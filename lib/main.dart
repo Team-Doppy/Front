@@ -1,4 +1,4 @@
-import 'package:doppy/home_screen.dart';
+import 'package:doppy/screens/profile_screen.dart';
 import 'package:flutter/material.dart';
 import 'theme/theme.dart';
 
@@ -17,7 +17,7 @@ class MyApp extends StatelessWidget {
       darkTheme: AppTheme.darkTheme, // 다크 테마
       themeMode: ThemeMode.system, // 시스템 설정에 따라 자동 전환
 
-      home: HomeScreen(),
+      home: const ProfileScreen(),
     );
   }
 }
