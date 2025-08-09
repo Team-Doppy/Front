@@ -491,6 +491,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
       'assets/images/feed2.png', // 추가 피드
       'assets/images/feed3.png', // 추가 피드
       'assets/images/feed4.png', // 추가 피드
+      'assets/images/feed5.jpg', // 더 많은 피드
+      'assets/images/feed6.jpg', // 더 많은 피드
+      'assets/images/feed1.jpg', // 더 많은 피드
+      'assets/images/feed2.png', // 더 많은 피드
+      'assets/images/feed3.png', // 더 많은 피드
+      'assets/images/feed4.png', // 더 많은 피드
+      'assets/images/feed5.jpg', // 더 많은 피드
+      'assets/images/feed6.jpg', // 더 많은 피드
     ];
 
     // 패널 높이에 따라 이미지 간격 동적 조정
