@@ -56,13 +56,6 @@ flutter:
   # included with your application, so that you can use the icons in
   # the material Icons class.
   uses-material-design: true
-  assets:
-    - assets/images/doppy_logo.png
-    - assets/images/profile_icon.png
-    - assets/images/home_icon.png
-    - assets/images/profile_icon_bar.png
-    - assets/images/search_icon.png
-    - assets/images/write_icon.png
 
   # To add assets to your application, add an assets section, like this:
   assets:
