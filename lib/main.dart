@@ -1,4 +1,11 @@
+import 'package:doppy/pages/post/group_profile_screen.dart';
+import 'package:doppy/pages/post/home_screen.dart';
+import 'package:doppy/pages/post/search_screen.dart';
+import 'package:doppy/pages/post/manage_group_screen.dart';
+import 'package:doppy/pages/post/manage_neighbor_screen.dart';
+import 'package:doppy/pages/post/postview_screen.dart';
 import 'package:doppy/pages/post/user_profile_screen.dart';
+import 'package:doppy/pages/user/login_screen.dart';
 import 'package:flutter/material.dart';
 import 'theme/theme.dart';
 
@@ -14,14 +21,27 @@ class MyApp extends StatelessWidget {
     return MaterialApp(
       title: 'Doppy',
       debugShowCheckedModeBanner: false,
-      theme: AppTheme.lightTheme, // 라이트 테마
-      darkTheme: AppTheme.darkTheme, // 다크 테마
-      themeMode: ThemeMode.system, // 시스템 설정에 따라 자동 전환
-      home: UserProfileScreen(),
+      theme: AppTheme.lightTheme,
+      darkTheme: AppTheme.darkTheme,
+      themeMode: ThemeMode.system,
+
+      // ✅ 초기 진입: 로그인
+      initialRoute: '/login',
+
+      routes: {
+        '/login': (_) => const LoginScreen(), // ✅ 추가
+        '/home': (_) => const HomeScreen(),
+        '/search': (_) => const SearchScreen(),
+        '/profile': (_) => const UserProfileScreen(),
+        // 필요 시 확장
+        // '/manage-group':    (_) => const ManageGroupScreen(),
+        // '/manage-neighbor': (_) => const ManageNeighborScreen(),
+        // '/group-profile':   (_) => const GroupProfileScreen(),
+        // '/post-view':       (_) => const PostViewScreen(),
+      },
+
+      onUnknownRoute:
+          (_) => MaterialPageRoute(builder: (_) => const HomeScreen()),
     );
   }
 }
-
-//비지니스 로직은 일단 비워두고 화면 구현 우선
-// provider - notifier 공부해보고 상태관리 적용하기 (중요)
-// Theme 폴더에서 컬러, 텍스트 스타일 일괄 적용

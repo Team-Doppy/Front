@@ -1,3 +1,4 @@
+import 'package:doppy/pages/components/custom_bottom_navigation_bar.dart';
 import 'package:flutter/material.dart';
 import '../../theme/app_colors.dart';
 
@@ -63,6 +64,10 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
           ),
         ),
       ),
+      bottomNavigationBar: CustomBottomNavigationBar(
+        currentIndex: 3,
+        onTap: (_) {},
+      ),
     );
   }
 
@@ -79,7 +84,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
         // 프로필 요소들
         ..._buildProfileElements(containerWidth, containerHeight),
         // 하단 네비게이션 바
-        _buildBottomNavigation(containerWidth, containerHeight),
+        //        _buildBottomNavigation(containerWidth, containerHeight),
         // 피드 패널 (최상위)
         _buildFeedPanel(containerWidth, panelTop, dynamicPanelHeight),
       ],
@@ -239,56 +244,6 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
         ),
       ),
     ];
-  }
-
-  Widget _buildBottomNavigation(double containerWidth, double containerHeight) {
-    return Positioned(
-      left: 0,
-      bottom: 0,
-      child: Container(
-        width: containerWidth,
-        height: containerHeight * 0.073,
-        clipBehavior: Clip.antiAlias,
-        decoration: ShapeDecoration(
-          color: AppColors.lightBackground,
-          shape: RoundedRectangleBorder(
-            side: BorderSide(
-              width: 1,
-              color: AppColors.lightBorder.withOpacity(0.5),
-            ),
-          ),
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-          children: [
-            _buildNavIcon(
-              'assets/icons/home.png',
-              Icons.home_outlined,
-              containerWidth,
-              containerHeight,
-            ),
-            _buildNavIcon(
-              'assets/icons/search.png',
-              Icons.search_outlined,
-              containerWidth,
-              containerHeight,
-            ),
-            _buildNavIcon(
-              'assets/icons/write.png',
-              Icons.add_box_outlined,
-              containerWidth,
-              containerHeight,
-            ),
-            _buildNavIcon(
-              'assets/icons/profile.png',
-              Icons.person_outline,
-              containerWidth,
-              containerHeight,
-            ),
-          ],
-        ),
-      ),
-    );
   }
 
   Widget _buildNavIcon(

@@ -1,11 +1,10 @@
-// lib/pages/components/custom_bottom_navigation_bar.dart
 import 'package:flutter/material.dart';
 
 class CustomBottomNavigationBar extends StatelessWidget {
   /// 현재 선택된 인덱스 (0: 홈, 1: 검색, 2: 작성, 3: 프로필)
   final int currentIndex;
 
-  /// 인덱스가 탭될 때 호출되는 콜백
+  /// 인덱스가 탭될 때 호출되는 콜백 (작성 버튼 등 화면 전환 외 동작용)
   final ValueChanged<int> onTap;
 
   const CustomBottomNavigationBar({
@@ -13,6 +12,29 @@ class CustomBottomNavigationBar extends StatelessWidget {
     required this.currentIndex,
     required this.onTap,
   }) : super(key: key);
+
+  void _handleTap(BuildContext context, int index) {
+    if (index == currentIndex) return; // 같은 탭 재탭 시 무시
+
+    switch (index) {
+      case 0:
+        // 홈
+        Navigator.of(context).pushReplacementNamed('/home');
+        break;
+      case 1:
+        // 검색
+        Navigator.of(context).pushReplacementNamed('/search');
+        break;
+      case 2:
+        // 작성: 내부 라우팅이 없다면 콜백으로 처리(예: 글쓰기 모달/페이지)
+        onTap(index);
+        return;
+      case 3:
+        // 프로필
+        Navigator.of(context).pushReplacementNamed('/profile');
+        break;
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -34,12 +56,11 @@ class CustomBottomNavigationBar extends StatelessWidget {
         children: List.generate(4, (index) {
           final isProfile = index == 3;
           final iconSize = isProfile ? 26.0 : 24.0;
-          // 선택된 탭이면 검정, 아니면 회색
           final iconColor = currentIndex == index ? Colors.black : Colors.grey;
 
           return Expanded(
             child: InkWell(
-              onTap: () => onTap(index),
+              onTap: () => _handleTap(context, index),
               child: Center(
                 child: Image.asset(
                   iconAssets[index],

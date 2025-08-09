@@ -1,3 +1,4 @@
+import 'package:doppy/pages/components/custom_bottom_navigation_bar.dart';
 import 'package:flutter/material.dart';
 import '../../theme/app_colors.dart';
 
@@ -413,26 +414,9 @@ class _HomeScreenState extends State<HomeScreen> {
           ],
         ),
       ),
-      bottomNavigationBar: Container(
-        height: 64,
-        decoration: BoxDecoration(
-          color: Colors.white,
-          border: Border(
-            top: BorderSide(
-              width: 1,
-              color: AppColors.lightBorder.withOpacity(0.5),
-            ),
-          ),
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceAround,
-          children: [
-            Image.asset('assets/icons/home.png', width: 24, height: 24),
-            Image.asset('assets/icons/search.png', width: 24, height: 24),
-            Image.asset('assets/icons/write.png', width: 24, height: 24),
-            Image.asset('assets/icons/profile.png', width: 24, height: 24),
-          ],
-        ),
+      bottomNavigationBar: CustomBottomNavigationBar(
+        currentIndex: 0,
+        onTap: (_) {}, // 2번(작성)만 콜백으로 처리됨. 필요시 모달/네비게이션 연결
       ),
     );
   }

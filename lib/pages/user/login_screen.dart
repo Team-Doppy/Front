@@ -21,16 +21,13 @@ class _LoginScreenState extends State<LoginScreen> {
   bool _obscure = true;
   bool _canSubmit = false;
 
-  // 전체 화면을 위로 올릴 픽셀 오프셋 (음수면 위로 이동)
   static const double _yShift = -140.0;
 
-  // 색상 (Figma 스니펫)
   static const Color _fillGray = Color(0x7FD9D9D9);
   static const Color _hintGray = Color(0xB2515151);
   static const Color _subTextGray = Color(0xFF515151);
   static const Color _primary = Color(0xB25C6AC4);
 
-  // 입력 UI 치수
   static const double _fieldHeight = 44;
   static const double _fieldsGap = 16;
   static const double _buttonHeight = 50;
@@ -61,13 +58,12 @@ class _LoginScreenState extends State<LoginScreen> {
     if (!(_formKey.currentState?.validate() ?? false)) return;
     final id = _idController.text.trim();
     final pw = _pwController.text;
-    if (widget.onNext != null) {
-      widget.onNext!(id, pw);
-    } else {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('로그인 시도: $id / $pw')));
-    }
+
+    // 필요하면 외부 콜백 먼저 호출
+    widget.onNext?.call(id, pw);
+
+    // ✅ 로그인 성공 시 홈으로 이동 (백스택 제거)
+    Navigator.of(context).pushNamedAndRemoveUntil('/home', (route) => false);
   }
 
   InputDecoration _decoration({required String hint, Widget? suffix}) {
@@ -87,18 +83,16 @@ class _LoginScreenState extends State<LoginScreen> {
 
   @override
   Widget build(BuildContext context) {
-    const double maxBodyWidth = 402; // Figma 기준 폭 상한
+    const double maxBodyWidth = 402;
     const double horizontalPadding = 24;
     final Size screen = MediaQuery.of(context).size;
     final double screenHeight = screen.height;
     final double contentMaxWidth =
         math.min(maxBodyWidth, screen.width) - horizontalPadding * 2;
 
-    // 텍스트
     const String titleText = '아이디, 비밀번호를 입력해주세요.';
     const String subText = '이후에도 언제든지 변경할 수 있어요.';
 
-    // 실제 텍스트 높이 측정 (제목=contentMaxWidth, 부제=최대 244px)
     final titlePainter = TextPainter(
       text: TextSpan(text: titleText, style: AppTextStyles.headlineLarge),
       textDirection: TextDirection.ltr,
@@ -117,10 +111,8 @@ class _LoginScreenState extends State<LoginScreen> {
     final double titleHeight = titlePainter.size.height;
     final double subHeight = subPainter.size.height;
 
-    // 라벨(제목/부제) → 입력창 간격 = 화면 높이 * 0.1
     final double labelToInputsGap = screenHeight * 0.07;
 
-    // 두 입력창 블록의 중앙이 화면 중앙이 되도록 상단 여백 계산
     final double inputsBlockHeight = _fieldHeight + _fieldsGap + _fieldHeight;
     final double inputsBlockCenterOffset = _fieldHeight + (_fieldsGap / 2);
 
@@ -153,14 +145,11 @@ class _LoginScreenState extends State<LoginScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        // 동적 상단 여백 (중앙 정렬 기준)
                         SizedBox(height: topSpacer),
 
-                        // 제목
                         Text(titleText, style: AppTextStyles.headlineLarge),
                         const SizedBox(height: 8),
 
-                        // 부제 (폭 244 제한)
                         ConstrainedBox(
                           constraints: const BoxConstraints(maxWidth: 244),
                           child: Text(
@@ -172,10 +161,8 @@ class _LoginScreenState extends State<LoginScreen> {
                           ),
                         ),
 
-                        // 라벨 → 입력창 간격
                         SizedBox(height: labelToInputsGap),
 
-                        // 입력 블록
                         SizedBox(
                           height: inputsBlockHeight,
                           child: Column(

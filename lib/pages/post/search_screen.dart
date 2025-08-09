@@ -212,8 +212,8 @@ class _SearchScreenState extends State<SearchScreen> {
 
         // ── 커스텀 바텀 네비게이션 바 ───────────────────
         bottomNavigationBar: CustomBottomNavigationBar(
-          currentIndex: _selectedIndex,
-          onTap: (i) => setState(() => _selectedIndex = i),
+          currentIndex: 1,
+          onTap: (_) {},
         ),
       ),
     );
