@@ -5,6 +5,7 @@ import 'package:doppy/pages/post/manage_group_screen.dart';
 import 'package:doppy/pages/post/manage_neighbor_screen.dart';
 import 'package:doppy/pages/post/postview_screen.dart';
 import 'package:flutter/material.dart';
+import 'screens/home_screen.dart';
 import 'theme/theme.dart';
 
 void main() {
