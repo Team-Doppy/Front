@@ -42,11 +42,8 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     // 패널 높이를 동적으로 계산: 패널 top부터 하단 네비게이션 바 바로 위까지
     final double bottomNavHeight = containerHeight * 0.076;
     final double bottomMargin = -5.0; // 하단 네비게이션 바와의 적절한 여백
-    final double maxPanelHeight = containerHeight * 0.50; // 패널 최대 높이를 더 줄임
-    final double calculatedHeight =
-        containerHeight - panelTop - bottomNavHeight - bottomMargin;
     final double dynamicPanelHeight =
-        calculatedHeight > maxPanelHeight ? maxPanelHeight : calculatedHeight;
+        containerHeight - panelTop - bottomNavHeight - bottomMargin;
 
     return Scaffold(
       body: SafeArea(
@@ -57,24 +54,11 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
             margin: EdgeInsets.symmetric(horizontal: 4.0),
             clipBehavior: Clip.antiAlias,
             decoration: BoxDecoration(color: AppColors.lightBackground),
-            child: Column(
-              children: [
-                // 고정된 상단 빈 공간 (높이 65px)
-                Container(
-                  width: containerWidth,
-                  height: 65.0,
-                  color: AppColors.lightSurface,
-                ),
-                // 기존 컨텐츠를 Expanded로 감싸서 남은 공간 차지
-                Expanded(
-                  child: _buildContent(
-                    containerWidth,
-                    containerHeight,
-                    panelTop,
-                    dynamicPanelHeight,
-                  ),
-                ),
-              ],
+            child: _buildContent(
+              containerWidth,
+              containerHeight,
+              panelTop,
+              dynamicPanelHeight,
             ),
           ),
         ),
@@ -96,8 +80,6 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
         ..._buildProfileElements(containerWidth, containerHeight),
         // 하단 네비게이션 바
         _buildBottomNavigation(containerWidth, containerHeight),
-        // 뒤로가기 버튼
-        _buildBackButton(),
         // 피드 패널 (최상위)
         _buildFeedPanel(containerWidth, panelTop, dynamicPanelHeight),
       ],
@@ -339,26 +321,6 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     );
   }
 
-  Widget _buildBackButton() {
-    return Positioned(
-      left: 20.0,
-      top: 25.0,
-      child: GestureDetector(
-        onTap: () {
-          Navigator.pop(context);
-        },
-        child: Image.asset(
-          'assets/icons/back.png',
-          width: 20.0,
-          height: 20.0,
-          errorBuilder: (context, error, stackTrace) {
-            return Icon(Icons.arrow_back, size: 20.0, color: Colors.black);
-          },
-        ),
-      ),
-    );
-  }
-
   Widget _buildFeedPanel(
     double containerWidth,
     double panelTop,
@@ -434,12 +396,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
               ),
               // 피드 컨텐츠
               Expanded(
-                child: SingleChildScrollView(
-                  child: SizedBox(
-                    height: _calculateFeedHeight(dynamicPanelHeight),
-                    child: _buildFeedImages(containerWidth, dynamicPanelHeight),
-                  ),
-                ),
+                child: _buildFeedImages(containerWidth, dynamicPanelHeight),
               ),
             ],
           ),
@@ -462,17 +419,6 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     );
   }
 
-  double _calculateFeedHeight(double panelHeight) {
-    // 이제 24개 이미지(12행)를 고려한 높이: 12행 * 140px = 1680px + 여백 = 1700px
-    double baseFeedHeight = 1700.0;
-
-    // 패널이 커질수록 더 많은 피드를 볼 수 있도록 높이 증가
-    // 패널 높이에 직접 비례해서 피드 높이 증가
-    double feedHeight = baseFeedHeight + (panelHeight * 0.3); // 패널 높이의 30%만큼 추가
-
-    return feedHeight;
-  }
-
   Widget _buildFeedImages(double containerWidth, double panelHeight) {
     final List<String> feedImages = [
       'assets/images/feed1.jpg',
@@ -481,48 +427,37 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
       'assets/images/feed2.png',
       'assets/images/feed5.jpg',
       'assets/images/feed6.jpg',
-      'assets/images/feed1.jpg', // 재사용
-      'assets/images/feed3.png', // 재사용
-      'assets/images/feed2.png', // 추가 피드
-      'assets/images/feed4.png', // 추가 피드
-      'assets/images/feed5.jpg', // 추가 피드
-      'assets/images/feed6.jpg', // 추가 피드
-      'assets/images/feed1.jpg', // 추가 피드
-      'assets/images/feed2.png', // 추가 피드
-      'assets/images/feed3.png', // 추가 피드
-      'assets/images/feed4.png', // 추가 피드
-      'assets/images/feed5.jpg', // 더 많은 피드
-      'assets/images/feed6.jpg', // 더 많은 피드
-      'assets/images/feed1.jpg', // 더 많은 피드
-      'assets/images/feed2.png', // 더 많은 피드
-      'assets/images/feed3.png', // 더 많은 피드
-      'assets/images/feed4.png', // 더 많은 피드
-      'assets/images/feed5.jpg', // 더 많은 피드
-      'assets/images/feed6.jpg', // 더 많은 피드
+      'assets/images/feed1.jpg',
+      'assets/images/feed3.png',
+      'assets/images/feed2.png',
+      'assets/images/feed4.png',
+      'assets/images/feed5.jpg',
+      'assets/images/feed6.jpg',
+      'assets/images/feed1.jpg',
+      'assets/images/feed2.png',
+      'assets/images/feed3.png',
+      'assets/images/feed4.png',
+      'assets/images/feed5.jpg',
+      'assets/images/feed6.jpg',
     ];
 
-    // 패널 높이에 따라 이미지 간격 동적 조정
-    final double availableHeight = panelHeight - 100; // 상단 여백 제외
-    final double imageHeight = 135.0;
-    final double dynamicRowSpacing = (availableHeight / 6).clamp(
-      125.0,
-      160.0,
-    ); // 최소 125, 최대 160
-
-    return Stack(
-      children: List.generate(feedImages.length, (index) {
-        final row = index ~/ 2;
-        final col = index % 2;
-        return Positioned(
-          left: (containerWidth - 370) / 2 + (col * 190),
-          top: 10.0 + (row * dynamicRowSpacing),
-          child: Container(
-            width: 180.0,
-            height: 135.0,
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16.0),
+      child: GridView.builder(
+        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: 2,
+          childAspectRatio: 180 / 135, // width / height 비율
+          crossAxisSpacing: 4,
+          mainAxisSpacing: 4,
+        ),
+        itemCount: feedImages.length,
+        physics: const AlwaysScrollableScrollPhysics(),
+        itemBuilder: (context, index) {
+          return Container(
             decoration: ShapeDecoration(
               color: AppColors.lightSurfaceVariant,
               shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(20),
+                borderRadius: BorderRadius.circular(2),
               ),
             ),
             child: ClipRRect(
@@ -534,16 +469,16 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                   return Container(
                     color:
                         index % 2 == 0 ? AppColors.accent : AppColors.primary,
-                    child: Center(
+                    child: const Center(
                       child: Icon(Icons.image, color: Colors.white, size: 40),
                     ),
                   );
                 },
               ),
             ),
-          ),
-        );
-      }),
+          );
+        },
+      ),
     );
   }
 }
