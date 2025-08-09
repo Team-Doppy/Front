@@ -1,6 +1,12 @@
+import 'package:doppy/screens/profile_screen.dart';
+import 'package:doppy/pages/post/group_profile_screen.dart';
 import 'package:doppy/pages/post/home_screen.dart';
 import 'package:doppy/pages/post/search_screen.dart';
+import 'package:doppy/pages/post/manage_group_screen.dart';
+import 'package:doppy/pages/post/manage_neighbor_screen.dart';
+import 'package:doppy/pages/post/postview_screen.dart';
 import 'package:flutter/material.dart';
+import 'screens/home_screen.dart';
 import 'theme/theme.dart';
 
 void main() {
@@ -18,7 +24,7 @@ class MyApp extends StatelessWidget {
       theme: AppTheme.lightTheme, // 라이트 테마
       darkTheme: AppTheme.darkTheme, // 다크 테마
       themeMode: ThemeMode.system, // 시스템 설정에 따라 자동 전환
-      home: SearchScreen(), // for search screen test
+      home: const HomeScreen(),
     );
   }
 }
