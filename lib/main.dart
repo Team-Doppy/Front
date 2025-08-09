@@ -1,6 +1,7 @@
 import 'package:doppy/screens/profile_screen.dart';
 import 'package:doppy/pages/post/group_profile_screen.dart';
 import 'package:doppy/pages/post/home_screen.dart';
+import 'package:doppy/pages/post/search_screen.dart';
 import 'package:doppy/pages/post/manage_group_screen.dart';
 import 'package:doppy/pages/post/manage_neighbor_screen.dart';
 import 'package:doppy/pages/post/postview_screen.dart';
