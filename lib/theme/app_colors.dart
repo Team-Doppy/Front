@@ -5,9 +5,9 @@ class AppColors {
   AppColors._(); // private constructor
 
   // ===== Primary Colors (연한 푸른색) =====
-  static const Color primary = Color.fromARGB(255, 91, 181, 255); // 연한 푸른색
-  static const Color primaryDark = Color(0xFF1976D2); // 진한 푸른색
-  static const Color primaryLight = Color(0xFF90CAF9); // 더 연한 푸른색
+  static const Color primary = Color(0xFF5C6AC4); // 연한 푸른색
+  static const Color primaryDark = Color(0xFF46529D); // 진한 푸른색
+  static const Color primaryLight = Color(0xFF7F8DE9); // 더 연한 푸른색
 
   // ===== Accent Colors =====
   static const Color accent = Color(0xFFE0E0E0); // 중성 회색

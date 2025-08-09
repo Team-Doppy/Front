@@ -1,11 +1,11 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import '../../theme/app_text_styles.dart';
+import 'package:provider/provider.dart';
+import '../../providers//auth_provider.dart';
 
 class LoginScreen extends StatefulWidget {
-  const LoginScreen({super.key, this.onNext});
-
-  final void Function(String userId, String password)? onNext;
+  const LoginScreen({super.key});
 
   @override
   State<LoginScreen> createState() => _LoginScreenState();
@@ -20,6 +20,9 @@ class _LoginScreenState extends State<LoginScreen> {
 
   bool _obscure = true;
   bool _canSubmit = false;
+
+  // ✅ API 통신 중 로딩 상태를 표시하기 위한 변수 추가
+  bool _isLoading = false;
 
   static const double _yShift = -140.0;
 
@@ -49,21 +52,51 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   void _updateSubmitState() {
+    // ✅ 로딩 중일 때는 버튼 비활성화
+    if (_isLoading) {
+      if (_canSubmit) setState(() => _canSubmit = false);
+      return;
+    }
     final can =
         _idController.text.trim().isNotEmpty && _pwController.text.isNotEmpty;
     if (can != _canSubmit) setState(() => _canSubmit = can);
   }
 
-  void _submit() {
+  Future<void> _submit() async {
     if (!(_formKey.currentState?.validate() ?? false)) return;
+
+    setState(() {
+      _isLoading = true;
+    });
+
     final id = _idController.text.trim();
     final pw = _pwController.text;
 
-    // 필요하면 외부 콜백 먼저 호출
-    widget.onNext?.call(id, pw);
+    // Provider를 통해 AuthProvider의 login 메소드 호출
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    final success = await authProvider.login(id, pw);
 
-    // ✅ 로그인 성공 시 홈으로 이동 (백스택 제거)
-    Navigator.of(context).pushNamedAndRemoveUntil('/home', (route) => false);
+    // ✅ mounted 체크: 비동기 작업 후 위젯이 여전히 화면에 있는지 확인 (중요)
+    if (!mounted) return;
+
+    if (success) {
+      // 로그인 성공 시 AuthProvider가 상태를 변경하여
+      // main.dart의 Consumer가 자동으로 HomeScreen으로 전환해줍니다.
+      // 따라서 여기서 직접 화면을 전환하는 코드는 필요 없습니다.
+      // Navigator.of(context).pushNamedAndRemoveUntil('/home', (route) => false);
+    } else {
+      // 로그인 실패 시 사용자에게 피드백 제공
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('아이디 또는 비밀번호가 일치하지 않습니다.'),
+          backgroundColor: Colors.redAccent,
+        ),
+      );
+    }
+
+    setState(() {
+      _isLoading = false;
+    });
   }
 
   InputDecoration _decoration({required String hint, Widget? suffix}) {
@@ -239,6 +272,7 @@ class _LoginScreenState extends State<LoginScreen> {
                           width: double.infinity,
                           height: _buttonHeight,
                           child: ElevatedButton(
+                            // ✅ 로딩 중이 아닐 때만 버튼 활성화
                             onPressed: _canSubmit ? _submit : null,
                             style: ElevatedButton.styleFrom(
                               backgroundColor: _primary,
@@ -250,7 +284,13 @@ class _LoginScreenState extends State<LoginScreen> {
                               ),
                               elevation: 0,
                             ),
-                            child: Text(
+                            // ✅ 로딩 상태에 따라 버튼 내부 위젯 변경
+                            child: _isLoading
+                                ? const CircularProgressIndicator(
+                              color: Colors.white,
+                              strokeWidth: 3.0,
+                            )
+                                : Text(
                               '다음',
                               style: AppTextStyles.withColor(
                                 AppTextStyles.bodyLarge,
