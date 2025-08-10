@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import '../../theme/app_text_styles.dart';
 import '../components/custom_bottom_navigation_bar.dart';
@@ -12,9 +13,9 @@ class SearchScreen extends StatefulWidget {
 
 /// ===== 데이터 모델 =====
 class AccountItem {
-  final String nickname;
-  final String userId;
-  final int neighbors;
+  final String nickname; // 서버는 username만 주므로 UI 편의를 위해 nickname=userId 변형
+  final String userId; // '@username'
+  final int neighbors; // 서버 응답엔 없으므로 0으로 채움
 
   const AccountItem({
     required this.nickname,
@@ -55,60 +56,16 @@ class _SearchScreenState extends State<SearchScreen> {
   String _query = '';
   Timer? _debounce;
 
-  // 더미 데이터
-  late final List<AccountItem> _allAccounts = [
-    const AccountItem(nickname: '여행러 민준', userId: '@travel_mj', neighbors: 40),
-    const AccountItem(
-      nickname: '사진찍는 수진',
-      userId: '@photo_sujin',
-      neighbors: 32,
-    ),
-    const AccountItem(
-      nickname: '코딩하는도치',
-      userId: '@coder_dochi',
-      neighbors: 27,
-    ),
-    const AccountItem(
-      nickname: '제주살이 현우',
-      userId: '@jeju_hyunwoo',
-      neighbors: 21,
-    ),
-    const AccountItem(nickname: '푸른하늘', userId: '@blue_sky', neighbors: 45),
-    const AccountItem(nickname: '밤양갱', userId: '@bamyanggeng', neighbors: 29),
-    const AccountItem(nickname: '고양이집사', userId: '@catlover', neighbors: 33),
-    const AccountItem(
-      nickname: '강아지훈련사',
-      userId: '@dog_trainer',
-      neighbors: 39,
-    ),
-    const AccountItem(nickname: '수취영', userId: '@suchiyoung', neighbors: 28),
-    const AccountItem(nickname: '영화광 민지', userId: '@cine_minji', neighbors: 34),
-    const AccountItem(nickname: '러닝하는 준호', userId: '@runner_jh', neighbors: 18),
-    const AccountItem(
-      nickname: '책읽는 보라',
-      userId: '@reader_bora',
-      neighbors: 24,
-    ),
-    const AccountItem(nickname: '디자인 우주', userId: '@ux_woozoo', neighbors: 36),
-    const AccountItem(nickname: '푸드파이터', userId: '@foodie', neighbors: 31),
-    const AccountItem(nickname: '사진러버', userId: '@photo_love', neighbors: 26),
-    const AccountItem(nickname: '여행기록가', userId: '@travel_log', neighbors: 41),
-    const AccountItem(nickname: '음악하는나무', userId: '@music_tree', neighbors: 22),
-    const AccountItem(
-      nickname: '도피 doppy',
-      userId: '@doppy_official',
-      neighbors: 99,
-    ),
-    const AccountItem(nickname: '일기장', userId: '@diary', neighbors: 15),
-    const AccountItem(nickname: '서핑하는 유나', userId: '@surf_yuna', neighbors: 25),
-    for (int i = 1; i <= 10; i++)
-      AccountItem(
-        nickname: '이웃 $i',
-        userId: '@user$i',
-        neighbors: 20 + (i % 10),
-      ),
-  ];
+  // 백엔드 설정
+  final String _baseUrl = 'https://example.com'; // TODO: 실제 서버 base URL로 교체
+  final FriendSearchApi _friendApi = FriendSearchApi();
 
+  // 네트워크 요청 상태
+  bool _accountsLoading = false;
+  String? _accountsError;
+  CancelToken? _accountsCancelToken;
+
+  // 더미 데이터 (게시글은 로컬 유지)
   late final List<PostItemData> _allPosts = [
     const PostItemData(
       title: '도피(doppy)로 기록하는 나의 일상',
@@ -177,18 +134,19 @@ class _SearchScreenState extends State<SearchScreen> {
   ];
 
   // 표시 목록(검색/정렬 반영본)
-  late List<AccountItem> _accounts = [];
-  late List<PostItemData> _posts = [];
+  List<AccountItem> _accounts = [];
+  List<PostItemData> _posts = [];
 
   @override
   void initState() {
     super.initState();
-    _applySortAndReset();
+    _applySortAndResetInitial(); // 최초엔 전체 게시글만 채움, 계정은 비워둠
   }
 
   @override
   void dispose() {
     _debounce?.cancel();
+    _accountsCancelToken?.cancel('dispose');
     _searchController.dispose();
     super.dispose();
   }
@@ -198,37 +156,127 @@ class _SearchScreenState extends State<SearchScreen> {
     setState(() => _query = q);
     _debounce?.cancel();
     _debounce = Timer(const Duration(milliseconds: 350), () {
-      _performSearch();
+      _performSearch(); // 디바운스 후 실행
     });
   }
 
   void _onSearchSubmitted(String q) {
     setState(() => _query = q);
     _debounce?.cancel();
-    _performSearch();
+    _performSearch(); // 즉시 실행
   }
 
-  void _performSearch() {
+  Future<void> _performSearch() async {
     final q = _query.trim();
-    debugPrint('검색 실행: "$q"');
+    debugPrint('[Search] performSearch | query="$q"');
 
     if (q.isEmpty) {
-      _applySortAndReset();
+      // 빈 검색어: 계정은 비우고, 게시글은 전체/정렬 반영 상태로
+      setState(() {
+        _accounts = [];
+        _posts = _sortPosts(List.of(_allPosts));
+        _selectedAccountIndex = null;
+        _selectedPostIndex = null;
+      });
       debugPrint(
-        '검색어 없음 → 전체 목록 표시 (accounts=${_accounts.length}, posts=${_posts.length})',
+        '[Search] empty query -> clear accounts, show all posts (${_posts.length})',
       );
       return;
     }
 
+    // 1) 계정: 서버 검색
+    await _searchAccountsRemote(q);
+
+    // 2) 게시글: 로컬 필터
+    _filterPostsLocal(q);
+
+    // 선택 상태 초기화
+    setState(() {
+      _selectedAccountIndex = null;
+      _selectedPostIndex = null;
+    });
+  }
+
+  Future<void> _searchAccountsRemote(String q) async {
+    // 진행 중 요청이 있으면 취소
+    _accountsCancelToken?.cancel('new query: $q');
+    _accountsCancelToken = CancelToken();
+
+    final token = await _getAuthToken();
+
+    setState(() {
+      _accountsLoading = true;
+      _accountsError = null;
+    });
+
+    final startedAt = DateTime.now();
+    debugPrint(
+      '[API] friends/search started | q="$q" | t=${startedAt.toIso8601String()}',
+    );
+
+    try {
+      final usernames = await _friendApi.searchUsers(
+        baseUrl: _baseUrl,
+        token: token ?? '',
+        query: q,
+        cancelToken: _accountsCancelToken,
+      );
+
+      // 서버가 반환한 username 배열을 화면용 AccountItem으로 변환
+      final items =
+          usernames
+              .map(
+                (u) => AccountItem(
+                  nickname: u, // 닉네임은 서버 데이터가 없으므로 일단 username
+                  userId: '@$u',
+                  neighbors: 0, // 서버 응답에 없으므로 0으로 표시
+                ),
+              )
+              .toList();
+
+      // 정렬 규칙 적용
+      final sorted = _sortAccounts(items);
+
+      final endedAt = DateTime.now();
+      debugPrint(
+        '[API] friends/search success | count=${sorted.length} | elapsed=${endedAt.difference(startedAt).inMilliseconds}ms',
+      );
+
+      setState(() {
+        _accountsLoading = false;
+        _accounts = sorted;
+      });
+    } on DioException catch (e) {
+      if (CancelToken.isCancel(e)) {
+        debugPrint('[API] friends/search canceled: ${e.message}');
+        return;
+      }
+      // 자세한 에러 로깅
+      debugPrint(
+        '[API][ERROR] friends/search failed | type=${e.type} | status=${e.response?.statusCode}',
+      );
+      debugPrint('[API][ERROR] message=${e.message}');
+      debugPrint('[API][ERROR] data=${e.response?.data}');
+
+      setState(() {
+        _accountsLoading = false;
+        _accountsError = '계정 검색 실패 (${e.response?.statusCode ?? e.type})';
+        _accounts = []; // 실패 시 빈 리스트
+      });
+      _showSnack(_accountsError!);
+    } catch (e) {
+      debugPrint('[API][ERROR] friends/search unknown error: $e');
+      setState(() {
+        _accountsLoading = false;
+        _accountsError = '계정 검색 중 알 수 없는 오류';
+        _accounts = [];
+      });
+      _showSnack(_accountsError!);
+    }
+  }
+
+  void _filterPostsLocal(String q) {
     final lower = q.toLowerCase();
-    List<AccountItem> acc =
-        _allAccounts
-            .where(
-              (a) =>
-                  a.nickname.toLowerCase().contains(lower) ||
-                  a.userId.toLowerCase().contains(lower),
-            )
-            .toList();
     List<PostItemData> pst =
         _allPosts
             .where(
@@ -237,23 +285,16 @@ class _SearchScreenState extends State<SearchScreen> {
                   p.author.toLowerCase().contains(lower),
             )
             .toList();
-
-    acc = _sortAccounts(acc);
     pst = _sortPosts(pst);
-
     setState(() {
-      _accounts = acc;
       _posts = pst;
-      _selectedAccountIndex = null;
-      _selectedPostIndex = null;
     });
-
-    debugPrint('검색 결과: accounts=${acc.length}, posts=${pst.length}');
+    debugPrint('[Search] posts local filtered | count=${pst.length}');
   }
 
-  void _applySortAndReset() {
+  void _applySortAndResetInitial() {
     setState(() {
-      _accounts = _sortAccounts(List.of(_allAccounts));
+      _accounts = []; // 최초엔 서버 검색 전이므로 비움
       _posts = _sortPosts(List.of(_allPosts));
       _selectedAccountIndex = null;
       _selectedPostIndex = null;
@@ -274,8 +315,15 @@ class _SearchScreenState extends State<SearchScreen> {
     return list;
   }
 
+  Future<String?> _getAuthToken() async {
+    // TODO: 실제 토큰 획득 로직으로 교체 (예: secure storage, provider, dio interceptor 등)
+    // 예시: return await SecureStorage.read('accessToken');
+    debugPrint('[Auth] getAuthToken called');
+    return 'YOUR_ACCESS_TOKEN'; // 임시
+  }
+
   void _clearSearch() {
-    debugPrint('검색어 초기화');
+    debugPrint('[Search] clear query');
     _searchController.clear();
     setState(() => _query = '');
     _performSearch();
@@ -327,11 +375,12 @@ class _SearchScreenState extends State<SearchScreen> {
                     _AccountsTab(
                       accounts: _accounts,
                       accountSort: _accountSort,
+                      loading: _accountsLoading,
+                      errorText: _accountsError,
                       onChangeSort: (v) {
                         setState(() => _accountSort = v);
-                        _applySortAndReset();
-                        _performSearch();
-                        debugPrint('계정 정렬 변경: $_accountSort');
+                        _accounts = _sortAccounts(List.of(_accounts));
+                        debugPrint('[Sort] account sort -> "$_accountSort"');
                       },
                       selectedIndex: _selectedAccountIndex,
                       onTapItem: _onTapAccount,
@@ -341,9 +390,8 @@ class _SearchScreenState extends State<SearchScreen> {
                       postSort: _postSort,
                       onChangeSort: (v) {
                         setState(() => _postSort = v);
-                        _applySortAndReset();
-                        _performSearch();
-                        debugPrint('게시글 정렬 변경: $_postSort');
+                        _posts = _sortPosts(List.of(_posts));
+                        debugPrint('[Sort] post sort -> "$_postSort"');
                       },
                       selectedIndex: _selectedPostIndex,
                       onTapItem: _onTapPost,
@@ -450,12 +498,11 @@ class _SearchTabBar extends StatelessWidget {
     final w = MediaQuery.of(context).size.width;
 
     return Material(
-      color: Colors.transparent, // 배경 투명 (문제 없음)
+      color: Colors.transparent,
       child: SizedBox(
         height: 46,
         child: TabBar(
-          dividerColor: Colors.transparent, // 기본 하단선 제거
-          // 텍스트 스타일 (피그마와 동일 계열)
+          dividerColor: Colors.transparent,
           labelColor: Colors.black,
           unselectedLabelColor: Colors.black,
           labelStyle: AppTextStyles.withWeight(
@@ -467,13 +514,12 @@ class _SearchTabBar extends StatelessWidget {
             FontWeight.w600,
           ),
           labelPadding: const EdgeInsets.symmetric(horizontal: 32),
-          // 🔹 활성 탭 중앙 기준, 스크린 폭의 37.5% 길이로 고정
           indicator: FixedUnderlineTabIndicator(
             color: Colors.black,
             thickness: 2.0,
             bottomInset: 0.0,
             screenWidth: w,
-            fraction: 0.375,
+            fraction: 0.375, // 화면 너비의 37.5%
           ),
           tabs: const [Tab(text: '계정'), Tab(text: '게시글')],
         ),
@@ -486,6 +532,8 @@ class _SearchTabBar extends StatelessWidget {
 class _AccountsTab extends StatelessWidget {
   final List<AccountItem> accounts;
   final String accountSort;
+  final bool loading;
+  final String? errorText;
   final ValueChanged<String> onChangeSort;
   final int? selectedIndex;
   final void Function(int index, AccountItem item) onTapItem;
@@ -493,6 +541,8 @@ class _AccountsTab extends StatelessWidget {
   const _AccountsTab({
     required this.accounts,
     required this.accountSort,
+    required this.loading,
+    required this.errorText,
     required this.onChangeSort,
     required this.selectedIndex,
     required this.onTapItem,
@@ -503,7 +553,10 @@ class _AccountsTab extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // 정렬 + 결과 수
+        // 로딩바
+        if (loading) const LinearProgressIndicator(minHeight: 2),
+
+        // 정렬 + 결과 수 / 에러
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
           child: Row(
@@ -535,13 +588,22 @@ class _AccountsTab extends StatelessWidget {
                   color: Colors.black,
                 ),
               ),
-              Text(
-                '결과 ${accounts.length}건',
-                style: AppTextStyles.withWeight(
-                  AppTextStyles.bodySmall,
-                  FontWeight.w500,
-                ).copyWith(color: Colors.black54),
-              ),
+              if (errorText == null)
+                Text(
+                  '결과 ${accounts.length}건',
+                  style: AppTextStyles.withWeight(
+                    AppTextStyles.bodySmall,
+                    FontWeight.w500,
+                  ).copyWith(color: Colors.black54),
+                )
+              else
+                Text(
+                  errorText!,
+                  style: AppTextStyles.withWeight(
+                    AppTextStyles.bodySmall,
+                    FontWeight.w600,
+                  ).copyWith(color: Colors.red),
+                ),
             ],
           ),
         ),
@@ -901,9 +963,7 @@ class _PostListItem extends StatelessWidget {
   }
 }
 
-/// ===== 커스텀 인디케이터: 화면 너비 37.5% 길이 =====
-enum FixedUnderlineAlign { left, center, right }
-
+/// ===== 커스텀 인디케이터: 활성 탭 중앙에, 화면 폭의 37.5% 길이 =====
 class FixedUnderlineTabIndicator extends Decoration {
   final Color color;
   final double thickness;
@@ -947,15 +1007,11 @@ class _FixedUnderlinePainter extends BoxPainter {
   void paint(Canvas canvas, Offset offset, ImageConfiguration configuration) {
     if (configuration.size == null) return;
 
-    // 현재 "해당 탭"의 영역
     final Rect rect = offset & configuration.size!;
-    final double cx = rect.center.dx; // 탭 중앙 x
+    final double cx = rect.center.dx; // 현재 탭 중앙
     final double half = indicatorWidth / 2;
-
-    // 인디케이터 y: 탭 하단에 붙임
     final double y = rect.bottom - bottomInset - thickness / 2;
 
-    // 중앙 정렬: 탭 중앙을 기준으로 좌우로 half
     final double x1 = cx - half;
     final double x2 = cx + half;
 
@@ -967,5 +1023,67 @@ class _FixedUnderlinePainter extends BoxPainter {
           ..strokeCap = StrokeCap.square;
 
     canvas.drawLine(Offset(x1, y), Offset(x2, y), p);
+  }
+}
+
+/// ====== API: 친구 검색 ======
+/// GET /api/friends/search?username={searchTerm}
+/// Authorization: Bearer {token}
+class FriendSearchApi {
+  final Dio _dio = Dio(
+    BaseOptions(
+      connectTimeout: const Duration(seconds: 10),
+      receiveTimeout: const Duration(seconds: 10),
+    ),
+  );
+
+  Future<List<String>> searchUsers({
+    required String baseUrl,
+    required String token,
+    required String query,
+    CancelToken? cancelToken,
+  }) async {
+    final uri = '$baseUrl/api/friends/search';
+    final params = {'username': query};
+
+    // 요청 로그
+    debugPrint('[API] → GET $uri');
+    debugPrint('[API]   params=$params');
+    debugPrint(
+      '[API]   headers={"Authorization": "Bearer ***${token.length >= 6 ? token.substring(token.length - 6) : token}"}',
+    );
+
+    final sw = Stopwatch()..start();
+
+    final res = await _dio.get<List<dynamic>>(
+      uri,
+      queryParameters: params,
+      cancelToken: cancelToken,
+      options: Options(
+        headers: {'Authorization': 'Bearer $token'},
+        responseType: ResponseType.json,
+      ),
+    );
+
+    sw.stop();
+    debugPrint('[API] ← ${res.statusCode}  (${sw.elapsedMilliseconds}ms)');
+
+    if (res.statusCode == 200 && res.data != null) {
+      // 응답 예: [{"username":"testuser2"}]
+      final List<dynamic> raw = res.data!;
+      final usernames = <String>[];
+      for (final item in raw) {
+        final u = (item as Map<String, dynamic>)['username']?.toString();
+        if (u != null && u.isNotEmpty) usernames.add(u);
+      }
+      debugPrint('[API] parsed usernames count=${usernames.length}');
+      return usernames;
+    } else {
+      // 비정상 코드 로깅
+      debugPrint(
+        '[API][WARN] unexpected status: ${res.statusCode}, data=${res.data}',
+      );
+      return [];
+    }
   }
 }
