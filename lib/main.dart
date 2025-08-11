@@ -30,8 +30,13 @@ class MyApp extends StatelessWidget {
         darkTheme: AppTheme.darkTheme,
         themeMode: ThemeMode.system,
 
-        // ✅ 초기 진입: 프로필 화면
-        home: const UserProfileScreen(),
+        // ✅ 초기 진입: 로그인 화면
+        home: Consumer<AuthProvider>(
+          builder: (context, auth, child) {
+            // AuthProvider의 isLoggedIn 상태에 따라 다른 화면을 보여줌
+            return auth.isLoggedIn ? HomeScreen() : LoginScreen();
+          },
+        ),
 
         routes: {
           '/login': (_) => const LoginScreen(), // ✅ 추가
