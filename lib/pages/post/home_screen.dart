@@ -2,6 +2,77 @@ import 'package:doppy/pages/components/custom_bottom_navigation_bar.dart';
 import 'package:doppy/pages/components/post_card.dart';
 import 'package:flutter/material.dart';
 import '../../theme/app_colors.dart';
+import '../../theme/app_text_styles.dart';
+
+class MainCarousel extends StatefulWidget {
+  const MainCarousel({super.key});
+
+  @override
+  State<MainCarousel> createState() => _MainCarouselState();
+}
+
+class _MainCarouselState extends State<MainCarousel> {
+  late final PageController _pageController;
+  int _currentPage = 0;
+
+  final _images = const [
+    'assets/image/feed1.jpg',
+    'assets/image/feed2.png',
+    'assets/image/feed3.png',
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    _pageController = PageController(
+      viewportFraction: 0.9, // 카드가 화면의 90%만 차지 → 오른쪽 살짝 보임
+      initialPage: 0,
+    );
+  }
+
+  @override
+  void dispose() {
+    _pageController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: AspectRatio(
+        aspectRatio: 4 / 3, // 전체 영역 비율 고정
+        child: PageView.builder(
+          controller: _pageController,
+          padEnds: false, // 첫 페이지를 왼쪽에 붙여서 오른쪽만 미리보이게
+          onPageChanged: (index) {
+            setState(() {
+              _currentPage = index % _images.length;
+            });
+          },
+          itemCount: 1000, // 크게 두고 아래에서 %로 순환
+          physics: const BouncingScrollPhysics(),
+          itemBuilder: (context, index) {
+            final img = _images[index % _images.length];
+            return Container(
+              margin: const EdgeInsets.only(right: 8), // 오른쪽만 살짝 간격
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(20),
+              ),
+              clipBehavior: Clip.antiAlias,
+              child: Image.asset(
+                img,
+                fit: BoxFit.cover, // 4:3 아닌 이미지는 가장자리 살짝 잘릴 수 있음
+                width: double.infinity,
+                height: double.infinity,
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+}
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -11,12 +82,10 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  int _currentPage = 0;
-  final PageController _pageController = PageController();
+  int _currentPage = 0; // 페이지 인디케이터용
 
   @override
   void dispose() {
-    _pageController.dispose();
     super.dispose();
   }
 
@@ -54,12 +123,9 @@ class _HomeScreenState extends State<HomeScreen> {
                             Expanded(
                               child: Text(
                                 '@affection-jh',
-                                style: TextStyle(
+                                style: AppTextStyles.headlineMedium.copyWith(
                                   color: AppColors.lightTextPrimary,
-                                  fontSize: 20,
-                                  fontFamily: 'Pretendard Variable',
-                                  fontWeight: FontWeight.w700,
-                                ),
+                                ), // 중형 제목 - 사용자 아이디, 중요 제목
                               ),
                             ),
                             Material(
@@ -85,45 +151,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
 
                       // 메인 이미지 PageView
-                      Container(
-                        width: containerWidth * 0.9,
-                        height: containerHeight * 0.3,
-                        margin: EdgeInsets.symmetric(
-                          horizontal: 16,
-                          vertical: 8,
-                        ),
-                        child: PageView.builder(
-                          controller: _pageController,
-                          onPageChanged: (index) {
-                            setState(() {
-                              _currentPage = index % 4; // 4로 나눈 나머지로 인덱스 관리
-                            });
-                          },
-                          itemCount: 1000, // 충분히 큰 수로 설정
-                          itemBuilder: (context, index) {
-                            return Container(
-                              margin: EdgeInsets.symmetric(horizontal: 4),
-                              decoration: BoxDecoration(
-                                color: Colors.grey[300],
-                                borderRadius: BorderRadius.circular(20),
-                              ),
-                              child: ClipRRect(
-                                borderRadius: BorderRadius.circular(20),
-                                child: Image.asset(
-                                  index % 3 == 0
-                                      ? 'assets/image/feed1.jpg'
-                                      : index % 3 == 1
-                                      ? 'assets/image/feed2.png'
-                                      : 'assets/image/feed3.png',
-                                  fit: BoxFit.cover,
-                                  width: double.infinity,
-                                  height: double.infinity,
-                                ),
-                              ),
-                            );
-                          },
-                        ),
-                      ),
+                      MainCarousel(),
 
                       // 페이지 인디케이터
                       Container(
@@ -154,12 +182,9 @@ class _HomeScreenState extends State<HomeScreen> {
                         padding: EdgeInsets.symmetric(horizontal: 16),
                         child: Text(
                           ' 친한 이웃',
-                          style: TextStyle(
+                          style: AppTextStyles.headlineSmall.copyWith(
                             color: AppColors.lightTextSecondary,
-                            fontSize: 16,
-                            fontFamily: 'Pretendard Variable',
-                            fontWeight: FontWeight.w700,
-                          ),
+                          ), // 소형 제목 - 섹션 제목, 포스트 제목
                         ),
                       ),
 
@@ -256,12 +281,12 @@ class _HomeScreenState extends State<HomeScreen> {
                                               : index == 3
                                               ? '새로운 카페 발견했어요\n맛있었어요!'
                                               : '오늘 하루도 힘내자고\n화이팅!',
-                                          style: TextStyle(
-                                            color: AppColors.lightTextSecondary,
-                                            fontSize: 10,
-                                            fontFamily: 'Pretendard Variable',
-                                            fontWeight: FontWeight.w400,
-                                          ),
+                                          style: AppTextStyles.labelSmall
+                                              .copyWith(
+                                                color:
+                                                    AppColors
+                                                        .lightTextSecondary,
+                                              ), // 작은 라벨 - 부가 정보, 작은 텍스트
                                           overflow: TextOverflow.ellipsis,
                                           maxLines: 2,
                                         ),
@@ -283,12 +308,9 @@ class _HomeScreenState extends State<HomeScreen> {
                         padding: EdgeInsets.symmetric(horizontal: 16),
                         child: Text(
                           '전체 이웃 글 보기',
-                          style: TextStyle(
+                          style: AppTextStyles.headlineSmall.copyWith(
                             color: AppColors.lightTextSecondary,
-                            fontSize: 16,
-                            fontFamily: 'Pretendard Variable',
-                            fontWeight: FontWeight.w700,
-                          ),
+                          ), // 소형 제목 - 섹션 제목, 포스트 제목
                         ),
                       ),
 

@@ -4,6 +4,7 @@ import 'package:doppy/pages/components/post_card.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import '../../theme/app_colors.dart';
+import '../../theme/app_text_styles.dart';
 
 class UserProfileScreen extends StatefulWidget {
   const UserProfileScreen({super.key});
@@ -18,6 +19,9 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
 
   // 피드 보기 모드 상태 (true: 카드형, false: 리스트형)
   bool isCardView = true;
+
+  // 이웃 요청 상태 관리
+  bool isNeighborRequested = false;
 
   double? _handleTop; // 드래그 핸들의 현재 top 위치
   late double _minHandleTop; // 핸들이 올라갈 수 있는 최소 top
@@ -177,12 +181,9 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                 child: Center(
                   child: Text(
                     '그룹관리',
-                    style: TextStyle(
+                    style: AppTextStyles.bodyLarge.copyWith(
                       color: AppColors.lightTextSecondary,
-                      fontSize: 15,
-                      fontFamily: 'Pretendard Variable',
-                      fontWeight: FontWeight.w400,
-                    ),
+                    ), // 강조 본문 - 메뉴, 중요 본문
                   ),
                 ),
               ),
@@ -213,12 +214,10 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                 child: Center(
                   child: Text(
                     '이웃관리',
-                    style: TextStyle(
+                    style: AppTextStyles.bodyLarge.copyWith(
                       color: AppColors.lightTextSecondary,
-                      fontSize: 15,
-                      fontFamily: 'Pretendard Variable',
                       fontWeight: FontWeight.w500,
-                    ),
+                    ), // 강조 본문 - 메뉴, 중요 본문
                   ),
                 ),
               ),
@@ -236,12 +235,9 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
           top: containerHeight * 0.23,
           child: Text(
             '함께 Doppy하는 이웃 3명',
-            style: TextStyle(
+            style: AppTextStyles.bodyMedium.copyWith(
               color: AppColors.lightTextSecondary,
-              fontSize: 14,
-              fontFamily: 'Pretendard Variable',
-              fontWeight: FontWeight.w400,
-            ),
+            ), // 일반 본문 - 설명 텍스트, 일반 내용
           ),
         ),
       );
@@ -257,26 +253,35 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
               borderRadius: BorderRadius.circular(10),
               splashColor: Colors.grey.withOpacity(0.6),
               highlightColor: Colors.grey.withOpacity(0.3),
-              onTap: () {}, // 이웃요청하기
+              onTap: () {
+                setState(() {
+                  isNeighborRequested = !isNeighborRequested;
+                });
+                // TODO: 실제 이웃 요청/취소 API 호출
+              },
               child: Container(
                 width: containerWidth * 0.906, // 전체 너비 사용
                 height: containerHeight * 0.046,
                 clipBehavior: Clip.antiAlias,
                 decoration: ShapeDecoration(
-                  color: AppColors.primary,
+                  color:
+                      isNeighborRequested
+                          ? AppColors.lightSurfaceVariant
+                          : AppColors.primary,
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(10),
                   ),
                 ),
                 child: Center(
                   child: Text(
-                    '이웃 요청하기',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 14,
-                      fontFamily: 'Pretendard Variable',
+                    isNeighborRequested ? '요청됨' : '이웃 요청하기',
+                    style: AppTextStyles.bodyMedium.copyWith(
+                      color:
+                          isNeighborRequested
+                              ? AppColors.lightTextSecondary
+                              : Colors.white,
                       fontWeight: FontWeight.w600,
-                    ),
+                    ), // 일반 본문 - 버튼 텍스트, 라벨
                   ),
                 ),
               ),
@@ -311,11 +316,9 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
               ),
               child: Text(
                 isOwnProfile ? '내 프로필' : '다른 프로필',
-                style: TextStyle(
+                style: AppTextStyles.labelMedium.copyWith(
                   color: Colors.white,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                ),
+                ), // 일반 라벨 - 버튼 텍스트, 라벨
               ),
             ),
           ),
@@ -337,12 +340,11 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
         top: containerHeight * 0.09, // 위로 올림
         child: Text(
           '수최영',
-          style: TextStyle(
+          style: AppTextStyles.headlineLarge.copyWith(
             color: AppColors.lightTextPrimary,
             fontSize: 25,
-            fontFamily: 'Pretendard Variable',
             fontWeight: FontWeight.w700,
-          ),
+          ), // 대형 제목 - 사용자 이름, 메인 제목
         ),
       ),
       // 사용자 설명
@@ -351,12 +353,9 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
         top: containerHeight * 0.16, // 위로 올림
         child: Text(
           '무료로일상공개해드립니다..\n조아요 구독 알림설정까지......',
-          style: TextStyle(
+          style: AppTextStyles.bodySmall.copyWith(
             color: AppColors.lightTextSecondary,
-            fontSize: 12,
-            fontFamily: 'Pretendard Variable',
-            fontWeight: FontWeight.w400,
-          ),
+          ), // 작은 본문 - 사용자 ID, 소개글
         ),
       ),
       // 이웃 수
@@ -365,12 +364,9 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
         top: containerHeight * 0.13, // 위로 올림
         child: Text(
           '이웃 72명',
-          style: TextStyle(
+          style: AppTextStyles.bodyLarge.copyWith(
             color: AppColors.lightTextPrimary,
-            fontSize: 15,
-            fontFamily: 'Pretendard Variable',
-            fontWeight: FontWeight.w400,
-          ),
+          ), // 강조 본문 - 메뉴, 중요 본문
         ),
       ),
     ];
