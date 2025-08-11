@@ -24,7 +24,8 @@ class ApiServiceBase {
     final headers = await _getHeaders();
     print('🚀 [API GET] 요청 시작: $url');
     try {
-      final response = await http.get(url, headers: headers)
+      final response = await http
+          .get(url, headers: headers)
           .timeout(const Duration(seconds: 10)); // 10초 타임아웃 설정
 
       // 응답 로그 (한글 깨짐 방지: utf8.decode)
@@ -57,7 +58,8 @@ class ApiServiceBase {
     }
 
     try {
-      final response = await http.post(url, headers: headers, body: encodedBody)
+      final response = await http
+          .post(url, headers: headers, body: encodedBody)
           .timeout(const Duration(seconds: 10)); // 10초 타임아웃 설정
 
       final responseBody = utf8.decode(response.bodyBytes);

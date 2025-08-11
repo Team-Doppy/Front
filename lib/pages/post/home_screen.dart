@@ -19,13 +19,14 @@ class _MainCarouselState extends State<MainCarousel> {
     'assets/image/feed1.jpg',
     'assets/image/feed2.png',
     'assets/image/feed3.png',
+    'assets/image/feed1.jpg', // 4번째 이미지 추가
   ];
 
   @override
   void initState() {
     super.initState();
     _pageController = PageController(
-      viewportFraction: 0.9, // 카드가 화면의 90%만 차지 → 오른쪽 살짝 보임
+      viewportFraction: 0.8, // 카드가 화면의 80% 차지하여 간격 확보
       initialPage: 0,
     );
   }
@@ -44,25 +45,27 @@ class _MainCarouselState extends State<MainCarousel> {
         aspectRatio: 4 / 3, // 전체 영역 비율 고정
         child: PageView.builder(
           controller: _pageController,
-          padEnds: false, // 첫 페이지를 왼쪽에 붙여서 오른쪽만 미리보이게
+          padEnds: false, // 패딩 제거
           onPageChanged: (index) {
             setState(() {
               _currentPage = index % _images.length;
             });
           },
-          itemCount: 1000, // 크게 두고 아래에서 %로 순환
+          itemCount: _images.length, // 실제 이미지 개수만큼만
           physics: const BouncingScrollPhysics(),
           itemBuilder: (context, index) {
-            final img = _images[index % _images.length];
+            final img = _images[index];
             return Container(
-              margin: const EdgeInsets.only(right: 8), // 오른쪽만 살짝 간격
+              margin: const EdgeInsets.symmetric(
+                horizontal: 12,
+              ), // 좌우 마진 추가하여 간격 확보
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(20),
               ),
               clipBehavior: Clip.antiAlias,
               child: Image.asset(
                 img,
-                fit: BoxFit.cover, // 4:3 아닌 이미지는 가장자리 살짝 잘릴 수 있음
+                fit: BoxFit.cover, // 4:3 비율로 맞춤
                 width: double.infinity,
                 height: double.infinity,
               ),
@@ -83,9 +86,17 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   int _currentPage = 0; // 페이지 인디케이터용
+  late final PageController _pageController; // PageController 추가
+
+  @override
+  void initState() {
+    super.initState();
+    _pageController = PageController(initialPage: 0);
+  }
 
   @override
   void dispose() {
+    _pageController.dispose(); // PageController 해제
     super.dispose();
   }
 
@@ -151,7 +162,45 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
 
                       // 메인 이미지 PageView
-                      MainCarousel(),
+                      Container(
+                        width: containerWidth * 0.9,
+                        height: containerHeight * 0.3,
+                        margin: EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 8,
+                        ),
+                        child: PageView.builder(
+                          controller: _pageController,
+                          onPageChanged: (index) {
+                            setState(() {
+                              _currentPage = index % 4; // 4로 나눈 나머지로 인덱스 관리
+                            });
+                          },
+                          itemCount: 1000, // 충분히 큰 수로 설정
+                          itemBuilder: (context, index) {
+                            return Container(
+                              margin: EdgeInsets.symmetric(horizontal: 4),
+                              decoration: BoxDecoration(
+                                color: Colors.grey[300],
+                                borderRadius: BorderRadius.circular(20),
+                              ),
+                              child: ClipRRect(
+                                borderRadius: BorderRadius.circular(20),
+                                child: Image.asset(
+                                  index % 3 == 0
+                                      ? 'assets/image/feed1.jpg'
+                                      : index % 3 == 1
+                                      ? 'assets/image/feed2.png'
+                                      : 'assets/image/feed3.png',
+                                  fit: BoxFit.cover,
+                                  width: double.infinity,
+                                  height: double.infinity,
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                      ),
 
                       // 페이지 인디케이터
                       Container(

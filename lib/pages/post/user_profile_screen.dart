@@ -5,6 +5,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/app_text_styles.dart';
+import 'manage_group_screen.dart';
+import 'manage_neighbor_screen.dart';
 
 class UserProfileScreen extends StatefulWidget {
   const UserProfileScreen({super.key});
@@ -41,7 +43,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     if (_handleTop == null) {
       _initialHandleTop = containerHeight * 0.320; // 이웃관리 바로 아래로 더 가깝게 위치
       _handleTop = _initialHandleTop;
-      _minHandleTop = 15.0; // 뒤로가기 버튼(top: 25)보다 위로 올라가서 가릴 수 있도록
+      _minHandleTop = -20.0; // top bar를 완전히 덮을 수 있도록 더 위로 올라가도록
     }
 
     // 핸들 위치에 따라 패널 top을 선형 매핑
@@ -99,10 +101,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
         ..._buildProfileElements(containerWidth, containerHeight),
         // 하단 네비게이션 바
         //        _buildBottomNavigation(containerWidth, containerHeight),
-        // 피드 패널 (최상위)
-        _buildFeedPanel(containerWidth, panelTop, dynamicPanelHeight),
-
-        // 상단 탑바 (최상위)
+        // 상단 탑바 (피드 패널 아래에 위치)
         Positioned(
           top: 0,
           left: 0,
@@ -116,6 +115,9 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
             },
           ),
         ),
+
+        // 피드 패널 (최상위 - top bar를 덮을 수 있도록)
+        _buildFeedPanel(containerWidth, panelTop, dynamicPanelHeight),
       ],
     );
   }
@@ -167,7 +169,14 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
               borderRadius: BorderRadius.circular(10),
               splashColor: Colors.grey.withOpacity(0.6),
               highlightColor: Colors.grey.withOpacity(0.3),
-              onTap: () {}, // 그룹관리 페이지 이동
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const ManageGroupScreen(),
+                  ),
+                );
+              }, // 그룹관리 페이지 이동
               child: Container(
                 width: containerWidth * 0.453,
                 height: containerHeight * 0.046,
@@ -200,7 +209,14 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
               borderRadius: BorderRadius.circular(10),
               splashColor: Colors.grey.withOpacity(0.6),
               highlightColor: Colors.grey.withOpacity(0.3),
-              onTap: () {}, // 이웃관리 페이지 이동
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const ManageNeighborScreen(),
+                  ),
+                );
+              }, // 이웃관리 페이지 이동
               child: Container(
                 width: containerWidth * 0.453,
                 height: containerHeight * 0.046,
