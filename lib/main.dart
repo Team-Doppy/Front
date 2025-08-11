@@ -30,7 +30,7 @@ class MyApp extends StatelessWidget {
         darkTheme: AppTheme.darkTheme,
         themeMode: ThemeMode.system,
 
-        // ✅ 초기 진입: 로그인
+        // ✅ 초기 진입: 로그인 화면
         home: Consumer<AuthProvider>(
           builder: (context, auth, child) {
             // AuthProvider의 isLoggedIn 상태에 따라 다른 화면을 보여줌
