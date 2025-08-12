@@ -4,7 +4,8 @@ import 'package:http/http.dart' as http;
 import '../services/auth_service.dart';
 
 class ApiServiceBase {
-  final String baseUrl = "http://localhost:8080";
+  final String baseUrl =
+      "http://Doppy-GaOoLi-env.eba-i6rkanrz.us-east-1.elasticbeanstalk.com";
   final AuthService _authService = AuthService(); // 토큰을 가져오기 위함
 
   Future<Map<String, String>> _getHeaders() async {

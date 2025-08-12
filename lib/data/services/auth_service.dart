@@ -7,7 +7,8 @@ class AuthService {
   final String _tokenKey = 'auth_token';
 
   // 🎯 [수정] API 명세서에 맞게 전체 URL을 정확히 입력했습니다. (포트와 엔드포인트 추가)
-  final String _baseUrl = "http://172.20.10.2:8080";
+  final String _baseUrl =
+      "http://Doppy-GaOoLi-env.eba-i6rkanrz.us-east-1.elasticbeanstalk.com";
 
   //API 2번: 사용자 로그인
   Future<bool> login(String username, String password) async {
@@ -22,13 +23,15 @@ class AuthService {
     print('📋 Request Body: ${jsonEncode(body)}');
 
     try {
-      final response = await http.post(
-        loginUrl,
-        headers: <String, String>{
-          'Content-Type': 'application/json; charset=UTF-8',
-        },
-        body: jsonEncode(body),
-      ).timeout(const Duration(seconds: 10)); // 10초 타임아웃 추가
+      final response = await http
+          .post(
+            loginUrl,
+            headers: <String, String>{
+              'Content-Type': 'application/json; charset=UTF-8',
+            },
+            body: jsonEncode(body),
+          )
+          .timeout(const Duration(seconds: 10)); // 10초 타임아웃 추가
 
       // ✨ [로그 추가] 2. 서버의 응답 코드와 내용을 그대로 출력
       final responseBody = utf8.decode(response.bodyBytes); // 한글 깨짐 방지
