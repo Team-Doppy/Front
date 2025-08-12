@@ -124,4 +124,90 @@ class AuthService {
       return null;
     }
   }
+
+  // 내 친구 수 조회 API
+  Future<int?> getFriendCount() async {
+    final token = await getToken();
+    if (token == null) {
+      print('❌ [AuthService] 토큰이 없습니다.');
+      return null;
+    }
+
+    final friendCountUrl = Uri.parse('$_baseUrl/api/users/friend-count');
+
+    print('🚀 [AuthService] 친구 수 조회 요청 시작: $friendCountUrl');
+
+    try {
+      final response = await http
+          .get(
+            friendCountUrl,
+            headers: <String, String>{
+              'Authorization': 'Bearer $token',
+              'Content-Type': 'application/json; charset=UTF-8',
+            },
+          )
+          .timeout(const Duration(seconds: 10));
+
+      final responseBody = utf8.decode(response.bodyBytes);
+
+      if (response.statusCode == 200) {
+        print('✅ [AuthService] 친구 수 조회 성공! Status: ${response.statusCode}');
+        print('📦 Response Body: $responseBody');
+
+        final responseData = jsonDecode(responseBody);
+        return responseData['friendCount'];
+      } else {
+        print('⚠️ [AuthService] 친구 수 조회 실패. Status: ${response.statusCode}');
+        print('📦 Response Body: $responseBody');
+        return null;
+      }
+    } catch (e, s) {
+      print('❌ [AuthService] 친구 수 조회 중 오류 발생: $e');
+      print('📄 Stack Trace: $s');
+      return null;
+    }
+  }
+
+  // 내 자기소개 조회 API
+  Future<String?> getSelfIntroduction() async {
+    final token = await getToken();
+    if (token == null) {
+      print('❌ [AuthService] 토큰이 없습니다.');
+      return null;
+    }
+
+    final selfIntroUrl = Uri.parse('$_baseUrl/api/users/self-introduction');
+
+    print('🚀 [AuthService] 자기소개 조회 요청 시작: $selfIntroUrl');
+
+    try {
+      final response = await http
+          .get(
+            selfIntroUrl,
+            headers: <String, String>{
+              'Authorization': 'Bearer $token',
+              'Content-Type': 'application/json; charset=UTF-8',
+            },
+          )
+          .timeout(const Duration(seconds: 10));
+
+      final responseBody = utf8.decode(response.bodyBytes);
+
+      if (response.statusCode == 200) {
+        print('✅ [AuthService] 자기소개 조회 성공! Status: ${response.statusCode}');
+        print('📦 Response Body: $responseBody');
+
+        final responseData = jsonDecode(responseBody);
+        return responseData['selfIntroduction'];
+      } else {
+        print('⚠️ [AuthService] 자기소개 조회 실패. Status: ${response.statusCode}');
+        print('📦 Response Body: $responseBody');
+        return null;
+      }
+    } catch (e, s) {
+      print('❌ [AuthService] 자기소개 조회 중 오류 발생: $e');
+      print('📄 Stack Trace: $s');
+      return null;
+    }
+  }
 }

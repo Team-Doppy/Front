@@ -27,6 +27,8 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
   // 사용자 정보 관련 상태
   User? _profileUser;
   bool _isLoadingUser = true;
+  int? _friendCount; // 친구 수 추가
+  String? _selfIntroduction; // 자기소개 추가
 
   double? _handleTop; // 드래그 핸들의 현재 top 위치
   late double _minHandleTop; // 핸들이 올라갈 수 있는 최소 top
@@ -61,10 +63,19 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
               id: userData['id'],
               username: userData['username'],
               role: userData['role'],
+              alias: userData['alias'],
             );
+
+            // 친구 수도 함께 조회
+            final friendCount = await _authService.getFriendCount();
+
+            // 자기소개도 함께 조회
+            final selfIntroduction = await _authService.getSelfIntroduction();
 
             setState(() {
               _profileUser = user;
+              _friendCount = friendCount;
+              _selfIntroduction = selfIntroduction;
               _isLoadingUser = false;
             });
           } else {
@@ -334,7 +345,13 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                   child: CircularProgressIndicator(strokeWidth: 2),
                 )
                 : Text(
-                  _profileUser != null ? _profileUser!.username : '사용자',
+                  _profileUser != null &&
+                          _profileUser!.alias != null &&
+                          _profileUser!.alias!.isNotEmpty
+                      ? _profileUser!.alias!
+                      : _profileUser != null
+                      ? _profileUser!.username
+                      : '사용자',
                   style: AppTextStyles.headlineLarge.copyWith(
                     color: AppColors.lightTextPrimary,
                     fontSize: 25,
@@ -346,23 +363,39 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
       Positioned(
         left: containerWidth * 0.475,
         top: containerHeight * 0.16, // 위로 올림
-        child: Text(
-          '무료로일상공개해드립니다..\n조아요 구독 알림설정까지......',
-          style: AppTextStyles.bodySmall.copyWith(
-            color: AppColors.lightTextSecondary,
-          ), // 작은 본문 - 사용자 ID, 소개글
-        ),
+        child:
+            _isLoadingUser
+                ? const SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+                : Text(
+                  _selfIntroduction != null && _selfIntroduction!.isNotEmpty
+                      ? _selfIntroduction!
+                      : '자기소개가 없습니다.',
+                  style: AppTextStyles.bodySmall.copyWith(
+                    color: AppColors.lightTextSecondary,
+                  ), // 작은 본문 - 사용자 ID, 소개글
+                ),
       ),
       // 이웃 수
       Positioned(
         left: containerWidth * 0.483,
         top: containerHeight * 0.13, // 위로 올림
-        child: Text(
-          '이웃 72명',
-          style: AppTextStyles.bodyLarge.copyWith(
-            color: AppColors.lightTextPrimary,
-          ), // 강조 본문 - 메뉴, 중요 본문
-        ),
+        child:
+            _isLoadingUser
+                ? const SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+                : Text(
+                  _friendCount != null ? '이웃 ${_friendCount}명' : '이웃 0명',
+                  style: AppTextStyles.bodyLarge.copyWith(
+                    color: AppColors.lightTextPrimary,
+                  ), // 강조 본문 - 메뉴, 중요 본문
+                ),
       ),
     ];
   }
