@@ -4,19 +4,16 @@ import 'dart:convert';
 
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
 
 import '../../theme/app_text_styles.dart';
 import '../components/custom_bottom_navigation_bar.dart';
-import '../../providers/auth_provider.dart';
-// 기존 import들 아래에 추가
-import '../../data/services/auth_service.dart'; // ← 경로 확인
+import '../../data/services/auth_service.dart';
 
 /// ===============================================================
 /// Search Screen (계정/게시글)
 /// - 서버 계정 검색(/api/friends/search?username=) 연결
-/// - 요청/응답/에러 디테일 로깅
-/// - JWT 형식 검증(헤더.payload.서명)
+/// - 사용자 정보 조회(/api/auth/users/{username}) → 프로필로 이동
+/// - 요청/응답/에러 디테일 로깅 + JWT 형식 검증
 /// - 커스텀 탭 인디케이터(화면 너비의 37.5%)
 /// - 계정/게시글 리스트 탭, 터치/선택 표시, 스낵바 알림
 /// ===============================================================
@@ -56,7 +53,14 @@ class PostItemData {
   });
 }
 
-/// -------------------- API 결과 컨테이너 --------------------
+/// -------------------- API DTO/결과 --------------------
+class UserDto {
+  final int id;
+  final String username;
+  final String role;
+  const UserDto({required this.id, required this.username, required this.role});
+}
+
 class FriendSearchResult {
   final int? status; // HTTP status
   final List<String> usernames; // 200일 때 파싱한 usernames
@@ -94,6 +98,7 @@ class FriendSearchApi {
         ),
       );
 
+  /// GET /api/friends/search?username={query}
   Future<FriendSearchResult> searchUsers({
     required String baseUrl,
     required String token,
@@ -103,15 +108,9 @@ class FriendSearchApi {
     final uri = '$baseUrl/api/friends/search';
     final sw = Stopwatch()..start();
 
-    // 요청 로그 (토큰은 끝 6자리만 노출)
-    final tail =
-        token.isNotEmpty
-            ? token.substring(
-              token.length - (token.length >= 6 ? 6 : token.length),
-            )
-            : '';
+    final masked = _maskToken(token);
     debugPrint('┌─[REQ] GET $uri?username=$query');
-    debugPrint('│ Authorization: Bearer ***$tail');
+    debugPrint('│ Authorization: Bearer $masked');
     debugPrint('└────────────────────────────────');
 
     final res = await _dio.get(
@@ -130,7 +129,6 @@ class FriendSearchApi {
     final uriFinal = res.requestOptions.uri;
     final headers = res.headers.map.map((k, v) => MapEntry(k, v));
 
-    // 응답 로그
     debugPrint('┌─[RES] ${res.requestOptions.method} $uriFinal');
     debugPrint('│ status: $status');
     debugPrint('│ headers: ${_trimLong(headers.toString())}');
@@ -138,7 +136,6 @@ class FriendSearchApi {
     debugPrint('│ elapsed: ${sw.elapsedMilliseconds}ms');
     debugPrint('└────────────────────────────────');
 
-    // 서버 메시지 추출
     String? pickMessage(dynamic b) {
       try {
         if (b is Map<String, dynamic>) {
@@ -150,7 +147,6 @@ class FriendSearchApi {
       return null;
     }
 
-    // usernames 파싱(성공일 때만)
     final usernames = <String>[];
     if (status == 200) {
       if (body is List) {
@@ -175,6 +171,83 @@ class FriendSearchApi {
       serverMessage: pickMessage(body),
     );
   }
+
+  /// GET /api/auth/users/{username}
+  Future<UserDto?> getUserByUsername({
+    required String baseUrl,
+    required String token,
+    required String username,
+    CancelToken? cancelToken,
+  }) async {
+    final uri = '$baseUrl/api/auth/users/$username';
+    final sw = Stopwatch()..start();
+
+    final masked = _maskToken(token);
+    debugPrint('┌─[REQ] GET $uri');
+    debugPrint('│ Authorization: Bearer $masked');
+    debugPrint('└────────────────────────────────');
+
+    final res = await _dio.get(
+      uri,
+      cancelToken: cancelToken,
+      options: Options(
+        headers: {'Authorization': 'Bearer $token'},
+        responseType: ResponseType.json,
+      ),
+    );
+    sw.stop();
+
+    final status = res.statusCode;
+    final body = res.data;
+    final uriFinal = res.requestOptions.uri;
+
+    debugPrint('┌─[RES] ${res.requestOptions.method} $uriFinal');
+    debugPrint('│ status: $status');
+    debugPrint('│ body: ${_trimLong(_prettyJson(body))}');
+    debugPrint('│ elapsed: ${sw.elapsedMilliseconds}ms');
+    debugPrint('└────────────────────────────────');
+
+    if (status == 200 && body is Map<String, dynamic>) {
+      try {
+        return UserDto(
+          id: (body['id'] as num).toInt(),
+          username: body['username']?.toString() ?? '',
+          role: body['role']?.toString() ?? '',
+        );
+      } catch (e) {
+        debugPrint('[-] parse error: $e');
+        return null;
+      }
+    }
+
+    debugPrint('[-] getUserByUsername failed | code=$status');
+    return null;
+  }
+
+  // ===== utils =====
+  static String _maskToken(String token) {
+    if (token.isEmpty) return '(empty)';
+    final n = token.length;
+    final tail = token.substring(n - (n >= 6 ? 6 : n));
+    return '***$tail';
+  }
+
+  static String _prettyJson(dynamic data) {
+    try {
+      if (data is String) {
+        final obj = json.decode(data);
+        return const JsonEncoder.withIndent('  ').convert(obj);
+      }
+      return const JsonEncoder.withIndent('  ').convert(data);
+    } catch (_) {
+      return data?.toString() ?? '';
+    }
+  }
+
+  static String _trimLong(String s, {int max = 3000}) {
+    if (s.length <= max) return s;
+    return s.substring(0, max) + '…(truncated)';
+  }
 }
 
 /// -------------------- 메인 화면 --------------------
@@ -192,12 +265,12 @@ class _SearchScreenState extends State<SearchScreen> {
   final TextEditingController _searchController = TextEditingController();
   String _query = '';
   Timer? _debounce;
-  final AuthService _authService = AuthService();
 
-  // 백엔드 설정
+  // 서비스/백엔드
+  final AuthService _authService = AuthService();
+  final FriendSearchApi _friendApi = FriendSearchApi();
   final String _baseUrl =
       'http://Doppy-GaOoLi-env.eba-i6rkanrz.us-east-1.elasticbeanstalk.com';
-  final FriendSearchApi _friendApi = FriendSearchApi();
 
   // 네트워크 요청 상태
   bool _accountsLoading = false;
@@ -473,14 +546,12 @@ class _SearchScreenState extends State<SearchScreen> {
     return list;
   }
 
-  /// 실제 토큰 가져오기 (AuthProvider.jwtToken 사용)
+  /// 실제 토큰 가져오기 (SecureStorage)
   Future<String?> _getAuthToken() async {
     try {
       final t = await _authService.getToken();
       final trimmed = t?.trim();
-      // 로그로 실제 저장 여부 확인
       debugPrint('[AuthService] token(raw)="${trimmed ?? 'null'}"');
-
       return trimmed;
     } catch (e) {
       debugPrint('[AuthService] getToken failed: $e');
@@ -495,12 +566,52 @@ class _SearchScreenState extends State<SearchScreen> {
     _performSearch();
   }
 
-  // -------------------- 선택/알림 --------------------
-  void _onTapAccount(int index, AccountItem item) {
+  // -------------------- 선택/네비게이션 --------------------
+  Future<void> _onTapAccount(int index, AccountItem item) async {
     setState(() => _selectedAccountIndex = index);
-    final msg = '계정 선택: ${item.nickname} (${item.userId})';
-    debugPrint(msg);
-    _showSnack(msg);
+
+    _showSnack('계정 정보 불러오는 중…');
+    final token = await _getAuthToken();
+    final jwtLike = RegExp(r'^[A-Za-z0-9-_]+\.[A-Za-z0-9-_]+\.[A-Za-z0-9-_]+$');
+    if (token == null || token.isEmpty || !jwtLike.hasMatch(token)) {
+      debugPrint('❌ 프로필 이동 불가 - JWT 문제');
+      _showSnack('로그인이 필요합니다(토큰 오류).');
+      return;
+    }
+
+    // '@username' → 'username'
+    final username =
+        item.userId.startsWith('@') ? item.userId.substring(1) : item.userId;
+
+    try {
+      final dto = await _friendApi.getUserByUsername(
+        baseUrl: _baseUrl,
+        token: token,
+        username: username,
+      );
+
+      if (dto == null) {
+        _showSnack('사용자 정보를 찾지 못했습니다.');
+        return;
+      }
+
+      debugPrint(
+        '[NAV] to /profile | id=${dto.id}, username=${dto.username}, role=${dto.role}',
+      );
+      // 네임드 라우트 사용 (routes에 '/profile'이 등록되어 있어야 함)
+      Navigator.pushNamed(
+        context,
+        '/profile',
+        arguments: {'id': dto.id, 'username': dto.username, 'role': dto.role},
+      );
+    } on DioException catch (e) {
+      final code = e.response?.statusCode;
+      debugPrint('[-] 프로필 조회 실패 | code=$code | ${e.message}');
+      _showSnack('프로필 조회 실패${code != null ? ' ($code)' : ''}');
+    } catch (e) {
+      debugPrint('[-] 프로필 조회 예외: $e');
+      _showSnack('프로필 조회 중 알 수 없는 오류');
+    }
   }
 
   void _onTapPost(int index, PostItemData item) {
@@ -527,14 +638,17 @@ class _SearchScreenState extends State<SearchScreen> {
         body: SafeArea(
           child: Column(
             children: [
-              _TopBar(
+              // 상단 검색 바
+              _SearchTopBar(
                 controller: _searchController,
                 query: _query,
                 onChanged: _onSearchChanged,
                 onSubmitted: _onSearchSubmitted,
                 onClear: _clearSearch,
               ),
+              // 탭바 (커스텀 인디케이터)
               const _SearchTabBar(),
+              // 탭 본문
               Expanded(
                 child: TabBarView(
                   children: [
@@ -549,7 +663,8 @@ class _SearchScreenState extends State<SearchScreen> {
                         debugPrint('[Sort] account sort -> "$_accountSort"');
                       },
                       selectedIndex: _selectedAccountIndex,
-                      onTapItem: _onTapAccount,
+                      onTapItem:
+                          (i, item) => _onTapAccount(i, item as AccountItem),
                     ),
                     _PostsTab(
                       posts: _posts,
@@ -560,7 +675,8 @@ class _SearchScreenState extends State<SearchScreen> {
                         debugPrint('[Sort] post sort -> "$_postSort"');
                       },
                       selectedIndex: _selectedPostIndex,
-                      onTapItem: _onTapPost,
+                      onTapItem:
+                          (i, item) => _onTapPost(i, item as PostItemData),
                     ),
                   ],
                 ),
@@ -581,14 +697,14 @@ class _SearchScreenState extends State<SearchScreen> {
 }
 
 /// -------------------- 상단 바(로고+검색창) --------------------
-class _TopBar extends StatelessWidget {
+class _SearchTopBar extends StatelessWidget {
   final TextEditingController controller;
   final String query;
   final ValueChanged<String> onChanged;
   final ValueChanged<String> onSubmitted;
   final VoidCallback onClear;
 
-  const _TopBar({
+  const _SearchTopBar({
     required this.controller,
     required this.query,
     required this.onChanged,
@@ -680,7 +796,7 @@ class _SearchTabBar extends StatelessWidget {
             FontWeight.w600,
           ),
           labelPadding: const EdgeInsets.symmetric(horizontal: 32),
-          indicator: FixedUnderlineTabIndicator(
+          indicator: _FixedUnderlineTabIndicator(
             color: Colors.black,
             thickness: 2.0,
             bottomInset: 0.0,
@@ -691,6 +807,66 @@ class _SearchTabBar extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+/// -------------------- 커스텀 인디케이터 --------------------
+class _FixedUnderlineTabIndicator extends Decoration {
+  final Color color;
+  final double thickness;
+  final double bottomInset;
+  final double screenWidth; // 스크린 전체 폭
+  final double fraction; // 스크린 폭 대비 길이 비율 (0.375 = 37.5%)
+
+  const _FixedUnderlineTabIndicator({
+    required this.color,
+    required this.screenWidth,
+    this.fraction = 0.375,
+    this.thickness = 2.0,
+    this.bottomInset = 0.0,
+  });
+
+  @override
+  BoxPainter createBoxPainter([VoidCallback? onChanged]) {
+    return _FixedUnderlinePainter(
+      color: color,
+      thickness: thickness,
+      bottomInset: bottomInset,
+      indicatorWidth: screenWidth * fraction,
+    );
+  }
+}
+
+class _FixedUnderlinePainter extends BoxPainter {
+  final Color color;
+  final double thickness;
+  final double bottomInset;
+  final double indicatorWidth;
+
+  _FixedUnderlinePainter({
+    required this.color,
+    required this.thickness,
+    required this.bottomInset,
+    required this.indicatorWidth,
+  });
+
+  @override
+  void paint(Canvas canvas, Offset offset, ImageConfiguration configuration) {
+    if (configuration.size == null) return;
+
+    final Rect rect = offset & configuration.size!;
+    final double cx = rect.center.dx; // 활성 탭 중앙
+    final double half = indicatorWidth / 2;
+    final double y = rect.bottom - bottomInset - thickness / 2;
+
+    final Paint p =
+        Paint()
+          ..color = color
+          ..strokeWidth = thickness
+          ..style = PaintingStyle.stroke
+          ..strokeCap = StrokeCap.square;
+
+    canvas.drawLine(Offset(cx - half, y), Offset(cx + half, y), p);
   }
 }
 
@@ -794,114 +970,6 @@ class _AccountsTab extends StatelessWidget {
   }
 }
 
-/// -------------------- 게시글 탭 --------------------
-class _PostsTab extends StatelessWidget {
-  final List<PostItemData> posts;
-  final String postSort;
-  final ValueChanged<String> onChangeSort;
-  final int? selectedIndex;
-  final void Function(int index, PostItemData item) onTapItem;
-
-  const _PostsTab({
-    required this.posts,
-    required this.postSort,
-    required this.onChangeSort,
-    required this.selectedIndex,
-    required this.onTapItem,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              DropdownButton<String>(
-                value: postSort,
-                items:
-                    const ['인기순']
-                        .map(
-                          (v) => DropdownMenuItem(
-                            value: v,
-                            child: Text(
-                              v,
-                              style: AppTextStyles.withWeight(
-                                AppTextStyles.bodyLarge,
-                                FontWeight.w600,
-                              ).copyWith(color: Colors.black),
-                            ),
-                          ),
-                        )
-                        .toList(),
-                onChanged: (v) {
-                  if (v != null) onChangeSort(v);
-                },
-                underline: const SizedBox.shrink(),
-                icon: const Icon(
-                  Icons.keyboard_arrow_down,
-                  color: Colors.black,
-                ),
-              ),
-              Text(
-                '결과 ${posts.length}건',
-                style: AppTextStyles.withWeight(
-                  AppTextStyles.bodySmall,
-                  FontWeight.w500,
-                ).copyWith(color: Colors.black54),
-              ),
-            ],
-          ),
-        ),
-        Expanded(
-          child:
-              posts.isEmpty
-                  ? const _EmptyResult(message: '게시글 결과가 없습니다.')
-                  : ListView.builder(
-                    itemCount: posts.length,
-                    itemBuilder: (context, index) {
-                      final item = posts[index];
-                      return _PostListItem(
-                        index: index,
-                        title: item.title,
-                        author: item.author,
-                        preview: item.preview,
-                        imageUrl: item.imageUrl,
-                        likes: item.likes,
-                        selected: selectedIndex == index,
-                        onTap: () => onTapItem(index, item),
-                      );
-                    },
-                  ),
-        ),
-      ],
-    );
-  }
-}
-
-/// -------------------- 공통: 결과 없음 --------------------
-class _EmptyResult extends StatelessWidget {
-  final String message;
-  const _EmptyResult({required this.message});
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Text(
-        message,
-        style: AppTextStyles.withWeight(
-          AppTextStyles.bodyMedium,
-          FontWeight.w500,
-        ).copyWith(color: Colors.black54),
-      ),
-    );
-  }
-}
-
-/// -------------------- 컴포넌트: 계정 아이템 --------------------
 class _AccountListItem extends StatelessWidget {
   final int index;
   final String nickname;
@@ -1008,7 +1076,94 @@ class _AccountListItem extends StatelessWidget {
   }
 }
 
-/// -------------------- 컴포넌트: 게시글 아이템 --------------------
+/// -------------------- 게시글 탭 --------------------
+class _PostsTab extends StatelessWidget {
+  final List<PostItemData> posts;
+  final String postSort;
+  final ValueChanged<String> onChangeSort;
+  final int? selectedIndex;
+  final void Function(int index, PostItemData item) onTapItem;
+
+  const _PostsTab({
+    required this.posts,
+    required this.postSort,
+    required this.onChangeSort,
+    required this.selectedIndex,
+    required this.onTapItem,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              DropdownButton<String>(
+                value: postSort,
+                items:
+                    const ['인기순']
+                        .map(
+                          (v) => DropdownMenuItem(
+                            value: v,
+                            child: Text(
+                              v,
+                              style: AppTextStyles.withWeight(
+                                AppTextStyles.bodyLarge,
+                                FontWeight.w600,
+                              ).copyWith(color: Colors.black),
+                            ),
+                          ),
+                        )
+                        .toList(),
+                onChanged: (v) {
+                  if (v != null) onChangeSort(v);
+                },
+                underline: const SizedBox.shrink(),
+                icon: const Icon(
+                  Icons.keyboard_arrow_down,
+                  color: Colors.black,
+                ),
+              ),
+              Text(
+                '결과 ${posts.length}건',
+                style: AppTextStyles.withWeight(
+                  AppTextStyles.bodySmall,
+                  FontWeight.w500,
+                ).copyWith(color: Colors.black54),
+              ),
+            ],
+          ),
+        ),
+        Expanded(
+          child:
+              posts.isEmpty
+                  ? const _EmptyResult(message: '게시글 결과가 없습니다.')
+                  : ListView.builder(
+                    itemCount: posts.length,
+                    itemBuilder: (context, index) {
+                      final item = posts[index];
+                      return _PostListItem(
+                        index: index,
+                        title: item.title,
+                        author: item.author,
+                        preview: item.preview,
+                        imageUrl: item.imageUrl,
+                        likes: item.likes,
+                        selected: selectedIndex == index,
+                        onTap: () => onTapItem(index, item),
+                      );
+                    },
+                  ),
+        ),
+      ],
+    );
+  }
+}
+
 class _PostListItem extends StatelessWidget {
   final int index;
   final String title;
@@ -1123,63 +1278,22 @@ class _PostListItem extends StatelessWidget {
   }
 }
 
-/// -------------------- 커스텀 인디케이터 --------------------
-class FixedUnderlineTabIndicator extends Decoration {
-  final Color color;
-  final double thickness;
-  final double bottomInset;
-  final double screenWidth; // 스크린 전체 폭
-  final double fraction; // 스크린 폭 대비 길이 비율 (0.375 = 37.5%)
-
-  const FixedUnderlineTabIndicator({
-    required this.color,
-    required this.screenWidth,
-    this.fraction = 0.375,
-    this.thickness = 2.0,
-    this.bottomInset = 0.0,
-  });
+/// -------------------- 공통: 결과 없음 --------------------
+class _EmptyResult extends StatelessWidget {
+  final String message;
+  const _EmptyResult({required this.message});
 
   @override
-  BoxPainter createBoxPainter([VoidCallback? onChanged]) {
-    return _FixedUnderlinePainter(
-      color: color,
-      thickness: thickness,
-      bottomInset: bottomInset,
-      indicatorWidth: screenWidth * fraction,
+  Widget build(BuildContext context) {
+    return Center(
+      child: Text(
+        message,
+        style: AppTextStyles.withWeight(
+          AppTextStyles.bodyMedium,
+          FontWeight.w500,
+        ).copyWith(color: Colors.black54),
+      ),
     );
-  }
-}
-
-class _FixedUnderlinePainter extends BoxPainter {
-  final Color color;
-  final double thickness;
-  final double bottomInset;
-  final double indicatorWidth;
-
-  _FixedUnderlinePainter({
-    required this.color,
-    required this.thickness,
-    required this.bottomInset,
-    required this.indicatorWidth,
-  });
-
-  @override
-  void paint(Canvas canvas, Offset offset, ImageConfiguration configuration) {
-    if (configuration.size == null) return;
-
-    final Rect rect = offset & configuration.size!;
-    final double cx = rect.center.dx; // 활성 탭 중앙
-    final double half = indicatorWidth / 2;
-    final double y = rect.bottom - bottomInset - thickness / 2;
-
-    final Paint p =
-        Paint()
-          ..color = color
-          ..strokeWidth = thickness
-          ..style = PaintingStyle.stroke
-          ..strokeCap = StrokeCap.square;
-
-    canvas.drawLine(Offset(cx - half, y), Offset(cx + half, y), p);
   }
 }
 
