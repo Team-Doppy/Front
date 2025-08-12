@@ -25,12 +25,12 @@ class AuthService {
     try {
       final response = await http
           .post(
-            loginUrl,
-            headers: <String, String>{
-              'Content-Type': 'application/json; charset=UTF-8',
-            },
-            body: jsonEncode(body),
-          )
+        loginUrl,
+        headers: <String, String>{
+          'Content-Type': 'application/json; charset=UTF-8',
+        },
+        body: jsonEncode(body),
+      )
           .timeout(const Duration(seconds: 10)); // 10초 타임아웃 추가
 
       // ✨ [로그 추가] 2. 서버의 응답 코드와 내용을 그대로 출력
