@@ -5,10 +5,9 @@ import '../models/group_member_model.dart';
 import 'api_service_base.dart';
 
 class GroupService extends ApiServiceBase {
-
   // 1. 그룹 생성
   Future<Group> createGroup(String name) async {
-    final body = jsonEncode({'name': name});
+    final body = {'name': name};
     final response = await post('/api/groups', body: body);
     if (response.statusCode == 201) {
       return Group.fromJson(jsonDecode(utf8.decode(response.bodyBytes)));
@@ -30,7 +29,7 @@ class GroupService extends ApiServiceBase {
 
   // 3. 그룹에 멤버 추가
   Future<void> addGroupMember(int groupId, String memberUsername) async {
-    final body = jsonEncode({'memberUsername': memberUsername});
+    final body = {'memberUsername': memberUsername};
     final response = await post('/api/groups/$groupId/members', body: body);
     if (response.statusCode != 200) {
       // API 명세에 따라 409(친구 관계 아님) 등 특정 에러 처리 가능
