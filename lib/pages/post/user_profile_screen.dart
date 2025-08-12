@@ -1,6 +1,13 @@
 import 'package:doppy/pages/components/custom_bottom_navigation_bar.dart';
+import 'package:doppy/pages/components/profile_top_bar.dart';
+import 'package:doppy/pages/components/post_card.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import '../../theme/app_colors.dart';
+import '../../theme/app_text_styles.dart';
+import '../../data/services/friend_service.dart';
+import 'manage_group_screen.dart';
+import 'manage_neighbor_screen.dart';
 
 class UserProfileScreen extends StatefulWidget {
   const UserProfileScreen({super.key});
@@ -10,6 +17,67 @@ class UserProfileScreen extends StatefulWidget {
 }
 
 class _UserProfileScreenState extends State<UserProfileScreen> {
+  // 프로필 구분을 위한 상태 변수 (테스트용으로 false로 설정)
+  bool isOwnProfile = false;
+
+  // 피드 보기 모드 상태 (true: 카드형, false: 리스트형)
+  bool isCardView = true;
+
+  // 이웃 요청 상태 관리
+  bool isNeighborRequested = false;
+
+  // 친구 서비스 인스턴스
+  final FriendService _friendService = FriendService();
+
+  // 요청 중인지 확인하는 상태
+  bool _isRequesting = false;
+
+  // 이웃 요청 처리 메서드
+  Future<void> _sendNeighborRequest() async {
+    if (_isRequesting || isNeighborRequested) return;
+
+    setState(() {
+      _isRequesting = true;
+    });
+
+    try {
+      // 현재 프로필의 사용자명 (실제로는 파라미터로 받아야 함)
+      const String targetUsername = 'swimn_'; // 임시로 하드코딩
+
+      await _friendService.sendFriendRequest(targetUsername);
+
+      setState(() {
+        isNeighborRequested = true;
+      });
+
+      // 성공 메시지 표시
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('이웃 요청이 완료되었습니다.'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      // 에러 메시지 표시
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('이웃 요청 실패: ${e.toString()}'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isRequesting = false;
+        });
+      }
+    }
+  }
+
   double? _handleTop; // 드래그 핸들의 현재 top 위치
   late double _minHandleTop; // 핸들이 올라갈 수 있는 최소 top
   late double _initialHandleTop; // 초기 핸들 위치 (아래쪽 한계)
@@ -28,7 +96,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     if (_handleTop == null) {
       _initialHandleTop = containerHeight * 0.320; // 이웃관리 바로 아래로 더 가깝게 위치
       _handleTop = _initialHandleTop;
-      _minHandleTop = 15.0; // 뒤로가기 버튼(top: 25)보다 위로 올라가서 가릴 수 있도록
+      _minHandleTop = -20.0; // top bar를 완전히 덮을 수 있도록 더 위로 올라가도록
     }
 
     // 핸들 위치에 따라 패널 top을 선형 매핑
@@ -81,11 +149,27 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
       children: [
         // 배경
         _buildBackground(containerWidth, containerHeight),
+
         // 프로필 요소들
         ..._buildProfileElements(containerWidth, containerHeight),
         // 하단 네비게이션 바
         //        _buildBottomNavigation(containerWidth, containerHeight),
-        // 피드 패널 (최상위)
+        // 상단 탑바 (피드 패널 아래에 위치)
+        Positioned(
+          top: 0,
+          left: 0,
+          right: 0,
+          child: DoppyTopBar(
+            title: isOwnProfile ? '@swimn_' : '@swimn_', // 사용자 아이디 표시
+            showBack: !isOwnProfile, // 내 프로필이 아닐 때만 뒤로가기 버튼 표시
+            onBack: !isOwnProfile ? () => Navigator.pop(context) : null,
+            onMore: () {
+              // 더보기 메뉴 로직 (필요시 구현)
+            },
+          ),
+        ),
+
+        // 피드 패널 (최상위 - top bar를 덮을 수 있도록)
         _buildFeedPanel(containerWidth, panelTop, dynamicPanelHeight),
       ],
     );
@@ -107,79 +191,186 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     double containerWidth,
     double containerHeight,
   ) {
-    return [
+    List<Widget> elements = [
       // 프로필 이미지 컨테이너
       Positioned(
         left: containerWidth * 0.06,
-        top: containerHeight * 0.08,
+        top: containerHeight * 0.07, // 위로 올림
         child: Container(
-          width: containerWidth * 0.34,
-          height: containerHeight * 0.15,
+          width: 132, // 고정 크기 132
+          height: 132, // 고정 크기 132
           decoration: ShapeDecoration(
             color: AppColors.primary,
             shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(40),
+              borderRadius: BorderRadius.circular(40), // 132/2 = 66
             ),
           ),
         ),
       ),
-      // 그룹관리 버튼
-      Positioned(
-        left: containerWidth * 0.517,
-        top: containerHeight * 0.263,
-        child: Container(
-          width: containerWidth * 0.453,
-          height: containerHeight * 0.046,
-          clipBehavior: Clip.antiAlias,
-          decoration: ShapeDecoration(
-            color: AppColors.lightBackground,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(10),
-            ),
-          ),
-          child: Center(
-            child: Text(
-              '그룹관리',
-              style: TextStyle(
-                color: AppColors.lightTextSecondary,
-                fontSize: 15,
-                fontFamily: 'Pretendard Variable',
-                fontWeight: FontWeight.w400,
-              ),
-            ),
-          ),
-        ),
-      ),
-      // 이웃관리 버튼
-      Positioned(
-        left: containerWidth * 0.047,
-        top: containerHeight * 0.263,
-        child: Container(
-          width: containerWidth * 0.453,
-          height: containerHeight * 0.046,
-          clipBehavior: Clip.antiAlias,
-          decoration: ShapeDecoration(
-            color: AppColors.lightSurfaceVariant,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(10),
-            ),
-          ),
-          child: Center(
-            child: Text(
-              '이웃관리',
-              style: TextStyle(
-                color: AppColors.lightTextPrimary,
-                fontSize: 15,
-                fontFamily: 'Pretendard Variable',
-                fontWeight: FontWeight.w500,
-              ),
-            ),
-          ),
-        ),
-      ),
-      // 사용자 정보들
-      ..._buildUserInfoTexts(containerWidth, containerHeight),
     ];
+
+    // 내 프로필일 때만 이웃관리, 그룹관리 버튼 표시
+    if (isOwnProfile) {
+      elements.addAll([
+        // 그룹관리 버튼
+        Positioned(
+          left: containerWidth * 0.517,
+          top: containerHeight * 0.25,
+          child: Material(
+            color: Colors.transparent,
+            child: InkWell(
+              borderRadius: BorderRadius.circular(10),
+              splashColor: Colors.grey.withOpacity(0.6),
+              highlightColor: Colors.grey.withOpacity(0.3),
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const ManageGroupScreen(),
+                  ),
+                );
+              }, // 그룹관리 페이지 이동
+              child: Container(
+                width: containerWidth * 0.453,
+                height: containerHeight * 0.046,
+                clipBehavior: Clip.antiAlias,
+                decoration: ShapeDecoration(
+                  color: AppColors.lightBackground,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                ),
+                child: Center(
+                  child: Text(
+                    '그룹관리',
+                    style: AppTextStyles.bodyLarge.copyWith(
+                      color: AppColors.lightTextSecondary,
+                    ), // 강조 본문 - 메뉴, 중요 본문
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+        // 이웃관리 버튼
+        Positioned(
+          left: containerWidth * 0.047,
+          top: containerHeight * 0.25,
+          child: Material(
+            color: Colors.transparent,
+            child: InkWell(
+              borderRadius: BorderRadius.circular(10),
+              splashColor: Colors.grey.withOpacity(0.6),
+              highlightColor: Colors.grey.withOpacity(0.3),
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const ManageNeighborScreen(),
+                  ),
+                );
+              }, // 이웃관리 페이지 이동
+              child: Container(
+                width: containerWidth * 0.453,
+                height: containerHeight * 0.046,
+                clipBehavior: Clip.antiAlias,
+                decoration: ShapeDecoration(
+                  color: AppColors.lightSurfaceVariant,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                ),
+                child: Center(
+                  child: Text(
+                    '이웃관리',
+                    style: AppTextStyles.bodyLarge.copyWith(
+                      color: AppColors.lightTextSecondary,
+                      fontWeight: FontWeight.w500,
+                    ), // 강조 본문 - 메뉴, 중요 본문
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ]);
+    } else {
+      // 다른 사람 프로필일 때는 "함께 Doppy하는 이웃 n명명" 텍스트와 이웃요청하기 버튼 표시
+
+      // 함께 Doppy하는 친구 텍스트
+      elements.add(
+        Positioned(
+          left: containerWidth * 0.047,
+          top: containerHeight * 0.23,
+          child: Text(
+            '함께 Doppy하는 이웃 3명',
+            style: AppTextStyles.bodyMedium.copyWith(
+              color: AppColors.lightTextSecondary,
+            ), // 일반 본문 - 설명 텍스트, 일반 내용
+          ),
+        ),
+      );
+
+      // 이웃요청하기 버튼
+      elements.add(
+        Positioned(
+          left: containerWidth * 0.047,
+          top: containerHeight * 0.263,
+          child: Material(
+            color: Colors.transparent,
+            child: InkWell(
+              borderRadius: BorderRadius.circular(10),
+              splashColor: Colors.grey.withOpacity(0.6),
+              highlightColor: Colors.grey.withOpacity(0.3),
+              onTap: _sendNeighborRequest,
+              child: Container(
+                width: containerWidth * 0.906, // 전체 너비 사용
+                height: containerHeight * 0.046,
+                clipBehavior: Clip.antiAlias,
+                decoration: ShapeDecoration(
+                  color:
+                      isNeighborRequested
+                          ? AppColors.lightSurfaceVariant
+                          : AppColors.primary,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                ),
+                child: Center(
+                  child:
+                      _isRequesting
+                          ? const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              valueColor: AlwaysStoppedAnimation<Color>(
+                                Colors.white,
+                              ),
+                            ),
+                          )
+                          : Text(
+                            isNeighborRequested ? '요청됨' : '이웃 요청하기',
+                            style: AppTextStyles.bodyMedium.copyWith(
+                              color:
+                                  isNeighborRequested
+                                      ? AppColors.lightTextSecondary
+                                      : Colors.white,
+                              fontWeight: FontWeight.w600,
+                            ), // 일반 본문 - 버튼 텍스트, 라벨
+                          ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    // 사용자 정보들 추가
+    elements.addAll(_buildUserInfoTexts(containerWidth, containerHeight));
+
+    return elements;
   }
 
   List<Widget> _buildUserInfoTexts(
@@ -187,60 +378,39 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     double containerHeight,
   ) {
     return [
-      // 사용자 아이디
-      Positioned(
-        left: containerWidth * 0.679,
-        top: containerHeight * 0.121,
-        child: Text(
-          '@swimn_',
-          style: TextStyle(
-            color: AppColors.lightTextPrimary,
-            fontSize: 12,
-            fontFamily: 'Pretendard Variable',
-            fontWeight: FontWeight.w400,
-          ),
-        ),
-      ),
       // 사용자 이름
       Positioned(
         left: containerWidth * 0.475,
-        top: containerHeight * 0.109,
+        top: containerHeight * 0.09, // 위로 올림
         child: Text(
           '수최영',
-          style: TextStyle(
+          style: AppTextStyles.headlineLarge.copyWith(
             color: AppColors.lightTextPrimary,
             fontSize: 25,
-            fontFamily: 'Pretendard Variable',
             fontWeight: FontWeight.w700,
-          ),
+          ), // 대형 제목 - 사용자 이름, 메인 제목
         ),
       ),
       // 사용자 설명
       Positioned(
         left: containerWidth * 0.475,
-        top: containerHeight * 0.182,
+        top: containerHeight * 0.16, // 위로 올림
         child: Text(
           '무료로일상공개해드립니다..\n조아요 구독 알림설정까지......',
-          style: TextStyle(
+          style: AppTextStyles.bodySmall.copyWith(
             color: AppColors.lightTextSecondary,
-            fontSize: 12,
-            fontFamily: 'Pretendard Variable',
-            fontWeight: FontWeight.w400,
-          ),
+          ), // 작은 본문 - 사용자 ID, 소개글
         ),
       ),
       // 이웃 수
       Positioned(
         left: containerWidth * 0.483,
-        top: containerHeight * 0.149,
+        top: containerHeight * 0.13, // 위로 올림
         child: Text(
           '이웃 72명',
-          style: TextStyle(
+          style: AppTextStyles.bodyLarge.copyWith(
             color: AppColors.lightTextPrimary,
-            fontSize: 15,
-            fontFamily: 'Pretendard Variable',
-            fontWeight: FontWeight.w400,
-          ),
+          ), // 강조 본문 - 메뉴, 중요 본문
         ),
       ),
     ];
@@ -252,25 +422,22 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     double containerWidth,
     double containerHeight,
   ) {
-    return GestureDetector(
-      onTap: () {},
-      child: Container(
-        width: containerWidth * 0.2,
-        height: containerHeight * 0.065, // 네비게이션 바 높이에 맞춤
-        padding: EdgeInsets.zero, // 패딩 제거
-        child: Center(
-          child: Image.asset(
-            assetPath,
-            width: 24,
-            height: 24,
-            errorBuilder: (context, error, stackTrace) {
-              return Icon(
-                fallbackIcon,
-                size: 24,
-                color: AppColors.lightTextSecondary,
-              );
-            },
-          ),
+    return Container(
+      width: containerWidth * 0.2,
+      height: containerHeight * 0.065, // 네비게이션 바 높이에 맞춤
+      padding: EdgeInsets.zero, // 패딩 제거
+      child: Center(
+        child: Image.asset(
+          assetPath,
+          width: 24,
+          height: 24,
+          errorBuilder: (context, error, stackTrace) {
+            return Icon(
+              fallbackIcon,
+              size: 24,
+              color: AppColors.lightTextSecondary,
+            );
+          },
         ),
       ),
     );
@@ -343,15 +510,18 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                 padding: EdgeInsets.only(left: 20, right: 20, bottom: 12),
                 child: Row(
                   children: [
-                    _buildShapeIcon('assets/icons/shape1.png'),
-                    SizedBox(width: 8.0),
-                    _buildShapeIcon('assets/icons/shape2.png'),
+                    _buildShapeIcon('assets/icons/card.svg', 20.0, 20.0, true),
+                    SizedBox(width: 12.0),
+                    _buildShapeIcon('assets/icons/list.svg', 20.0, 20.0, false),
                   ],
                 ),
               ),
               // 피드 컨텐츠
               Expanded(
-                child: _buildFeedImages(containerWidth, dynamicPanelHeight),
+                child:
+                    isCardView
+                        ? _buildFeedImages(containerWidth, dynamicPanelHeight)
+                        : _buildFeedList(containerWidth, dynamicPanelHeight),
               ),
             ],
           ),
@@ -360,16 +530,52 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     );
   }
 
-  Widget _buildShapeIcon(String assetPath) {
-    return GestureDetector(
-      onTap: () {},
-      child: Image.asset(
-        assetPath,
-        width: 25.0,
-        height: 25.0,
-        errorBuilder: (context, error, stackTrace) {
-          return Icon(Icons.grid_view, size: 25.0, color: AppColors.accent);
+  Widget _buildShapeIcon(
+    String assetPath,
+    double width,
+    double height,
+    bool isCard,
+  ) {
+    final bool isSelected = isCard ? isCardView : !isCardView;
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12.5),
+        splashColor: Colors.grey.withOpacity(0.6),
+        highlightColor: Colors.grey.withOpacity(0.3),
+        onTap: () {
+          setState(() {
+            isCardView = isCard;
+          });
         },
+        child: Container(
+          padding: EdgeInsets.all(4),
+          child: FutureBuilder<String>(
+            future: DefaultAssetBundle.of(context).loadString(assetPath),
+            builder: (context, snapshot) {
+              if (snapshot.hasData) {
+                return SvgPicture.string(
+                  snapshot.data!,
+                  width: width,
+                  height: height,
+                  colorFilter: ColorFilter.mode(
+                    isSelected
+                        ? AppColors.lightTextSecondary
+                        : AppColors.accent,
+                    BlendMode.srcIn,
+                  ),
+                );
+              } else {
+                return Icon(
+                  Icons.grid_view,
+                  size: width,
+                  color: AppColors.lightTextSecondary,
+                );
+              }
+            },
+          ),
+        ),
       ),
     );
   }
@@ -408,32 +614,114 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
         itemCount: feedImages.length,
         physics: const AlwaysScrollableScrollPhysics(),
         itemBuilder: (context, index) {
-          return Container(
-            decoration: ShapeDecoration(
-              color: AppColors.lightSurfaceVariant,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-            child: ClipRRect(
+          return Material(
+            color: Colors.transparent,
+            child: InkWell(
               borderRadius: BorderRadius.circular(2),
-              child: Image.asset(
-                feedImages[index],
-                fit: BoxFit.cover,
-                errorBuilder: (context, error, stackTrace) {
-                  return Container(
-                    color:
-                        index % 2 == 0 ? AppColors.accent : AppColors.primary,
-                    child: const Center(
-                      child: Icon(Icons.image, color: Colors.white, size: 40),
-                    ),
-                  );
-                },
+              splashColor: Colors.grey.withOpacity(0.6),
+              highlightColor: Colors.grey.withOpacity(0.3),
+              onTap: () {}, // 피드 상세보기 페이지 이동
+              child: Container(
+                decoration: ShapeDecoration(
+                  color: AppColors.lightSurfaceVariant,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(2),
+                  child: Image.asset(
+                    feedImages[index],
+                    fit: BoxFit.cover,
+                    errorBuilder: (context, error, stackTrace) {
+                      return Container(
+                        color:
+                            index % 2 == 0
+                                ? AppColors.accent
+                                : AppColors.primary,
+                        child: const Center(
+                          child: Icon(
+                            Icons.image,
+                            color: Colors.white,
+                            size: 40,
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
               ),
             ),
           );
         },
       ),
+    );
+  }
+
+  Widget _buildFeedList(double containerWidth, double panelHeight) {
+    final List<Map<String, String>> feedData = [
+      {
+        'image': 'assets/images/feed1.jpg',
+        'title': '모태솔로지만연애를해야할까///',
+        'author': '수최영',
+        'content':
+            '안녕하세여,.오늘은 모태솔로지만연애는하고싶 어후기로돌아왓어요다들키스씬은보셧나요저는보다가기절을할뻔했어요 완전 찰스엔터됨 진짜 갈!!!!!!!!!!!!할뻔함 어쩌고 저쩌고 저ㅉ고어쩌고',
+      },
+      {
+        'image': 'assets/images/feed2.png',
+        'title': '오늘 날씨가 너무 좋아서 산책했어요',
+        'author': '김여름',
+        'content':
+            '오늘 날씨가 정말 좋아서 산책을 다녀왔어요. 햇살이 따뜻하고 바람도 시원해서 정말 기분이 좋았어요. 특히 공원에서 만난 강아지들이 너무 귀여웠어요!',
+      },
+      {
+        'image': 'assets/images/feed3.png',
+        'title': '새로운 카페를 발견했어요!',
+        'author': '박카페',
+        'content':
+            '새로운 카페를 발견했어요! 분위기도 좋고 커피도 맛있어서 정말 만족스러웠어요. 다음에 친구들과 함께 가보려고 해요.',
+      },
+      {
+        'image': 'assets/images/feed4.png',
+        'title': '블로그 1000억 무조건 부자될 것 같아',
+        'author': '이블로그',
+        'content':
+            '블로그로 1000억 벌어서 부자가 될 것 같아요! 열심히 글 쓰고 있으니까 조만간 성공할 것 같아요. 다들 응원해주세요!',
+      },
+      {
+        'image': 'assets/images/feed5.jpg',
+        'title': '오늘은 수강신청을 망쳐버렸어요',
+        'author': '정수강',
+        'content':
+            '오늘 수강신청을 망쳐버렸어요... 원하는 과목을 못 들었어요. 다음 학기에 다시 도전해보려고 해요. 화이팅!',
+      },
+    ];
+
+    return ListView.builder(
+      itemCount: feedData.length,
+      physics: const AlwaysScrollableScrollPhysics(),
+      itemBuilder: (context, index) {
+        final feed = feedData[index];
+        return Material(
+          color: Colors.transparent,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(8),
+            splashColor: Colors.grey.withOpacity(0.6),
+            highlightColor: Colors.grey.withOpacity(0.3),
+            onTap: () {
+              // 피드 상세보기 페이지 이동
+              // TODO: 피드 상세보기 페이지로 이동
+            },
+            child: PostCard(
+              containerWidth: containerWidth,
+              imagePath: feed['image']!,
+              title: feed['title']!,
+              author: feed['author']!,
+              content: feed['content']!,
+            ),
+          ),
+        );
+      },
     );
   }
 }
