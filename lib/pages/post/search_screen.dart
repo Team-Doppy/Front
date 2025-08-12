@@ -11,11 +11,11 @@ import '../../data/services/auth_service.dart';
 
 /// ===============================================================
 /// Search Screen (계정/게시글)
-/// - 서버 계정 검색(/api/friends/search?username=) 연결
-/// - 사용자 정보 조회(/api/auth/users/{username}) → 프로필로 이동
-/// - 요청/응답/에러 디테일 로깅 + JWT 형식 검증
+/// - 사용자 검색 GET /api/friends/search?username=
+/// - 사용자 조회 GET /api/auth/users/{username} → 프로필 이동
+/// - 친구 신청/수락/거절/차단/삭제 등 Friend API 액션
+/// - 요청/응답/에러 로깅 + JWT 형식 검증
 /// - 커스텀 탭 인디케이터(화면 너비의 37.5%)
-/// - 계정/게시글 리스트 탭, 터치/선택 표시, 스낵바 알림
 /// ===============================================================
 
 class SearchScreen extends StatefulWidget {
@@ -29,7 +29,6 @@ class AccountItem {
   final String nickname; // 서버는 username만 주므로 UI 편의상 nickname = username
   final String userId; // 화면 표기 '@username'
   final int neighbors; // 서버 응답에 없으므로 0으로 채움
-
   const AccountItem({
     required this.nickname,
     required this.userId,
@@ -43,7 +42,6 @@ class PostItemData {
   final String preview;
   final String imageUrl;
   final int likes;
-
   const PostItemData({
     required this.title,
     required this.author,
@@ -62,16 +60,14 @@ class UserDto {
 }
 
 class FriendSearchResult {
-  final int? status; // HTTP status
-  final List<String> usernames; // 200일 때 파싱한 usernames
-  final dynamic body; // 원본 body
-  final Map<String, List<String>> headers; // 응답 헤더
-  final Uri uri; // 실제 요청 URI
-  final Duration elapsed; // 소요 시간
-  final String? serverMessage; // body.message/error/detail 등
-
+  final int? status;
+  final List<String> usernames;
+  final dynamic body;
+  final Map<String, List<String>> headers;
+  final Uri uri;
+  final Duration elapsed;
+  final String? serverMessage;
   bool get ok => status != null && status! >= 200 && status! < 300;
-
   const FriendSearchResult({
     required this.status,
     required this.usernames,
@@ -86,19 +82,42 @@ class FriendSearchResult {
 /// -------------------- API 클라이언트 --------------------
 class FriendSearchApi {
   final Dio _dio;
-
   FriendSearchApi()
     : _dio = Dio(
         BaseOptions(
           connectTimeout: const Duration(seconds: 10),
           receiveTimeout: const Duration(seconds: 10),
-          // 4xx/5xx도 onResponse로 들어오게 해서 본문을 반드시 잡는다
-          validateStatus: (code) => true,
+          validateStatus: (code) => true, // 4xx/5xx도 잡아서 로깅
           receiveDataWhenStatusError: true,
         ),
       );
 
-  /// GET /api/friends/search?username={query}
+  // ---- 공통 로깅 유틸
+  static String _maskToken(String token) {
+    if (token.isEmpty) return '(empty)';
+    final n = token.length;
+    final tail = token.substring(n - (n >= 6 ? 6 : n));
+    return '***$tail';
+  }
+
+  static String _prettyJson(dynamic data) {
+    try {
+      if (data is String) {
+        final obj = json.decode(data);
+        return const JsonEncoder.withIndent('  ').convert(obj);
+      }
+      return const JsonEncoder.withIndent('  ').convert(data);
+    } catch (_) {
+      return data?.toString() ?? '';
+    }
+  }
+
+  static String _trimLong(String s, {int max = 3000}) {
+    if (s.length <= max) return s;
+    return s.substring(0, max) + '…(truncated)';
+  }
+
+  // ---- 사용자 검색
   Future<FriendSearchResult> searchUsers({
     required String baseUrl,
     required String token,
@@ -108,9 +127,8 @@ class FriendSearchApi {
     final uri = '$baseUrl/api/friends/search';
     final sw = Stopwatch()..start();
 
-    final masked = _maskToken(token);
     debugPrint('┌─[REQ] GET $uri?username=$query');
-    debugPrint('│ Authorization: Bearer $masked');
+    debugPrint('│ Authorization: Bearer ${_maskToken(token)}');
     debugPrint('└────────────────────────────────');
 
     final res = await _dio.get(
@@ -172,7 +190,7 @@ class FriendSearchApi {
     );
   }
 
-  /// GET /api/auth/users/{username}
+  // ---- 사용자 정보 조회
   Future<UserDto?> getUserByUsername({
     required String baseUrl,
     required String token,
@@ -182,9 +200,8 @@ class FriendSearchApi {
     final uri = '$baseUrl/api/auth/users/$username';
     final sw = Stopwatch()..start();
 
-    final masked = _maskToken(token);
     debugPrint('┌─[REQ] GET $uri');
-    debugPrint('│ Authorization: Bearer $masked');
+    debugPrint('│ Authorization: Bearer ${_maskToken(token)}');
     debugPrint('└────────────────────────────────');
 
     final res = await _dio.get(
@@ -224,29 +241,90 @@ class FriendSearchApi {
     return null;
   }
 
-  // ===== utils =====
-  static String _maskToken(String token) {
-    if (token.isEmpty) return '(empty)';
-    final n = token.length;
-    final tail = token.substring(n - (n >= 6 ? 6 : n));
-    return '***$tail';
+  // ---- 친구 신청
+  Future<Response> requestFriend({
+    required String baseUrl,
+    required String token,
+    required String targetUsername,
+  }) {
+    final uri = '$baseUrl/api/friends/request';
+    debugPrint('┌─[REQ] POST $uri | body={"targetUsername":"$targetUsername"}');
+    debugPrint('│ Authorization: Bearer ${_maskToken(token)}');
+    debugPrint('└────────────────────────────────');
+    return _dio.post(
+      uri,
+      data: {'targetUsername': targetUsername},
+      options: Options(
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Content-Type': 'application/json',
+        },
+      ),
+    );
   }
 
-  static String _prettyJson(dynamic data) {
-    try {
-      if (data is String) {
-        final obj = json.decode(data);
-        return const JsonEncoder.withIndent('  ').convert(obj);
-      }
-      return const JsonEncoder.withIndent('  ').convert(data);
-    } catch (_) {
-      return data?.toString() ?? '';
-    }
+  // ---- 친구 수락
+  Future<Response> acceptFriend({
+    required String baseUrl,
+    required String token,
+    required String requesterUsername,
+  }) {
+    final uri = '$baseUrl/api/friends/accept/$requesterUsername';
+    debugPrint('┌─[REQ] POST $uri');
+    debugPrint('│ Authorization: Bearer ${_maskToken(token)}');
+    debugPrint('└────────────────────────────────');
+    return _dio.post(
+      uri,
+      options: Options(headers: {'Authorization': 'Bearer $token'}),
+    );
   }
 
-  static String _trimLong(String s, {int max = 3000}) {
-    if (s.length <= max) return s;
-    return s.substring(0, max) + '…(truncated)';
+  // ---- 친구 거절
+  Future<Response> rejectFriend({
+    required String baseUrl,
+    required String token,
+    required String requesterUsername,
+  }) {
+    final uri = '$baseUrl/api/friends/reject/$requesterUsername';
+    debugPrint('┌─[REQ] POST $uri');
+    debugPrint('│ Authorization: Bearer ${_maskToken(token)}');
+    debugPrint('└────────────────────────────────');
+    return _dio.post(
+      uri,
+      options: Options(headers: {'Authorization': 'Bearer $token'}),
+    );
+  }
+
+  // ---- 친구 차단
+  Future<Response> blockUser({
+    required String baseUrl,
+    required String token,
+    required String targetUsername,
+  }) {
+    final uri = '$baseUrl/api/friends/block/$targetUsername';
+    debugPrint('┌─[REQ] POST $uri');
+    debugPrint('│ Authorization: Bearer ${_maskToken(token)}');
+    debugPrint('└────────────────────────────────');
+    return _dio.post(
+      uri,
+      options: Options(headers: {'Authorization': 'Bearer $token'}),
+    );
+  }
+
+  // ---- 친구 삭제
+  Future<Response> deleteFriend({
+    required String baseUrl,
+    required String token,
+    required String targetUsername,
+  }) {
+    final uri = '$baseUrl/api/friends/delete/$targetUsername';
+    debugPrint('┌─[REQ] DELETE $uri');
+    debugPrint('│ Authorization: Bearer ${_maskToken(token)}');
+    debugPrint('└────────────────────────────────');
+    return _dio.delete(
+      uri,
+      options: Options(headers: {'Authorization': 'Bearer $token'}),
+    );
   }
 }
 
@@ -272,7 +350,7 @@ class _SearchScreenState extends State<SearchScreen> {
   final String _baseUrl =
       'http://Doppy-GaOoLi-env.eba-i6rkanrz.us-east-1.elasticbeanstalk.com';
 
-  // 네트워크 요청 상태
+  // 네트워크 요청 상태(계정)
   bool _accountsLoading = false;
   String? _accountsError;
   CancelToken? _accountsCancelToken;
@@ -352,7 +430,7 @@ class _SearchScreenState extends State<SearchScreen> {
   @override
   void initState() {
     super.initState();
-    _applySortAndResetInitial(); // 최초엔 계정 비우고 게시글만 채움
+    _applySortAndResetInitial();
   }
 
   @override
@@ -367,9 +445,7 @@ class _SearchScreenState extends State<SearchScreen> {
   void _onSearchChanged(String q) {
     setState(() => _query = q);
     _debounce?.cancel();
-    _debounce = Timer(const Duration(milliseconds: 350), () {
-      _performSearch();
-    });
+    _debounce = Timer(const Duration(milliseconds: 350), _performSearch);
   }
 
   void _onSearchSubmitted(String q) {
@@ -393,8 +469,8 @@ class _SearchScreenState extends State<SearchScreen> {
       return;
     }
 
-    await _searchAccountsRemote(q); // 서버 검색
-    _filterPostsLocal(q); // 로컬(게시글) 필터
+    await _searchAccountsRemote(q);
+    _filterPostsLocal(q);
     setState(() {
       _selectedAccountIndex = null;
       _selectedPostIndex = null;
@@ -412,7 +488,6 @@ class _SearchScreenState extends State<SearchScreen> {
       _accountsError = null;
     });
 
-    // ✅ JWT 형식 검증 (헤더.payload.서명)
     final jwtLike = RegExp(r'^[A-Za-z0-9-_]+\.[A-Za-z0-9-_]+\.[A-Za-z0-9-_]+$');
 
     if (token == null || token.isEmpty) {
@@ -436,7 +511,6 @@ class _SearchScreenState extends State<SearchScreen> {
       return;
     }
 
-    // 토큰 말단 6자리만 마스킹해서 찍기
     final tail = token.substring(token.length - 6);
     debugPrint('🔑 Using JWT ***$tail');
 
@@ -488,7 +562,9 @@ class _SearchScreenState extends State<SearchScreen> {
       final body = e.response?.data;
       debugPrint('┌─[DIO ERROR]');
       debugPrint('│ type=${e.type} code=$code');
-      debugPrint('│ body=${_trimLong(_prettyJson(body))}');
+      debugPrint(
+        '│ body=${FriendSearchApi._trimLong(FriendSearchApi._prettyJson(body))}',
+      );
       debugPrint('└─────────────────');
 
       setState(() {
@@ -546,7 +622,6 @@ class _SearchScreenState extends State<SearchScreen> {
     return list;
   }
 
-  /// 실제 토큰 가져오기 (SecureStorage)
   Future<String?> _getAuthToken() async {
     try {
       final t = await _authService.getToken();
@@ -566,10 +641,81 @@ class _SearchScreenState extends State<SearchScreen> {
     _performSearch();
   }
 
-  // -------------------- 선택/네비게이션 --------------------
+  // -------------------- 선택/네비게이션 & Friend 액션 --------------------
   Future<void> _onTapAccount(int index, AccountItem item) async {
     setState(() => _selectedAccountIndex = index);
 
+    // 액션 시트: 프로필 방문 / 친구 신청 / 차단
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (_) {
+        final username =
+            item.userId.startsWith('@')
+                ? item.userId.substring(1)
+                : item.userId;
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                ListTile(
+                  leading: const Icon(Icons.person),
+                  title: Text('프로필 방문 (@$username)'),
+                  onTap: () async {
+                    Navigator.pop(context);
+                    await _goToProfile(username);
+                  },
+                ),
+                const Divider(height: 1),
+                ListTile(
+                  leading: const Icon(Icons.person_add_alt_1),
+                  title: const Text('친구 신청 보내기'),
+                  onTap: () async {
+                    Navigator.pop(context);
+                    await _friendAction(
+                      actionName: '친구 신청',
+                      run:
+                          (baseUrl, token) => _friendApi.requestFriend(
+                            baseUrl: baseUrl,
+                            token: token,
+                            targetUsername: username,
+                          ),
+                      successMsg: '친구 신청이 완료되었습니다.',
+                    );
+                  },
+                ),
+                ListTile(
+                  leading: const Icon(Icons.block),
+                  title: const Text('사용자 차단'),
+                  onTap: () async {
+                    Navigator.pop(context);
+                    await _friendAction(
+                      actionName: '차단',
+                      run:
+                          (baseUrl, token) => _friendApi.blockUser(
+                            baseUrl: baseUrl,
+                            token: token,
+                            targetUsername: username,
+                          ),
+                      successMsg: '사용자를 차단했습니다.',
+                    );
+                  },
+                ),
+                const SizedBox(height: 8),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _goToProfile(String username) async {
     _showSnack('계정 정보 불러오는 중…');
     final token = await _getAuthToken();
     final jwtLike = RegExp(r'^[A-Za-z0-9-_]+\.[A-Za-z0-9-_]+\.[A-Za-z0-9-_]+$');
@@ -578,27 +724,19 @@ class _SearchScreenState extends State<SearchScreen> {
       _showSnack('로그인이 필요합니다(토큰 오류).');
       return;
     }
-
-    // '@username' → 'username'
-    final username =
-        item.userId.startsWith('@') ? item.userId.substring(1) : item.userId;
-
     try {
       final dto = await _friendApi.getUserByUsername(
         baseUrl: _baseUrl,
         token: token,
         username: username,
       );
-
       if (dto == null) {
         _showSnack('사용자 정보를 찾지 못했습니다.');
         return;
       }
-
       debugPrint(
-        '[NAV] to /profile | id=${dto.id}, username=${dto.username}, role=${dto.role}',
+        '[NAV] /profile | id=${dto.id}, username=${dto.username}, role=${dto.role}',
       );
-      // 네임드 라우트 사용 (routes에 '/profile'이 등록되어 있어야 함)
       Navigator.pushNamed(
         context,
         '/profile',
@@ -614,11 +752,51 @@ class _SearchScreenState extends State<SearchScreen> {
     }
   }
 
+  /// 공통 Friend 액션 실행기 (신청/수락/거절/차단/삭제)
+  Future<void> _friendAction({
+    required String actionName,
+    required Future<Response> Function(String baseUrl, String token) run,
+    required String successMsg,
+  }) async {
+    final token = await _getAuthToken();
+    final jwtLike = RegExp(r'^[A-Za-z0-9-_]+\.[A-Za-z0-9-_]+\.[A-Za-z0-9-_]+$');
+    if (token == null || token.isEmpty || !jwtLike.hasMatch(token)) {
+      _showSnack('로그인이 필요합니다(토큰 오류).');
+      return;
+    }
+    try {
+      final res = await run(_baseUrl, token);
+      final code = res.statusCode ?? -1;
+      final bodyStr = FriendSearchApi._prettyJson(res.data);
+      debugPrint('[Friend:$actionName] code=$code body=$bodyStr');
+
+      if (code >= 200 && code < 300) {
+        _showSnack(successMsg);
+      } else {
+        // 서버가 문자열 메시지를 반환한다는 명세에 맞춰 처리
+        final msg =
+            res.data is String
+                ? res.data as String
+                : (res.data?['message'] ?? res.data?.toString() ?? '');
+        _showSnack('실패 ($code) ${msg.toString()}');
+      }
+    } on DioException catch (e) {
+      final code = e.response?.statusCode;
+      final msg =
+          e.response?.data is String
+              ? e.response?.data
+              : FriendSearchApi._prettyJson(e.response?.data);
+      debugPrint('[Friend:$actionName][DIO] code=$code body=$msg');
+      _showSnack('$actionName 실패${code != null ? ' ($code)' : ''}');
+    } catch (e) {
+      debugPrint('[Friend:$actionName][UNEXPECTED] $e');
+      _showSnack('$actionName 중 알 수 없는 오류');
+    }
+  }
+
   void _onTapPost(int index, PostItemData item) {
     setState(() => _selectedPostIndex = index);
-    final msg = '게시글 선택: "${item.title}" - ${item.author} (♥${item.likes})';
-    debugPrint(msg);
-    _showSnack(msg);
+    _showSnack('게시글 선택: "${item.title}" - ${item.author} (♥${item.likes})');
   }
 
   void _showSnack(String message) {
@@ -638,7 +816,6 @@ class _SearchScreenState extends State<SearchScreen> {
         body: SafeArea(
           child: Column(
             children: [
-              // 상단 검색 바
               _SearchTopBar(
                 controller: _searchController,
                 query: _query,
@@ -646,9 +823,7 @@ class _SearchScreenState extends State<SearchScreen> {
                 onSubmitted: _onSearchSubmitted,
                 onClear: _clearSearch,
               ),
-              // 탭바 (커스텀 인디케이터)
               const _SearchTabBar(),
-              // 탭 본문
               Expanded(
                 child: TabBarView(
                   children: [
@@ -778,13 +953,12 @@ class _SearchTabBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final w = MediaQuery.of(context).size.width;
-
     return Material(
       color: Colors.transparent,
       child: SizedBox(
         height: 46,
         child: TabBar(
-          dividerColor: Colors.transparent, // 기본 하단선 제거
+          dividerColor: Colors.transparent,
           labelColor: Colors.black,
           unselectedLabelColor: Colors.black,
           labelStyle: AppTextStyles.withWeight(
@@ -810,7 +984,6 @@ class _SearchTabBar extends StatelessWidget {
   }
 }
 
-/// -------------------- 커스텀 인디케이터 --------------------
 class _FixedUnderlineTabIndicator extends Decoration {
   final Color color;
   final double thickness;
@@ -853,19 +1026,16 @@ class _FixedUnderlinePainter extends BoxPainter {
   @override
   void paint(Canvas canvas, Offset offset, ImageConfiguration configuration) {
     if (configuration.size == null) return;
-
     final Rect rect = offset & configuration.size!;
     final double cx = rect.center.dx; // 활성 탭 중앙
     final double half = indicatorWidth / 2;
     final double y = rect.bottom - bottomInset - thickness / 2;
-
     final Paint p =
         Paint()
           ..color = color
           ..strokeWidth = thickness
           ..style = PaintingStyle.stroke
           ..strokeCap = StrokeCap.square;
-
     canvas.drawLine(Offset(cx - half, y), Offset(cx + half, y), p);
   }
 }
@@ -990,7 +1160,6 @@ class _AccountListItem extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final bg = selected ? Colors.black.withOpacity(0.06) : Colors.transparent;
-
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 16),
       child: Material(
@@ -1188,7 +1357,6 @@ class _PostListItem extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final bg = selected ? Colors.black.withOpacity(0.06) : Colors.transparent;
-
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 16),
       child: Material(
@@ -1295,22 +1463,4 @@ class _EmptyResult extends StatelessWidget {
       ),
     );
   }
-}
-
-/// -------------------- 로깅 유틸 --------------------
-String _prettyJson(dynamic data) {
-  try {
-    if (data is String) {
-      final obj = json.decode(data);
-      return const JsonEncoder.withIndent('  ').convert(obj);
-    }
-    return const JsonEncoder.withIndent('  ').convert(data);
-  } catch (_) {
-    return data?.toString() ?? '';
-  }
-}
-
-String _trimLong(String s, {int max = 3000}) {
-  if (s.length <= max) return s;
-  return s.substring(0, max) + '…(truncated)';
 }
