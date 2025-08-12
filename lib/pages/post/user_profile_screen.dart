@@ -5,7 +5,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/app_text_styles.dart';
-import '../../data/services/friend_service.dart';
+import '../../data/services/auth_service.dart';
+import '../../data/models/user_model.dart';
 import 'manage_group_screen.dart';
 import 'manage_neighbor_screen.dart';
 
@@ -17,70 +18,92 @@ class UserProfileScreen extends StatefulWidget {
 }
 
 class _UserProfileScreenState extends State<UserProfileScreen> {
-  // 프로필 구분을 위한 상태 변수 (테스트용으로 false로 설정)
-  bool isOwnProfile = false;
-
   // 피드 보기 모드 상태 (true: 카드형, false: 리스트형)
   bool isCardView = true;
 
-  // 이웃 요청 상태 관리
-  bool isNeighborRequested = false;
+  // 인증 서비스 인스턴스
+  final AuthService _authService = AuthService();
 
-  // 친구 서비스 인스턴스
-  final FriendService _friendService = FriendService();
-
-  // 요청 중인지 확인하는 상태
-  bool _isRequesting = false;
-
-  // 이웃 요청 처리 메서드
-  Future<void> _sendNeighborRequest() async {
-    if (_isRequesting || isNeighborRequested) return;
-
-    setState(() {
-      _isRequesting = true;
-    });
-
-    try {
-      // 현재 프로필의 사용자명 (실제로는 파라미터로 받아야 함)
-      const String targetUsername = 'swimn_'; // 임시로 하드코딩
-
-      await _friendService.sendFriendRequest(targetUsername);
-
-      setState(() {
-        isNeighborRequested = true;
-      });
-
-      // 성공 메시지 표시
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('이웃 요청이 완료되었습니다.'),
-            backgroundColor: Colors.green,
-          ),
-        );
-      }
-    } catch (e) {
-      // 에러 메시지 표시
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('이웃 요청 실패: ${e.toString()}'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isRequesting = false;
-        });
-      }
-    }
-  }
+  // 사용자 정보 관련 상태
+  User? _profileUser;
+  bool _isLoadingUser = true;
+  int? _friendCount; // 친구 수 추가
+  String? _selfIntroduction; // 자기소개 추가
 
   double? _handleTop; // 드래그 핸들의 현재 top 위치
   late double _minHandleTop; // 핸들이 올라갈 수 있는 최소 top
   late double _initialHandleTop; // 초기 핸들 위치 (아래쪽 한계)
+
+  @override
+  void initState() {
+    super.initState();
+    _loadProfileUser();
+  }
+
+  // 프로필 사용자 정보 로드
+  Future<void> _loadProfileUser() async {
+    try {
+      setState(() {
+        _isLoadingUser = true;
+      });
+
+      // 현재 로그인된 사용자의 토큰을 가져와서 사용자 정보 조회
+      final token = await _authService.getToken();
+
+      if (token != null) {
+        // 토큰이 있으면 현재 로그인된 사용자 정보를 가져옴
+        final String? profileUsername = await _authService.getUsername();
+
+        if (profileUsername != null) {
+          final userData = await _authService.getUserInfo(profileUsername);
+
+          if (userData != null) {
+            // API 응답에서 User 객체 생성
+            final user = User(
+              id: userData['id'],
+              username: userData['username'],
+              role: userData['role'],
+              alias: userData['alias'],
+            );
+
+            // 친구 수도 함께 조회
+            final friendCount = await _authService.getFriendCount();
+
+            // 자기소개도 함께 조회
+            final selfIntroduction = await _authService.getSelfIntroduction();
+
+            setState(() {
+              _profileUser = user;
+              _friendCount = friendCount;
+              _selfIntroduction = selfIntroduction;
+              _isLoadingUser = false;
+            });
+          } else {
+            setState(() {
+              _isLoadingUser = false;
+            });
+          }
+        } else {
+          // 사용자명이 없으면 로그인되지 않은 상태
+          setState(() {
+            _isLoadingUser = false;
+          });
+          // TODO: 로그인 페이지로 이동하거나 에러 처리
+        }
+      } else {
+        // 토큰이 없으면 로그인되지 않은 상태
+        setState(() {
+          _isLoadingUser = false;
+        });
+        // TODO: 로그인 페이지로 이동하거나 에러 처리
+      }
+    } catch (e) {
+      print('프로필 사용자 정보 로드 실패: $e');
+      setState(() {
+        _isLoadingUser = false;
+      });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -104,7 +127,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     final double initialPanelTop = containerHeight * 0.32; // 패널 초기 위치를 위로 조정
     final double a =
         (initialPanelTop - targetPanelTop) /
-        (_initialHandleTop - _minHandleTop);
+            (_initialHandleTop - _minHandleTop);
     final double b = initialPanelTop - a * _initialHandleTop;
     final double panelTop = a * _handleTop! + b;
 
@@ -140,11 +163,11 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
   }
 
   Widget _buildContent(
-    double containerWidth,
-    double containerHeight,
-    double panelTop,
-    double dynamicPanelHeight,
-  ) {
+      double containerWidth,
+      double containerHeight,
+      double panelTop,
+      double dynamicPanelHeight,
+      ) {
     return Stack(
       children: [
         // 배경
@@ -160,9 +183,14 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
           left: 0,
           right: 0,
           child: DoppyTopBar(
-            title: isOwnProfile ? '@swimn_' : '@swimn_', // 사용자 아이디 표시
-            showBack: !isOwnProfile, // 내 프로필이 아닐 때만 뒤로가기 버튼 표시
-            onBack: !isOwnProfile ? () => Navigator.pop(context) : null,
+            title:
+            _isLoadingUser
+                ? '로딩 중...'
+                : _profileUser != null
+                ? '@${_profileUser!.username}'
+                : '사용자', // 사용자 아이디 표시
+            showBack: false, // 내 프로필이므로 뒤로가기 버튼 숨김
+            onBack: null,
             onMore: () {
               // 더보기 메뉴 로직 (필요시 구현)
             },
@@ -188,9 +216,9 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
   }
 
   List<Widget> _buildProfileElements(
-    double containerWidth,
-    double containerHeight,
-  ) {
+      double containerWidth,
+      double containerHeight,
+      ) {
     List<Widget> elements = [
       // 프로필 이미지 컨테이너
       Positioned(
@@ -209,163 +237,90 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
       ),
     ];
 
-    // 내 프로필일 때만 이웃관리, 그룹관리 버튼 표시
-    if (isOwnProfile) {
-      elements.addAll([
-        // 그룹관리 버튼
-        Positioned(
-          left: containerWidth * 0.517,
-          top: containerHeight * 0.25,
-          child: Material(
-            color: Colors.transparent,
-            child: InkWell(
-              borderRadius: BorderRadius.circular(10),
-              splashColor: Colors.grey.withOpacity(0.6),
-              highlightColor: Colors.grey.withOpacity(0.3),
-              onTap: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => const ManageGroupScreen(),
-                  ),
-                );
-              }, // 그룹관리 페이지 이동
-              child: Container(
-                width: containerWidth * 0.453,
-                height: containerHeight * 0.046,
-                clipBehavior: Clip.antiAlias,
-                decoration: ShapeDecoration(
-                  color: AppColors.lightBackground,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(10),
-                  ),
+    // 이웃관리, 그룹관리 버튼 표시 (내 프로필이므로 항상 표시)
+    elements.addAll([
+      // 그룹관리 버튼
+      Positioned(
+        left: containerWidth * 0.517,
+        top: containerHeight * 0.25,
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(10),
+            splashColor: Colors.grey.withOpacity(0.6),
+            highlightColor: Colors.grey.withOpacity(0.3),
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const ManageGroupScreen(),
                 ),
-                child: Center(
-                  child: Text(
-                    '그룹관리',
-                    style: AppTextStyles.bodyLarge.copyWith(
-                      color: AppColors.lightTextSecondary,
-                    ), // 강조 본문 - 메뉴, 중요 본문
-                  ),
+              );
+            }, // 그룹관리 페이지 이동
+            child: Container(
+              width: containerWidth * 0.453,
+              height: containerHeight * 0.046,
+              clipBehavior: Clip.antiAlias,
+              decoration: ShapeDecoration(
+                color: AppColors.lightBackground,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+              ),
+              child: Center(
+                child: Text(
+                  '그룹관리',
+                  style: AppTextStyles.bodyLarge.copyWith(
+                    color: AppColors.lightTextSecondary,
+                  ), // 강조 본문 - 메뉴, 중요 본문
                 ),
               ),
             ),
           ),
         ),
-        // 이웃관리 버튼
-        Positioned(
-          left: containerWidth * 0.047,
-          top: containerHeight * 0.25,
-          child: Material(
-            color: Colors.transparent,
-            child: InkWell(
-              borderRadius: BorderRadius.circular(10),
-              splashColor: Colors.grey.withOpacity(0.6),
-              highlightColor: Colors.grey.withOpacity(0.3),
-              onTap: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => const ManageNeighborScreen(),
-                  ),
-                );
-              }, // 이웃관리 페이지 이동
-              child: Container(
-                width: containerWidth * 0.453,
-                height: containerHeight * 0.046,
-                clipBehavior: Clip.antiAlias,
-                decoration: ShapeDecoration(
-                  color: AppColors.lightSurfaceVariant,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(10),
-                  ),
+      ),
+      // 이웃관리 버튼
+      Positioned(
+        left: containerWidth * 0.047,
+        top: containerHeight * 0.25,
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(10),
+            splashColor: Colors.grey.withOpacity(0.6),
+            highlightColor: Colors.grey.withOpacity(0.3),
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const ManageNeighborScreen(),
                 ),
-                child: Center(
-                  child: Text(
-                    '이웃관리',
-                    style: AppTextStyles.bodyLarge.copyWith(
-                      color: AppColors.lightTextSecondary,
-                      fontWeight: FontWeight.w500,
-                    ), // 강조 본문 - 메뉴, 중요 본문
-                  ),
+              );
+            }, // 이웃관리 페이지 이동
+            child: Container(
+              width: containerWidth * 0.453,
+              height: containerHeight * 0.046,
+              clipBehavior: Clip.antiAlias,
+              decoration: ShapeDecoration(
+                color: AppColors.lightSurfaceVariant,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+              ),
+              child: Center(
+                child: Text(
+                  '이웃관리',
+                  style: AppTextStyles.bodyLarge.copyWith(
+                    color: AppColors.lightTextSecondary,
+                    fontWeight: FontWeight.w500,
+                  ), // 강조 본문 - 메뉴, 중요 본문
                 ),
               ),
             ),
           ),
         ),
-      ]);
-    } else {
-      // 다른 사람 프로필일 때는 "함께 Doppy하는 이웃 n명명" 텍스트와 이웃요청하기 버튼 표시
-
-      // 함께 Doppy하는 친구 텍스트
-      elements.add(
-        Positioned(
-          left: containerWidth * 0.047,
-          top: containerHeight * 0.23,
-          child: Text(
-            '함께 Doppy하는 이웃 3명',
-            style: AppTextStyles.bodyMedium.copyWith(
-              color: AppColors.lightTextSecondary,
-            ), // 일반 본문 - 설명 텍스트, 일반 내용
-          ),
-        ),
-      );
-
-      // 이웃요청하기 버튼
-      elements.add(
-        Positioned(
-          left: containerWidth * 0.047,
-          top: containerHeight * 0.263,
-          child: Material(
-            color: Colors.transparent,
-            child: InkWell(
-              borderRadius: BorderRadius.circular(10),
-              splashColor: Colors.grey.withOpacity(0.6),
-              highlightColor: Colors.grey.withOpacity(0.3),
-              onTap: _sendNeighborRequest,
-              child: Container(
-                width: containerWidth * 0.906, // 전체 너비 사용
-                height: containerHeight * 0.046,
-                clipBehavior: Clip.antiAlias,
-                decoration: ShapeDecoration(
-                  color:
-                      isNeighborRequested
-                          ? AppColors.lightSurfaceVariant
-                          : AppColors.primary,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                ),
-                child: Center(
-                  child:
-                      _isRequesting
-                          ? const SizedBox(
-                            width: 20,
-                            height: 20,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              valueColor: AlwaysStoppedAnimation<Color>(
-                                Colors.white,
-                              ),
-                            ),
-                          )
-                          : Text(
-                            isNeighborRequested ? '요청됨' : '이웃 요청하기',
-                            style: AppTextStyles.bodyMedium.copyWith(
-                              color:
-                                  isNeighborRequested
-                                      ? AppColors.lightTextSecondary
-                                      : Colors.white,
-                              fontWeight: FontWeight.w600,
-                            ), // 일반 본문 - 버튼 텍스트, 라벨
-                          ),
-                ),
-              ),
-            ),
-          ),
-        ),
-      );
-    }
+      ),
+    ]);
 
     // 사용자 정보들 추가
     elements.addAll(_buildUserInfoTexts(containerWidth, containerHeight));
@@ -374,16 +329,29 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
   }
 
   List<Widget> _buildUserInfoTexts(
-    double containerWidth,
-    double containerHeight,
-  ) {
+      double containerWidth,
+      double containerHeight,
+      ) {
     return [
       // 사용자 이름
       Positioned(
         left: containerWidth * 0.475,
         top: containerHeight * 0.09, // 위로 올림
-        child: Text(
-          '수최영',
+        child:
+        _isLoadingUser
+            ? const SizedBox(
+          width: 20,
+          height: 20,
+          child: CircularProgressIndicator(strokeWidth: 2),
+        )
+            : Text(
+          _profileUser != null &&
+              _profileUser!.alias != null &&
+              _profileUser!.alias!.isNotEmpty
+              ? _profileUser!.alias!
+              : _profileUser != null
+              ? _profileUser!.username
+              : '사용자',
           style: AppTextStyles.headlineLarge.copyWith(
             color: AppColors.lightTextPrimary,
             fontSize: 25,
@@ -395,8 +363,17 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
       Positioned(
         left: containerWidth * 0.475,
         top: containerHeight * 0.16, // 위로 올림
-        child: Text(
-          '무료로일상공개해드립니다..\n조아요 구독 알림설정까지......',
+        child:
+        _isLoadingUser
+            ? const SizedBox(
+          width: 20,
+          height: 20,
+          child: CircularProgressIndicator(strokeWidth: 2),
+        )
+            : Text(
+          _selfIntroduction != null && _selfIntroduction!.isNotEmpty
+              ? _selfIntroduction!
+              : '자기소개가 없습니다.',
           style: AppTextStyles.bodySmall.copyWith(
             color: AppColors.lightTextSecondary,
           ), // 작은 본문 - 사용자 ID, 소개글
@@ -406,8 +383,15 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
       Positioned(
         left: containerWidth * 0.483,
         top: containerHeight * 0.13, // 위로 올림
-        child: Text(
-          '이웃 72명',
+        child:
+        _isLoadingUser
+            ? const SizedBox(
+          width: 20,
+          height: 20,
+          child: CircularProgressIndicator(strokeWidth: 2),
+        )
+            : Text(
+          _friendCount != null ? '이웃 ${_friendCount}명' : '이웃 0명',
           style: AppTextStyles.bodyLarge.copyWith(
             color: AppColors.lightTextPrimary,
           ), // 강조 본문 - 메뉴, 중요 본문
@@ -417,11 +401,11 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
   }
 
   Widget _buildNavIcon(
-    String assetPath,
-    IconData fallbackIcon,
-    double containerWidth,
-    double containerHeight,
-  ) {
+      String assetPath,
+      IconData fallbackIcon,
+      double containerWidth,
+      double containerHeight,
+      ) {
     return Container(
       width: containerWidth * 0.2,
       height: containerHeight * 0.065, // 네비게이션 바 높이에 맞춤
@@ -444,10 +428,10 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
   }
 
   Widget _buildFeedPanel(
-    double containerWidth,
-    double panelTop,
-    double dynamicPanelHeight,
-  ) {
+      double containerWidth,
+      double panelTop,
+      double dynamicPanelHeight,
+      ) {
     return Positioned(
       left: 0,
       top: panelTop,
@@ -484,9 +468,9 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
 
             // 50% 이상 드래그했으면 최대 높이로, 미만이면 원래 위치로
             final double targetTop =
-                currentDistance >= threshold
-                    ? _minHandleTop
-                    : _initialHandleTop;
+            currentDistance >= threshold
+                ? _minHandleTop
+                : _initialHandleTop;
 
             setState(() {
               _handleTop = targetTop;
@@ -519,9 +503,9 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
               // 피드 컨텐츠
               Expanded(
                 child:
-                    isCardView
-                        ? _buildFeedImages(containerWidth, dynamicPanelHeight)
-                        : _buildFeedList(containerWidth, dynamicPanelHeight),
+                isCardView
+                    ? _buildFeedImages(containerWidth, dynamicPanelHeight)
+                    : _buildFeedList(containerWidth, dynamicPanelHeight),
               ),
             ],
           ),
@@ -531,11 +515,11 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
   }
 
   Widget _buildShapeIcon(
-    String assetPath,
-    double width,
-    double height,
-    bool isCard,
-  ) {
+      String assetPath,
+      double width,
+      double height,
+      bool isCard,
+      ) {
     final bool isSelected = isCard ? isCardView : !isCardView;
 
     return Material(
@@ -636,9 +620,9 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                     errorBuilder: (context, error, stackTrace) {
                       return Container(
                         color:
-                            index % 2 == 0
-                                ? AppColors.accent
-                                : AppColors.primary,
+                        index % 2 == 0
+                            ? AppColors.accent
+                            : AppColors.primary,
                         child: const Center(
                           child: Icon(
                             Icons.image,
@@ -665,35 +649,35 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
         'title': '모태솔로지만연애를해야할까///',
         'author': '수최영',
         'content':
-            '안녕하세여,.오늘은 모태솔로지만연애는하고싶 어후기로돌아왓어요다들키스씬은보셧나요저는보다가기절을할뻔했어요 완전 찰스엔터됨 진짜 갈!!!!!!!!!!!!할뻔함 어쩌고 저쩌고 저ㅉ고어쩌고',
+        '안녕하세여,.오늘은 모태솔로지만연애는하고싶 어후기로돌아왓어요다들키스씬은보셧나요저는보다가기절을할뻔했어요 완전 찰스엔터됨 진짜 갈!!!!!!!!!!!!할뻔함 어쩌고 저쩌고 저ㅉ고어쩌고',
       },
       {
         'image': 'assets/images/feed2.png',
         'title': '오늘 날씨가 너무 좋아서 산책했어요',
         'author': '김여름',
         'content':
-            '오늘 날씨가 정말 좋아서 산책을 다녀왔어요. 햇살이 따뜻하고 바람도 시원해서 정말 기분이 좋았어요. 특히 공원에서 만난 강아지들이 너무 귀여웠어요!',
+        '오늘 날씨가 정말 좋아서 산책을 다녀왔어요. 햇살이 따뜻하고 바람도 시원해서 정말 기분이 좋았어요. 특히 공원에서 만난 강아지들이 너무 귀여웠어요!',
       },
       {
         'image': 'assets/images/feed3.png',
         'title': '새로운 카페를 발견했어요!',
         'author': '박카페',
         'content':
-            '새로운 카페를 발견했어요! 분위기도 좋고 커피도 맛있어서 정말 만족스러웠어요. 다음에 친구들과 함께 가보려고 해요.',
+        '새로운 카페를 발견했어요! 분위기도 좋고 커피도 맛있어서 정말 만족스러웠어요. 다음에 친구들과 함께 가보려고 해요.',
       },
       {
         'image': 'assets/images/feed4.png',
         'title': '블로그 1000억 무조건 부자될 것 같아',
         'author': '이블로그',
         'content':
-            '블로그로 1000억 벌어서 부자가 될 것 같아요! 열심히 글 쓰고 있으니까 조만간 성공할 것 같아요. 다들 응원해주세요!',
+        '블로그로 1000억 벌어서 부자가 될 것 같아요! 열심히 글 쓰고 있으니까 조만간 성공할 것 같아요. 다들 응원해주세요!',
       },
       {
         'image': 'assets/images/feed5.jpg',
         'title': '오늘은 수강신청을 망쳐버렸어요',
         'author': '정수강',
         'content':
-            '오늘 수강신청을 망쳐버렸어요... 원하는 과목을 못 들었어요. 다음 학기에 다시 도전해보려고 해요. 화이팅!',
+        '오늘 수강신청을 망쳐버렸어요... 원하는 과목을 못 들었어요. 다음 학기에 다시 도전해보려고 해요. 화이팅!',
       },
     ];
 
