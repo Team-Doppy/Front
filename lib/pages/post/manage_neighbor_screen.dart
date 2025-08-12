@@ -1,19 +1,8 @@
+import 'package:doppy/pages/components/custom_bottom_navigation_bar.dart';
 import 'package:flutter/material.dart';
-
-// 이웃 정보를 담을 데이터 모델
-class Neighbor {
-  final String name;
-  final String userId;
-  final int mutualFriends;
-  final String? profileImageUrl; // 프로필 이미지는 URL 형태일 수 있으므로 nullable
-
-  Neighbor({
-    required this.name,
-    required this.userId,
-    required this.mutualFriends,
-    this.profileImageUrl,
-  });
-}
+import 'package:flutter_svg/flutter_svg.dart';
+import 'package:provider/provider.dart';
+import '../../providers/friend_provider.dart';
 
 // 이웃 관리 화면 메인 위젯
 class ManageNeighborScreen extends StatefulWidget {
@@ -24,29 +13,31 @@ class ManageNeighborScreen extends StatefulWidget {
 }
 
 class _ManageNeighborScreenState extends State<ManageNeighborScreen> {
-  // 하단 네비게이션 바의 현재 선택된 인덱스
-  int _selectedIndex = 3; // 초기 선택을 '프로필'로 설정
-
-  // 샘플 데이터 목록
-  final List<Neighbor> _neighbors = List.generate(
-    15,
-        (index) => Neighbor(
-      name: '이웃 ${index + 1}',
-      userId: '@userID${index + 1}',
-      mutualFriends: 23,
-    ),
-  );
-
   @override
+  void initState() {
+    super.initState();
+    // 화면이 열릴 때 Provider를 통해 모든 데이터를 한 번에 불러옵니다.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      Provider.of<FriendProvider>(
+        context,
+        listen: false,
+      ).fetchAllNeighborData();
+    });
+  }
+
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.white,
       // 상단 앱 바
       appBar: AppBar(
         backgroundColor: Colors.white,
-        elevation: 0, // 그림자 제거
+        elevation: 0,
+        // 그림자 제거
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back, color: Colors.black),
+          icon: SvgPicture.asset(
+            'assets/icons/ic_back.svg',
+            colorFilter: const ColorFilter.mode(Colors.black, BlendMode.srcIn),
+          ),
           onPressed: () {
             // TODO: 뒤로가기 로직 구현
           },
@@ -58,7 +49,13 @@ class _ManageNeighborScreenState extends State<ManageNeighborScreen> {
         centerTitle: true,
         actions: [
           IconButton(
-            icon: const Icon(Icons.menu, color: Colors.black),
+            icon: SvgPicture.asset(
+              'assets/icons/ic_menu.svg',
+              colorFilter: const ColorFilter.mode(
+                Colors.black,
+                BlendMode.srcIn,
+              ),
+            ),
             onPressed: () {
               // TODO: 메뉴 버튼 로직 구현
             },
@@ -66,41 +63,49 @@ class _ManageNeighborScreenState extends State<ManageNeighborScreen> {
         ],
       ),
       // 화면 본문
-      body: Column(
-        children: [
-          _buildSearchBar(),
-          _buildFilterBar(),
-          // 스크롤 가능한 이웃 목록
-          Expanded(
-            child: ListView.builder(
-              itemCount: _neighbors.length,
-              itemBuilder: (context, index) {
-                return _NeighborListTile(neighbor: _neighbors[index]);
-              },
-            ),
-          ),
-        ],
-      ),
-      // 하단 네비게이션 바
-      bottomNavigationBar: BottomNavigationBar(
-        currentIndex: _selectedIndex,
-        onTap: (index) {
-          setState(() {
-            _selectedIndex = index;
-          });
-          // TODO: 각 탭에 대한 화면 이동 로직 구현
+      body: Consumer<FriendProvider>(
+        builder: (context, provider, child) {
+          // 로딩 중일 때
+          if (provider.isLoading) {
+            return const Center(child: CircularProgressIndicator());
+          }
+          // 에러 발생 시
+          if (provider.errorMessage != null) {
+            return Center(child: Text(provider.errorMessage!));
+          }
+
+          // --- 데이터 로딩 성공 시 ---
+          return Column(
+            children: [
+              _buildSearchBar(),
+              // ✨ API에서 받아온 '받은 요청' 목록으로 섹션 빌드
+              _buildRequestSection(provider),
+              _buildFilterBar(),
+              Expanded(
+                child: ListView.builder(
+                  // ✨ API에서 받아온 '수락된 친구' 목록 사용
+                  itemCount: provider.acceptedFriends.length,
+                  itemBuilder: (context, index) {
+                    final friend = provider.acceptedFriends[index];
+                    return _NeighborListTile(
+                      name: friend.username, // Friend 모델의 데이터 사용
+                      userId: '@${friend.username}', // userId 필드가 없다면 username 활용
+                      mutualFriends: 0, // API 응답에 없으므로 0 또는 다른 값으로 표시
+                      trailing: IconButton(
+                        icon: const Icon(Icons.more_vert),
+                        onPressed: () {},
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ],
+          );
         },
-        type: BottomNavigationBarType.fixed, // 탭이 많아도 고정
-        selectedItemColor: Colors.black,
-        unselectedItemColor: Colors.grey,
-        showSelectedLabels: false, // 선택된 아이템 라벨 숨김
-        showUnselectedLabels: false, // 선택되지 않은 아이템 라벨 숨김
-        items: const [
-          BottomNavigationBarItem(icon: Icon(Icons.home), label: 'Home'),
-          BottomNavigationBarItem(icon: Icon(Icons.search), label: 'Search'),
-          BottomNavigationBarItem(icon: Icon(Icons.edit_square), label: 'Write'),
-          BottomNavigationBarItem(icon: Icon(Icons.person_outline), label: 'Profile'),
-        ],
+      ),
+      bottomNavigationBar: CustomBottomNavigationBar(
+        currentIndex: 3,
+        onTap: (_) {},
       ),
     );
   }
@@ -120,6 +125,45 @@ class _ManageNeighborScreenState extends State<ManageNeighborScreen> {
             borderSide: BorderSide.none, // 테두리 없음
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildRequestSection(FriendProvider provider) {
+    // 요청이 없으면 아무것도 그리지 않음
+    if (provider.receivedRequests.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16.0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8.0),
+            child: Text(
+              '이웃 요청',
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+            ),
+          ),
+          // Column을 사용하여 요청 목록을 순서대로 그림
+          ...provider.receivedRequests.map((request) {
+            return _NeighborListTile(
+              name: request.username,
+              userId: '@${request.username}',
+              mutualFriends: 0,
+              // trailing 위젯으로 '수락' 버튼을 전달
+              trailing: _AcceptButton(
+                onPressed: () {
+                  // 버튼을 누르면 Provider의 수락 메소드 호출
+                  provider.acceptFriendRequest(request.username);
+                },
+              ),
+            );
+          }).toList(),
+          const SizedBox(height: 16), // 섹션 간 간격
+        ],
       ),
     );
   }
@@ -144,9 +188,20 @@ class _ManageNeighborScreenState extends State<ManageNeighborScreen> {
 
 // 이웃 목록의 각 항목을 구성하는 위젯
 class _NeighborListTile extends StatelessWidget {
-  final Neighbor neighbor;
+  final String name;
+  final String userId;
+  final int mutualFriends;
+  final Widget? trailing;
+  final String? profileImageUrl;
 
-  const _NeighborListTile({Key? key, required this.neighbor}) : super(key: key);
+  const _NeighborListTile({
+    Key? key,
+    required this.name,
+    required this.userId,
+    required this.mutualFriends,
+    this.trailing,
+    this.profileImageUrl,
+  }) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
@@ -155,23 +210,61 @@ class _NeighborListTile extends StatelessWidget {
         radius: 28,
         backgroundColor: Colors.grey[200],
         // 프로필 이미지가 있으면 보여주고, 없으면 기본 아이콘 표시
-        child: neighbor.profileImageUrl != null
-            ? ClipOval(child: Image.network(neighbor.profileImageUrl!, fit: BoxFit.cover))
-            : const Icon(Icons.person, color: Colors.white, size: 30),
+        child: profileImageUrl != null
+                ? ClipOval(
+                  child: Image.network(
+                    profileImageUrl!,
+                    fit: BoxFit.cover,
+                  ),
+                )
+                : SvgPicture.asset(
+                  'assets/icons/ic_profile.svg',
+                  width: 30,
+                  height: 30,
+                  colorFilter: const ColorFilter.mode(
+                    Colors.white,
+                    BlendMode.srcIn,
+                  ),
+                ),
       ),
       title: Row(
         children: [
-          Text(neighbor.name, style: const TextStyle(fontWeight: FontWeight.bold)),
+          Text(
+            name,
+            style: const TextStyle(fontWeight: FontWeight.bold),
+          ),
           const SizedBox(width: 8),
-          Text(neighbor.userId, style: const TextStyle(color: Colors.grey, fontSize: 14)),
+          Text(
+            userId,
+            style: const TextStyle(color: Colors.grey, fontSize: 14),
+          ),
         ],
       ),
-      subtitle: Text('이웃 ${neighbor.mutualFriends}명'),
-      trailing: IconButton(
-        icon: const Icon(Icons.more_vert),
-        onPressed: () {
-          // TODO: 더보기 메뉴 로직 구현
-        },
+      subtitle: Text('이웃 ${mutualFriends}명'),
+      trailing: trailing,
+    );
+  }
+}
+
+class _AcceptButton extends StatelessWidget {
+  final VoidCallback onPressed;
+
+  const _AcceptButton({required this.onPressed});
+
+  @override
+  Widget build(BuildContext context) {
+    // '수락됨' 상태는 Provider가 목록에서 제거해주므로 '수락' 버튼만 필요
+    return SizedBox(
+      width: 70, height: 32,
+      child: ElevatedButton(
+        onPressed: onPressed,
+        style: ElevatedButton.styleFrom(
+          backgroundColor: const Color(0xFF3B82F6),
+          foregroundColor: Colors.white,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+          elevation: 0,
+        ),
+        child: const Text('수락', style: TextStyle(fontWeight: FontWeight.bold)),
       ),
     );
   }

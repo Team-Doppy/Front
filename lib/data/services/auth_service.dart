@@ -7,9 +7,8 @@ class AuthService {
   final String _tokenKey = 'auth_token';
 
   // 🎯 [수정] API 명세서에 맞게 전체 URL을 정확히 입력했습니다. (포트와 엔드포인트 추가)
-  final String _baseUrl =
-      "http://Doppy-GaOoLi-env.eba-i6rkanrz.us-east-1.elasticbeanstalk.com";
-
+  final String _baseUrl = "http://doppy-gaooli-env.eba-i6rkanrz.us-east-1.elasticbeanstalk.com";
+  
   //API 2번: 사용자 로그인
   Future<bool> login(String username, String password) async {
     // 🎯 [수정] 이메일(email)이 아닌 사용자 이름(username)을 받도록 변경했습니다.

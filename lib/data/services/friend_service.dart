@@ -16,7 +16,7 @@ class FriendService extends ApiServiceBase {
     }
   }
 
-  // 1. 친구 신청
+  // 1. 친구 신청(완)
   Future<void> sendFriendRequest(String targetUsername) async {
     final body = {'targetUsername': targetUsername};
     final response = await post('/api/friends/request', body: body);
@@ -25,7 +25,7 @@ class FriendService extends ApiServiceBase {
     }
   }
 
-  // 2. 받은 친구 요청 목록 조회
+  // 2. 받은 친구 요청 목록 조회(완)
   Future<List<Friend>> getReceivedFriendRequests() async {
     final response = await get('/api/friends/received-requests');
     if (response.statusCode == 200) {
@@ -36,7 +36,7 @@ class FriendService extends ApiServiceBase {
     }
   }
 
-  // 3. 친구 요청 수락
+  // 3. 친구 요청 수락(완)
   Future<void> acceptFriendRequest(String requesterUsername) async {
     final response = await post('/api/friends/accept/$requesterUsername');
     if (response.statusCode != 200) {
@@ -44,7 +44,7 @@ class FriendService extends ApiServiceBase {
     }
   }
 
-  // 6. 수락된 친구 목록 조회
+  // 6. 수락된 친구 목록 조회(완)
   Future<List<Friend>> getAcceptedFriends() async {
     final response = await get('/api/friends/accepted');
     if (response.statusCode == 200) {

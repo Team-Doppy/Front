@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 
 class CustomBottomNavigationBar extends StatelessWidget {
   /// 현재 선택된 인덱스 (0: 홈, 1: 검색, 2: 작성, 3: 프로필)
@@ -40,10 +41,10 @@ class CustomBottomNavigationBar extends StatelessWidget {
   Widget build(BuildContext context) {
     // 아이콘 에셋 경로
     const iconAssets = [
-      'assets/images/home_icon.png',
-      'assets/images/search_icon.png',
-      'assets/images/write_icon.png',
-      'assets/images/profile_icon_bar.png',
+      'assets/icons/ic_home.svg',
+      'assets/icons/ic_search.svg',
+      'assets/icons/ic_write.svg',
+      'assets/icons/ic_profile.svg',
     ];
 
     return Container(
@@ -62,11 +63,11 @@ class CustomBottomNavigationBar extends StatelessWidget {
             child: InkWell(
               onTap: () => _handleTap(context, index),
               child: Center(
-                child: Image.asset(
+                child: SvgPicture.asset(
                   iconAssets[index],
                   width: iconSize,
                   height: iconSize,
-                  color: iconColor,
+                  colorFilter: ColorFilter.mode(iconColor, BlendMode.srcIn),
                 ),
               ),
             ),
