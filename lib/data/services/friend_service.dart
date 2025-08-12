@@ -5,7 +5,6 @@ import '../models/user_model.dart';
 import 'api_service_base.dart';
 
 class FriendService extends ApiServiceBase {
-
   // 8. 사용자 검색
   Future<List<User>> searchUsers(String searchTerm) async {
     final response = await get('/api/friends/search?username=$searchTerm');
@@ -19,7 +18,7 @@ class FriendService extends ApiServiceBase {
 
   // 1. 친구 신청(완)
   Future<void> sendFriendRequest(String targetUsername) async {
-    final body = jsonEncode({'targetUsername': targetUsername});
+    final body = {'targetUsername': targetUsername};
     final response = await post('/api/friends/request', body: body);
     if (response.statusCode != 200) {
       throw Exception('친구 신청 실패');
