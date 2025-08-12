@@ -1,21 +1,37 @@
+// lib/pages/post/search_screen.dart
 import 'dart:async';
+import 'dart:convert';
+
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+
 import '../../theme/app_text_styles.dart';
 import '../components/custom_bottom_navigation_bar.dart';
+import '../../providers/auth_provider.dart';
+// 기존 import들 아래에 추가
+import '../../data/services/auth_service.dart'; // ← 경로 확인
+
+/// ===============================================================
+/// Search Screen (계정/게시글)
+/// - 서버 계정 검색(/api/friends/search?username=) 연결
+/// - 요청/응답/에러 디테일 로깅
+/// - JWT 형식 검증(헤더.payload.서명)
+/// - 커스텀 탭 인디케이터(화면 너비의 37.5%)
+/// - 계정/게시글 리스트 탭, 터치/선택 표시, 스낵바 알림
+/// ===============================================================
 
 class SearchScreen extends StatefulWidget {
   const SearchScreen({super.key});
-
   @override
   State<SearchScreen> createState() => _SearchScreenState();
 }
 
-/// ===== 데이터 모델 =====
+/// -------------------- 데이터 모델 --------------------
 class AccountItem {
-  final String nickname; // 서버는 username만 주므로 UI 편의를 위해 nickname=userId 변형
-  final String userId; // '@username'
-  final int neighbors; // 서버 응답엔 없으므로 0으로 채움
+  final String nickname; // 서버는 username만 주므로 UI 편의상 nickname = username
+  final String userId; // 화면 표기 '@username'
+  final int neighbors; // 서버 응답에 없으므로 0으로 채움
 
   const AccountItem({
     required this.nickname,
@@ -40,9 +56,130 @@ class PostItemData {
   });
 }
 
-/// ===== 메인 화면 =====
+/// -------------------- API 결과 컨테이너 --------------------
+class FriendSearchResult {
+  final int? status; // HTTP status
+  final List<String> usernames; // 200일 때 파싱한 usernames
+  final dynamic body; // 원본 body
+  final Map<String, List<String>> headers; // 응답 헤더
+  final Uri uri; // 실제 요청 URI
+  final Duration elapsed; // 소요 시간
+  final String? serverMessage; // body.message/error/detail 등
+
+  bool get ok => status != null && status! >= 200 && status! < 300;
+
+  const FriendSearchResult({
+    required this.status,
+    required this.usernames,
+    required this.body,
+    required this.headers,
+    required this.uri,
+    required this.elapsed,
+    required this.serverMessage,
+  });
+}
+
+/// -------------------- API 클라이언트 --------------------
+class FriendSearchApi {
+  final Dio _dio;
+
+  FriendSearchApi()
+    : _dio = Dio(
+        BaseOptions(
+          connectTimeout: const Duration(seconds: 10),
+          receiveTimeout: const Duration(seconds: 10),
+          // 4xx/5xx도 onResponse로 들어오게 해서 본문을 반드시 잡는다
+          validateStatus: (code) => true,
+          receiveDataWhenStatusError: true,
+        ),
+      );
+
+  Future<FriendSearchResult> searchUsers({
+    required String baseUrl,
+    required String token,
+    required String query,
+    CancelToken? cancelToken,
+  }) async {
+    final uri = '$baseUrl/api/friends/search';
+    final sw = Stopwatch()..start();
+
+    // 요청 로그 (토큰은 끝 6자리만 노출)
+    final tail =
+        token.isNotEmpty
+            ? token.substring(
+              token.length - (token.length >= 6 ? 6 : token.length),
+            )
+            : '';
+    debugPrint('┌─[REQ] GET $uri?username=$query');
+    debugPrint('│ Authorization: Bearer ***$tail');
+    debugPrint('└────────────────────────────────');
+
+    final res = await _dio.get(
+      uri,
+      queryParameters: {'username': query},
+      cancelToken: cancelToken,
+      options: Options(
+        headers: {'Authorization': 'Bearer $token'},
+        responseType: ResponseType.json,
+      ),
+    );
+    sw.stop();
+
+    final status = res.statusCode;
+    final body = res.data;
+    final uriFinal = res.requestOptions.uri;
+    final headers = res.headers.map.map((k, v) => MapEntry(k, v));
+
+    // 응답 로그
+    debugPrint('┌─[RES] ${res.requestOptions.method} $uriFinal');
+    debugPrint('│ status: $status');
+    debugPrint('│ headers: ${_trimLong(headers.toString())}');
+    debugPrint('│ body: ${_trimLong(_prettyJson(body))}');
+    debugPrint('│ elapsed: ${sw.elapsedMilliseconds}ms');
+    debugPrint('└────────────────────────────────');
+
+    // 서버 메시지 추출
+    String? pickMessage(dynamic b) {
+      try {
+        if (b is Map<String, dynamic>) {
+          return (b['message'] ?? b['error'] ?? b['detail'] ?? b['msg'])
+              ?.toString();
+        }
+        if (b is String) return b;
+      } catch (_) {}
+      return null;
+    }
+
+    // usernames 파싱(성공일 때만)
+    final usernames = <String>[];
+    if (status == 200) {
+      if (body is List) {
+        for (final e in body) {
+          if (e is Map<String, dynamic>) {
+            final u = e['username']?.toString();
+            if (u != null && u.isNotEmpty) usernames.add(u);
+          }
+        }
+      } else {
+        debugPrint('[-] WARN: 200인데 body가 List가 아님: ${body.runtimeType}');
+      }
+    }
+
+    return FriendSearchResult(
+      status: status,
+      usernames: usernames,
+      body: body,
+      headers: headers,
+      uri: uriFinal,
+      elapsed: sw.elapsed,
+      serverMessage: pickMessage(body),
+    );
+  }
+}
+
+/// -------------------- 메인 화면 --------------------
 class _SearchScreenState extends State<SearchScreen> {
-  // 네비/정렬
+  // 하단 네비/정렬
   int _bottomIndex = 1;
   String _accountSort = '계정 이름';
   String _postSort = '인기순';
@@ -55,9 +192,11 @@ class _SearchScreenState extends State<SearchScreen> {
   final TextEditingController _searchController = TextEditingController();
   String _query = '';
   Timer? _debounce;
+  final AuthService _authService = AuthService();
 
   // 백엔드 설정
-  final String _baseUrl = 'https://example.com'; // TODO: 실제 서버 base URL로 교체
+  final String _baseUrl =
+      'http://Doppy-GaOoLi-env.eba-i6rkanrz.us-east-1.elasticbeanstalk.com';
   final FriendSearchApi _friendApi = FriendSearchApi();
 
   // 네트워크 요청 상태
@@ -65,7 +204,7 @@ class _SearchScreenState extends State<SearchScreen> {
   String? _accountsError;
   CancelToken? _accountsCancelToken;
 
-  // 더미 데이터 (게시글은 로컬 유지)
+  // 로컬 더미 게시글
   late final List<PostItemData> _allPosts = [
     const PostItemData(
       title: '도피(doppy)로 기록하는 나의 일상',
@@ -133,14 +272,14 @@ class _SearchScreenState extends State<SearchScreen> {
       ),
   ];
 
-  // 표시 목록(검색/정렬 반영본)
+  // 표시 목록
   List<AccountItem> _accounts = [];
   List<PostItemData> _posts = [];
 
   @override
   void initState() {
     super.initState();
-    _applySortAndResetInitial(); // 최초엔 전체 게시글만 채움, 계정은 비워둠
+    _applySortAndResetInitial(); // 최초엔 계정 비우고 게시글만 채움
   }
 
   @override
@@ -151,46 +290,38 @@ class _SearchScreenState extends State<SearchScreen> {
     super.dispose();
   }
 
-  // ===== 검색/정렬 =====
+  // -------------------- 검색/정렬 --------------------
   void _onSearchChanged(String q) {
     setState(() => _query = q);
     _debounce?.cancel();
     _debounce = Timer(const Duration(milliseconds: 350), () {
-      _performSearch(); // 디바운스 후 실행
+      _performSearch();
     });
   }
 
   void _onSearchSubmitted(String q) {
     setState(() => _query = q);
     _debounce?.cancel();
-    _performSearch(); // 즉시 실행
+    _performSearch();
   }
 
   Future<void> _performSearch() async {
     final q = _query.trim();
-    debugPrint('[Search] performSearch | query="$q"');
+    debugPrint('[Search] perform | query="$q"');
 
     if (q.isEmpty) {
-      // 빈 검색어: 계정은 비우고, 게시글은 전체/정렬 반영 상태로
       setState(() {
         _accounts = [];
         _posts = _sortPosts(List.of(_allPosts));
         _selectedAccountIndex = null;
         _selectedPostIndex = null;
       });
-      debugPrint(
-        '[Search] empty query -> clear accounts, show all posts (${_posts.length})',
-      );
+      debugPrint('[Search] empty -> accounts cleared, posts=${_posts.length}');
       return;
     }
 
-    // 1) 계정: 서버 검색
-    await _searchAccountsRemote(q);
-
-    // 2) 게시글: 로컬 필터
-    _filterPostsLocal(q);
-
-    // 선택 상태 초기화
+    await _searchAccountsRemote(q); // 서버 검색
+    _filterPostsLocal(q); // 로컬(게시글) 필터
     setState(() {
       _selectedAccountIndex = null;
       _selectedPostIndex = null;
@@ -198,7 +329,6 @@ class _SearchScreenState extends State<SearchScreen> {
   }
 
   Future<void> _searchAccountsRemote(String q) async {
-    // 진행 중 요청이 있으면 취소
     _accountsCancelToken?.cancel('new query: $q');
     _accountsCancelToken = CancelToken();
 
@@ -209,69 +339,99 @@ class _SearchScreenState extends State<SearchScreen> {
       _accountsError = null;
     });
 
-    final startedAt = DateTime.now();
-    debugPrint(
-      '[API] friends/search started | q="$q" | t=${startedAt.toIso8601String()}',
-    );
+    // ✅ JWT 형식 검증 (헤더.payload.서명)
+    final jwtLike = RegExp(r'^[A-Za-z0-9-_]+\.[A-Za-z0-9-_]+\.[A-Za-z0-9-_]+$');
+
+    if (token == null || token.isEmpty) {
+      debugPrint('❌ JWT 없음: 요청 중단');
+      setState(() {
+        _accountsLoading = false;
+        _accountsError = '로그인이 필요합니다(토큰 없음).';
+        _accounts = [];
+      });
+      _showSnack('로그인이 필요합니다(토큰 없음).');
+      return;
+    }
+    if (!jwtLike.hasMatch(token)) {
+      debugPrint('❌ JWT 형식 불일치: "$token"');
+      setState(() {
+        _accountsLoading = false;
+        _accountsError = '로그인 상태가 유효하지 않습니다(토큰 형식 오류).';
+        _accounts = [];
+      });
+      _showSnack('로그인 상태가 유효하지 않습니다(토큰 형식 오류).');
+      return;
+    }
+
+    // 토큰 말단 6자리만 마스킹해서 찍기
+    final tail = token.substring(token.length - 6);
+    debugPrint('🔑 Using JWT ***$tail');
 
     try {
-      final usernames = await _friendApi.searchUsers(
+      final res = await _friendApi.searchUsers(
         baseUrl: _baseUrl,
-        token: token ?? '',
+        token: token,
         query: q,
         cancelToken: _accountsCancelToken,
       );
 
-      // 서버가 반환한 username 배열을 화면용 AccountItem으로 변환
-      final items =
-          usernames
-              .map(
-                (u) => AccountItem(
-                  nickname: u, // 닉네임은 서버 데이터가 없으므로 일단 username
-                  userId: '@$u',
-                  neighbors: 0, // 서버 응답에 없으므로 0으로 표시
-                ),
-              )
-              .toList();
+      if (res.ok) {
+        final items =
+            res.usernames
+                .map(
+                  (u) => AccountItem(nickname: u, userId: '@$u', neighbors: 0),
+                )
+                .toList();
+        setState(() {
+          _accountsLoading = false;
+          _accountsError = null;
+          _accounts = _sortAccounts(items);
+        });
+        debugPrint('[OK] accounts=${items.length}');
+      } else {
+        final code = res.status ?? -1;
+        final serverMsg = res.serverMessage;
+        final uiMsg =
+            '계정 검색 실패 ($code)${serverMsg != null ? ' - $serverMsg' : ''}';
 
-      // 정렬 규칙 적용
-      final sorted = _sortAccounts(items);
+        debugPrint('[-] FAIL search users | code=$code');
+        debugPrint(
+          '[-] uri=${res.uri} | elapsed=${res.elapsed.inMilliseconds}ms',
+        );
 
-      final endedAt = DateTime.now();
-      debugPrint(
-        '[API] friends/search success | count=${sorted.length} | elapsed=${endedAt.difference(startedAt).inMilliseconds}ms',
-      );
-
-      setState(() {
-        _accountsLoading = false;
-        _accounts = sorted;
-      });
+        setState(() {
+          _accountsLoading = false;
+          _accountsError = uiMsg;
+          _accounts = [];
+        });
+        _showSnack(uiMsg);
+      }
     } on DioException catch (e) {
       if (CancelToken.isCancel(e)) {
-        debugPrint('[API] friends/search canceled: ${e.message}');
+        debugPrint('[CANCEL] ${e.message}');
         return;
       }
-      // 자세한 에러 로깅
-      debugPrint(
-        '[API][ERROR] friends/search failed | type=${e.type} | status=${e.response?.statusCode}',
-      );
-      debugPrint('[API][ERROR] message=${e.message}');
-      debugPrint('[API][ERROR] data=${e.response?.data}');
+      final code = e.response?.statusCode;
+      final body = e.response?.data;
+      debugPrint('┌─[DIO ERROR]');
+      debugPrint('│ type=${e.type} code=$code');
+      debugPrint('│ body=${_trimLong(_prettyJson(body))}');
+      debugPrint('└─────────────────');
 
       setState(() {
         _accountsLoading = false;
-        _accountsError = '계정 검색 실패 (${e.response?.statusCode ?? e.type})';
-        _accounts = []; // 실패 시 빈 리스트
+        _accountsError = '계정 검색 실패${code != null ? ' ($code)' : ''}';
+        _accounts = [];
       });
       _showSnack(_accountsError!);
     } catch (e) {
-      debugPrint('[API][ERROR] friends/search unknown error: $e');
+      debugPrint('[UNEXPECTED] $e');
       setState(() {
         _accountsLoading = false;
         _accountsError = '계정 검색 중 알 수 없는 오류';
         _accounts = [];
       });
-      _showSnack(_accountsError!);
+      _showSnack('계정 검색 중 알 수 없는 오류');
     }
   }
 
@@ -286,15 +446,13 @@ class _SearchScreenState extends State<SearchScreen> {
             )
             .toList();
     pst = _sortPosts(pst);
-    setState(() {
-      _posts = pst;
-    });
-    debugPrint('[Search] posts local filtered | count=${pst.length}');
+    setState(() => _posts = pst);
+    debugPrint('[Search] posts filtered | count=${pst.length}');
   }
 
   void _applySortAndResetInitial() {
     setState(() {
-      _accounts = []; // 최초엔 서버 검색 전이므로 비움
+      _accounts = [];
       _posts = _sortPosts(List.of(_allPosts));
       _selectedAccountIndex = null;
       _selectedPostIndex = null;
@@ -315,21 +473,29 @@ class _SearchScreenState extends State<SearchScreen> {
     return list;
   }
 
+  /// 실제 토큰 가져오기 (AuthProvider.jwtToken 사용)
   Future<String?> _getAuthToken() async {
-    // TODO: 실제 토큰 획득 로직으로 교체 (예: secure storage, provider, dio interceptor 등)
-    // 예시: return await SecureStorage.read('accessToken');
-    debugPrint('[Auth] getAuthToken called');
-    return 'YOUR_ACCESS_TOKEN'; // 임시
+    try {
+      final t = await _authService.getToken();
+      final trimmed = t?.trim();
+      // 로그로 실제 저장 여부 확인
+      debugPrint('[AuthService] token(raw)="${trimmed ?? 'null'}"');
+
+      return trimmed;
+    } catch (e) {
+      debugPrint('[AuthService] getToken failed: $e');
+      return null;
+    }
   }
 
   void _clearSearch() {
-    debugPrint('[Search] clear query');
+    debugPrint('[Search] clear');
     _searchController.clear();
     setState(() => _query = '');
     _performSearch();
   }
 
-  // ===== 선택/알림 =====
+  // -------------------- 선택/알림 --------------------
   void _onTapAccount(int index, AccountItem item) {
     setState(() => _selectedAccountIndex = index);
     final msg = '계정 선택: ${item.nickname} (${item.userId})';
@@ -414,7 +580,7 @@ class _SearchScreenState extends State<SearchScreen> {
   }
 }
 
-/// ===== 상단 바(로고+검색창) =====
+/// -------------------- 상단 바(로고+검색창) --------------------
 class _TopBar extends StatelessWidget {
   final TextEditingController controller;
   final String query;
@@ -489,7 +655,7 @@ class _TopBar extends StatelessWidget {
   }
 }
 
-/// ===== 탭바 =====
+/// -------------------- 탭바(커스텀 인디케이터) --------------------
 class _SearchTabBar extends StatelessWidget {
   const _SearchTabBar();
 
@@ -502,7 +668,7 @@ class _SearchTabBar extends StatelessWidget {
       child: SizedBox(
         height: 46,
         child: TabBar(
-          dividerColor: Colors.transparent,
+          dividerColor: Colors.transparent, // 기본 하단선 제거
           labelColor: Colors.black,
           unselectedLabelColor: Colors.black,
           labelStyle: AppTextStyles.withWeight(
@@ -528,7 +694,7 @@ class _SearchTabBar extends StatelessWidget {
   }
 }
 
-/// ===== 계정 탭 =====
+/// -------------------- 계정 탭 --------------------
 class _AccountsTab extends StatelessWidget {
   final List<AccountItem> accounts;
   final String accountSort;
@@ -553,10 +719,7 @@ class _AccountsTab extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // 로딩바
         if (loading) const LinearProgressIndicator(minHeight: 2),
-
-        // 정렬 + 결과 수 / 에러
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
           child: Row(
@@ -607,7 +770,6 @@ class _AccountsTab extends StatelessWidget {
             ],
           ),
         ),
-        // 리스트
         Expanded(
           child:
               accounts.isEmpty
@@ -632,7 +794,7 @@ class _AccountsTab extends StatelessWidget {
   }
 }
 
-/// ===== 게시글 탭 =====
+/// -------------------- 게시글 탭 --------------------
 class _PostsTab extends StatelessWidget {
   final List<PostItemData> posts;
   final String postSort;
@@ -653,7 +815,6 @@ class _PostsTab extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // 정렬 + 결과 수
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
           child: Row(
@@ -695,7 +856,6 @@ class _PostsTab extends StatelessWidget {
             ],
           ),
         ),
-        // 리스트
         Expanded(
           child:
               posts.isEmpty
@@ -722,7 +882,7 @@ class _PostsTab extends StatelessWidget {
   }
 }
 
-/// ===== 공통: 결과 없음 =====
+/// -------------------- 공통: 결과 없음 --------------------
 class _EmptyResult extends StatelessWidget {
   final String message;
   const _EmptyResult({required this.message});
@@ -741,7 +901,7 @@ class _EmptyResult extends StatelessWidget {
   }
 }
 
-/// ===== 컴포넌트: 계정 아이템 =====
+/// -------------------- 컴포넌트: 계정 아이템 --------------------
 class _AccountListItem extends StatelessWidget {
   final int index;
   final String nickname;
@@ -848,7 +1008,7 @@ class _AccountListItem extends StatelessWidget {
   }
 }
 
-/// ===== 컴포넌트: 게시글 아이템 =====
+/// -------------------- 컴포넌트: 게시글 아이템 --------------------
 class _PostListItem extends StatelessWidget {
   final int index;
   final String title;
@@ -963,13 +1123,13 @@ class _PostListItem extends StatelessWidget {
   }
 }
 
-/// ===== 커스텀 인디케이터: 활성 탭 중앙에, 화면 폭의 37.5% 길이 =====
+/// -------------------- 커스텀 인디케이터 --------------------
 class FixedUnderlineTabIndicator extends Decoration {
   final Color color;
   final double thickness;
   final double bottomInset;
   final double screenWidth; // 스크린 전체 폭
-  final double fraction; // 스크린 폭 대비 비율 (0.375 = 37.5%)
+  final double fraction; // 스크린 폭 대비 길이 비율 (0.375 = 37.5%)
 
   const FixedUnderlineTabIndicator({
     required this.color,
@@ -985,7 +1145,7 @@ class FixedUnderlineTabIndicator extends Decoration {
       color: color,
       thickness: thickness,
       bottomInset: bottomInset,
-      indicatorWidth: screenWidth * fraction, // 스크린 기준 길이
+      indicatorWidth: screenWidth * fraction,
     );
   }
 }
@@ -1008,12 +1168,9 @@ class _FixedUnderlinePainter extends BoxPainter {
     if (configuration.size == null) return;
 
     final Rect rect = offset & configuration.size!;
-    final double cx = rect.center.dx; // 현재 탭 중앙
+    final double cx = rect.center.dx; // 활성 탭 중앙
     final double half = indicatorWidth / 2;
     final double y = rect.bottom - bottomInset - thickness / 2;
-
-    final double x1 = cx - half;
-    final double x2 = cx + half;
 
     final Paint p =
         Paint()
@@ -1022,68 +1179,24 @@ class _FixedUnderlinePainter extends BoxPainter {
           ..style = PaintingStyle.stroke
           ..strokeCap = StrokeCap.square;
 
-    canvas.drawLine(Offset(x1, y), Offset(x2, y), p);
+    canvas.drawLine(Offset(cx - half, y), Offset(cx + half, y), p);
   }
 }
 
-/// ====== API: 친구 검색 ======
-/// GET /api/friends/search?username={searchTerm}
-/// Authorization: Bearer {token}
-class FriendSearchApi {
-  final Dio _dio = Dio(
-    BaseOptions(
-      connectTimeout: const Duration(seconds: 10),
-      receiveTimeout: const Duration(seconds: 10),
-    ),
-  );
-
-  Future<List<String>> searchUsers({
-    required String baseUrl,
-    required String token,
-    required String query,
-    CancelToken? cancelToken,
-  }) async {
-    final uri = '$baseUrl/api/friends/search';
-    final params = {'username': query};
-
-    // 요청 로그
-    debugPrint('[API] → GET $uri');
-    debugPrint('[API]   params=$params');
-    debugPrint(
-      '[API]   headers={"Authorization": "Bearer ***${token.length >= 6 ? token.substring(token.length - 6) : token}"}',
-    );
-
-    final sw = Stopwatch()..start();
-
-    final res = await _dio.get<List<dynamic>>(
-      uri,
-      queryParameters: params,
-      cancelToken: cancelToken,
-      options: Options(
-        headers: {'Authorization': 'Bearer $token'},
-        responseType: ResponseType.json,
-      ),
-    );
-
-    sw.stop();
-    debugPrint('[API] ← ${res.statusCode}  (${sw.elapsedMilliseconds}ms)');
-
-    if (res.statusCode == 200 && res.data != null) {
-      // 응답 예: [{"username":"testuser2"}]
-      final List<dynamic> raw = res.data!;
-      final usernames = <String>[];
-      for (final item in raw) {
-        final u = (item as Map<String, dynamic>)['username']?.toString();
-        if (u != null && u.isNotEmpty) usernames.add(u);
-      }
-      debugPrint('[API] parsed usernames count=${usernames.length}');
-      return usernames;
-    } else {
-      // 비정상 코드 로깅
-      debugPrint(
-        '[API][WARN] unexpected status: ${res.statusCode}, data=${res.data}',
-      );
-      return [];
+/// -------------------- 로깅 유틸 --------------------
+String _prettyJson(dynamic data) {
+  try {
+    if (data is String) {
+      final obj = json.decode(data);
+      return const JsonEncoder.withIndent('  ').convert(obj);
     }
+    return const JsonEncoder.withIndent('  ').convert(data);
+  } catch (_) {
+    return data?.toString() ?? '';
   }
+}
+
+String _trimLong(String s, {int max = 3000}) {
+  if (s.length <= max) return s;
+  return s.substring(0, max) + '…(truncated)';
 }
