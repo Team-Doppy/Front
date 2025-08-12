@@ -5,7 +5,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/app_text_styles.dart';
-import '../../data/services/friend_service.dart';
+import '../../data/services/auth_service.dart';
+import '../../data/models/user_model.dart';
 import 'manage_group_screen.dart';
 import 'manage_neighbor_screen.dart';
 
@@ -17,70 +18,81 @@ class UserProfileScreen extends StatefulWidget {
 }
 
 class _UserProfileScreenState extends State<UserProfileScreen> {
-  // 프로필 구분을 위한 상태 변수 (테스트용으로 false로 설정)
-  bool isOwnProfile = false;
-
   // 피드 보기 모드 상태 (true: 카드형, false: 리스트형)
   bool isCardView = true;
 
-  // 이웃 요청 상태 관리
-  bool isNeighborRequested = false;
+  // 인증 서비스 인스턴스
+  final AuthService _authService = AuthService();
 
-  // 친구 서비스 인스턴스
-  final FriendService _friendService = FriendService();
-
-  // 요청 중인지 확인하는 상태
-  bool _isRequesting = false;
-
-  // 이웃 요청 처리 메서드
-  Future<void> _sendNeighborRequest() async {
-    if (_isRequesting || isNeighborRequested) return;
-
-    setState(() {
-      _isRequesting = true;
-    });
-
-    try {
-      // 현재 프로필의 사용자명 (실제로는 파라미터로 받아야 함)
-      const String targetUsername = 'swimn_'; // 임시로 하드코딩
-
-      await _friendService.sendFriendRequest(targetUsername);
-
-      setState(() {
-        isNeighborRequested = true;
-      });
-
-      // 성공 메시지 표시
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('이웃 요청이 완료되었습니다.'),
-            backgroundColor: Colors.green,
-          ),
-        );
-      }
-    } catch (e) {
-      // 에러 메시지 표시
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('이웃 요청 실패: ${e.toString()}'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isRequesting = false;
-        });
-      }
-    }
-  }
+  // 사용자 정보 관련 상태
+  User? _profileUser;
+  bool _isLoadingUser = true;
 
   double? _handleTop; // 드래그 핸들의 현재 top 위치
   late double _minHandleTop; // 핸들이 올라갈 수 있는 최소 top
   late double _initialHandleTop; // 초기 핸들 위치 (아래쪽 한계)
+
+  @override
+  void initState() {
+    super.initState();
+    _loadProfileUser();
+  }
+
+  // 프로필 사용자 정보 로드
+  Future<void> _loadProfileUser() async {
+    try {
+      setState(() {
+        _isLoadingUser = true;
+      });
+
+      // 현재 로그인된 사용자의 토큰을 가져와서 사용자 정보 조회
+      final token = await _authService.getToken();
+
+      if (token != null) {
+        // 토큰이 있으면 현재 로그인된 사용자 정보를 가져옴
+        final String? profileUsername = await _authService.getUsername();
+
+        if (profileUsername != null) {
+          final userData = await _authService.getUserInfo(profileUsername);
+
+          if (userData != null) {
+            // API 응답에서 User 객체 생성
+            final user = User(
+              id: userData['id'],
+              username: userData['username'],
+              role: userData['role'],
+            );
+
+            setState(() {
+              _profileUser = user;
+              _isLoadingUser = false;
+            });
+          } else {
+            setState(() {
+              _isLoadingUser = false;
+            });
+          }
+        } else {
+          // 사용자명이 없으면 로그인되지 않은 상태
+          setState(() {
+            _isLoadingUser = false;
+          });
+          // TODO: 로그인 페이지로 이동하거나 에러 처리
+        }
+      } else {
+        // 토큰이 없으면 로그인되지 않은 상태
+        setState(() {
+          _isLoadingUser = false;
+        });
+        // TODO: 로그인 페이지로 이동하거나 에러 처리
+      }
+    } catch (e) {
+      print('프로필 사용자 정보 로드 실패: $e');
+      setState(() {
+        _isLoadingUser = false;
+      });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -160,9 +172,14 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
           left: 0,
           right: 0,
           child: DoppyTopBar(
-            title: isOwnProfile ? '@swimn_' : '@swimn_', // 사용자 아이디 표시
-            showBack: !isOwnProfile, // 내 프로필이 아닐 때만 뒤로가기 버튼 표시
-            onBack: !isOwnProfile ? () => Navigator.pop(context) : null,
+            title:
+                _isLoadingUser
+                    ? '로딩 중...'
+                    : _profileUser != null
+                    ? '@${_profileUser!.username}'
+                    : '사용자', // 사용자 아이디 표시
+            showBack: false, // 내 프로필이므로 뒤로가기 버튼 숨김
+            onBack: null,
             onMore: () {
               // 더보기 메뉴 로직 (필요시 구현)
             },
@@ -209,163 +226,90 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
       ),
     ];
 
-    // 내 프로필일 때만 이웃관리, 그룹관리 버튼 표시
-    if (isOwnProfile) {
-      elements.addAll([
-        // 그룹관리 버튼
-        Positioned(
-          left: containerWidth * 0.517,
-          top: containerHeight * 0.25,
-          child: Material(
-            color: Colors.transparent,
-            child: InkWell(
-              borderRadius: BorderRadius.circular(10),
-              splashColor: Colors.grey.withOpacity(0.6),
-              highlightColor: Colors.grey.withOpacity(0.3),
-              onTap: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => const ManageGroupScreen(),
-                  ),
-                );
-              }, // 그룹관리 페이지 이동
-              child: Container(
-                width: containerWidth * 0.453,
-                height: containerHeight * 0.046,
-                clipBehavior: Clip.antiAlias,
-                decoration: ShapeDecoration(
-                  color: AppColors.lightBackground,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(10),
-                  ),
+    // 이웃관리, 그룹관리 버튼 표시 (내 프로필이므로 항상 표시)
+    elements.addAll([
+      // 그룹관리 버튼
+      Positioned(
+        left: containerWidth * 0.517,
+        top: containerHeight * 0.25,
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(10),
+            splashColor: Colors.grey.withOpacity(0.6),
+            highlightColor: Colors.grey.withOpacity(0.3),
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const ManageGroupScreen(),
                 ),
-                child: Center(
-                  child: Text(
-                    '그룹관리',
-                    style: AppTextStyles.bodyLarge.copyWith(
-                      color: AppColors.lightTextSecondary,
-                    ), // 강조 본문 - 메뉴, 중요 본문
-                  ),
+              );
+            }, // 그룹관리 페이지 이동
+            child: Container(
+              width: containerWidth * 0.453,
+              height: containerHeight * 0.046,
+              clipBehavior: Clip.antiAlias,
+              decoration: ShapeDecoration(
+                color: AppColors.lightBackground,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+              ),
+              child: Center(
+                child: Text(
+                  '그룹관리',
+                  style: AppTextStyles.bodyLarge.copyWith(
+                    color: AppColors.lightTextSecondary,
+                  ), // 강조 본문 - 메뉴, 중요 본문
                 ),
               ),
             ),
           ),
         ),
-        // 이웃관리 버튼
-        Positioned(
-          left: containerWidth * 0.047,
-          top: containerHeight * 0.25,
-          child: Material(
-            color: Colors.transparent,
-            child: InkWell(
-              borderRadius: BorderRadius.circular(10),
-              splashColor: Colors.grey.withOpacity(0.6),
-              highlightColor: Colors.grey.withOpacity(0.3),
-              onTap: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => const ManageNeighborScreen(),
-                  ),
-                );
-              }, // 이웃관리 페이지 이동
-              child: Container(
-                width: containerWidth * 0.453,
-                height: containerHeight * 0.046,
-                clipBehavior: Clip.antiAlias,
-                decoration: ShapeDecoration(
-                  color: AppColors.lightSurfaceVariant,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(10),
-                  ),
+      ),
+      // 이웃관리 버튼
+      Positioned(
+        left: containerWidth * 0.047,
+        top: containerHeight * 0.25,
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(10),
+            splashColor: Colors.grey.withOpacity(0.6),
+            highlightColor: Colors.grey.withOpacity(0.3),
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const ManageNeighborScreen(),
                 ),
-                child: Center(
-                  child: Text(
-                    '이웃관리',
-                    style: AppTextStyles.bodyLarge.copyWith(
-                      color: AppColors.lightTextSecondary,
-                      fontWeight: FontWeight.w500,
-                    ), // 강조 본문 - 메뉴, 중요 본문
-                  ),
+              );
+            }, // 이웃관리 페이지 이동
+            child: Container(
+              width: containerWidth * 0.453,
+              height: containerHeight * 0.046,
+              clipBehavior: Clip.antiAlias,
+              decoration: ShapeDecoration(
+                color: AppColors.lightSurfaceVariant,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+              ),
+              child: Center(
+                child: Text(
+                  '이웃관리',
+                  style: AppTextStyles.bodyLarge.copyWith(
+                    color: AppColors.lightTextSecondary,
+                    fontWeight: FontWeight.w500,
+                  ), // 강조 본문 - 메뉴, 중요 본문
                 ),
               ),
             ),
           ),
         ),
-      ]);
-    } else {
-      // 다른 사람 프로필일 때는 "함께 Doppy하는 이웃 n명명" 텍스트와 이웃요청하기 버튼 표시
-
-      // 함께 Doppy하는 친구 텍스트
-      elements.add(
-        Positioned(
-          left: containerWidth * 0.047,
-          top: containerHeight * 0.23,
-          child: Text(
-            '함께 Doppy하는 이웃 3명',
-            style: AppTextStyles.bodyMedium.copyWith(
-              color: AppColors.lightTextSecondary,
-            ), // 일반 본문 - 설명 텍스트, 일반 내용
-          ),
-        ),
-      );
-
-      // 이웃요청하기 버튼
-      elements.add(
-        Positioned(
-          left: containerWidth * 0.047,
-          top: containerHeight * 0.263,
-          child: Material(
-            color: Colors.transparent,
-            child: InkWell(
-              borderRadius: BorderRadius.circular(10),
-              splashColor: Colors.grey.withOpacity(0.6),
-              highlightColor: Colors.grey.withOpacity(0.3),
-              onTap: _sendNeighborRequest,
-              child: Container(
-                width: containerWidth * 0.906, // 전체 너비 사용
-                height: containerHeight * 0.046,
-                clipBehavior: Clip.antiAlias,
-                decoration: ShapeDecoration(
-                  color:
-                      isNeighborRequested
-                          ? AppColors.lightSurfaceVariant
-                          : AppColors.primary,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                ),
-                child: Center(
-                  child:
-                      _isRequesting
-                          ? const SizedBox(
-                            width: 20,
-                            height: 20,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              valueColor: AlwaysStoppedAnimation<Color>(
-                                Colors.white,
-                              ),
-                            ),
-                          )
-                          : Text(
-                            isNeighborRequested ? '요청됨' : '이웃 요청하기',
-                            style: AppTextStyles.bodyMedium.copyWith(
-                              color:
-                                  isNeighborRequested
-                                      ? AppColors.lightTextSecondary
-                                      : Colors.white,
-                              fontWeight: FontWeight.w600,
-                            ), // 일반 본문 - 버튼 텍스트, 라벨
-                          ),
-                ),
-              ),
-            ),
-          ),
-        ),
-      );
-    }
+      ),
+    ]);
 
     // 사용자 정보들 추가
     elements.addAll(_buildUserInfoTexts(containerWidth, containerHeight));
@@ -382,14 +326,21 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
       Positioned(
         left: containerWidth * 0.475,
         top: containerHeight * 0.09, // 위로 올림
-        child: Text(
-          '수최영',
-          style: AppTextStyles.headlineLarge.copyWith(
-            color: AppColors.lightTextPrimary,
-            fontSize: 25,
-            fontWeight: FontWeight.w700,
-          ), // 대형 제목 - 사용자 이름, 메인 제목
-        ),
+        child:
+            _isLoadingUser
+                ? const SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+                : Text(
+                  _profileUser != null ? _profileUser!.username : '사용자',
+                  style: AppTextStyles.headlineLarge.copyWith(
+                    color: AppColors.lightTextPrimary,
+                    fontSize: 25,
+                    fontWeight: FontWeight.w700,
+                  ), // 대형 제목 - 사용자 이름, 메인 제목
+                ),
       ),
       // 사용자 설명
       Positioned(

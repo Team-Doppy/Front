@@ -5,10 +5,12 @@ import 'dart:convert';
 class AuthService {
   final _storage = const FlutterSecureStorage();
   final String _tokenKey = 'auth_token';
+  final String _usernameKey = 'username';
 
   // 🎯 [수정] API 명세서에 맞게 전체 URL을 정확히 입력했습니다. (포트와 엔드포인트 추가)
-  final String _baseUrl = "http://doppy-gaooli-env.eba-i6rkanrz.us-east-1.elasticbeanstalk.com";
-  
+  final String _baseUrl =
+      "http://doppy-gaooli-env.eba-i6rkanrz.us-east-1.elasticbeanstalk.com";
+
   //API 2번: 사용자 로그인
   Future<bool> login(String username, String password) async {
     // 🎯 [수정] 이메일(email)이 아닌 사용자 이름(username)을 받도록 변경했습니다.
@@ -44,6 +46,7 @@ class AuthService {
         final String token = responseData['token'];
 
         await _saveToken(token);
+        await _saveUsername(username); // 로그인한 사용자명 저장
         return true;
       } else {
         print('⚠️ [AuthService] 로그인 실패. Status: ${response.statusCode}');
@@ -62,11 +65,63 @@ class AuthService {
     await _storage.write(key: _tokenKey, value: token);
   }
 
+  Future<void> _saveUsername(String username) async {
+    await _storage.write(key: _usernameKey, value: username);
+  }
+
   Future<String?> getToken() async {
     return await _storage.read(key: _tokenKey);
   }
 
+  Future<String?> getUsername() async {
+    return await _storage.read(key: _usernameKey);
+  }
+
   Future<void> logout() async {
     await _storage.delete(key: _tokenKey);
+    await _storage.delete(key: _usernameKey);
+  }
+
+  // 사용자 정보 조회 API
+  Future<Map<String, dynamic>?> getUserInfo(String username) async {
+    final token = await getToken();
+    if (token == null) {
+      print('❌ [AuthService] 토큰이 없습니다.');
+      return null;
+    }
+
+    final userInfoUrl = Uri.parse('$_baseUrl/api/auth/users/$username');
+
+    print('🚀 [AuthService] 사용자 정보 조회 요청 시작: $userInfoUrl');
+
+    try {
+      final response = await http
+          .get(
+            userInfoUrl,
+            headers: <String, String>{
+              'Authorization': 'Bearer $token',
+              'Content-Type': 'application/json; charset=UTF-8',
+            },
+          )
+          .timeout(const Duration(seconds: 10));
+
+      final responseBody = utf8.decode(response.bodyBytes);
+
+      if (response.statusCode == 200) {
+        print('✅ [AuthService] 사용자 정보 조회 성공! Status: ${response.statusCode}');
+        print('📦 Response Body: $responseBody');
+
+        final userData = jsonDecode(responseBody);
+        return userData;
+      } else {
+        print('⚠️ [AuthService] 사용자 정보 조회 실패. Status: ${response.statusCode}');
+        print('📦 Response Body: $responseBody');
+        return null;
+      }
+    } catch (e, s) {
+      print('❌ [AuthService] 사용자 정보 조회 중 오류 발생: $e');
+      print('📄 Stack Trace: $s');
+      return null;
+    }
   }
 }
