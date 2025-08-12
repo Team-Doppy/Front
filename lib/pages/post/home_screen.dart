@@ -1,6 +1,7 @@
 import 'package:doppy/pages/components/custom_bottom_navigation_bar.dart';
 import 'package:flutter/material.dart';
-import '../../theme/app_colors.dart';
+import 'package:flutter_svg/flutter_svg.dart';
+import '../../theme/theme.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -53,18 +54,21 @@ class _HomeScreenState extends State<HomeScreen> {
                             Expanded(
                               child: Text(
                                 '@affection-jh',
-                                style: TextStyle(
-                                  color: AppColors.lightTextPrimary,
-                                  fontSize: 20,
-                                  fontFamily: 'Pretendard Variable',
-                                  fontWeight: FontWeight.w700,
+                                style: AppTextStyles.withThemeColor(
+                                  AppTextStyles.headlineMedium,
+                                  Theme.of(context).brightness ==
+                                      Brightness.dark,
                                 ),
                               ),
                             ),
-                            Image.asset(
-                              'assets/icons/alarm.png',
+                            SvgPicture.asset(
+                              'assets/icons/ic_notification.svg',
                               width: 24,
                               height: 24,
+                              colorFilter: ColorFilter.mode(
+                                AppColors.getTextPrimary(Theme.of(context).brightness == Brightness.dark),
+                                BlendMode.srcIn,
+                              ),
                             ),
                           ],
                         ),
@@ -140,11 +144,9 @@ class _HomeScreenState extends State<HomeScreen> {
                         padding: EdgeInsets.symmetric(horizontal: 16),
                         child: Text(
                           ' 친한 이웃',
-                          style: TextStyle(
-                            color: AppColors.lightTextSecondary,
-                            fontSize: 16,
-                            fontFamily: 'Pretendard Variable',
-                            fontWeight: FontWeight.w700,
+                          style: AppTextStyles.withThemeColor(
+                            AppTextStyles.headlineMedium,
+                            Theme.of(context).brightness == Brightness.dark,
                           ),
                         ),
                       ),
@@ -233,11 +235,11 @@ class _HomeScreenState extends State<HomeScreen> {
                                           : index == 3
                                           ? '새로운 카페 발견했어요\n맛있었어요!'
                                           : '오늘 하루도 힘내자고\n화이팅!',
-                                      style: TextStyle(
-                                        color: AppColors.lightTextSecondary,
-                                        fontSize: 10,
-                                        fontFamily: 'Pretendard Variable',
-                                        fontWeight: FontWeight.w400,
+                                      style: AppTextStyles.withThemeColor(
+                                        AppTextStyles.bodySmall,
+                                        Theme.of(context).brightness ==
+                                            Brightness.dark,
+                                        isSecondary: true,
                                       ),
                                       overflow: TextOverflow.ellipsis,
                                       maxLines: 2,
@@ -258,15 +260,12 @@ class _HomeScreenState extends State<HomeScreen> {
                         padding: EdgeInsets.symmetric(horizontal: 16),
                         child: Text(
                           '전체 이웃 글 보기',
-                          style: TextStyle(
-                            color: AppColors.lightTextSecondary,
-                            fontSize: 16,
-                            fontFamily: 'Pretendard Variable',
-                            fontWeight: FontWeight.w700,
+                          style: AppTextStyles.withThemeColor(
+                            AppTextStyles.headlineMedium,
+                            Theme.of(context).brightness == Brightness.dark,
                           ),
                         ),
                       ),
-
                       SizedBox(height: 4),
 
                       // 전체 이웃 글들 (Column으로 여러 개)
@@ -332,14 +331,11 @@ class _HomeScreenState extends State<HomeScreen> {
                                             : index == 8
                                             ? '새로운 취미를 시작했어요'
                                             : '오늘은 정말 특별한 하루였어요',
-                                        style: TextStyle(
-                                          color: AppColors.lightTextPrimary,
-                                          fontSize: 16,
-                                          fontFamily: 'Pretendard Variable',
-                                          fontWeight: FontWeight.w700,
+                                        style: AppTextStyles.withThemeColor(
+                                          AppTextStyles.bodyLarge,
+                                          Theme.of(context).brightness ==
+                                              Brightness.dark,
                                         ),
-                                        overflow: TextOverflow.ellipsis,
-                                        maxLines: 2,
                                       ),
                                       SizedBox(height: 4),
                                       // 작성자
@@ -363,12 +359,14 @@ class _HomeScreenState extends State<HomeScreen> {
                                             : index == 8
                                             ? '윤취미'
                                             : '임특별',
-                                        style: TextStyle(
-                                          color: AppColors.lightTextSecondary,
-                                          fontSize: 12,
-                                          fontFamily: 'Pretendard Variable',
-                                          fontWeight: FontWeight.w600,
+                                        style: AppTextStyles.withThemeColor(
+                                          AppTextStyles.bodySmall,
+                                          Theme.of(context).brightness ==
+                                              Brightness.dark,
+                                          isSecondary: true,
                                         ),
+                                        overflow: TextOverflow.ellipsis,
+                                        maxLines: 2,
                                       ),
                                       SizedBox(height: 4),
                                       // 본문 내용 미리보기
@@ -392,14 +390,12 @@ class _HomeScreenState extends State<HomeScreen> {
                                             : index == 8
                                             ? '새로운 취미를 시작했어요! 그림 그리기를 시작했는데 생각보다 재미있어요. 시간 가는 줄 모르고 그리게 되네요.'
                                             : '오늘은 정말 특별한 하루였어요. 뜻밖의 좋은 일들이 많이 일어나서 기분이 너무 좋아요. 이런 날들이 더 많았으면 좋겠어요.',
-                                        style: TextStyle(
-                                          color: AppColors.lightTextSecondary,
-                                          fontSize: 10,
-                                          fontFamily: 'Pretendard Variable',
-                                          fontWeight: FontWeight.w400,
+                                        style: AppTextStyles.withThemeColor(
+                                          AppTextStyles.bodySmall,
+                                          Theme.of(context).brightness ==
+                                              Brightness.dark,
+                                          isSecondary: true,
                                         ),
-                                        overflow: TextOverflow.ellipsis,
-                                        maxLines: 2,
                                       ),
                                     ],
                                   ),

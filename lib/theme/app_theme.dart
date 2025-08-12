@@ -31,18 +31,18 @@ class AppTheme {
 
       // ===== Text Theme =====
       textTheme: TextTheme(
-        displayLarge: AppTextStyles.withThemeColor(
-          AppTextStyles.displayLarge,
-          false,
-        ),
-        displayMedium: AppTextStyles.withThemeColor(
-          AppTextStyles.displayMedium,
-          false,
-        ),
-        displaySmall: AppTextStyles.withThemeColor(
-          AppTextStyles.displaySmall,
-          false,
-        ),
+        // displayLarge: AppTextStyles.withThemeColor(
+        //   AppTextStyles.displayLarge,
+        //   false,
+        // ),
+        // displayMedium: AppTextStyles.withThemeColor(
+        //   AppTextStyles.displayMedium,
+        //   false,
+        // ),
+        // displaySmall: AppTextStyles.withThemeColor(
+        //   AppTextStyles.displaySmall,
+        //   false,
+        // ),
         headlineLarge: AppTextStyles.withThemeColor(
           AppTextStyles.headlineLarge,
           false,
@@ -129,18 +129,18 @@ class AppTheme {
 
       // ===== Text Theme =====
       textTheme: TextTheme(
-        displayLarge: AppTextStyles.withThemeColor(
-          AppTextStyles.displayLarge,
-          true,
-        ),
-        displayMedium: AppTextStyles.withThemeColor(
-          AppTextStyles.displayMedium,
-          true,
-        ),
-        displaySmall: AppTextStyles.withThemeColor(
-          AppTextStyles.displaySmall,
-          true,
-        ),
+        // displayLarge: AppTextStyles.withThemeColor(
+        //   AppTextStyles.displayLarge,
+        //   true,
+        // ),
+        // displayMedium: AppTextStyles.withThemeColor(
+        //   AppTextStyles.displayMedium,
+        //   true,
+        // ),
+        // displaySmall: AppTextStyles.withThemeColor(
+        //   AppTextStyles.displaySmall,
+        //   true,
+        // ),
         headlineLarge: AppTextStyles.withThemeColor(
           AppTextStyles.headlineLarge,
           true,

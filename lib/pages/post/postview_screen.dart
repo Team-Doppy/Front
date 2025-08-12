@@ -1,5 +1,7 @@
+import 'package:doppy/theme/app_text_styles.dart';
 import 'package:flutter/material.dart';
 import 'package:doppy/theme/theme.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 
 class PostviewScreen extends StatelessWidget {
   @override
@@ -28,36 +30,110 @@ class PostviewScreen extends StatelessWidget {
   }
 }
 
-class _TopBar extends StatelessWidget {
+class _TopBar extends StatefulWidget {
   const _TopBar();
 
   @override
+  State<_TopBar> createState() => _TopBarState();
+}
+
+class _TopBarState extends State<_TopBar> {
+  bool _isCategoryListVisible = false;
+  final double _topBarHeight = 60.0;
+  final Duration _animationDuration = const Duration(milliseconds: 300);
+
+  void _toggleCategoryList() {
+    setState(() {
+      _isCategoryListVisible = !_isCategoryListVisible;
+    });
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 8.0),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+    return AnimatedContainer(
+      duration: _animationDuration,
+      curve: Curves.easeInOut,
+      height: _isCategoryListVisible ? 250 : _topBarHeight,
+      child: Stack(
         children: [
-          IconButton(
-            onPressed: () {},
-            icon: const Icon(Icons.arrow_back),
-            iconSize: 30, // 아이콘 크기 조정
-          ),
-          TextButton.icon(
-            onPressed: () {},
-            icon: const Icon(Icons.category), //TODO: 카테고리 토글 구현
-            label: Text(
-              '일상',
-              style: Theme.of(context)
-                  .textTheme
-                  .titleLarge
-                  ?.copyWith(fontWeight: FontWeight.bold), // 폰트 스타일 조정
+          // Animated Category List
+          AnimatedPositioned(
+            top: _isCategoryListVisible ? _topBarHeight : -200,
+            left: 0,
+            right: 0,
+            duration: _animationDuration,
+            curve: Curves.easeInOut,
+            child: Container(
+              color: Colors.grey[200],
+              child: Column(
+                children: [
+                  ListTile(
+                    title: const Text('Category 1'),
+                    onTap: () {
+                      // Handle category selection
+                      _toggleCategoryList();
+                    },
+                  ),
+                  ListTile(
+                    title: const Text('Category 2'),
+                    onTap: () {
+                      // Handle category selection
+                      _toggleCategoryList();
+                    },
+                  ),
+                  ListTile(
+                    title: const Text('Category 3'),
+                    onTap: () {
+                      // Handle category selection
+                      _toggleCategoryList();
+                    },
+                  ),
+                ],
+              ),
             ),
           ),
-          IconButton(
-            onPressed: () {},
-            icon: const Icon(Icons.menu),
-            iconSize: 30, // 아이콘 크기 조정
+
+          // Top Bar
+          Container(
+            height: _topBarHeight,
+            color: Theme.of(context).scaffoldBackgroundColor,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 8.0),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  IconButton(
+                    onPressed: () {},
+                    icon: SvgPicture.asset('assets/icons/ic_back.svg'),
+                    iconSize: 30, // 아이콘 크기 조정
+                  ),
+                  TextButton(
+                    onPressed: _toggleCategoryList,
+                    child: Row(
+                      children: [
+                        Text(
+                          '일상',
+                          style: Theme.of(context)
+                              .textTheme
+                              .titleLarge
+                              ?.copyWith(fontWeight: FontWeight.bold), // 폰트 스타일 조정
+                        ),
+                        const SizedBox(width: 4),
+                        RotatedBox(
+                          quarterTurns: _isCategoryListVisible ? 2 : 0,
+                          child: SvgPicture.asset('assets/icons/ic_expand_more.svg'),
+                        ),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: () {},
+                    icon: SvgPicture.asset('assets/icons/ic_menu.svg'),
+                    iconSize: 30, // 아이콘 크기 조정
+                  ),
+                ],
+              ),
+            ),
           ),
         ],
       ),
@@ -75,10 +151,11 @@ class _AuthorInfo extends StatelessWidget {
       child: Row(
         children: [
           // 작성자 프로필 사진
-          const CircleAvatar(
-            //TODO: 작성자 ProfileScreen으로 링크 추가
-            radius: 28, // 프로필 사진 크기 조정 (56px)
-            backgroundImage: AssetImage('assets/images/profile.jpg'),
+          SizedBox(
+            //TODO: 작성자 UserProfileScreen으로 링크 추가
+            width: 48,
+            height: 48,
+            child: SvgPicture.asset('assets/icons/ic_profile.svg'),
           ),
 
           const SizedBox(width: 12),
@@ -107,17 +184,10 @@ class _AuthorInfo extends StatelessWidget {
               ],
             ),
           ),
-
-          // 이웃 요청 버튼 : 삭제, 기타 버튼에 패스
-          // TextButton(
-          //   onPressed: () {},
-          //   child: const Text('+ 이웃 요청'),
-          // ),
-
           // 기타 버튼
           IconButton(
             onPressed: () {},
-            icon: const Icon(Icons.more_vert),
+            icon: SvgPicture.asset('assets/icons/ic_more_vert.svg'),
             iconSize: 30, // 아이콘 크기 조정
           ),
         ],
@@ -138,10 +208,10 @@ class _Thumbnail extends StatelessWidget {
         children: [
           // 썸네일 이미지
           AspectRatio(
-            aspectRatio: 5 / 7,
+            aspectRatio: 4 / 3,
             child: ClipRRect(
               child: Image.asset(
-                'assets/images/thumbnail.jpg', // 경로는 실제 이미지에 맞게 수정
+                'assets/images/feed5.jpg', //TODO: 백 연동
                 fit: BoxFit.cover,
                 width: double.infinity,
               ),
@@ -162,9 +232,8 @@ class _Thumbnail extends StatelessWidget {
             padding: const EdgeInsets.all(12),
             child: Text(
               '성시경의 명곡을\n이창섭의 감성으로 재해석하다', //TODO: 텍스트 길이 제한 걸기
-              style: Theme.of(context).textTheme.displayMedium?.copyWith(
+              style: AppTextStyles.headlineLarge.copyWith(
                     color: AppColors.darkTextPrimary,
-                    fontWeight: FontWeight.bold, // 폰트 두께 조정
                   ),
             ),
           ),
@@ -229,62 +298,43 @@ class _InteractionButtons extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
       child: Row(
         children: [
-          _IconTextButton(
-            icon: Icons.favorite_border,
-            label: '123', //TODO: likes 값 넣기, 1K, 2.3K 등 처리
-            onPressed: () {
+          InkWell(
+            onTap: () {
               // TODO: 좋아요 기능, !liked로 상태 변경
             },
+            child: Row(
+              children: [
+                SvgPicture.asset('assets/icons/ic_heart_outlined.svg', width: 24, height: 24),
+                const SizedBox(width: 8),
+                Text(
+                  '123', //TODO: likes 값 넣기, 1K, 2.3K 등 처리
+                  style: Theme.of(context).textTheme.bodyLarge,
+                ),
+              ],
+            ),
           ),
-          const SizedBox(width: 16),
-          _IconTextButton(
-            icon: Icons.comment_outlined,
-            label: '45', //TODO: comments 값 넣기
-            onPressed: () {
+          const SizedBox(width: 24),
+          InkWell(
+            onTap: () {
               // TODO: 댓글 기능
             },
+            child: Row(
+              children: [
+                SvgPicture.asset('assets/icons/ic_comment.svg', width: 24, height: 24),
+                const SizedBox(width: 8),
+                Text(
+                  '45', //TODO: comments 값 넣기
+                  style: Theme.of(context).textTheme.bodyLarge,
+                ),
+              ],
+            ),
           ),
           const Spacer(), // 오른쪽으로 밀어내기
           IconButton(
-            icon: const Icon(Icons.share_outlined),
+            icon: SvgPicture.asset('assets/icons/ic_share.svg', width: 24, height: 24),
             onPressed: () {
               // TODO: 공유 기능
             },
-            iconSize: 30, // 아이콘 크기 조정
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _IconTextButton extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final VoidCallback onPressed;
-
-  const _IconTextButton({
-    required this.icon,
-    required this.label,
-    required this.onPressed,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onPressed,
-      borderRadius: BorderRadius.circular(8),
-      child: Row(
-        children: [
-          Icon(icon,
-              size: 28, color: Theme.of(context).colorScheme.onSurface), // 아이콘 크기 조정
-          const SizedBox(width: 8),
-          Text(
-            label,
-            style: Theme.of(context)
-                .textTheme
-                .titleMedium
-                ?.copyWith(fontWeight: FontWeight.bold), // 폰트 스타일 조정
           ),
         ],
       ),
@@ -303,9 +353,10 @@ class _AuthorProfile extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           // 프로필 사진
-          const CircleAvatar(
-            radius: 28, // 프로필 사진 크기 조정 (56px)
-            backgroundImage: AssetImage('assets/images/profile.jpg'),
+          SizedBox(
+            width: 48,
+            height: 48,
+            child: SvgPicture.asset('assets/icons/ic_profile.svg'),
           ),
 
           const SizedBox(width: 16),
@@ -346,27 +397,13 @@ class _AuthorProfile extends StatelessWidget {
             ),
           ),
 
-          // 친구 추가 버튼 : 삭제, 기타 버튼에 패스
-          // TextButton(
-          //   onPressed: () {
-          //     // TODO: 친구 추가 기능
-          //   },
-          //   child: Text(
-          //     '+ 친구',
-          //     style: Theme.of(context)
-          //         .textTheme
-          //         .bodySmall
-          //         ?.copyWith(fontWeight: FontWeight.bold), // 폰트 스타일 조정
-          //   ),
-          // ),
-
           // 기타 버튼
           IconButton(
             onPressed: () {
               // TODO: 옵션 메뉴 기능 (이웃 추가, ...)
             },
-            icon: const Icon(Icons.more_vert),
-            iconSize: 30, // 아이콘 크기 조정
+            icon: SvgPicture.asset('assets/icons/ic_more_vert.svg'),
+            iconSize: 36, // 아이콘 크기 조정
           ),
         ],
       ),
@@ -382,7 +419,7 @@ class _PostList extends StatelessWidget {
     // 더미 데이터 예시
     final posts = List.generate(
       5,
-      (index) => { //TODO: 값 수정하기
+      (index) => { //TODO: 백 연동하기
         'title': '글 제목 ${index + 1}',
         'date': '2025.08.0${index + 1}',
         'likes': 12 * (index + 1),
@@ -431,16 +468,16 @@ class _PostList extends StatelessWidget {
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               IconButton(
-                icon: const Icon(Icons.arrow_back),
-                iconSize: 30, // 아이콘 크기 조정
+                icon: SvgPicture.asset('assets/icons/ic_arrow_forward.svg'),
+                iconSize: 36, // 아이콘 크기 조정
                 onPressed: () {
                   // TODO: 이전 페이지
                 },
               ),
               const SizedBox(width: 40),
               IconButton(
-                icon: const Icon(Icons.arrow_forward),
-                iconSize: 30, // 아이콘 크기 조정
+                icon: SvgPicture.asset('assets/icons/ic_arrow_back.svg'),
+                iconSize: 36, // 아이콘 크기 조정
                 onPressed: () {
                   // TODO: 다음 페이지
                 },
@@ -481,6 +518,7 @@ class _PostCard extends StatelessWidget {
                     children: [
                       // 제목
                       Text(
+                        //TODO 백 연동
                         post['title'],
                         style: Theme
                             .of(context)
@@ -495,7 +533,8 @@ class _PostCard extends StatelessWidget {
                       Row(
                         children: [
                           Text(
-                            post['date'],
+                            //TODO: 백 연동
+                            '${post['date']}',
                             style: Theme
                                 .of(context)
                                 .textTheme
@@ -504,14 +543,16 @@ class _PostCard extends StatelessWidget {
                                 fontWeight: FontWeight.bold), // 폰트 스타일 조정
                           ),
                           const SizedBox(width: 12),
-                          Icon(Icons.favorite,
-                              size: 16,
-                              color: Theme
-                                  .of(context)
-                                  .colorScheme
-                                  .error), // 아이콘 크기 조정
+                          SvgPicture.asset(
+                              'assets/icons/ic_heart_outlined.svg',
+                              width: 16,
+                              height: 16,
+                              colorFilter: ColorFilter.mode(
+                                  Theme.of(context).colorScheme.error,
+                                  BlendMode.srcIn)), // 아이콘 크기 조정
                           const SizedBox(width: 4),
                           Text(
+                            //TODO: 백 연동
                             '${post['likes']}',
                             style: Theme
                                 .of(context)
@@ -521,14 +562,16 @@ class _PostCard extends StatelessWidget {
                                 fontWeight: FontWeight.bold), // 폰트 스타일 조정
                           ),
                           const SizedBox(width: 12),
-                          Icon(Icons.comment,
-                              size: 16,
-                              color: Theme
-                                  .of(context)
-                                  .colorScheme
-                                  .onSurface), // 아이콘 크기 조정
+                          SvgPicture.asset(
+                              'assets/icons/ic_comment.svg',
+                              width: 16,
+                              height: 16,
+                              colorFilter: ColorFilter.mode(
+                                  Theme.of(context).colorScheme.onSurface,
+                                  BlendMode.srcIn)), // 아이콘 크기 조정
                           const SizedBox(width: 4),
                           Text(
+                            //TODO: 백 연동
                             '${post['comments']}',
                             style: Theme
                                 .of(context)
@@ -544,14 +587,13 @@ class _PostCard extends StatelessWidget {
                 ),
                 const SizedBox(width: 12), // 썸네일과 텍스트 사이 간격
                 // 썸네일
-                Container(
-                  width: 76,
-                  height: 74,
-                  decoration: const BoxDecoration(
-                    image: DecorationImage(
-                      image: AssetImage('assets/images/card_sample.jpg'), // 실제 이미지 경로로 변경
-                      fit: BoxFit.cover,
-                    ),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(5.0),
+                  child: Image.asset(
+                    'assets/images/feed2.png', //TODO: 백 연동
+                    width: 76,
+                    height: 74,
+                    fit: BoxFit.cover,
                   ),
                 ),
               ],
@@ -582,7 +624,7 @@ class _BannerAd extends StatelessWidget {
             height: 180,
             decoration: const BoxDecoration(
               image: DecorationImage(
-                image: AssetImage('assets/images/banner_sample.jpg'), // 실제 이미지 경로로 변경
+                image: AssetImage('assets/images/feed6.jpg'),
                 fit: BoxFit.cover,
               ),
             ),
