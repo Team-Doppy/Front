@@ -184,11 +184,19 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
           right: 0,
           child: DoppyTopBar(
             title:
+<<<<<<< HEAD
+                _isLoadingUser
+                    ? '로딩 중...'
+                    : _profileUser != null
+                    ? '@${_profileUser!.username}'
+                    : '사용자', // 사용자 아이디 표시
+=======
             _isLoadingUser
                 ? '로딩 중...'
                 : _profileUser != null
                 ? '@${_profileUser!.username}'
                 : '사용자', // 사용자 아이디 표시
+>>>>>>> 168bf9a4046aba1baf5bdf0cfa03e3f7050744f4
             showBack: false, // 내 프로필이므로 뒤로가기 버튼 숨김
             onBack: null,
             onMore: () {
@@ -338,6 +346,28 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
         left: containerWidth * 0.475,
         top: containerHeight * 0.09, // 위로 올림
         child:
+<<<<<<< HEAD
+            _isLoadingUser
+                ? const SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+                : Text(
+                  _profileUser != null &&
+                          _profileUser!.alias != null &&
+                          _profileUser!.alias!.isNotEmpty
+                      ? _profileUser!.alias!
+                      : _profileUser != null
+                      ? _profileUser!.username
+                      : '사용자',
+                  style: AppTextStyles.headlineLarge.copyWith(
+                    color: AppColors.lightTextPrimary,
+                    fontSize: 25,
+                    fontWeight: FontWeight.w700,
+                  ), // 대형 제목 - 사용자 이름, 메인 제목
+                ),
+=======
         _isLoadingUser
             ? const SizedBox(
           width: 20,
@@ -358,12 +388,29 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
             fontWeight: FontWeight.w700,
           ), // 대형 제목 - 사용자 이름, 메인 제목
         ),
+>>>>>>> 168bf9a4046aba1baf5bdf0cfa03e3f7050744f4
       ),
       // 사용자 설명
       Positioned(
         left: containerWidth * 0.475,
         top: containerHeight * 0.16, // 위로 올림
         child:
+<<<<<<< HEAD
+            _isLoadingUser
+                ? const SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+                : Text(
+                  _selfIntroduction != null && _selfIntroduction!.isNotEmpty
+                      ? _selfIntroduction!
+                      : '자기소개가 없습니다.',
+                  style: AppTextStyles.bodySmall.copyWith(
+                    color: AppColors.lightTextSecondary,
+                  ), // 작은 본문 - 사용자 ID, 소개글
+                ),
+=======
         _isLoadingUser
             ? const SizedBox(
           width: 20,
@@ -378,12 +425,27 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
             color: AppColors.lightTextSecondary,
           ), // 작은 본문 - 사용자 ID, 소개글
         ),
+>>>>>>> 168bf9a4046aba1baf5bdf0cfa03e3f7050744f4
       ),
       // 이웃 수
       Positioned(
         left: containerWidth * 0.483,
         top: containerHeight * 0.13, // 위로 올림
         child:
+<<<<<<< HEAD
+            _isLoadingUser
+                ? const SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+                : Text(
+                  _friendCount != null ? '이웃 ${_friendCount}명' : '이웃 0명',
+                  style: AppTextStyles.bodyLarge.copyWith(
+                    color: AppColors.lightTextPrimary,
+                  ), // 강조 본문 - 메뉴, 중요 본문
+                ),
+=======
         _isLoadingUser
             ? const SizedBox(
           width: 20,
@@ -396,6 +458,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
             color: AppColors.lightTextPrimary,
           ), // 강조 본문 - 메뉴, 중요 본문
         ),
+>>>>>>> 168bf9a4046aba1baf5bdf0cfa03e3f7050744f4
       ),
     ];
   }
