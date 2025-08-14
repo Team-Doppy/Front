@@ -208,7 +208,7 @@ class AuthService {
       print('❌ [AuthService] 자기소개 조회 중 오류 발생: $e');
       print('📄 Stack Trace: $s');
       return null;
-    }
+    
   }
 
   // 내가 보낸 친구 신청 목록 조회 API

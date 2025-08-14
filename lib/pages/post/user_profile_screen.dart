@@ -318,8 +318,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
           left: 0,
           right: 0,
           child: DoppyTopBar(
-            title:
-                _isLoadingUser
+            title: _isLoadingUser
                     ? '로딩 중...'
                     : _profileUser != null
                     ? '@${_profileUser!.username}'
@@ -479,8 +478,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
       Positioned(
         left: containerWidth * 0.475,
         top: containerHeight * 0.09, // 위로 올림
-        child:
-            _isLoadingUser
+        child: _isLoadingUser
                 ? const SizedBox(
                   width: 20,
                   height: 20,
@@ -505,8 +503,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
       Positioned(
         left: containerWidth * 0.475,
         top: containerHeight * 0.16, // 위로 올림
-        child:
-            _isLoadingUser
+        child: _isLoadingUser
                 ? const SizedBox(
                   width: 20,
                   height: 20,
@@ -525,8 +522,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
       Positioned(
         left: containerWidth * 0.483,
         top: containerHeight * 0.13, // 위로 올림
-        child:
-            _isLoadingUser
+        child: _isLoadingUser
                 ? const SizedBox(
                   width: 20,
                   height: 20,

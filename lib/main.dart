@@ -43,7 +43,6 @@ class MyApp extends StatelessWidget {
         home: Consumer<AuthProvider>(
           builder: (context, auth, child) {
             // AuthProvider의 isLoggedIn 상태에 따라 다른 화면을 보여줌
-
             // return LoginScreen();
             return auth.isLoggedIn ? HomeScreen() : LoginScreen();
           },
