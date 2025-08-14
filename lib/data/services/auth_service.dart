@@ -26,12 +26,12 @@ class AuthService {
     try {
       final response = await http
           .post(
-        loginUrl,
-        headers: <String, String>{
-          'Content-Type': 'application/json; charset=UTF-8',
-        },
-        body: jsonEncode(body),
-      )
+            loginUrl,
+            headers: <String, String>{
+              'Content-Type': 'application/json; charset=UTF-8',
+            },
+            body: jsonEncode(body),
+          )
           .timeout(const Duration(seconds: 10)); // 10초 타임아웃 추가
 
       // ✨ [로그 추가] 2. 서버의 응답 코드와 내용을 그대로 출력
@@ -97,12 +97,12 @@ class AuthService {
     try {
       final response = await http
           .get(
-        userInfoUrl,
-        headers: <String, String>{
-          'Authorization': 'Bearer $token',
-          'Content-Type': 'application/json; charset=UTF-8',
-        },
-      )
+            userInfoUrl,
+            headers: <String, String>{
+              'Authorization': 'Bearer $token',
+              'Content-Type': 'application/json; charset=UTF-8',
+            },
+          )
           .timeout(const Duration(seconds: 10));
 
       final responseBody = utf8.decode(response.bodyBytes);
@@ -140,12 +140,12 @@ class AuthService {
     try {
       final response = await http
           .get(
-        friendCountUrl,
-        headers: <String, String>{
-          'Authorization': 'Bearer $token',
-          'Content-Type': 'application/json; charset=UTF-8',
-        },
-      )
+            friendCountUrl,
+            headers: <String, String>{
+              'Authorization': 'Bearer $token',
+              'Content-Type': 'application/json; charset=UTF-8',
+            },
+          )
           .timeout(const Duration(seconds: 10));
 
       final responseBody = utf8.decode(response.bodyBytes);
@@ -183,12 +183,12 @@ class AuthService {
     try {
       final response = await http
           .get(
-        selfIntroUrl,
-        headers: <String, String>{
-          'Authorization': 'Bearer $token',
-          'Content-Type': 'application/json; charset=UTF-8',
-        },
-      )
+            selfIntroUrl,
+            headers: <String, String>{
+              'Authorization': 'Bearer $token',
+              'Content-Type': 'application/json; charset=UTF-8',
+            },
+          )
           .timeout(const Duration(seconds: 10));
 
       final responseBody = utf8.decode(response.bodyBytes);
@@ -208,6 +208,110 @@ class AuthService {
       print('❌ [AuthService] 자기소개 조회 중 오류 발생: $e');
       print('📄 Stack Trace: $s');
       return null;
+    
+  }
+
+  // 내가 보낸 친구 신청 목록 조회 API
+  Future<List<Map<String, dynamic>>> getSentFriendRequests() async {
+    final token = await getToken();
+    if (token == null) {
+      print('❌ [AuthService] 토큰이 없습니다.');
+      return [];
+    }
+
+    final sentRequestsUrl = Uri.parse('$_baseUrl/api/friends/sent-requests');
+
+    print('🚀 [AuthService] 보낸 친구 신청 목록 조회 요청 시작: $sentRequestsUrl');
+
+    try {
+      final response = await http
+          .get(
+            sentRequestsUrl,
+            headers: <String, String>{
+              'Authorization': 'Bearer $token',
+              'Content-Type': 'application/json; charset=UTF-8',
+            },
+          )
+          .timeout(const Duration(seconds: 10));
+
+      final responseBody = utf8.decode(response.bodyBytes);
+
+      if (response.statusCode == 200) {
+        print(
+          '✅ [AuthService] 보낸 친구 신청 목록 조회 성공! Status: ${response.statusCode}',
+        );
+        print('📦 Response Body: $responseBody');
+
+        final responseData = jsonDecode(responseBody);
+        if (responseData is List) {
+          return responseData.cast<Map<String, dynamic>>();
+        } else if (responseData['data'] is List) {
+          return responseData['data'].cast<Map<String, dynamic>>();
+        }
+        return [];
+      } else {
+        print(
+          '⚠️ [AuthService] 보낸 친구 신청 목록 조회 실패. Status: ${response.statusCode}',
+        );
+        print('📦 Response Body: $responseBody');
+        return [];
+      }
+    } catch (e, s) {
+      print('❌ [AuthService] 보낸 친구 신청 목록 조회 중 오류 발생: $e');
+      print('📄 Stack Trace: $s');
+      return [];
+    }
+  }
+
+  // 수락된 친구 목록 조회 API
+  Future<List<Map<String, dynamic>>> getAcceptedFriends() async {
+    final token = await getToken();
+    if (token == null) {
+      print('❌ [AuthService] 토큰이 없습니다.');
+      return [];
+    }
+
+    final acceptedFriendsUrl = Uri.parse('$_baseUrl/api/friends/accepted');
+
+    print('🚀 [AuthService] 수락된 친구 목록 조회 요청 시작: $acceptedFriendsUrl');
+
+    try {
+      final response = await http
+          .get(
+            acceptedFriendsUrl,
+            headers: <String, String>{
+              'Authorization': 'Bearer $token',
+              'Content-Type': 'application/json; charset=UTF-8',
+            },
+          )
+          .timeout(const Duration(seconds: 10));
+
+      final responseBody = utf8.decode(response.bodyBytes);
+
+      if (response.statusCode == 200) {
+        print(
+          '✅ [AuthService] 수락된 친구 목록 조회 성공! Status: ${response.statusCode}',
+        );
+        print('📦 Response Body: $responseBody');
+
+        final responseData = jsonDecode(responseBody);
+        if (responseData is List) {
+          return responseData.cast<Map<String, dynamic>>();
+        } else if (responseData['data'] is List) {
+          return responseData['data'].cast<Map<String, dynamic>>();
+        }
+        return [];
+      } else {
+        print(
+          '⚠️ [AuthService] 수락된 친구 목록 조회 실패. Status: ${response.statusCode}',
+        );
+        print('📦 Response Body: $responseBody');
+        return [];
+      }
+    } catch (e, s) {
+      print('❌ [AuthService] 수락된 친구 목록 조회 중 오류 발생: $e');
+      print('📄 Stack Trace: $s');
+      return [];
     }
   }
 }

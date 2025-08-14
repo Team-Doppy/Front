@@ -52,7 +52,12 @@ class MyApp extends StatelessWidget {
           '/login': (_) => const LoginScreen(), // ✅ 추가
           '/home': (_) => const HomeScreen(),
           '/search': (_) => const SearchScreen(),
-          '/profile': (_) => const UserProfileScreen(),
+          '/profile': (context) {
+            final args =
+                ModalRoute.of(context)?.settings.arguments
+                    as Map<String, dynamic>?;
+            return UserProfileScreen(arguments: args);
+          },
           // 필요 시 확장
           '/manage-group': (_) => const ManageGroupScreen(),
           '/manage-neighbor': (_) => const ManageNeighborScreen(),
