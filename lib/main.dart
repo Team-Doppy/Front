@@ -43,11 +43,8 @@ class MyApp extends StatelessWidget {
         home: Consumer<AuthProvider>(
           builder: (context, auth, child) {
             // AuthProvider의 isLoggedIn 상태에 따라 다른 화면을 보여줌
-<<<<<<< HEAD
-            //return LoginScreen();
-=======
+
             // return LoginScreen();
->>>>>>> 168bf9a4046aba1baf5bdf0cfa03e3f7050744f4
             return auth.isLoggedIn ? HomeScreen() : LoginScreen();
           },
         ),
@@ -56,7 +53,12 @@ class MyApp extends StatelessWidget {
           '/login': (_) => const LoginScreen(), // ✅ 추가
           '/home': (_) => const HomeScreen(),
           '/search': (_) => const SearchScreen(),
-          '/profile': (_) => const UserProfileScreen(),
+          '/profile': (context) {
+            final args =
+                ModalRoute.of(context)?.settings.arguments
+                    as Map<String, dynamic>?;
+            return UserProfileScreen(arguments: args);
+          },
           // 필요 시 확장
           '/manage-group': (_) => const ManageGroupScreen(),
           '/manage-neighbor': (_) => const ManageNeighborScreen(),
