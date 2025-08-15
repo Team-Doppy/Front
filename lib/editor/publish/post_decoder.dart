@@ -21,8 +21,9 @@ class _PostDecoderState extends State<PostDecoder> {
     super.initState();
     if (widget.initialJson != null) {
       _model = widget.initialJson;
-      _controller.text =
-          const JsonEncoder.withIndent('  ').convert(widget.initialJson);
+      _controller.text = const JsonEncoder.withIndent(
+        '  ',
+      ).convert(widget.initialJson);
     }
   }
 
@@ -48,9 +49,7 @@ class _PostDecoderState extends State<PostDecoder> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('임시 글 보기 프리뷰'),
-      ),
+      appBar: AppBar(title: const Text('임시 글 보기 프리뷰')),
       body: Column(
         children: [
           Padding(
@@ -71,10 +70,7 @@ class _PostDecoderState extends State<PostDecoder> {
                 const SizedBox(width: 8),
                 Column(
                   children: [
-                    ElevatedButton(
-                      onPressed: _render,
-                      child: const Text('렌더'),
-                    ),
+                    ElevatedButton(onPressed: _render, child: const Text('렌더')),
                     const SizedBox(height: 8),
                     OutlinedButton(
                       onPressed: () {
@@ -87,7 +83,7 @@ class _PostDecoderState extends State<PostDecoder> {
                       child: const Text('초기화'),
                     ),
                   ],
-                )
+                ),
               ],
             ),
           ),
@@ -96,24 +92,22 @@ class _PostDecoderState extends State<PostDecoder> {
               padding: const EdgeInsets.symmetric(horizontal: 12),
               child: Align(
                 alignment: Alignment.centerLeft,
-                child: Text(
-                  _error!,
-                  style: const TextStyle(color: Colors.red),
-                ),
+                child: Text(_error!, style: const TextStyle(color: Colors.red)),
               ),
             ),
           const SizedBox(height: 8),
           Expanded(
             child: Container(
               color: Colors.white,
-              child: _model == null
-                  ? const Center(
-                child: Text(
-                  'JSON을 붙여넣고 렌더를 눌러보세요',
-                  style: TextStyle(color: Colors.grey),
-                ),
-              )
-                  : GridDocumentViewer(model: _model!),
+              child:
+                  _model == null
+                      ? const Center(
+                        child: Text(
+                          'JSON을 붙여넣고 렌더를 눌러보세요',
+                          style: TextStyle(color: Colors.grey),
+                        ),
+                      )
+                      : GridDocumentViewer(model: _model!),
             ),
           ),
         ],
@@ -212,8 +206,9 @@ class GridDocumentViewer extends StatelessWidget {
               width: width,
               height: height,
               child: _ImageFast(
-                url: ((b['image'] as Map?)?.cast<String, dynamic>() ??
-                    {})['url'] as String? ??
+                url:
+                    ((b['image'] as Map?)?.cast<String, dynamic>() ?? {})['url']
+                        as String? ??
                     '',
               ),
             ),
@@ -294,9 +289,7 @@ class GridDocumentViewer extends StatelessWidget {
 class _ImageFast extends StatelessWidget {
   final String url;
 
-  const _ImageFast({
-    required this.url,
-  });
+  const _ImageFast({required this.url});
 
   @override
   Widget build(BuildContext context) {

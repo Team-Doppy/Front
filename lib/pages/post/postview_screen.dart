@@ -1,3 +1,4 @@
+import 'package:doppy/editor/publish/post_decoder.dart';
 import 'package:doppy/theme/app_text_styles.dart';
 import 'package:flutter/material.dart';
 import 'package:doppy/theme/theme.dart';
@@ -15,6 +16,7 @@ class PostviewScreen extends StatelessWidget {
               _AuthorInfo(), // 작성자 정보
               _Thumbnail(), // 썸네일
               _Content(), // 제목, 부제목, 본문
+              PostDecoder(),
               _InteractionButtons(), // 좋아요, 댓글, 공유
               Divider(),
               _AuthorProfile(), // 작성자 프로필
@@ -98,7 +100,10 @@ class _TopBarState extends State<_TopBar> {
             height: _topBarHeight,
             color: Theme.of(context).scaffoldBackgroundColor,
             child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 8.0),
+              padding: const EdgeInsets.symmetric(
+                horizontal: 12.0,
+                vertical: 8.0,
+              ),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
@@ -113,15 +118,18 @@ class _TopBarState extends State<_TopBar> {
                       children: [
                         Text(
                           '일상',
-                          style: Theme.of(context)
-                              .textTheme
-                              .titleLarge
-                              ?.copyWith(fontWeight: FontWeight.bold), // 폰트 스타일 조정
+                          style: Theme.of(
+                            context,
+                          ).textTheme.titleLarge?.copyWith(
+                            fontWeight: FontWeight.bold,
+                          ), // 폰트 스타일 조정
                         ),
                         const SizedBox(width: 4),
                         RotatedBox(
                           quarterTurns: _isCategoryListVisible ? 2 : 0,
-                          child: SvgPicture.asset('assets/icons/ic_expand_more.svg'),
+                          child: SvgPicture.asset(
+                            'assets/icons/ic_expand_more.svg',
+                          ),
                         ),
                       ],
                     ),
@@ -168,18 +176,16 @@ class _AuthorInfo extends StatelessWidget {
                 Text(
                   //TODO: 작성자 ProfileScreen으로 링크 추가
                   'name', //TODO: username 값 넣기
-                  style: Theme.of(context)
-                      .textTheme
-                      .titleMedium
-                      ?.copyWith(fontWeight: FontWeight.bold), // 폰트 스타일 조정
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.bold,
+                  ), // 폰트 스타일 조정
                 ),
                 const SizedBox(height: 4),
                 Text(
                   '2025.7.29 13:23', //TODO: date값 넣기, 2분 전, 1시간 전 등 처리해주기
-                  style: Theme.of(context)
-                      .textTheme
-                      .bodyMedium
-                      ?.copyWith(fontWeight: FontWeight.bold), // 폰트 스타일 조정
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    fontWeight: FontWeight.bold,
+                  ), // 폰트 스타일 조정
                 ),
               ],
             ),
@@ -233,8 +239,8 @@ class _Thumbnail extends StatelessWidget {
             child: Text(
               '성시경의 명곡을\n이창섭의 감성으로 재해석하다', //TODO: 텍스트 길이 제한 걸기
               style: AppTextStyles.headlineLarge.copyWith(
-                    color: AppColors.darkTextPrimary,
-                  ),
+                color: AppColors.darkTextPrimary,
+              ),
             ),
           ),
         ],
@@ -256,30 +262,18 @@ class _Content extends StatelessWidget {
           // 제목
           Text(
             '그 자리에, 그 시간에', //TODO: 텍스트 길이 제한 걸기
-            style: Theme.of(context)
-                .textTheme
-                .headlineLarge
-                ?.copyWith(fontWeight: FontWeight.bold), // 폰트 두께 조정
-          ),
-          const SizedBox(height: 4),
-          // 부제목
-          Text(
-            '원곡 성시경, 커버 이창섭',
-            style: Theme.of(context)
-                .textTheme
-                .headlineSmall
-                ?.copyWith(fontSize: 20), // 폰트 크기 조정
+            style: Theme.of(context).textTheme.headlineLarge?.copyWith(
+              fontWeight: FontWeight.bold,
+            ), // 폰트 두께 조정
           ),
 
           SizedBox(height: 16),
-
           // 본문
           Text(
             '살아가는 순간들 마다\n얼마나 많은 일들이\n우연이라는 이름에 빛을 잃었는지\n믿기 힘든 작은 기적들\n\n\n그 자리에 그 시간에\n꼭 운명처럼 우리는 놓여있었던 거죠\n스쳐 지나갔다면 다른 곳을 봤다면\n만일 누군가 만났더라면\n우린 사랑하지 않았을까요\n\n\n사랑하며 순간들 마다\n얼마나 많은 말들이\n이별이라는 끝으로 밀어 넣었는지\n지나서야 깨닫는 일들\n\n\n그 자리에 그 시간에\n헤어질 차례가 되어 놓여졌던 걸까요\n그 말을 참았다면 다른 얘길 했다면\n우린 이별을 피해 갔을 것 같나요\n잃어버린 반지처럼 꼭 찾을 것 같아\n한참을 헤매겠지만 돌이킬 수 없는 일\n\n\n그댈 안아줬다면 울리지 않았다면\n우린 어떻게 되었을까요\n정말 헤어지진 않았을까요',
-            style: Theme.of(context)
-                .textTheme
-                .bodyLarge
-                ?.copyWith(fontSize: 15), // 폰트 크기 조정
+            style: Theme.of(
+              context,
+            ).textTheme.bodyLarge?.copyWith(fontSize: 15), // 폰트 크기 조정
           ),
 
           SizedBox(height: 16),
@@ -304,7 +298,11 @@ class _InteractionButtons extends StatelessWidget {
             },
             child: Row(
               children: [
-                SvgPicture.asset('assets/icons/ic_heart_outlined.svg', width: 24, height: 24),
+                SvgPicture.asset(
+                  'assets/icons/ic_heart_outlined.svg',
+                  width: 24,
+                  height: 24,
+                ),
                 const SizedBox(width: 8),
                 Text(
                   '123', //TODO: likes 값 넣기, 1K, 2.3K 등 처리
@@ -320,7 +318,11 @@ class _InteractionButtons extends StatelessWidget {
             },
             child: Row(
               children: [
-                SvgPicture.asset('assets/icons/ic_comment.svg', width: 24, height: 24),
+                SvgPicture.asset(
+                  'assets/icons/ic_comment.svg',
+                  width: 24,
+                  height: 24,
+                ),
                 const SizedBox(width: 8),
                 Text(
                   '45', //TODO: comments 값 넣기
@@ -331,7 +333,11 @@ class _InteractionButtons extends StatelessWidget {
           ),
           const Spacer(), // 오른쪽으로 밀어내기
           IconButton(
-            icon: SvgPicture.asset('assets/icons/ic_share.svg', width: 24, height: 24),
+            icon: SvgPicture.asset(
+              'assets/icons/ic_share.svg',
+              width: 24,
+              height: 24,
+            ),
             onPressed: () {
               // TODO: 공유 기능
             },
@@ -370,28 +376,25 @@ class _AuthorProfile extends StatelessWidget {
                   children: [
                     Text(
                       '홍길동',
-                      style: Theme.of(context)
-                          .textTheme
-                          .titleMedium
-                          ?.copyWith(fontWeight: FontWeight.bold), // 폰트 스타일 조정
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.bold,
+                      ), // 폰트 스타일 조정
                     ),
                     const SizedBox(width: 8), // 이름과 아이디 사이 간격
                     Text(
                       '@hong_gildong',
-                      style: Theme.of(context)
-                          .textTheme
-                          .bodySmall
-                          ?.copyWith(fontWeight: FontWeight.bold), // 폰트 스타일 조정
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        fontWeight: FontWeight.bold,
+                      ), // 폰트 스타일 조정
                     ),
                   ],
                 ),
                 SizedBox(height: 4),
                 Text(
                   '친구 254명',
-                  style: Theme.of(context)
-                      .textTheme
-                      .bodySmall
-                      ?.copyWith(fontWeight: FontWeight.bold), // 폰트 스타일 조정
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    fontWeight: FontWeight.bold,
+                  ), // 폰트 스타일 조정
                 ),
               ],
             ),
@@ -419,7 +422,8 @@ class _PostList extends StatelessWidget {
     // 더미 데이터 예시
     final posts = List.generate(
       5,
-      (index) => { //TODO: 백 연동하기
+      (index) => {
+        //TODO: 백 연동하기
         'title': '글 제목 ${index + 1}',
         'date': '2025.08.0${index + 1}',
         'likes': 12 * (index + 1),
@@ -441,9 +445,9 @@ class _PostList extends StatelessWidget {
             child: Text(
               '#일상 카테고리의 다른 글',
               style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                    color: Theme.of(context).colorScheme.primary,
-                    fontWeight: FontWeight.bold, // 폰트 스타일 조정
-                  ),
+                color: Theme.of(context).colorScheme.primary,
+                fontWeight: FontWeight.bold, // 폰트 스타일 조정
+              ),
             ),
           ),
 
@@ -456,7 +460,12 @@ class _PostList extends StatelessWidget {
             return Column(
               children: [
                 _PostCard(post: post),
-                if (index < posts.length - 1) Divider(color: AppColors.getBorder(Theme.of(context).brightness == Brightness.dark)), // 마지막 카드 뒤에는 Divider를 추가하지 않음
+                if (index < posts.length - 1)
+                  Divider(
+                    color: AppColors.getBorder(
+                      Theme.of(context).brightness == Brightness.dark,
+                    ),
+                  ), // 마지막 카드 뒤에는 Divider를 추가하지 않음
               ],
             );
           }).toList(),
@@ -520,65 +529,64 @@ class _PostCard extends StatelessWidget {
                       Text(
                         //TODO 백 연동
                         post['title'],
-                        style: Theme
-                            .of(context)
-                            .textTheme
-                            .titleMedium
-                            ?.copyWith(fontWeight: FontWeight
-                            .bold), // 폰트 스타일 조정
+                        style: Theme.of(
+                          context,
+                        ).textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.bold,
+                        ), // 폰트 스타일 조정
                       ),
                       const SizedBox(height: 4), // 제목과 서브타이틀 정보 사이 간격
-
                       // 날짜, 좋아요, 댓글
                       Row(
                         children: [
                           Text(
                             //TODO: 백 연동
                             '${post['date']}',
-                            style: Theme
-                                .of(context)
-                                .textTheme
-                                .bodySmall
-                                ?.copyWith(
-                                fontWeight: FontWeight.bold), // 폰트 스타일 조정
+                            style: Theme.of(
+                              context,
+                            ).textTheme.bodySmall?.copyWith(
+                              fontWeight: FontWeight.bold,
+                            ), // 폰트 스타일 조정
                           ),
                           const SizedBox(width: 12),
                           SvgPicture.asset(
-                              'assets/icons/ic_heart_outlined.svg',
-                              width: 16,
-                              height: 16,
-                              colorFilter: ColorFilter.mode(
-                                  Theme.of(context).colorScheme.error,
-                                  BlendMode.srcIn)), // 아이콘 크기 조정
+                            'assets/icons/ic_heart_outlined.svg',
+                            width: 16,
+                            height: 16,
+                            colorFilter: ColorFilter.mode(
+                              Theme.of(context).colorScheme.error,
+                              BlendMode.srcIn,
+                            ),
+                          ), // 아이콘 크기 조정
                           const SizedBox(width: 4),
                           Text(
                             //TODO: 백 연동
                             '${post['likes']}',
-                            style: Theme
-                                .of(context)
-                                .textTheme
-                                .bodySmall
-                                ?.copyWith(
-                                fontWeight: FontWeight.bold), // 폰트 스타일 조정
+                            style: Theme.of(
+                              context,
+                            ).textTheme.bodySmall?.copyWith(
+                              fontWeight: FontWeight.bold,
+                            ), // 폰트 스타일 조정
                           ),
                           const SizedBox(width: 12),
                           SvgPicture.asset(
-                              'assets/icons/ic_comment.svg',
-                              width: 16,
-                              height: 16,
-                              colorFilter: ColorFilter.mode(
-                                  Theme.of(context).colorScheme.onSurface,
-                                  BlendMode.srcIn)), // 아이콘 크기 조정
+                            'assets/icons/ic_comment.svg',
+                            width: 16,
+                            height: 16,
+                            colorFilter: ColorFilter.mode(
+                              Theme.of(context).colorScheme.onSurface,
+                              BlendMode.srcIn,
+                            ),
+                          ), // 아이콘 크기 조정
                           const SizedBox(width: 4),
                           Text(
                             //TODO: 백 연동
                             '${post['comments']}',
-                            style: Theme
-                                .of(context)
-                                .textTheme
-                                .bodySmall
-                                ?.copyWith(
-                                fontWeight: FontWeight.bold), // 폰트 스타일 조정
+                            style: Theme.of(
+                              context,
+                            ).textTheme.bodySmall?.copyWith(
+                              fontWeight: FontWeight.bold,
+                            ), // 폰트 스타일 조정
                           ),
                         ],
                       ),
@@ -616,7 +624,8 @@ class _BannerAd extends StatelessWidget {
       // ClipRRect ensures the rounded corners are applied to all children.
       child: ClipRRect(
         borderRadius: BorderRadius.circular(5.0),
-        child: InkWell( // To make the whole banner clickable
+        child: InkWell(
+          // To make the whole banner clickable
           onTap: () {
             // TODO: 광고 링크 이동
           },
@@ -635,7 +644,10 @@ class _BannerAd extends StatelessWidget {
                   top: 8.0,
                   left: 8.0,
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 2,
+                    ),
                     decoration: BoxDecoration(
                       color: Colors.black.withOpacity(0.5),
                       borderRadius: BorderRadius.circular(4),
@@ -665,10 +677,12 @@ class _BannerAd extends StatelessWidget {
                         padding: const EdgeInsets.only(left: 8.0),
                         child: Text(
                           '더 알아보기',
-                          style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                                color: Colors.white,
-                                fontWeight: FontWeight.bold,
-                              ),
+                          style: Theme.of(
+                            context,
+                          ).textTheme.labelMedium?.copyWith(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                          ),
                         ),
                       ),
                     ),
@@ -682,4 +696,3 @@ class _BannerAd extends StatelessWidget {
     );
   }
 }
-
