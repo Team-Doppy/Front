@@ -64,6 +64,18 @@ class _OnboardingScreenState extends State<OnboardingScreen>
       CurvedAnimation(parent: _cursorController, curve: Curves.easeInOut),
     );
 
+    // 타이핑 완료 후 자동 페이지 전환을 위한 리스너 추가
+    _typingController.addStatusListener((status) {
+      if (status == AnimationStatus.completed) {
+        // 타이핑이 완료되면 잠시 대기 후 다음 페이지로 이동
+        Future.delayed(const Duration(milliseconds: 800), () {
+          if (mounted) {
+            _goToNextPage();
+          }
+        });
+      }
+    });
+
     _startTypingAnimation();
     _cursorController.repeat(reverse: true);
   }
