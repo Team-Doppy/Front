@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:provider/provider.dart';
 import '../../providers/friend_provider.dart';
+import '../../data/models/friend_model.dart'; // ✅ 실제 Friend 모델을 사용합니다.
+import '../../theme/theme.dart'; // (테마가 있다면 경로 확인)
 
 // 이웃 관리 화면 메인 위젯
 class ManageNeighborScreen extends StatefulWidget {
@@ -16,12 +18,9 @@ class _ManageNeighborScreenState extends State<ManageNeighborScreen> {
   @override
   void initState() {
     super.initState();
-    // 화면이 열릴 때 Provider를 통해 모든 데이터를 한 번에 불러옵니다.
+    // ✅ 화면이 열릴 때 Provider를 통해 '받은 요청'과 '친구 목록' 데이터를 한번에 요청합니다.
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      Provider.of<FriendProvider>(
-        context,
-        listen: false,
-      ).fetchAllNeighborData();
+      Provider.of<FriendProvider>(context, listen: false).fetchAllFriendData();
     });
   }
 
@@ -88,9 +87,7 @@ class _ManageNeighborScreenState extends State<ManageNeighborScreen> {
                   itemBuilder: (context, index) {
                     final friend = provider.acceptedFriends[index];
                     return _NeighborListTile(
-                      name: friend.username, // Friend 모델의 데이터 사용
-                      userId: '@${friend.username}', // userId 필드가 없다면 username 활용
-                      mutualFriends: 0, // API 응답에 없으므로 0 또는 다른 값으로 표시
+                      friend: friend,
                       trailing: IconButton(
                         icon: const Icon(Icons.more_vert),
                         onPressed: () {},
@@ -149,15 +146,12 @@ class _ManageNeighborScreenState extends State<ManageNeighborScreen> {
           ),
           // Column을 사용하여 요청 목록을 순서대로 그림
           ...provider.receivedRequests.map((request) {
+            // ✅ [수정] friend 객체를 직접 전달하도록 수정
             return _NeighborListTile(
-              name: request.username,
-              userId: '@${request.username}',
-              mutualFriends: 0,
-              // trailing 위젯으로 '수락' 버튼을 전달
+              friend: request,
               trailing: _AcceptButton(
                 onPressed: () {
-                  // 버튼을 누르면 Provider의 수락 메소드 호출
-                  provider.acceptFriendRequest(request.username);
+                  context.read<FriendProvider>().acceptFriendRequest(request.username);
                 },
               ),
             );
@@ -188,17 +182,13 @@ class _ManageNeighborScreenState extends State<ManageNeighborScreen> {
 
 // 이웃 목록의 각 항목을 구성하는 위젯
 class _NeighborListTile extends StatelessWidget {
-  final String name;
-  final String userId;
-  final int mutualFriends;
+  final Friend friend;
   final Widget? trailing;
   final String? profileImageUrl;
 
   const _NeighborListTile({
     Key? key,
-    required this.name,
-    required this.userId,
-    required this.mutualFriends,
+    required this.friend,
     this.trailing,
     this.profileImageUrl,
   }) : super(key: key);
@@ -230,17 +220,17 @@ class _NeighborListTile extends StatelessWidget {
       title: Row(
         children: [
           Text(
-            name,
+            friend.username,
             style: const TextStyle(fontWeight: FontWeight.bold),
           ),
           const SizedBox(width: 8),
           Text(
-            userId,
+            '@${friend.username}', // ✅ [수정] friend 객체의 username 사용
             style: const TextStyle(color: Colors.grey, fontSize: 14),
           ),
         ],
       ),
-      subtitle: Text('이웃 ${mutualFriends}명'),
+      subtitle: const Text('함께 아는 이웃 0명'),
       trailing: trailing,
     );
   }

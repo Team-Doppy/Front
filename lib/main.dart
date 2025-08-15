@@ -8,6 +8,8 @@ import 'package:doppy/pages/post/user_profile_screen.dart';
 import 'package:doppy/pages/user/login_screen.dart';
 import 'package:doppy/providers/auth_provider.dart';
 import 'package:doppy/providers/friend_provider.dart';
+import 'package:doppy/providers/group_provider.dart';
+import 'package:doppy/providers/user_provider.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'theme/theme.dart';
@@ -17,8 +19,9 @@ void main() {
     MultiProvider(
       providers: [
         ChangeNotifierProvider(create: (_) => AuthProvider()),
-        // ✅ 여기에 FriendProvider가 등록되어야 합니다!
         ChangeNotifierProvider(create: (_) => FriendProvider()),
+        ChangeNotifierProvider(create: (_) => UserProvider()),
+        ChangeNotifierProvider(create: (_) => GroupProvider()),
       ],
       child: const MyApp(), // MyApp 위젯을 child로 감싸줍니다.
     ),
@@ -30,33 +33,27 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ChangeNotifierProvider(
-      create: (context) => AuthProvider(),
-      child: MaterialApp(
-        title: 'Doppy',
-        debugShowCheckedModeBanner: false,
-        theme: AppTheme.lightTheme,
-        darkTheme: AppTheme.darkTheme,
-        themeMode: ThemeMode.system,
+    return MaterialApp(
+      title: 'Doppy',
+      debugShowCheckedModeBanner: false,
+      theme: AppTheme.lightTheme,
+      darkTheme: AppTheme.darkTheme,
+      themeMode: ThemeMode.system,
 
-        // ✅ 초기 진입: 로그인 화면
-        home: Consumer<AuthProvider>(
-          builder: (context, auth, child) {
-            // AuthProvider의 isLoggedIn 상태에 따라 다른 화면을 보여줌
-            // return LoginScreen();
-            return auth.isLoggedIn ? HomeScreen() : LoginScreen();
-          },
-        ),
+      home: Consumer<AuthProvider>(
+        builder: (context, auth, child) {
+          return auth.isLoggedIn ? const HomeScreen() : const LoginScreen();
+        },
+      ),
 
-        routes: {
+      routes: {
           '/login': (_) => const LoginScreen(), // ✅ 추가
           '/home': (_) => const HomeScreen(),
           '/search': (_) => const SearchScreen(),
           '/profile': (context) {
-            final args =
-                ModalRoute.of(context)?.settings.arguments
-                    as Map<String, dynamic>?;
-            return UserProfileScreen(arguments: args);
+            final args = ModalRoute.of(context)?.settings.arguments;
+            final String? username = (args is Map) ? args['username'] : null;
+            return UserProfileScreen(username: username);
           },
           // 필요 시 확장
           '/manage-group': (_) => const ManageGroupScreen(),
@@ -67,7 +64,6 @@ class MyApp extends StatelessWidget {
 
         onUnknownRoute:
             (_) => MaterialPageRoute(builder: (_) => const HomeScreen()),
-      ),
     );
   }
 }

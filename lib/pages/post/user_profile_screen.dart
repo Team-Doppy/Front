@@ -3,25 +3,20 @@ import 'package:doppy/pages/components/profile_top_bar.dart';
 import 'package:doppy/pages/components/post_card.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
+import 'package:provider/provider.dart';
+import '../../providers/auth_provider.dart';
+import '../../providers/friend_provider.dart';
+import '../../providers/user_provider.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/app_text_styles.dart';
-import '../../data/services/auth_service.dart';
-import '../../data/models/user_model.dart';
 import 'manage_group_screen.dart';
 import 'manage_neighbor_screen.dart';
-import '../../data/services/friend_service.dart';
-
-// 친구 요청 상태를 나타내는 enum
-enum FriendRequestStatus {
-  none, // 친구 요청 안 함
-  requested, // 친구 요청함, 수락 안 됨
-  accepted, // 친구가 됨
-}
+import '../../data/models/user_model.dart';
 
 class UserProfileScreen extends StatefulWidget {
-  final Map<String, dynamic>? arguments; // 다른 사용자 프로필을 볼 때 전달되는 인자
+  final String? username; // 다른 사용자 프로필을 볼 때 username 전달
 
-  const UserProfileScreen({super.key, this.arguments});
+  const UserProfileScreen({super.key, this.username});
 
   @override
   State<UserProfileScreen> createState() => _UserProfileScreenState();
@@ -30,218 +25,45 @@ class UserProfileScreen extends StatefulWidget {
 class _UserProfileScreenState extends State<UserProfileScreen> {
   // 피드 보기 모드 상태 (true: 카드형, false: 리스트형)
   bool isCardView = true;
-
-  // 인증 서비스 인스턴스
-  final AuthService _authService = AuthService();
-
-  // 친구 서비스 인스턴스
-  final FriendService _friendService = FriendService();
-
-  // 사용자 정보 관련 상태
-  User? _profileUser;
-  bool _isLoadingUser = true;
-  int? _friendCount; // 친구 수 추가
-  String? _selfIntroduction; // 자기소개 추가
-
-  // 친구 상태 관련 상태
-  bool _isLoadingFriendStatus = false;
-  FriendRequestStatus _friendRequestStatus =
-      FriendRequestStatus.none; // 친구 요청 상태
-
-  // 프로필 구분 상태
-  late final bool _isOwnProfile; // 내 프로필인지 다른 사용자 프로필인지 구분
-  late final String? _targetUsername; // 다른 사용자 프로필을 볼 때의 username
-
   double? _handleTop; // 드래그 핸들의 현재 top 위치
   late double _minHandleTop; // 핸들이 올라갈 수 있는 최소 top
   late double _initialHandleTop; // 초기 핸들 위치 (아래쪽 한계)
 
+  // ✅ 프로필 구분 상태는 그대로 유지
+  late final bool _isOwnProfile;
+
+
   @override
   void initState() {
     super.initState();
+    _isOwnProfile = (widget.username == null);
 
-    // arguments가 있으면 다른 사용자 프로필, 없으면 내 프로필
-    if (widget.arguments != null) {
-      _isOwnProfile = false;
-      _targetUsername = widget.arguments!['username'] as String?;
-    } else {
-      _isOwnProfile = true;
-      _targetUsername = null;
-    }
-
-    _loadProfileUser();
-
-    // 다른 사용자 프로필인 경우 친구 상태도 확인
-    if (!_isOwnProfile) {
-      _checkFriendStatus();
-    }
-  }
-
-  // 프로필 사용자 정보 로드
-  Future<void> _loadProfileUser() async {
-    try {
-      setState(() {
-        _isLoadingUser = true;
-      });
-
-      // 현재 로그인된 사용자의 토큰을 가져와서 사용자 정보 조회
-      final token = await _authService.getToken();
-
-      if (token != null) {
-        if (_isOwnProfile) {
-          // 내 프로필인 경우
-          final String? profileUsername = await _authService.getUsername();
-
-          if (profileUsername != null) {
-            final userData = await _authService.getUserInfo(profileUsername);
-
-            if (userData != null) {
-              // API 응답에서 User 객체 생성
-              final user = User(
-                id: userData['id'],
-                username: userData['username'],
-                role: userData['role'],
-                alias: userData['alias'],
-              );
-
-              // 친구 수도 함께 조회
-              final friendCount = await _authService.getFriendCount();
-
-              // 자기소개도 함께 조회
-              final selfIntroduction = await _authService.getSelfIntroduction();
-
-              setState(() {
-                _profileUser = user;
-                _friendCount = friendCount;
-                _selfIntroduction = selfIntroduction;
-                _isLoadingUser = false;
-              });
-            } else {
-              setState(() {
-                _isLoadingUser = false;
-              });
-            }
-          } else {
-            // 사용자명이 없으면 로그인되지 않은 상태
-            setState(() {
-              _isLoadingUser = false;
-            });
-            // TODO: 로그인 페이지로 이동하거나 에러 처리
-          }
-        } else {
-          // 다른 사용자 프로필인 경우
-          if (_targetUsername != null) {
-            final userData = await _authService.getUserInfo(_targetUsername!);
-
-            if (userData != null) {
-              // API 응답에서 User 객체 생성
-              final user = User(
-                id: userData['id'],
-                username: userData['username'],
-                role: userData['role'],
-                alias: userData['alias'],
-              );
-
-              // 다른 사용자의 경우에도 이웃 수와 자기소개를 조회해보기
-              // (API가 공개 정보를 제공한다면 표시)
-              int? otherUserFriendCount;
-              String? otherUserSelfIntroduction;
-
-              try {
-                // 다른 사용자의 친구 수 조회 (공개 API가 있다면)
-                // 현재는 같은 API를 사용하지만, 실제로는 별도의 공개 API가 필요할 수 있음
-                otherUserFriendCount = await _authService.getFriendCount();
-
-                // 다른 사용자의 자기소개 조회 (공개 API가 있다면)
-                otherUserSelfIntroduction =
-                    await _authService.getSelfIntroduction();
-              } catch (e) {
-                print('⚠️ [UserProfileScreen] 다른 사용자 정보 조회 실패: $e');
-                // 실패해도 기본 정보는 표시
-              }
-
-              setState(() {
-                _profileUser = user;
-                _friendCount = otherUserFriendCount;
-                _selfIntroduction = otherUserSelfIntroduction;
-                _isLoadingUser = false;
-              });
-            } else {
-              setState(() {
-                _isLoadingUser = false;
-              });
-            }
-          } else {
-            setState(() {
-              _isLoadingUser = false;
-            });
-          }
-        }
+    // ✅ [구조 개선] Provider를 통해 필요한 데이터를 한번에 요청합니다.
+    // 이 코드 하나로 모든 데이터 로딩이 시작됩니다.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final userProvider = context.read<UserProvider>();
+      if (_isOwnProfile) {
+        // 내 프로필에 필요한 데이터 로딩
+        userProvider.fetchMyProfile();
       } else {
-        // 토큰이 없으면 로그인되지 않은 상태
-        setState(() {
-          _isLoadingUser = false;
-        });
-        // TODO: 로그인 페이지로 이동하거나 에러 처리
+        // 다른 사용자 프로필에 필요한 데이터 로딩
+        userProvider.fetchUserProfile(widget.username!);
+        context.read<FriendProvider>().checkFriendStatus(widget.username!);
       }
-    } catch (e) {
-      print('프로필 사용자 정보 로드 실패: $e');
-      setState(() {
-        _isLoadingUser = false;
-      });
-    }
-  }
-
-  // 친구 상태 확인 메서드
-  Future<void> _checkFriendStatus() async {
-    if (_isOwnProfile || _targetUsername == null) return;
-
-    setState(() {
-      _isLoadingFriendStatus = true;
     });
-
-    try {
-      // 1. 내가 보낸 친구 신청 목록 확인
-      final sentRequests = await _authService.getSentFriendRequests();
-      final hasSentRequest = sentRequests.any(
-        (request) =>
-            request['targetUsername'] == _targetUsername ||
-            request['username'] == _targetUsername,
-      );
-
-      if (hasSentRequest) {
-        // 2. 친구 요청을 보냈다면, 수락된 친구 목록 확인
-        final acceptedFriends = await _authService.getAcceptedFriends();
-        final isAccepted = acceptedFriends.any(
-          (friend) =>
-              friend['username'] == _targetUsername ||
-              friend['targetUsername'] == _targetUsername,
-        );
-
-        setState(() {
-          _friendRequestStatus =
-              isAccepted
-                  ? FriendRequestStatus.accepted
-                  : FriendRequestStatus.requested;
-          _isLoadingFriendStatus = false;
-        });
-      } else {
-        setState(() {
-          _friendRequestStatus = FriendRequestStatus.none;
-          _isLoadingFriendStatus = false;
-        });
-      }
-    } catch (e) {
-      print('❌ [UserProfileScreen] 친구 상태 확인 실패: $e');
-      setState(() {
-        _friendRequestStatus = FriendRequestStatus.none;
-        _isLoadingFriendStatus = false;
-      });
-    }
   }
 
   @override
   Widget build(BuildContext context) {
+    // ✅ [구조 개선] Provider들로부터 데이터와 상태를 가져옵니다.
+    final userProvider = context.watch<UserProvider>();
+    final friendProvider = context.watch<FriendProvider>();
+
+    // ✅ [구조 개선] 현재 화면에 표시할 사용자 정보를 Provider로부터 결정합니다.
+    final User? profileUser = _isOwnProfile ? userProvider.currentUser : userProvider.viewedUser;
+    final String? selfIntroduction = _isOwnProfile ? userProvider.selfIntroduction : userProvider.viewedUserSelfIntroduction;
+    final int? friendCount = _isOwnProfile ? userProvider.friendCount : null;
+
     final screenWidth = MediaQuery.of(context).size.width;
     final screenHeight = MediaQuery.of(context).size.height;
 
@@ -286,6 +108,10 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
               containerHeight,
               panelTop,
               dynamicPanelHeight,
+              profileUser,
+              selfIntroduction,
+              friendCount,
+              friendProvider,
             ),
           ),
         ),
@@ -298,10 +124,14 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
   }
 
   Widget _buildContent(
-    double containerWidth,
-    double containerHeight,
-    double panelTop,
-    double dynamicPanelHeight,
+      double containerWidth,
+      double containerHeight,
+      double panelTop,
+      double dynamicPanelHeight,
+      User? profileUser,
+      String? selfIntroduction,
+      int? friendCount,
+      FriendProvider friendProvider,
   ) {
     return Stack(
       children: [
@@ -309,7 +139,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
         _buildBackground(containerWidth, containerHeight),
 
         // 프로필 요소들
-        ..._buildProfileElements(containerWidth, containerHeight),
+        ..._buildProfileElements(containerWidth, containerHeight, profileUser, selfIntroduction, friendCount, friendProvider),
         // 하단 네비게이션 바
         //        _buildBottomNavigation(containerWidth, containerHeight),
         // 상단 탑바 (피드 패널 아래에 위치)
@@ -318,12 +148,8 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
           left: 0,
           right: 0,
           child: DoppyTopBar(
-            title: _isLoadingUser
-                    ? '로딩 중...'
-                    : _profileUser != null
-                    ? '@${_profileUser!.username}'
-                    : '사용자', // 사용자 아이디 표시
-            showBack: !_isOwnProfile, // 다른 사용자 프로필일 때만 뒤로가기 버튼 표시
+            title: profileUser != null ? '@${profileUser.username}' : '사용자',
+            showBack: !_isOwnProfile,
             onBack: _isOwnProfile ? null : () => Navigator.pop(context),
             onMore: () {
               // 더보기 메뉴 로직 (필요시 구현)
@@ -352,6 +178,10 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
   List<Widget> _buildProfileElements(
     double containerWidth,
     double containerHeight,
+    User? profileUser,
+    String? selfIntroduction,
+    int? friendCount,
+    FriendProvider friendProvider,
   ) {
     List<Widget> elements = [
       // 프로필 이미지 컨테이너
@@ -459,11 +289,11 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     }
 
     // 사용자 정보들 추가
-    elements.addAll(_buildUserInfoTexts(containerWidth, containerHeight));
+    elements.addAll(_buildUserInfoTexts(containerWidth, containerHeight, profileUser, selfIntroduction, friendCount));
 
     // 다른 사용자 프로필인 경우 이웃 요청하기 버튼과 함께 Doppy하는 이웃 수 추가
     if (!_isOwnProfile) {
-      elements.addAll(_buildOtherUserElements(containerWidth, containerHeight));
+      elements.addAll(_buildOtherUserElements(containerWidth, containerHeight, profileUser, friendProvider));
     }
 
     return elements;
@@ -472,68 +302,37 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
   List<Widget> _buildUserInfoTexts(
     double containerWidth,
     double containerHeight,
+    User? profileUser,
+    String? selfIntroduction,
+    int? friendCount,
   ) {
     return [
       // 사용자 이름
       Positioned(
         left: containerWidth * 0.475,
         top: containerHeight * 0.09, // 위로 올림
-        child: _isLoadingUser
-                ? const SizedBox(
-                  width: 20,
-                  height: 20,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-                : Text(
-                  _profileUser != null &&
-                          _profileUser!.alias != null &&
-                          _profileUser!.alias!.isNotEmpty
-                      ? _profileUser!.alias!
-                      : _profileUser != null
-                      ? _profileUser!.username
-                      : '사용자',
-                  style: AppTextStyles.headlineLarge.copyWith(
-                    color: AppColors.lightTextPrimary,
-                    fontSize: 25,
-                    fontWeight: FontWeight.w700,
-                  ), // 대형 제목 - 사용자 이름, 메인 제목
-                ),
+        child: Text(
+          profileUser?.alias ?? profileUser?.username ?? '사용자',
+          style: AppTextStyles.headlineLarge.copyWith(fontSize: 25, fontWeight: FontWeight.w700),
+        ),
       ),
       // 사용자 설명 (모든 프로필에서 표시)
       Positioned(
         left: containerWidth * 0.475,
         top: containerHeight * 0.16, // 위로 올림
-        child: _isLoadingUser
-                ? const SizedBox(
-                  width: 20,
-                  height: 20,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-                : Text(
-                  _selfIntroduction != null && _selfIntroduction!.isNotEmpty
-                      ? _selfIntroduction!
-                      : '자기소개가 없습니다.',
-                  style: AppTextStyles.bodySmall.copyWith(
-                    color: AppColors.lightTextSecondary,
-                  ), // 작은 본문 - 사용자 ID, 소개글
-                ),
+        child: Text(
+          selfIntroduction ?? '자기소개가 없습니다.',
+          style: AppTextStyles.bodySmall,
+        ),
       ),
       // 이웃 수 (모든 프로필에서 표시)
       Positioned(
         left: containerWidth * 0.483,
         top: containerHeight * 0.13, // 위로 올림
-        child: _isLoadingUser
-                ? const SizedBox(
-                  width: 20,
-                  height: 20,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-                : Text(
-                  _friendCount != null ? '이웃 ${_friendCount}명' : '이웃 0명',
-                  style: AppTextStyles.bodyLarge.copyWith(
-                    color: AppColors.lightTextPrimary,
-                  ), // 강조 본문 - 메뉴, 중요 본문
-                ),
+        child: Text(
+          '이웃 ${friendCount ?? 0}명',
+          style: AppTextStyles.bodyLarge,
+        ),
       ),
     ];
   }
@@ -542,6 +341,8 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
   List<Widget> _buildOtherUserElements(
     double containerWidth,
     double containerHeight,
+      User? profileUser,
+      FriendProvider friendProvider,
   ) {
     return [
       // 함께 Doppy하는 이웃 수 (이웃 요청하기 버튼 바로 위에 위치)
@@ -557,7 +358,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
       ),
 
       // 이웃 요청하기 버튼 (친구 상태에 따라 다르게 표시)
-      if (_friendRequestStatus != FriendRequestStatus.accepted)
+      if (friendProvider.friendStatus != FriendRequestStatus.accepted)
         Positioned(
           left: containerWidth * 0.047,
           top: containerHeight * 0.25, // 함께 Doppy하는 이웃 수 아래에 위치
@@ -571,33 +372,27 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                 splashColor: Colors.grey.withOpacity(0.6),
                 highlightColor: Colors.grey.withOpacity(0.3),
                 onTap:
-                    _friendRequestStatus == FriendRequestStatus.none
-                        ? _sendFriendRequest
-                        : null, // 이미 요청한 경우 클릭 불가
+                friendProvider.friendStatus == FriendRequestStatus.none
+                    ? () => context.read<FriendProvider>().sendFriendRequest(profileUser!.username)
+                    : null, // 이미 요청한 경우 클릭 불가
                 child: Container(
                   decoration: BoxDecoration(
                     color:
-                        _friendRequestStatus == FriendRequestStatus.none
-                            ? AppColors
-                                .primary // 보라색 배경
-                            : AppColors.lightSurfaceVariant, // 회색 배경
+                      friendProvider.friendStatus == FriendRequestStatus.none
+                          ? AppColors.primary // 보라색 배경
+                          : AppColors.lightSurfaceVariant, // 회색 배경
                     borderRadius: BorderRadius.circular(10),
                   ),
                   child: Center(
-                    child:
-                        _isLoadingFriendStatus
-                            ? const SizedBox(
-                              width: 20,
-                              height: 20,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                            : Text(
-                              _friendRequestStatus == FriendRequestStatus.none
+                    child: friendProvider.isLoadingStatus
+                        ? const CircularProgressIndicator(color: Colors.white, strokeWidth: 2)
+                        : Text(
+                      friendProvider.friendStatus == FriendRequestStatus.none
                                   ? '이웃 요청하기'
                                   : '이웃 요청함',
                               style: AppTextStyles.bodyLarge.copyWith(
                                 color:
-                                    _friendRequestStatus ==
+                                friendProvider.friendStatus ==
                                             FriendRequestStatus.none
                                         ? Colors.white
                                         : AppColors.lightTextSecondary,
@@ -611,37 +406,6 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
           ),
         ),
     ];
-  }
-
-  // 친구 요청 보내기 메서드
-  Future<void> _sendFriendRequest() async {
-    if (_targetUsername == null) return;
-
-    try {
-      // FriendService를 사용하여 친구 요청 보내기
-      await _friendService.sendFriendRequest(_targetUsername!);
-
-      // 친구 요청 성공 시 상태 업데이트
-      setState(() {
-        _friendRequestStatus = FriendRequestStatus.requested;
-      });
-
-      // 성공 메시지 표시
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('이웃 요청이 완료되었습니다.'),
-          duration: Duration(seconds: 2),
-        ),
-      );
-    } catch (e) {
-      print('❌ [UserProfileScreen] 친구 요청 실패: $e');
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('이웃 요청 중 오류가 발생했습니다.'),
-          duration: Duration(seconds: 2),
-        ),
-      );
-    }
   }
 
   Widget _buildNavIcon(

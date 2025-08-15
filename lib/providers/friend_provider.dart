@@ -2,60 +2,103 @@ import 'package:flutter/material.dart';
 import '../data/models/friend_model.dart';
 import '../data/services/friend_service.dart';
 
+// 친구 요청 상태를 나타내는 enum
+enum FriendRequestStatus { none, requested, accepted }
+
 class FriendProvider with ChangeNotifier {
   final FriendService _friendService = FriendService();
 
+  // --- 상태 변수 ---
+
+  // '이웃 관리' 화면용 데이터
   List<Friend> _acceptedFriends = [];
   List<Friend> _receivedRequests = [];
-
-  bool _isLoading = false;
+  bool _isLoading = false; // 목록 로딩 상태
   String? _errorMessage;
+
+  // '다른 사용자 프로필' 화면용 데이터
+  FriendRequestStatus _friendStatus = FriendRequestStatus.none;
+  bool _isLoadingStatus = false; // 개별 친구 상태 로딩
 
   // --- Getter ---
   List<Friend> get acceptedFriends => _acceptedFriends;
-  List<Friend> get receivedRequests => _receivedRequests; // ✨ 새 Getter
+  List<Friend> get receivedRequests => _receivedRequests;
   bool get isLoading => _isLoading;
   String? get errorMessage => _errorMessage;
 
+  FriendRequestStatus get friendStatus => _friendStatus;
+  bool get isLoadingStatus => _isLoadingStatus;
+
   // --- API 호출 메소드 ---
 
-  // ✨ 두 API를 한 번에 호출하는 통합 메소드
-  Future<void> fetchAllNeighborData() async {
+  /// ✨ [추가] '이웃 관리' 화면에 필요한 모든 데이터를 한번에 불러옵니다.
+  Future<void> fetchAllFriendData() async {
     _isLoading = true;
     _errorMessage = null;
     notifyListeners();
-
     try {
-      // 두 API를 동시에 요청하여 시간 절약 (Future.wait)
       final results = await Future.wait([
         _friendService.getAcceptedFriends(),
         _friendService.getReceivedFriendRequests(),
       ]);
-      // 결과 할당
-      _acceptedFriends = results[0] as List<Friend>;
-      _receivedRequests = results[1] as List<Friend>;
-
+      _acceptedFriends = results[0];
+      _receivedRequests = results[1];
     } catch (e) {
-      _errorMessage = "데이터를 불러오는데 실패했습니다: $e";
+      _errorMessage = "데이터 로딩에 실패했습니다: $e";
     } finally {
       _isLoading = false;
       notifyListeners();
     }
   }
 
-  // ✨ 친구 요청 수락 API 호출 메소드
+  /// ✨ [추가] 친구 요청을 수락합니다.
   Future<bool> acceptFriendRequest(String requesterUsername) async {
     try {
       await _friendService.acceptFriendRequest(requesterUsername);
-      // 성공 시, 화면을 즉시 갱신하여 '수락됨'으로 보이게 함
-      // 1. 요청 목록에서 해당 유저 제거
-      _receivedRequests.removeWhere((req) => req.username == requesterUsername);
-      // 2. 친구 목록에 추가 (이 부분은 선택적. 전체 목록을 다시 fetch해도 됨)
-      // fetchAllNeighborData(); // 혹은 간단히 전체 데이터를 다시 불러옴
-      notifyListeners();
+      // 성공 시, 목록을 새로고침하여 UI에 즉시 반영
+      await fetchAllFriendData();
       return true;
     } catch (e) {
       print("친구 요청 수락 실패: $e");
+      // TODO: UI에 에러 메시지 표시 (예: 스낵바)
+      return false;
+    }
+  }
+
+  /// 특정 사용자와의 친구 상태 확인
+  Future<void> checkFriendStatus(String targetUsername) async {
+    _isLoadingStatus = true;
+    notifyListeners();
+    try {
+      final results = await Future.wait([
+        _friendService.getSentFriendRequests(),
+        _friendService.getAcceptedFriends(),
+      ]);
+      final sentRequests = results[0];
+      final acceptedFriends = results[1];
+
+      if (acceptedFriends.any((f) => f.username == targetUsername)) {
+        _friendStatus = FriendRequestStatus.accepted;
+      } else if (sentRequests.any((r) => r.username == targetUsername)) {
+        _friendStatus = FriendRequestStatus.requested;
+      } else {
+        _friendStatus = FriendRequestStatus.none;
+      }
+    } finally {
+      _isLoadingStatus = false;
+      notifyListeners();
+    }
+  }
+
+  /// 친구 신청 보내기
+  Future<bool> sendFriendRequest(String targetUsername) async {
+    try {
+      await _friendService.sendFriendRequest(targetUsername);
+      _friendStatus = FriendRequestStatus.requested; // UI 즉시 반영
+      notifyListeners();
+      return true;
+    } catch (e) {
+      print("친구 신청 실패: $e");
       return false;
     }
   }
