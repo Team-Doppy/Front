@@ -6,6 +6,7 @@ import 'package:doppy/pages/post/postview_screen.dart';
 import 'package:doppy/pages/post/search_screen.dart';
 import 'package:doppy/pages/post/user_profile_screen.dart';
 import 'package:doppy/pages/user/login_screen.dart';
+import 'package:doppy/pages/onboarding/onboarding_screen.dart';
 import 'package:doppy/providers/auth_provider.dart';
 import 'package:doppy/providers/friend_provider.dart';
 import 'package:doppy/providers/group_provider.dart';
@@ -42,28 +43,33 @@ class MyApp extends StatelessWidget {
 
       home: Consumer<AuthProvider>(
         builder: (context, auth, child) {
-          return auth.isLoggedIn ? const HomeScreen() : const LoginScreen();
+          if (auth.isLoggedIn) {
+            return const HomeScreen();
+          } else {
+            // 온보딩 화면을 먼저 보여주고, 건너뛰기나 시작하기 버튼을 누르면 로그인 화면으로 이동
+            return const OnboardingScreen();
+          }
         },
       ),
 
       routes: {
-          '/login': (_) => const LoginScreen(), // ✅ 추가
-          '/home': (_) => const HomeScreen(),
-          '/search': (_) => const SearchScreen(),
-          '/profile': (context) {
-            final args = ModalRoute.of(context)?.settings.arguments;
-            final String? username = (args is Map) ? args['username'] : null;
-            return UserProfileScreen(username: username);
-          },
-          // 필요 시 확장
-          '/manage-group': (_) => const ManageGroupScreen(),
-          '/manage-neighbor': (_) => const ManageNeighborScreen(),
-          '/group-profile': (_) => const GroupProfileScreen(),
-          '/post-view': (_) => PostviewScreen(),
+        '/login': (_) => const LoginScreen(), // ✅ 추가
+        '/home': (_) => const HomeScreen(),
+        '/search': (_) => const SearchScreen(),
+        '/profile': (context) {
+          final args = ModalRoute.of(context)?.settings.arguments;
+          final String? username = (args is Map) ? args['username'] : null;
+          return UserProfileScreen(username: username);
         },
+        // 필요 시 확장
+        '/manage-group': (_) => const ManageGroupScreen(),
+        '/manage-neighbor': (_) => const ManageNeighborScreen(),
+        '/group-profile': (_) => const GroupProfileScreen(),
+        '/post-view': (_) => PostviewScreen(),
+      },
 
-        onUnknownRoute:
-            (_) => MaterialPageRoute(builder: (_) => const HomeScreen()),
+      onUnknownRoute:
+          (_) => MaterialPageRoute(builder: (_) => const HomeScreen()),
     );
   }
 }

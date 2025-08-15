@@ -19,15 +19,15 @@ class AuthService {
     String? alias,
   }) async {
     final url = Uri.parse('$_baseUrl/api/auth/register');
-    final body = {
-      'username': username,
-      'password': password,
-      'alias': alias,
-    };
+    final body = {'username': username, 'password': password, 'alias': alias};
     // null 값은 보내지 않도록 처리
     body.removeWhere((key, value) => value == null);
 
-    final response = await http.post(url, headers: {'Content-Type': 'application/json'}, body: jsonEncode(body));
+    final response = await http.post(
+      url,
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode(body),
+    );
     if (response.statusCode == 200) {
       return User.fromJson(jsonDecode(utf8.decode(response.bodyBytes)));
     }
@@ -39,9 +39,15 @@ class AuthService {
     final url = Uri.parse('$_baseUrl/api/auth/login');
     final body = {'username': username, 'password': password};
     try {
-      final response = await http.post(url, headers: {'Content-Type': 'application/json'}, body: jsonEncode(body));
+      final response = await http.post(
+        url,
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode(body),
+      );
       if (response.statusCode == 200) {
-        final loginResponse = LoginResponse.fromJson(jsonDecode(utf8.decode(response.bodyBytes)));
+        final loginResponse = LoginResponse.fromJson(
+          jsonDecode(utf8.decode(response.bodyBytes)),
+        );
         await _saveToken(loginResponse.token);
         await _saveUsername(loginResponse.username);
         return loginResponse;
@@ -63,8 +69,10 @@ class AuthService {
   }
 
   // --- 토큰 및 사용자명 관리 ---
-  Future<void> _saveToken(String token) async => await _storage.write(key: _tokenKey, value: token);
-  Future<void> _saveUsername(String username) async => await _storage.write(key: _usernameKey, value: username);
+  Future<void> _saveToken(String token) async =>
+      await _storage.write(key: _tokenKey, value: token);
+  Future<void> _saveUsername(String username) async =>
+      await _storage.write(key: _usernameKey, value: username);
   Future<String?> getToken() async => await _storage.read(key: _tokenKey);
   Future<String?> getUsername() async => await _storage.read(key: _usernameKey);
   Future<void> logout() async {
