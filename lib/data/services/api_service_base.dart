@@ -6,8 +6,7 @@ import 'auth_service.dart';
 
 /// 인증이 필요한 모든 API 서비스의 기반이 되는 클래스
 class ApiServiceBase {
-  final String baseUrl =
-      "http://doppy-gaooli-env.eba-i6rkanrz.us-east-1.elasticbeanstalk.com";
+  static final String baseUrl = "http://54.180.97.66:5000";
 
   // AuthService는 static으로 만들어 어디서든 접근 가능하게 하거나,
   // get_it 같은 서비스 로케이터를 사용하는 것이 좋지만, 지금은 간단하게 인스턴스를 생성합니다.
@@ -29,27 +28,35 @@ class ApiServiceBase {
   Future<http.Response> get(String endpoint) async {
     final url = Uri.parse('$baseUrl$endpoint');
     final headers = await _getHeaders();
-    return await http.get(url, headers: headers).timeout(const Duration(seconds: 10));
+    return await http
+        .get(url, headers: headers)
+        .timeout(const Duration(seconds: 10));
   }
 
   /// POST 요청을 처리합니다.
   Future<http.Response> post(String endpoint, {Object? body}) async {
     final url = Uri.parse('$baseUrl$endpoint');
     final headers = await _getHeaders();
-    return await http.post(url, headers: headers, body: jsonEncode(body)).timeout(const Duration(seconds: 10));
+    return await http
+        .post(url, headers: headers, body: jsonEncode(body))
+        .timeout(const Duration(seconds: 10));
   }
 
   /// PUT 요청을 처리합니다.
   Future<http.Response> put(String endpoint, {Object? body}) async {
     final url = Uri.parse('$baseUrl$endpoint');
     final headers = await _getHeaders();
-    return await http.put(url, headers: headers, body: jsonEncode(body)).timeout(const Duration(seconds: 10));
+    return await http
+        .put(url, headers: headers, body: jsonEncode(body))
+        .timeout(const Duration(seconds: 10));
   }
 
   /// DELETE 요청을 처리합니다.
   Future<http.Response> delete(String endpoint) async {
     final url = Uri.parse('$baseUrl$endpoint');
     final headers = await _getHeaders();
-    return await http.delete(url, headers: headers).timeout(const Duration(seconds: 10));
+    return await http
+        .delete(url, headers: headers)
+        .timeout(const Duration(seconds: 10));
   }
 }

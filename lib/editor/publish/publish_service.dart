@@ -1,21 +1,13 @@
 import 'dart:convert';
 import 'dart:io';
+import 'package:doppy/data/services/api_service_base.dart';
 import 'package:http/http.dart' as http;
 import 'package:super_editor/super_editor.dart';
 import 'package:flutter/material.dart'; // Added for BuildContext
 
-enum Visibility {
-  public,
-  private,
-  friends,
-  groups,
-}
+enum Visibility { public, private, friends, groups }
 
-enum BlogStatus {
-  DRAFT,
-  PUBLISHED,
-  ARCHIVED,
-}
+enum BlogStatus { DRAFT, PUBLISHED, ARCHIVED }
 
 class PreviewData {
   final String title;
@@ -31,8 +23,11 @@ class PreviewData {
 }
 
 extension PublishServicePreview on PublishService {
-  PreviewData extractPreviewData(MutableDocument document,
-      {String? userThumbnail, List<String> tags = const []}) {
+  PreviewData extractPreviewData(
+    MutableDocument document, {
+    String? userThumbnail,
+    List<String> tags = const [],
+  }) {
     // 제목 추출
     String title = '제목 없음';
     if (document.nodeCount > 0 && document.getNodeAt(0) is ParagraphNode) {
@@ -40,8 +35,10 @@ extension PublishServicePreview on PublishService {
       if (t.isNotEmpty) title = t.length > 30 ? t.substring(0, 30) + '...' : t;
     }
     // 썸네일 추출
-    String thumbnailUrl =
-        extractThumbnailUrl(document, userSelected: userThumbnail);
+    String thumbnailUrl = extractThumbnailUrl(
+      document,
+      userSelected: userThumbnail,
+    );
     // 본문 미리보기(두 번째 문단 등)
     String previewText = '';
     for (int i = 1; i < document.nodeCount; i++) {
@@ -67,7 +64,7 @@ class PublishService {
   PublishService._internal();
 
   // API 기본 설정
-  static const String _baseUrl = 'http://172.20.10.2:8080';
+  static String _baseUrl = ApiServiceBase.baseUrl;
 
   // 블로그 데이터
   String title = "";
@@ -104,8 +101,10 @@ class PublishService {
       this.title = title.trim();
       this.content = documentJson;
       // 썸네일 자동 추출
-      this.thumbnailImageUrl =
-          extractThumbnailUrl(document, userSelected: thumbnailImageUrl);
+      this.thumbnailImageUrl = extractThumbnailUrl(
+        document,
+        userSelected: thumbnailImageUrl,
+      );
       this.tags = tags;
       this.annotations = annotations;
       this.visibility = visibility;
@@ -126,16 +125,14 @@ class PublishService {
       };
     } catch (e) {
       print('❌ 발행 준비 실패: $e');
-      return {
-        'success': false,
-        'error': e.toString(),
-      };
+      return {'success': false, 'error': e.toString()};
     }
   }
 
   // 문서를 JSON으로 변환
   Future<Map<String, dynamic>> _convertDocumentToJson(
-      MutableDocument document) async {
+    MutableDocument document,
+  ) async {
     try {
       final blocks = <Map<String, dynamic>>[];
 
@@ -174,9 +171,7 @@ class PublishService {
 
     // 텍스트 스팬 처리 (간단한 버전)
     textSpans.add({
-      'text': {
-        'content': textContent.text,
-      },
+      'text': {'content': textContent.text},
       'annotations': {
         'bold': false,
         'italic': false,
@@ -189,10 +184,7 @@ class PublishService {
 
     return {
       'type': 'paragraph',
-      'paragraph': {
-        'rich_text': textSpans,
-        'text_align': 'left',
-      },
+      'paragraph': {'rich_text': textSpans, 'text_align': 'left'},
     };
   }
 
@@ -202,14 +194,9 @@ class PublishService {
 
     return {
       'type': 'image',
-      'image': {
-        'url': node.imageUrl,
-        'alt': metadata['alt'] ?? '이미지',
-      },
+      'image': {'url': node.imageUrl, 'alt': metadata['alt'] ?? '이미지'},
       'layout': {
-        'position': {
-          'gridX': metadata['gridX'] ?? 0,
-        },
+        'position': {'gridX': metadata['gridX'] ?? 0},
         'size': {
           'gridW': metadata['gridW'] ?? 1,
           'gridH': metadata['gridH'] ?? 1,
@@ -282,7 +269,7 @@ class PublishService {
         throw Exception('제목과 내용이 필요합니다');
       }
 
-      final uri = Uri.parse('$_baseUrl/api/blogs');
+      final uri = Uri.parse('$_baseUrl/api/posts');
 
       // 요청 데이터 구성
       final requestData = {
@@ -360,61 +347,51 @@ class PublishService {
       }
     } on http.ClientException catch (e) {
       print('❌ 네트워크 오류: $e');
-      return {
-        'success': false,
-        'error': '네트워크 연결을 확인해주세요',
-      };
+      return {'success': false, 'error': '네트워크 연결을 확인해주세요'};
     } catch (e) {
       print('❌ 블로그 발행 중 오류: $e');
-      return {
-        'success': false,
-        'error': e.toString(),
-      };
+      return {'success': false, 'error': e.toString()};
     }
   }
 
   // 블로그 상태 변경
   Future<Map<String, dynamic>> changeBlogStatus(
-      int blogId, BlogStatus newStatus) async {
+    int blogId,
+    BlogStatus newStatus,
+  ) async {
     try {
       final uri = Uri.parse(
-          '$_baseUrl/api/blogs/$blogId/status?status=${newStatus.name}');
+        '$_baseUrl/api/posts/$blogId/status?status=${newStatus.name}',
+      );
 
       print('📤 블로그 상태 변경 요청: $blogId → ${newStatus.name}');
 
-      final response = await http.put(
-        uri,
-        headers: {
-          'Authorization': 'Bearer user1234', // 실제 토큰으로 변경 필요
-        },
-      ).timeout(const Duration(seconds: 15));
+      final response = await http
+          .put(
+            uri,
+            headers: {
+              'Authorization': 'Bearer user1234', // 실제 토큰으로 변경 필요
+            },
+          )
+          .timeout(const Duration(seconds: 15));
 
       if (response.statusCode == 200) {
         print('✅ 블로그 상태 변경 성공: ${newStatus.name}');
-        return {
-          'success': true,
-          'message': '블로그 상태가 변경되었습니다',
-        };
+        return {'success': true, 'message': '블로그 상태가 변경되었습니다'};
       } else {
         print('❌ 블로그 상태 변경 실패: ${response.statusCode}');
-        return {
-          'success': false,
-          'error': '상태 변경에 실패했습니다',
-        };
+        return {'success': false, 'error': '상태 변경에 실패했습니다'};
       }
     } catch (e) {
       print('❌ 블로그 상태 변경 중 오류: $e');
-      return {
-        'success': false,
-        'error': e.toString(),
-      };
+      return {'success': false, 'error': e.toString()};
     }
   }
 
   // 블로그 수정
   Future<Map<String, dynamic>> updateBlog(int blogId) async {
     try {
-      final uri = Uri.parse('$_baseUrl/api/blogs/$blogId');
+      final uri = Uri.parse('$_baseUrl/api/posts/$blogId');
 
       final requestData = {
         'title': title,
@@ -447,28 +424,18 @@ class PublishService {
           final result = json.decode(responseBody);
           print('✅ 블로그 수정 성공: $blogId');
 
-          return {
-            'success': true,
-            'message': '블로그가 수정되었습니다',
-            'data': result,
-          };
+          return {'success': true, 'message': '블로그가 수정되었습니다', 'data': result};
         } catch (parseError) {
           print('❌ JSON 파싱 실패: $parseError');
           throw Exception('서버 응답 파싱 실패');
         }
       } else {
         print('❌ 블로그 수정 실패: ${response.statusCode}');
-        return {
-          'success': false,
-          'error': '블로그 수정에 실패했습니다',
-        };
+        return {'success': false, 'error': '블로그 수정에 실패했습니다'};
       }
     } catch (e) {
       print('❌ 블로그 수정 중 오류: $e');
-      return {
-        'success': false,
-        'error': e.toString(),
-      };
+      return {'success': false, 'error': e.toString()};
     }
   }
 
@@ -490,7 +457,8 @@ class PublishService {
     required void Function(String errorMsg) onError,
   }) async {
     try {
-      final resolvedTitle = title ??
+      final resolvedTitle =
+          title ??
           ((document.nodeCount > 0 && document.getNodeAt(0) is ParagraphNode)
               ? ((document.getNodeAt(0) as ParagraphNode).text.text.isNotEmpty
                   ? (document.getNodeAt(0) as ParagraphNode).text.text

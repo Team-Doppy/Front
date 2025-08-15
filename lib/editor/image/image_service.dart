@@ -3,10 +3,12 @@ import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'dart:async';
+import 'package:doppy/data/services/api_service_base.dart';
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:super_editor/super_editor.dart';
+import 'package:doppy/data/services/auth_service.dart';
 
 class ImageService {
   static final ImageService _instance = ImageService._internal();
@@ -14,7 +16,7 @@ class ImageService {
   ImageService._internal();
 
   // API 기본 설정
-  static const String _baseUrl = 'http://localhost:5000'; // 테스트용 로컬 서버
+  static String _baseUrl = ApiServiceBase.baseUrl; // 테스트용 로컬 서버
 
   // 이미지 삽입 (선택 즉시 미리보기 → 백그라운드 업로드 후 교체)
   Future<void> insertImage(
@@ -58,7 +60,9 @@ class ImageService {
 
       documentEditor.execute([
         InsertNodeAtIndexRequest(
-            nodeIndex: insertIndex, newNode: placeholderNode),
+          nodeIndex: insertIndex,
+          newNode: placeholderNode,
+        ),
       ]);
 
       analyzeAndUpdateDocument();
@@ -92,9 +96,10 @@ class ImageService {
       final batches = <List<File>>[];
 
       for (int i = 0; i < imageFiles.length; i += batchSize) {
-        final end = (i + batchSize < imageFiles.length)
-            ? i + batchSize
-            : imageFiles.length;
+        final end =
+            (i + batchSize < imageFiles.length)
+                ? i + batchSize
+                : imageFiles.length;
         batches.add(imageFiles.sublist(i, end));
       }
 
@@ -104,7 +109,8 @@ class ImageService {
       for (int batchIndex = 0; batchIndex < batches.length; batchIndex++) {
         final batch = batches[batchIndex];
         print(
-            '배치 ${batchIndex + 1}/${batches.length} 처리 시작 (${batch.length}개 이미지)');
+          '배치 ${batchIndex + 1}/${batches.length} 처리 시작 (${batch.length}개 이미지)',
+        );
 
         await _uploadAndInsertImages(
           batch,
@@ -154,7 +160,8 @@ class ImageService {
       for (int batchIndex = 0; batchIndex < batches.length; batchIndex++) {
         final batch = batches[batchIndex];
         print(
-            '배치 ${batchIndex + 1}/${batches.length} 처리 시작 (${batch.length}개 이미지)');
+          '배치 ${batchIndex + 1}/${batches.length} 처리 시작 (${batch.length}개 이미지)',
+        );
 
         await _insertWebImagesBatch(
           batch,
@@ -218,7 +225,10 @@ class ImageService {
 
       // 실패 시 placeholder 노드 제거
       _removePlaceholderNode(
-          tempNodeId, documentEditor, analyzeAndUpdateDocument);
+        tempNodeId,
+        documentEditor,
+        analyzeAndUpdateDocument,
+      );
     }
   }
 
@@ -278,9 +288,11 @@ class ImageService {
           print('✅ 웹 이미지 ${uploadResults.length}개 업로드 성공');
 
           // 성공한 이미지로 플레이스홀더 교체
-          for (int i = 0;
-              i < tempNodeIds.length && i < uploadResults.length;
-              i++) {
+          for (
+            int i = 0;
+            i < tempNodeIds.length && i < uploadResults.length;
+            i++
+          ) {
             final tempNodeId = tempNodeIds[i];
             final result = uploadResults[i];
             final xFile = xFiles[i];
@@ -303,7 +315,9 @@ class ImageService {
 
               documentEditor.execute([
                 ReplaceNodeRequest(
-                    existingNodeId: tempNodeId, newNode: realImageNode),
+                  existingNodeId: tempNodeId,
+                  newNode: realImageNode,
+                ),
               ]);
 
               print('🔄 웹 플레이스홀더 → 실제 URL 이미지 교체 완료: ${xFile.name}');
@@ -311,9 +325,7 @@ class ImageService {
               print('❌ 웹 이미지 교체 실패: ${xFile.name} - $e');
               // 교체 실패 시 플레이스홀더 제거
               try {
-                documentEditor.execute([
-                  DeleteNodeRequest(nodeId: tempNodeId),
-                ]);
+                documentEditor.execute([DeleteNodeRequest(nodeId: tempNodeId)]);
                 print('🗑️ 실패한 웹 플레이스홀더 제거: $tempNodeId');
               } catch (deleteError) {
                 print('❌ 웹 플레이스홀더 제거 실패: $tempNodeId - $deleteError');
@@ -328,7 +340,10 @@ class ImageService {
           print('❌ 웹 이미지 업로드 성공한 것이 없습니다');
           // 업로드 실패 시 모든 플레이스홀더 제거
           _removePlaceholders(
-              tempNodeIds, documentEditor, analyzeAndUpdateDocument);
+            tempNodeIds,
+            documentEditor,
+            analyzeAndUpdateDocument,
+          );
         }
       } catch (e) {
         print('❌ 웹 이미지 배치 업로드 실패: $e');
@@ -336,14 +351,21 @@ class ImageService {
 
         // 배치 업로드 실패 시 개별 업로드로 fallback
         await _fallbackToIndividualUploads(
-            xFiles, tempNodeIds, documentEditor, analyzeAndUpdateDocument);
+          xFiles,
+          tempNodeIds,
+          documentEditor,
+          analyzeAndUpdateDocument,
+        );
       }
     } catch (e) {
       print('❌ 웹 이미지 배치 처리 실패: $e');
       // 에러 시 플레이스홀더 제거
       if (tempNodeIds.isNotEmpty) {
         _removePlaceholders(
-            tempNodeIds, documentEditor, analyzeAndUpdateDocument);
+          tempNodeIds,
+          documentEditor,
+          analyzeAndUpdateDocument,
+        );
       }
     }
   }
@@ -355,9 +377,7 @@ class ImageService {
     VoidCallback analyzeAndUpdateDocument,
   ) {
     try {
-      documentEditor.execute([
-        DeleteNodeRequest(nodeId: nodeId),
-      ]);
+      documentEditor.execute([DeleteNodeRequest(nodeId: nodeId)]);
       analyzeAndUpdateDocument();
     } catch (e) {
       print('❌ placeholder 노드 제거 실패: $e');
@@ -373,15 +393,23 @@ class ImageService {
       final uri = Uri.parse('$_baseUrl/api/images/upload');
 
       final mediaType = _createMediaType(fileName);
+      final token = await AuthService().getToken();
 
-      final request = http.MultipartRequest('POST', uri)
-        ..fields['uid'] = 'user1234' // 실제 사용자 UID로 변경 필요
-        ..files.add(http.MultipartFile.fromBytes(
-          'file',
-          bytes,
-          filename: fileName,
-          contentType: mediaType,
-        ));
+      final request =
+          http.MultipartRequest('POST', uri)
+            ..fields['uid'] =
+                'user1234' // 실제 사용자 UID로 변경 필요
+            ..files.add(
+              http.MultipartFile.fromBytes(
+                'file',
+                bytes,
+                filename: fileName,
+                contentType: mediaType,
+              ),
+            );
+      if (token != null) {
+        request.headers['Authorization'] = 'Bearer $token';
+      }
 
       // 요청 전송 전 로깅
       print('📤 이미지 업로드 요청 전송:');
@@ -422,8 +450,9 @@ class ImageService {
         print('❌ 이미지 업로드 실패: ${response.statusCode} - $responseBody');
 
         // HTTP 상태 코드별 구체적인 에러 메시지
-        String errorMessage =
-            _getErrorMessageFromStatusCode(response.statusCode);
+        String errorMessage = _getErrorMessageFromStatusCode(
+          response.statusCode,
+        );
         throw HttpException('$errorMessage (${response.statusCode})');
       }
     } on TimeoutException catch (e) {
@@ -444,9 +473,12 @@ class ImageService {
   ) async {
     try {
       final uri = Uri.parse('$_baseUrl/api/images/upload-multiple');
-
+      final token = await AuthService().getToken();
       final request = http.MultipartRequest('POST', uri)
         ..fields['uid'] = 'user1234'; // 실제 사용자 UID로 변경 필요
+      if (token != null) {
+        request.headers['Authorization'] = 'Bearer $token';
+      }
 
       // 각 이미지 파일 추가
       for (final imageFile in imageFiles) {
@@ -455,12 +487,14 @@ class ImageService {
 
         final mediaType = _createMediaType(fileName);
 
-        request.files.add(http.MultipartFile.fromBytes(
-          'files',
-          bytes,
-          filename: fileName,
-          contentType: mediaType,
-        ));
+        request.files.add(
+          http.MultipartFile.fromBytes(
+            'files',
+            bytes,
+            filename: fileName,
+            contentType: mediaType,
+          ),
+        );
 
         print('   📎 파일 추가: $fileName (${bytes.length} bytes, $mediaType)');
       }
@@ -489,8 +523,9 @@ class ImageService {
       } else {
         print('❌ 다중 이미지 업로드 실패: ${response.statusCode} - $responseBody');
 
-        String errorMessage =
-            _getErrorMessageFromStatusCode(response.statusCode);
+        String errorMessage = _getErrorMessageFromStatusCode(
+          response.statusCode,
+        );
         throw HttpException('$errorMessage (${response.statusCode})');
       }
     } on TimeoutException catch (e) {
@@ -538,9 +573,12 @@ class ImageService {
   ) async {
     try {
       final uri = Uri.parse('$_baseUrl/api/images/upload-multiple');
-
+      final token = await AuthService().getToken();
       final request = http.MultipartRequest('POST', uri)
         ..fields['uid'] = 'user1234'; // 실제 사용자 UID로 변경 필요
+      if (token != null) {
+        request.headers['Authorization'] = 'Bearer $token';
+      }
 
       // 요청 전송 전 로깅
       print('📤 웹 다중 이미지 업로드 요청 전송:');
@@ -562,15 +600,18 @@ class ImageService {
 
         final mediaType = _createMediaType(fileName);
 
-        request.files.add(http.MultipartFile.fromBytes(
-          'files',
-          bytes,
-          filename: cleanFileName,
-          contentType: mediaType,
-        ));
+        request.files.add(
+          http.MultipartFile.fromBytes(
+            'files',
+            bytes,
+            filename: cleanFileName,
+            contentType: mediaType,
+          ),
+        );
 
         print(
-            '   📎 웹 파일 추가: $fileName → $cleanFileName (${bytes.length} bytes, $mediaType)');
+          '   📎 웹 파일 추가: $fileName → $cleanFileName (${bytes.length} bytes, $mediaType)',
+        );
       }
 
       // 유효한 이미지가 없으면 에러
@@ -608,8 +649,9 @@ class ImageService {
       } else {
         print('❌ 웹 다중 이미지 업로드 실패: ${response.statusCode} - $responseBody');
 
-        String errorMessage =
-            _getErrorMessageFromStatusCode(response.statusCode);
+        String errorMessage = _getErrorMessageFromStatusCode(
+          response.statusCode,
+        );
         throw HttpException('$errorMessage (${response.statusCode})');
       }
     } on TimeoutException catch (e) {
@@ -670,9 +712,11 @@ class ImageService {
         print('✅ ${uploadResults.length}개 이미지 업로드 성공');
 
         // 3. 성공한 이미지로 플레이스홀더 교체
-        for (int i = 0;
-            i < tempNodeIds.length && i < uploadResults.length;
-            i++) {
+        for (
+          int i = 0;
+          i < tempNodeIds.length && i < uploadResults.length;
+          i++
+        ) {
           final tempNodeId = tempNodeIds[i];
           final result = uploadResults[i];
 
@@ -700,19 +744,26 @@ class ImageService {
         // 실제 이미지로 교체된 후에만 SpatialManager에 등록
         analyzeAndUpdateDocument();
         print(
-            '🎉 ${uploadResults.length}개 이미지가 실제 이미지로 교체되고 SpatialManager에 등록되었습니다');
+          '🎉 ${uploadResults.length}개 이미지가 실제 이미지로 교체되고 SpatialManager에 등록되었습니다',
+        );
       } else {
         print('❌ 업로드 성공한 이미지가 없습니다');
         // 실패 시 플레이스홀더 제거 후 SpatialManager 동기화
         _removePlaceholders(
-            tempNodeIds, documentEditor, analyzeAndUpdateDocument);
+          tempNodeIds,
+          documentEditor,
+          analyzeAndUpdateDocument,
+        );
       }
     } catch (e) {
       print('❌ 이미지 업로드 및 삽입 실패: $e');
       // 에러 시 플레이스홀더 제거 후 SpatialManager 동기화
       if (tempNodeIds.isNotEmpty) {
         _removePlaceholders(
-            tempNodeIds, documentEditor, analyzeAndUpdateDocument);
+          tempNodeIds,
+          documentEditor,
+          analyzeAndUpdateDocument,
+        );
       }
     }
   }
@@ -725,9 +776,7 @@ class ImageService {
   ) {
     for (final tempNodeId in tempNodeIds) {
       try {
-        documentEditor.execute([
-          DeleteNodeRequest(nodeId: tempNodeId),
-        ]);
+        documentEditor.execute([DeleteNodeRequest(nodeId: tempNodeId)]);
         print('🗑️ 플레이스홀더 제거: $tempNodeId');
       } catch (e) {
         print('❌ 플레이스홀더 제거 실패: $tempNodeId - $e');
@@ -786,9 +835,10 @@ class ImageService {
 
       if (image == null) return null;
 
-      fileName = image.name.isNotEmpty
-          ? image.name
-          : 'image_${DateTime.now().millisecondsSinceEpoch}';
+      fileName =
+          image.name.isNotEmpty
+              ? image.name
+              : 'image_${DateTime.now().millisecondsSinceEpoch}';
 
       if (!fileName.contains('.')) {
         fileName += '.jpg';
@@ -859,8 +909,10 @@ class ImageService {
   // 파일명 정리 (한글, 특수문자 제거)
   String _cleanFileName(String originalFileName) {
     final extension = originalFileName.split('.').last.toLowerCase();
-    String nameWithoutExt =
-        originalFileName.substring(0, originalFileName.lastIndexOf('.'));
+    String nameWithoutExt = originalFileName.substring(
+      0,
+      originalFileName.lastIndexOf('.'),
+    );
 
     nameWithoutExt = nameWithoutExt.replaceAll(RegExp(r'[^a-zA-Z0-9_]'), '_');
     nameWithoutExt = nameWithoutExt.replaceAll(RegExp(r'_+'), '_');
@@ -968,14 +1020,13 @@ class ImageService {
 
         print('📤 개별 업로드 시도: $fileName');
         print(
-            '📊 파일 정보: ${bytes.length} bytes, MIME: ${_getMimeType(fileName)}');
+          '📊 파일 정보: ${bytes.length} bytes, MIME: ${_getMimeType(fileName)}',
+        );
 
         // 파일이 실제 이미지인지 검증
         if (!_isValidImageFile(bytes)) {
           print('❌ 유효하지 않은 이미지 파일: $fileName');
-          documentEditor.execute([
-            DeleteNodeRequest(nodeId: tempNodeId),
-          ]);
+          documentEditor.execute([DeleteNodeRequest(nodeId: tempNodeId)]);
           continue;
         }
 
@@ -1001,25 +1052,23 @@ class ImageService {
 
           documentEditor.execute([
             ReplaceNodeRequest(
-                existingNodeId: tempNodeId, newNode: realImageNode),
+              existingNodeId: tempNodeId,
+              newNode: realImageNode,
+            ),
           ]);
 
           print('✅ 개별 업로드 성공: $fileName');
           successCount++;
         } else {
           // 개별 업로드도 실패: 플레이스홀더 제거
-          documentEditor.execute([
-            DeleteNodeRequest(nodeId: tempNodeId),
-          ]);
+          documentEditor.execute([DeleteNodeRequest(nodeId: tempNodeId)]);
           print('❌ 개별 업로드 실패, 플레이스홀더 제거: $fileName');
         }
       } catch (e) {
         print('❌ 개별 업로드 중 오류: ${xFile.name} - $e');
         // 오류 발생 시 플레이스홀더 제거
         try {
-          documentEditor.execute([
-            DeleteNodeRequest(nodeId: tempNodeId),
-          ]);
+          documentEditor.execute([DeleteNodeRequest(nodeId: tempNodeId)]);
           print('🗑️ 오류로 인한 플레이스홀더 제거: $tempNodeId');
         } catch (deleteError) {
           print('❌ 플레이스홀더 제거 실패: $tempNodeId - $deleteError');
