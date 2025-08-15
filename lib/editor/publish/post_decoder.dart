@@ -48,70 +48,66 @@ class _PostDecoderState extends State<PostDecoder> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('임시 글 보기 프리뷰')),
-      body: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.all(12),
-            child: Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _controller,
-                    minLines: 3,
-                    maxLines: 6,
-                    decoration: const InputDecoration(
-                      hintText: '여기에 JSON을 붙여넣으세요',
-                      border: OutlineInputBorder(),
-                    ),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.all(12),
+          child: Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _controller,
+                  minLines: 3,
+                  maxLines: 6,
+                  decoration: const InputDecoration(
+                    hintText: '여기에 JSON을 붙여넣으세요',
+                    border: OutlineInputBorder(),
                   ),
                 ),
-                const SizedBox(width: 8),
-                Column(
-                  children: [
-                    ElevatedButton(onPressed: _render, child: const Text('렌더')),
-                    const SizedBox(height: 8),
-                    OutlinedButton(
-                      onPressed: () {
-                        setState(() {
-                          _controller.clear();
-                          _model = null;
-                          _error = null;
-                        });
-                      },
-                      child: const Text('초기화'),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-          if (_error != null)
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: Text(_error!, style: const TextStyle(color: Colors.red)),
               ),
-            ),
-          const SizedBox(height: 8),
-          Expanded(
-            child: Container(
-              color: Colors.white,
-              child:
-                  _model == null
-                      ? const Center(
-                        child: Text(
-                          'JSON을 붙여넣고 렌더를 눌러보세요',
-                          style: TextStyle(color: Colors.grey),
-                        ),
-                      )
-                      : GridDocumentViewer(model: _model!),
+              const SizedBox(width: 8),
+              Column(
+                children: [
+                  ElevatedButton(onPressed: _render, child: const Text('렌더')),
+                  const SizedBox(height: 8),
+                  OutlinedButton(
+                    onPressed: () {
+                      setState(() {
+                        _controller.clear();
+                        _model = null;
+                        _error = null;
+                      });
+                    },
+                    child: const Text('초기화'),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+        if (_error != null)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: Text(_error!, style: const TextStyle(color: Colors.red)),
             ),
           ),
-        ],
-      ),
+        const SizedBox(height: 8),
+        Container(
+          color: Colors.white,
+          child:
+              _model == null
+                  ? const Center(
+                    child: Text(
+                      'JSON을 붙여넣고 렌더를 눌러보세요',
+                      style: TextStyle(color: Colors.grey),
+                    ),
+                  )
+                  : GridDocumentViewer(model: _model!),
+        ),
+      ],
     );
   }
 }
@@ -135,6 +131,8 @@ class GridDocumentViewer extends StatelessWidget {
     return ListView.builder(
       padding: EdgeInsets.zero,
       itemCount: blocks.length,
+      shrinkWrap: true,
+      physics: NeverScrollableScrollPhysics(),
       itemBuilder: (context, i) {
         final b = (blocks[i] as Map).cast<String, dynamic>();
         final type = b['type'] as String? ?? '';

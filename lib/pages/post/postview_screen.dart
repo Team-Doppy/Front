@@ -9,23 +9,22 @@ class PostviewScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       body: SafeArea(
-        child: SingleChildScrollView(
-          child: Column(
-            children: const [
-              _TopBar(), // 상단 바
-              _AuthorInfo(), // 작성자 정보
-              _Thumbnail(), // 썸네일
-              _Content(), // 제목, 부제목, 본문
-              PostDecoder(),
-              _InteractionButtons(), // 좋아요, 댓글, 공유
-              Divider(),
-              _AuthorProfile(), // 작성자 프로필
-              _PostList(), // 관련 글 목록
-              Divider(),
-              _BannerAd(), // 배너 광고
-              //TODO: 하단 NavBar 구현?
-            ],
-          ),
+        child: ListView(
+          padding: EdgeInsets.zero,
+          children: const [
+            _TopBar(),
+            _AuthorInfo(),
+            _Thumbnail(),
+            _Content(),
+            PostDecoder(),
+            _InteractionButtons(),
+            Divider(),
+            _AuthorProfile(),
+            _PostList(),
+            Divider(),
+            _BannerAd(),
+            //TODO: 하단 NavBar 구현?
+          ],
         ),
       ),
     );
