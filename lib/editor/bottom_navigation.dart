@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_svg/flutter_svg.dart';
+import 'package:flutter_svg/svg.dart';
 
 class CustomBottomNavigationBar extends StatelessWidget {
   /// 현재 선택된 인덱스 (0: 홈, 1: 검색, 2: 작성, 3: 프로필)
@@ -27,8 +27,8 @@ class CustomBottomNavigationBar extends StatelessWidget {
         Navigator.of(context).pushReplacementNamed('/search');
         break;
       case 2:
-        // 작성
-        Navigator.of(context).pushNamed('/post-write');
+        // 작성: 내부 라우팅이 없다면 콜백으로 처리(예: 글쓰기 모달/페이지)
+        onTap(index);
         return;
       case 3:
         // 프로필

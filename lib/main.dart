@@ -3,6 +3,7 @@ import 'package:doppy/pages/post/home_screen.dart';
 import 'package:doppy/pages/post/manage_group_screen.dart';
 import 'package:doppy/pages/post/manage_neighbor_screen.dart';
 import 'package:doppy/pages/post/postview_screen.dart';
+import 'package:doppy/pages/post/postwrite_screen.dart';
 import 'package:doppy/pages/post/search_screen.dart';
 import 'package:doppy/pages/post/user_profile_screen.dart';
 import 'package:doppy/pages/user/login_screen.dart';
@@ -33,6 +34,8 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+
+    final screenWidth = MediaQuery.of(context).size.width;
     return MaterialApp(
       title: 'Doppy',
       debugShowCheckedModeBanner: false,
@@ -60,6 +63,7 @@ class MyApp extends StatelessWidget {
           '/manage-neighbor': (_) => const ManageNeighborScreen(),
           '/group-profile': (_) => const GroupProfileScreen(),
           '/post-view': (_) => PostviewScreen(),
+          '/post-write': (_) => PostwriteScreen(screenWidth:screenWidth),
         },
 
         onUnknownRoute:
