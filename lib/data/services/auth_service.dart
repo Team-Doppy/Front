@@ -1,3 +1,4 @@
+import 'package:doppy/data/services/api_service_base.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
@@ -9,8 +10,7 @@ class AuthService {
   final _storage = const FlutterSecureStorage();
   final String _tokenKey = 'auth_token';
   final String _usernameKey = 'username';
-  final String _baseUrl =
-      "http://doppy-gaooli-env.eba-i6rkanrz.us-east-1.elasticbeanstalk.com";
+  final String _baseUrl = ApiServiceBase.baseUrl;
 
   /// 1. 사용자 등록
   Future<User?> register({

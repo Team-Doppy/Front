@@ -38,7 +38,8 @@ class _ManageNeighborScreenState extends State<ManageNeighborScreen> {
             colorFilter: const ColorFilter.mode(Colors.black, BlendMode.srcIn),
           ),
           onPressed: () {
-            // TODO: 뒤로가기 로직 구현
+            // 뒤로가기 로직 구현
+            Navigator.pop(context);
           },
         ),
         title: const Text(
@@ -151,7 +152,9 @@ class _ManageNeighborScreenState extends State<ManageNeighborScreen> {
               friend: request,
               trailing: _AcceptButton(
                 onPressed: () {
-                  context.read<FriendProvider>().acceptFriendRequest(request.username);
+                  context.read<FriendProvider>().acceptFriendRequest(
+                    request.username,
+                  );
                 },
               ),
             );
@@ -200,12 +203,10 @@ class _NeighborListTile extends StatelessWidget {
         radius: 28,
         backgroundColor: Colors.grey[200],
         // 프로필 이미지가 있으면 보여주고, 없으면 기본 아이콘 표시
-        child: profileImageUrl != null
+        child:
+            profileImageUrl != null
                 ? ClipOval(
-                  child: Image.network(
-                    profileImageUrl!,
-                    fit: BoxFit.cover,
-                  ),
+                  child: Image.network(profileImageUrl!, fit: BoxFit.cover),
                 )
                 : SvgPicture.asset(
                   'assets/icons/ic_profile.svg',
@@ -245,7 +246,8 @@ class _AcceptButton extends StatelessWidget {
   Widget build(BuildContext context) {
     // '수락됨' 상태는 Provider가 목록에서 제거해주므로 '수락' 버튼만 필요
     return SizedBox(
-      width: 70, height: 32,
+      width: 70,
+      height: 32,
       child: ElevatedButton(
         onPressed: onPressed,
         style: ElevatedButton.styleFrom(

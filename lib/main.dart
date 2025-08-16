@@ -3,8 +3,10 @@ import 'package:doppy/pages/post/home_screen.dart';
 import 'package:doppy/pages/post/manage_group_screen.dart';
 import 'package:doppy/pages/post/manage_neighbor_screen.dart';
 import 'package:doppy/pages/post/postview_screen.dart';
+import 'package:doppy/pages/post/postwrite_screen.dart';
 import 'package:doppy/pages/post/search_screen.dart';
 import 'package:doppy/pages/post/user_profile_screen.dart';
+import 'package:doppy/pages/post/add_member_screen.dart';
 import 'package:doppy/pages/user/login_screen.dart';
 import 'package:doppy/pages/onboarding/onboarding_screen.dart';
 import 'package:doppy/providers/auth_provider.dart';
@@ -34,6 +36,7 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final screenWidth = MediaQuery.of(context).size.width;
     return MaterialApp(
       title: 'Doppy',
       debugShowCheckedModeBanner: false,
@@ -64,8 +67,8 @@ class MyApp extends StatelessWidget {
         // 필요 시 확장
         '/manage-group': (_) => const ManageGroupScreen(),
         '/manage-neighbor': (_) => const ManageNeighborScreen(),
-        '/group-profile': (_) => const GroupProfileScreen(),
         '/post-view': (_) => PostviewScreen(),
+        '/post-write': (_) => PostwriteScreen(screenWidth: screenWidth),
       },
 
       onUnknownRoute:

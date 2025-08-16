@@ -3,6 +3,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:dio/dio.dart';
+import 'package:doppy/data/services/api_service_base.dart';
 import 'package:flutter/material.dart';
 
 import '../../theme/app_text_styles.dart';
@@ -347,8 +348,7 @@ class _SearchScreenState extends State<SearchScreen> {
   // 서비스/백엔드
   final AuthService _authService = AuthService();
   final FriendSearchApi _friendApi = FriendSearchApi();
-  final String _baseUrl =
-      'http://Doppy-GaOoLi-env.eba-i6rkanrz.us-east-1.elasticbeanstalk.com';
+  final String _baseUrl = ApiServiceBase.baseUrl;
 
   // 네트워크 요청 상태(계정)
   bool _accountsLoading = false;
