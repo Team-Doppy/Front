@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 import 'package:doppy/data/services/api_service_base.dart';
+import 'package:doppy/data/services/auth_service.dart';
 import 'package:http/http.dart' as http;
 import 'package:super_editor/super_editor.dart';
 import 'package:flutter/material.dart'; // Added for BuildContext
@@ -24,10 +25,10 @@ class PreviewData {
 
 extension PublishServicePreview on PublishService {
   PreviewData extractPreviewData(
-      MutableDocument document, {
-        String? userThumbnail,
-        List<String> tags = const [],
-      }) {
+    MutableDocument document, {
+    String? userThumbnail,
+    List<String> tags = const [],
+  }) {
     // 제목 추출
     String title = '제목 없음';
     if (document.nodeCount > 0 && document.getNodeAt(0) is ParagraphNode) {
@@ -116,6 +117,7 @@ class PublishService {
       print('   상태: ${status.name}');
       print('   태그: ${tags.join(', ')}');
       print('   공유 그룹: ${sharedGroups.join(', ')}');
+      print('   content: $content');
       return {
         'success': true,
         'title': this.title,
@@ -131,8 +133,8 @@ class PublishService {
 
   // 문서를 JSON으로 변환
   Future<Map<String, dynamic>> _convertDocumentToJson(
-      MutableDocument document,
-      ) async {
+    MutableDocument document,
+  ) async {
     try {
       final blocks = <Map<String, dynamic>>[];
 
@@ -291,13 +293,14 @@ class PublishService {
       // HTTP 요청 전송
       final response = await http
           .post(
-        uri,
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer user1234', // 실제 토큰으로 변경 필요
-        },
-        body: json.encode(requestData),
-      )
+            uri,
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization':
+                  'Bearer ${await AuthService().getToken()}', // 실제 토큰으로 변경 필요
+            },
+            body: json.encode(requestData),
+          )
           .timeout(const Duration(seconds: 30));
 
       final responseBody = response.body;
@@ -356,9 +359,9 @@ class PublishService {
 
   // 블로그 상태 변경
   Future<Map<String, dynamic>> changeBlogStatus(
-      int blogId,
-      BlogStatus newStatus,
-      ) async {
+    int blogId,
+    BlogStatus newStatus,
+  ) async {
     try {
       final uri = Uri.parse(
         '$_baseUrl/api/posts/$blogId/status?status=${newStatus.name}',
@@ -368,11 +371,12 @@ class PublishService {
 
       final response = await http
           .put(
-        uri,
-        headers: {
-          'Authorization': 'Bearer user1234', // 실제 토큰으로 변경 필요
-        },
-      )
+            uri,
+            headers: {
+              'Authorization':
+                  'Bearer ${await AuthService().getToken()}', // 실제 토큰으로 변경 필요
+            },
+          )
           .timeout(const Duration(seconds: 15));
 
       if (response.statusCode == 200) {
@@ -408,13 +412,14 @@ class PublishService {
 
       final response = await http
           .put(
-        uri,
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer user1234', // 실제 토큰으로 변경 필요
-        },
-        body: json.encode(requestData),
-      )
+            uri,
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization':
+                  'Bearer ${await AuthService().getToken()}', // 실제 토큰으로 변경 필요
+            },
+            body: json.encode(requestData),
+          )
           .timeout(const Duration(seconds: 30));
 
       final responseBody = response.body;
@@ -459,11 +464,11 @@ class PublishService {
     try {
       final resolvedTitle =
           title ??
-              ((document.nodeCount > 0 && document.getNodeAt(0) is ParagraphNode)
-                  ? ((document.getNodeAt(0) as ParagraphNode).text.text.isNotEmpty
+          ((document.nodeCount > 0 && document.getNodeAt(0) is ParagraphNode)
+              ? ((document.getNodeAt(0) as ParagraphNode).text.text.isNotEmpty
                   ? (document.getNodeAt(0) as ParagraphNode).text.text
                   : '제목 없음')
-                  : '제목 없음');
+              : '제목 없음');
       showDialog(
         context: context,
         barrierDismissible: false,

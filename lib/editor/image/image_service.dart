@@ -20,10 +20,10 @@ class ImageService {
 
   // 이미지 삽입 (선택 즉시 미리보기 → 백그라운드 업로드 후 교체)
   Future<void> insertImage(
-      Editor documentEditor,
-      MutableDocument document,
-      VoidCallback analyzeAndUpdateDocument,
-      ) async {
+    Editor documentEditor,
+    MutableDocument document,
+    VoidCallback analyzeAndUpdateDocument,
+  ) async {
     try {
       // 1) 이미지 선택 (bytes 확보 + data URL 생성)
       final picked = await _pickImageBytes();
@@ -82,12 +82,12 @@ class ImageService {
 
   // 다중 이미지 삽입 (갤러리에서 선택된 여러 이미지)
   Future<void> insertMultipleImages(
-      Editor documentEditor,
-      MutableDocument document,
-      List<File> imageFiles,
-      VoidCallback analyzeAndUpdateDocument, {
-        dynamic spatialManager, // SpatialManager 참조 (선택적)
-      }) async {
+    Editor documentEditor,
+    MutableDocument document,
+    List<File> imageFiles,
+    VoidCallback analyzeAndUpdateDocument, {
+    dynamic spatialManager, // SpatialManager 참조 (선택적)
+  }) async {
     try {
       if (imageFiles.isEmpty) return;
 
@@ -97,9 +97,9 @@ class ImageService {
 
       for (int i = 0; i < imageFiles.length; i += batchSize) {
         final end =
-        (i + batchSize < imageFiles.length)
-            ? i + batchSize
-            : imageFiles.length;
+            (i + batchSize < imageFiles.length)
+                ? i + batchSize
+                : imageFiles.length;
         batches.add(imageFiles.sublist(i, end));
       }
 
@@ -133,12 +133,12 @@ class ImageService {
 
   // 웹용 다중 이미지 삽입 (XFile 기반)
   Future<void> insertMultipleWebImages(
-      List<XFile> xFiles,
-      Editor documentEditor,
-      MutableDocument document,
-      VoidCallback analyzeAndUpdateDocument, {
-        dynamic spatialManager, // SpatialManager 참조 (선택적)
-      }) async {
+    List<XFile> xFiles,
+    Editor documentEditor,
+    MutableDocument document,
+    VoidCallback analyzeAndUpdateDocument, {
+    dynamic spatialManager, // SpatialManager 참조 (선택적)
+  }) async {
     try {
       if (xFiles.isEmpty) return;
 
@@ -150,7 +150,7 @@ class ImageService {
 
       for (int i = 0; i < xFiles.length; i += batchSize) {
         final end =
-        (i + batchSize < xFiles.length) ? i + batchSize : xFiles.length;
+            (i + batchSize < xFiles.length) ? i + batchSize : xFiles.length;
         batches.add(xFiles.sublist(i, end));
       }
 
@@ -184,12 +184,12 @@ class ImageService {
 
   // 백그라운드 이미지 업로드
   Future<void> _uploadImageInBackground(
-      Uint8List bytes,
-      String fileName,
-      String tempNodeId,
-      Editor documentEditor,
-      VoidCallback analyzeAndUpdateDocument,
-      ) async {
+    Uint8List bytes,
+    String fileName,
+    String tempNodeId,
+    Editor documentEditor,
+    VoidCallback analyzeAndUpdateDocument,
+  ) async {
     try {
       final uploadResult = await _uploadSingleImage(bytes, fileName);
       if (uploadResult == null) {
@@ -203,7 +203,7 @@ class ImageService {
         metadata: {
           'imageId': uploadResult['imageId'],
           'pxW':
-          uploadResult['fileSize'] != null ? 400.0 : null, // 실제 크기로 교체 필요
+              uploadResult['fileSize'] != null ? 400.0 : null, // 실제 크기로 교체 필요
           'pxH': uploadResult['fileSize'] != null ? 300.0 : null,
           'isPlaceholder': false,
           'isRealImage': true,
@@ -234,11 +234,11 @@ class ImageService {
 
   // 웹 이미지 배치 처리
   Future<void> _insertWebImagesBatch(
-      List<XFile> xFiles,
-      Editor documentEditor,
-      VoidCallback analyzeAndUpdateDocument, {
-        dynamic spatialManager,
-      }) async {
+    List<XFile> xFiles,
+    Editor documentEditor,
+    VoidCallback analyzeAndUpdateDocument, {
+    dynamic spatialManager,
+  }) async {
     final tempNodeIds = <String>[];
 
     try {
@@ -289,9 +289,9 @@ class ImageService {
 
           // 성공한 이미지로 플레이스홀더 교체
           for (
-          int i = 0;
-          i < tempNodeIds.length && i < uploadResults.length;
-          i++
+            int i = 0;
+            i < tempNodeIds.length && i < uploadResults.length;
+            i++
           ) {
             final tempNodeId = tempNodeIds[i];
             final result = uploadResults[i];
@@ -372,10 +372,10 @@ class ImageService {
 
   // placeholder 노드 제거
   void _removePlaceholderNode(
-      String nodeId,
-      Editor documentEditor,
-      VoidCallback analyzeAndUpdateDocument,
-      ) {
+    String nodeId,
+    Editor documentEditor,
+    VoidCallback analyzeAndUpdateDocument,
+  ) {
     try {
       documentEditor.execute([DeleteNodeRequest(nodeId: nodeId)]);
       analyzeAndUpdateDocument();
@@ -386,9 +386,9 @@ class ImageService {
 
   // 단일 이미지 업로드
   Future<Map<String, dynamic>?> _uploadSingleImage(
-      Uint8List bytes,
-      String fileName,
-      ) async {
+    Uint8List bytes,
+    String fileName,
+  ) async {
     try {
       final uri = Uri.parse('$_baseUrl/api/images/upload');
 
@@ -396,17 +396,17 @@ class ImageService {
       final token = await AuthService().getToken();
 
       final request =
-      http.MultipartRequest('POST', uri)
-        ..fields['uid'] =
-            'user1234' // 실제 사용자 UID로 변경 필요
-        ..files.add(
-          http.MultipartFile.fromBytes(
-            'file',
-            bytes,
-            filename: fileName,
-            contentType: mediaType,
-          ),
-        );
+          http.MultipartRequest('POST', uri)
+            ..fields['uid'] =
+                'user1234' // 실제 사용자 UID로 변경 필요
+            ..files.add(
+              http.MultipartFile.fromBytes(
+                'file',
+                bytes,
+                filename: fileName,
+                contentType: mediaType,
+              ),
+            );
       if (token != null) {
         request.headers['Authorization'] = 'Bearer $token';
       }
@@ -469,8 +469,8 @@ class ImageService {
 
   // 다중 이미지 업로드 (File 기반)
   Future<List<Map<String, dynamic>>> _uploadMultipleImages(
-      List<File> imageFiles,
-      ) async {
+    List<File> imageFiles,
+  ) async {
     try {
       final uri = Uri.parse('$_baseUrl/api/images/upload-multiple');
       final token = await AuthService().getToken();
@@ -569,8 +569,8 @@ class ImageService {
 
   // 다중 이미지 업로드 (XFile 기반 - 웹용)
   Future<List<Map<String, dynamic>>> _uploadMultipleWebImages(
-      List<XFile> xFiles,
-      ) async {
+    List<XFile> xFiles,
+  ) async {
     try {
       final uri = Uri.parse('$_baseUrl/api/images/upload-multiple');
       final token = await AuthService().getToken();
@@ -668,11 +668,11 @@ class ImageService {
 
   // 업로드 후 성공한 이미지만 문서에 삽입
   Future<void> _uploadAndInsertImages(
-      List<File> imageFiles,
-      Editor documentEditor,
-      VoidCallback analyzeAndUpdateDocument, {
-        dynamic spatialManager, // SpatialManager 참조 (선택적)
-      }) async {
+    List<File> imageFiles,
+    Editor documentEditor,
+    VoidCallback analyzeAndUpdateDocument, {
+    dynamic spatialManager, // SpatialManager 참조 (선택적)
+  }) async {
     final tempNodeIds = <String>[];
 
     try {
@@ -713,9 +713,9 @@ class ImageService {
 
         // 3. 성공한 이미지로 플레이스홀더 교체
         for (
-        int i = 0;
-        i < tempNodeIds.length && i < uploadResults.length;
-        i++
+          int i = 0;
+          i < tempNodeIds.length && i < uploadResults.length;
+          i++
         ) {
           final tempNodeId = tempNodeIds[i];
           final result = uploadResults[i];
@@ -770,10 +770,10 @@ class ImageService {
 
   // 플레이스홀더 노드들 제거
   void _removePlaceholders(
-      List<String> tempNodeIds,
-      Editor documentEditor,
-      VoidCallback analyzeAndUpdateDocument,
-      ) {
+    List<String> tempNodeIds,
+    Editor documentEditor,
+    VoidCallback analyzeAndUpdateDocument,
+  ) {
     for (final tempNodeId in tempNodeIds) {
       try {
         documentEditor.execute([DeleteNodeRequest(nodeId: tempNodeId)]);
@@ -836,9 +836,9 @@ class ImageService {
       if (image == null) return null;
 
       fileName =
-      image.name.isNotEmpty
-          ? image.name
-          : 'image_${DateTime.now().millisecondsSinceEpoch}';
+          image.name.isNotEmpty
+              ? image.name
+              : 'image_${DateTime.now().millisecondsSinceEpoch}';
 
       if (!fileName.contains('.')) {
         fileName += '.jpg';
@@ -931,11 +931,11 @@ class ImageService {
 
   // 웹: 컴퓨터 폴더에서 다중 이미지 선택
   Future<void> pickImagesFromComputer(
-      Editor documentEditor,
-      MutableDocument document,
-      VoidCallback analyzeAndUpdateDocument, {
-        dynamic spatialManager,
-      }) async {
+    Editor documentEditor,
+    MutableDocument document,
+    VoidCallback analyzeAndUpdateDocument, {
+    dynamic spatialManager,
+  }) async {
     try {
       final result = await ImagePicker().pickMultiImage(
         maxWidth: 1920,
@@ -961,11 +961,11 @@ class ImageService {
 
   // 모바일: 갤러리에서 다중 이미지 선택
   Future<void> showMobileGallery(
-      Editor documentEditor,
-      MutableDocument document,
-      VoidCallback analyzeAndUpdateDocument, {
-        dynamic spatialManager,
-      }) async {
+    Editor documentEditor,
+    MutableDocument document,
+    VoidCallback analyzeAndUpdateDocument, {
+    dynamic spatialManager,
+  }) async {
     try {
       // 모바일에서는 갤러리 바텀시트를 통해 이미지 선택
       // 이 메서드는 갤러리에서 선택된 이미지들을 처리
@@ -978,12 +978,12 @@ class ImageService {
 
   // 모바일 갤러리에서 선택된 이미지들 처리
   Future<void> processMobileGalleryImages(
-      List<File> imageFiles,
-      Editor documentEditor,
-      MutableDocument document,
-      VoidCallback analyzeAndUpdateDocument, {
-        dynamic spatialManager,
-      }) async {
+    List<File> imageFiles,
+    Editor documentEditor,
+    MutableDocument document,
+    VoidCallback analyzeAndUpdateDocument, {
+    dynamic spatialManager,
+  }) async {
     try {
       await insertMultipleImages(
         documentEditor,
@@ -1000,11 +1000,11 @@ class ImageService {
 
   // 배치 업로드 실패 시 개별 업로드로 fallback
   Future<void> _fallbackToIndividualUploads(
-      List<XFile> xFiles,
-      List<String> tempNodeIds,
-      Editor documentEditor,
-      VoidCallback analyzeAndUpdateDocument,
-      ) async {
+    List<XFile> xFiles,
+    List<String> tempNodeIds,
+    Editor documentEditor,
+    VoidCallback analyzeAndUpdateDocument,
+  ) async {
     print('🔄 개별 업로드 fallback 시작: ${xFiles.length}개 이미지');
 
     int successCount = 0;

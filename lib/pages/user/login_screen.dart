@@ -285,18 +285,19 @@ class _LoginScreenState extends State<LoginScreen> {
                               elevation: 0,
                             ),
                             // ✅ 로딩 상태에 따라 버튼 내부 위젯 변경
-                            child: _isLoading
-                                ? const CircularProgressIndicator(
-                              color: Colors.white,
-                              strokeWidth: 3.0,
-                            )
-                                : Text(
-                              '다음',
-                              style: AppTextStyles.withColor(
-                                AppTextStyles.bodyLarge,
-                                Colors.white,
-                              ),
-                            ),
+                            child:
+                                _isLoading
+                                    ? const CircularProgressIndicator(
+                                      color: Colors.white,
+                                      strokeWidth: 3.0,
+                                    )
+                                    : Text(
+                                      '다음',
+                                      style: AppTextStyles.withColor(
+                                        AppTextStyles.bodyLarge,
+                                        Colors.white,
+                                      ),
+                                    ),
                           ),
                         ),
 
