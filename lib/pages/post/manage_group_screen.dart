@@ -86,7 +86,8 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
         leading: IconButton(
           icon: const Icon(Icons.arrow_back, color: Colors.black),
           onPressed: () {
-            // TODO: 뒤로가기 로직 구현
+            // 프로필 화면으로 뒤로가기
+            Navigator.pop(context);
           },
         ),
         title: const Text(
