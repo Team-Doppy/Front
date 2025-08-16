@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 import 'package:doppy/data/services/api_service_base.dart';
+import 'package:doppy/data/services/auth_service.dart';
 import 'package:http/http.dart' as http;
 import 'package:super_editor/super_editor.dart';
 import 'package:flutter/material.dart'; // Added for BuildContext
@@ -116,6 +117,7 @@ class PublishService {
       print('   상태: ${status.name}');
       print('   태그: ${tags.join(', ')}');
       print('   공유 그룹: ${sharedGroups.join(', ')}');
+      print('   content: $content');
       return {
         'success': true,
         'title': this.title,
@@ -294,7 +296,8 @@ class PublishService {
             uri,
             headers: {
               'Content-Type': 'application/json',
-              'Authorization': 'Bearer user1234', // 실제 토큰으로 변경 필요
+              'Authorization':
+                  'Bearer ${await AuthService().getToken()}', // 실제 토큰으로 변경 필요
             },
             body: json.encode(requestData),
           )
@@ -370,7 +373,8 @@ class PublishService {
           .put(
             uri,
             headers: {
-              'Authorization': 'Bearer user1234', // 실제 토큰으로 변경 필요
+              'Authorization':
+                  'Bearer ${await AuthService().getToken()}', // 실제 토큰으로 변경 필요
             },
           )
           .timeout(const Duration(seconds: 15));
@@ -411,7 +415,8 @@ class PublishService {
             uri,
             headers: {
               'Content-Type': 'application/json',
-              'Authorization': 'Bearer user1234', // 실제 토큰으로 변경 필요
+              'Authorization':
+                  'Bearer ${await AuthService().getToken()}', // 실제 토큰으로 변경 필요
             },
             body: json.encode(requestData),
           )

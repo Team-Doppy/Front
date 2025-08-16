@@ -1,11 +1,9 @@
-import 'package:doppy/editor/bottom_navigation.dart';
 import 'package:doppy/pages/post/postview_screen.dart';
 import 'package:flutter/material.dart' hide Visibility;
 import 'package:super_editor/super_editor.dart';
 import '../../pages/post/postwrite_screen.dart';
 import 'publish_service.dart';
 import '../spatial_manager.dart';
-import 'post_decoder.dart';
 import 'package:top_snackbar_flutter/top_snack_bar.dart';
 import 'package:top_snackbar_flutter/custom_snack_bar.dart';
 import 'package:doppy/editor/util/custom_bottom_sheet.dart';
@@ -90,13 +88,11 @@ class _PublishingScreenState extends State<PublishingScreen> {
       appBar: AppBar(
         backgroundColor: Colors.white,
         leading: IconButton(
-            onPressed: () {
-              Navigator.pop(context);
-            },
-            icon: Icon(
-              Icons.arrow_back_ios_new,
-              color: Colors.black,
-            )),
+          onPressed: () {
+            Navigator.pop(context);
+          },
+          icon: Icon(Icons.arrow_back_ios_new, color: Colors.black),
+        ),
         centerTitle: true,
         title: PopupMenuButton<VisibilityOption>(
           initialValue: _selectedVisibility,
@@ -111,29 +107,30 @@ class _PublishingScreenState extends State<PublishingScreen> {
             borderRadius: BorderRadius.circular(12),
             side: BorderSide(color: Colors.grey.withOpacity(0.15)),
           ),
-          itemBuilder: (context) => [
-            PopupMenuItem(
-              value: VisibilityOption.public,
-              child: Text(
-                _visibilityLabel(VisibilityOption.public),
-                style: TextStyle(fontWeight: FontWeight.w600),
-              ),
-            ),
-            PopupMenuItem(
-              value: VisibilityOption.partial,
-              child: Text(
-                _visibilityLabel(VisibilityOption.partial),
-                style: TextStyle(fontWeight: FontWeight.w600),
-              ),
-            ),
-            PopupMenuItem(
-              value: VisibilityOption.private,
-              child: Text(
-                _visibilityLabel(VisibilityOption.private),
-                style: TextStyle(fontWeight: FontWeight.w600),
-              ),
-            ),
-          ],
+          itemBuilder:
+              (context) => [
+                PopupMenuItem(
+                  value: VisibilityOption.public,
+                  child: Text(
+                    _visibilityLabel(VisibilityOption.public),
+                    style: TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                ),
+                PopupMenuItem(
+                  value: VisibilityOption.partial,
+                  child: Text(
+                    _visibilityLabel(VisibilityOption.partial),
+                    style: TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                ),
+                PopupMenuItem(
+                  value: VisibilityOption.private,
+                  child: Text(
+                    _visibilityLabel(VisibilityOption.private),
+                    style: TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                ),
+              ],
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -146,8 +143,10 @@ class _PublishingScreenState extends State<PublishingScreen> {
                 ),
               ),
               const SizedBox(width: 6),
-              const Icon(Icons.keyboard_arrow_down_rounded,
-                  color: Colors.black),
+              const Icon(
+                Icons.keyboard_arrow_down_rounded,
+                color: Colors.black,
+              ),
             ],
           ),
         ),
@@ -182,7 +181,9 @@ class _PublishingScreenState extends State<PublishingScreen> {
           borderRadius: BorderRadius.circular(12),
           color: Colors.white,
           border: Border.all(
-              color: const Color.fromARGB(255, 134, 134, 134), width: 0.2),
+            color: const Color.fromARGB(255, 134, 134, 134),
+            width: 0.2,
+          ),
           boxShadow: [
             BoxShadow(
               color: Colors.grey.withOpacity(0.1),
@@ -246,25 +247,40 @@ class _PublishingScreenState extends State<PublishingScreen> {
                           Wrap(
                             spacing: 6,
                             children: [
-                              ..._userTags.take(3).map((tag) => Chip(
-                                    label: Text(tag,
+                              ..._userTags
+                                  .take(3)
+                                  .map(
+                                    (tag) => Chip(
+                                      label: Text(
+                                        tag,
                                         style: const TextStyle(
-                                            fontSize: 11,
-                                            color: Color(0xFF5888FF))),
-                                    backgroundColor: const Color(0xFFF4F5F8),
-                                    padding: const EdgeInsets.symmetric(
-                                        horizontal: 8, vertical: 0),
-                                    materialTapTargetSize:
-                                        MaterialTapTargetSize.shrinkWrap,
-                                  )),
+                                          fontSize: 11,
+                                          color: Color(0xFF5888FF),
+                                        ),
+                                      ),
+                                      backgroundColor: const Color(0xFFF4F5F8),
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 8,
+                                        vertical: 0,
+                                      ),
+                                      materialTapTargetSize:
+                                          MaterialTapTargetSize.shrinkWrap,
+                                    ),
+                                  ),
                               if (_userTags.length > 3)
                                 Chip(
-                                  label: const Text('...',
-                                      style: TextStyle(
-                                          fontSize: 11, color: Colors.grey)),
+                                  label: const Text(
+                                    '...',
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      color: Colors.grey,
+                                    ),
+                                  ),
                                   backgroundColor: const Color(0xFFF4F5F8),
                                   padding: const EdgeInsets.symmetric(
-                                      horizontal: 8, vertical: 0),
+                                    horizontal: 8,
+                                    vertical: 0,
+                                  ),
                                   materialTapTargetSize:
                                       MaterialTapTargetSize.shrinkWrap,
                                 ),
@@ -354,87 +370,94 @@ class _PublishingScreenState extends State<PublishingScreen> {
                 return Positioned(
                   left: overlay.position.dx,
                   top: overlay.position.dy,
-                  child: overlay.isEditing
-                      ? IntrinsicWidth(
-                          child: TextField(
-                            autofocus: true,
-                            controller:
-                                TextEditingController(text: overlay.text),
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 24,
-                              fontWeight: FontWeight.bold,
-                              shadows: [
-                                Shadow(
-                                  color: Colors.black54,
-                                  blurRadius: 4,
-                                  offset: Offset(1, 1),
-                                ),
-                              ],
+                  child:
+                      overlay.isEditing
+                          ? IntrinsicWidth(
+                            child: TextField(
+                              autofocus: true,
+                              controller: TextEditingController(
+                                text: overlay.text,
+                              ),
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 24,
+                                fontWeight: FontWeight.bold,
+                                shadows: [
+                                  Shadow(
+                                    color: Colors.black54,
+                                    blurRadius: 4,
+                                    offset: Offset(1, 1),
+                                  ),
+                                ],
+                              ),
+                              decoration: const InputDecoration(
+                                border: InputBorder.none,
+                                isDense: true,
+                                contentPadding: EdgeInsets.zero,
+                              ),
+                              onChanged: (val) {
+                                overlay.text = val;
+                                setState(() {}); // 길이 반영
+                              },
+                              onEditingComplete: () {
+                                setState(() {
+                                  overlay.isEditing = false;
+                                });
+                              },
                             ),
-                            decoration: const InputDecoration(
-                              border: InputBorder.none,
-                              isDense: true,
-                              contentPadding: EdgeInsets.zero,
-                            ),
-                            onChanged: (val) {
-                              overlay.text = val;
-                              setState(() {}); // 길이 반영
-                            },
-                            onEditingComplete: () {
+                          )
+                          : GestureDetector(
+                            onTap: () {
                               setState(() {
-                                overlay.isEditing = false;
+                                for (final t in _overlayTexts) {
+                                  t.isEditing = false;
+                                }
+                                overlay.isEditing = true;
                               });
                             },
-                          ),
-                        )
-                      : GestureDetector(
-                          onTap: () {
-                            setState(() {
-                              for (final t in _overlayTexts) {
-                                t.isEditing = false;
-                              }
-                              overlay.isEditing = true;
-                            });
-                          },
-                          onScaleStart: overlay.isEditing
-                              ? null
-                              : (details) {
-                                  _initFocalPoint = details.focalPoint;
-                                  _initScale = overlay.scale;
-                                  _dragStart = details.focalPoint;
-                                  _dragOrigin = overlay.position;
-                                  setState(() => _selectedOverlayIndex = i);
-                                },
-                          onScaleUpdate: overlay.isEditing
-                              ? null
-                              : (details) {
-                                  setState(() {
-                                    overlay.scale =
-                                        (_initScale ?? 1.0) * details.scale;
-                                    if (details.scale == 1.0 &&
-                                        details.focalPoint != _initFocalPoint) {
-                                      overlay.position = _dragOrigin! +
-                                          (details.focalPoint - _dragStart!);
-                                    }
-                                  });
-                                },
-                          child: Text(
-                            overlay.text,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 24,
-                              fontWeight: FontWeight.bold,
-                              shadows: [
-                                Shadow(
-                                  color: Colors.black54,
-                                  blurRadius: 4,
-                                  offset: Offset(1, 1),
-                                ),
-                              ],
+                            onScaleStart:
+                                overlay.isEditing
+                                    ? null
+                                    : (details) {
+                                      _initFocalPoint = details.focalPoint;
+                                      _initScale = overlay.scale;
+                                      _dragStart = details.focalPoint;
+                                      _dragOrigin = overlay.position;
+                                      setState(() => _selectedOverlayIndex = i);
+                                    },
+                            onScaleUpdate:
+                                overlay.isEditing
+                                    ? null
+                                    : (details) {
+                                      setState(() {
+                                        overlay.scale =
+                                            (_initScale ?? 1.0) * details.scale;
+                                        if (details.scale == 1.0 &&
+                                            details.focalPoint !=
+                                                _initFocalPoint) {
+                                          overlay.position =
+                                              _dragOrigin! +
+                                              (details.focalPoint -
+                                                  _dragStart!);
+                                        }
+                                      });
+                                    },
+                            child: Text(
+                              overlay.text,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 24,
+                                fontWeight: FontWeight.bold,
+                                shadows: [
+                                  Shadow(
+                                    color: Colors.black54,
+                                    blurRadius: 4,
+                                    offset: Offset(1, 1),
+                                  ),
+                                ],
+                              ),
                             ),
                           ),
-                        ),
                 );
               }).toList(),
             ],
@@ -453,20 +476,27 @@ class _PublishingScreenState extends State<PublishingScreen> {
         child: Row(
           children: [
             // 'Aa' 버튼: 오버레이 텍스트 추가
-            _buildEditTool('Aa', Icons.text_fields, 40, onTap: () {
-              setState(() {
-                for (final t in _overlayTexts) {
-                  t.isEditing = false;
-                }
-                _overlayTexts.add(OverlayText(
-                  text: '텍스트를 입력하세요',
-                  position: const Offset(100, 100),
-                  scale: 1.0,
-                  isEditing: true,
-                ));
-                _selectedOverlayIndex = _overlayTexts.length - 1;
-              });
-            }),
+            _buildEditTool(
+              'Aa',
+              Icons.text_fields,
+              40,
+              onTap: () {
+                setState(() {
+                  for (final t in _overlayTexts) {
+                    t.isEditing = false;
+                  }
+                  _overlayTexts.add(
+                    OverlayText(
+                      text: '텍스트를 입력하세요',
+                      position: const Offset(100, 100),
+                      scale: 1.0,
+                      isEditing: true,
+                    ),
+                  );
+                  _selectedOverlayIndex = _overlayTexts.length - 1;
+                });
+              },
+            ),
             const SizedBox(width: 20),
             _buildEditTool('사진', Icons.photo, 40),
             const SizedBox(width: 20),
@@ -478,25 +508,31 @@ class _PublishingScreenState extends State<PublishingScreen> {
             const SizedBox(width: 20),
             _buildEditTool('위치', Icons.location_on, 40),
             const SizedBox(width: 20),
-            _buildEditTool('태그', Icons.tag, 40, onTap: () async {
-              final height = MediaQuery.of(context).size.height -
-                  _previewSectionHeight -
-                  60;
-              await showCustomBottomSheet(
-                context: context,
-                height: height,
-                child: TagBottomSheet(
-                  initialTags: _userTags,
-                  onChanged: (tags) {
-                    setState(() {
-                      _userTags
-                        ..clear()
-                        ..addAll(tags);
-                    });
-                  },
-                ),
-              );
-            }),
+            _buildEditTool(
+              '태그',
+              Icons.tag,
+              40,
+              onTap: () async {
+                final height =
+                    MediaQuery.of(context).size.height -
+                    _previewSectionHeight -
+                    60;
+                await showCustomBottomSheet(
+                  context: context,
+                  height: height,
+                  child: TagBottomSheet(
+                    initialTags: _userTags,
+                    onChanged: (tags) {
+                      setState(() {
+                        _userTags
+                          ..clear()
+                          ..addAll(tags);
+                      });
+                    },
+                  ),
+                );
+              },
+            ),
             const SizedBox(width: 20),
             _buildEditTool('텍스트', Icons.format_size, 40),
             const SizedBox(width: 20),
@@ -519,9 +555,10 @@ class _PublishingScreenState extends State<PublishingScreen> {
               onPressed: _isPublishing ? null : _handlePublish,
               style: ElevatedButton.styleFrom(
                 minimumSize: Size(double.infinity, 50),
-                backgroundColor: _isPublishing
-                    ? Colors.grey
-                    : const Color.fromARGB(255, 158, 186, 255),
+                backgroundColor:
+                    _isPublishing
+                        ? Colors.grey
+                        : const Color.fromARGB(255, 158, 186, 255),
                 foregroundColor: Colors.white,
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(20),
@@ -530,10 +567,7 @@ class _PublishingScreenState extends State<PublishingScreen> {
               ),
               child: const Text(
                 '발행하기',
-                style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w500,
-                ),
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
               ),
             ),
           ),
@@ -582,16 +616,16 @@ class _PublishingScreenState extends State<PublishingScreen> {
           Navigator.pushReplacement(
             context,
             MaterialPageRoute(
-              builder: (context) => PostviewScreen() // TODO: 게시글 API 연동
+              builder:
+                  (context) =>
+                      PostviewScreen(postJson: contentJson), // TODO: 게시글 API 연동
             ),
           );
         },
         onError: (msg) {
           showTopSnackBar(
             Overlay.of(context),
-            CustomSnackBar.error(
-              message: msg,
-            ),
+            CustomSnackBar.error(message: msg),
             displayDuration: Duration(seconds: 2),
           );
         },
@@ -643,11 +677,7 @@ class _PublishingScreenState extends State<PublishingScreen> {
           const SizedBox(width: 6),
           GestureDetector(
             onTap: () => _removeTag(tag),
-            child: Icon(
-              Icons.close,
-              size: 16,
-              color: Colors.blue[600],
-            ),
+            child: Icon(Icons.close, size: 16, color: Colors.blue[600]),
           ),
         ],
       ),
@@ -658,8 +688,10 @@ class _PublishingScreenState extends State<PublishingScreen> {
     if (tagText.trim().isEmpty) return;
 
     // 쉼표로 구분된 태그들을 분리하여 추가
-    final tags =
-        tagText.split(',').map((t) => t.trim()).where((t) => t.isNotEmpty);
+    final tags = tagText
+        .split(',')
+        .map((t) => t.trim())
+        .where((t) => t.isNotEmpty);
 
     for (final tag in tags) {
       if (tag.length > 20) {
@@ -690,8 +722,12 @@ class _PublishingScreenState extends State<PublishingScreen> {
     });
   }
 
-  Widget _buildEditTool(String label, IconData icon, double size,
-      {VoidCallback? onTap}) {
+  Widget _buildEditTool(
+    String label,
+    IconData icon,
+    double size, {
+    VoidCallback? onTap,
+  }) {
     return GestureDetector(
       onTap: onTap,
       child: Column(
@@ -711,11 +747,7 @@ class _PublishingScreenState extends State<PublishingScreen> {
                 ),
               ],
             ),
-            child: Icon(
-              icon,
-              size: size * 0.5,
-              color: Colors.grey[800],
-            ),
+            child: Icon(icon, size: size * 0.5, color: Colors.grey[800]),
           ),
           const SizedBox(height: 8),
           Text(
@@ -761,13 +793,7 @@ class _PublishingScreenState extends State<PublishingScreen> {
       children: [
         Icon(icon, size: 24, color: Colors.grey[600]),
         const SizedBox(height: 4),
-        Text(
-          label,
-          style: TextStyle(
-            fontSize: 10,
-            color: Colors.grey[600],
-          ),
-        ),
+        Text(label, style: TextStyle(fontSize: 10, color: Colors.grey[600])),
       ],
     );
   }

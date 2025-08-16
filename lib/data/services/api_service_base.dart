@@ -6,7 +6,7 @@ import 'auth_service.dart';
 
 /// 인증이 필요한 모든 API 서비스의 기반이 되는 클래스
 class ApiServiceBase {
-  static final String baseUrl = "http://54.180.97.66:5000";
+  static final String baseUrl = "http://13.125.227.178:5000";
 
   // AuthService는 static으로 만들어 어디서든 접근 가능하게 하거나,
   // get_it 같은 서비스 로케이터를 사용하는 것이 좋지만, 지금은 간단하게 인스턴스를 생성합니다.

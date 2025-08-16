@@ -83,7 +83,7 @@ class _LoginScreenState extends State<LoginScreen> {
       // 로그인 성공 시 AuthProvider가 상태를 변경하여
       // main.dart의 Consumer가 자동으로 HomeScreen으로 전환해줍니다.
       // 따라서 여기서 직접 화면을 전환하는 코드는 필요 없습니다.
-      // Navigator.of(context).pushNamedAndRemoveUntil('/home', (route) => false);
+      Navigator.of(context).pushNamedAndRemoveUntil('/home', (route) => false);
     } else {
       // 로그인 실패 시 사용자에게 피드백 제공
       ScaffoldMessenger.of(context).showSnackBar(
@@ -285,18 +285,19 @@ class _LoginScreenState extends State<LoginScreen> {
                               elevation: 0,
                             ),
                             // ✅ 로딩 상태에 따라 버튼 내부 위젯 변경
-                            child: _isLoading
-                                ? const CircularProgressIndicator(
-                              color: Colors.white,
-                              strokeWidth: 3.0,
-                            )
-                                : Text(
-                              '다음',
-                              style: AppTextStyles.withColor(
-                                AppTextStyles.bodyLarge,
-                                Colors.white,
-                              ),
-                            ),
+                            child:
+                                _isLoading
+                                    ? const CircularProgressIndicator(
+                                      color: Colors.white,
+                                      strokeWidth: 3.0,
+                                    )
+                                    : Text(
+                                      '다음',
+                                      style: AppTextStyles.withColor(
+                                        AppTextStyles.bodyLarge,
+                                        Colors.white,
+                                      ),
+                                    ),
                           ),
                         ),
 
