@@ -154,19 +154,27 @@ class _Thumbnail extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final url = post['thumbnailUrl'] as String?;
-    if (url == null || url.isEmpty) {
-      return const SizedBox(height: 20);
-    }
     Widget imageWidget;
-    if (url.startsWith('http://') || url.startsWith('https://')) {
+    if (url != null &&
+        url.isNotEmpty &&
+        (url.startsWith('http://') || url.startsWith('https://'))) {
       imageWidget = Image.network(
         url,
         fit: BoxFit.cover,
         width: double.infinity,
-        errorBuilder: (c, e, s) => Container(color: Colors.grey[200]),
+        errorBuilder:
+            (c, e, s) => Image.asset(
+              'assets/images/feed5.jpg',
+              fit: BoxFit.cover,
+              width: double.infinity,
+            ),
       );
     } else {
-      imageWidget = Container(color: Colors.grey[200]);
+      imageWidget = Image.asset(
+        'assets/images/feed5.jpg',
+        fit: BoxFit.cover,
+        width: double.infinity,
+      );
     }
     return Stack(
       alignment: Alignment.bottomLeft,
@@ -207,17 +215,6 @@ class _Content extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Row(
-            children: [
-              Text(
-                post['title']?.toString() ?? '',
-                style: Theme.of(context).textTheme.headlineLarge?.copyWith(
-                  fontWeight: FontWeight.bold,
-                  color: AppColors.lightTextPrimary,
-                ), // 폰트 두께 조정
-              ),
-            ],
-          ),
           const SizedBox(height: 4),
           if ((post["tags"] as List).isNotEmpty)
             Padding(

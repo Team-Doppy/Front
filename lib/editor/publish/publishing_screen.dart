@@ -8,6 +8,10 @@ import 'package:top_snackbar_flutter/top_snack_bar.dart';
 import 'package:top_snackbar_flutter/custom_snack_bar.dart';
 import 'package:doppy/editor/util/custom_bottom_sheet.dart';
 import 'package:doppy/editor/util/tag_bottom_sheet.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:image_picker/image_picker.dart';
+import 'dart:async';
+import 'dart:html' as html;
 
 class PublishingScreen extends StatefulWidget {
   final PreviewData preview;
@@ -46,11 +50,32 @@ class _PublishingScreenState extends State<PublishingScreen> {
   bool _isPublishing = false;
   VisibilityOption _selectedVisibility = VisibilityOption.public;
 
+  String? selectedThumbnailId;
+  List<String> imageUrls = [];
+
   @override
   void initState() {
     super.initState();
     _selectedVisibility = widget.visibilityOption;
+    imageUrls = extractImageUrlsFromDocument(widget.document);
+    if (imageUrls.isNotEmpty) {
+      selectedThumbnailId = imageUrls.first;
+    }
     _initializePublishing();
+    print("✅ imageUrls: $imageUrls");
+  }
+
+  // 노드의 속성에서 type이 image이고 url이 있으면 url을 추출
+  List<String> extractImageUrlsFromDocument(MutableDocument document) {
+    final List<String> urls = [];
+    for (int i = 0; i < document.nodeCount; i++) {
+      final node = document.getNodeAt(i);
+      if (node == null) continue;
+      if (node is ImageNode) {
+        urls.add(node.imageUrl);
+      }
+    }
+    return urls;
   }
 
   @override
@@ -64,10 +89,6 @@ class _PublishingScreenState extends State<PublishingScreen> {
     // 태그/텍스트 모두 기본값 없이 빈 상태로 시작
     _userTags.clear();
     _overlayTexts.clear();
-    print('✅ 발행 초기화 완료');
-    print('   문서 노드 수: ${widget.document.nodeCount}');
-    print('   가시성: ${widget.visibilityOption.name}');
-    print('   태그: ${_userTags.join(', ')}');
   }
 
   String _visibilityLabel(VisibilityOption option) {
@@ -173,6 +194,7 @@ class _PublishingScreenState extends State<PublishingScreen> {
   }
 
   Widget _buildPreviewSection() {
+    final thumbnailUrl = selectedThumbnailId;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 10),
       child: Container(
@@ -225,16 +247,28 @@ class _PublishingScreenState extends State<PublishingScreen> {
                     ),
                     child: ClipRRect(
                       borderRadius: BorderRadius.circular(8),
-                      child: Image.asset(
-                        widget.preview.thumbnailUrl,
-                        fit: BoxFit.cover,
-                        errorBuilder: (context, error, stackTrace) {
-                          return Container(
-                            color: Colors.grey[300],
-                            child: const Icon(Icons.image, color: Colors.grey),
-                          );
-                        },
-                      ),
+                      child:
+                          (thumbnailUrl != null && thumbnailUrl.isNotEmpty)
+                              ? Image.network(
+                                thumbnailUrl,
+                                fit: BoxFit.cover,
+                                errorBuilder: (context, error, stackTrace) {
+                                  return Container(
+                                    color: Colors.grey[300],
+                                    child: const Icon(
+                                      Icons.image,
+                                      color: Colors.grey,
+                                    ),
+                                  );
+                                },
+                              )
+                              : Container(
+                                color: Colors.grey[300],
+                                child: const Icon(
+                                  Icons.image,
+                                  color: Colors.grey,
+                                ),
+                              ),
                     ),
                   ),
                   const SizedBox(width: 16),
@@ -321,9 +355,9 @@ class _PublishingScreenState extends State<PublishingScreen> {
 
   Widget _buildMainImageArea() {
     final imageHeight = MediaQuery.of(context).size.height * 0.3;
+    final thumbnailUrl = selectedThumbnailId;
     return GestureDetector(
       onTap: () {
-        // 바깥 클릭 시 모든 편집 종료
         setState(() {
           for (final t in _overlayTexts) {
             t.isEditing = false;
@@ -347,22 +381,35 @@ class _PublishingScreenState extends State<PublishingScreen> {
           child: Stack(
             children: [
               // 이미지
-              Image.asset(
-                widget.preview.thumbnailUrl,
-                width: MediaQuery.of(context).size.width,
-                height: imageHeight,
-                fit: BoxFit.cover,
-                errorBuilder: (context, error, stackTrace) {
-                  return Container(
+              (thumbnailUrl != null && thumbnailUrl.isNotEmpty)
+                  ? Image.network(
+                    thumbnailUrl,
+                    width: MediaQuery.of(context).size.width,
+                    height: imageHeight,
+                    fit: BoxFit.cover,
+                    errorBuilder: (context, error, stackTrace) {
+                      return Container(
+                        width: MediaQuery.of(context).size.width,
+                        height: imageHeight,
+                        color: Colors.grey[300],
+                        child: const Center(
+                          child: Icon(
+                            Icons.image,
+                            size: 64,
+                            color: Colors.grey,
+                          ),
+                        ),
+                      );
+                    },
+                  )
+                  : Container(
                     width: MediaQuery.of(context).size.width,
                     height: imageHeight,
                     color: Colors.grey[300],
                     child: const Center(
                       child: Icon(Icons.image, size: 64, color: Colors.grey),
                     ),
-                  );
-                },
-              ),
+                  ),
               // 여러 오버레이 텍스트 렌더링
               ..._overlayTexts.asMap().entries.map((entry) {
                 final i = entry.key;
@@ -498,7 +545,20 @@ class _PublishingScreenState extends State<PublishingScreen> {
               },
             ),
             const SizedBox(width: 20),
-            _buildEditTool('사진', Icons.photo, 40),
+            _buildEditTool(
+              '사진',
+              Icons.photo,
+              40,
+              onTap: () async {
+                final url = await pickSingleImage(context);
+                if (url != null) {
+                  setState(() {
+                    imageUrls = [url];
+                    selectedThumbnailId = url;
+                  });
+                }
+              },
+            ),
             const SizedBox(width: 20),
             _buildEditTool('자르기', Icons.crop, 40),
             const SizedBox(width: 20),
@@ -765,6 +825,38 @@ class _PublishingScreenState extends State<PublishingScreen> {
     );
   }
 
+  Widget _buildThumbnailSelector() {
+    if (imageUrls.isEmpty) return const SizedBox.shrink();
+    return Row(
+      children:
+          imageUrls.map((url) {
+            final isSelected = url == selectedThumbnailId;
+            return GestureDetector(
+              onTap: () {
+                setState(() {
+                  selectedThumbnailId = url;
+                });
+              },
+              child: Container(
+                margin: const EdgeInsets.all(4),
+                decoration: BoxDecoration(
+                  border: Border.all(
+                    color: isSelected ? Colors.blue : Colors.grey,
+                    width: isSelected ? 3 : 1,
+                  ),
+                ),
+                child: Image.network(
+                  url,
+                  width: 60,
+                  height: 60,
+                  fit: BoxFit.cover,
+                ),
+              ),
+            );
+          }).toList(),
+    );
+  }
+
   Widget _buildBottomNavigation() {
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 16),
@@ -801,6 +893,34 @@ class _PublishingScreenState extends State<PublishingScreen> {
   }
 
   double get _previewSectionHeight => 180; // 미리보기 섹션 예상 높이(조정 가능)
+
+  Future<String?> pickSingleImage(BuildContext context) async {
+    if (kIsWeb) {
+      final completer = Completer<String?>();
+      final uploadInput = html.FileUploadInputElement()..accept = 'image/*';
+      uploadInput.click();
+      uploadInput.onChange.listen((event) {
+        final file = uploadInput.files?.first;
+        if (file != null) {
+          final reader = html.FileReader();
+          reader.readAsDataUrl(file);
+          reader.onLoadEnd.listen((event) {
+            completer.complete(reader.result as String?);
+          });
+        } else {
+          completer.complete(null);
+        }
+      });
+      return completer.future;
+    } else {
+      final picker = ImagePicker();
+      final picked = await picker.pickImage(source: ImageSource.gallery);
+      if (picked != null) {
+        return picked.path;
+      }
+      return null;
+    }
+  }
 }
 
 class OverlayText {

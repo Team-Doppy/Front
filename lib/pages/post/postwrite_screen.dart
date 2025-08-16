@@ -15,11 +15,7 @@ import 'package:doppy/editor/publish/publish_service.dart';
 import 'package:doppy/editor/publish/publishing_screen.dart';
 
 /// 글 공개 범위 옵션
-enum VisibilityOption {
-  public,
-  partial,
-  private,
-}
+enum VisibilityOption { public, partial, private }
 
 class PostwriteScreen extends StatefulWidget {
   final double screenWidth;
@@ -34,6 +30,10 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
   late MutableDocumentComposer _composer; //문서 편집 상태와 커서 관리
   late Editor _editor; //문서 편집 기능 제공
   late FocusNode _editorFocusNode; //텍스트 입력 커서 관리
+  bool showPublishButton = false;
+
+  final TextEditingController _titleController = TextEditingController();
+  TextAlign _titleAlign = TextAlign.center;
 
   late GridSystem _gridSystem; //그리드 시스템
   late SpatialManager _spatialManager; //문서 내 요소 위치 관리
@@ -73,12 +73,13 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (context) => PublishingScreen(
-          preview: preview,
-          document: _document,
-          spatialManager: _spatialManager,
-          visibilityOption: _visibilityOption,
-        ),
+        builder:
+            (context) => PublishingScreen(
+              preview: preview,
+              document: _document,
+              spatialManager: _spatialManager,
+              visibilityOption: _visibilityOption,
+            ),
       ),
     );
   }
@@ -100,21 +101,22 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
       showModalBottomSheet(
         context: context,
         isScrollControlled: true,
-        builder: (context) => GalleryBottomSheet(
-          onImagesSelected: (List<File> imageFiles) async {
-            try {
-              await ImageService().processMobileGalleryImages(
-                imageFiles,
-                _editor,
-                _document,
-                _analyzeAndUpdateDocument,
-                spatialManager: _spatialManager,
-              );
-            } catch (e) {
-              print('❌ 이미지 추가 중 오류: $e');
-            }
-          },
-        ),
+        builder:
+            (context) => GalleryBottomSheet(
+              onImagesSelected: (List<File> imageFiles) async {
+                try {
+                  await ImageService().processMobileGalleryImages(
+                    imageFiles,
+                    _editor,
+                    _document,
+                    _analyzeAndUpdateDocument,
+                    spatialManager: _spatialManager,
+                  );
+                } catch (e) {
+                  print('❌ 이미지 추가 중 오류: $e');
+                }
+              },
+            ),
       );
     }
   }
@@ -128,11 +130,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
       nodes: [
         ParagraphNode(
           id: Editor.createNodeId(),
-          text: AttributedText('드래그 가능한 이미지 시스템입니다.'),
-        ),
-        ParagraphNode(
-          id: Editor.createNodeId(),
-          text: AttributedText('이미지를 텍스트 위로 드래그하면 빨간나고,'),
+          text: AttributedText('오늘의 도피는 무엇인가요?'),
         ),
       ],
     );
@@ -174,8 +172,10 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
         elevation: 0,
         centerTitle: true,
         leading: IconButton(
-          icon:
-          const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.black),
+          icon: const Icon(
+            Icons.arrow_back_ios_new_rounded,
+            color: Colors.black,
+          ),
           onPressed: () => Navigator.of(context).pop(),
         ),
         title: PopupMenuButton<VisibilityOption>(
@@ -191,29 +191,30 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
             borderRadius: BorderRadius.circular(12),
             side: BorderSide(color: Colors.grey.withOpacity(0.15)),
           ),
-          itemBuilder: (context) => [
-            PopupMenuItem(
-              value: VisibilityOption.public,
-              child: Text(
-                _visibilityLabel(VisibilityOption.public),
-                style: TextStyle(fontWeight: FontWeight.w600),
-              ),
-            ),
-            PopupMenuItem(
-              value: VisibilityOption.partial,
-              child: Text(
-                _visibilityLabel(VisibilityOption.partial),
-                style: TextStyle(fontWeight: FontWeight.w600),
-              ),
-            ),
-            PopupMenuItem(
-              value: VisibilityOption.private,
-              child: Text(
-                _visibilityLabel(VisibilityOption.private),
-                style: TextStyle(fontWeight: FontWeight.w600),
-              ),
-            ),
-          ],
+          itemBuilder:
+              (context) => [
+                PopupMenuItem(
+                  value: VisibilityOption.public,
+                  child: Text(
+                    _visibilityLabel(VisibilityOption.public),
+                    style: TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                ),
+                PopupMenuItem(
+                  value: VisibilityOption.partial,
+                  child: Text(
+                    _visibilityLabel(VisibilityOption.partial),
+                    style: TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                ),
+                PopupMenuItem(
+                  value: VisibilityOption.private,
+                  child: Text(
+                    _visibilityLabel(VisibilityOption.private),
+                    style: TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                ),
+              ],
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -226,21 +227,30 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                 ),
               ),
               const SizedBox(width: 6),
-              const Icon(Icons.keyboard_arrow_down_rounded,
-                  color: Colors.black),
+              const Icon(
+                Icons.keyboard_arrow_down_rounded,
+                color: Colors.black,
+              ),
             ],
           ),
         ),
         actions: [
           TextButton(
-            onPressed: _onSubmit,
+            onPressed: () {
+              if (_titleController.text.isNotEmpty) {
+                _onSubmit();
+              }
+            },
             style: TextButton.styleFrom(
               padding: EdgeInsets.symmetric(horizontal: 14, vertical: 6),
             ),
-            child: const Text(
-              '발행',
+            child: Text(
+              '등록',
               style: TextStyle(
-                color: Color.fromARGB(255, 102, 145, 255),
+                color:
+                    (_titleController.text.isNotEmpty)
+                        ? const Color.fromARGB(255, 102, 145, 255)
+                        : const Color.fromARGB(255, 177, 177, 177),
                 fontSize: 16,
                 fontWeight: FontWeight.w500,
               ),
@@ -249,7 +259,42 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
           const SizedBox(width: 8),
         ],
       ),
-      body: _buildBody(),
+      body: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 18, 20, 8),
+            child: TextField(
+              controller: _titleController,
+              onChanged: (val) {
+                setState(() {
+                  showPublishButton = _titleController.text.isNotEmpty;
+                });
+              },
+
+              style: const TextStyle(
+                fontSize: 22,
+                fontWeight: FontWeight.bold,
+                color: Colors.black,
+              ),
+              cursorColor: Colors.black,
+              decoration: const InputDecoration(
+                hintText: '제목을 입력하세요',
+                hintStyle: TextStyle(
+                  fontSize: 22,
+                  fontWeight: FontWeight.bold,
+                  color: Color.fromARGB(255, 194, 194, 194),
+                ),
+                border: InputBorder.none,
+                isDense: true,
+                contentPadding: EdgeInsets.zero,
+              ),
+              maxLines: 1,
+              textAlign: _titleAlign,
+            ),
+          ),
+          Expanded(child: _buildBody()),
+        ],
+      ),
     );
   }
 
@@ -282,9 +327,10 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                           documentOverlayBuilders: [
                             SuperEditorIosHandlesDocumentLayerBuilder(),
                           ],
-                          gestureMode: kIsWeb
-                              ? DocumentGestureMode.mouse
-                              : DocumentGestureMode.iOS,
+                          gestureMode:
+                              kIsWeb
+                                  ? DocumentGestureMode.mouse
+                                  : DocumentGestureMode.iOS,
                           inputSource: TextInputSource.ime,
                           componentBuilders: [
                             InteractiveFloatingImageComponentBuilder(
@@ -327,5 +373,12 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     );
 
     _spatialManager.printDocStructure();
+  }
+
+  // 예시: 사용자가 정렬을 변경하는 함수 (어디선가 호출)
+  void _setTitleAlign(TextAlign align) {
+    setState(() {
+      _titleAlign = align;
+    });
   }
 }
