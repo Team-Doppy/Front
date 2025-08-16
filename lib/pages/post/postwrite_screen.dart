@@ -56,6 +56,20 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
 
   void _onSubmit() {
     final preview = PublishService().extractPreviewData(_document);
+
+    // ✅ preview 객체가 null인지 확인하는 로직 추가
+    if (preview == null) {
+      // null 이라면 사용자에게 스낵바 메시지를 보여주고 함수를 종료합니다.
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('게시글을 발행하려면 대표 이미지가 최소 1개 이상 필요합니다.'),
+          backgroundColor: Colors.redAccent,
+        ),
+      );
+      return; // PublishingScreen으로 넘어가지 않음
+    }
+
+    // preview 객체가 정상적으로 생성되었을 때만 화면을 이동합니다.
     Navigator.push(
       context,
       MaterialPageRoute(
