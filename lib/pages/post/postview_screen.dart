@@ -300,8 +300,7 @@ class _InteractionButtons extends StatelessWidget {
             icon: SvgPicture.asset(
               'assets/icons/ic_share.svg',
               width: 24,
-              height: 24,
-            ),
+              height: 24,            ),
             onPressed: () {
               // TODO: 공유 기능
             },
