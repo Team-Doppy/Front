@@ -1,23 +1,10 @@
-import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:doppy/pages/components/custom_bottom_navigation_bar.dart';
+import 'group_profile_screen.dart';
+import '../../data/models/group_model.dart';
+import '../../data/services/group_service.dart';
+import '../components/custom_bottom_navigation_bar.dart';
 
-/// 그룹 정보를 담을 데이터 모델
-class Group {
-  final String name;
-  final String description;
-  final int memberCount;
-  final String? groupIconUrl;
-
-  Group({
-    required this.name,
-    required this.description,
-    required this.memberCount,
-    this.groupIconUrl,
-  });
-}
-
-/// 그룹 관리 화면
+// 그룹 관리 화면 메인 위젯
 class ManageGroupScreen extends StatefulWidget {
   const ManageGroupScreen({Key? key}) : super(key: key);
 
@@ -25,99 +12,82 @@ class ManageGroupScreen extends StatefulWidget {
   State<ManageGroupScreen> createState() => _ManageGroupScreenState();
 }
 
-class _ManageGroupScreenState extends State<ManageGroupScreen> {
-  /// 하단 네비: 프로필 탭에서 열렸다고 가정 (0:홈, 1:검색, 2:작성, 3:프로필)
-  int _bottomIndex = 3;
+class _ManageGroupScreenState extends State<ManageGroupScreen>
+    with WidgetsBindingObserver {
+  // 하단 네비게이션 바의 현재 선택된 인덱스
+  int _selectedIndex = 3;
 
-  /// 검색 상태
-  final TextEditingController _searchController = TextEditingController();
-  String _query = '';
-  Timer? _debounce;
+  // API 서비스
+  final GroupService _groupService = GroupService();
 
-  /// 샘플 데이터(실서버 연동 전)
-  final List<Group> _groups = List.generate(
-    10,
-    (index) => Group(
-      name: '그룹 ${index + 1}',
-      description: '설명',
-      memberCount: 23 + index,
-    ),
-  );
+  // 그룹 목록
+  List<Group> _groups = [];
+  bool _isLoading = true;
+  String? _error;
 
-  /// 표시용 목록(검색/정렬 반영)
-  late List<Group> _visibleGroups = List.of(_groups);
+  @override
+  void initState() {
+    super.initState();
+    _loadGroups();
+
+    // 화면 포커스 감지를 위한 observer 등록
+    WidgetsBinding.instance.addObserver(this);
+  }
 
   @override
   void dispose() {
-    _debounce?.cancel();
-    _searchController.dispose();
+    // observer 해제
+    WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
 
-  // -------------------- 검색 로직 --------------------
-  void _onSearchChanged(String q) {
-    setState(() => _query = q);
-    _debounce?.cancel();
-    _debounce = Timer(const Duration(milliseconds: 350), _performSearch);
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // 앱이 포그라운드로 돌아올 때 그룹 목록 새로고침
+    if (state == AppLifecycleState.resumed) {
+      _loadGroups();
+    }
   }
 
-  void _onSearchSubmitted(String q) {
-    setState(() => _query = q);
-    _debounce?.cancel();
-    _performSearch();
-  }
+  // 그룹 목록 로드
+  Future<void> _loadGroups() async {
+    try {
+      print('🔍 [ManageGroupScreen] 그룹 목록 로드 시작');
 
-  void _clearSearch() {
-    _searchController.clear();
-    setState(() => _query = '');
-    _performSearch();
-  }
-
-  void _performSearch() {
-    final q = _query.trim().toLowerCase();
-    if (q.isEmpty) {
       setState(() {
-        _visibleGroups = List.of(_groups);
+        _isLoading = true;
+        _error = null;
       });
-      return;
-    }
 
-    final filtered =
-        _groups.where((g) {
-          final name = g.name.toLowerCase();
-          final desc = g.description.toLowerCase();
-          return name.contains(q) || desc.contains(q);
-        }).toList();
+      final groups = await _groupService.getMyGroups();
+      print('✅ [ManageGroupScreen] 그룹 목록 로드 성공: ${groups.length}개');
 
-    setState(() {
-      _visibleGroups = filtered;
-    });
-  }
-
-  // -------------------- 뒤로가기 로직 --------------------
-  Future<void> _handleBack() async {
-    // 뒤로갈 수 있으면 pop, 아니면 홈으로
-    if (Navigator.of(context).canPop()) {
-      Navigator.of(context).pop();
-    } else {
-      Navigator.of(context).pushReplacementNamed('/home');
+      setState(() {
+        _groups = groups;
+        _isLoading = false;
+      });
+    } catch (e) {
+      print('❌ [ManageGroupScreen] 그룹 목록 로드 실패: $e');
+      setState(() {
+        _error = '그룹 목록을 불러오는데 실패했습니다: $e';
+        _isLoading = false;
+      });
     }
   }
 
-  // -------------------- UI --------------------
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.white,
-
       // 상단 앱 바
       appBar: AppBar(
         backgroundColor: Colors.white,
         elevation: 0,
         leading: IconButton(
-          tooltip: '뒤로가기',
           icon: const Icon(Icons.arrow_back, color: Colors.black),
-          onPressed: _handleBack,
+          onPressed: () {
+            // TODO: 뒤로가기 로직 구현
+          },
         ),
         title: const Text(
           '그룹관리',
@@ -125,112 +95,92 @@ class _ManageGroupScreenState extends State<ManageGroupScreen> {
         ),
         centerTitle: true,
         actions: [
-          // 간단한 메뉴 (필요 시 확장)
-          PopupMenuButton<String>(
-            icon: const Icon(Icons.more_horiz, color: Colors.black),
-            onSelected: (v) {
-              switch (v) {
-                case 'create':
-                  _showSnack('그룹 생성은 별도 화면/모달로 연결하세요.');
-                  break;
-                case 'refresh':
-                  setState(() {
-                    // 서버 연동 시 목록 새로고침 자리
-                    _visibleGroups = List.of(_groups);
-                    _query = '';
-                    _searchController.clear();
-                  });
-                  _showSnack('목록을 새로고침했습니다.');
-                  break;
-              }
+          IconButton(
+            icon: const Icon(Icons.menu, color: Colors.black),
+            onPressed: () {
+              // TODO: 메뉴 버튼 로직 구현
             },
-            itemBuilder:
-                (context) => const [
-                  PopupMenuItem(value: 'create', child: Text('그룹 생성')),
-                  PopupMenuItem(value: 'refresh', child: Text('새로고침')),
-                ],
           ),
         ],
       ),
-
-      // 본문
+      // 화면 본문
       body: Column(
         children: [
           _buildSearchBar(),
           _buildSortFilterBar(),
+          // 스크롤 가능한 그룹 목록
           Expanded(
             child:
-                _visibleGroups.isEmpty
-                    ? const _Empty(message: '그룹이 없습니다.')
+                _isLoading
+                    ? const Center(child: CircularProgressIndicator())
+                    : _error != null
+                    ? Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Text(
+                            _error!,
+                            style: const TextStyle(color: Colors.red),
+                          ),
+                          const SizedBox(height: 16),
+                          ElevatedButton(
+                            onPressed: _loadGroups,
+                            child: const Text('다시 시도'),
+                          ),
+                        ],
+                      ),
+                    )
                     : ListView.builder(
-                      itemCount: _visibleGroups.length,
+                      itemCount: _groups.length,
                       itemBuilder: (context, index) {
                         return _GroupListTile(
-                          group: _visibleGroups[index],
-                          onPressSettings:
-                              () => _openGroupActions(_visibleGroups[index]),
+                          group: _groups[index],
+                          onGroupDeleted: () {
+                            // 그룹이 삭제되었으면 목록 새로고침
+                            _loadGroups();
+                          },
                         );
                       },
                     ),
           ),
         ],
       ),
-
-      // 하단 네비게이션: 커스텀 컴포넌트 사용
+      // 하단 네비게이션 바
       bottomNavigationBar: CustomBottomNavigationBar(
-        currentIndex: _bottomIndex,
-        onTap: (i) {
-          // 글쓰기(2)는 콜백으로만 처리됨. 필요 시 모달/페이지로 연결
-          if (i == 2) {
-            _showSnack('작성 버튼 눌림 (모달/페이지 연결)');
-            return;
-          }
-          setState(() => _bottomIndex = i);
+        currentIndex: _selectedIndex,
+        onTap: (index) {
+          setState(() {
+            _selectedIndex = index;
+          });
+          // CustomBottomNavigationBar가 자체적으로 화면 전환을 처리합니다
         },
       ),
     );
   }
 
-  // 검색 바
+  // 검색 바 위젯
   Widget _buildSearchBar() {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-      child: SizedBox(
-        height: 40,
-        child: TextField(
-          controller: _searchController,
-          textInputAction: TextInputAction.search,
-          onChanged: _onSearchChanged,
-          onSubmitted: _onSearchSubmitted,
-          decoration: InputDecoration(
-            hintText: '검색',
-            prefixIcon: const Icon(Icons.search, color: Colors.grey),
-            suffixIcon:
-                _query.isNotEmpty
-                    ? IconButton(
-                      tooltip: '지우기',
-                      icon: const Icon(Icons.clear, color: Colors.grey),
-                      onPressed: _clearSearch,
-                    )
-                    : null,
-            filled: true,
-            fillColor: Colors.grey[100],
-            isDense: true,
-            contentPadding: const EdgeInsets.symmetric(vertical: 8),
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12.0),
-              borderSide: BorderSide.none,
-            ),
+      child: TextField(
+        decoration: InputDecoration(
+          hintText: '검색',
+          prefixIcon: const Icon(Icons.search, color: Colors.grey),
+          filled: true,
+          fillColor: Colors.grey[100],
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12.0),
+            borderSide: BorderSide.none,
           ),
         ),
       ),
     );
   }
 
-  // 정렬/필터 바 (지금은 이름순 고정 표시만)
+  // 정렬 필터 바 위젯
   Widget _buildSortFilterBar() {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 6.0),
+      padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
       child: Row(
         children: [
           const Text(
@@ -239,99 +189,19 @@ class _ManageGroupScreenState extends State<ManageGroupScreen> {
           ),
           const Icon(Icons.arrow_drop_down),
           const Spacer(),
-          Text(
-            '총 ${_visibleGroups.length}개',
-            style: const TextStyle(color: Colors.grey),
-          ),
         ],
       ),
     );
   }
-
-  // 그룹 액션(설정 버튼) 시트
-  void _openGroupActions(Group group) {
-    showModalBottomSheet<void>(
-      context: context,
-      showDragHandle: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
-      builder:
-          (_) => SafeArea(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                ListTile(
-                  leading: const Icon(Icons.edit),
-                  title: const Text('그룹 이름/설명 수정'),
-                  onTap: () {
-                    Navigator.pop(context);
-                    _showSnack('"${group.name}" 수정 화면으로 이동하세요.');
-                  },
-                ),
-                const Divider(height: 1),
-                ListTile(
-                  leading: const Icon(Icons.group),
-                  title: const Text('멤버 관리'),
-                  onTap: () {
-                    Navigator.pop(context);
-                    _showSnack('"${group.name}" 멤버 관리 화면으로 이동하세요.');
-                  },
-                ),
-                const Divider(height: 1),
-                ListTile(
-                  leading: const Icon(Icons.delete_outline, color: Colors.red),
-                  title: const Text(
-                    '그룹 삭제',
-                    style: TextStyle(color: Colors.red),
-                  ),
-                  onTap: () {
-                    Navigator.pop(context);
-                    _showSnack('"${group.name}" 삭제 API 연결 자리.');
-                  },
-                ),
-                const SizedBox(height: 8),
-              ],
-            ),
-          ),
-    );
-  }
-
-  void _showSnack(String msg) {
-    ScaffoldMessenger.of(context)
-      ..clearSnackBars()
-      ..showSnackBar(
-        SnackBar(content: Text(msg), duration: const Duration(seconds: 1)),
-      );
-  }
 }
 
-/// 목록이 비었을 때 표시
-class _Empty extends StatelessWidget {
-  final String message;
-  const _Empty({required this.message});
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Text(
-        message,
-        style: const TextStyle(color: Colors.black54, fontSize: 14),
-      ),
-    );
-  }
-}
-
-/// 그룹 목록의 각 항목
+// 그룹 목록의 각 항목을 구성하는 위젯
 class _GroupListTile extends StatelessWidget {
   final Group group;
-  final VoidCallback onPressSettings;
+  final VoidCallback? onGroupDeleted;
 
-  const _GroupListTile({
-    Key? key,
-    required this.group,
-    required this.onPressSettings,
-  }) : super(key: key);
+  const _GroupListTile({Key? key, required this.group, this.onGroupDeleted})
+    : super(key: key);
 
   @override
   Widget build(BuildContext context) {
@@ -343,17 +213,7 @@ class _GroupListTile extends StatelessWidget {
           CircleAvatar(
             radius: 28,
             backgroundColor: Colors.grey[200],
-            child:
-                group.groupIconUrl != null
-                    ? ClipOval(
-                      child: Image.network(
-                        group.groupIconUrl!,
-                        fit: BoxFit.cover,
-                        width: 56,
-                        height: 56,
-                      ),
-                    )
-                    : const Icon(Icons.groups, color: Colors.white, size: 30),
+            child: const Icon(Icons.groups, color: Colors.white, size: 30),
           ),
           const SizedBox(width: 16),
           // 그룹 정보
@@ -363,32 +223,23 @@ class _GroupListTile extends StatelessWidget {
               children: [
                 Row(
                   children: [
-                    Flexible(
-                      child: Text(
-                        group.name,
-                        style: const TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 16,
-                        ),
-                        overflow: TextOverflow.ellipsis,
+                    Text(
+                      group.name,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16,
                       ),
                     ),
                     const SizedBox(width: 8),
-                    Flexible(
-                      child: Text(
-                        group.description,
-                        style: const TextStyle(
-                          color: Colors.grey,
-                          fontSize: 14,
-                        ),
-                        overflow: TextOverflow.ellipsis,
-                      ),
+                    Text(
+                      group.description,
+                      style: const TextStyle(color: Colors.grey, fontSize: 14),
                     ),
                   ],
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  '멤버 ${group.memberCount}명',
+                  '소유자: ${group.owner.username}',
                   style: const TextStyle(color: Colors.grey, fontSize: 14),
                 ),
               ],
@@ -396,7 +247,32 @@ class _GroupListTile extends StatelessWidget {
           ),
           // 설정 버튼
           OutlinedButton(
-            onPressed: onPressSettings,
+            onPressed: () {
+              // 그룹 프로필 화면으로 이동 (더미 데이터 전달)
+              final dummyGroup = Group(
+                id: group.id, // 실제 ID 사용
+                name: group.name,
+                description: group.description,
+                ownerId: group.ownerId, // ownerId 추가
+                owner: group.owner, // 실제 소유자 정보 사용
+                createdAt: group.createdAt,
+              );
+
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => GroupProfileScreen(group: dummyGroup),
+                ),
+              ).then((result) {
+                if (result == 'deleted') {
+                  // 그룹이 삭제되었으면 콜백 호출
+                  onGroupDeleted?.call();
+                  ScaffoldMessenger.of(
+                    context,
+                  ).showSnackBar(const SnackBar(content: Text('그룹이 삭제되었습니다')));
+                }
+              });
+            },
             style: OutlinedButton.styleFrom(
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(20),
