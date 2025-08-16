@@ -613,12 +613,14 @@ class _PublishingScreenState extends State<PublishingScreen> {
         tags: widget.preview.tags,
         visibility: _toServiceVisibility(_selectedVisibility),
         onSuccess: (contentJson) {
+          final int postId = contentJson["blogId"];
+          print(postId);
           Navigator.pushReplacement(
             context,
             MaterialPageRoute(
               builder:
                   (context) =>
-                      PostviewScreen(postJson: contentJson), // TODO: 게시글 API 연동
+                      PostviewScreen(postId: postId), // TODO: 게시글 API 연동
             ),
           );
         },

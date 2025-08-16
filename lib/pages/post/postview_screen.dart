@@ -10,28 +10,35 @@ import 'package:doppy/editor/publish/post_decoder.dart';
 import 'package:flutter_svg/svg.dart';
 
 class PostviewScreen extends StatelessWidget {
-  final int? postId;
-  final Map<String, dynamic>? postJson; // 글쓰기 후 바로 올 때 전달받는 JSON
-  const PostviewScreen({Key? key, this.postId, this.postJson})
-    : super(key: key);
+  final int postId;
+  const PostviewScreen({Key? key, required this.postId}) : super(key: key);
 
   Future<Map<String, dynamic>> fetchPost() async {
-    if (postJson != null) return postJson!;
-
-    if (postId != null) {
-      final token = await AuthService().getToken();
-      final url = Uri.parse('${ApiServiceBase.baseUrl}/api/posts/$postId');
-      final response = await http.get(
-        url,
+    final token = await AuthService().getToken();
+    final url = Uri.parse('${ApiServiceBase.baseUrl}/api/posts/$postId');
+    final response = await http.get(
+      url,
+      headers: {'Authorization': 'Bearer $token'},
+    );
+    if (response.statusCode != 200) {
+      throw Exception('블로그 데이터를 불러오지 못했습니다. (${response.statusCode})');
+    }
+    final post = jsonDecode(utf8.decode(response.bodyBytes));
+    String? thumbnailUrl;
+    final thumbId = post['thumbnailImageId'];
+    if (thumbId != null) {
+      final imgRes = await http.get(
+        Uri.parse('${ApiServiceBase.baseUrl}/api/images/$thumbId'),
         headers: {'Authorization': 'Bearer $token'},
       );
-      if (response.statusCode == 200) {
-        return jsonDecode(utf8.decode(response.bodyBytes));
-      } else {
-        throw Exception('블로그 데이터를 불러오지 못했습니다. (${response.statusCode})');
+      if (imgRes.statusCode == 200) {
+        final imgJson = jsonDecode(utf8.decode(imgRes.bodyBytes));
+        thumbnailUrl = imgJson['url'] as String?;
+        print("✅ thumbnailUrl: $thumbnailUrl");
       }
     }
-    throw Exception('postId가 없습니다.');
+    post['thumbnailUrl'] = thumbnailUrl;
+    return post;
   }
 
   @override
@@ -51,6 +58,7 @@ class PostviewScreen extends StatelessWidget {
             body: PostErrorView(
               error: snapshot.error,
               onRetry: () {
+                // ignore: invalid_use_of_protected_member
                 (context as Element).reassemble();
               },
             ),
@@ -64,7 +72,6 @@ class PostviewScreen extends StatelessWidget {
         }
         final post = snapshot.data!;
         final contentJson = post["content"];
-        print(contentJson);
         return Scaffold(
           backgroundColor: Colors.white,
           body: ListView(
@@ -146,21 +153,25 @@ class _Thumbnail extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final url = post['thumbnailUrl'] as String?;
+    if (url == null || url.isEmpty) {
+      return const SizedBox(height: 20);
+    }
+    Widget imageWidget;
+    if (url.startsWith('http://') || url.startsWith('https://')) {
+      imageWidget = Image.network(
+        url,
+        fit: BoxFit.cover,
+        width: double.infinity,
+        errorBuilder: (c, e, s) => Container(color: Colors.grey[200]),
+      );
+    } else {
+      imageWidget = Container(color: Colors.grey[200]);
+    }
     return Stack(
       alignment: Alignment.bottomLeft,
       children: [
-        // 썸네일 이미지
-        AspectRatio(
-          aspectRatio: 4 / 3,
-          child: ClipRRect(
-            child: Image.asset(
-              'assets/images/feed5.jpg', //TODO: 백 연동
-              fit: BoxFit.cover,
-              width: double.infinity,
-            ),
-          ),
-        ),
-
+        AspectRatio(aspectRatio: 4 / 3, child: ClipRRect(child: imageWidget)),
         // 그라데이션 + 주제 텍스트
         Container(
           height: 120, // 그라데이션 높이 조정
@@ -174,7 +185,7 @@ class _Thumbnail extends StatelessWidget {
           alignment: Alignment.bottomLeft,
           padding: const EdgeInsets.all(12),
           child: Text(
-            '성시경의 명곡을\n이창섭의 감성으로 재해석하다', //TODO: 텍스트 길이 제한 걸기
+            post['title']?.toString() ?? '',
             style: AppTextStyles.headlineLarge.copyWith(
               color: AppColors.darkTextPrimary,
             ),
@@ -196,28 +207,10 @@ class _Content extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          /*
-          ListTile(
-            leading: const CircleAvatar(child: Icon(Icons.person)),
-            title: Text(
-              "affection-jh",
-              style: AppTextStyles.headlineMedium.copyWith(
-                color: AppColors.lightTextPrimary,
-              ),
-            ),
-            subtitle: Text(
-              "작성일: 2025-08-16",
-              style: AppTextStyles.bodySmall.copyWith(
-                color: AppColors.lightTextSecondary,
-              ),
-            ),
-          ),
-          // 제목
-          */
           Row(
             children: [
               Text(
-                '그 자리에, 그 시간에', //TODO: 텍스트 길이 제한 걸기
+                post['title']?.toString() ?? '',
                 style: Theme.of(context).textTheme.headlineLarge?.copyWith(
                   fontWeight: FontWeight.bold,
                   color: AppColors.lightTextPrimary,
@@ -253,9 +246,7 @@ class _InteractionButtons extends StatelessWidget {
       child: Row(
         children: [
           InkWell(
-            onTap: () {
-              // TODO: 좋아요 기능, !liked로 상태 변경
-            },
+            onTap: () {},
             child: Row(
               children: [
                 SvgPicture.asset(
@@ -300,7 +291,8 @@ class _InteractionButtons extends StatelessWidget {
             icon: SvgPicture.asset(
               'assets/icons/ic_share.svg',
               width: 24,
-              height: 24,            ),
+              height: 24,
+            ),
             onPressed: () {
               // TODO: 공유 기능
             },
