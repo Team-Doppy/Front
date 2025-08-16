@@ -18,7 +18,6 @@ import 'package:provider/provider.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'theme/theme.dart';
 
-
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
@@ -26,7 +25,9 @@ Future<void> main() async {
   const storage = FlutterSecureStorage();
 
   // 2. 'hasSeenOnboarding' 키의 값을 문자열로 읽어옵니다.
-  final String? hasSeenOnboardingStr = await storage.read(key: 'hasSeenOnboarding');
+  final String? hasSeenOnboardingStr = await storage.read(
+    key: 'hasSeenOnboarding',
+  );
 
   // 3. 읽어온 값이 'true' 문자열인지 확인합니다.
   final bool hasSeenOnboarding = hasSeenOnboardingStr == 'true';
@@ -39,7 +40,9 @@ Future<void> main() async {
         ChangeNotifierProvider(create: (_) => UserProvider()),
         ChangeNotifierProvider(create: (_) => GroupProvider()),
       ],
-      child: MyApp(hasSeenOnboarding: hasSeenOnboarding), // MyApp 위젯을 child로 감싸줍니다.
+      child: MyApp(
+        hasSeenOnboarding: hasSeenOnboarding,
+      ), // MyApp 위젯을 child로 감싸줍니다.
     ),
   );
 }
