@@ -84,14 +84,14 @@ class FriendSearchResult {
 class FriendSearchApi {
   final Dio _dio;
   FriendSearchApi()
-    : _dio = Dio(
-        BaseOptions(
-          connectTimeout: const Duration(seconds: 10),
-          receiveTimeout: const Duration(seconds: 10),
-          validateStatus: (code) => true, // 4xx/5xx도 잡아서 로깅
-          receiveDataWhenStatusError: true,
-        ),
-      );
+      : _dio = Dio(
+    BaseOptions(
+      connectTimeout: const Duration(seconds: 10),
+      receiveTimeout: const Duration(seconds: 10),
+      validateStatus: (code) => true, // 4xx/5xx도 잡아서 로깅
+      receiveDataWhenStatusError: true,
+    ),
+  );
 
   // ---- 공통 로깅 유틸
   static String _maskToken(String token) {
@@ -524,11 +524,11 @@ class _SearchScreenState extends State<SearchScreen> {
 
       if (res.ok) {
         final items =
-            res.usernames
-                .map(
-                  (u) => AccountItem(nickname: u, userId: '@$u', neighbors: 0),
-                )
-                .toList();
+        res.usernames
+            .map(
+              (u) => AccountItem(nickname: u, userId: '@$u', neighbors: 0),
+        )
+            .toList();
         setState(() {
           _accountsLoading = false;
           _accountsError = null;
@@ -587,13 +587,13 @@ class _SearchScreenState extends State<SearchScreen> {
   void _filterPostsLocal(String q) {
     final lower = q.toLowerCase();
     List<PostItemData> pst =
-        _allPosts
-            .where(
-              (p) =>
-                  p.title.toLowerCase().contains(lower) ||
-                  p.author.toLowerCase().contains(lower),
-            )
-            .toList();
+    _allPosts
+        .where(
+          (p) =>
+      p.title.toLowerCase().contains(lower) ||
+          p.author.toLowerCase().contains(lower),
+    )
+        .toList();
     pst = _sortPosts(pst);
     setState(() => _posts = pst);
     debugPrint('[Search] posts filtered | count=${pst.length}');
@@ -654,9 +654,9 @@ class _SearchScreenState extends State<SearchScreen> {
       ),
       builder: (_) {
         final username =
-            item.userId.startsWith('@')
-                ? item.userId.substring(1)
-                : item.userId;
+        item.userId.startsWith('@')
+            ? item.userId.substring(1)
+            : item.userId;
         return SafeArea(
           child: Padding(
             padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
@@ -681,10 +681,10 @@ class _SearchScreenState extends State<SearchScreen> {
                       actionName: '친구 신청',
                       run:
                           (baseUrl, token) => _friendApi.requestFriend(
-                            baseUrl: baseUrl,
-                            token: token,
-                            targetUsername: username,
-                          ),
+                        baseUrl: baseUrl,
+                        token: token,
+                        targetUsername: username,
+                      ),
                       successMsg: '친구 신청이 완료되었습니다.',
                     );
                   },
@@ -698,10 +698,10 @@ class _SearchScreenState extends State<SearchScreen> {
                       actionName: '차단',
                       run:
                           (baseUrl, token) => _friendApi.blockUser(
-                            baseUrl: baseUrl,
-                            token: token,
-                            targetUsername: username,
-                          ),
+                        baseUrl: baseUrl,
+                        token: token,
+                        targetUsername: username,
+                      ),
                       successMsg: '사용자를 차단했습니다.',
                     );
                   },
@@ -775,17 +775,17 @@ class _SearchScreenState extends State<SearchScreen> {
       } else {
         // 서버가 문자열 메시지를 반환한다는 명세에 맞춰 처리
         final msg =
-            res.data is String
-                ? res.data as String
-                : (res.data?['message'] ?? res.data?.toString() ?? '');
+        res.data is String
+            ? res.data as String
+            : (res.data?['message'] ?? res.data?.toString() ?? '');
         _showSnack('실패 ($code) ${msg.toString()}');
       }
     } on DioException catch (e) {
       final code = e.response?.statusCode;
       final msg =
-          e.response?.data is String
-              ? e.response?.data
-              : FriendSearchApi._prettyJson(e.response?.data);
+      e.response?.data is String
+          ? e.response?.data
+          : FriendSearchApi._prettyJson(e.response?.data);
       debugPrint('[Friend:$actionName][DIO] code=$code body=$msg');
       _showSnack('$actionName 실패${code != null ? ' ($code)' : ''}');
     } catch (e) {
@@ -914,16 +914,16 @@ class _SearchTopBar extends StatelessWidget {
                     color: Color(0xFF989898),
                   ),
                   suffixIcon:
-                      query.isNotEmpty
-                          ? IconButton(
-                            tooltip: '지우기',
-                            onPressed: onClear,
-                            icon: const Icon(
-                              Icons.clear,
-                              color: Color(0xFF989898),
-                            ),
-                          )
-                          : null,
+                  query.isNotEmpty
+                      ? IconButton(
+                    tooltip: '지우기',
+                    onPressed: onClear,
+                    icon: const Icon(
+                      Icons.clear,
+                      color: Color(0xFF989898),
+                    ),
+                  )
+                      : null,
                   contentPadding: const EdgeInsets.symmetric(vertical: 8),
                   isDense: true,
                   enabledBorder: const OutlineInputBorder(
@@ -1031,11 +1031,11 @@ class _FixedUnderlinePainter extends BoxPainter {
     final double half = indicatorWidth / 2;
     final double y = rect.bottom - bottomInset - thickness / 2;
     final Paint p =
-        Paint()
-          ..color = color
-          ..strokeWidth = thickness
-          ..style = PaintingStyle.stroke
-          ..strokeCap = StrokeCap.square;
+    Paint()
+      ..color = color
+      ..strokeWidth = thickness
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.square;
     canvas.drawLine(Offset(cx - half, y), Offset(cx + half, y), p);
   }
 }
@@ -1074,20 +1074,20 @@ class _AccountsTab extends StatelessWidget {
               DropdownButton<String>(
                 value: accountSort,
                 items:
-                    const ['계정 이름']
-                        .map(
-                          (v) => DropdownMenuItem(
-                            value: v,
-                            child: Text(
-                              v,
-                              style: AppTextStyles.withWeight(
-                                AppTextStyles.bodyLarge,
-                                FontWeight.w600,
-                              ).copyWith(color: Colors.black),
-                            ),
-                          ),
-                        )
-                        .toList(),
+                const ['계정 이름']
+                    .map(
+                      (v) => DropdownMenuItem(
+                    value: v,
+                    child: Text(
+                      v,
+                      style: AppTextStyles.withWeight(
+                        AppTextStyles.bodyLarge,
+                        FontWeight.w600,
+                      ).copyWith(color: Colors.black),
+                    ),
+                  ),
+                )
+                    .toList(),
                 onChanged: (v) {
                   if (v != null) onChangeSort(v);
                 },
@@ -1118,22 +1118,22 @@ class _AccountsTab extends StatelessWidget {
         ),
         Expanded(
           child:
-              accounts.isEmpty
-                  ? const _EmptyResult(message: '계정 결과가 없습니다.')
-                  : ListView.builder(
-                    itemCount: accounts.length,
-                    itemBuilder: (context, index) {
-                      final item = accounts[index];
-                      return _AccountListItem(
-                        index: index,
-                        nickname: item.nickname,
-                        userId: item.userId,
-                        neighborCount: '이웃 ${item.neighbors}명',
-                        selected: selectedIndex == index,
-                        onTap: () => onTapItem(index, item),
-                      );
-                    },
-                  ),
+          accounts.isEmpty
+              ? const _EmptyResult(message: '계정 결과가 없습니다.')
+              : ListView.builder(
+            itemCount: accounts.length,
+            itemBuilder: (context, index) {
+              final item = accounts[index];
+              return _AccountListItem(
+                index: index,
+                nickname: item.nickname,
+                userId: item.userId,
+                neighborCount: '이웃 ${item.neighbors}명',
+                selected: selectedIndex == index,
+                onTap: () => onTapItem(index, item),
+              );
+            },
+          ),
         ),
       ],
     );
@@ -1274,20 +1274,20 @@ class _PostsTab extends StatelessWidget {
               DropdownButton<String>(
                 value: postSort,
                 items:
-                    const ['인기순']
-                        .map(
-                          (v) => DropdownMenuItem(
-                            value: v,
-                            child: Text(
-                              v,
-                              style: AppTextStyles.withWeight(
-                                AppTextStyles.bodyLarge,
-                                FontWeight.w600,
-                              ).copyWith(color: Colors.black),
-                            ),
-                          ),
-                        )
-                        .toList(),
+                const ['인기순']
+                    .map(
+                      (v) => DropdownMenuItem(
+                    value: v,
+                    child: Text(
+                      v,
+                      style: AppTextStyles.withWeight(
+                        AppTextStyles.bodyLarge,
+                        FontWeight.w600,
+                      ).copyWith(color: Colors.black),
+                    ),
+                  ),
+                )
+                    .toList(),
                 onChanged: (v) {
                   if (v != null) onChangeSort(v);
                 },
@@ -1309,24 +1309,24 @@ class _PostsTab extends StatelessWidget {
         ),
         Expanded(
           child:
-              posts.isEmpty
-                  ? const _EmptyResult(message: '게시글 결과가 없습니다.')
-                  : ListView.builder(
-                    itemCount: posts.length,
-                    itemBuilder: (context, index) {
-                      final item = posts[index];
-                      return _PostListItem(
-                        index: index,
-                        title: item.title,
-                        author: item.author,
-                        preview: item.preview,
-                        imageUrl: item.imageUrl,
-                        likes: item.likes,
-                        selected: selectedIndex == index,
-                        onTap: () => onTapItem(index, item),
-                      );
-                    },
-                  ),
+          posts.isEmpty
+              ? const _EmptyResult(message: '게시글 결과가 없습니다.')
+              : ListView.builder(
+            itemCount: posts.length,
+            itemBuilder: (context, index) {
+              final item = posts[index];
+              return _PostListItem(
+                index: index,
+                title: item.title,
+                author: item.author,
+                preview: item.preview,
+                imageUrl: item.imageUrl,
+                likes: item.likes,
+                selected: selectedIndex == index,
+                onTap: () => onTapItem(index, item),
+              );
+            },
+          ),
         ),
       ],
     );

@@ -1,5 +1,3 @@
-import 'dart:convert';
-
 import 'package:flutter/material.dart';
 
 /// - 아래 영역에 그리드 기반 레이아웃으로 렌더링합니다.

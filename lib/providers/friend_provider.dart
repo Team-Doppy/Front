@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../data/models/friend_model.dart';
+import '../data/models/user_model.dart';
 import '../data/services/friend_service.dart';
 
 // 친구 요청 상태를 나타내는 enum
@@ -16,6 +17,11 @@ class FriendProvider with ChangeNotifier {
   bool _isLoading = false; // 목록 로딩 상태
   String? _errorMessage;
 
+  // ✨ 사용자 검색을 위한 상태 변수 추가
+  List<User> _searchedUsers = [];
+  bool _isSearching = false;
+  String? _searchError;
+
   // '다른 사용자 프로필' 화면용 데이터
   FriendRequestStatus _friendStatus = FriendRequestStatus.none;
   bool _isLoadingStatus = false; // 개별 친구 상태 로딩
@@ -25,6 +31,10 @@ class FriendProvider with ChangeNotifier {
   List<Friend> get receivedRequests => _receivedRequests;
   bool get isLoading => _isLoading;
   String? get errorMessage => _errorMessage;
+
+  List<User> get searchedUsers => _searchedUsers;
+  bool get isSearching => _isSearching;
+  String? get searchError => _searchError;
 
   FriendRequestStatus get friendStatus => _friendStatus;
   bool get isLoadingStatus => _isLoadingStatus;

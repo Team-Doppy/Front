@@ -2,6 +2,7 @@ import 'package:doppy/pages/post/group_profile_screen.dart';
 import 'package:doppy/pages/post/home_screen.dart';
 import 'package:doppy/pages/post/manage_group_screen.dart';
 import 'package:doppy/pages/post/manage_neighbor_screen.dart';
+import 'package:doppy/pages/post/onboarding_screen.dart';
 import 'package:doppy/pages/post/postview_screen.dart';
 import 'package:doppy/pages/post/postwrite_screen.dart';
 import 'package:doppy/pages/post/search_screen.dart';
@@ -13,9 +14,22 @@ import 'package:doppy/providers/group_provider.dart';
 import 'package:doppy/providers/user_provider.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'theme/theme.dart';
 
-void main() {
+
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  // 1. FlutterSecureStorage 인스턴스를 생성합니다.
+  const storage = FlutterSecureStorage();
+
+  // 2. 'hasSeenOnboarding' 키의 값을 문자열로 읽어옵니다.
+  final String? hasSeenOnboardingStr = await storage.read(key: 'hasSeenOnboarding');
+
+  // 3. 읽어온 값이 'true' 문자열인지 확인합니다.
+  final bool hasSeenOnboarding = hasSeenOnboardingStr == 'true';
+
   runApp(
     MultiProvider(
       providers: [
@@ -24,13 +38,14 @@ void main() {
         ChangeNotifierProvider(create: (_) => UserProvider()),
         ChangeNotifierProvider(create: (_) => GroupProvider()),
       ],
-      child: const MyApp(), // MyApp 위젯을 child로 감싸줍니다.
+      child: MyApp(hasSeenOnboarding: hasSeenOnboarding), // MyApp 위젯을 child로 감싸줍니다.
     ),
   );
 }
 
 class MyApp extends StatelessWidget {
-  const MyApp({super.key});
+  final bool hasSeenOnboarding;
+  const MyApp({super.key, required this.hasSeenOnboarding});
 
   @override
   Widget build(BuildContext context) {
@@ -43,11 +58,13 @@ class MyApp extends StatelessWidget {
       darkTheme: AppTheme.darkTheme,
       themeMode: ThemeMode.system,
 
-      home: Consumer<AuthProvider>(
-        builder: (context, auth, child) {
-          return auth.isLoggedIn ? const HomeScreen() : const LoginScreen();
-        },
-      ),
+      home: hasSeenOnboarding
+          ? Consumer<AuthProvider>(
+            builder: (context, auth, child) {
+              return auth.isLoggedIn ? const HomeScreen() : const LoginScreen();
+            },
+          )
+          : const OnboardingScreen(),
 
       routes: {
           '/login': (_) => const LoginScreen(), // ✅ 추가

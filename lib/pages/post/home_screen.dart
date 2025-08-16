@@ -1,5 +1,6 @@
 import 'package:doppy/pages/components/custom_bottom_navigation_bar.dart';
 import 'package:doppy/pages/components/post_card.dart';
+import 'package:doppy/pages/post/postview_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import '../../theme/app_colors.dart';
@@ -455,6 +456,14 @@ class _HomeScreenState extends State<HomeScreen> {
                             child: InkWell(
                               borderRadius: BorderRadius.circular(8),
                               onTap: () {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder:
+                                        (context) =>
+                                            PostviewScreen(postId: index),
+                                  ),
+                                );
                                 // 전체 이웃 글 클릭 기능 구현
                                 print('전체 이웃 글 ${index + 1} 클릭');
                               },
