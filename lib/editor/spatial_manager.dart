@@ -79,6 +79,8 @@ class SpatialManager extends ChangeNotifier {
       size: size,
       metadata: metadata ?? {},
     );
+
+    printDocStructure();
   }
 
   void analyzeAndUpdateDocument({
@@ -127,6 +129,8 @@ class SpatialManager extends ChangeNotifier {
         final prevPxW = (prev?.metadata['pxW'] as num?)?.toDouble();
         final prevPxH = (prev?.metadata['pxH'] as num?)?.toDouble();
 
+        final prevGridX = (prev?.metadata['gridX'] as num?)?.toDouble() ?? 0.0;
+
         // 실제 이미지 크기 계산
         final actualWidth = prevPxW ?? SystemConstants.baseWidth;
         final actualHeight = prevPxH ?? SystemConstants.baseHeight;
@@ -138,7 +142,8 @@ class SpatialManager extends ChangeNotifier {
         // 문단 흐름을 위한 라인 높이는 디스플레이 높이 기준으로 산정
         final totalImageHeight = displayHeight + SystemConstants.imagePadding;
 
-        final nodePosition = Offset(0, currentY);
+        // 🎯 xOffset을 position에 반영
+        final nodePosition = Offset(prevX, currentY);
         // 🎯 요소 자체의 사이즈는 실제 표시 크기로 설정 (렌더링 크기 반영)
         final nodeSize = Size(displayWidth, displayHeight);
 
@@ -150,15 +155,15 @@ class SpatialManager extends ChangeNotifier {
           metadata: {
             'isImageNode': true,
             'imageUrl': node.imageUrl,
-            'text': '이미지 ${node.id.substring(node.id.length - 4)}',
+            'text': '이미지 ${node.id.substring(node.id.length)}',
             'scale': prevScale,
-            'xOffset': prevX,
+            'gridX': prevGridX,
             'pxW': prevPxW ?? actualWidth,
             'pxH': prevPxH ?? actualHeight,
           },
         );
 
-        currentY += totalImageHeight; // 🎯 이미지 표시 높이 + 패딩
+        currentY += totalImageHeight;
         processedNodes++;
       }
     }
@@ -220,22 +225,19 @@ class SpatialManager extends ChangeNotifier {
         final isPreviousImage =
             previousElement.metadata['isImageNode'] ?? false;
 
-        print('🔍 이전 노드 이미지?: $isPreviousImage');
-
         if (isPreviousImage) {
           expectedLineHeight = previousElement.size.height;
-          print('🔍 위로 드래그 - 이전 노드가 이미지, 높이: $expectedLineHeight');
         } else {
           // 이전 노드가 텍스트: 텍스트 줄 높이 기준
-          expectedLineHeight = SystemConstants.defaultFontSize *
+          expectedLineHeight =
+              SystemConstants.defaultFontSize *
               SystemConstants.defaultLineHeight1;
-          print('🔍 위로 드래그 - 이전 노드가 텍스트, 높이: $expectedLineHeight');
         }
       } else {
         // 첫 번째 요소: 기본 텍스트 높이 사용
-        expectedLineHeight = SystemConstants.defaultFontSize *
+        expectedLineHeight =
+            SystemConstants.defaultFontSize *
             SystemConstants.defaultLineHeight1;
-        print('🔍 위로 드래그 - 첫 번째 요소, 기본 높이: $expectedLineHeight');
       }
     } else {
       // 아래로 드래그: 다음 노드 확인
@@ -245,20 +247,19 @@ class SpatialManager extends ChangeNotifier {
         // 🔑 type으로 직접 확인하는 것이 더 정확함
         final isNextImage = nextElement.metadata['isImageNode'] ?? false;
 
-        print('🔍 다음 노드 이미지?: $isNextImage');
-
         if (isNextImage) {
-          print('🔍 아래로 드래그 - 다음 노드가 이미지: ${nextElement.size.height}');
           // 다음 노드가 이미지: 이미지 높이 기준
           expectedLineHeight = nextElement.size.height;
         } else {
           // 다음 노드가 텍스트: 텍스트 줄 높이 기준
-          expectedLineHeight = SystemConstants.defaultFontSize *
+          expectedLineHeight =
+              SystemConstants.defaultFontSize *
               SystemConstants.defaultLineHeight1;
         }
       } else {
         // 마지막 요소: 기본 텍스트 높이 사용
-        expectedLineHeight = SystemConstants.defaultFontSize *
+        expectedLineHeight =
+            SystemConstants.defaultFontSize *
             SystemConstants.defaultLineHeight1;
       }
     }
@@ -285,22 +286,21 @@ class SpatialManager extends ChangeNotifier {
     int clampedLinesToMove;
     if (isDraggingUp) {
       // 🔑 위로 드래그: 거리 기반 계산을 우선하되, 합리적인 최대값으로 제한
-      final reasonableMaxUpward =
-          math.max(maxUpward, expectedLinesFromDistance.abs());
+      final reasonableMaxUpward = math.max(
+        maxUpward,
+        expectedLinesFromDistance.abs(),
+      );
       clampedLinesToMove = linesToMove.clamp(-reasonableMaxUpward, 0);
     } else {
       // 아래로 드래그: 거리 기반 계산을 우선하되, 합리적인 최대값으로 제한
-      final reasonableMaxDownward =
-          math.max(maxDownward, expectedLinesFromDistance);
+      final reasonableMaxDownward = math.max(
+        maxDownward,
+        expectedLinesFromDistance,
+      );
       clampedLinesToMove = linesToMove.clamp(0, reasonableMaxDownward);
     }
     if (lastExecuted != clampedLinesToMove) {
       handleImagePositionUpdate(imageId, isDraggingUp ? 'up' : 'down');
-      analyzeAndUpdateDocument(
-        document: _document!,
-        screenWidth: SystemConstants.displayWidth,
-        documentPadding: 0.0,
-      );
       printDocStructure();
 
       _lastExecutedLines[imageId] = clampedLinesToMove;
@@ -311,8 +311,9 @@ class SpatialManager extends ChangeNotifier {
 
   void printDocStructure() {
     // Y 위치 기준으로 정렬
-    final sortedElements = _elements.values.toList()
-      ..sort((a, b) => a.position.dy.compareTo(b.position.dy));
+    final sortedElements =
+        _elements.values.toList()
+          ..sort((a, b) => a.position.dy.compareTo(b.position.dy));
     print('===============================================');
 
     for (final element in sortedElements) {
@@ -324,7 +325,8 @@ class SpatialManager extends ChangeNotifier {
         final pxW = element.metadata['pxW'] as double? ?? 0.0;
         final pxH = element.metadata['pxH'] as double? ?? 0.0;
         print(
-            '  └── 이미지: ${element.metadata['text']} (scale: ${scale.toStringAsFixed(2)}, px: ${pxW.toInt()}x${pxH.toInt()})');
+          '  └── 이미지: ${element.metadata['text']} (scale: ${scale.toStringAsFixed(2)}, px: ${pxW.toInt()}x${pxH.toInt()})',
+        );
       } else {
         final text = element.metadata['text'] ?? '';
         final shortText =
@@ -338,9 +340,7 @@ class SpatialManager extends ChangeNotifier {
   // 🎯 요소 제거
   void removeElement(String id) {
     _elements.remove(id);
-    _documentEditor!.execute([
-      DeleteNodeRequest(nodeId: id),
-    ]);
+    _documentEditor!.execute([DeleteNodeRequest(nodeId: id)]);
     notifyListeners();
   }
 

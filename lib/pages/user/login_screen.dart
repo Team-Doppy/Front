@@ -1,8 +1,8 @@
 import 'dart:math' as math;
+import 'package:doppy/data/services/auth_service.dart';
+import 'package:doppy/providers/auth_provider.dart';
 import 'package:flutter/material.dart';
 import '../../theme/app_text_styles.dart';
-import 'package:provider/provider.dart';
-import '../../providers//auth_provider.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -72,9 +72,7 @@ class _LoginScreenState extends State<LoginScreen> {
     final id = _idController.text.trim();
     final pw = _pwController.text;
 
-    // Provider를 통해 AuthProvider의 login 메소드 호출
-    final authProvider = Provider.of<AuthProvider>(context, listen: false);
-    final success = await authProvider.login(id, pw);
+    final success = await AuthProvider().login(id, pw);
 
     // ✅ mounted 체크: 비동기 작업 후 위젯이 여전히 화면에 있는지 확인 (중요)
     if (!mounted) return;
@@ -272,7 +270,6 @@ class _LoginScreenState extends State<LoginScreen> {
                           width: double.infinity,
                           height: _buttonHeight,
                           child: ElevatedButton(
-                            // ✅ 로딩 중이 아닐 때만 버튼 활성화
                             onPressed: _canSubmit ? _submit : null,
                             style: ElevatedButton.styleFrom(
                               backgroundColor: _primary,
@@ -284,7 +281,6 @@ class _LoginScreenState extends State<LoginScreen> {
                               ),
                               elevation: 0,
                             ),
-                            // ✅ 로딩 상태에 따라 버튼 내부 위젯 변경
                             child:
                                 _isLoading
                                     ? const CircularProgressIndicator(

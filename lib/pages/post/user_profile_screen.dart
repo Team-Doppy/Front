@@ -1,10 +1,10 @@
 import 'package:doppy/pages/components/custom_bottom_navigation_bar.dart';
 import 'package:doppy/pages/components/profile_top_bar.dart';
 import 'package:doppy/pages/components/post_card.dart';
+import 'package:doppy/pages/user/setting_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:provider/provider.dart';
-import '../../providers/auth_provider.dart';
 import '../../providers/friend_provider.dart';
 import '../../providers/user_provider.dart';
 import '../../theme/app_colors.dart';
@@ -31,7 +31,6 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
 
   // ✅ 프로필 구분 상태는 그대로 유지
   late final bool _isOwnProfile;
-
 
   @override
   void initState() {
@@ -60,8 +59,12 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     final friendProvider = context.watch<FriendProvider>();
 
     // ✅ [구조 개선] 현재 화면에 표시할 사용자 정보를 Provider로부터 결정합니다.
-    final User? profileUser = _isOwnProfile ? userProvider.currentUser : userProvider.viewedUser;
-    final String? selfIntroduction = _isOwnProfile ? userProvider.selfIntroduction : userProvider.viewedUserSelfIntroduction;
+    final User? profileUser =
+        _isOwnProfile ? userProvider.currentUser : userProvider.viewedUser;
+    final String? selfIntroduction =
+        _isOwnProfile
+            ? userProvider.selfIntroduction
+            : userProvider.viewedUserSelfIntroduction;
     final int? friendCount = _isOwnProfile ? userProvider.friendCount : null;
 
     final screenWidth = MediaQuery.of(context).size.width;
@@ -124,14 +127,14 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
   }
 
   Widget _buildContent(
-      double containerWidth,
-      double containerHeight,
-      double panelTop,
-      double dynamicPanelHeight,
-      User? profileUser,
-      String? selfIntroduction,
-      int? friendCount,
-      FriendProvider friendProvider,
+    double containerWidth,
+    double containerHeight,
+    double panelTop,
+    double dynamicPanelHeight,
+    User? profileUser,
+    String? selfIntroduction,
+    int? friendCount,
+    FriendProvider friendProvider,
   ) {
     return Stack(
       children: [
@@ -139,7 +142,14 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
         _buildBackground(containerWidth, containerHeight),
 
         // 프로필 요소들
-        ..._buildProfileElements(containerWidth, containerHeight, profileUser, selfIntroduction, friendCount, friendProvider),
+        ..._buildProfileElements(
+          containerWidth,
+          containerHeight,
+          profileUser,
+          selfIntroduction,
+          friendCount,
+          friendProvider,
+        ),
         // 하단 네비게이션 바
         //        _buildBottomNavigation(containerWidth, containerHeight),
         // 상단 탑바 (피드 패널 아래에 위치)
@@ -152,7 +162,10 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
             showBack: !_isOwnProfile,
             onBack: _isOwnProfile ? null : () => Navigator.pop(context),
             onMore: () {
-              // 더보기 메뉴 로직 (필요시 구현)
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => const SettingScreen()),
+              );
             },
           ),
         ),
@@ -289,11 +302,26 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     }
 
     // 사용자 정보들 추가
-    elements.addAll(_buildUserInfoTexts(containerWidth, containerHeight, profileUser, selfIntroduction, friendCount));
+    elements.addAll(
+      _buildUserInfoTexts(
+        containerWidth,
+        containerHeight,
+        profileUser,
+        selfIntroduction,
+        friendCount,
+      ),
+    );
 
     // 다른 사용자 프로필인 경우 이웃 요청하기 버튼과 함께 Doppy하는 이웃 수 추가
     if (!_isOwnProfile) {
-      elements.addAll(_buildOtherUserElements(containerWidth, containerHeight, profileUser, friendProvider));
+      elements.addAll(
+        _buildOtherUserElements(
+          containerWidth,
+          containerHeight,
+          profileUser,
+          friendProvider,
+        ),
+      );
     }
 
     return elements;
@@ -310,10 +338,13 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
       // 사용자 이름
       Positioned(
         left: containerWidth * 0.475,
-        top: containerHeight * 0.09, // 위로 올림
+        top: containerHeight * 0.11, // 위로 올림
         child: Text(
           profileUser?.alias ?? profileUser?.username ?? '사용자',
-          style: AppTextStyles.headlineLarge.copyWith(fontSize: 25, fontWeight: FontWeight.w700),
+          style: AppTextStyles.headlineLarge.copyWith(
+            fontSize: 25,
+            fontWeight: FontWeight.w700,
+          ),
         ),
       ),
       // 사용자 설명 (모든 프로필에서 표시)
@@ -322,17 +353,16 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
         top: containerHeight * 0.16, // 위로 올림
         child: Text(
           selfIntroduction ?? '자기소개가 없습니다.',
-          style: AppTextStyles.bodySmall,
+          style: AppTextStyles.bodySmall.copyWith(
+            color: AppColors.lightTextSecondary,
+          ),
         ),
       ),
       // 이웃 수 (모든 프로필에서 표시)
       Positioned(
         left: containerWidth * 0.483,
-        top: containerHeight * 0.13, // 위로 올림
-        child: Text(
-          '이웃 ${friendCount ?? 0}명',
-          style: AppTextStyles.bodyLarge,
-        ),
+        top: containerHeight * 0.15, // 위로 올림
+        child: Text('이웃 ${friendCount ?? 0}명', style: AppTextStyles.bodyLarge),
       ),
     ];
   }
@@ -341,8 +371,8 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
   List<Widget> _buildOtherUserElements(
     double containerWidth,
     double containerHeight,
-      User? profileUser,
-      FriendProvider friendProvider,
+    User? profileUser,
+    FriendProvider friendProvider,
   ) {
     return [
       // 함께 Doppy하는 이웃 수 (이웃 요청하기 버튼 바로 위에 위치)
@@ -372,27 +402,35 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                 splashColor: Colors.grey.withOpacity(0.6),
                 highlightColor: Colors.grey.withOpacity(0.3),
                 onTap:
-                friendProvider.friendStatus == FriendRequestStatus.none
-                    ? () => context.read<FriendProvider>().sendFriendRequest(profileUser!.username)
-                    : null, // 이미 요청한 경우 클릭 불가
+                    friendProvider.friendStatus == FriendRequestStatus.none
+                        ? () => context
+                            .read<FriendProvider>()
+                            .sendFriendRequest(profileUser!.username)
+                        : null, // 이미 요청한 경우 클릭 불가
                 child: Container(
                   decoration: BoxDecoration(
                     color:
-                      friendProvider.friendStatus == FriendRequestStatus.none
-                          ? AppColors.primary // 보라색 배경
-                          : AppColors.lightSurfaceVariant, // 회색 배경
+                        friendProvider.friendStatus == FriendRequestStatus.none
+                            ? AppColors
+                                .primary // 보라색 배경
+                            : AppColors.lightSurfaceVariant, // 회색 배경
                     borderRadius: BorderRadius.circular(10),
                   ),
                   child: Center(
-                    child: friendProvider.isLoadingStatus
-                        ? const CircularProgressIndicator(color: Colors.white, strokeWidth: 2)
-                        : Text(
-                      friendProvider.friendStatus == FriendRequestStatus.none
+                    child:
+                        friendProvider.isLoadingStatus
+                            ? const CircularProgressIndicator(
+                              color: Colors.white,
+                              strokeWidth: 2,
+                            )
+                            : Text(
+                              friendProvider.friendStatus ==
+                                      FriendRequestStatus.none
                                   ? '이웃 요청하기'
                                   : '이웃 요청함',
                               style: AppTextStyles.bodyLarge.copyWith(
                                 color:
-                                friendProvider.friendStatus ==
+                                    friendProvider.friendStatus ==
                                             FriendRequestStatus.none
                                         ? Colors.white
                                         : AppColors.lightTextSecondary,

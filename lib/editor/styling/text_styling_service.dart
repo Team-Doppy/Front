@@ -1,8 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:super_editor/super_editor.dart';
 
-// super_editor의 ColorAttribution, FontSizeAttribution, TextAlignAttribution을 사용
-
 /// 텍스트 스타일링 관리자
 class TextStylingSystem {
   final Editor editor;
@@ -127,9 +125,10 @@ class TextStylingSystem {
     if (selection == null) return;
 
     final existingAttributions = _getAttributionsInSelection();
-    final fontSizeAttributions = existingAttributions
-        .where((attr) => attr is FontSizeAttribution)
-        .toSet();
+    final fontSizeAttributions =
+        existingAttributions
+            .where((attr) => attr is FontSizeAttribution)
+            .toSet();
 
     if (fontSizeAttributions.isNotEmpty) {
       editor.execute([

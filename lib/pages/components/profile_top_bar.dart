@@ -25,19 +25,14 @@ class DoppyTopBar extends StatelessWidget implements PreferredSizeWidget {
     const double slot = 48;
 
     Widget leading = SizedBox(width: slot);
-    if (showBack) {
-      leading = SizedBox(
-        width: slot,
-        child: IconButton(
-          icon: SvgPicture.asset(
-            'assets/icons/arrow-left.svg',
-            width: 24,
-            height: 24,
-          ),
-          onPressed: onBack ?? () => Navigator.maybePop(context),
-        ),
-      );
-    }
+
+    leading = SizedBox(
+      width: slot,
+      child: IconButton(
+        icon: const Icon(Icons.arrow_back_ios_new_rounded),
+        onPressed: onBack ?? () => Navigator.maybePop(context),
+      ),
+    );
 
     Widget trailing = SizedBox(width: slot);
     if (showMore) {

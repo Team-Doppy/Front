@@ -74,17 +74,18 @@ class PostviewScreen extends StatelessWidget {
         final contentJson = post["content"];
         return Scaffold(
           backgroundColor: Colors.white,
-          body: ListView(
-            padding: EdgeInsets.zero,
-            children: [
-              _Thumbnail(post: post),
-              _Content(post: post),
-              SizedBox(height: 16),
-              ...PostDecoderUtil.buildContentBlocks(contentJson),
-              SizedBox(height: 35),
-              _InteractionButtons(),
-              _CommentList(),
-            ],
+          body: SafeArea(
+            child: ListView(
+              children: [
+                _Thumbnail(post: post),
+                _Content(post: post),
+                SizedBox(height: 16),
+                ...PostDecoderUtil.buildContentBlocks(contentJson),
+                SizedBox(height: 35),
+                _InteractionButtons(),
+                _CommentList(),
+              ],
+            ),
           ),
           bottomNavigationBar: CustomBottomNavigationBar(
             currentIndex: 3,

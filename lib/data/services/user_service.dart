@@ -2,6 +2,10 @@ import 'dart:convert';
 import 'api_service_base.dart';
 
 class UserService extends ApiServiceBase {
+  static final UserService _instance = UserService._internal();
+  factory UserService() => _instance;
+  UserService._internal();
+
   /// 4. 내 친구 수 조회
   Future<int> getFriendCount() async {
     final response = await get('/api/users/friend-count');
@@ -13,7 +17,10 @@ class UserService extends ApiServiceBase {
 
   /// 5. 자기소개 저장
   Future<void> saveSelfIntroduction(String introduction) async {
-    final response = await put('/api/users/self-introduction', body: {'selfIntroduction': introduction});
+    final response = await put(
+      '/api/users/self-introduction',
+      body: {'selfIntroduction': introduction},
+    );
     if (response.statusCode != 200) {
       throw Exception('자기소개 저장 실패');
     }

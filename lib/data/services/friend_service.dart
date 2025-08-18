@@ -4,9 +4,16 @@ import '../models/friend_model.dart';
 import '../models/user_model.dart';
 
 class FriendService extends ApiServiceBase {
+  static final FriendService _instance = FriendService._internal();
+  factory FriendService() => _instance;
+  FriendService._internal();
+
   /// 8. 친구 신청
   Future<void> sendFriendRequest(String targetUsername) async {
-    final response = await post('/api/friends/request', body: {'targetUsername': targetUsername});
+    final response = await post(
+      '/api/friends/request',
+      body: {'targetUsername': targetUsername},
+    );
     if (response.statusCode != 200) throw Exception('친구 신청 실패');
   }
 
@@ -34,7 +41,9 @@ class FriendService extends ApiServiceBase {
     if (response.statusCode == 200) {
       final List<dynamic> data = jsonDecode(utf8.decode(response.bodyBytes));
       // API 응답이 {"username": "..."} 이므로 User 모델로 변환
-      return data.map((item) => User(id: 0, username: item['username'])).toList();
+      return data
+          .map((item) => User(id: 0, username: item['username']))
+          .toList();
     }
     throw Exception('사용자 검색 실패');
   }

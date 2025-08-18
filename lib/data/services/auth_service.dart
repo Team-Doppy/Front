@@ -7,6 +7,10 @@ import '../models/login_response_model.dart';
 import '../models/user_model.dart';
 
 class AuthService {
+  static final AuthService _instance = AuthService._internal();
+  factory AuthService() => _instance;
+  AuthService._internal();
+
   final _storage = const FlutterSecureStorage();
   final String _tokenKey = 'auth_token';
   final String _usernameKey = 'username';

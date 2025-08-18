@@ -21,7 +21,6 @@ class ImageService {
   // 이미지 삽입 (선택 즉시 미리보기 → 백그라운드 업로드 후 교체)
   Future<void> insertImage(
     Editor documentEditor,
-    MutableDocument document,
     VoidCallback analyzeAndUpdateDocument,
   ) async {
     try {
@@ -34,15 +33,15 @@ class ImageService {
       int insertIndex = 0;
 
       if (currentSelection != null && currentSelection.isCollapsed) {
-        for (int i = 0; i < document.nodeCount; i++) {
-          final node = document.getNodeAt(i);
+        for (int i = 0; i < documentEditor.document.nodeCount; i++) {
+          final node = documentEditor.document.getNodeAt(i);
           if (node?.id == currentSelection.extent.nodeId) {
             insertIndex = i + 1;
             break;
           }
         }
       } else {
-        insertIndex = document.nodeCount;
+        insertIndex = documentEditor.document.nodeCount;
       }
 
       // 2) 선택 즉시 data URL로 미리보기 노드 삽입 (빠른 피드백)

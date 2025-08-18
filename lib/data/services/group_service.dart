@@ -4,6 +4,10 @@ import '../models/group_model.dart';
 import '../models/group_member_model.dart';
 
 class GroupService extends ApiServiceBase {
+  static final GroupService _instance = GroupService._internal();
+  factory GroupService() => _instance;
+  GroupService._internal();
+
   /// 17. 그룹 생성
   Future<void> createGroup(String name) async {
     final response = await post('/api/groups', body: {'name': name});

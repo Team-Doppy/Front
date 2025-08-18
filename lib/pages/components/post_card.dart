@@ -20,15 +20,15 @@ class PostCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      width: containerWidth * 0.9,
+      width: containerWidth * 0.95,
       height: 120,
-      margin: EdgeInsets.symmetric(horizontal: 16, vertical: 2),
+      margin: EdgeInsets.symmetric(horizontal: 12, vertical: 0),
       child: Row(
         children: [
           // 왼쪽 사진
           Container(
             width: 144,
-            height: 108, // 4:3 비율
+            height: 100, // 4:3 비율
             decoration: BoxDecoration(
               color: Colors.grey[200],
               borderRadius: BorderRadius.circular(10),

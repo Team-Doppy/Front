@@ -1,10 +1,11 @@
 import 'dart:convert';
-import 'dart:io';
 import 'package:doppy/data/services/api_service_base.dart';
 import 'package:doppy/data/services/auth_service.dart';
 import 'package:http/http.dart' as http;
 import 'package:super_editor/super_editor.dart';
 import 'package:flutter/material.dart'; // Added for BuildContext
+import '../spatial_manager.dart'; // 🎯 SpatialManager import 추가
+import 'post_encoder.dart'; // 🎯 PostEncoder import 추가
 
 enum Visibility { public, private, friends, groups }
 
@@ -25,30 +26,44 @@ class PreviewData {
 
 extension PublishServicePreview on PublishService {
   PreviewData extractPreviewData(
+    TextEditingController titleController,
     MutableDocument document, {
     String? userThumbnail,
     List<String> tags = const [],
   }) {
-    // 제목 추출
-    String title = '제목 없음';
-    if (document.nodeCount > 0 && document.getNodeAt(0) is ParagraphNode) {
-      final t = (document.getNodeAt(0) as ParagraphNode).text.text;
-      if (t.isNotEmpty) title = t.length > 30 ? t.substring(0, 30) + '...' : t;
-    }
-    // 썸네일 추출
-    String thumbnailUrl = extractThumbnailUrl(
-      document,
-      userSelected: userThumbnail,
-    );
-    // 본문 미리보기(두 번째 문단 등)
-    String previewText = '';
-    for (int i = 1; i < document.nodeCount; i++) {
-      final node = document.getNodeAt(i);
-      if (node is ParagraphNode) {
-        previewText = node.text.text;
-        if (previewText.isNotEmpty) break;
+    final t = titleController.text.trim();
+
+    if (t.isNotEmpty) title = t.length > 30 ? t.substring(0, 30) + '...' : t;
+    // 썸네일 추출 (userThumbnail 우선, 없으면 첫번째 이미지)
+    String? thumbnailUrl = userThumbnail;
+    if (thumbnailUrl == null) {
+      for (int i = 0; i < document.nodeCount; i++) {
+        final node = document.getNodeAt(i);
+        if (node is ImageNode) {
+          thumbnailUrl = node.imageUrl;
+          break;
+        }
       }
     }
+    thumbnailUrl ??= '';
+    // 본문 미리보기(3줄 또는 100자 이내)
+    String previewText = '';
+    int lines = 0;
+    for (int i = 0; i < document.nodeCount; i++) {
+      final node = document.getNodeAt(i);
+      if (node is ParagraphNode) {
+        final text = node.text.text.trim();
+        if (text.isNotEmpty) {
+          previewText += (previewText.isEmpty ? '' : '\n') + text;
+          lines++;
+          if (lines >= 3 || previewText.length > 100) break;
+        }
+      }
+    }
+    if (previewText.length > 100) {
+      previewText = previewText.substring(0, 100) + '...';
+    }
+
     if (previewText.isEmpty) previewText = '내용 없음';
     return PreviewData(
       title: title,
@@ -84,6 +99,7 @@ class PublishService {
   Future<Map<String, dynamic>> prepareForPublishing({
     required String title,
     required MutableDocument document,
+    required SpatialManager spatialManager, // 🎯 spatialManager 추가
     String? thumbnailImageUrl, // nullable로 변경
     List<String> tags = const [],
     List<String> annotations = const [],
@@ -98,7 +114,11 @@ class PublishService {
       if (document.nodeCount == 0) {
         throw Exception('내용이 없습니다');
       }
-      final documentJson = await _convertDocumentToJson(document);
+      // 🎯 PostEncoder 사용으로 변경
+      final documentJson = PostEncoder.toModel(
+        document: document,
+        spatialManager: spatialManager,
+      );
       this.title = title.trim();
       this.content = documentJson;
       // 썸네일 자동 추출
@@ -116,97 +136,13 @@ class PublishService {
       print('✅ 발행 준비 완료: $title');
       print('   상태: ${status.name}');
       print('   태그: ${tags.join(', ')}');
-      print('   공유 그룹: ${sharedGroups.join(', ')}');
-      print('   content: $content');
-      return {
-        'success': true,
-        'title': this.title,
-        'status': status.name,
-        'tags': this.tags,
-        'sharedGroups': this.sharedGroups,
-      };
+      print('   썸네일: ${this.thumbnailImageUrl}');
+      print('   콘텐츠: $documentJson');
+      return {'success': true, 'message': '발행 준비가 완료되었습니다.'};
     } catch (e) {
       print('❌ 발행 준비 실패: $e');
       return {'success': false, 'error': e.toString()};
     }
-  }
-
-  // 문서를 JSON으로 변환
-  Future<Map<String, dynamic>> _convertDocumentToJson(
-    MutableDocument document,
-  ) async {
-    try {
-      final blocks = <Map<String, dynamic>>[];
-
-      for (int i = 0; i < document.nodeCount; i++) {
-        final node = document.getNodeAt(i);
-        if (node == null) continue;
-
-        if (node is ParagraphNode) {
-          // 텍스트 노드 처리
-          final paragraph = _convertParagraphNode(node);
-          blocks.add(paragraph);
-        } else if (node is ImageNode) {
-          // 이미지 노드 처리
-          final image = _convertImageNode(node);
-          blocks.add(image);
-        }
-      }
-
-      return {
-        'blocks': blocks,
-        'metadata': {
-          'totalBlocks': blocks.length,
-          'convertedAt': DateTime.now().toIso8601String(),
-        },
-      };
-    } catch (e) {
-      print('❌ 문서 JSON 변환 실패: $e');
-      rethrow;
-    }
-  }
-
-  // 텍스트 노드 변환
-  Map<String, dynamic> _convertParagraphNode(ParagraphNode node) {
-    final textContent = node.text;
-    final textSpans = <Map<String, dynamic>>[];
-
-    // 텍스트 스팬 처리 (간단한 버전)
-    textSpans.add({
-      'text': {'content': textContent.text},
-      'annotations': {
-        'bold': false,
-        'italic': false,
-        'underline': false,
-        'strikethrough': false,
-        'color': '#000000',
-        'font_size': 16,
-      },
-    });
-
-    return {
-      'type': 'paragraph',
-      'paragraph': {'rich_text': textSpans, 'text_align': 'left'},
-    };
-  }
-
-  // 이미지 노드 변환
-  Map<String, dynamic> _convertImageNode(ImageNode node) {
-    final metadata = node.metadata;
-
-    return {
-      'type': 'image',
-      'image': {'url': node.imageUrl, 'alt': metadata['alt'] ?? '이미지'},
-      'layout': {
-        'position': {'gridX': metadata['gridX'] ?? 0},
-        'size': {
-          'gridW': metadata['gridW'] ?? 1,
-          'gridH': metadata['gridH'] ?? 1,
-          'pxW': metadata['pxW'] ?? 400,
-          'pxH': metadata['pxH'] ?? 300,
-        },
-      },
-    };
   }
 
   // 접근 레벨 및 상태 설정
@@ -454,6 +390,7 @@ class PublishService {
   Future<void> publishFromEditor({
     required BuildContext context,
     required MutableDocument document,
+    required SpatialManager spatialManager, // 🎯 spatialManager 추가
     String? title,
     String? thumbnailImageUrl,
     List<String> tags = const [],
@@ -477,6 +414,7 @@ class PublishService {
       final prepareResult = await prepareForPublishing(
         title: resolvedTitle,
         document: document,
+        spatialManager: spatialManager, // 🎯 spatialManager 전달
         thumbnailImageUrl: thumbnailImageUrl,
         tags: tags,
         visibility: visibility,

@@ -112,16 +112,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
   }
 
   void _navigateToLogin() {
-    Navigator.of(context).pushReplacement(
-      PageRouteBuilder(
-        pageBuilder:
-            (context, animation, secondaryAnimation) => const LoginScreen(),
-        transitionsBuilder: (context, animation, secondaryAnimation, child) {
-          return FadeTransition(opacity: animation, child: child);
-        },
-        transitionDuration: const Duration(milliseconds: 500),
-      ),
-    );
+    Navigator.of(context).pushReplacementNamed('/login');
   }
 
   @override

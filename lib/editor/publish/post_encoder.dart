@@ -14,6 +14,12 @@ class PostEncoder {
     required MutableDocument document,
     required SpatialManager spatialManager,
   }) {
+    spatialManager.analyzeAndUpdateDocument(
+      document: document,
+      screenWidth: spatialManager.gridSystem.screenWidth,
+      documentPadding: 0.0,
+    );
+
     // 최신 레이아웃 분석이 되어 있어야 좌표가 정확함
     final elementsById = <String, SpatialElement?>{};
     for (int i = 0; i < document.nodeCount; i++) {
@@ -24,11 +30,14 @@ class PostEncoder {
 
     final blocks = <Map<String, dynamic>>[];
 
+    // 🎯 디코더에 필요한 정보들
+    final gridSize = spatialManager.gridSystem.gridSize;
+    final columns = SystemConstants.gridSize;
+    final editorScreenWidth = spatialManager.gridSystem.screenWidth;
+
     for (int i = 0; i < document.nodeCount; i++) {
       final node = document.getNodeAt(i);
       if (node == null) continue;
-      // 요소 메타 접근은 아래 분기에서 직접 수행
-      // final grid = spatialManager.gridSystem.pixelToGrid(position);
 
       if (node is ParagraphNode) {
         final richText = _buildRichText(node.text);
@@ -41,70 +50,59 @@ class PostEncoder {
           },
         });
       } else if (node is ImageNode) {
-        // 이미지는 수평 그리드 오프셋과 그리드 단위 크기만 저장
-        final gridSizePx = spatialManager.gridSystem.gridSize;
-        final columns = SystemConstants.gridSize.toInt();
+        final element = elementsById[node.id];
+        if (element != null) {
+          final position = element.position;
+          final size = element.size;
+          final metadata = element.metadata;
 
-        // 표시 크기(px): 편집기에서 저장한 실제 px 우선 사용 → 없으면 스케일 기반 추정
-        final pxW =
-            (elementsById[node.id]?.metadata['pxW'] as num?)?.toDouble();
-        final pxH =
-            (elementsById[node.id]?.metadata['pxH'] as num?)?.toDouble();
-        final scale =
-            (elementsById[node.id]?.metadata['scale'] as double?) ?? 1.0;
-        final displayW =
-            (pxW ?? (SystemConstants.displayWidth * scale)).round();
-        final displayH =
-            (pxH ?? (SystemConstants.displayHeight * scale)).round();
+          //  실제 픽셀 크기와 위치 정보
+          final pxW = (metadata['pxW'] as num?)?.toDouble() ?? size.width;
+          final pxH = (metadata['pxH'] as num?)?.toDouble() ?? size.height;
+          final scale = (metadata['scale'] as double?) ?? 1.0;
+          final gridX = (metadata['gridX'] as num?)?.toDouble() ?? 0.0;
 
-        // gridW/H는 우선 편집기에서 계산/저장한 값이 있으면 우선 사용
-        int gridW = (elementsById[node.id]?.metadata['gridW'] as int?) ??
-            (displayW / gridSizePx).round();
-        if (gridW > columns) gridW = columns;
-        int gridH = (elementsById[node.id]?.metadata['gridH'] as int?) ??
-            (displayH / gridSizePx).round();
-        if (gridW < 1) gridW = 1;
-        if (gridH < 1) gridH = 1;
-
-        // gridX도 편집기에서 저장한 값이 있으면 우선 사용
-        int gridX = (elementsById[node.id]?.metadata['gridX'] as int?) ??
-            (() {
-              final dx =
-                  (elementsById[node.id]?.metadata['xOffset'] as double?) ??
-                      0.0;
-              // 중앙 정렬의 좌측 시작 인덱스 = (columns - gridW) / 2
-              final baseLeft = ((columns - gridW) / 2).round();
-              final offsetCols = (dx / gridSizePx).round();
-              return baseLeft + offsetCols;
-            })();
-        final maxLeft = (columns - gridW).clamp(0, columns);
-        gridX = gridX.clamp(0, maxLeft);
-
-        // 디버그 로그: 직렬화 직전 실제 값 확인
-
-        blocks.add({
-          'type': 'image',
-          'image': {
-            'url': node.imageUrl,
-          },
-          'layout': {
-            'position': {
-              'gridX': gridX,
+          blocks.add({
+            'type': 'image',
+            'image': {'url': node.imageUrl, 'alt': '이미지'},
+            'layout': {
+              'position': {'x': position.dx, 'y': position.dy, 'gridX': gridX},
+              'size': {
+                'width': size.width,
+                'height': size.height,
+                'pxW': pxW,
+                'pxH': pxH,
+                'scale': scale,
+              },
             },
-            'size': {
-              'gridW': gridW,
-              'gridH': gridH,
-              'pxW': displayW,
-              'pxH': displayH,
+          });
+        } else {
+          blocks.add({
+            'type': 'image',
+            'image': {'url': node.imageUrl, 'alt': '이미지'},
+            'layout': {
+              'position': {'x': 0.0, 'y': 0.0, 'xOffset': 0.0},
+              'size': {
+                'width': 400.0,
+                'height': 300.0,
+                'pxW': 400.0,
+                'pxH': 300.0,
+                'scale': 1.0,
+              },
             },
-          },
-        });
+          });
+        }
       }
     }
 
     return {
       'version': '1.0',
-      'grid': {'columns': SystemConstants.gridSize},
+      'editor': {
+        'screenWidth': editorScreenWidth,
+        'gridSize': gridSize,
+        'columns': columns,
+      },
+      'grid': {'columns': columns},
       'blocks': blocks,
     };
   }
@@ -136,21 +134,25 @@ class PostEncoder {
         final metadata = <String, dynamic>{};
         final textAlign = paragraph['text_align'] as String?;
         if (textAlign != null) metadata['textAlign'] = textAlign;
-        nodes.add(ParagraphNode(
-          id: Editor.createNodeId(),
-          text: textAndRanges.$1,
-          metadata: metadata,
-        ));
+        nodes.add(
+          ParagraphNode(
+            id: Editor.createNodeId(),
+            text: textAndRanges.$1,
+            metadata: metadata,
+          ),
+        );
         // Apply attributions after node creation is handled by ParagraphNode's text
         // Since AttributedText already contains attributions, there is no extra step
       } else if (type == 'image') {
         final image = (map['image'] as Map?)?.cast<String, dynamic>() ?? {};
         final url = image['url'] as String? ?? '';
-        nodes.add(ImageNode(
-          id: Editor.createNodeId(),
-          imageUrl: url,
-          expectedBitmapSize: const ExpectedSize(3, 4),
-        ));
+        nodes.add(
+          ImageNode(
+            id: Editor.createNodeId(),
+            imageUrl: url,
+            expectedBitmapSize: const ExpectedSize(3, 4),
+          ),
+        );
       }
     }
 
@@ -203,14 +205,16 @@ class PostEncoder {
   }
 
   static (AttributedText, List<_RangeAnn>) _buildAttributedTextFromRich(
-      List<dynamic> rich) {
+    List<dynamic> rich,
+  ) {
     final buffer = StringBuffer();
     final ranges = <_RangeAnn>[];
     for (final item in rich) {
       final map = (item as Map).cast<String, dynamic>();
       if (map['type'] != 'text') continue;
-      final text = ((map['text'] as Map?)?.cast<String, dynamic>() ??
-              {})['content'] as String? ??
+      final text =
+          ((map['text'] as Map?)?.cast<String, dynamic>() ?? {})['content']
+              as String? ??
           '';
       final start = buffer.length;
       buffer.write(text);
@@ -228,25 +232,35 @@ class PostEncoder {
       }
       if (r.ann['italic'] == true) {
         attributed.addAttribution(
-            italicsAttribution, SpanRange(r.start, r.end));
+          italicsAttribution,
+          SpanRange(r.start, r.end),
+        );
       }
       if (r.ann['underline'] == true) {
         attributed.addAttribution(
-            underlineAttribution, SpanRange(r.start, r.end));
+          underlineAttribution,
+          SpanRange(r.start, r.end),
+        );
       }
       if (r.ann['strikethrough'] == true) {
         attributed.addAttribution(
-            strikethroughAttribution, SpanRange(r.start, r.end));
+          strikethroughAttribution,
+          SpanRange(r.start, r.end),
+        );
       }
       final colorStr = r.ann['color'] as String?;
       if (colorStr != null) {
         attributed.addAttribution(
-            ColorAttribution(_hexToColor(colorStr)), SpanRange(r.start, r.end));
+          ColorAttribution(_hexToColor(colorStr)),
+          SpanRange(r.start, r.end),
+        );
       }
       final fontSize = r.ann['font_size'];
       if (fontSize is num) {
-        attributed.addAttribution(FontSizeAttribution(fontSize.toDouble()),
-            SpanRange(r.start, r.end));
+        attributed.addAttribution(
+          FontSizeAttribution(fontSize.toDouble()),
+          SpanRange(r.start, r.end),
+        );
       }
     }
 
@@ -326,13 +340,13 @@ class TextAnnotations {
 
   @override
   int get hashCode => Object.hash(
-        bold,
-        italic,
-        underline,
-        strikethrough,
-        color?.value,
-        fontSize,
-      );
+    bold,
+    italic,
+    underline,
+    strikethrough,
+    color?.value,
+    fontSize,
+  );
 
   static bool _colorEquals(Color? a, Color? b) {
     if (identical(a, b)) return true;

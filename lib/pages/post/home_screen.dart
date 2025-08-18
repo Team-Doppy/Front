@@ -1,12 +1,13 @@
 import 'package:doppy/pages/components/custom_bottom_navigation_bar.dart';
+import 'package:doppy/pages/components/oval_chice_bar.dart';
 import 'package:doppy/pages/components/post_card.dart';
 import 'package:doppy/pages/post/postview_screen.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_svg/flutter_svg.dart';
 import 'package:provider/provider.dart';
 import '../../providers/auth_provider.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/app_text_styles.dart';
+import 'dart:ui'; // Added for ImageFilter
 
 class MainCarousel extends StatefulWidget {
   const MainCarousel({super.key});
@@ -44,7 +45,7 @@ class _MainCarouselState extends State<MainCarousel> {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 0, vertical: 8),
       child: AspectRatio(
         aspectRatio: 4 / 3, // 전체 영역 비율 고정
         child: PageView.builder(
@@ -61,7 +62,7 @@ class _MainCarouselState extends State<MainCarousel> {
             final img = _images[index];
             return Container(
               margin: const EdgeInsets.symmetric(
-                horizontal: 12,
+                horizontal: 0,
               ), // 좌우 마진 추가하여 간격 확보
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(20),
@@ -180,10 +181,10 @@ class _HomeScreenState extends State<HomeScreen> {
 
                       // 메인 이미지 PageView
                       Container(
-                        width: containerWidth * 0.9,
+                        width: containerWidth,
                         height: containerHeight * 0.3,
                         margin: EdgeInsets.symmetric(
-                          horizontal: 16,
+                          horizontal: 10,
                           vertical: 8,
                         ),
                         child: PageView.builder(
@@ -197,21 +198,76 @@ class _HomeScreenState extends State<HomeScreen> {
                           itemBuilder: (context, index) {
                             return Container(
                               margin: EdgeInsets.symmetric(horizontal: 4),
-                              decoration: BoxDecoration(
-                                color: Colors.grey[300],
-                                borderRadius: BorderRadius.circular(20),
-                              ),
+
                               child: ClipRRect(
-                                borderRadius: BorderRadius.circular(20),
-                                child: Image.asset(
-                                  index % 3 == 0
-                                      ? 'assets/image/feed1.jpg'
-                                      : index % 3 == 1
-                                      ? 'assets/image/feed2.png'
-                                      : 'assets/image/feed3.png',
-                                  fit: BoxFit.cover,
-                                  width: double.infinity,
-                                  height: double.infinity,
+                                borderRadius: BorderRadius.only(
+                                  topLeft: Radius.circular(2),
+                                  bottomRight: Radius.circular(20),
+                                  topRight: Radius.circular(20),
+                                  bottomLeft: Radius.circular(20),
+                                ),
+                                child: Stack(
+                                  children: [
+                                    Image.asset(
+                                      index % 3 == 0
+                                          ? 'assets/image/feed1.jpg'
+                                          : index % 3 == 1
+                                          ? 'assets/image/feed2.png'
+                                          : 'assets/image/feed3.png',
+                                      fit: BoxFit.cover,
+                                      width: double.infinity,
+                                      height: double.infinity,
+                                    ),
+                                    // 블러+반투명 검정 오버레이
+                                    Positioned.fill(
+                                      child: Container(
+                                        decoration: BoxDecoration(
+                                          color: const Color.fromARGB(
+                                            255,
+                                            149,
+                                            149,
+                                            149,
+                                          ).withOpacity(0.35),
+                                        ),
+                                        child: BackdropFilter(
+                                          filter: ImageFilter.blur(
+                                            sigmaX: 1,
+                                            sigmaY: 1,
+                                          ),
+                                          child: Container(
+                                            color: Colors.black.withOpacity(
+                                              0.1,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                    // 왼쪽 하단 흰색 텍스트
+                                    Positioned(
+                                      left: 20,
+                                      right: 20,
+                                      bottom: 10,
+                                      child: Text(
+                                        '확실히 돕하다,\n미친 도피의 파급력!',
+                                        style: TextStyle(
+                                          letterSpacing: 0,
+                                          height: 1.4,
+                                          color: Colors.white,
+                                          fontWeight: FontWeight.bold,
+                                          fontSize: 28,
+                                          shadows: [
+                                            Shadow(
+                                              color: Colors.black.withOpacity(
+                                                0.5,
+                                              ),
+                                              blurRadius: 8,
+                                            ),
+                                          ],
+                                        ),
+                                        textAlign: TextAlign.left,
+                                      ),
+                                    ),
+                                  ],
                                 ),
                               ),
                             );
@@ -227,7 +283,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: List.generate(4, (index) {
                             return Container(
-                              margin: EdgeInsets.symmetric(horizontal: 4),
+                              margin: EdgeInsets.symmetric(horizontal: 3),
                               width: 8,
                               height: 8,
                               decoration: BoxDecoration(
@@ -245,24 +301,25 @@ class _HomeScreenState extends State<HomeScreen> {
                       // 친한 이웃 섹션
                       Container(
                         width: containerWidth,
-                        padding: EdgeInsets.symmetric(horizontal: 16),
+                        padding: EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 8,
+                        ),
                         child: Text(
-                          ' 친한 이웃',
+                          '친한 친구들의 도피',
                           style: AppTextStyles.headlineSmall.copyWith(
                             color: AppColors.lightTextSecondary,
                           ), // 소형 제목 - 섹션 제목, 포스트 제목
                         ),
                       ),
 
-                      SizedBox(height: 10),
-
                       // 친한 이웃 카드들 (가로 스크롤)
-                      Container(
+                      SizedBox(
                         width: containerWidth,
                         height: 160, // 높이 줄임 (180 -> 160)
                         child: ListView.builder(
                           scrollDirection: Axis.horizontal,
-                          padding: EdgeInsets.symmetric(horizontal: 16),
+                          padding: EdgeInsets.symmetric(horizontal: 12),
                           itemCount: 5, // 친한 이웃 수
                           itemBuilder: (context, index) {
                             return Container(
@@ -305,8 +362,8 @@ class _HomeScreenState extends State<HomeScreen> {
                                             ),
                                             // 프로필 사진 (오른쪽 하단)
                                             Positioned(
-                                              right: 8,
-                                              bottom: 8,
+                                              right: 4,
+                                              bottom: 4,
                                               child: Container(
                                                 width: 32,
                                                 height: 32,
@@ -366,21 +423,8 @@ class _HomeScreenState extends State<HomeScreen> {
                         ),
                       ),
 
-                      SizedBox(height: 0),
-
-                      // 전체 이웃 글 보기
-                      Container(
-                        width: containerWidth,
-                        padding: EdgeInsets.symmetric(horizontal: 16),
-                        child: Text(
-                          '전체 이웃 글 보기',
-                          style: AppTextStyles.headlineSmall.copyWith(
-                            color: AppColors.lightTextSecondary,
-                          ), // 소형 제목 - 섹션 제목, 포스트 제목
-                        ),
-                      ),
-
-                      SizedBox(height: 4),
+                      // 넷플릭스 스타일 타원형 선택지
+                      SizedBox(height: 30),
 
                       // 전체 이웃 글들 (Column으로 여러 개)
                       Column(
@@ -459,29 +503,39 @@ class _HomeScreenState extends State<HomeScreen> {
                                   ? '새로운 취미를 시작했어요! 그림 그리기를 시작했는데 생각보다 재미있어요. 시간 가는 줄 모르고 그리게 되네요.'
                                   : '오늘은 정말 특별한 하루였어요. 뜻밖의 좋은 일들이 많이 일어나서 기분이 너무 좋아요. 이런 날들이 더 많았으면 좋겠어요.';
 
-                          return Material(
-                            color: Colors.transparent,
-                            child: InkWell(
-                              borderRadius: BorderRadius.circular(8),
-                              onTap: () {
-                                Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder:
-                                        (context) =>
-                                            PostviewScreen(postId: index),
+                          return Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 2),
+                            child: Stack(
+                              alignment: Alignment.centerLeft,
+                              children: [
+                                Container(
+                                  margin: const EdgeInsets.only(left: 0),
+                                  child: Material(
+                                    color: Colors.transparent,
+                                    child: InkWell(
+                                      onTap: () {
+                                        Navigator.push(
+                                          context,
+                                          MaterialPageRoute(
+                                            builder:
+                                                (context) =>
+                                                    PostviewScreen(postId: 47),
+                                          ),
+                                        );
+                                        print('전체 이웃 글 ${index + 10} 클릭');
+                                      },
+                                      borderRadius: BorderRadius.circular(12),
+                                      child: PostCard(
+                                        containerWidth: containerWidth,
+                                        imagePath: imagePath,
+                                        title: title,
+                                        author: author,
+                                        content: content,
+                                      ),
+                                    ),
                                   ),
-                                );
-                                // 전체 이웃 글 클릭 기능 구현
-                                print('전체 이웃 글 ${index + 1} 클릭');
-                              },
-                              child: PostCard(
-                                containerWidth: containerWidth,
-                                imagePath: imagePath,
-                                title: title,
-                                author: author,
-                                content: content,
-                              ),
+                                ),
+                              ],
                             ),
                           );
                         }),
@@ -496,6 +550,7 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ),
       ),
+
       bottomNavigationBar: CustomBottomNavigationBar(
         currentIndex: 0,
         onTap: (_) {}, // 2번(작성)만 콜백으로 처리됨. 필요시 모달/네비게이션 연결

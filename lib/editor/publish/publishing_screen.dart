@@ -8,10 +8,8 @@ import 'package:top_snackbar_flutter/top_snack_bar.dart';
 import 'package:top_snackbar_flutter/custom_snack_bar.dart';
 import 'package:doppy/editor/util/custom_bottom_sheet.dart';
 import 'package:doppy/editor/util/tag_bottom_sheet.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:image_picker/image_picker.dart';
 import 'dart:async';
-import 'dart:html' as html;
 
 class PublishingScreen extends StatefulWidget {
   final PreviewData preview;
@@ -51,31 +49,13 @@ class _PublishingScreenState extends State<PublishingScreen> {
   VisibilityOption _selectedVisibility = VisibilityOption.public;
 
   String? selectedThumbnailId;
-  List<String> imageUrls = [];
 
   @override
   void initState() {
     super.initState();
     _selectedVisibility = widget.visibilityOption;
-    imageUrls = extractImageUrlsFromDocument(widget.document);
-    if (imageUrls.isNotEmpty) {
-      selectedThumbnailId = imageUrls.first;
-    }
     _initializePublishing();
-    print("✅ imageUrls: $imageUrls");
-  }
-
-  // 노드의 속성에서 type이 image이고 url이 있으면 url을 추출
-  List<String> extractImageUrlsFromDocument(MutableDocument document) {
-    final List<String> urls = [];
-    for (int i = 0; i < document.nodeCount; i++) {
-      final node = document.getNodeAt(i);
-      if (node == null) continue;
-      if (node is ImageNode) {
-        urls.add(node.imageUrl);
-      }
-    }
-    return urls;
+    selectedThumbnailId = widget.preview.thumbnailUrl;
   }
 
   @override
@@ -553,7 +533,6 @@ class _PublishingScreenState extends State<PublishingScreen> {
                 final url = await pickSingleImage(context);
                 if (url != null) {
                   setState(() {
-                    imageUrls = [url];
                     selectedThumbnailId = url;
                   });
                 }
@@ -631,29 +610,6 @@ class _PublishingScreenState extends State<PublishingScreen> {
               ),
             ),
           ),
-          /*
-          const SizedBox(width: 12),
-          Expanded(
-            child: ElevatedButton(
-              onPressed: _isPublishing ? null : _handleSaveDraft,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFFF4F5F8),
-                foregroundColor: Color(0xFF222222),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                elevation: 0,
-              ),
-              child: const Text(
-                '임시저장',
-                style: TextStyle(
-                  fontSize: 16,
-                  color: Color.fromARGB(255, 111, 152, 255),
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-            ),
-          ),*/
         ],
       ),
     );
@@ -668,6 +624,7 @@ class _PublishingScreenState extends State<PublishingScreen> {
       await _publishService.publishFromEditor(
         context: context,
         document: widget.document,
+        spatialManager: widget.spatialManager,
         title: title,
         thumbnailImageUrl: widget.preview.thumbnailUrl,
         tags: widget.preview.tags,
@@ -697,15 +654,6 @@ class _PublishingScreenState extends State<PublishingScreen> {
     }
   }
 
-  void _handleSaveDraft() {
-    // TODO: 임시저장 로직 (PublishService에 위임)
-    showTopSnackBar(
-      Overlay.of(context),
-      CustomSnackBar.info(message: '임시저장 기능은 곧 지원됩니다.'),
-      displayDuration: Duration(seconds: 2),
-    );
-  }
-
   Visibility _toServiceVisibility(VisibilityOption option) {
     switch (option) {
       case VisibilityOption.public:
@@ -715,73 +663,6 @@ class _PublishingScreenState extends State<PublishingScreen> {
       case VisibilityOption.private:
         return Visibility.private;
     }
-  }
-
-  Widget _buildTagChip(String tag) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-      decoration: BoxDecoration(
-        color: Colors.blue[100],
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.blue[300]!),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(
-            tag,
-            style: TextStyle(
-              color: Colors.blue[800],
-              fontSize: 14,
-              fontWeight: FontWeight.w500,
-            ),
-          ),
-          const SizedBox(width: 6),
-          GestureDetector(
-            onTap: () => _removeTag(tag),
-            child: Icon(Icons.close, size: 16, color: Colors.blue[600]),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _addTag(String tagText) {
-    if (tagText.trim().isEmpty) return;
-
-    // 쉼표로 구분된 태그들을 분리하여 추가
-    final tags = tagText
-        .split(',')
-        .map((t) => t.trim())
-        .where((t) => t.isNotEmpty);
-
-    for (final tag in tags) {
-      if (tag.length > 20) {
-        // 태그가 너무 길면 경고
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('태그는 20자 이하여야 합니다: $tag'),
-            backgroundColor: Colors.orange,
-          ),
-        );
-        continue;
-      }
-
-      if (!_userTags.contains(tag)) {
-        setState(() {
-          _userTags.add(tag);
-        });
-      }
-    }
-
-    // 입력 필드 초기화
-    _tagController.clear();
-  }
-
-  void _removeTag(String tag) {
-    setState(() {
-      _userTags.remove(tag);
-    });
   }
 
   Widget _buildEditTool(
@@ -825,101 +706,15 @@ class _PublishingScreenState extends State<PublishingScreen> {
     );
   }
 
-  Widget _buildThumbnailSelector() {
-    if (imageUrls.isEmpty) return const SizedBox.shrink();
-    return Row(
-      children:
-          imageUrls.map((url) {
-            final isSelected = url == selectedThumbnailId;
-            return GestureDetector(
-              onTap: () {
-                setState(() {
-                  selectedThumbnailId = url;
-                });
-              },
-              child: Container(
-                margin: const EdgeInsets.all(4),
-                decoration: BoxDecoration(
-                  border: Border.all(
-                    color: isSelected ? Colors.blue : Colors.grey,
-                    width: isSelected ? 3 : 1,
-                  ),
-                ),
-                child: Image.network(
-                  url,
-                  width: 60,
-                  height: 60,
-                  fit: BoxFit.cover,
-                ),
-              ),
-            );
-          }).toList(),
-    );
-  }
-
-  Widget _buildBottomNavigation() {
-    return Container(
-      padding: const EdgeInsets.symmetric(vertical: 16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        boxShadow: [
-          BoxShadow(
-            color: Colors.grey.withOpacity(0.1),
-            blurRadius: 4,
-            offset: const Offset(0, -2),
-          ),
-        ],
-      ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-        children: [
-          _buildNavItem(Icons.home_outlined, '홈'),
-          _buildNavItem(Icons.search_outlined, '검색'),
-          _buildNavItem(Icons.edit_outlined, '편집'),
-          _buildNavItem(Icons.person_outline, '프로필'),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildNavItem(IconData icon, String label) {
-    return Column(
-      children: [
-        Icon(icon, size: 24, color: Colors.grey[600]),
-        const SizedBox(height: 4),
-        Text(label, style: TextStyle(fontSize: 10, color: Colors.grey[600])),
-      ],
-    );
-  }
-
   double get _previewSectionHeight => 180; // 미리보기 섹션 예상 높이(조정 가능)
 
   Future<String?> pickSingleImage(BuildContext context) async {
-    if (kIsWeb) {
-      final completer = Completer<String?>();
-      final uploadInput = html.FileUploadInputElement()..accept = 'image/*';
-      uploadInput.click();
-      uploadInput.onChange.listen((event) {
-        final file = uploadInput.files?.first;
-        if (file != null) {
-          final reader = html.FileReader();
-          reader.readAsDataUrl(file);
-          reader.onLoadEnd.listen((event) {
-            completer.complete(reader.result as String?);
-          });
-        } else {
-          completer.complete(null);
-        }
-      });
-      return completer.future;
-    } else {
-      final picker = ImagePicker();
-      final picked = await picker.pickImage(source: ImageSource.gallery);
-      if (picked != null) {
-        return picked.path;
-      }
-      return null;
+    final picker = ImagePicker();
+    final picked = await picker.pickImage(source: ImageSource.gallery);
+    if (picked != null) {
+      return picked.path;
     }
+    return null;
   }
 }
 

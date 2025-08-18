@@ -9,10 +9,11 @@ import 'package:doppy/editor/styling/text_styling_service.dart';
 import 'package:doppy/editor/styling/text_styling_toolbar.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
-import 'package:super_editor/super_editor.dart';
+
 import 'dart:io';
 import 'package:doppy/editor/publish/publish_service.dart';
 import 'package:doppy/editor/publish/publishing_screen.dart';
+import 'package:super_editor/super_editor.dart';
 
 /// 글 공개 범위 옵션
 enum VisibilityOption { public, partial, private }
@@ -43,6 +44,9 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
   // 앱바 드롭다운(공개 범위) 상태
   VisibilityOption _visibilityOption = VisibilityOption.public;
 
+  // 대표 이미지(썸네일) 선택 변수 추가
+  String? _selectedThumbnailUrl;
+
   String _visibilityLabel(VisibilityOption option) {
     switch (option) {
       case VisibilityOption.public:
@@ -55,21 +59,17 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
   }
 
   void _onSubmit() {
-    final preview = PublishService().extractPreviewData(_document);
+    final preview = PublishService().extractPreviewData(
+      _titleController,
+      _document,
+    );
 
-    // ✅ preview 객체가 null인지 확인하는 로직 추가
-    if (preview == null) {
-      // null 이라면 사용자에게 스낵바 메시지를 보여주고 함수를 종료합니다.
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('게시글을 발행하려면 대표 이미지가 최소 1개 이상 필요합니다.'),
-          backgroundColor: Colors.redAccent,
-        ),
-      );
-      return; // PublishingScreen으로 넘어가지 않음
-    }
+    PublishService().prepareForPublishing(
+      title: _titleController.text,
+      document: _document,
+      spatialManager: _spatialManager,
+    );
 
-    // preview 객체가 정상적으로 생성되었을 때만 화면을 이동합니다.
     Navigator.push(
       context,
       MaterialPageRoute(
@@ -168,6 +168,8 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
       backgroundColor: Colors.white,
       resizeToAvoidBottomInset: true,
       appBar: AppBar(
+        automaticallyImplyLeading: false,
+        scrolledUnderElevation: 0,
         backgroundColor: Colors.white,
         elevation: 0,
         centerTitle: true,
@@ -175,6 +177,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
           icon: const Icon(
             Icons.arrow_back_ios_new_rounded,
             color: Colors.black,
+            size: 20,
           ),
           onPressed: () => Navigator.of(context).pop(),
         ),
@@ -270,7 +273,8 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                   showPublishButton = _titleController.text.isNotEmpty;
                 });
               },
-
+              minLines: 1,
+              maxLines: 2,
               style: const TextStyle(
                 fontSize: 22,
                 fontWeight: FontWeight.bold,
@@ -288,7 +292,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                 isDense: true,
                 contentPadding: EdgeInsets.zero,
               ),
-              maxLines: 1,
+
               textAlign: _titleAlign,
             ),
           ),

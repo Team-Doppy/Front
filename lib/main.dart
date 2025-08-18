@@ -1,14 +1,10 @@
-import 'package:doppy/pages/post/group_profile_screen.dart';
 import 'package:doppy/pages/post/home_screen.dart';
 import 'package:doppy/pages/post/manage_group_screen.dart';
 import 'package:doppy/pages/post/manage_neighbor_screen.dart';
-import 'package:doppy/pages/post/postview_screen.dart';
 import 'package:doppy/pages/post/postwrite_screen.dart';
 import 'package:doppy/pages/post/search_screen.dart';
 import 'package:doppy/pages/post/user_profile_screen.dart';
-import 'package:doppy/pages/post/add_member_screen.dart';
 import 'package:doppy/pages/user/login_screen.dart';
-import 'package:doppy/pages/onboarding/onboarding_screen.dart';
 import 'package:doppy/providers/auth_provider.dart';
 import 'package:doppy/providers/friend_provider.dart';
 import 'package:doppy/providers/group_provider.dart';
@@ -61,19 +57,24 @@ class MyApp extends StatelessWidget {
       darkTheme: AppTheme.darkTheme,
       themeMode: ThemeMode.system,
 
-      home: Consumer<AuthProvider>(
-        builder: (context, auth, child) {
-          if (auth.isLoggedIn) {
+      home: FutureBuilder<bool>(
+        future: AuthProvider().checkLoginStatus(), // 비동기 로그인 체크 함수
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(child: CircularProgressIndicator());
+          }
+          if (snapshot.hasError) {
+            return const Center(child: Text('에러 발생!'));
+          }
+          if (snapshot.data == true) {
             return const HomeScreen();
           } else {
-            // 온보딩 화면을 먼저 보여주고, 건너뛰기나 시작하기 버튼을 누르면 로그인 화면으로 이동
-            return const OnboardingScreen();
+            return const LoginScreen();
           }
         },
       ),
 
       routes: {
-        '/login': (_) => const LoginScreen(), // ✅ 추가
         '/home': (_) => const HomeScreen(),
         '/search': (_) => const SearchScreen(),
         '/profile': (context) {

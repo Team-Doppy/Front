@@ -893,8 +893,6 @@ class _SearchTopBar extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       child: Row(
         children: [
-          Image.asset('assets/images/doppy_logo.png', width: 32, height: 32),
-          const SizedBox(width: 12),
           Expanded(
             child: SizedBox(
               height: 40,
@@ -932,7 +930,7 @@ class _SearchTopBar extends StatelessWidget {
                   ),
                   focusedBorder: const OutlineInputBorder(
                     borderRadius: BorderRadius.all(Radius.circular(8)),
-                    borderSide: BorderSide(color: Colors.black, width: 1.5),
+                    borderSide: BorderSide(color: Colors.black, width: 0.5),
                   ),
                 ),
                 onChanged: onChanged,
@@ -956,18 +954,18 @@ class _SearchTabBar extends StatelessWidget {
     return Material(
       color: Colors.transparent,
       child: SizedBox(
-        height: 46,
+        height: 40,
         child: TabBar(
           dividerColor: Colors.transparent,
           labelColor: Colors.black,
           unselectedLabelColor: Colors.black,
           labelStyle: AppTextStyles.withWeight(
-            AppTextStyles.headlineMedium,
-            FontWeight.w600,
+            AppTextStyles.bodyLarge,
+            FontWeight.w500,
           ),
           unselectedLabelStyle: AppTextStyles.withWeight(
-            AppTextStyles.headlineMedium,
-            FontWeight.w600,
+            AppTextStyles.bodyLarge,
+            FontWeight.w300,
           ),
           labelPadding: const EdgeInsets.symmetric(horizontal: 32),
           indicator: _FixedUnderlineTabIndicator(
@@ -995,7 +993,7 @@ class _FixedUnderlineTabIndicator extends Decoration {
     required this.color,
     required this.screenWidth,
     this.fraction = 0.375,
-    this.thickness = 2.0,
+    this.thickness = 1.0,
     this.bottomInset = 0.0,
   });
 
@@ -1081,9 +1079,11 @@ class _AccountsTab extends StatelessWidget {
                             child: Text(
                               v,
                               style: AppTextStyles.withWeight(
-                                AppTextStyles.bodyLarge,
-                                FontWeight.w600,
-                              ).copyWith(color: Colors.black),
+                                AppTextStyles.bodyMedium,
+                                FontWeight.w400,
+                              ).copyWith(
+                                color: const Color.fromARGB(255, 98, 98, 98),
+                              ),
                             ),
                           ),
                         )
@@ -1094,7 +1094,7 @@ class _AccountsTab extends StatelessWidget {
                 underline: const SizedBox.shrink(),
                 icon: const Icon(
                   Icons.keyboard_arrow_down,
-                  color: Colors.black,
+                  color: const Color.fromARGB(255, 98, 98, 98),
                 ),
               ),
               if (errorText == null)

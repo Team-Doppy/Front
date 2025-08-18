@@ -32,7 +32,8 @@ class DocumentInteractiveFloatingImage extends StatefulWidget {
 }
 
 class _DocumentInteractiveFloatingImageState
-    extends State<DocumentInteractiveFloatingImage> with DocumentComponent {
+    extends State<DocumentInteractiveFloatingImage>
+    with DocumentComponent {
   bool _isDragging = false;
   Offset _currentOffset = Offset.zero;
   double _scale = 1.0;
@@ -50,6 +51,36 @@ class _DocumentInteractiveFloatingImageState
 
   // 초기화 시에만 설정되는 baseY (문서 내 실제 Y 위치)
   double _baseY = 0.0;
+
+  Map<String, dynamic> _calculateGridValues() {
+    final screenWidth = MediaQuery.of(context).size.width;
+    final contentWidth = widget.gridSystem?.screenWidth ?? screenWidth;
+    final gridSize =
+        (widget.gridSystem != null)
+            ? widget.gridSystem!.gridSize
+            : (contentWidth / SystemConstants.gridSize);
+    final columns = SystemConstants.gridSize.toInt();
+
+    final displaySize = _displaySize;
+    final halfWidth = displaySize.width / 2;
+    final contentCenterX = contentWidth / 2;
+    final currentCenterX = contentCenterX + _currentOffset.dx;
+    final currentLeft = currentCenterX - halfWidth;
+    int gridW = (displaySize.width / gridSize).round().clamp(1, columns);
+    int gridH = (displaySize.height / gridSize).round().clamp(1, columns);
+    int gridX = (currentLeft / gridSize).round();
+    final maxIndex = (columns - gridW).clamp(0, columns);
+    gridX = gridX.clamp(0, maxIndex);
+
+    return {
+      'gridSize': gridSize,
+      'columns': columns,
+      'gridW': gridW,
+      'gridH': gridH,
+      'gridX': gridX,
+      'displaySize': displaySize,
+    };
+  }
 
   @override
   void initState() {
@@ -82,19 +113,22 @@ class _DocumentInteractiveFloatingImageState
     final img = Image.network(widget.imageUrl);
     final ImageStream stream = img.image.resolve(const ImageConfiguration());
     late final ImageStreamListener listener;
-    listener = ImageStreamListener((ImageInfo info, bool _) {
-      final w = info.image.width.toDouble();
-      final h = info.image.height.toDouble();
-      if (w > 0 && h > 0 && mounted) {
-        setState(() {
-          _intrinsicAspect = h / w;
-        });
-        _autoSizeIfNeeded();
-      }
-      stream.removeListener(listener);
-    }, onError: (dynamic _, __) {
-      stream.removeListener(listener);
-    });
+    listener = ImageStreamListener(
+      (ImageInfo info, bool _) {
+        final w = info.image.width.toDouble();
+        final h = info.image.height.toDouble();
+        if (w > 0 && h > 0 && mounted) {
+          setState(() {
+            _intrinsicAspect = h / w;
+          });
+          _autoSizeIfNeeded();
+        }
+        stream.removeListener(listener);
+      },
+      onError: (dynamic _, __) {
+        stream.removeListener(listener);
+      },
+    );
     stream.addListener(listener);
   }
 
@@ -104,7 +138,8 @@ class _DocumentInteractiveFloatingImageState
     if (_intrinsicAspect == null) return;
 
     final element = widget.spatialManager?.getElement(widget.nodeId);
-    final hasSaved = element?.metadata.containsKey('scale') == true ||
+    final hasSaved =
+        element?.metadata.containsKey('scale') == true ||
         element?.metadata.containsKey('gridW') == true;
     if (hasSaved) return;
 
@@ -118,9 +153,10 @@ class _DocumentInteractiveFloatingImageState
     }
 
     final contentWidth = widget.gridSystem?.screenWidth ?? screenWidth;
-    final gridSize = (widget.gridSystem != null)
-        ? widget.gridSystem!.gridSize
-        : (contentWidth / SystemConstants.gridSize);
+    final gridSize =
+        (widget.gridSystem != null)
+            ? widget.gridSystem!.gridSize
+            : (contentWidth / SystemConstants.gridSize);
     final columns = SystemConstants.gridSize.toDouble();
 
     final aspect = _intrinsicAspect!;
@@ -136,8 +172,10 @@ class _DocumentInteractiveFloatingImageState
 
     final desiredWidthPx = desiredCols * gridSize;
     final baseDisplayWidthPx = SystemConstants.displayWidth;
-    final newScale = (desiredWidthPx / baseDisplayWidthPx)
-        .clamp(SystemConstants.scaleMin, SystemConstants.scaleMax);
+    final newScale = (desiredWidthPx / baseDisplayWidthPx).clamp(
+      SystemConstants.scaleMin,
+      SystemConstants.scaleMax,
+    );
 
     setState(() {
       _scale = newScale;
@@ -195,9 +233,10 @@ class _DocumentInteractiveFloatingImageState
     }
 
     final contentWidth = widget.gridSystem?.screenWidth ?? screenWidth;
-    final gridSize = (widget.gridSystem != null)
-        ? widget.gridSystem!.gridSize
-        : (contentWidth / SystemConstants.gridSize);
+    final gridSize =
+        (widget.gridSystem != null)
+            ? widget.gridSystem!.gridSize
+            : (contentWidth / SystemConstants.gridSize);
 
     final raw = _rawDisplaySize; // <-- scale 반영됨
     double cols = (raw.width / gridSize).roundToDouble();
@@ -404,40 +443,25 @@ class _DocumentInteractiveFloatingImageState
   }) {
     if (widget.spatialManager == null) return;
 
-    // 🎯 초기화 시 설정된 baseY 사용 (일방적 업데이트 원칙)
-    final currentPosition = Offset(0.0, _baseY);
+    // 🎯 xOffset을 position에 반영
+    final currentPosition = Offset(_currentOffset.dx, _baseY);
 
-    // 현재 스냅된 표시 크기 기준으로 그리드 수치 계산(편집/미리보기 일치 보장)
-    final screenWidth = MediaQuery.of(context).size.width;
-    final contentWidth = widget.gridSystem?.screenWidth ?? screenWidth;
-    final gridSize = (widget.gridSystem != null)
-        ? widget.gridSystem!.gridSize
-        : (contentWidth / SystemConstants.gridSize);
-    final columns = SystemConstants.gridSize.toInt();
-
-    final displaySize = _displaySize;
-    final halfWidth = displaySize.width / 2;
-    final contentCenterX = contentWidth / 2;
-    final currentCenterX = contentCenterX + _currentOffset.dx;
-    final currentLeft = currentCenterX - halfWidth;
-    int gridW = (displaySize.width / gridSize).round().clamp(1, columns);
-    int gridH = (displaySize.height / gridSize).round().clamp(1, columns);
-    int gridX = (currentLeft / gridSize).round();
-    final maxIndex = (columns - gridW).clamp(0, columns);
-    gridX = gridX.clamp(0, maxIndex);
+    // 🎯 캐시된 그리드 계산 사용
+    final gridValues = _calculateGridValues();
+    final displaySize = gridValues['displaySize'] as Size;
 
     final newMetadata = {
       'scale': _scale,
-      'xOffset': _currentOffset.dx,
-      'yOffset': _currentOffset.dy,
       'pxW': displaySize.width,
       'pxH': displaySize.height,
-      'gridW': gridW,
-      'gridH': gridH,
-      'gridX': gridX,
+      'gridW': gridValues['gridW'],
+      'gridH': gridValues['gridH'],
+      'gridX': gridValues['gridX'], //중요
       'isImageNode': true,
       ...updatedMetadata,
     };
+
+    print('🎯 newMetadata: $newMetadata');
 
     widget.spatialManager!.updateElement(
       id: widget.nodeId,
@@ -483,13 +507,17 @@ class _DocumentInteractiveFloatingImageState
     if (details.pointerCount == 2 && details.scale != 1.0) {
       // 두 손가락 - 스케일링 (경계 제한 적용)
       setState(() {
-        final newScale = (_scale * details.scale)
-            .clamp(SystemConstants.scaleMin, SystemConstants.scaleMax);
+        final newScale = (_scale * details.scale).clamp(
+          SystemConstants.scaleMin,
+          SystemConstants.scaleMax,
+        );
 
         // 🎯 새로운 크기로 경계 제한 적용
         final newDisplaySize = ImageSizeCalculator.getDisplaySize(newScale);
-        final clampedOffset =
-            _applyScreenBounds(_currentOffset, newDisplaySize);
+        final clampedOffset = _applyScreenBounds(
+          _currentOffset,
+          newDisplaySize,
+        );
 
         // 경계를 벗어나지 않는 경우에만 스케일 적용
         if (clampedOffset == _currentOffset) {
@@ -539,11 +567,15 @@ class _DocumentInteractiveFloatingImageState
 
       if (widget.spatialManager != null) {
         final display = _displaySize;
-        _updateRealTimePosition(updatedMetadata: {
-          'scale': _scale,
-          'pxW': display.width,
-          'pxH': display.height,
-        });
+        _updateRealTimePosition(
+          updatedMetadata: {
+            'scale': _scale,
+            'xOffset': _currentOffset.dx,
+            'yOffset': _currentOffset.dy,
+            'pxW': display.width,
+            'pxH': display.height,
+          },
+        );
       }
 
       FocusManager.instance.primaryFocus?.requestFocus();
@@ -556,31 +588,33 @@ class _DocumentInteractiveFloatingImageState
     final deltaX = _currentOffset.dx;
     final deltaY = _currentOffset.dy;
 
-    // 컨텐츠 폭 기준 그리드 세팅
-    final screenWidth = MediaQuery.of(context).size.width;
-
-    final contentWidth = widget.gridSystem?.screenWidth ?? screenWidth;
-    final gridSystem = GridSystem(screenWidth: contentWidth);
-    final gridSize = gridSystem.gridSize;
+    // 🎯 기존 그리드 계산 함수 재사용
+    final gridValues = _calculateGridValues();
+    final gridSize = gridValues['gridSize'] as double;
+    final columns = gridValues['columns'] as int;
 
     // 현재 이미지 좌측 좌표(컨텐츠 기준)
-    final halfWidth = _displaySize.width / 2;
+    final displaySize = gridValues['displaySize'] as Size;
+    final halfWidth = displaySize.width / 2;
+    final screenWidth = MediaQuery.of(context).size.width;
+    final contentWidth = widget.gridSystem?.screenWidth ?? screenWidth;
     final contentCenterX = contentWidth / 2;
     final currentCenterX = contentCenterX + deltaX;
     final currentLeft = currentCenterX - halfWidth;
 
     // 스냅 인덱스 및 스냅 좌표 (열 기준 클램프 포함)
     final rawIndex = (currentLeft / gridSize).round();
-    final columns = SystemConstants.gridSize; // 고정 그리드 개수
-    final imageCols = (_displaySize.width / gridSize).clamp(1.0, columns);
+    final imageCols = (displaySize.width / gridSize).clamp(1.0, columns);
     final maxIndex = (columns - imageCols).floor();
     final gridIndex = rawIndex.clamp(0, maxIndex);
     final snappedLeft = gridIndex * gridSize;
     final snappedCenterX = snappedLeft + halfWidth;
     final snappedDx = snappedCenterX - contentCenterX;
 
-    final clampedGridOffset =
-        _applyScreenBounds(Offset(snappedDx, 0), _displaySize);
+    final clampedGridOffset = _applyScreenBounds(
+      Offset(snappedDx, 0),
+      displaySize,
+    );
 
     if (deltaY.abs() > SystemConstants.verticalSwapThreshold) {
       // 세로 이동이 충분하면 → 문서 순서 변경 + X 위치 경계 제한 적용
@@ -589,12 +623,22 @@ class _DocumentInteractiveFloatingImageState
       // 가로 이동만 → 격자 위치로 스냅 (경계 제한 적용)
       _handleHorizontalMovement(clampedGridOffset.dx);
     }
+
+    // ✅ 드래그 종료 시점에 반드시 최종 위치 업데이트
+    _updateRealTimePosition(
+      updatedMetadata: {
+        'xOffset': _currentOffset.dx,
+        'yOffset': _currentOffset.dy,
+      },
+    );
   }
 
   /// 🎯 세로 이동 처리
   void _handleVerticalMovement(double deltaX) {
     if (widget.spatialManager != null) {
-      _updateRealTimePosition(updatedMetadata: {'xOffset': deltaX});
+      _updateRealTimePosition(
+        updatedMetadata: {'xOffset': deltaX, 'yOffset': 0.0},
+      );
     }
 
     _moveImageInDocument(deltaX.abs());
@@ -608,7 +652,9 @@ class _DocumentInteractiveFloatingImageState
   /// 🎯 가로 이동 처리
   void _handleHorizontalMovement(double clampedGridX) {
     if (widget.spatialManager != null) {
-      _updateRealTimePosition(updatedMetadata: {'xOffset': clampedGridX});
+      _updateRealTimePosition(
+        updatedMetadata: {'xOffset': clampedGridX, 'yOffset': 0.0},
+      );
     }
 
     setState(() {
@@ -617,23 +663,14 @@ class _DocumentInteractiveFloatingImageState
     _resetDragState();
   }
 
-  void _onImageDragging() async {
-    if (widget.spatialManager == null) return;
-
-    _updateRealTimePosition(
-      updatedMetadata: {
-        'xOffset': _currentOffset.dx,
-        'yOffset': _currentOffset.dy,
-      },
-    );
-
-    final imageDragInfo = _getCurrentDragInfo();
-    if (imageDragInfo == null) return;
-
-    _calculateVerticalLineMovement(imageDragInfo);
+  void _onImageDragging() {
+    if (_currentOffset.dy.abs() > 5.0) {
+      final imageDragInfo = _getCurrentDragInfo();
+      if (imageDragInfo != null) {
+        _calculateVerticalLineMovement(imageDragInfo);
+      }
+    }
   }
-
-  // 가로 겹침 판단 함수는 현재 사용하지 않음(레이아웃 정책 변경)
 
   void _calculateVerticalLineMovement(ImageDragInfo imageDragInfo) {
     if (widget.spatialManager == null) return;
@@ -657,15 +694,12 @@ class _DocumentInteractiveFloatingImageState
     final isDraggingDown = dragOffset > 0;
 
     if (linesToMove != 0) {
-      print(
-          ' Y축 이동: ${linesToMove}줄 (targetY=$targetY, 방향=${isDraggingUp ? "위" : "아래"})');
       _updateInsertionBorder(linesToMove.abs(), isDraggingUp, isDraggingDown);
     } else {
       _updateInsertionBorder(0, false, false);
     }
   }
 
-  /// 🎯 삽입 위치 표시
   void _updateInsertionBorder(
     int linesToMove,
     bool isDraggingUp,
@@ -698,9 +732,7 @@ class _DocumentInteractiveFloatingImageState
       return;
     }
 
-    // 🎯 초기화 시 설정된 baseY 사용 (일방적 업데이트 원칙)
     final dragOffset = _currentOffset.dy;
-
     final targetY = TargetYCalculator.calculateTargetY(
       baseY: _baseY,
       imageHeight: _actualSize.height,
@@ -786,22 +818,26 @@ class _DocumentInteractiveFloatingImageState
   BoxDecoration _buildBorderDecoration() {
     return BoxDecoration(
       border: Border(
-        top: _showTopBorder
-            ? const BorderSide(color: Colors.orange, width: 3.0)
-            : BorderSide.none,
-        bottom: _showBottomBorder
-            ? const BorderSide(color: Colors.orange, width: 3.0)
-            : BorderSide.none,
+        top:
+            _showTopBorder
+                ? const BorderSide(color: Colors.orange, width: 3.0)
+                : BorderSide.none,
+        bottom:
+            _showBottomBorder
+                ? const BorderSide(color: Colors.orange, width: 3.0)
+                : BorderSide.none,
         left: BorderSide(
-          color: _isTapped
-              ? const Color.fromARGB(255, 92, 127, 255)
-              : Colors.transparent,
+          color:
+              _isTapped
+                  ? const Color.fromARGB(255, 92, 127, 255)
+                  : Colors.transparent,
           width: _isTapped ? 3.0 : 0.5,
         ),
         right: BorderSide(
-          color: _isTapped
-              ? const Color.fromARGB(255, 92, 127, 255)
-              : Colors.transparent,
+          color:
+              _isTapped
+                  ? const Color.fromARGB(255, 92, 127, 255)
+                  : Colors.transparent,
           width: _isTapped ? 3.0 : 0.5,
         ),
       ),
@@ -826,10 +862,11 @@ class _DocumentInteractiveFloatingImageState
               color: Colors.grey[300],
               child: Center(
                 child: CircularProgressIndicator(
-                  value: loadingProgress.expectedTotalBytes != null
-                      ? loadingProgress.cumulativeBytesLoaded /
-                          loadingProgress.expectedTotalBytes!
-                      : null,
+                  value:
+                      loadingProgress.expectedTotalBytes != null
+                          ? loadingProgress.cumulativeBytesLoaded /
+                              loadingProgress.expectedTotalBytes!
+                          : null,
                   strokeWidth: 2,
                 ),
               ),
@@ -860,7 +897,8 @@ class _DocumentInteractiveFloatingImageState
             child: CircularProgressIndicator(
               strokeWidth: 2,
               valueColor: AlwaysStoppedAnimation<Color>(
-                  const Color.fromARGB(179, 127, 127, 127)),
+                const Color.fromARGB(179, 127, 127, 127),
+              ),
             ),
           ),
         ],
