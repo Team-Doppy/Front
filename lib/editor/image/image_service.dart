@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'dart:async';
 import 'package:doppy/data/services/api_service_base.dart';
+import 'package:doppy/providers/auth_provider.dart';
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 import 'package:image_picker/image_picker.dart';
@@ -17,67 +18,6 @@ class ImageService {
 
   // API 기본 설정
   static String _baseUrl = ApiServiceBase.baseUrl; // 테스트용 로컬 서버
-
-  // 이미지 삽입 (선택 즉시 미리보기 → 백그라운드 업로드 후 교체)
-  Future<void> insertImage(
-    Editor documentEditor,
-    VoidCallback analyzeAndUpdateDocument,
-  ) async {
-    try {
-      // 1) 이미지 선택 (bytes 확보 + data URL 생성)
-      final picked = await _pickImageBytes();
-      if (picked == null) return;
-
-      final tempNodeId = Editor.createNodeId();
-      final currentSelection = documentEditor.composer.selection;
-      int insertIndex = 0;
-
-      if (currentSelection != null && currentSelection.isCollapsed) {
-        for (int i = 0; i < documentEditor.document.nodeCount; i++) {
-          final node = documentEditor.document.getNodeAt(i);
-          if (node?.id == currentSelection.extent.nodeId) {
-            insertIndex = i + 1;
-            break;
-          }
-        }
-      } else {
-        insertIndex = documentEditor.document.nodeCount;
-      }
-
-      // 2) 선택 즉시 data URL로 미리보기 노드 삽입 (빠른 피드백)
-      final placeholderNode = ImageNode(
-        id: tempNodeId,
-        imageUrl: picked['dataUrl'],
-      );
-
-      final imageSize = picked['imageSize'] as ui.Size?;
-      if (imageSize != null) {
-        placeholderNode.metadata['pxW'] = imageSize.width;
-        placeholderNode.metadata['pxH'] = imageSize.height;
-        placeholderNode.metadata['isPlaceholder'] = true;
-      }
-
-      documentEditor.execute([
-        InsertNodeAtIndexRequest(
-          nodeIndex: insertIndex,
-          newNode: placeholderNode,
-        ),
-      ]);
-
-      analyzeAndUpdateDocument();
-
-      // 3) 백그라운드에서 서버 업로드 후 실제 URL로 교체
-      _uploadImageInBackground(
-        picked['bytes'] as Uint8List,
-        picked['fileName'] as String,
-        tempNodeId,
-        documentEditor,
-        analyzeAndUpdateDocument,
-      );
-    } catch (e) {
-      print('❌ 문서 이미지 삽입 실패: $e');
-    }
-  }
 
   // 다중 이미지 삽입 (갤러리에서 선택된 여러 이미지)
   Future<void> insertMultipleImages(
@@ -178,56 +118,6 @@ class ImageService {
       print('✅ 모든 웹 배치 처리 완료 (총 ${xFiles.length}개 이미지)');
     } catch (e) {
       print('❌ 웹 다중 이미지 삽입 실패: $e');
-    }
-  }
-
-  // 백그라운드 이미지 업로드
-  Future<void> _uploadImageInBackground(
-    Uint8List bytes,
-    String fileName,
-    String tempNodeId,
-    Editor documentEditor,
-    VoidCallback analyzeAndUpdateDocument,
-  ) async {
-    try {
-      final uploadResult = await _uploadSingleImage(bytes, fileName);
-      if (uploadResult == null) {
-        throw Exception('업로드 결과가 없습니다');
-      }
-
-      // placeholder 노드를 실제 이미지 노드로 교체
-      final imageNode = ImageNode(
-        id: tempNodeId,
-        imageUrl: uploadResult['accessUrl'] ?? '',
-        metadata: {
-          'imageId': uploadResult['imageId'],
-          'pxW':
-              uploadResult['fileSize'] != null ? 400.0 : null, // 실제 크기로 교체 필요
-          'pxH': uploadResult['fileSize'] != null ? 300.0 : null,
-          'isPlaceholder': false,
-          'isRealImage': true,
-          'uploadTime': uploadResult['uploadTime'],
-        },
-      );
-
-      documentEditor.execute([
-        ReplaceNodeRequest(existingNodeId: tempNodeId, newNode: imageNode),
-      ]);
-
-      analyzeAndUpdateDocument();
-      print('✅ 이미지 업로드 완료: ${uploadResult['imageId']}');
-    } catch (e) {
-      print('❌ 백그라운드 이미지 업로드 실패: $e');
-
-      // 사용자에게 에러 알림 (SnackBar 등으로 표시 가능)
-      _showUploadErrorNotification(e.toString());
-
-      // 실패 시 placeholder 노드 제거
-      _removePlaceholderNode(
-        tempNodeId,
-        documentEditor,
-        analyzeAndUpdateDocument,
-      );
     }
   }
 
@@ -574,16 +464,10 @@ class ImageService {
       final uri = Uri.parse('$_baseUrl/api/images/upload-multiple');
       final token = await AuthService().getToken();
       final request = http.MultipartRequest('POST', uri)
-        ..fields['uid'] = 'user1234'; // 실제 사용자 UID로 변경 필요
+        ..fields['uid'] = AuthProvider().username ?? '';
       if (token != null) {
         request.headers['Authorization'] = 'Bearer $token';
       }
-
-      // 요청 전송 전 로깅
-      print('📤 웹 다중 이미지 업로드 요청 전송:');
-      print('   URL: $uri');
-      print('   총 이미지 개수: ${xFiles.length}');
-      print('   사용자 ID: user1234');
 
       // 각 이미지 파일 추가
       for (final xFile in xFiles) {
@@ -593,7 +477,6 @@ class ImageService {
 
         // 파일이 실제 이미지인지 검증
         if (!_isValidImageFile(bytes)) {
-          print('⚠️ 유효하지 않은 이미지 파일 건너뛰기: $fileName');
           continue;
         }
 
@@ -740,6 +623,45 @@ class ImageService {
           print('🔄 플레이스홀더 → 실제 이미지 교체 완료: ${result['imageId']}');
         }
 
+        // 4. 마지막에 빈 패러그래프 노드 추가 및 자동 포커스
+
+        final emptyParagraph = ParagraphNode(
+          id: Editor.createNodeId(),
+          text: AttributedText(''),
+        );
+
+        documentEditor.execute([
+          InsertNodeAtIndexRequest(
+            nodeIndex: documentEditor.document.nodeCount,
+            newNode: emptyParagraph,
+          ),
+          ChangeSelectionRequest(
+            DocumentSelection.collapsed(
+              position: DocumentPosition(
+                nodeId: emptyParagraph.id,
+                nodePosition: const TextNodePosition(offset: 0),
+              ),
+            ),
+            SelectionChangeType.placeCaret,
+            SelectionReason.userInteraction,
+          ),
+        ]);
+        print('빈 패러그래프 노드 추가 및 자동 포커스 완료');
+
+        // 5. 남아있는 플레이스홀더 노드 제거
+        final doc = documentEditor.document;
+        final placeholderIds = <String>[];
+        for (int i = 0; i < doc.nodeCount; i++) {
+          final node = doc.getNodeAt(i);
+          if (node is ImageNode && (node.metadata['isPlaceholder'] == true)) {
+            placeholderIds.add(node.id);
+          }
+        }
+        for (final id in placeholderIds) {
+          documentEditor.execute([DeleteNodeRequest(nodeId: id)]);
+          print('남은 플레이스홀더 제거: $id');
+        }
+
         // 실제 이미지로 교체된 후에만 SpatialManager에 등록
         analyzeAndUpdateDocument();
         print(
@@ -809,65 +731,6 @@ class ImageService {
         return '서버 응답 시간이 초과되었습니다';
       default:
         return '알 수 없는 오류가 발생했습니다';
-    }
-  }
-
-  // 업로드 에러 알림 (콘솔에만 출력, 스낵바 표시 안함)
-  void _showUploadErrorNotification(String errorMessage) {
-    // 스낵바 대신 콘솔에만 출력하여 이미지 화면에서만 알림 표시
-    print('🚨 업로드 에러 알림: $errorMessage');
-  }
-
-  Future<Map<String, dynamic>?> _pickImageBytes() async {
-    try {
-      String fileName;
-      List<int> bytes;
-      ui.Size? imageSize;
-
-      final ImagePicker picker = ImagePicker();
-      final XFile? image = await picker.pickImage(
-        source: ImageSource.gallery,
-        maxWidth: null,
-        maxHeight: null,
-        imageQuality: null,
-      );
-
-      if (image == null) return null;
-
-      fileName =
-          image.name.isNotEmpty
-              ? image.name
-              : 'image_${DateTime.now().millisecondsSinceEpoch}';
-
-      if (!fileName.contains('.')) {
-        fileName += '.jpg';
-      }
-
-      bytes = await image.readAsBytes();
-
-      try {
-        final codec = await ui.instantiateImageCodec(Uint8List.fromList(bytes));
-        final frameInfo = await codec.getNextFrame();
-        imageSize = ui.Size(
-          frameInfo.image.width.toDouble(),
-          frameInfo.image.height.toDouble(),
-        );
-      } catch (e) {
-        imageSize = ui.Size(400, 300);
-      }
-
-      final mime = _getMimeType(fileName);
-      final dataUrl = 'data:$mime;base64,${base64Encode(bytes)}';
-
-      return {
-        'fileName': fileName,
-        'bytes': bytes,
-        'dataUrl': dataUrl,
-        'imageSize': imageSize,
-      };
-    } catch (e) {
-      print('❌ 이미지 선택 실패: $e');
-      return null;
     }
   }
 

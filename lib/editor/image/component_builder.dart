@@ -26,29 +26,17 @@ class InteractiveFloatingImageComponentBuilder implements ComponentBuilder {
         componentViewModel.expectedSize?.width?.toDouble() ?? 200.0,
         componentViewModel.expectedSize?.height?.toDouble() ?? 200.0,
       );
-
-      return _DynamicImageSizer(
-        key: componentContext.componentKey,
-        imageUrl: componentViewModel.imageUrl,
+      // _DynamicImageSizer 래퍼 제거, DocumentInteractiveFloatingImage 직접 반환
+      return DocumentInteractiveFloatingImage(
         nodeId: componentViewModel.nodeId,
+        imageUrl: componentViewModel.imageUrl,
+        size: fallbackSize,
+        initialScale: 1.0,
         spatialManager: spatialManager,
         gridSystem: gridSystem,
-        fallbackSize: fallbackSize,
-        onResolved: onLayoutUpdateNeeded,
-        builder: (resolvedSize) {
-          return DocumentInteractiveFloatingImage(
-            nodeId: componentViewModel.nodeId,
-            imageUrl: componentViewModel.imageUrl,
-            size: resolvedSize,
-            initialScale: 1.0,
-            spatialManager: spatialManager,
-            gridSystem: gridSystem,
-            onLayoutUpdateNeeded: onLayoutUpdateNeeded,
-          );
-        },
+        onLayoutUpdateNeeded: onLayoutUpdateNeeded,
       );
     }
-
     return null;
   }
 

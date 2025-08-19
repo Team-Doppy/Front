@@ -588,12 +588,10 @@ class _DocumentInteractiveFloatingImageState
     final deltaX = _currentOffset.dx;
     final deltaY = _currentOffset.dy;
 
-    // 🎯 기존 그리드 계산 함수 재사용
     final gridValues = _calculateGridValues();
     final gridSize = gridValues['gridSize'] as double;
     final columns = gridValues['columns'] as int;
 
-    // 현재 이미지 좌측 좌표(컨텐츠 기준)
     final displaySize = gridValues['displaySize'] as Size;
     final halfWidth = displaySize.width / 2;
     final screenWidth = MediaQuery.of(context).size.width;
@@ -602,7 +600,6 @@ class _DocumentInteractiveFloatingImageState
     final currentCenterX = contentCenterX + deltaX;
     final currentLeft = currentCenterX - halfWidth;
 
-    // 스냅 인덱스 및 스냅 좌표 (열 기준 클램프 포함)
     final rawIndex = (currentLeft / gridSize).round();
     final imageCols = (displaySize.width / gridSize).clamp(1.0, columns);
     final maxIndex = (columns - imageCols).floor();
@@ -617,14 +614,12 @@ class _DocumentInteractiveFloatingImageState
     );
 
     if (deltaY.abs() > SystemConstants.verticalSwapThreshold) {
-      // 세로 이동이 충분하면 → 문서 순서 변경 + X 위치 경계 제한 적용
       _handleVerticalMovement(clampedGridOffset.dx);
     } else {
-      // 가로 이동만 → 격자 위치로 스냅 (경계 제한 적용)
       _handleHorizontalMovement(clampedGridOffset.dx);
     }
 
-    // ✅ 드래그 종료 시점에 반드시 최종 위치 업데이트
+    // 드래그 종료 시점에 반드시 최종 위치 업데이트
     _updateRealTimePosition(
       updatedMetadata: {
         'xOffset': _currentOffset.dx,
@@ -844,9 +839,8 @@ class _DocumentInteractiveFloatingImageState
     );
   }
 
-  /// 🎯 이미지 내용 위젯
+  ///
   Widget _buildImageContent() {
-    // 실제 이미지 URL이 있으면 네트워크 이미지로 렌더링
     if (widget.imageUrl.isNotEmpty &&
         !widget.imageUrl.contains('picsum.photos')) {
       return ClipRRect(

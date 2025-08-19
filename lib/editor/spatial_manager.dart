@@ -211,53 +211,27 @@ class SpatialManager extends ChangeNotifier {
     final currentImageY = currentElement.position.dy;
     final isDraggingUp = targetY < currentImageY;
 
-    // 실제 Y축 거리 변화 계산
     final yDistance = (targetY - currentImageY).abs();
-
-    // 이웃한 노드가 이미지인지 텍스트인지 판단하여 적절한 높이 계산
     double expectedLineHeight;
 
     if (isDraggingUp) {
       final currentIndex = _sortedElements.indexWhere((e) => e.id == imageId);
       if (currentIndex > 0) {
-        final previousElement = _sortedElements[currentIndex - 1];
-        // 🔑 type으로 직접 확인하는 것이 더 정확함
-        final isPreviousImage =
-            previousElement.metadata['isImageNode'] ?? false;
-
-        if (isPreviousImage) {
-          expectedLineHeight = previousElement.size.height;
-        } else {
-          // 이전 노드가 텍스트: 텍스트 줄 높이 기준
-          expectedLineHeight =
-              SystemConstants.defaultFontSize *
-              SystemConstants.defaultLineHeight1;
-        }
+        expectedLineHeight =
+            SystemConstants.defaultFontSize *
+            SystemConstants.defaultLineHeight1;
       } else {
-        // 첫 번째 요소: 기본 텍스트 높이 사용
         expectedLineHeight =
             SystemConstants.defaultFontSize *
             SystemConstants.defaultLineHeight1;
       }
     } else {
-      // 아래로 드래그: 다음 노드 확인
       final currentIndex = _sortedElements.indexWhere((e) => e.id == imageId);
       if (currentIndex < _sortedElements.length - 1) {
-        final nextElement = _sortedElements[currentIndex + 1];
-        // 🔑 type으로 직접 확인하는 것이 더 정확함
-        final isNextImage = nextElement.metadata['isImageNode'] ?? false;
-
-        if (isNextImage) {
-          // 다음 노드가 이미지: 이미지 높이 기준
-          expectedLineHeight = nextElement.size.height;
-        } else {
-          // 다음 노드가 텍스트: 텍스트 줄 높이 기준
-          expectedLineHeight =
-              SystemConstants.defaultFontSize *
-              SystemConstants.defaultLineHeight1;
-        }
+        expectedLineHeight =
+            SystemConstants.defaultFontSize *
+            SystemConstants.defaultLineHeight1;
       } else {
-        // 마지막 요소: 기본 텍스트 높이 사용
         expectedLineHeight =
             SystemConstants.defaultFontSize *
             SystemConstants.defaultLineHeight1;
@@ -266,7 +240,6 @@ class SpatialManager extends ChangeNotifier {
 
     final expectedLinesFromDistance = (yDistance / expectedLineHeight).round();
 
-    // 현재 이미지의 인덱스 찾기
     final currentIndex = _sortedElements.indexWhere((e) => e.id == imageId);
     if (currentIndex == -1) return 0;
 
@@ -282,30 +255,20 @@ class SpatialManager extends ChangeNotifier {
     final maxUpward = currentIndex; // 현재 위치까지 위로 이동 가능
     final maxDownward = totalElements - 1 - currentIndex; // 마지막까지 아래로 이동 가능
 
-    // 아래로 드래그할 때는 더 관대하게 클램프 (거리 기반 계산 우선)
     int clampedLinesToMove;
     if (isDraggingUp) {
-      // 🔑 위로 드래그: 거리 기반 계산을 우선하되, 합리적인 최대값으로 제한
       final reasonableMaxUpward = math.max(
         maxUpward,
         expectedLinesFromDistance.abs(),
       );
       clampedLinesToMove = linesToMove.clamp(-reasonableMaxUpward, 0);
     } else {
-      // 아래로 드래그: 거리 기반 계산을 우선하되, 합리적인 최대값으로 제한
       final reasonableMaxDownward = math.max(
         maxDownward,
         expectedLinesFromDistance,
       );
       clampedLinesToMove = linesToMove.clamp(0, reasonableMaxDownward);
     }
-    if (lastExecuted != clampedLinesToMove) {
-      handleImagePositionUpdate(imageId, isDraggingUp ? 'up' : 'down');
-      printDocStructure();
-
-      _lastExecutedLines[imageId] = clampedLinesToMove;
-    }
-
     return clampedLinesToMove;
   }
 
