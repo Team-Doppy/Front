@@ -60,7 +60,6 @@ class _DynamicImageSizer extends StatefulWidget {
   final VoidCallback? onResolved;
 
   const _DynamicImageSizer({
-    super.key,
     required this.imageUrl,
     required this.nodeId,
     required this.fallbackSize,

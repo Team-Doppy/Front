@@ -664,9 +664,6 @@ class ImageService {
 
         // 실제 이미지로 교체된 후에만 SpatialManager에 등록
         analyzeAndUpdateDocument();
-        print(
-          '🎉 ${uploadResults.length}개 이미지가 실제 이미지로 교체되고 SpatialManager에 등록되었습니다',
-        );
       } else {
         print('❌ 업로드 성공한 이미지가 없습니다');
         // 실패 시 플레이스홀더 제거 후 SpatialManager 동기화

@@ -143,7 +143,6 @@ class _DocumentInteractiveFloatingImageState
         element?.metadata.containsKey('gridW') == true;
     if (hasSaved) return;
 
-    // 🔑 MediaQuery 사용을 안전하게 처리
     double screenWidth;
     try {
       screenWidth = MediaQuery.of(context).size.width;
@@ -183,7 +182,7 @@ class _DocumentInteractiveFloatingImageState
       _currentOffset = const Offset(0, 0);
     });
 
-    _updateRealTimePosition(updatedMetadata: {'scale': _scale});
+    _updateImagePosition(updatedMetadata: {'scale': _scale});
     widget.onLayoutUpdateNeeded?.call();
   }
 
@@ -218,7 +217,6 @@ class _DocumentInteractiveFloatingImageState
     }
   }
 
-  /// 🎯 현재 이미지 크기 계산
   Size get _actualSize => ImageSizeCalculator.getActualSize(_scale);
   Size get _rawDisplaySize => ImageSizeCalculator.getDisplaySize(_scale);
   Size get _displaySize => _snappedDisplaySize;
@@ -438,15 +436,11 @@ class _DocumentInteractiveFloatingImageState
     );
   }
 
-  void _updateRealTimePosition({
-    required Map<String, dynamic> updatedMetadata,
-  }) {
+  void _updateImagePosition({required Map<String, dynamic> updatedMetadata}) {
     if (widget.spatialManager == null) return;
 
-    // 🎯 xOffset을 position에 반영
     final currentPosition = Offset(_currentOffset.dx, _baseY);
 
-    // 🎯 캐시된 그리드 계산 사용
     final gridValues = _calculateGridValues();
     final displaySize = gridValues['displaySize'] as Size;
 
@@ -460,7 +454,6 @@ class _DocumentInteractiveFloatingImageState
       'isImageNode': true,
       ...updatedMetadata,
     };
-
     print('🎯 newMetadata: $newMetadata');
 
     widget.spatialManager!.updateElement(
@@ -531,6 +524,7 @@ class _DocumentInteractiveFloatingImageState
       // 한 손가락 - 자유로운 2D 드래그 (경계에서만 이동 제한)
       final currentX = details.focalPoint.dx;
       final currentY = details.focalPoint.dy;
+      _onImageDragging(currentX, currentY);
 
       setState(() {
         _isDragging = true;
@@ -541,21 +535,13 @@ class _DocumentInteractiveFloatingImageState
         final targetImageCenterX = currentX - _initialTouchOffset.dx;
         final targetImageCenterY = currentY - _initialTouchOffset.dy;
 
-        // 🎯 공통 경계 제한 함수 사용
         final targetOffset = Offset(
           targetImageCenterX - (screenWidth / 2),
           targetImageCenterY - 70,
         );
 
         _currentOffset = _applyScreenBounds(targetOffset, _displaySize);
-
-        // 방향 힌트 계산
-        final deltaX = currentX - _initialDragX;
-        final deltaY = currentY - _initialDragY;
-        DragDirectionDetector.detectDirection(deltaX, deltaY);
       });
-
-      _onImageDragging();
     }
   }
 
@@ -567,7 +553,7 @@ class _DocumentInteractiveFloatingImageState
 
       if (widget.spatialManager != null) {
         final display = _displaySize;
-        _updateRealTimePosition(
+        _updateImagePosition(
           updatedMetadata: {
             'scale': _scale,
             'xOffset': _currentOffset.dx,
@@ -618,9 +604,7 @@ class _DocumentInteractiveFloatingImageState
     } else {
       _handleHorizontalMovement(clampedGridOffset.dx);
     }
-
-    // 드래그 종료 시점에 반드시 최종 위치 업데이트
-    _updateRealTimePosition(
+    _updateImagePosition(
       updatedMetadata: {
         'xOffset': _currentOffset.dx,
         'yOffset': _currentOffset.dy,
@@ -628,14 +612,7 @@ class _DocumentInteractiveFloatingImageState
     );
   }
 
-  /// 🎯 세로 이동 처리
   void _handleVerticalMovement(double deltaX) {
-    if (widget.spatialManager != null) {
-      _updateRealTimePosition(
-        updatedMetadata: {'xOffset': deltaX, 'yOffset': 0.0},
-      );
-    }
-
     _moveImageInDocument(deltaX.abs());
     setState(() {
       _currentOffset = Offset(deltaX, 0);
@@ -644,21 +621,15 @@ class _DocumentInteractiveFloatingImageState
     _showKeyboard();
   }
 
-  /// 🎯 가로 이동 처리
   void _handleHorizontalMovement(double clampedGridX) {
-    if (widget.spatialManager != null) {
-      _updateRealTimePosition(
-        updatedMetadata: {'xOffset': clampedGridX, 'yOffset': 0.0},
-      );
-    }
-
     setState(() {
       _currentOffset = Offset(clampedGridX, 0);
     });
     _resetDragState();
   }
 
-  void _onImageDragging() {
+  void _onImageDragging(double deltaY, double deltaX) {
+    print('🎯 _onImageDragging: $deltaY, $deltaX');
     if (_currentOffset.dy.abs() > 5.0) {
       final imageDragInfo = _getCurrentDragInfo();
       if (imageDragInfo != null) {

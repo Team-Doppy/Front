@@ -36,12 +36,8 @@ class SpatialElement {
 class SpatialManager extends ChangeNotifier {
   final GridSystem gridSystem;
   final Map<String, SpatialElement> _elements = {};
-
   Editor? _documentEditor;
   MutableDocument? _document;
-
-  // 🎯 이미지별로 마지막 실행된 줄 수 추적
-  final Map<String, int> _lastExecutedLines = {};
 
   SpatialManager({required this.gridSystem});
 
@@ -199,8 +195,6 @@ class SpatialManager extends ChangeNotifier {
   // 최적화된 줄 수 계산
   int calculateHowManyLinesToMove({required String imageId, double? targetY}) {
     if (targetY == null) return 0;
-
-    final lastExecuted = _lastExecutedLines[imageId] ?? 0;
 
     final currentElement = _elements[imageId];
     if (currentElement == null) {
