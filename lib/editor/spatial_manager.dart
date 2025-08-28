@@ -84,6 +84,17 @@ class SpatialManager extends ChangeNotifier {
     required double screenWidth,
     required double documentPadding,
   }) {
+    // 🎯 1) 문서에 존재하지 않는 요소 정리 (삭제된 노드 제거)
+    final Set<String> docNodeIds = <String>{};
+    for (int i = 0; i < document.nodeCount; i++) {
+      final node = document.getNodeAt(i);
+      if (node != null) {
+        docNodeIds.add(node.id);
+      }
+    }
+    _elements.removeWhere((id, _) => !docNodeIds.contains(id));
+
+    // 🎯 2) 현재 문서 내용 기반으로 위치/크기 재계산 및 동기화
     double currentY = 0.0;
     // ignore: unused_local_variable
     int processedNodes = 0;
