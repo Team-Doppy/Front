@@ -1,7 +1,5 @@
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
-import 'dart:ui' as ui;
 import 'dart:async';
 import 'package:doppy/data/services/api_service_base.dart';
 import 'package:doppy/providers/auth_provider.dart';
@@ -10,14 +8,86 @@ import 'package:http_parser/http_parser.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:super_editor/super_editor.dart';
 import 'package:doppy/data/services/auth_service.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 class ImageService {
   static final ImageService _instance = ImageService._internal();
   factory ImageService() => _instance;
   ImageService._internal();
 
+  void _handleError(dynamic error, BuildContext? context) {
+    if (error.toString().contains('permission') ||
+        error.toString().contains('권한') ||
+        error.toString().contains('denied') ||
+        error.toString().contains('access') ||
+        error.toString().contains('unauthorized')) {
+      if (context != null) {
+        _showPermissionErrorDialog(context, _getPermissionErrorMessage());
+      }
+      return;
+    }
+  }
+
   // API 기본 설정
   static String _baseUrl = ApiServiceBase.baseUrl; // 테스트용 로컬 서버
+
+  Future<bool> _checkAndRequestPermissions() async {
+    if (Platform.isAndroid) {
+      final storageStatus = await Permission.storage.status;
+      if (storageStatus.isDenied) {
+        final result = await Permission.storage.request();
+        if (result.isDenied || result.isPermanentlyDenied) {
+          return false;
+        }
+      }
+    } else if (Platform.isIOS) {
+      final photosStatus = await Permission.photos.status;
+      if (photosStatus.isDenied) {
+        final result = await Permission.photos.request();
+        if (result.isDenied || result.isPermanentlyDenied) {
+          return false;
+        }
+      }
+    }
+    return true;
+  }
+
+  void _showPermissionErrorDialog(BuildContext context, String message) {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text('권한 필요'),
+          content: Text(message),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('취소'),
+            ),
+            TextButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+                openAppSettings();
+              },
+              child: const Text('설정으로 이동'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  String _getPermissionErrorMessage() {
+    if (Platform.isAndroid) {
+      return '이미지를 선택하려면 저장소 및 사진 접근 권한이 필요합니다.\n\n설정에서 권한을 허용해주세요.';
+    } else if (Platform.isIOS) {
+      return '이미지를 선택하려면 사진 라이브러리 접근 권한이 필요합니다.\n\n설정에서 권한을 허용해주세요.';
+    } else {
+      return '이미지를 선택하려면 파일 접근 권한이 필요합니다.';
+    }
+  }
 
   // 다중 이미지 삽입 (갤러리에서 선택된 여러 이미지)
   Future<void> insertMultipleImages(
@@ -256,20 +326,6 @@ class ImageService {
           analyzeAndUpdateDocument,
         );
       }
-    }
-  }
-
-  // placeholder 노드 제거
-  void _removePlaceholderNode(
-    String nodeId,
-    Editor documentEditor,
-    VoidCallback analyzeAndUpdateDocument,
-  ) {
-    try {
-      documentEditor.execute([DeleteNodeRequest(nodeId: nodeId)]);
-      analyzeAndUpdateDocument();
-    } catch (e) {
-      print('❌ placeholder 노드 제거 실패: $e');
     }
   }
 
@@ -565,26 +621,20 @@ class ImageService {
         final tempNodeId = Editor.createNodeId();
         tempNodeIds.add(tempNodeId);
 
-        // 임시 data URL 생성
-        final bytes = await imageFile.readAsBytes();
-        final mime = _mimeFromFile(imageFile);
-        final dataUrl = 'data:$mime;base64,${base64Encode(bytes)}';
-
+        // 🎯 File 객체를 직접 사용 (data: URL 변환 없이)
         final placeholderNode = ImageNode(
           id: tempNodeId,
-          imageUrl: dataUrl,
+          imageUrl: 'placeholder', // 🎯 임시 URL (실제로는 사용되지 않음)
           metadata: {
             'isPlaceholder': true,
             'originalFileName': imageFile.path.split('/').last,
+            'isLocalFile': true, // 🎯 로컬 파일임을 표시
+            'localFilePath': imageFile.path, // 🎯 로컬 파일 경로 저장
           },
         );
 
-        documentEditor.execute([
-          InsertNodeAtIndexRequest(
-            nodeIndex: insertIndex++,
-            newNode: placeholderNode,
-          ),
-        ]);
+        // 🎯 플레이스홀더는 Undo/Redo 스택에 포함하지 않음
+        documentEditor.document.insertNodeAt(insertIndex++, placeholderNode);
       }
 
       // 2. 백그라운드에서 업로드
@@ -611,16 +661,15 @@ class ImageService {
               'pxH': result['fileSize'] != null ? 300.0 : null,
               'isPlaceholder': false,
               'isRealImage': true,
-              'isImageNode': true, // 🔑 SpatialManager에서 이미지 노드로 인식
+              'isImageNode': true,
               'uploadTime': result['uploadTime'],
             },
           );
 
+          // 🎯 실제 이미지로 교체 (Undo/Redo 스택에 포함)
           documentEditor.execute([
             ReplaceNodeRequest(existingNodeId: tempNodeId, newNode: imageNode),
           ]);
-
-          print('🔄 플레이스홀더 → 실제 이미지 교체 완료: ${result['imageId']}');
         }
 
         // 4. 마지막에 빈 패러그래프 노드 추가 및 자동 포커스
@@ -646,23 +695,7 @@ class ImageService {
             SelectionReason.userInteraction,
           ),
         ]);
-        print('빈 패러그래프 노드 추가 및 자동 포커스 완료');
 
-        // 5. 남아있는 플레이스홀더 노드 제거
-        final doc = documentEditor.document;
-        final placeholderIds = <String>[];
-        for (int i = 0; i < doc.nodeCount; i++) {
-          final node = doc.getNodeAt(i);
-          if (node is ImageNode && (node.metadata['isPlaceholder'] == true)) {
-            placeholderIds.add(node.id);
-          }
-        }
-        for (final id in placeholderIds) {
-          documentEditor.execute([DeleteNodeRequest(nodeId: id)]);
-          print('남은 플레이스홀더 제거: $id');
-        }
-
-        // 실제 이미지로 교체된 후에만 SpatialManager에 등록
         analyzeAndUpdateDocument();
       } else {
         print('❌ 업로드 성공한 이미지가 없습니다');
@@ -794,13 +827,35 @@ class ImageService {
     MutableDocument document,
     VoidCallback analyzeAndUpdateDocument, {
     dynamic spatialManager,
+    BuildContext? context, // 🎯 권한 에러 다이얼로그 표시용
   }) async {
     try {
-      final result = await ImagePicker().pickMultiImage(
-        maxWidth: 1920,
-        maxHeight: 1080,
-        imageQuality: 85,
-      );
+      // 🎯 권한 체크 (웹에서는 생략)
+      if (!kIsWeb) {
+        try {
+          final hasPermission = await _checkAndRequestPermissions();
+          if (!hasPermission) {
+            print('❌ 권한이 없습니다');
+            if (context != null) {
+              _showPermissionErrorDialog(context, _getPermissionErrorMessage());
+            }
+            return;
+          }
+        } catch (e) {
+          print('❌ 권한 체크 중 오류: $e');
+        }
+      }
+
+      final result = await ImagePicker()
+          .pickMultiImage(maxWidth: 1920, maxHeight: 1080, imageQuality: 85)
+          .catchError((error) {
+            if (error.toString().contains('permission') ||
+                error.toString().contains('권한') ||
+                error.toString().contains('denied')) {
+              return <XFile>[];
+            }
+            throw error;
+          });
 
       if (result.isNotEmpty) {
         // 웹에서는 ImageService의 웹용 메서드 사용
@@ -813,8 +868,7 @@ class ImageService {
         );
       }
     } catch (e) {
-      print('❌ 웹 이미지 선택 실패: $e');
-      rethrow;
+      _handleError(e, context);
     }
   }
 
@@ -842,18 +896,21 @@ class ImageService {
     MutableDocument document,
     VoidCallback analyzeAndUpdateDocument, {
     dynamic spatialManager,
+    BuildContext? context, // 🎯 권한 에러 다이얼로그 표시용
   }) async {
     try {
-      await insertMultipleImages(
-        documentEditor,
-        document,
+      // 🎯 GalleryBottomSheet에서 이미 권한 체크가 완료된 이미지들이므로 권한 체크 생략
+      print('✅ 이미지 처리 시작: ${imageFiles.length}개');
+
+      // 🎯 File 객체를 직접 처리 (data: URL 변환 없이)
+      await _uploadAndInsertImages(
         imageFiles,
+        documentEditor,
         analyzeAndUpdateDocument,
         spatialManager: spatialManager,
       );
     } catch (e) {
-      print('❌ 모바일 갤러리 이미지 처리 실패: $e');
-      rethrow;
+      _handleError(e, context);
     }
   }
 
@@ -935,52 +992,11 @@ class ImageService {
       }
     }
 
-    // 개별 업로드 완료 후 SpatialManager 동기화
     if (successCount > 0) {
       analyzeAndUpdateDocument();
       print('📱 개별 업로드 fallback 완료: $successCount개 성공');
     } else {
       print('❌ 개별 업로드 fallback도 모두 실패');
     }
-  }
-}
-
-/// 이미지 노드 삽입 (기존 호환성 유지)
-Future<void> insertImageNode({
-  required Editor documentEditor,
-  required MutableDocument document,
-  required File imageFile,
-}) async {
-  try {
-    final bytes = await imageFile.readAsBytes();
-
-    final codec = await ui.instantiateImageCodec(bytes);
-    final frame = await codec.getNextFrame();
-    final width = frame.image.width;
-    final height = frame.image.height;
-
-    final imageNode = ImageNode(
-      id: Editor.createNodeId(),
-      imageUrl: 'placeholder',
-      metadata: {
-        'isImageNode': true,
-        'pxW': width,
-        'pxH': height,
-        'scale': 1.0,
-        'text': '이미지',
-      },
-    );
-
-    documentEditor.execute([
-      InsertNodeAtIndexRequest(
-        nodeIndex: document.nodeCount,
-        newNode: imageNode,
-      ),
-    ]);
-
-    print('✅ 이미지 노드 삽입 완료: ${width}x${height}');
-  } catch (e) {
-    print('❌ 이미지 노드 삽입 실패: $e');
-    rethrow;
   }
 }

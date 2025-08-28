@@ -26,8 +26,9 @@ class InteractiveFloatingImageComponentBuilder implements ComponentBuilder {
         componentViewModel.expectedSize?.width?.toDouble() ?? 200.0,
         componentViewModel.expectedSize?.height?.toDouble() ?? 200.0,
       );
-      // _DynamicImageSizer 래퍼 제거, DocumentInteractiveFloatingImage 직접 반환
+
       return DocumentInteractiveFloatingImage(
+        key: componentContext.componentKey,
         nodeId: componentViewModel.nodeId,
         imageUrl: componentViewModel.imageUrl,
         size: fallbackSize,
@@ -45,6 +46,26 @@ class InteractiveFloatingImageComponentBuilder implements ComponentBuilder {
     Document document,
     DocumentNode node,
   ) {
+    if (node is ImageNode) {
+      // ImageNode의 메타데이터에서 로컬 파일 경로 확인
+      final isLocalFile = node.metadata['isLocalFile'] == true;
+      final localFilePath = node.metadata['localFilePath'] as String?;
+
+      //  로컬 파일이면 localFilePath 사용, 아니면 imageUrl 사용
+      final effectiveImageUrl =
+          isLocalFile && localFilePath != null ? localFilePath : node.imageUrl;
+
+      final expectedWidth = (node.metadata['pxW'] as num?)?.toInt() ?? 200;
+      final expectedHeight = (node.metadata['pxH'] as num?)?.toInt() ?? 150;
+
+      return ImageComponentViewModel(
+        nodeId: node.id,
+        imageUrl: effectiveImageUrl,
+        expectedSize: ExpectedSize(expectedWidth, expectedHeight),
+        selection: null,
+        selectionColor: Colors.transparent,
+      );
+    }
     return null;
   }
 }
@@ -118,8 +139,8 @@ class _DynamicImageSizerState extends State<_DynamicImageSizer> {
             final element = widget.spatialManager!.getElement(widget.nodeId);
             if (element != null) {
               final newMetadata = Map<String, dynamic>.from(element.metadata);
-              newMetadata['pxW'] = width;
-              newMetadata['pxH'] = height;
+              newMetadata['pxW'] = width.toInt();
+              newMetadata['pxH'] = height.toInt();
               newMetadata['isImageNode'] = true;
               widget.spatialManager!.updateElement(
                 id: widget.nodeId,

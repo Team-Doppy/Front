@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:doppy/editor/image/image_util.dart';
 import 'package:flutter/material.dart';
 import 'package:super_editor/super_editor.dart';
@@ -40,14 +41,13 @@ class _DocumentInteractiveFloatingImageState
   double? _intrinsicAspect; // 원본 비율 (height / width)
   bool _didAutoSize = false;
 
-  double _initialDragX = 0;
-  double _initialDragY = 0;
   bool _isScaling = false;
   bool _isTapped = false;
 
   Offset _initialTouchOffset = Offset.zero;
   bool _showTopBorder = false;
   bool _showBottomBorder = false;
+  bool isOverlapping = false;
 
   // 초기화 시에만 설정되는 baseY (문서 내 실제 Y 위치)
   double _baseY = 0.0;
@@ -251,30 +251,19 @@ class _DocumentInteractiveFloatingImageState
   // 컨테이너 높이는 표시 높이만 사용 (여백은 main_style_sheet.dart에서 처리)
   double get _containerHeight => _displaySize.height;
 
-  /// 🎯 현재 이미지 위치 계산
-  Offset get _imageCenterOffset {
-    final screenWidth = MediaQuery.of(context).size.width;
-    return ImagePositionCalculator.getImageCenterOffset(
-      _currentOffset,
-      screenWidth,
-      _actualSize.width,
-    );
+  // 로컬 좌표계에서의 이미지 사각형/중심
+  Rect get _localImageRect {
+    final left = _computeImageLeftForBuild();
+    final top = _currentOffset.dy - 6;
+    return Rect.fromLTWH(left, top, _displaySize.width, _displaySize.height);
   }
 
-  Rect get _imageRect {
-    final screenWidth = MediaQuery.of(context).size.width;
-    return ImagePositionCalculator.getImageRect(
-      _currentOffset,
-      screenWidth,
-      _actualSize,
-    );
-  }
+  Offset get _localImageCenter => _localImageRect.center;
 
-  // DocumentComponent 필수 메서드들 (절대 좌표 기반)
+  // DocumentComponent 필수 메서드들 (로컬 좌표 기반)
   @override
   UpstreamDownstreamNodePosition? getPositionAtOffset(Offset localOffset) {
-    if (_imageRect.contains(localOffset)) {
-      // 이미지 영역에서는 upstream() 반환하여 커서가 이미지 아래 텍스트를 가리키도록 함
+    if (_localImageRect.contains(localOffset)) {
       return UpstreamDownstreamNodePosition.upstream();
     }
     return UpstreamDownstreamNodePosition.upstream();
@@ -282,17 +271,17 @@ class _DocumentInteractiveFloatingImageState
 
   @override
   Offset getOffsetForPosition(NodePosition nodePosition) {
-    return _imageCenterOffset;
+    return _localImageCenter;
   }
 
   @override
   Rect getRectForPosition(NodePosition nodePosition) {
-    return _imageRect;
+    return _localImageRect;
   }
 
   @override
   Rect getEdgeForPosition(NodePosition nodePosition) {
-    return getRectForPosition(nodePosition);
+    return _localImageRect;
   }
 
   @override
@@ -300,7 +289,7 @@ class _DocumentInteractiveFloatingImageState
     NodePosition basePosition,
     NodePosition extentPosition,
   ) {
-    return getRectForPosition(basePosition);
+    return _localImageRect;
   }
 
   @override
@@ -318,7 +307,7 @@ class _DocumentInteractiveFloatingImageState
     NodePosition currentPosition, [
     MovementModifier? movementModifier,
   ]) {
-    return null;
+    return UpstreamDownstreamNodePosition.upstream();
   }
 
   @override
@@ -326,30 +315,29 @@ class _DocumentInteractiveFloatingImageState
     NodePosition currentPosition, [
     MovementModifier? movementModifier,
   ]) {
-    return null;
+    return UpstreamDownstreamNodePosition.upstream();
   }
 
   @override
   UpstreamDownstreamNodePosition? movePositionUp(NodePosition currentPosition) {
-    return null;
+    return UpstreamDownstreamNodePosition.upstream();
   }
 
   @override
   UpstreamDownstreamNodePosition? movePositionDown(
     NodePosition currentPosition,
   ) {
-    return null;
+    return UpstreamDownstreamNodePosition.upstream();
   }
 
   @override
   UpstreamDownstreamNodePosition getEndPosition() {
-    // 이미지 노드의 끝 위치도 upstream()으로 처리하여 커서가 다음 텍스트를 가리키도록 함
     return UpstreamDownstreamNodePosition.upstream();
   }
 
   @override
   UpstreamDownstreamNodePosition getEndPositionNearX(double x) {
-    return UpstreamDownstreamNodePosition.downstream();
+    return UpstreamDownstreamNodePosition.upstream();
   }
 
   @override
@@ -357,7 +345,10 @@ class _DocumentInteractiveFloatingImageState
     Offset localBaseOffset,
     Offset localExtentOffset,
   ) {
-    return null;
+    return UpstreamDownstreamNodeSelection(
+      base: UpstreamDownstreamNodePosition.upstream(),
+      extent: UpstreamDownstreamNodePosition.upstream(),
+    );
   }
 
   @override
@@ -388,7 +379,7 @@ class _DocumentInteractiveFloatingImageState
   }
 
   @override
-  bool isVisualSelectionSupported() => true;
+  bool isVisualSelectionSupported() => false;
 
   @override
   MouseCursor? getDesiredCursorAtOffset(Offset localOffset) {
@@ -483,8 +474,6 @@ class _DocumentInteractiveFloatingImageState
         _isScaling = false;
         _isDragging = true;
         _isTapped = false;
-        _initialDragX = details.focalPoint.dx;
-        _initialDragY = details.focalPoint.dy;
 
         final screenWidth = MediaQuery.of(context).size.width;
         _initialTouchOffset = ImagePositionCalculator.getTouchOffset(
@@ -629,13 +618,28 @@ class _DocumentInteractiveFloatingImageState
   }
 
   void _onImageDragging(double deltaY, double deltaX) {
-    print('🎯 _onImageDragging: $deltaY, $deltaX');
     if (_currentOffset.dy.abs() > 5.0) {
       final imageDragInfo = _getCurrentDragInfo();
       if (imageDragInfo != null) {
+        isOverlapping = _shouldHorizontalPlace(deltaY, deltaX);
+        if (isOverlapping) {
+          return;
+        }
+        print('🎯 _onImageDragging: $deltaY, $deltaX, ${_actualSize}');
         _calculateVerticalLineMovement(imageDragInfo);
       }
     }
+  }
+
+  bool _shouldHorizontalPlace(double deltaY, double deltaX) {
+    if (widget.spatialManager == null) return false;
+
+    final overlapRatio = widget.spatialManager!.calculateImageOverlapRatio(
+      imageId: widget.nodeId,
+      imagePosition: Offset(deltaX, deltaY),
+      imageSize: _actualSize,
+    );
+    return false;
   }
 
   void _calculateVerticalLineMovement(ImageDragInfo imageDragInfo) {
@@ -759,12 +763,10 @@ class _DocumentInteractiveFloatingImageState
     );
   }
 
-  /// 🎯 이미지 컨테이너 위젯
   Widget _buildImageContainer() {
     return Container(
       width: _displaySize.width,
       height: _displaySize.height,
-      // margin 제거 (여백은 main_style_sheet.dart에서 처리)
       decoration: _buildBorderDecoration(),
       child: _buildImageContent(),
     );
@@ -812,7 +814,31 @@ class _DocumentInteractiveFloatingImageState
 
   ///
   Widget _buildImageContent() {
+    // 🎯 로컬 파일인지 확인
+    if (_isLocalFile()) {
+      try {
+        return ClipRRect(
+          borderRadius: BorderRadius.circular(4),
+          child: Image.file(
+            File(widget.imageUrl),
+            width: _displaySize.width,
+            height: _displaySize.height,
+            fit: BoxFit.contain,
+            errorBuilder: (context, error, stackTrace) {
+              debugPrint('로컬 파일 로드 실패: $error');
+              return _buildPlaceholderContent();
+            },
+          ),
+        );
+      } catch (e) {
+        debugPrint('로컬 파일 처리 실패: $e');
+        return _buildPlaceholderContent();
+      }
+    }
+
+    // 🎯 네트워크 이미지인지 확인
     if (widget.imageUrl.isNotEmpty &&
+        widget.imageUrl.startsWith('http') &&
         !widget.imageUrl.contains('picsum.photos')) {
       return ClipRRect(
         borderRadius: BorderRadius.circular(4),
@@ -838,14 +864,14 @@ class _DocumentInteractiveFloatingImageState
             );
           },
           errorBuilder: (context, error, stackTrace) {
-            debugPrint('이미지 로드 실패: $error');
+            debugPrint('네트워크 이미지 로드 실패: $error');
             return _buildPlaceholderContent();
           },
         ),
       );
     }
 
-    // 기본 플레이스홀더
+    // 🎯 기본 플레이스홀더
     return _buildPlaceholderContent();
   }
 
@@ -853,22 +879,23 @@ class _DocumentInteractiveFloatingImageState
   Widget _buildPlaceholderContent() {
     return Container(
       color: const Color.fromARGB(255, 232, 232, 232),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          SizedBox(
-            width: 22,
-            height: 22,
-            child: CircularProgressIndicator(
-              strokeWidth: 2,
-              valueColor: AlwaysStoppedAnimation<Color>(
-                const Color.fromARGB(179, 127, 127, 127),
-              ),
-            ),
-          ),
-        ],
-      ),
+      child: SizedBox(width: 22, height: 22),
     );
+  }
+
+  /// 로컬 파일인지 확인
+  bool _isLocalFile() {
+    if (widget.imageUrl.startsWith('file://') ||
+        widget.imageUrl.startsWith('/') ||
+        widget.imageUrl.contains('tmp/') ||
+        widget.imageUrl.contains('flutter-images/')) {
+      return true;
+    }
+    final element = widget.spatialManager?.getElement(widget.nodeId);
+    if (element != null && element.metadata['isLocalFile'] == true) {
+      return true;
+    }
+    return false;
   }
 
   bool _isPlaceholder() {

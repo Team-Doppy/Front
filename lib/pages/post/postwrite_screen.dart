@@ -44,9 +44,6 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
   // 앱바 드롭다운(공개 범위) 상태
   VisibilityOption _visibilityOption = VisibilityOption.public;
 
-  // 대표 이미지(썸네일) 선택 변수 추가
-  String? _selectedThumbnailUrl;
-
   String _visibilityLabel(VisibilityOption option) {
     switch (option) {
       case VisibilityOption.public:
@@ -96,6 +93,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
         _document,
         _analyzeAndUpdateDocument,
         spatialManager: _spatialManager,
+        context: context,
       );
     } else {
       showModalBottomSheet(
@@ -111,6 +109,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                     _document,
                     _analyzeAndUpdateDocument,
                     spatialManager: _spatialManager,
+                    context: context,
                   );
                 } catch (e) {
                   print('❌ 이미지 추가 중 오류: $e');
@@ -377,12 +376,5 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     );
 
     _spatialManager.printDocStructure();
-  }
-
-  // 예시: 사용자가 정렬을 변경하는 함수 (어디선가 호출)
-  void _setTitleAlign(TextAlign align) {
-    setState(() {
-      _titleAlign = align;
-    });
   }
 }

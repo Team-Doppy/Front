@@ -94,10 +94,8 @@ class SpatialManager extends ChangeNotifier {
       if (node is ParagraphNode) {
         final text = node.text.text;
 
-        // 🎯 캐시된 텍스트 높이 계산
         final nodeHeight = _calculatePreciseTextHeight(text);
-        final contentWidth = screenWidth; // 🎯 패딩 제거
-
+        final contentWidth = screenWidth;
         final nodePosition = Offset(0, currentY);
         final nodeSize = Size(contentWidth, nodeHeight);
 
@@ -113,34 +111,21 @@ class SpatialManager extends ChangeNotifier {
           },
         );
 
-        currentY += nodeHeight; // 🎯 패딩 제거
+        currentY += nodeHeight;
         processedNodes++;
       } else if (node is ImageNode) {
-        // 기존 메타데이터가 있으면 보존: scale/size/xOffset
         final prev = _elements[node.id];
         final prevScale = (prev?.metadata['scale'] as double?) ?? 1.0;
         final prevX = (prev?.metadata['xOffset'] as double?) ?? 0.0;
-
-        // 🎯 실제 이미지 크기 사용 (기존 pxW/pxH 우선, 없으면 기본값)
         final prevPxW = (prev?.metadata['pxW'] as num?)?.toDouble();
         final prevPxH = (prev?.metadata['pxH'] as num?)?.toDouble();
-
         final prevGridX = (prev?.metadata['gridX'] as num?)?.toDouble() ?? 0.0;
-
-        // 실제 이미지 크기 계산
         final actualWidth = prevPxW ?? SystemConstants.baseWidth;
         final actualHeight = prevPxH ?? SystemConstants.baseHeight;
-
-        // 스케일에 따른 표시 크기 계산
         final displayWidth = actualWidth * prevScale;
         final displayHeight = actualHeight * prevScale;
-
-        // 문단 흐름을 위한 라인 높이는 디스플레이 높이 기준으로 산정
         final totalImageHeight = displayHeight + SystemConstants.imagePadding;
-
-        // 🎯 xOffset을 position에 반영
         final nodePosition = Offset(prevX, currentY);
-        // 🎯 요소 자체의 사이즈는 실제 표시 크기로 설정 (렌더링 크기 반영)
         final nodeSize = Size(displayWidth, displayHeight);
 
         updateElement(
@@ -170,29 +155,76 @@ class SpatialManager extends ChangeNotifier {
       ..sort((a, b) => a.position.dy.compareTo(b.position.dy));
   }
 
-  double _calculatePreciseTextHeight(String text) {
-    if (text.isEmpty) {
-      return SystemConstants.defaultFontSize *
-          SystemConstants.defaultLineHeight1;
+  /// 🎯 이미지 간 겹침 판단 (중앙점 ± 가로/세로/2 기준)
+  double calculateImageOverlapRatio({
+    required String imageId,
+    required Offset imagePosition,
+    required Size imageSize,
+  }) {
+    final currentElement = _elements[imageId];
+    if (currentElement == null) {
+      return 0.0;
     }
 
-    final textPainter = TextPainter(
-      text: TextSpan(
-        text: text,
-        style: TextStyle(
-          fontSize: SystemConstants.defaultFontSize,
-          height: SystemConstants.defaultLineHeight1,
-        ),
-      ),
-      textDirection: TextDirection.ltr,
-      maxLines: null,
+    // 현재 이미지의 경계 계산 (메타데이터 우선, 없으면 파라미터)
+    final currentCenterX =
+        currentElement.metadata['centerXDoc'] as double? ?? imagePosition.dx;
+    final currentCenterY =
+        currentElement.metadata['centerYDoc'] as double? ?? imagePosition.dy;
+    final currentHalfWidth = imageSize.width / 2;
+    final currentHalfHeight = imageSize.height / 2;
+
+    final currentRect = Rect.fromLTWH(
+      currentCenterX - currentHalfWidth,
+      currentCenterY - currentHalfHeight,
+      imageSize.width,
+      imageSize.height,
     );
 
-    textPainter.layout(maxWidth: double.infinity);
-    return textPainter.height;
+    // 다른 모든 이미지와 겹침 검사
+    double maxOverlapRatio = 0.0;
+
+    for (final element in _elements.values) {
+      if (element.id == imageId || element.type != SpatialElementType.image) {
+        continue; // 자기 자신과 텍스트 노드는 제외
+      }
+
+      // 다른 이미지의 경계 계산 (메타데이터의 xOffset, yOffset 고려)
+      final otherXOffset = element.metadata['xOffset'] as double? ?? 0.0;
+      final otherYOffset = element.metadata['yOffset'] as double? ?? 0.0;
+      final otherCenterX = element.position.dx + otherXOffset;
+      final otherCenterY = element.position.dy + otherYOffset;
+      final otherHalfWidth = element.size.width / 2;
+      final otherHalfHeight = element.size.height / 2;
+
+      final otherRect = Rect.fromLTWH(
+        otherCenterX - otherHalfWidth,
+        otherCenterY - otherHalfHeight,
+        element.size.width,
+        element.size.height,
+      );
+
+      // 겹침 영역 계산
+      final overlapRect = currentRect.intersect(otherRect);
+      if (overlapRect.width > 0 && overlapRect.height > 0) {
+        // 겹침 비율 계산 (겹침 영역 / 현재 이미지 영역)
+        final overlapArea = overlapRect.width * overlapRect.height;
+        final currentArea = imageSize.width * imageSize.height;
+        final overlapRatio = overlapArea / currentArea;
+
+        if (overlapRatio > maxOverlapRatio) {
+          maxOverlapRatio = overlapRatio;
+        }
+      }
+    }
+
+    print(
+      '🎯 calculateImageOverlapRatio: $imageId, $imagePosition, $imageSize, $maxOverlapRatio',
+    );
+
+    return maxOverlapRatio;
   }
 
-  // 최적화된 줄 수 계산
   int calculateHowManyLinesToMove({required String imageId, double? targetY}) {
     if (targetY == null) return 0;
 
@@ -279,10 +311,19 @@ class SpatialManager extends ChangeNotifier {
       print('• $displayType ${element.position}, ${element.size}');
       if (isImage) {
         final scale = element.metadata['scale'] as double? ?? 1.0;
-        final pxW = element.metadata['pxW'] as double? ?? 0.0;
-        final pxH = element.metadata['pxH'] as double? ?? 0.0;
+        final pxW = (element.metadata['pxW'] as num?)?.toInt() ?? 0;
+        final pxH = (element.metadata['pxH'] as num?)?.toInt() ?? 0;
+        final xOffset = element.metadata['xOffset'] as double? ?? 0.0;
+        final yOffset = element.metadata['yOffset'] as double? ?? 0.0;
+        final gridX = (element.metadata['gridX'] as num?)?.toInt() ?? 0;
+        final gridW = (element.metadata['gridW'] as num?)?.toInt() ?? 0;
+        final gridH = (element.metadata['gridH'] as num?)?.toInt() ?? 0;
+
         print(
           '  └── 이미지: ${element.metadata['text']} (scale: ${scale.toStringAsFixed(2)}, px: ${pxW.toInt()}x${pxH.toInt()})',
+        );
+        print(
+          '      └── 좌표: xOffset=${xOffset.toStringAsFixed(1)}, yOffset=${yOffset.toStringAsFixed(1)}, gridX=$gridX, gridW=$gridW, gridH=$gridH',
         );
       } else {
         final text = element.metadata['text'] ?? '';
@@ -294,7 +335,6 @@ class SpatialManager extends ChangeNotifier {
     print('===============================================');
   }
 
-  // 🎯 요소 제거
   void removeElement(String id) {
     _elements.remove(id);
     _documentEditor!.execute([DeleteNodeRequest(nodeId: id)]);
@@ -417,5 +457,27 @@ class SpatialManager extends ChangeNotifier {
     } catch (e) {
       print('❌ 이미지 아래로 이동 실패: $e');
     }
+  }
+
+  double _calculatePreciseTextHeight(String text) {
+    if (text.isEmpty) {
+      return SystemConstants.defaultFontSize *
+          SystemConstants.defaultLineHeight1;
+    }
+
+    final textPainter = TextPainter(
+      text: TextSpan(
+        text: text,
+        style: TextStyle(
+          fontSize: SystemConstants.defaultFontSize,
+          height: SystemConstants.defaultLineHeight1,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+      maxLines: null,
+    );
+
+    textPainter.layout(maxWidth: double.infinity);
+    return textPainter.height;
   }
 }

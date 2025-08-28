@@ -77,8 +77,8 @@ class PostDecoderUtil {
                     double gridX = (pos['gridX'] as num?)?.toDouble() ?? 0.0;
                     double gridW = (size['gridW'] as num?)?.toDouble() ?? 1.0;
                     double gridH = (size['gridH'] as num?)?.toDouble() ?? 1.0;
-                    double pxW = (size['pxW'] as num?)?.toDouble() ?? 400.0;
-                    double pxH = (size['pxH'] as num?)?.toDouble() ?? 300.0;
+                    int pxW = (size['pxW'] as num?)?.toInt() ?? 400;
+                    int pxH = (size['pxH'] as num?)?.toInt() ?? 300;
 
                     final maxLeftCols = (columns - gridW).clamp(0.0, columns);
                     gridX = gridX.clamp(0.0, maxLeftCols);
