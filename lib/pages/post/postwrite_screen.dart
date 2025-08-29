@@ -7,6 +7,7 @@ import 'package:doppy/editor/spatial_manager.dart';
 import 'package:doppy/editor/styling/main_style_sheet.dart';
 import 'package:doppy/editor/styling/text_styling_service.dart';
 import 'package:doppy/editor/styling/text_styling_toolbar.dart';
+import 'package:doppy/editor/util/view_scale.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 
@@ -32,6 +33,8 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
   late Editor _editor; //문서 편집 기능 제공
   late FocusNode _editorFocusNode; //텍스트 입력 커서 관리
   bool showPublishButton = false;
+  bool isDragging = false; // 🎯 드래그 상태 (오타 수정)
+  bool _dragModeActive = false; // 롱프레스 드래그 모드
 
   final TextEditingController _titleController = TextEditingController();
   TextAlign _titleAlign = TextAlign.center;
@@ -43,6 +46,13 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
 
   // 앱바 드롭다운(공개 범위) 상태
   VisibilityOption _visibilityOption = VisibilityOption.public;
+
+  // 이미지 롱프레스 드래그 모드 on/off 콜백
+  void _onDragModeChanged(bool active) {
+    setState(() {
+      _dragModeActive = active;
+    });
+  }
 
   String _visibilityLabel(VisibilityOption option) {
     switch (option) {
@@ -309,7 +319,8 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
         child: ListenableBuilder(
           listenable: _composer,
           builder: (context, child) {
-            return Stack(
+            final editorContent = Stack(
+              clipBehavior: Clip.none,
               children: [
                 // Super Editor
                 Positioned.fill(
@@ -317,33 +328,50 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                     builder: (context, constraints) {
                       final contentWidth = constraints.maxWidth;
                       _gridSystem = GridSystem(screenWidth: contentWidth);
-                      return Container(
+                      final editor = Container(
                         margin: EdgeInsets.zero,
                         padding: EdgeInsets.only(bottom: 30),
-                        child: SuperEditor(
-                          editor: _editor,
-                          focusNode: _editorFocusNode,
-                          stylesheet: buildCustomStylesheet(),
-                          selectionStyle: SelectionStyles(
-                            selectionColor: Colors.grey.withOpacity(0.3),
-                          ),
-                          documentOverlayBuilders: [
-                            SuperEditorIosHandlesDocumentLayerBuilder(),
-                          ],
-                          gestureMode:
-                              kIsWeb
-                                  ? DocumentGestureMode.mouse
-                                  : DocumentGestureMode.iOS,
-                          inputSource: TextInputSource.ime,
-                          componentBuilders: [
-                            InteractiveFloatingImageComponentBuilder(
-                              spatialManager: _spatialManager,
-                              gridSystem: _gridSystem,
-                              onLayoutUpdateNeeded: _analyzeAndUpdateDocument,
+                        child: EditorViewScale(
+                          scale: _dragModeActive ? 0.8 : 1.0,
+                          child: SuperEditor(
+                            editor: _editor,
+                            focusNode: _editorFocusNode,
+                            stylesheet: buildCustomStylesheet(context),
+                            selectionStyle: SelectionStyles(
+                              selectionColor: Colors.grey.withOpacity(0.3),
                             ),
-                            ...defaultComponentBuilders,
-                          ],
+                            documentOverlayBuilders: [
+                              SuperEditorIosHandlesDocumentLayerBuilder(),
+                            ],
+                            gestureMode:
+                                kIsWeb
+                                    ? DocumentGestureMode.mouse
+                                    : DocumentGestureMode.iOS,
+                            inputSource: TextInputSource.ime,
+                            componentBuilders: [
+                              InteractiveFloatingImageComponentBuilder(
+                                spatialManager: _spatialManager,
+                                gridSystem: _gridSystem,
+                                onDragModeChanged: _onDragModeChanged,
+                              ),
+                              ...defaultComponentBuilders,
+                            ],
+                          ),
                         ),
+                      );
+                      // 드래그 모드에서는 화면을 시각적으로만 축소하되,
+                      // 위아래 컨텐츠가 잘리지 않도록 OverflowBox + Transform.scale 조합 사용
+                      // 뷰포트가 무한 높이를 받는 문제를 피하기 위해, 제약은 유지하고 시각적으로만 축소
+                      final scale = _dragModeActive ? 0.8 : 1.0;
+                      final viewHeight = constraints.maxHeight;
+                      final dy = (viewHeight - viewHeight * scale) / 2;
+                      return Transform(
+                        alignment: Alignment.topCenter,
+                        transform:
+                            Matrix4.identity()
+                              ..translate(0.0, dy)
+                              ..scale(scale, scale, 1.0),
+                        child: editor,
                       );
                     },
                   ),
@@ -359,6 +387,10 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                 ),
               ],
             );
+
+            // 편집기 루트를 전체적으로 감싸 시각적 축소만 적용.
+            // 좌우 끝까지 이동 가능하도록 내부 로직은 기존 screenWidth를 그대로 사용.
+            return editorContent;
           },
         ),
       ),

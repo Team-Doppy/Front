@@ -52,7 +52,7 @@ class PostEncoder {
       } else if (node is ImageNode) {
         final element = elementsById[node.id];
         if (element != null) {
-          final position = element.position;
+          final position = element.coordinates.document;
           final size = element.size;
           final metadata = element.metadata;
 

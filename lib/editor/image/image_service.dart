@@ -31,7 +31,7 @@ class ImageService {
   }
 
   // API 기본 설정
-  static String _baseUrl = ApiServiceBase.baseUrl; // 테스트용 로컬 서버
+  static String _baseUrl = ApiServiceBase.baseUrl; // 테스트용  서버
 
   Future<bool> _checkAndRequestPermissions() async {
     if (Platform.isAndroid) {
@@ -94,9 +94,8 @@ class ImageService {
     Editor documentEditor,
     MutableDocument document,
     List<File> imageFiles,
-    VoidCallback analyzeAndUpdateDocument, {
-    dynamic spatialManager, // SpatialManager 참조 (선택적)
-  }) async {
+    VoidCallback analyzeAndUpdateDocument,
+  ) async {
     try {
       if (imageFiles.isEmpty) return;
 
@@ -121,12 +120,7 @@ class ImageService {
           '배치 ${batchIndex + 1}/${batches.length} 처리 시작 (${batch.length}개 이미지)',
         );
 
-        await _uploadAndInsertImages(
-          batch,
-          documentEditor,
-          analyzeAndUpdateDocument,
-          spatialManager: spatialManager,
-        );
+        await _uploadAndInsertImages(batch, documentEditor);
 
         // 배치 간 간격 (서버 부하 방지)
         if (batchIndex < batches.length - 1) {
@@ -134,7 +128,10 @@ class ImageService {
         }
       }
 
-      print('✅ 모든 배치 처리 완료 (총 ${imageFiles.length}개 이미지)');
+      analyzeAndUpdateDocument();
+      print(
+        '✅ 모든 배치 처리 완료 후 SpatialManager 업데이트 수행 (총 ${imageFiles.length}개 이미지)',
+      );
     } catch (e) {
       print('❌ 다중 이미지 삽입 실패: $e');
     }
@@ -145,13 +142,10 @@ class ImageService {
     List<XFile> xFiles,
     Editor documentEditor,
     MutableDocument document,
-    VoidCallback analyzeAndUpdateDocument, {
-    dynamic spatialManager, // SpatialManager 참조 (선택적)
-  }) async {
+    VoidCallback analyzeAndUpdateDocument,
+  ) async {
     try {
       if (xFiles.isEmpty) return;
-
-      print('🌐 웹 이미지 처리 시작: ${xFiles.length}개');
 
       // 10개씩 배치로 나누기
       const int batchSize = 10;
@@ -176,7 +170,6 @@ class ImageService {
           batch,
           documentEditor,
           analyzeAndUpdateDocument,
-          spatialManager: spatialManager,
         );
 
         // 배치 간 간격
@@ -185,7 +178,11 @@ class ImageService {
         }
       }
 
-      print('✅ 모든 웹 배치 처리 완료 (총 ${xFiles.length}개 이미지)');
+      // 🎯 모든 배치 완료 후 한 번만 analyzeAndUpdateDocument 수행
+      analyzeAndUpdateDocument();
+      print(
+        '✅ 모든 웹 배치 처리 완료 후 SpatialManager 업데이트 수행 (총 ${xFiles.length}개 이미지)',
+      );
     } catch (e) {
       print('❌ 웹 다중 이미지 삽입 실패: $e');
     }
@@ -195,13 +192,11 @@ class ImageService {
   Future<void> _insertWebImagesBatch(
     List<XFile> xFiles,
     Editor documentEditor,
-    VoidCallback analyzeAndUpdateDocument, {
-    dynamic spatialManager,
-  }) async {
+    VoidCallback analyzeAndUpdateDocument,
+  ) async {
     final tempNodeIds = <String>[];
 
     try {
-      // 1. 플레이스홀더 노드들을 문서에 삽입
       int insertIndex = documentEditor.document.nodeCount;
 
       for (final xFile in xFiles) {
@@ -238,9 +233,7 @@ class ImageService {
         }
       }
 
-      // 🔑 웹에서도 배치 업로드 후 실제 이미지로 교체
       try {
-        // 배치로 한 번에 업로드
         final uploadResults = await _uploadMultipleWebImages(xFiles);
 
         if (uploadResults.isNotEmpty) {
@@ -281,8 +274,6 @@ class ImageService {
 
               print('🔄 웹 플레이스홀더 → 실제 URL 이미지 교체 완료: ${xFile.name}');
             } catch (e) {
-              print('❌ 웹 이미지 교체 실패: ${xFile.name} - $e');
-              // 교체 실패 시 플레이스홀더 제거
               try {
                 documentEditor.execute([DeleteNodeRequest(nodeId: tempNodeId)]);
                 print('🗑️ 실패한 웹 플레이스홀더 제거: $tempNodeId');
@@ -292,123 +283,15 @@ class ImageService {
             }
           }
 
-          // 모든 이미지 교체 후 SpatialManager에 등록
-          analyzeAndUpdateDocument();
           print('📱 웹 이미지 SpatialManager 등록 완료');
         } else {
           print('❌ 웹 이미지 업로드 성공한 것이 없습니다');
-          // 업로드 실패 시 모든 플레이스홀더 제거
-          _removePlaceholders(
-            tempNodeIds,
-            documentEditor,
-            analyzeAndUpdateDocument,
-          );
         }
       } catch (e) {
         print('❌ 웹 이미지 배치 업로드 실패: $e');
-        print('🔄 개별 업로드로 fallback 시도...');
-
-        // 배치 업로드 실패 시 개별 업로드로 fallback
-        await _fallbackToIndividualUploads(
-          xFiles,
-          tempNodeIds,
-          documentEditor,
-          analyzeAndUpdateDocument,
-        );
       }
     } catch (e) {
       print('❌ 웹 이미지 배치 처리 실패: $e');
-      // 에러 시 플레이스홀더 제거
-      if (tempNodeIds.isNotEmpty) {
-        _removePlaceholders(
-          tempNodeIds,
-          documentEditor,
-          analyzeAndUpdateDocument,
-        );
-      }
-    }
-  }
-
-  // 단일 이미지 업로드
-  Future<Map<String, dynamic>?> _uploadSingleImage(
-    Uint8List bytes,
-    String fileName,
-  ) async {
-    try {
-      final uri = Uri.parse('$_baseUrl/api/images/upload');
-
-      final mediaType = _createMediaType(fileName);
-      final token = await AuthService().getToken();
-
-      final request =
-          http.MultipartRequest('POST', uri)
-            ..fields['uid'] =
-                'user1234' // 실제 사용자 UID로 변경 필요
-            ..files.add(
-              http.MultipartFile.fromBytes(
-                'file',
-                bytes,
-                filename: fileName,
-                contentType: mediaType,
-              ),
-            );
-      if (token != null) {
-        request.headers['Authorization'] = 'Bearer $token';
-      }
-
-      // 요청 전송 전 로깅
-      print('📤 이미지 업로드 요청 전송:');
-      print('   URL: $uri');
-      print('   파일명: $fileName');
-      print('   파일 크기: ${bytes.length} bytes');
-      print('   MIME 타입: $mediaType');
-      print('   사용자 ID: user1234');
-
-      // 타임아웃 설정 (5초)
-      final response = await request.send().timeout(
-        const Duration(seconds: 5),
-        onTimeout: () {
-          throw TimeoutException('서버 응답 시간 초과', const Duration(seconds: 5));
-        },
-      );
-
-      final responseBody = await response.stream.bytesToString();
-
-      // 서버 응답 상세 로깅
-      print('📡 서버 응답 수신:');
-      print('   상태 코드: ${response.statusCode}');
-      print('   응답 헤더: ${response.headers}');
-      print('   응답 본문: $responseBody');
-
-      if (response.statusCode == 200) {
-        try {
-          final result = json.decode(responseBody);
-          print('✅ 서버 응답 파싱 성공:');
-          print('   응답 데이터: $result');
-          return result;
-        } catch (parseError) {
-          print('❌ JSON 파싱 실패: $parseError');
-          print('   원본 응답: $responseBody');
-          throw HttpException('서버 응답 파싱 실패: $parseError');
-        }
-      } else {
-        print('❌ 이미지 업로드 실패: ${response.statusCode} - $responseBody');
-
-        // HTTP 상태 코드별 구체적인 에러 메시지
-        String errorMessage = _getErrorMessageFromStatusCode(
-          response.statusCode,
-        );
-        throw HttpException('$errorMessage (${response.statusCode})');
-      }
-    } on TimeoutException catch (e) {
-      print('❌ 이미지 업로드 타임아웃: $e');
-      rethrow;
-    } on SocketException catch (e) {
-      print('❌ 네트워크 연결 오류: $e');
-      throw HttpException('네트워크 연결을 확인해주세요');
-    } catch (e) {
-      print('❌ 이미지 업로드 중 오류: $e');
-      rethrow;
     }
   }
 
@@ -567,12 +450,6 @@ class ImageService {
 
       final responseBody = await response.stream.bytesToString();
 
-      // 서버 응답 상세 로깅
-      print('📡 웹 다중 이미지 업로드 서버 응답 수신:');
-      print('   상태 코드: ${response.statusCode}');
-      print('   응답 헤더: ${response.headers}');
-      print('   응답 본문: $responseBody');
-
       if (response.statusCode == 200) {
         try {
           final result = json.decode(responseBody);
@@ -608,42 +485,46 @@ class ImageService {
   Future<void> _uploadAndInsertImages(
     List<File> imageFiles,
     Editor documentEditor,
-    VoidCallback analyzeAndUpdateDocument, {
-    dynamic spatialManager, // SpatialManager 참조 (선택적)
-  }) async {
+  ) async {
     final tempNodeIds = <String>[];
 
     try {
-      // 1. 먼저 플레이스홀더 노드들을 문서에 삽입
+      // 1. 먼저 플레이스홀더 노드들을 문서에 삽입 (일관된 방법 사용)
       int insertIndex = documentEditor.document.nodeCount;
 
       for (final imageFile in imageFiles) {
         final tempNodeId = Editor.createNodeId();
         tempNodeIds.add(tempNodeId);
 
-        // 🎯 File 객체를 직접 사용 (data: URL 변환 없이)
         final placeholderNode = ImageNode(
           id: tempNodeId,
-          imageUrl: 'placeholder', // 🎯 임시 URL (실제로는 사용되지 않음)
+          imageUrl: 'placeholder',
           metadata: {
             'isPlaceholder': true,
             'originalFileName': imageFile.path.split('/').last,
             'isLocalFile': true, // 🎯 로컬 파일임을 표시
             'localFilePath': imageFile.path, // 🎯 로컬 파일 경로 저장
+            'skipAutoMovement': true, // 🎯 자동 이동 스킵 플래그
           },
         );
 
-        // 🎯 플레이스홀더는 Undo/Redo 스택에 포함하지 않음
-        documentEditor.document.insertNodeAt(insertIndex++, placeholderNode);
+        // 🎯 플레이스홀더 삽입 (단일 execute로 묶기)
+        documentEditor.execute([
+          InsertNodeAtIndexRequest(
+            nodeIndex: insertIndex++,
+            newNode: placeholderNode,
+          ),
+        ]);
       }
 
       // 2. 백그라운드에서 업로드
       final uploadResults = await _uploadMultipleImages(imageFiles);
 
       if (uploadResults.isNotEmpty) {
-        print('✅ ${uploadResults.length}개 이미지 업로드 성공');
+        // 🎯 모든 문서 변경사항을 하나의 execute로 묶기
+        final allRequests = <EditRequest>[];
 
-        // 3. 성공한 이미지로 플레이스홀더 교체
+        // 실제 이미지로 교체
         for (
           int i = 0;
           i < tempNodeIds.length && i < uploadResults.length;
@@ -663,23 +544,22 @@ class ImageService {
               'isRealImage': true,
               'isImageNode': true,
               'uploadTime': result['uploadTime'],
+              'skipAutoMovement': true,
             },
           );
 
-          // 🎯 실제 이미지로 교체 (Undo/Redo 스택에 포함)
-          documentEditor.execute([
+          allRequests.add(
             ReplaceNodeRequest(existingNodeId: tempNodeId, newNode: imageNode),
-          ]);
+          );
         }
 
-        // 4. 마지막에 빈 패러그래프 노드 추가 및 자동 포커스
-
+        // 빈 패러그래프 노드 추가 및 자동 포커스
         final emptyParagraph = ParagraphNode(
           id: Editor.createNodeId(),
           text: AttributedText(''),
         );
 
-        documentEditor.execute([
+        allRequests.addAll([
           InsertNodeAtIndexRequest(
             nodeIndex: documentEditor.document.nodeCount,
             newNode: emptyParagraph,
@@ -696,44 +576,30 @@ class ImageService {
           ),
         ]);
 
-        analyzeAndUpdateDocument();
+        documentEditor.execute(allRequests);
       } else {
         print('❌ 업로드 성공한 이미지가 없습니다');
         // 실패 시 플레이스홀더 제거 후 SpatialManager 동기화
-        _removePlaceholders(
-          tempNodeIds,
-          documentEditor,
-          analyzeAndUpdateDocument,
-        );
+        _removePlaceholders(tempNodeIds, documentEditor);
       }
     } catch (e) {
       print('❌ 이미지 업로드 및 삽입 실패: $e');
       // 에러 시 플레이스홀더 제거 후 SpatialManager 동기화
       if (tempNodeIds.isNotEmpty) {
-        _removePlaceholders(
-          tempNodeIds,
-          documentEditor,
-          analyzeAndUpdateDocument,
-        );
+        _removePlaceholders(tempNodeIds, documentEditor);
       }
     }
   }
 
   // 플레이스홀더 노드들 제거
-  void _removePlaceholders(
-    List<String> tempNodeIds,
-    Editor documentEditor,
-    VoidCallback analyzeAndUpdateDocument,
-  ) {
+  void _removePlaceholders(List<String> tempNodeIds, Editor documentEditor) {
     for (final tempNodeId in tempNodeIds) {
       try {
         documentEditor.execute([DeleteNodeRequest(nodeId: tempNodeId)]);
-        print('🗑️ 플레이스홀더 제거: $tempNodeId');
       } catch (e) {
         print('❌ 플레이스홀더 제거 실패: $tempNodeId - $e');
       }
     }
-    analyzeAndUpdateDocument();
   }
 
   // HTTP 상태 코드별 에러 메시지
@@ -783,12 +649,6 @@ class ImageService {
       default:
         return 'image/jpeg';
     }
-  }
-
-  // 파일에서 MIME 타입 추출 (File 기반)
-  String _mimeFromFile(File file) {
-    final ext = file.path.split('.').last.toLowerCase();
-    return _getMimeType('dummy.$ext');
   }
 
   // MIME 타입을 MediaType으로 변환
@@ -864,28 +724,10 @@ class ImageService {
           documentEditor,
           document,
           analyzeAndUpdateDocument,
-          spatialManager: spatialManager,
         );
       }
     } catch (e) {
       _handleError(e, context);
-    }
-  }
-
-  // 모바일: 갤러리에서 다중 이미지 선택
-  Future<void> showMobileGallery(
-    Editor documentEditor,
-    MutableDocument document,
-    VoidCallback analyzeAndUpdateDocument, {
-    dynamic spatialManager,
-  }) async {
-    try {
-      // 모바일에서는 갤러리 바텀시트를 통해 이미지 선택
-      // 이 메서드는 갤러리에서 선택된 이미지들을 처리
-      print('📱 모바일 갤러리 이미지 처리 준비 완료');
-    } catch (e) {
-      print('❌ 모바일 갤러리 처리 실패: $e');
-      rethrow;
     }
   }
 
@@ -899,104 +741,15 @@ class ImageService {
     BuildContext? context, // 🎯 권한 에러 다이얼로그 표시용
   }) async {
     try {
-      // 🎯 GalleryBottomSheet에서 이미 권한 체크가 완료된 이미지들이므로 권한 체크 생략
-      print('✅ 이미지 처리 시작: ${imageFiles.length}개');
-
-      // 🎯 File 객체를 직접 처리 (data: URL 변환 없이)
-      await _uploadAndInsertImages(
-        imageFiles,
+      // 🎯 insertMultipleImages를 올바른 매개변수로 호출
+      await insertMultipleImages(
         documentEditor,
+        document,
+        imageFiles,
         analyzeAndUpdateDocument,
-        spatialManager: spatialManager,
       );
     } catch (e) {
       _handleError(e, context);
-    }
-  }
-
-  // 배치 업로드 실패 시 개별 업로드로 fallback
-  Future<void> _fallbackToIndividualUploads(
-    List<XFile> xFiles,
-    List<String> tempNodeIds,
-    Editor documentEditor,
-    VoidCallback analyzeAndUpdateDocument,
-  ) async {
-    print('🔄 개별 업로드 fallback 시작: ${xFiles.length}개 이미지');
-
-    int successCount = 0;
-
-    for (int i = 0; i < xFiles.length; i++) {
-      final xFile = xFiles[i];
-      final tempNodeId = tempNodeIds[i];
-
-      try {
-        final bytes = await xFile.readAsBytes();
-        final fileName = xFile.name;
-        final cleanFileName = _cleanFileName(fileName);
-
-        print('📤 개별 업로드 시도: $fileName');
-        print(
-          '📊 파일 정보: ${bytes.length} bytes, MIME: ${_getMimeType(fileName)}',
-        );
-
-        // 파일이 실제 이미지인지 검증
-        if (!_isValidImageFile(bytes)) {
-          print('❌ 유효하지 않은 이미지 파일: $fileName');
-          documentEditor.execute([DeleteNodeRequest(nodeId: tempNodeId)]);
-          continue;
-        }
-
-        // 개별 업로드 시도
-        final uploadResult = await _uploadSingleImage(bytes, cleanFileName);
-
-        if (uploadResult != null) {
-          // 업로드 성공: 실제 URL로 교체
-          final realImageNode = ImageNode(
-            id: tempNodeId,
-            imageUrl: uploadResult['accessUrl'] ?? '',
-            metadata: {
-              'isPlaceholder': false,
-              'isRealImage': true,
-              'isImageNode': true,
-              'imageId': uploadResult['imageId'],
-              'originalFileName': fileName,
-              'isWebImage': true,
-              'fileSize': bytes.length,
-              'uploadTime': uploadResult['uploadTime'],
-            },
-          );
-
-          documentEditor.execute([
-            ReplaceNodeRequest(
-              existingNodeId: tempNodeId,
-              newNode: realImageNode,
-            ),
-          ]);
-
-          print('✅ 개별 업로드 성공: $fileName');
-          successCount++;
-        } else {
-          // 개별 업로드도 실패: 플레이스홀더 제거
-          documentEditor.execute([DeleteNodeRequest(nodeId: tempNodeId)]);
-          print('❌ 개별 업로드 실패, 플레이스홀더 제거: $fileName');
-        }
-      } catch (e) {
-        print('❌ 개별 업로드 중 오류: ${xFile.name} - $e');
-        // 오류 발생 시 플레이스홀더 제거
-        try {
-          documentEditor.execute([DeleteNodeRequest(nodeId: tempNodeId)]);
-          print('🗑️ 오류로 인한 플레이스홀더 제거: $tempNodeId');
-        } catch (deleteError) {
-          print('❌ 플레이스홀더 제거 실패: $tempNodeId - $deleteError');
-        }
-      }
-    }
-
-    if (successCount > 0) {
-      analyzeAndUpdateDocument();
-      print('📱 개별 업로드 fallback 완료: $successCount개 성공');
-    } else {
-      print('❌ 개별 업로드 fallback도 모두 실패');
     }
   }
 }

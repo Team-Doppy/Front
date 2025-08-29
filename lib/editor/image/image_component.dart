@@ -10,10 +10,11 @@ class DocumentInteractiveFloatingImage extends StatefulWidget {
   final String imageUrl;
   final Size size;
   final SpatialManager? spatialManager;
-  final GridSystem? gridSystem;
+  final GridSystem gridSystem;
   final Offset? initialPosition;
   final double initialScale;
   final VoidCallback? onLayoutUpdateNeeded;
+  final ValueChanged<bool>? onDragModeChanged;
 
   const DocumentInteractiveFloatingImage({
     super.key,
@@ -22,9 +23,10 @@ class DocumentInteractiveFloatingImage extends StatefulWidget {
     required this.size,
     required this.initialScale,
     this.spatialManager,
-    this.gridSystem,
+    required this.gridSystem,
     this.initialPosition,
     this.onLayoutUpdateNeeded,
+    this.onDragModeChanged,
   });
 
   @override
@@ -36,6 +38,7 @@ class _DocumentInteractiveFloatingImageState
     extends State<DocumentInteractiveFloatingImage>
     with DocumentComponent {
   bool _isDragging = false;
+  bool _dragModeActive = false; // 롱프레스 진입 후에만 드래그 허용
   Offset _currentOffset = Offset.zero;
   double _scale = 1.0;
   double? _intrinsicAspect; // 원본 비율 (height / width)
@@ -48,28 +51,30 @@ class _DocumentInteractiveFloatingImageState
   bool _showTopBorder = false;
   bool _showBottomBorder = false;
   bool isOverlapping = false;
-
-  // 초기화 시에만 설정되는 baseY (문서 내 실제 Y 위치)
   double _baseY = 0.0;
 
   Map<String, dynamic> _calculateGridValues() {
-    final screenWidth = MediaQuery.of(context).size.width;
-    final contentWidth = widget.gridSystem?.screenWidth ?? screenWidth;
-    final gridSize =
-        (widget.gridSystem != null)
-            ? widget.gridSystem!.gridSize
-            : (contentWidth / SystemConstants.gridSize);
+    final contentWidth = widget.gridSystem.screenWidth;
+    final gridSize = (contentWidth / SystemConstants.gridSize);
     final columns = SystemConstants.gridSize.toInt();
-
     final displaySize = _displaySize;
-    final halfWidth = displaySize.width / 2;
-    final contentCenterX = contentWidth / 2;
-    final currentCenterX = contentCenterX + _currentOffset.dx;
+    final halfWidth = _displaySize.width / 2;
+
+    // 🎯 이미 경계 체크된 _currentOffset 사용 (연산량 최적화)
+    final currentCenterX = contentWidth / 2 + _currentOffset.dx;
     final currentLeft = currentCenterX - halfWidth;
+
     int gridW = (displaySize.width / gridSize).round().clamp(1, columns);
     int gridH = (displaySize.height / gridSize).round().clamp(1, columns);
+
+    // 🎯 그리드 인덱스 계산 (경계 체크 제거로 연산량 감소)
     int gridX = (currentLeft / gridSize).round();
-    final maxIndex = (columns - gridW).clamp(0, columns);
+
+    // 🎯 maxIndex 계산 개선 - 음수 방지
+    int maxIndex = (columns - gridW).clamp(0, columns);
+    if (maxIndex < 0) maxIndex = 0;
+
+    // 🎯 gridX를 경계 내로 제한
     gridX = gridX.clamp(0, maxIndex);
 
     return {
@@ -80,15 +85,6 @@ class _DocumentInteractiveFloatingImageState
       'gridX': gridX,
       'displaySize': displaySize,
     };
-  }
-
-  @override
-  void initState() {
-    super.initState();
-    _initializeFromSpatialManager();
-
-    // 🔑 MediaQuery 사용을 didChangeDependencies로 이동
-    // _ensureIntrinsicAspect();
   }
 
   @override
@@ -103,6 +99,10 @@ class _DocumentInteractiveFloatingImageState
   @override
   void didUpdateWidget(covariant DocumentInteractiveFloatingImage oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.spatialManager != widget.spatialManager) {
+      oldWidget.spatialManager?.removeListener(_onSpatialChanged);
+      widget.spatialManager?.addListener(_onSpatialChanged);
+    }
     if (oldWidget.imageUrl != widget.imageUrl && widget.imageUrl.isNotEmpty) {
       _ensureIntrinsicAspect();
     }
@@ -121,7 +121,6 @@ class _DocumentInteractiveFloatingImageState
           setState(() {
             _intrinsicAspect = h / w;
           });
-          _autoSizeIfNeeded();
         }
         stream.removeListener(listener);
       },
@@ -132,111 +131,15 @@ class _DocumentInteractiveFloatingImageState
     stream.addListener(listener);
   }
 
-  void _autoSizeIfNeeded() {
-    if (_didAutoSize) return;
-    if (!mounted) return;
-    if (_intrinsicAspect == null) return;
-
-    final element = widget.spatialManager?.getElement(widget.nodeId);
-    final hasSaved =
-        element?.metadata.containsKey('scale') == true ||
-        element?.metadata.containsKey('gridW') == true;
-    if (hasSaved) return;
-
-    double screenWidth;
-    try {
-      screenWidth = MediaQuery.of(context).size.width;
-    } catch (e) {
-      screenWidth = 400.0; // 기본값
-      return; // MediaQuery 사용 불가시 자동 크기 조정 건너뛰기
-    }
-
-    final contentWidth = widget.gridSystem?.screenWidth ?? screenWidth;
-    final gridSize =
-        (widget.gridSystem != null)
-            ? widget.gridSystem!.gridSize
-            : (contentWidth / SystemConstants.gridSize);
-    final columns = SystemConstants.gridSize.toDouble();
-
-    final aspect = _intrinsicAspect!;
-    double desiredCols;
-    if (aspect < 0.8) {
-      desiredCols = columns * 0.8;
-    } else if (aspect > 1.2) {
-      desiredCols = columns * 0.5;
-    } else {
-      desiredCols = columns * 0.6;
-    }
-    desiredCols = desiredCols.clamp(1.0, columns);
-
-    final desiredWidthPx = desiredCols * gridSize;
-    final baseDisplayWidthPx = SystemConstants.displayWidth;
-    final newScale = (desiredWidthPx / baseDisplayWidthPx).clamp(
-      SystemConstants.scaleMin,
-      SystemConstants.scaleMax,
-    );
-
-    setState(() {
-      _scale = newScale;
-      _didAutoSize = true;
-      _currentOffset = const Offset(0, 0);
-    });
-
-    _updateImagePosition(updatedMetadata: {'scale': _scale});
-    widget.onLayoutUpdateNeeded?.call();
-  }
-
-  /// 🎯 SpatialManager에서 초기 상태 복원
-  void _initializeFromSpatialManager() {
-    if (widget.spatialManager == null) {
-      _scale = widget.initialScale;
-      _baseY = widget.initialPosition?.dy ?? 0.0;
-      return;
-    }
-
-    final element = widget.spatialManager!.getElement(widget.nodeId);
-    if (element != null) {
-      // 스케일 복원
-      if (element.metadata.containsKey('scale')) {
-        _scale = element.metadata['scale'] as double;
-      } else {
-        _scale = widget.initialScale;
-      }
-
-      // X 위치 복원
-      if (element.metadata.containsKey('xOffset')) {
-        final savedXOffset = element.metadata['xOffset'] as double;
-        _currentOffset = Offset(savedXOffset, 0);
-      }
-
-      // 초기화 시에만 baseY 설정 (문서 내 실제 Y 위치)
-      _baseY = element.position.dy;
-    } else {
-      _scale = widget.initialScale;
-      _baseY = widget.initialPosition?.dy ?? 0.0;
-    }
-  }
-
   Size get _actualSize => ImageSizeCalculator.getActualSize(_scale);
   Size get _rawDisplaySize => ImageSizeCalculator.getDisplaySize(_scale);
   Size get _displaySize => _snappedDisplaySize;
 
   /// 그리드 배수로 스냅된 표시 크기 (에디터에서는 scale이 즉시 반영되어야 함)
   Size get _snappedDisplaySize {
-    double screenWidth;
-    try {
-      screenWidth = MediaQuery.of(context).size.width;
-    } catch (e) {
-      screenWidth = 400.0; // 기본값
-    }
-
-    final contentWidth = widget.gridSystem?.screenWidth ?? screenWidth;
-    final gridSize =
-        (widget.gridSystem != null)
-            ? widget.gridSystem!.gridSize
-            : (contentWidth / SystemConstants.gridSize);
-
-    final raw = _rawDisplaySize; // <-- scale 반영됨
+    final contentWidth = widget.gridSystem.screenWidth;
+    final gridSize = (contentWidth / SystemConstants.gridSize);
+    final raw = _rawDisplaySize;
     double cols = (raw.width / gridSize).roundToDouble();
     cols = cols.clamp(1.0, SystemConstants.gridSize);
     final snappedW = cols * gridSize;
@@ -386,31 +289,36 @@ class _DocumentInteractiveFloatingImageState
     return SystemMouseCursors.grab;
   }
 
-  /// 🎯 가로 경계 제한 함수 (X축만)
   Offset _applyScreenBounds(Offset targetOffset, Size imageSize) {
-    final screenWidth = MediaQuery.of(context).size.width;
-    final double contentLeft = 0.0;
-    final contentWidth = widget.gridSystem?.screenWidth ?? screenWidth;
-
+    // 🎯 연산량 최적화: 불필요한 계산 제거
+    final contentWidth = widget.gridSystem.screenWidth;
     final halfWidth = imageSize.width / 2;
-    final contentCenterX = contentLeft + contentWidth / 2;
+    final contentCenterX = contentWidth / 2;
+
+    // 🎯 경계 체크를 한 번에 계산
     final imageCenterX = contentCenterX + targetOffset.dx;
     final imageLeft = imageCenterX - halfWidth;
     final imageRight = imageCenterX + halfWidth;
 
-    final rightBound = contentLeft + contentWidth;
-    if (imageLeft < contentLeft) {
-      final correctedCenterX = contentLeft + halfWidth;
-      final correctedDx = correctedCenterX - contentCenterX;
-      return Offset(correctedDx, targetOffset.dy);
-    }
-    if (imageRight > rightBound) {
-      final correctedCenterX = rightBound - halfWidth;
-      final correctedDx = correctedCenterX - contentCenterX;
-      return Offset(correctedDx, targetOffset.dy);
+    // 🎯 경계를 벗어나지 않으면 early return
+    if (imageLeft >= 0 && imageRight <= contentWidth) {
+      return targetOffset;
     }
 
-    return targetOffset;
+    // 🎯 경계를 벗어난 경우에만 수정
+    Offset clampedOffset = targetOffset;
+
+    if (imageLeft < 0) {
+      final correctedDx = halfWidth - contentCenterX;
+      clampedOffset = Offset(correctedDx, targetOffset.dy);
+      print(' 왼쪽 경계 도달: correctedDx=$correctedDx');
+    } else if (imageRight > contentWidth) {
+      final correctedDx = (contentWidth - halfWidth) - contentCenterX;
+      clampedOffset = Offset(correctedDx, targetOffset.dy);
+      print(' 오른쪽 경계 도달: correctedDx=$correctedDx');
+    }
+
+    return clampedOffset;
   }
 
   ImageDragInfo? _getCurrentDragInfo() {
@@ -427,10 +335,15 @@ class _DocumentInteractiveFloatingImageState
     );
   }
 
+  /// 🎯 문서 기준 Y 위치 계산
+  double _calculateDocumentY() {
+    // 🎯 이미지가 문서에서 차지하는 실제 Y 위치
+    // _baseY는 이미지의 상단 위치를 나타냄
+    return _baseY;
+  }
+
   void _updateImagePosition({required Map<String, dynamic> updatedMetadata}) {
     if (widget.spatialManager == null) return;
-
-    final currentPosition = Offset(_currentOffset.dx, _baseY);
 
     final gridValues = _calculateGridValues();
     final displaySize = gridValues['displaySize'] as Size;
@@ -441,17 +354,32 @@ class _DocumentInteractiveFloatingImageState
       'pxH': displaySize.height,
       'gridW': gridValues['gridW'],
       'gridH': gridValues['gridH'],
-      'gridX': gridValues['gridX'], //중요
+      'gridX': gridValues['gridX'],
       'isImageNode': true,
+
       ...updatedMetadata,
     };
-    print('🎯 newMetadata: $newMetadata');
+
+    // 🎯 문서 기준 좌표계 사용 (analyzeAndUpdateDocument와 일치)
+    // 문서에서 이미지가 차지하는 실제 위치 계산
+    final documentX =
+        gridValues['gridX'] * gridValues['gridSize']; // 그리드 X를 픽셀로 변환
+    final documentY = _calculateDocumentY(); // 🎯 문서 기준 Y 위치 계산
+
+    print('🎯 문서 기준 좌표계: X=$documentX, Y=$documentY');
+    print(
+      '  └── gridX: ${gridValues['gridX']}, gridSize: ${gridValues['gridSize']}',
+    );
+    print('  └── _baseY: $_baseY');
 
     widget.spatialManager!.updateElement(
       id: widget.nodeId,
       type: SpatialElementType.image,
-      position: currentPosition,
-      size: _actualSize,
+      coordinates: DocumentCoordinates(
+        document: Offset(documentX, documentY), // 🎯 문서 기준 좌표
+        grid: Offset.zero,
+      ),
+      size: _displaySize,
       metadata: newMetadata,
     );
   }
@@ -461,7 +389,48 @@ class _DocumentInteractiveFloatingImageState
       _isDragging = false;
       _showTopBorder = false;
       _showBottomBorder = false;
+      _dragModeActive = false;
     });
+    // 프리뷰 상태 초기화
+    widget.spatialManager?.clearRowPreview();
+    widget.onDragModeChanged?.call(false);
+  }
+
+  void _beginDragAt(Offset globalPosition) {
+    final screenWidth = MediaQuery.of(context).size.width;
+    _initialTouchOffset = ImagePositionCalculator.getTouchOffset(
+      globalPosition,
+      _currentOffset,
+      screenWidth,
+    );
+  }
+
+  void _updateDragFromGlobal(Offset globalPosition) {
+    // 한 손가락 - 자유로운 2D 드래그 (경계에서만 이동 제한)
+    final currentX = globalPosition.dx;
+    final currentY = globalPosition.dy;
+
+    final screenWidth = widget.gridSystem.screenWidth;
+    final targetImageCenterX = currentX - _initialTouchOffset.dx;
+    final targetImageCenterY = currentY - _initialTouchOffset.dy;
+
+    final dragFactorX = 1.0;
+    final dragFactorY = 1.0;
+
+    final adjustedTargetX =
+        (targetImageCenterX - (screenWidth / 2)) * dragFactorX;
+    final adjustedTargetY = (targetImageCenterY - 70) * dragFactorY;
+
+    final targetOffset = Offset(adjustedTargetX, adjustedTargetY);
+    final clampedOffset = _applyScreenBounds(targetOffset, _displaySize);
+
+    setState(() {
+      _isDragging = true;
+      _isScaling = false;
+      _currentOffset = clampedOffset;
+    });
+
+    _onImageDragging(currentX, currentY);
   }
 
   void _handleScaleStart(ScaleStartDetails details) {
@@ -471,16 +440,14 @@ class _DocumentInteractiveFloatingImageState
         _isDragging = false;
         _isTapped = false;
       } else {
+        // 단일 터치는 롱프레스 모드에서만 드래그 허용
+        if (!_dragModeActive) {
+          return;
+        }
         _isScaling = false;
         _isDragging = true;
         _isTapped = false;
-
-        final screenWidth = MediaQuery.of(context).size.width;
-        _initialTouchOffset = ImagePositionCalculator.getTouchOffset(
-          details.focalPoint,
-          _currentOffset,
-          screenWidth,
-        );
+        _beginDragAt(details.focalPoint);
       }
     });
   }
@@ -504,58 +471,38 @@ class _DocumentInteractiveFloatingImageState
         // 경계를 벗어나지 않는 경우에만 스케일 적용
         if (clampedOffset == _currentOffset) {
           _scale = newScale;
+
+          _updateImagePosition(
+            updatedMetadata: {
+              'scale': _scale,
+              'pxW': _displaySize.width,
+              'pxH': _displaySize.height,
+            },
+          );
         }
 
         _isScaling = true;
         _isDragging = false;
       });
     } else if (details.pointerCount == 1) {
+      if (!_dragModeActive) return; // 롱프레스 모드에서만 단일 터치 드래그 허용
       // 한 손가락 - 자유로운 2D 드래그 (경계에서만 이동 제한)
-      final currentX = details.focalPoint.dx;
-      final currentY = details.focalPoint.dy;
-      _onImageDragging(currentX, currentY);
-
-      setState(() {
-        _isDragging = true;
-        _isScaling = false;
-
-        // 터치 기준점을 유지한 정확한 이동
-        final screenWidth = MediaQuery.of(context).size.width;
-        final targetImageCenterX = currentX - _initialTouchOffset.dx;
-        final targetImageCenterY = currentY - _initialTouchOffset.dy;
-
-        final targetOffset = Offset(
-          targetImageCenterX - (screenWidth / 2),
-          targetImageCenterY - 70,
-        );
-
-        _currentOffset = _applyScreenBounds(targetOffset, _displaySize);
-      });
+      _updateDragFromGlobal(details.focalPoint);
     }
   }
 
   void _handleScaleEnd(ScaleEndDetails details) {
+    _updateImagePosition(updatedMetadata: {});
     if (_isScaling) {
-      setState(() {
-        _isScaling = false;
-      });
-
-      if (widget.spatialManager != null) {
-        final display = _displaySize;
-        _updateImagePosition(
-          updatedMetadata: {
-            'scale': _scale,
-            'xOffset': _currentOffset.dx,
-            'yOffset': _currentOffset.dy,
-            'pxW': display.width,
-            'pxH': display.height,
-          },
-        );
-      }
-
-      FocusManager.instance.primaryFocus?.requestFocus();
+      _isScaling = false;
+      //FocusManager.instance.primaryFocus?.requestFocus();
     } else if (_isDragging) {
       _handleDragEnd();
+    }
+    // 드래그가 끝나면 모드 해제
+    if (_dragModeActive) {
+      _dragModeActive = false;
+      widget.onDragModeChanged?.call(false);
     }
   }
 
@@ -569,8 +516,7 @@ class _DocumentInteractiveFloatingImageState
 
     final displaySize = gridValues['displaySize'] as Size;
     final halfWidth = displaySize.width / 2;
-    final screenWidth = MediaQuery.of(context).size.width;
-    final contentWidth = widget.gridSystem?.screenWidth ?? screenWidth;
+    final contentWidth = widget.gridSystem.screenWidth;
     final contentCenterX = contentWidth / 2;
     final currentCenterX = contentCenterX + deltaX;
     final currentLeft = currentCenterX - halfWidth;
@@ -593,39 +539,71 @@ class _DocumentInteractiveFloatingImageState
     } else {
       _handleHorizontalMovement(clampedGridOffset.dx);
     }
-    _updateImagePosition(
-      updatedMetadata: {
-        'xOffset': _currentOffset.dx,
-        'yOffset': _currentOffset.dy,
-      },
-    );
+
+    setState(() {
+      _currentOffset = Offset(clampedGridOffset.dx, 0);
+    });
   }
 
   void _handleVerticalMovement(double deltaX) {
     _moveImageInDocument(deltaX.abs());
-    setState(() {
-      _currentOffset = Offset(deltaX, 0);
-    });
+    _baseY = _baseY + _currentOffset.dy;
+    _currentOffset = Offset(deltaX, 0); //중요
     _resetDragState();
-    _showKeyboard();
+    //_showKeyboard();
   }
 
   void _handleHorizontalMovement(double clampedGridX) {
-    setState(() {
-      _currentOffset = Offset(clampedGridX, 0);
-    });
+    _currentOffset = Offset(clampedGridX, 0); //중요
     _resetDragState();
   }
 
   void _onImageDragging(double deltaY, double deltaX) {
     if (_currentOffset.dy.abs() > 5.0) {
       final imageDragInfo = _getCurrentDragInfo();
+
       if (imageDragInfo != null) {
+        // 🎯 겹침 감지 (문서 좌표계 기준)
+        if (widget.spatialManager != null) {
+          // 연속 문서좌표 중심 계산
+          final contentWidth = widget.gridSystem.screenWidth;
+          final contentCenterX = contentWidth / 2;
+          final halfW = _displaySize.width / 2;
+          final leftDoc = (contentCenterX + _currentOffset.dx) - halfW;
+          final topDoc = _baseY + _currentOffset.dy;
+          final Offset centerDoc = Offset(
+            leftDoc + halfW,
+            topDoc + _displaySize.height / 2,
+          );
+
+          // 드래그 데드존: 10px 이내는 겹침 계산하지 않음
+          if (_currentOffset.distance > 10.0) {
+            widget.spatialManager!.updateRowPreviewFromDrag(
+              draggingId: widget.nodeId,
+              draggingCenterDocument: centerDoc,
+              draggingSize: _displaySize,
+              verticalDelta: _currentOffset.dy,
+            );
+
+            final overlaps = widget.spatialManager!.detectOverlapsPrecise(
+              draggingId: widget.nodeId,
+              draggingCenterDocument: centerDoc,
+              draggingSize: _displaySize,
+              verticalDelta: _currentOffset.dy,
+            );
+            final bool anyStrongOverlap = overlaps.isNotEmpty;
+            if (anyStrongOverlap != isOverlapping) {
+              setState(() {
+                isOverlapping = anyStrongOverlap;
+              });
+            }
+          }
+        }
+
         isOverlapping = _shouldHorizontalPlace(deltaY, deltaX);
         if (isOverlapping) {
           return;
         }
-        print('🎯 _onImageDragging: $deltaY, $deltaX, ${_actualSize}');
         _calculateVerticalLineMovement(imageDragInfo);
       }
     }
@@ -633,12 +611,6 @@ class _DocumentInteractiveFloatingImageState
 
   bool _shouldHorizontalPlace(double deltaY, double deltaX) {
     if (widget.spatialManager == null) return false;
-
-    final overlapRatio = widget.spatialManager!.calculateImageOverlapRatio(
-      imageId: widget.nodeId,
-      imagePosition: Offset(deltaX, deltaY),
-      imageSize: _actualSize,
-    );
     return false;
   }
 
@@ -655,15 +627,18 @@ class _DocumentInteractiveFloatingImageState
       dragOffset: dragOffset,
     );
 
-    final linesToMove = widget.spatialManager!.calculateHowManyLinesToMove(
+    int linesToMove = widget.spatialManager!.calculateHowManyLinesToMove(
       imageId: widget.nodeId,
       targetY: targetY,
     );
 
+    double triggerThreshold =
+        SystemConstants.defaultFontSize * SystemConstants.defaultLineHeight1;
+
     final isDraggingUp = dragOffset < 0;
     final isDraggingDown = dragOffset > 0;
 
-    if (linesToMove != 0) {
+    if (linesToMove != 0 && dragOffset.abs() > triggerThreshold) {
       _updateInsertionBorder(linesToMove.abs(), isDraggingUp, isDraggingDown);
     } else {
       _updateInsertionBorder(0, false, false);
@@ -716,6 +691,23 @@ class _DocumentInteractiveFloatingImageState
     );
   }
 
+  @override
+  void initState() {
+    super.initState();
+    widget.spatialManager?.addListener(_onSpatialChanged);
+  }
+
+  void _onSpatialChanged() {
+    if (!mounted) return;
+    setState(() {});
+  }
+
+  @override
+  void dispose() {
+    widget.spatialManager?.removeListener(_onSpatialChanged);
+    super.dispose();
+  }
+
   void _handleTap() {
     print('🎯 이미지 탭 이벤트 발생');
     setState(() {
@@ -752,6 +744,27 @@ class _DocumentInteractiveFloatingImageState
             top: _currentOffset.dy - 6,
             child: GestureDetector(
               onTap: _handleTap,
+              onLongPressStart: (details) {
+                if (_isPlaceholder()) return;
+                setState(() {
+                  _dragModeActive = true;
+                  _isDragging = false;
+                  _isScaling = false;
+                });
+                widget.onDragModeChanged?.call(true);
+                _beginDragAt(details.globalPosition);
+              },
+              onLongPressMoveUpdate: (details) {
+                if (!_dragModeActive) return;
+                _updateDragFromGlobal(details.globalPosition);
+              },
+              onLongPressEnd: (_) {
+                if (!_dragModeActive) return;
+                _handleDragEnd();
+                _updateImagePosition(updatedMetadata: {});
+                _dragModeActive = false;
+                widget.onDragModeChanged?.call(false);
+              },
               onScaleStart: _isPlaceholder() ? null : _handleScaleStart,
               onScaleUpdate: _isPlaceholder() ? null : _handleScaleUpdate,
               onScaleEnd: _isPlaceholder() ? null : _handleScaleEnd,
@@ -773,17 +786,19 @@ class _DocumentInteractiveFloatingImageState
   }
 
   double _computeImageLeftForBuild() {
-    final screenWidth = MediaQuery.of(context).size.width;
     final double contentLeft = 0.0;
-    final contentWidth = widget.gridSystem?.screenWidth ?? screenWidth;
+    final contentWidth = widget.gridSystem.screenWidth;
     final contentCenterX = contentLeft + contentWidth / 2;
     final halfWidth = _displaySize.width / 2;
     final imageCenterX = contentCenterX + _currentOffset.dx;
     return imageCenterX - halfWidth;
   }
 
-  /// 🎯 보더 데코레이션
   BoxDecoration _buildBorderDecoration() {
+    final bool isPreviewTarget =
+        widget.spatialManager?.rowPreviewTargetId == widget.nodeId;
+    final OverlapSide? previewSide = widget.spatialManager?.rowPreviewSide;
+
     return BoxDecoration(
       border: Border(
         top:
@@ -796,38 +811,52 @@ class _DocumentInteractiveFloatingImageState
                 : BorderSide.none,
         left: BorderSide(
           color:
-              _isTapped
-                  ? const Color.fromARGB(255, 92, 127, 255)
-                  : Colors.transparent,
-          width: _isTapped ? 3.0 : 0.5,
+              isPreviewTarget && previewSide == OverlapSide.left
+                  ? Colors.orange
+                  : (_isTapped
+                      ? const Color.fromARGB(255, 92, 127, 255)
+                      : Colors.transparent),
+          width:
+              isPreviewTarget && previewSide == OverlapSide.left
+                  ? 3.0
+                  : (_isTapped ? 3.0 : 0.5),
         ),
         right: BorderSide(
           color:
-              _isTapped
-                  ? const Color.fromARGB(255, 92, 127, 255)
-                  : Colors.transparent,
-          width: _isTapped ? 3.0 : 0.5,
+              isPreviewTarget && previewSide == OverlapSide.right
+                  ? Colors.orange
+                  : (_isTapped
+                      ? const Color.fromARGB(255, 92, 127, 255)
+                      : Colors.transparent),
+          width:
+              isPreviewTarget && previewSide == OverlapSide.right
+                  ? 3.0
+                  : (_isTapped ? 3.0 : 0.5),
         ),
       ),
     );
   }
 
-  ///
   Widget _buildImageContent() {
-    // 🎯 로컬 파일인지 확인
     if (_isLocalFile()) {
       try {
-        return ClipRRect(
-          borderRadius: BorderRadius.circular(4),
-          child: Image.file(
-            File(widget.imageUrl),
-            width: _displaySize.width,
-            height: _displaySize.height,
-            fit: BoxFit.contain,
-            errorBuilder: (context, error, stackTrace) {
-              debugPrint('로컬 파일 로드 실패: $error');
-              return _buildPlaceholderContent();
-            },
+        return Container(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(4),
+            border: Border.all(color: Colors.grey.shade400, width: 0.5),
+          ),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(4),
+            child: Image.file(
+              File(widget.imageUrl),
+              width: _displaySize.width,
+              height: _displaySize.height,
+              fit: BoxFit.contain,
+              errorBuilder: (context, error, stackTrace) {
+                debugPrint('로컬 파일 로드 실패: $error');
+                return _buildPlaceholderContent();
+              },
+            ),
           ),
         );
       } catch (e) {
@@ -836,46 +865,49 @@ class _DocumentInteractiveFloatingImageState
       }
     }
 
-    // 🎯 네트워크 이미지인지 확인
     if (widget.imageUrl.isNotEmpty &&
         widget.imageUrl.startsWith('http') &&
         !widget.imageUrl.contains('picsum.photos')) {
-      return ClipRRect(
-        borderRadius: BorderRadius.circular(4),
-        child: Image.network(
-          widget.imageUrl,
-          width: _displaySize.width,
-          height: _displaySize.height,
-          fit: BoxFit.contain,
-          loadingBuilder: (context, child, loadingProgress) {
-            if (loadingProgress == null) return child;
-            return Container(
-              color: Colors.grey[300],
-              child: Center(
-                child: CircularProgressIndicator(
-                  value:
-                      loadingProgress.expectedTotalBytes != null
-                          ? loadingProgress.cumulativeBytesLoaded /
-                              loadingProgress.expectedTotalBytes!
-                          : null,
-                  strokeWidth: 2,
+      return Container(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(4),
+          border: Border.all(color: Colors.grey.shade400, width: 0.5),
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(4),
+          child: Image.network(
+            widget.imageUrl,
+            width: _displaySize.width,
+            height: _displaySize.height,
+            fit: BoxFit.contain,
+            loadingBuilder: (context, child, loadingProgress) {
+              if (loadingProgress == null) return child;
+              return Container(
+                color: Colors.grey[300],
+                child: Center(
+                  child: CircularProgressIndicator(
+                    value:
+                        loadingProgress.expectedTotalBytes != null
+                            ? loadingProgress.cumulativeBytesLoaded /
+                                loadingProgress.expectedTotalBytes!
+                            : null,
+                    strokeWidth: 2,
+                  ),
                 ),
-              ),
-            );
-          },
-          errorBuilder: (context, error, stackTrace) {
-            debugPrint('네트워크 이미지 로드 실패: $error');
-            return _buildPlaceholderContent();
-          },
+              );
+            },
+            errorBuilder: (context, error, stackTrace) {
+              debugPrint('네트워크 이미지 로드 실패: $error');
+              return _buildPlaceholderContent();
+            },
+          ),
         ),
       );
     }
 
-    // 🎯 기본 플레이스홀더
     return _buildPlaceholderContent();
   }
 
-  /// 플레이스홀더 이미지 내용
   Widget _buildPlaceholderContent() {
     return Container(
       color: const Color.fromARGB(255, 232, 232, 232),
@@ -899,12 +931,9 @@ class _DocumentInteractiveFloatingImageState
   }
 
   bool _isPlaceholder() {
-    // 🔑 metadata의 isPlaceholder 값을 우선적으로 확인
     final element = widget.spatialManager?.getElement(widget.nodeId);
 
-    // 🔑 SpatialManager에 등록된 이미지는 실제 이미지
     if (element != null) {
-      // isPlaceholder가 명시적으로 true인 경우만 플레이스홀더
       if (element.metadata.containsKey('isPlaceholder')) {
         return element.metadata['isPlaceholder'] == true;
       }
@@ -920,11 +949,9 @@ class _DocumentInteractiveFloatingImageState
         return false;
       }
 
-      // 🔑 SpatialManager에 등록된 이미지는 기본적으로 실제 이미지로 간주
       return false;
     }
 
-    // 🔑 SpatialManager에 등록되지 않은 이미지는 플레이스홀더로 간주
     return true;
   }
 }

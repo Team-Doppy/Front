@@ -7,13 +7,15 @@ import '../spatial_manager.dart';
 /// ImageNode를 InteractiveFloatingImage로 렌더링하는 ComponentBuilder
 class InteractiveFloatingImageComponentBuilder implements ComponentBuilder {
   final SpatialManager? spatialManager;
-  final GridSystem? gridSystem;
+  final GridSystem gridSystem;
   final VoidCallback? onLayoutUpdateNeeded;
+  final ValueChanged<bool>? onDragModeChanged;
 
   InteractiveFloatingImageComponentBuilder({
     this.spatialManager,
-    this.gridSystem,
+    required this.gridSystem,
     this.onLayoutUpdateNeeded,
+    this.onDragModeChanged,
   });
 
   @override
@@ -36,6 +38,7 @@ class InteractiveFloatingImageComponentBuilder implements ComponentBuilder {
         spatialManager: spatialManager,
         gridSystem: gridSystem,
         onLayoutUpdateNeeded: onLayoutUpdateNeeded,
+        onDragModeChanged: onDragModeChanged,
       );
     }
     return null;
@@ -75,7 +78,7 @@ class _DynamicImageSizer extends StatefulWidget {
   final String imageUrl;
   final String nodeId;
   final SpatialManager? spatialManager;
-  final GridSystem? gridSystem;
+  final GridSystem gridSystem;
   final Size fallbackSize;
   final Widget Function(Size size) builder;
   final VoidCallback? onResolved;
@@ -85,8 +88,8 @@ class _DynamicImageSizer extends StatefulWidget {
     required this.nodeId,
     required this.fallbackSize,
     required this.builder,
-    this.spatialManager,
-    this.gridSystem,
+    required this.spatialManager,
+    required this.gridSystem,
     this.onResolved,
   });
 
@@ -145,7 +148,7 @@ class _DynamicImageSizerState extends State<_DynamicImageSizer> {
               widget.spatialManager!.updateElement(
                 id: widget.nodeId,
                 type: SpatialElementType.image,
-                position: element.position,
+                coordinates: element.coordinates,
                 size: element.size,
                 metadata: newMetadata,
               );

@@ -19,7 +19,7 @@ class SystemConstants {
   static const double moveThreshold = 20.0;
 
   // 🎯 스케일 범위
-  static const double scaleMin = 0.3;
+  static const double scaleMin = 0.6;
   static const double scaleMax = 3.0;
 
   // 🎯 텍스트 스타일 (시스템 전체 통일)
@@ -28,6 +28,9 @@ class SystemConstants {
   // 🎯 이미지 간격 (대칭적 여백을 위해 충분한 값 설정)
   static const double imagePadding = 8.0;
   static const double defaultLineHeight1 = 1.5;
+
+  // 🎯 상단 여백 (그리드 Y 좌표 계산용)
+  static const double topMargin = 70.0;
 }
 
 class ImageSizeCalculator {
@@ -35,14 +38,18 @@ class ImageSizeCalculator {
     // 실제 사용 경로에서 원본 비율 기반 displaySize를 사용하므로,
     // 이 함수는 더 이상 핵심 경로가 아님. 하위 호환 유지.
     return Size(
-        SystemConstants.baseWidth * scale, SystemConstants.baseHeight * scale);
+      SystemConstants.baseWidth * scale,
+      SystemConstants.baseHeight * scale,
+    );
   }
 
   static Size getDisplaySize(double scale) {
     // 실제 표시 크기는 원본 비율 기반으로 DocumentInteractiveFloatingImage에서 계산함.
     // 여기서는 기존 경로 하위 호환만 유지.
-    return Size(SystemConstants.displayWidth * scale,
-        SystemConstants.displayHeight * scale);
+    return Size(
+      SystemConstants.displayWidth * scale,
+      SystemConstants.displayHeight * scale,
+    );
   }
 
   static double getContainerHeight(double scale) {
@@ -63,7 +70,10 @@ class ImageSizeCalculator {
 
 class ImagePositionCalculator {
   static Offset getImageCenterOffset(
-      Offset currentOffset, double screenWidth, double actualWidth) {
+    Offset currentOffset,
+    double screenWidth,
+    double actualWidth,
+  ) {
     return Offset(
       currentOffset.dx + (screenWidth / 2) - (actualWidth / 2),
       currentOffset.dy,
@@ -71,9 +81,15 @@ class ImagePositionCalculator {
   }
 
   static Rect getImageRect(
-      Offset currentOffset, double screenWidth, Size actualSize) {
-    final centerOffset =
-        getImageCenterOffset(currentOffset, screenWidth, actualSize.width);
+    Offset currentOffset,
+    double screenWidth,
+    Size actualSize,
+  ) {
+    final centerOffset = getImageCenterOffset(
+      currentOffset,
+      screenWidth,
+      actualSize.width,
+    );
     return Rect.fromLTWH(
       centerOffset.dx,
       centerOffset.dy,
@@ -83,7 +99,10 @@ class ImagePositionCalculator {
   }
 
   static Offset getTouchOffset(
-      Offset focalPoint, Offset currentOffset, double screenWidth) {
+    Offset focalPoint,
+    Offset currentOffset,
+    double screenWidth,
+  ) {
     final currentImageCenterX = (screenWidth / 2) + currentOffset.dx;
     final currentImageCenterY = 70 + currentOffset.dy;
 

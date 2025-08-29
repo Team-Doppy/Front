@@ -1,9 +1,13 @@
 import 'package:doppy/editor/image/image_util.dart';
 import 'package:flutter/material.dart';
 import 'package:super_editor/super_editor.dart';
+import '../util/view_scale.dart';
 
 /// 커스텀 스타일시트
-Stylesheet buildCustomStylesheet() {
+Stylesheet buildCustomStylesheet([BuildContext? context]) {
+  final scale = context != null ? EditorViewScale.of(context) : 1.0;
+  final baseFontSize = 16.0 * scale;
+  final baseLineHeight = SystemConstants.defaultLineHeight1; // 비율은 유지, 폰트에만 스케일
   return defaultStylesheet.copyWith(
     documentPadding: const EdgeInsets.only(
       left: 0,
@@ -14,11 +18,7 @@ Stylesheet buildCustomStylesheet() {
     addRulesAfter: [
       StyleRule(BlockSelector.all, (doc, docNode) {
         final baseStyle = {
-          Styles.textStyle: const TextStyle(
-            fontSize: 16,
-            height: SystemConstants.defaultLineHeight1,
-            color: Colors.black,
-          ),
+          Styles.textStyle: const TextStyle(color: Colors.black),
           Styles.padding: const CascadingPadding.all(0),
         };
 
@@ -43,6 +43,8 @@ Stylesheet buildCustomStylesheet() {
         }
 
         baseStyle[Styles.textAlign] = textAlign;
+        baseStyle[Styles.textStyle] = (baseStyle[Styles.textStyle] as TextStyle)
+            .copyWith(fontSize: baseFontSize, height: baseLineHeight);
 
         return baseStyle;
       }),
@@ -51,7 +53,9 @@ Stylesheet buildCustomStylesheet() {
         if (docNode is ImageNode) {
           return {
             Styles.padding: const CascadingPadding.only(
-                top: SystemConstants.imagePadding, bottom: 0),
+              top: SystemConstants.imagePadding,
+              bottom: 0,
+            ),
           };
         }
         return {};
@@ -84,6 +88,7 @@ Stylesheet buildCustomStylesheet() {
         fontWeight: isBold ? FontWeight.bold : FontWeight.normal,
         fontStyle: isItalic ? FontStyle.italic : FontStyle.normal,
         decoration: _buildTextDecoration(hasUnderline, hasStrikethrough),
+        fontSize: (style.fontSize ?? 16) * scale,
       );
 
       return style;
@@ -92,10 +97,7 @@ Stylesheet buildCustomStylesheet() {
 }
 
 /// 텍스트 장식 빌드 (밑줄, 취소선)
-TextDecoration _buildTextDecoration(
-  bool hasUnderline,
-  bool hasStrikethrough,
-) {
+TextDecoration _buildTextDecoration(bool hasUnderline, bool hasStrikethrough) {
   if (hasUnderline && hasStrikethrough) {
     return TextDecoration.combine([
       TextDecoration.underline,
