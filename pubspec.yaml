@@ -35,11 +35,7 @@ dependencies:
   dio: ^5.4.0
   cupertino_icons: ^1.0.8
 
-  super_editor:
-    git:
-      url: https://github.com/superlistapp/super_editor
-      path: super_editor
-      ref: stable
+  super_editor: ^0.3.0-dev.33
   http: ^1.5.0
   image_picker_for_web: ^3.0.0
   http_parser: ^4.0.2

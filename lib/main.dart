@@ -1,7 +1,7 @@
 import 'package:doppy/pages/post/home_screen.dart';
 import 'package:doppy/pages/post/manage_group_screen.dart';
 import 'package:doppy/pages/post/manage_neighbor_screen.dart';
-import 'package:doppy/pages/post/postwrite_screen.dart';
+import 'package:doppy/editor/postwrite_screen.dart';
 import 'package:doppy/pages/post/search_screen.dart';
 import 'package:doppy/pages/post/user_profile_screen.dart';
 import 'package:doppy/pages/user/login_screen.dart';

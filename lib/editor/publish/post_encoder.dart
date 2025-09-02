@@ -3,10 +3,7 @@ import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:super_editor/super_editor.dart';
-import '../image/image_util.dart';
-
-// unused: simple_grid
-import '../spatial_manager.dart';
+/*
 
 class PostEncoder {
   // ===== Encoding =====
@@ -362,3 +359,4 @@ class _RangeAnn {
 
   _RangeAnn(this.start, this.end, this.ann);
 }
+*/

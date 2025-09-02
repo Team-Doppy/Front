@@ -37,10 +37,10 @@ packages:
     dependency: transitive
     description:
       name: attributed_text
-      sha256: "9d8bdc6e54387f31e52d2dcc3d93d656072582a44bcaa855c9ea8b3b2fa7abd3"
+      sha256: "177ea01f58a8d8df279f4066834375a2009bdd304d559c084bb06f784b258477"
       url: "https://pub.dev"
     source: hosted
-    version: "0.4.4"
+    version: "0.4.5"
   boolean_selector:
     dependency: transitive
     description:
@@ -816,12 +816,11 @@ packages:
   super_editor:
     dependency: "direct main"
     description:
-      path: super_editor
-      ref: stable
-      resolved-ref: c112a3c50ba87f4321696051cc2d6d19fbc4f5a0
-      url: "https://github.com/superlistapp/super_editor"
-    source: git
-    version: "0.3.0-dev.10"
+      name: super_editor
+      sha256: "2b64aa38ac7d88dd0eac44853a723db65c904535448d700f38b275d125572c82"
+      url: "https://pub.dev"
+    source: hosted
+    version: "0.3.0-dev.33"
   super_keyboard:
     dependency: transitive
     description:

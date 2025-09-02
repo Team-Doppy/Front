@@ -1,8 +1,8 @@
 import 'dart:convert';
+import 'package:doppy/pages/components/custom_bottom_navigation_bar.dart';
 import 'package:http/http.dart' as http;
 import 'package:doppy/data/services/auth_service.dart';
 import 'package:doppy/data/services/api_service_base.dart';
-import 'package:doppy/editor/bottom_navigation.dart';
 import 'package:doppy/theme/app_colors.dart';
 import 'package:doppy/theme/app_text_styles.dart';
 import 'package:flutter/material.dart';
@@ -88,8 +88,8 @@ class PostviewScreen extends StatelessWidget {
             ),
           ),
           bottomNavigationBar: CustomBottomNavigationBar(
-            currentIndex: 3,
-            onTap: (_) {},
+            currentIndex: 2,
+            onTap: (_) {}, // 2번(작성)만 콜백으로 처리됨. 필요시 모달/네비게이션 연결
           ),
         );
       },
