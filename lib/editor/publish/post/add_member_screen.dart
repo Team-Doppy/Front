@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
-import '../../data/services/friend_service.dart';
-import '../../data/services/group_service.dart';
-import '../../data/models/friend_model.dart';
-import '../../data/models/group_model.dart';
+import '../../../data/services/friend_service.dart';
+import '../../../data/services/group_service.dart';
+import '../../../data/models/friend_model.dart';
+import '../../../data/models/group_model.dart';
 
 // 멤버 추가 화면
 class AddMemberScreen extends StatefulWidget {

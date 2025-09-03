@@ -2,9 +2,9 @@ import 'package:doppy/pages/components/custom_bottom_navigation_bar.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:provider/provider.dart';
-import '../../providers/friend_provider.dart';
-import '../../data/models/friend_model.dart'; // ✅ 실제 Friend 모델을 사용합니다.
-import '../../theme/theme.dart'; // (테마가 있다면 경로 확인)
+import '../../../providers/friend_provider.dart';
+import '../../../data/models/friend_model.dart'; // ✅ 실제 Friend 모델을 사용합니다.
+import '../../../theme/theme.dart'; // (테마가 있다면 경로 확인)
 
 // 이웃 관리 화면 메인 위젯
 class ManageNeighborScreen extends StatefulWidget {

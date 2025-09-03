@@ -5,13 +5,13 @@ import 'package:doppy/pages/user/setting_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:provider/provider.dart';
-import '../../providers/friend_provider.dart';
-import '../../providers/user_provider.dart';
-import '../../theme/app_colors.dart';
-import '../../theme/app_text_styles.dart';
+import '../../../providers/friend_provider.dart';
+import '../../../providers/user_provider.dart';
+import '../../../theme/app_colors.dart';
+import '../../../theme/app_text_styles.dart';
 import 'manage_group_screen.dart';
 import 'manage_neighbor_screen.dart';
-import '../../data/models/user_model.dart';
+import '../../../data/models/user_model.dart';
 
 class UserProfileScreen extends StatefulWidget {
   final String? username; // 다른 사용자 프로필을 볼 때 username 전달

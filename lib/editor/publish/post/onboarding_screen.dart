@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import '../../theme/app_colors.dart';
-import '../../theme/app_text_styles.dart';
+import '../../../theme/app_colors.dart';
+import '../../../theme/app_text_styles.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
-import '../user/login_screen.dart';
+import '../../../pages/user/login_screen.dart';
 
 class OnboardingScreen extends StatefulWidget {
   const OnboardingScreen({super.key});
@@ -17,9 +17,9 @@ class OnboardingScreen extends StatefulWidget {
 
     if (context.mounted) {
       // 3. LoginScreen으로 이동합니다. (뒤로가기 방지)
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute(builder: (_) => const LoginScreen()),
-      );
+      Navigator.of(
+        context,
+      ).pushReplacement(MaterialPageRoute(builder: (_) => const LoginScreen()));
     }
   }
 
@@ -175,16 +175,16 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: List.generate(
                       _numPages,
-                          (index) => AnimatedContainer(
+                      (index) => AnimatedContainer(
                         duration: const Duration(milliseconds: 300),
                         margin: const EdgeInsets.symmetric(horizontal: 6),
                         width: _currentPage == index ? 32 : 8,
                         height: 8,
                         decoration: BoxDecoration(
                           color:
-                          _currentPage == index
-                              ? AppColors.primary
-                              : Colors.black.withOpacity(0.2),
+                              _currentPage == index
+                                  ? AppColors.primary
+                                  : Colors.black.withOpacity(0.2),
                           borderRadius: BorderRadius.circular(4),
                         ),
                       ),
@@ -245,7 +245,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
       animation: _typingAnimation,
       builder: (context, child) {
         final int currentCharacters =
-        (_typingAnimation.value * fullText.length).round();
+            (_typingAnimation.value * fullText.length).round();
         final String displayText = fullText.substring(
           0,
           currentCharacters.clamp(0, fullText.length),

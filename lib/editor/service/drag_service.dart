@@ -14,10 +14,7 @@ class DragService extends ChangeNotifier {
   NodeType? targetNodeType;
   DragMode dragMode = DragMode.none;
 
-  /// 화면 상의 드래그 포인터 위치 (Stack 레이어 렌더링용)
   Offset? dragPosition;
-
-  /// 뷰모델 파이프라인에서 사용할 드롭 인덱스
   int? dropIndex;
 
   DragService({required this.editorService});
@@ -26,8 +23,18 @@ class DragService extends ChangeNotifier {
     draggingNodeId = nodeId;
     draggingNodeType = editorService.getNodeType(nodeId);
     dragPosition = globalPosition;
-    _computeDropIndex(globalPosition);
+
+    // 다음 프레임에서 계산하도록 예약
+    dropIndex = null;
     notifyListeners();
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (dragPosition != null) {
+        final computed = _computeDropIndex(dragPosition!);
+        dropIndex = computed;
+        notifyListeners();
+      }
+    });
   }
 
   void updateDrag(Offset globalPosition, BuildContext context) {
@@ -37,9 +44,16 @@ class DragService extends ChangeNotifier {
       targetNodeType = editorService.getNodeType(hit.id);
     }
 
-    // 드롭 인덱스 계산 및 통지
     dragPosition = globalPosition;
-    _computeDropIndex(globalPosition);
+    final newDropIndex = _computeDropIndex(globalPosition);
+
+    // dropIndex 변경 시 즉시 업데이트
+    if (newDropIndex != dropIndex) {
+      print("📢 Drop index changed from $dropIndex to $newDropIndex");
+      dropIndex = newDropIndex;
+    }
+
+    // 플레이스 홀더를 위한 알림
     notifyListeners();
 
     // 드래그 모드 결정
@@ -61,8 +75,8 @@ class DragService extends ChangeNotifier {
   }
 
   void endDrag() {
+    _cleanup();
     if (draggingNodeId == null || targetNodeId == null) {
-      _cleanup();
       return;
     }
 
@@ -100,10 +114,8 @@ class DragService extends ChangeNotifier {
 
   // =================== 내부 함수 ===================
 
-  // Overlay 사용 제거: 미리보기는 화면 Stack에서 렌더링
-
   /// globalPosition 기준으로 문서 내 드롭 인덱스 계산
-  void _computeDropIndex(Offset globalPosition) {
+  int? _computeDropIndex(Offset globalPosition) {
     int index = 0;
     int? candidate;
 
@@ -140,7 +152,6 @@ class DragService extends ChangeNotifier {
       index += 1;
     }
 
-    print("candidate: $candidate");
-    dropIndex = candidate;
+    return candidate;
   }
 }

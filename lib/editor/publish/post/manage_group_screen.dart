@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'group_profile_screen.dart';
-import '../../data/models/group_model.dart';
-import '../../data/services/group_service.dart';
-import '../components/custom_bottom_navigation_bar.dart';
+import '../../../data/models/group_model.dart';
+import '../../../data/services/group_service.dart';
+import '../../../pages/components/custom_bottom_navigation_bar.dart';
 
 // 그룹 관리 화면 메인 위젯
 class ManageGroupScreen extends StatefulWidget {
