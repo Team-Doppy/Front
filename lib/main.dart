@@ -1,9 +1,10 @@
-import 'package:doppy/editor/publish/post/home_screen.dart';
-import 'package:doppy/editor/publish/post/manage_group_screen.dart';
-import 'package:doppy/editor/publish/post/manage_neighbor_screen.dart';
 import 'package:doppy/editor/postwrite_screen.dart';
-import 'package:doppy/editor/publish/post/search_screen.dart';
-import 'package:doppy/editor/publish/post/user_profile_screen.dart';
+import 'package:doppy/pages/post/home_screen.dart';
+import 'package:doppy/pages/post/manage_group_screen.dart';
+import 'package:doppy/pages/post/manage_neighbor_screen.dart';
+import 'package:doppy/pages/post/search_screen.dart';
+import 'package:doppy/pages/post/user_profile_screen.dart';
+
 import 'package:doppy/pages/user/login_screen.dart';
 import 'package:doppy/providers/auth_provider.dart';
 import 'package:doppy/providers/friend_provider.dart';

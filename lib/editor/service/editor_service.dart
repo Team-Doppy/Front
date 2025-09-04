@@ -1,6 +1,7 @@
 import 'package:doppy/editor/postwrite_screen.dart';
-import 'package:doppy/editor/model/image_row_node.dart';
+import 'package:doppy/editor/custom_nodes/image_row_node.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:super_editor/super_editor.dart';
 
 class EditorService extends ChangeNotifier {
@@ -104,27 +105,39 @@ class EditorService extends ChangeNotifier {
     final node = editor.document.getNodeById(nodeId);
     switch (node) {
       case ParagraphNode():
-        // 이미지 노드는 특별한 텍스트로 구분
-        if (node.text.text.contains('🖼️')) {
-          return NodeType.image;
-        }
         return NodeType.paragraph;
       case ImageNode():
         return NodeType.image;
+      case ImageRowNode():
+        return NodeType.imageRow;
       default:
         return NodeType.unknown;
     }
   }
 
   DocumentNode? findNodeAtPosition(Offset position) {
-    position = Offset(position.dx, position.dy - 120);
     final documentLayout = _documentLayoutKey?.currentState as DocumentLayout?;
     if (documentLayout == null) return null;
 
     try {
+      // 글로벌 좌표를 DocumentLayout의 로컬 좌표로 변환
+      final renderObject =
+          _documentLayoutKey?.currentContext?.findRenderObject();
+      RenderBox? renderBox;
+      if (renderObject is RenderSliverToBoxAdapter) {
+        renderBox = renderObject.child;
+      } else if (renderObject is RenderBox) {
+        renderBox = renderObject;
+      }
+
+      if (renderBox == null) return null;
+
+      // 글로벌 좌표를 DocumentLayout의 로컬 좌표로 변환
+      final localPosition = renderBox.globalToLocal(position);
+
       // SuperEditor 내장 함수 사용
       final documentPosition = documentLayout
-          .getDocumentPositionNearestToOffset(position);
+          .getDocumentPositionNearestToOffset(localPosition);
       if (documentPosition == null) return null;
 
       return editor.document.getNodeById(documentPosition.nodeId);

@@ -1,19 +1,21 @@
+import 'package:doppy/editor/custom_nodes/image_row_node.dart';
+import 'package:doppy/editor/component/image_row_component.dart';
 import 'package:flutter/material.dart';
 import 'package:super_editor/super_editor.dart';
-import 'package:doppy/editor/model/image_row_node.dart';
-import 'package:doppy/editor/component/image_row_component.dart';
 
-/// ImageRowNode를 위한 컴포넌트 빌더
-class ImageRowComponentBuilder implements ComponentBuilder {
+class RowImageComponentBuilder implements ComponentBuilder {
   @override
   Widget? createComponent(
     SingleColumnDocumentComponentContext componentContext,
     SingleColumnLayoutComponentViewModel componentViewModel,
   ) {
     if (componentViewModel is ImageRowComponentViewModel) {
+      // ⚠️ 여기서 일반 위젯이 아니라 DocumentComponent를 리턴!
       return ImageRowComponent(
-        componentContext: componentContext,
-        componentViewModel: componentViewModel,
+        nodeId: componentViewModel.nodeId,
+        imageUrls: componentViewModel.imageUrls,
+        spacing: componentViewModel.spacing,
+        componentKey: componentContext.componentKey, // ← 매우 중요
       );
     }
     return null;

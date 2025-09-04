@@ -1,9 +1,11 @@
-import 'package:doppy/editor/component/image_component.dart';
-import 'package:doppy/editor/component/image_row_component_builder.dart';
+import 'package:doppy/editor/component/single_image_component_builder.dart';
+import 'package:doppy/editor/component/row_image_component_builder.dart';
 import 'package:doppy/editor/config/config.dart';
+import 'package:doppy/editor/custom_nodes/image_row_node.dart';
 import 'package:doppy/editor/service/drag_service.dart';
 import 'package:doppy/editor/service/editor_service.dart';
 import 'package:doppy/editor/style/style_sheet.dart';
+import 'package:doppy/editor/overlay/drag_overlay_widget.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:super_editor/super_editor.dart' hide DragMode;
@@ -11,7 +13,7 @@ import 'package:super_editor/super_editor.dart' hide DragMode;
 /// 글 공개 범위 옵션
 enum VisibilityOption { public, partial, private }
 
-enum NodeType { paragraph, image, unknown }
+enum NodeType { paragraph, image, imageRow, unknown }
 
 class PostwriteScreen extends StatefulWidget {
   final double screenWidth;
@@ -34,6 +36,8 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
   GlobalKey overlayKey = GlobalKey();
   final GlobalKey _documentLayoutKey = GlobalKey();
 
+  ScrollController scrollController = ScrollController();
+
   @override
   void initState() {
     super.initState();
@@ -49,13 +53,15 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
         ImageNode(
           id: '7',
           imageUrl:
-              'https://media.istockphoto.com/id/1317323736/ko/%EC%82%AC%EC%A7%84/%EB%82%98%EB%AC%B4-%EB%B0%A9%ED%96%A5%EC%9C%BC%EB%A1%9C-%ED%95%98%EB%8A%98%EB%A1%9C-%EB%B0%94%EB%9D%BC%EB%B3%B4%EB%8A%94-%EA%B2%BD%EC%B9%98.jpg?s=612x612&w=0&k=20&c=0xTghmMTXJ5ITCZ-LKTABbaPIK_1kWNf0FSFl_GL_7I=',
+              'https://image.utoimage.com/preview/cp872722/2022/12/202212008462_500.jpg',
         ),
         ImageNode(
           id: '8',
           imageUrl:
-              'https://image.utoimage.com/preview/cp872722/2022/12/202212008462_500.jpg',
+              'https://media.istockphoto.com/id/1317323736/ko/%EC%82%AC%EC%A7%84/%EB%82%98%EB%AC%B4-%EB%B0%A9%ED%96%A5%EC%9C%BC%EB%A1%9C-%ED%95%98%EB%8A%98%EB%A1%9C-%EB%B0%94%EB%9D%BC%EB%B3%B4%EB%8A%94-%EA%B2%BD%EC%B9%98.jpg?s=612x612&w=0&k=20&c=0xTghmMTXJ5ITCZ-LKTABbaPIK_1kWNf0FSFl_GL_7I=',
         ),
+        ParagraphNode(id: '9', text: AttributedText('Hello, World8!')),
+        ParagraphNode(id: '10', text: AttributedText('Hello, World9!')),
       ],
     );
     composer = MutableDocumentComposer();
@@ -82,64 +88,48 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     if (mounted) setState(() {});
   }
 
-  // 드래그 오버레이 빌드 (실시간 위치 사용)
+  // 드래그 오버레이 빌드 (노션 스타일 컴포넌트 미리보기)
   Widget _buildDragOverlay() {
     final pos = dragService.dragPosition;
-    if (pos == null) return const SizedBox.shrink();
+    final nodeId = dragService.draggingNodeId;
+    if (pos == null || nodeId == null) return const SizedBox.shrink();
 
-    return Positioned(
-      left: pos.dx - 50,
-      top: pos.dy - EditorConfig.complementOfGlobalToDocument,
-      child: Container(
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: Colors.blue.withAlpha(220),
-          borderRadius: BorderRadius.circular(8),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withAlpha(80),
-              blurRadius: 8,
-              offset: const Offset(0, 4),
-            ),
-          ],
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.drag_indicator, color: Colors.white, size: 16),
-            const SizedBox(width: 8),
-            Text(
-              "Dragging ${dragService.draggingNodeId}",
-              style: const TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.bold,
-                fontSize: 14,
-              ),
-            ),
-          ],
-        ),
-      ),
+    // 노드 타입 확인
+    final node = document.getNodeById(nodeId);
+    if (node == null) return const SizedBox.shrink();
+
+    String nodeType = 'default';
+    if (node is ImageNode) {
+      nodeType = 'image';
+    } else if (node is ImageRowNode) {
+      nodeType = 'imageRow';
+    } else if (node is ParagraphNode) {
+      nodeType = 'paragraph';
+    }
+
+    return DragOverlayWidget(
+      nodeId: nodeId,
+      nodeType: nodeType,
+      position: pos,
+      document: document,
     );
   }
 
   // 드롭 라인 빌드 (실시간 위치 사용)
-  Widget _buildDropLine() {
+  Widget _buildDropLine(BuildContext context) {
     final pos = dragService.dragPosition;
     if (pos == null) return const SizedBox.shrink();
 
+    // computeDropInfo에서 모든 라인 정보를 가져옴
+    final dropInfo = dragService.computeDropInfo(pos);
+    if (dropInfo == null) return const SizedBox.shrink();
+
     // 이미지 가로 배치 모드일 때 세로 라인 표시
-    if (dragService.dragMode == DragMode.imageRowMerge) {
-      // 타겟 이미지의 경계를 가져와서 방향에 따라 세로 라인 표시
-      final targetNode = editorService.editor.document.getNodeById(
-        dragService.targetNodeId ?? '',
-      );
-      if (targetNode == null) return const SizedBox.shrink();
-
-      final bounds = dragService.getNodeGlobalBounds(targetNode.id);
-      if (bounds == null) return const SizedBox.shrink();
-
-      // 드래그 방향에 따라 다른 라인 표시
-      final isFromLeft = dragService.isDraggingFromLeft;
+    final imageRowLineInfo =
+        dropInfo['imageRowLineInfo'] as Map<String, dynamic>?;
+    if (imageRowLineInfo != null) {
+      final bounds = imageRowLineInfo['bounds'] as NodeBounds;
+      final isFromLeft = imageRowLineInfo['isFromLeft'] as bool;
 
       return Stack(
         children: [
@@ -147,42 +137,26 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
           if (isFromLeft)
             Positioned(
               left: bounds.left - 2,
-              top: bounds.top,
+              top:
+                  bounds.top -
+                  EditorConfig.getComplementOfGlobalToDocument(context),
               child: Container(
                 width: 4,
                 height: bounds.size.height,
-                decoration: BoxDecoration(
-                  color: const Color(0xFF007AFF),
-                  borderRadius: BorderRadius.circular(2),
-                  boxShadow: [
-                    BoxShadow(
-                      color: const Color(0xFF007AFF).withAlpha(150),
-                      blurRadius: 6,
-                      offset: const Offset(0, 2),
-                    ),
-                  ],
-                ),
+                decoration: BoxDecoration(color: const Color(0xFF007AFF)),
               ),
             ),
           // 오른쪽에서 오는 경우 오른쪽 라인만
           if (!isFromLeft)
             Positioned(
               left: bounds.right - 2,
-              top: bounds.top,
+              top:
+                  bounds.top -
+                  EditorConfig.getComplementOfGlobalToDocument(context),
               child: Container(
                 width: 4,
                 height: bounds.size.height,
-                decoration: BoxDecoration(
-                  color: const Color(0xFF007AFF),
-                  borderRadius: BorderRadius.circular(2),
-                  boxShadow: [
-                    BoxShadow(
-                      color: const Color(0xFF007AFF).withAlpha(150),
-                      blurRadius: 6,
-                      offset: const Offset(0, 2),
-                    ),
-                  ],
-                ),
+                decoration: BoxDecoration(color: const Color(0xFF007AFF)),
               ),
             ),
         ],
@@ -190,27 +164,16 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     }
 
     // 일반 모드일 때 가로 라인 표시
-    final dropInfo = dragService.computeDropInfo(pos);
-    final linePos = dropInfo?['linePosition'] as Offset?;
+    final linePos = dropInfo['linePosition'] as Offset?;
     if (linePos == null) return const SizedBox.shrink();
 
     return Positioned(
-      left: 0,
-      top: linePos.dy,
-      right: 0,
+      left: EditorConfig.documentPadding,
+      top: linePos.dy - EditorConfig.getComplementOfGlobalToDocument(context),
+      right: EditorConfig.documentPadding,
       child: Container(
         height: 3,
-        decoration: BoxDecoration(
-          color: const Color(0xFF007AFF),
-          borderRadius: BorderRadius.circular(1.5),
-          boxShadow: [
-            BoxShadow(
-              color: const Color(0xFF007AFF).withAlpha(150),
-              blurRadius: 6,
-              offset: const Offset(0, 2),
-            ),
-          ],
-        ),
+        decoration: BoxDecoration(color: const Color(0xFF007AFF)),
       ),
     );
   }
@@ -221,16 +184,24 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
       appBar: AppBar(),
       body: Stack(
         children: [
-          SuperEditor(
-            gestureMode: DocumentGestureMode.iOS,
-            editor: editor,
-            stylesheet: buildCustomStylesheet(),
-            documentLayoutKey: _documentLayoutKey,
-            componentBuilders: [
-              ...defaultComponentBuilders,
-              CustomImageComponentBuilder(),
-              ImageRowComponentBuilder(),
-            ],
+          AnimatedOpacity(
+            duration: const Duration(milliseconds: 100),
+            opacity:
+                dragService.draggingNodeId != null
+                    ? 0.7
+                    : 1.0, // 드래그 중일 때 투명도 조정
+            child: SuperEditor(
+              gestureMode: DocumentGestureMode.iOS,
+              editor: editor,
+              stylesheet: buildCustomStylesheet(),
+              documentLayoutKey: _documentLayoutKey,
+              scrollController: scrollController,
+              componentBuilders: [
+                ...defaultComponentBuilders,
+                SingleImageComponentBuilder(),
+                RowImageComponentBuilder(),
+              ],
+            ),
           ),
 
           Positioned.fill(
@@ -271,7 +242,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
           if (dragService.draggingNodeId != null) _buildDragOverlay(),
 
           // 드롭 라인 (개선된 Stack 방식)
-          if (dragService.dropIndex != null) _buildDropLine(),
+          if (dragService.dropIndex != null) _buildDropLine(context),
         ],
       ),
     );

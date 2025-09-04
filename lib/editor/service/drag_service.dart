@@ -1,6 +1,7 @@
 import 'package:doppy/editor/postwrite_screen.dart';
 import 'package:doppy/editor/service/editor_service.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:super_editor/super_editor.dart';
 
 enum DragMode { none, reorder, imageRowMerge }
@@ -32,7 +33,6 @@ class NodeBounds {
 
 class DragService extends ChangeNotifier {
   final EditorService editorService;
-  static final int complementPx = 120; // 드롭 라인 보정 픽셀
 
   String? draggingNodeId;
   NodeType? draggingNodeType;
@@ -61,7 +61,7 @@ class DragService extends ChangeNotifier {
 
     final dropInfo = computeDropInfo(globalPosition);
     if (dropInfo != null) {
-      dropIndex = dropInfo['dropIndex'] as int;
+      dropIndex = dropInfo['dropIndex'] as int?;
     }
 
     notifyListeners();
@@ -73,7 +73,6 @@ class DragService extends ChangeNotifier {
     if (lastMovedPosition != null &&
         (lastMovedPosition! - globalPosition).distance > 20) {
       lastMovedPosition = globalPosition;
-      print("lastMovedPosition: $lastMovedPosition");
       dropInfo = computeDropInfo(globalPosition);
     }
 
@@ -89,7 +88,8 @@ class DragService extends ChangeNotifier {
     // 드래그 모드 결정
     if (dropIndex == null) {
       dragMode = DragMode.none;
-    } else if (draggingNodeType == NodeType.image &&
+    } else if ((draggingNodeType == NodeType.image ||
+            draggingNodeType == NodeType.imageRow) &&
         targetNodeType == NodeType.image &&
         draggingNodeId != targetNodeId) {
       dragMode = DragMode.imageRowMerge;
@@ -161,7 +161,6 @@ class DragService extends ChangeNotifier {
   // =================== 내부 함수 ===================
 
   NodeBounds? getNodeGlobalBounds(String nodeId) {
-    // 캐시 무효화 조건 체크
     if (!_cacheValid ||
         _lastDocumentLength != editorService.editor.document.length) {
       _rebuildCache();
@@ -193,57 +192,65 @@ class DragService extends ChangeNotifier {
         editorService.documentLayoutKey?.currentState as DocumentLayout?;
     if (documentLayout == null) return null;
 
-    for (final docNode in editorService.editor.document) {
-      if (docNode.id == node.id) {
-        // 노드의 시작 위치를 찾기 위해 문서 상단부터 스캔
-        for (double y = 0; y < 2000; y += 5) {
-          final testPosition = documentLayout
-              .getDocumentPositionNearestToOffset(Offset(0, y));
-          if (testPosition?.nodeId == node.id) {
-            // 노드의 시작 위치를 찾았으므로 전체 영역 계산
-            final startRect = documentLayout.getRectForPosition(testPosition!);
-            if (startRect != null) {
-              // 노드의 끝 위치를 찾기 위해 더 아래쪽 스캔
-              Rect? endRect = startRect;
+    // RenderBox를 통해 정확한 글로벌 좌표 계산
+    final renderObject =
+        editorService.documentLayoutKey?.currentContext?.findRenderObject();
+    RenderBox? renderBox;
+    if (renderObject is RenderSliverToBoxAdapter) {
+      renderBox = renderObject.child;
+    } else if (renderObject is RenderBox) {
+      renderBox = renderObject;
+    }
+    if (renderBox == null) return null;
 
-              for (double checkY = y + 5; checkY < y + 500; checkY += 5) {
-                final checkPosition = documentLayout
-                    .getDocumentPositionNearestToOffset(Offset(0, checkY));
-                if (checkPosition?.nodeId == node.id) {
-                  final checkRect = documentLayout.getRectForPosition(
-                    checkPosition!,
-                  );
-                  if (checkRect != null) {
-                    endRect = checkRect;
-                  }
-                } else {
-                  break; // 다른 노드가 나오면 중단
-                }
-              }
-
-              // 노드의 전체 영역 계산
-              final top = startRect.top;
-              final bottom = endRect?.bottom ?? startRect.bottom;
-              final left = startRect.left;
-              final right = startRect.right;
-              final width = right - left;
-              final height = bottom - top;
-
-              return NodeBounds(
-                nodeId: node.id,
-                topLeft: Offset(left, top),
-                bottomRight: Offset(right, bottom),
-                center: Offset(left + width / 2, top + height / 2),
-                size: Size(width, height),
-                top: top,
-                bottom: bottom,
-                left: left,
-                right: right,
+    for (double y = 0; y < 2000; y += 5) {
+      final testPosition = documentLayout.getDocumentPositionNearestToOffset(
+        Offset(0, y),
+      );
+      if (testPosition?.nodeId == node.id) {
+        final startRect = documentLayout.getRectForPosition(testPosition!);
+        if (startRect != null) {
+          // 노드의 끝 위치 찾기
+          Rect? endRect = startRect;
+          for (double checkY = y + 5; checkY < y + 500; checkY += 5) {
+            final checkPosition = documentLayout
+                .getDocumentPositionNearestToOffset(Offset(0, checkY));
+            if (checkPosition?.nodeId == node.id) {
+              final checkRect = documentLayout.getRectForPosition(
+                checkPosition!,
               );
+              if (checkRect != null) {
+                endRect = checkRect;
+              }
+            } else {
+              break;
             }
           }
+
+          // DocumentLayout의 로컬 좌표를 글로벌 좌표로 변환
+          final globalTopLeft = renderBox.localToGlobal(startRect.topLeft);
+          final globalBottomRight = renderBox.localToGlobal(
+            endRect?.bottomRight ?? startRect.bottomRight,
+          );
+
+          return NodeBounds(
+            nodeId: node.id,
+            topLeft: globalTopLeft,
+            bottomRight: globalBottomRight,
+            center: Offset(
+              (globalTopLeft.dx + globalBottomRight.dx) / 2,
+              (globalTopLeft.dy + globalBottomRight.dy) / 2,
+            ),
+            size: Size(
+              globalBottomRight.dx - globalTopLeft.dx,
+              globalBottomRight.dy - globalTopLeft.dy,
+            ),
+            top: globalTopLeft.dy,
+            bottom: globalBottomRight.dy,
+            left: globalTopLeft.dx,
+            right: globalBottomRight.dx,
+          );
         }
-        break;
       }
     }
 
@@ -252,11 +259,8 @@ class DragService extends ChangeNotifier {
 
   /// 드롭 인덱스와 라인 위치를 한 번에 계산
   Map<String, dynamic>? computeDropInfo(Offset globalPosition) {
-    // 좌표 보정 (complementPx 사용)
-    final correctedPosition = Offset(
-      globalPosition.dx,
-      globalPosition.dy - complementPx,
-    );
+    // 글로벌 좌표를 그대로 사용 (이미 글로벌 좌표이므로)
+    final correctedPosition = globalPosition;
 
     // 타겟 노드 찾기 (이미지 겹침 감지를 위해)
     DocumentNode? targetNode;
@@ -336,6 +340,30 @@ class DragService extends ChangeNotifier {
       }
     }
 
+    // 드래그 모드 결정
+    if (targetNode != null &&
+        (draggingNodeType == NodeType.image ||
+            draggingNodeType == NodeType.imageRow)) {
+      final targetNodeType = editorService.getNodeType(targetNode.id);
+      if (targetNodeType == NodeType.image) {
+        dragMode = DragMode.imageRowMerge;
+      } else {
+        dragMode = DragMode.reorder;
+      }
+    } else {
+      dragMode = DragMode.reorder;
+    }
+
+    // 이미지 가로 배치 모드일 때 세로 라인 정보 계산
+    Map<String, dynamic>? imageRowLineInfo;
+    if (dragMode == DragMode.imageRowMerge && targetNode != null) {
+      final bounds = getNodeGlobalBounds(targetNode.id);
+      if (bounds != null) {
+        final isFromLeft = correctedPosition.dx < bounds.center.dx;
+        imageRowLineInfo = {'bounds': bounds, 'isFromLeft': isFromLeft};
+      }
+    }
+
     // 타겟 노드 정보 업데이트
     if (targetNode != null) {
       targetNodeId = targetNode.id;
@@ -345,14 +373,10 @@ class DragService extends ChangeNotifier {
       targetNodeType = null;
     }
 
-    print("candidate: $candidate");
-    print("draggingNodeId: $draggingNodeId");
-    print("draggingNodeIndex: $draggingNodeIndex");
-    print("targetNodeId: $targetNodeId");
-    print("targetNodeType: $targetNodeType");
-
-    return candidate != null && linePosition != null
-        ? {'dropIndex': candidate, 'linePosition': linePosition}
-        : null;
+    return {
+      'dropIndex': candidate,
+      'linePosition': linePosition,
+      'imageRowLineInfo': imageRowLineInfo,
+    };
   }
 }

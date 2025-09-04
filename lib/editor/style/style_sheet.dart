@@ -1,4 +1,5 @@
 import 'package:doppy/editor/config/config.dart';
+import 'package:doppy/editor/custom_nodes/image_row_node.dart';
 import 'package:flutter/material.dart';
 import 'package:super_editor/super_editor.dart';
 
@@ -24,6 +25,15 @@ Stylesheet buildCustomStylesheet() {
           return {
             Styles.padding: CascadingPadding.symmetric(
               vertical: EditorConfig.imagePadding,
+              horizontal: EditorConfig.imagePadding, // 가로 패딩 제거
+            ),
+          };
+        }
+        if (docNode is ImageRowNode) {
+          return {
+            Styles.padding: CascadingPadding.symmetric(
+              vertical: EditorConfig.imagePadding,
+              horizontal: 0, // 가로 패딩 제거
             ),
           };
         }

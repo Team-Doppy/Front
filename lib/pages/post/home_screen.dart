@@ -1,7 +1,7 @@
 import 'package:doppy/pages/components/custom_bottom_navigation_bar.dart';
 import 'package:doppy/pages/components/oval_chice_bar.dart';
 import 'package:doppy/pages/components/post_card.dart';
-import 'package:doppy/editor/publish/post/postview_screen.dart';
+import 'package:doppy/pages/post/postview_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../../providers/auth_provider.dart';

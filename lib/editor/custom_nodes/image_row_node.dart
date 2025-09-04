@@ -1,7 +1,7 @@
 import 'package:super_editor/super_editor.dart';
 
 /// 여러 이미지를 가로로 배치하는 커스텀 노드
-class ImageRowNode extends DocumentNode {
+class ImageRowNode extends BlockNode {
   ImageRowNode({required this.id, required this.imageUrls, this.spacing = 8.0});
 
   @override
@@ -43,60 +43,57 @@ class ImageRowNode extends DocumentNode {
   }
 
   @override
-  NodePosition get beginningPosition => throw UnimplementedError();
-
-  @override
-  NodeSelection computeSelection({
-    required NodePosition base,
-    required NodePosition extent,
-  }) {
-    // TODO: implement computeSelection
-    throw UnimplementedError();
-  }
-
-  @override
   bool containsPosition(Object position) {
-    // TODO: implement containsPosition
-    throw UnimplementedError();
+    // 블록 노드는 Upstream/Downstream 포지션만 가진다고 가정
+    return position is UpstreamDownstreamNodePosition;
   }
 
   @override
   DocumentNode copyAndReplaceMetadata(Map<String, dynamic> newMetadata) {
-    // TODO: implement copyAndReplaceMetadata
-    throw UnimplementedError();
+    // 메타데이터 사용 안 하면 동일 복제 반환
+    return ImageRowNode(
+      id: id,
+      imageUrls: List<String>.from(imageUrls),
+      spacing: spacing,
+    );
   }
 
   @override
   String? copyContent(NodeSelection selection) {
-    // TODO: implement copyContent
-    throw UnimplementedError();
+    // 이미지 행은 텍스트 복사 없음
+    return null;
   }
 
   @override
   DocumentNode copyWithAddedMetadata(Map<String, dynamic> newProperties) {
-    // TODO: implement copyWithAddedMetadata
-    throw UnimplementedError();
+    // 동일
+    return ImageRowNode(
+      id: id,
+      imageUrls: List<String>.from(imageUrls),
+      spacing: spacing,
+    );
   }
 
   @override
-  // TODO: implement endPosition
-  NodePosition get endPosition => throw UnimplementedError();
-
-  @override
-  NodePosition selectDownstreamPosition(
-    NodePosition position1,
-    NodePosition position2,
-  ) {
-    // TODO: implement selectDownstreamPosition
-    throw UnimplementedError();
+  UpstreamDownstreamNodeSelection computeSelection({
+    required NodePosition base,
+    required NodePosition extent,
+  }) {
+    return UpstreamDownstreamNodeSelection(
+      base: base as UpstreamDownstreamNodePosition,
+      extent: extent as UpstreamDownstreamNodePosition,
+    );
   }
 
   @override
-  NodePosition selectUpstreamPosition(
-    NodePosition position1,
-    NodePosition position2,
-  ) {
-    // TODO: implement selectUpstreamPosition
-    throw UnimplementedError();
-  }
+  UpstreamDownstreamNodePosition selectDownstreamPosition(
+    NodePosition base,
+    NodePosition extent,
+  ) => UpstreamDownstreamNodePosition.downstream();
+
+  @override
+  UpstreamDownstreamNodePosition selectUpstreamPosition(
+    NodePosition base,
+    NodePosition extent,
+  ) => UpstreamDownstreamNodePosition.upstream();
 }
