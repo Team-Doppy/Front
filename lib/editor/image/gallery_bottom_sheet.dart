@@ -6,10 +6,8 @@ import 'package:flutter/services.dart';
 class GalleryBottomSheet extends StatefulWidget {
   final Function(List<File>) onImagesSelected;
 
-  const GalleryBottomSheet({
-    Key? key,
-    required this.onImagesSelected,
-  }) : super(key: key);
+  const GalleryBottomSheet({Key? key, required this.onImagesSelected})
+    : super(key: key);
 
   @override
   State<GalleryBottomSheet> createState() => _GalleryBottomSheetState();
@@ -313,8 +311,9 @@ class _GalleryBottomSheetState extends State<GalleryBottomSheet>
         try {
           final tempDir = await _createTempDirectory();
           // 파일명을 단순화하여 경로 길이 문제 해결
-          final tempFile =
-              File('${tempDir.path}/img_${assetId.substring(0, 8)}.jpg');
+          final tempFile = File(
+            '${tempDir.path}/img_${assetId.substring(0, 8)}.jpg',
+          );
           await tempFile.writeAsBytes(imageData);
 
           _addToCache(assetId, tempFile);
@@ -352,9 +351,10 @@ class _GalleryBottomSheetState extends State<GalleryBottomSheet>
         _isLoading = true; // 로딩 상태 표시
       });
 
-      final selectedPhotos = _photos
-          .where((photo) => _selectedPhotoIds.contains(photo.id))
-          .toList();
+      final selectedPhotos =
+          _photos
+              .where((photo) => _selectedPhotoIds.contains(photo.id))
+              .toList();
 
       final files = <File>[];
       int successCount = 0;
@@ -433,10 +433,7 @@ class _GalleryBottomSheetState extends State<GalleryBottomSheet>
         errorBuilder: (context, error, stackTrace) {
           return Container(
             color: Colors.grey[200],
-            child: Icon(
-              Icons.image_not_supported,
-              color: Colors.grey[400],
-            ),
+            child: Icon(Icons.image_not_supported, color: Colors.grey[400]),
           );
         },
       );
@@ -452,10 +449,7 @@ class _GalleryBottomSheetState extends State<GalleryBottomSheet>
           errorBuilder: (context, error, stackTrace) {
             return Container(
               color: Colors.grey[200],
-              child: Icon(
-                Icons.image_not_supported,
-                color: Colors.grey[400],
-              ),
+              child: Icon(Icons.image_not_supported, color: Colors.grey[400]),
             );
           },
         );
@@ -466,19 +460,14 @@ class _GalleryBottomSheetState extends State<GalleryBottomSheet>
     if (isLoading) {
       return Container(
         color: Colors.grey[200],
-        child: const Center(
-          child: CircularProgressIndicator(),
-        ),
+        child: const Center(child: CircularProgressIndicator()),
       );
     }
 
     // 로드되지 않은 이미지는 기본 아이콘 표시
     return Container(
       color: Colors.grey[200],
-      child: Icon(
-        Icons.image_not_supported,
-        color: Colors.grey[400],
-      ),
+      child: Icon(Icons.image_not_supported, color: Colors.grey[400]),
     );
   }
 
@@ -508,8 +497,9 @@ class _GalleryBottomSheetState extends State<GalleryBottomSheet>
           Container(
             padding: const EdgeInsets.all(16),
             decoration: const BoxDecoration(
-              border:
-                  Border(bottom: BorderSide(color: Colors.grey, width: 0.5)),
+              border: Border(
+                bottom: BorderSide(color: Colors.grey, width: 0.5),
+              ),
             ),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -526,10 +516,7 @@ class _GalleryBottomSheetState extends State<GalleryBottomSheet>
                     ),
                     Text(
                       '${_selectedPhotoIds.length}개 선택됨',
-                      style: TextStyle(
-                        fontSize: 14,
-                        color: Colors.grey[600],
-                      ),
+                      style: TextStyle(fontSize: 14, color: Colors.grey[600]),
                     ),
                   ],
                 ),
@@ -538,27 +525,29 @@ class _GalleryBottomSheetState extends State<GalleryBottomSheet>
                     if (_selectedPhotoIds.isNotEmpty)
                       TextButton(
                         onPressed: _isLoading ? null : _confirmSelection,
-                        child: _isLoading
-                            ? Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  const SizedBox(
-                                    width: 16,
-                                    height: 16,
-                                    child: CircularProgressIndicator(
-                                        strokeWidth: 2),
+                        child:
+                            _isLoading
+                                ? Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    const SizedBox(
+                                      width: 16,
+                                      height: 16,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    const Text('처리 중...'),
+                                  ],
+                                )
+                                : const Text(
+                                  '선택 완료',
+                                  style: TextStyle(
+                                    color: Colors.blue,
+                                    fontWeight: FontWeight.w600,
                                   ),
-                                  const SizedBox(width: 8),
-                                  const Text('처리 중...'),
-                                ],
-                              )
-                            : const Text(
-                                '선택 완료',
-                                style: TextStyle(
-                                  color: Colors.blue,
-                                  fontWeight: FontWeight.w600,
                                 ),
-                              ),
                       ),
                     IconButton(
                       onPressed:
@@ -572,9 +561,7 @@ class _GalleryBottomSheetState extends State<GalleryBottomSheet>
           ),
 
           // 갤러리 그리드
-          Expanded(
-            child: _buildGalleryContent(),
-          ),
+          Expanded(child: _buildGalleryContent()),
         ],
       ),
     );
@@ -582,9 +569,7 @@ class _GalleryBottomSheetState extends State<GalleryBottomSheet>
 
   Widget _buildGalleryContent() {
     if (_isLoading) {
-      return const Center(
-        child: CircularProgressIndicator(),
-      );
+      return const Center(child: CircularProgressIndicator());
     }
 
     if (_error != null) {
@@ -592,31 +577,25 @@ class _GalleryBottomSheetState extends State<GalleryBottomSheet>
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(
-              Icons.error_outline,
-              size: 64,
-              color: Colors.grey[400],
-            ),
+            Icon(Icons.error_outline, size: 64, color: Colors.grey[400]),
             const SizedBox(height: 16),
             Text(
               _error!,
-              style: TextStyle(
-                color: Colors.grey[600],
-                fontSize: 16,
-              ),
+              style: TextStyle(color: Colors.grey[600], fontSize: 16),
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 16),
             if (_error!.contains('권한이 필요합니다') || _error!.contains('권한을 허용해주세요'))
               ElevatedButton(
                 onPressed: _isPermissionRequesting ? null : _requestPermission,
-                child: _isPermissionRequesting
-                    ? const SizedBox(
-                        width: 20,
-                        height: 20,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Text('권한 허용'),
+                child:
+                    _isPermissionRequesting
+                        ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                        : const Text('권한 허용'),
               )
             else
               ElevatedButton(
@@ -632,10 +611,7 @@ class _GalleryBottomSheetState extends State<GalleryBottomSheet>
       return const Center(
         child: Text(
           '사진이 없습니다.',
-          style: TextStyle(
-            color: Colors.grey,
-            fontSize: 16,
-          ),
+          style: TextStyle(color: Colors.grey, fontSize: 16),
         ),
       );
     }
@@ -686,13 +662,14 @@ class _GalleryBottomSheetState extends State<GalleryBottomSheet>
                       width: 2,
                     ),
                   ),
-                  child: isSelected
-                      ? const Icon(
-                          Icons.check,
-                          color: Colors.white,
-                          size: 16,
-                        )
-                      : null,
+                  child:
+                      isSelected
+                          ? const Icon(
+                            Icons.check,
+                            color: Colors.white,
+                            size: 16,
+                          )
+                          : null,
                 ),
               ),
             ],

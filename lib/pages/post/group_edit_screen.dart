@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
-import '../../../data/services/group_service.dart';
-import '../../../data/models/group_model.dart';
+import '../../data/services/group_service.dart';
+import '../../data/models/group_model.dart';
 
 // 그룹 편집 화면
 class GroupEditScreen extends StatefulWidget {

@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
-import '../../../data/services/group_service.dart';
-import '../../../data/models/group_model.dart';
-import '../../../data/models/group_member_model.dart';
+import '../../data/services/group_service.dart';
+import '../../data/models/group_model.dart';
+import '../../data/models/group_member_model.dart';
 import 'add_member_screen.dart';
-import '../../../pages/components/custom_bottom_navigation_bar.dart';
+import '../components/custom_bottom_navigation_bar.dart';
 import 'group_edit_screen.dart'; // GroupEditScreen 추가
 
 // 그룹 프로필 화면 메인 위젯
