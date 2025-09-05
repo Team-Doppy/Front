@@ -4,18 +4,22 @@ import 'package:flutter/material.dart';
 import 'package:super_editor/super_editor.dart';
 
 class RowImageComponentBuilder implements ComponentBuilder {
+  const RowImageComponentBuilder({this.dragService});
+
+  final dynamic dragService; // DragService 타입을 나중에 import해서 수정
+
   @override
   Widget? createComponent(
     SingleColumnDocumentComponentContext componentContext,
     SingleColumnLayoutComponentViewModel componentViewModel,
   ) {
     if (componentViewModel is ImageRowComponentViewModel) {
-      // ⚠️ 여기서 일반 위젯이 아니라 DocumentComponent를 리턴!
       return ImageRowComponent(
         nodeId: componentViewModel.nodeId,
         imageUrls: componentViewModel.imageUrls,
         spacing: componentViewModel.spacing,
         componentKey: componentContext.componentKey, // ← 매우 중요
+        dragService: dragService,
       );
     }
     return null;

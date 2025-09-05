@@ -1,5 +1,6 @@
 import 'package:doppy/editor/config/config.dart';
 import 'package:doppy/editor/custom_nodes/image_row_node.dart';
+import 'package:doppy/editor/custom_nodes/paragraph.dart' as custom;
 import 'package:flutter/material.dart';
 import 'package:super_editor/super_editor.dart';
 
@@ -10,7 +11,7 @@ Stylesheet buildCustomStylesheet() {
     addRulesAfter: [
       // 텍스트 노드 스타일
       StyleRule(BlockSelector.all, (doc, docNode) {
-        if (docNode is ParagraphNode) {
+        if (docNode is custom.ParagraphNode) {
           return {
             Styles.textStyle: const TextStyle(
               fontSize: 16,

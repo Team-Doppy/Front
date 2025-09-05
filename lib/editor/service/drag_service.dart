@@ -1,63 +1,43 @@
+import 'dart:async';
 import 'package:doppy/editor/postwrite_screen.dart';
 import 'package:doppy/editor/service/editor_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:super_editor/super_editor.dart';
 
-enum DragMode { none, reorder, imageRowMerge }
-
-/// 노드의 글로벌 위치 정보를 관리하는 헬퍼 클래스
-class NodeBounds {
-  final String nodeId;
-  final Offset topLeft;
-  final Offset bottomRight;
-  final Offset center;
-  final Size size;
-  final double top;
-  final double bottom;
-  final double left;
-  final double right;
-
-  const NodeBounds({
-    required this.nodeId,
-    required this.topLeft,
-    required this.bottomRight,
-    required this.center,
-    required this.size,
-    required this.top,
-    required this.bottom,
-    required this.left,
-    required this.right,
-  });
-}
+enum DragType { none, reorder, imageRowMerge }
 
 class DragService extends ChangeNotifier {
   final EditorService editorService;
+  ScrollController? scrollController;
 
   String? draggingNodeId;
   NodeType? draggingNodeType;
   String? targetNodeId;
   NodeType? targetNodeType;
-  DragMode dragMode = DragMode.none;
+  DragType dragMode = DragType.none;
 
   Offset? dragPosition;
   int? dropIndex;
   Offset? lastMovedPosition;
 
-  // 캐싱 시스템
-  final Map<String, NodeBounds> _nodeBoundsCache = {};
-  bool _cacheValid = false;
-  int _lastDocumentLength = 0;
+  // Auto-scroll state
+  Timer? _autoScrollTimer;
+  double _autoScrollDirection = 0.0; // -1: up, 1: down, 0: none
 
-  DragService({required this.editorService});
+  DragService({required this.editorService, this.scrollController});
+
+  void attachScrollController(ScrollController controller) {
+    scrollController = controller;
+  }
 
   void startDrag(String nodeId, BuildContext context, Offset globalPosition) {
-    _rebuildCache(); // 드래그 시작 시 캐시 구축
-
     draggingNodeId = nodeId;
     draggingNodeType = editorService.getNodeType(nodeId);
     dragPosition = globalPosition;
     lastMovedPosition = globalPosition;
+    _stopAutoScroll();
+    _autoScrollDirection = 0.0;
 
     final dropInfo = computeDropInfo(globalPosition);
     if (dropInfo != null) {
@@ -70,11 +50,8 @@ class DragService extends ChangeNotifier {
   void updateDrag(Offset globalPosition, BuildContext context) {
     Map<String, dynamic>? dropInfo;
     dragPosition = globalPosition;
-    if (lastMovedPosition != null &&
-        (lastMovedPosition! - globalPosition).distance > 20) {
-      lastMovedPosition = globalPosition;
-      dropInfo = computeDropInfo(globalPosition);
-    }
+    lastMovedPosition = globalPosition;
+    dropInfo = computeDropInfo(globalPosition);
 
     if (dropInfo != null) {
       if (dropInfo['dropIndex'] != null) {
@@ -85,20 +62,20 @@ class DragService extends ChangeNotifier {
       }
     }
 
-    // 드래그 모드 결정
+    // computeDropInfo에서 이미 dragMode와 targetNodeId를 설정했으므로
+    // dropIndex가 null일 때만 모드를 none으로 변경
     if (dropIndex == null) {
-      dragMode = DragMode.none;
-    } else if ((draggingNodeType == NodeType.image ||
-            draggingNodeType == NodeType.imageRow) &&
-        targetNodeType == NodeType.image &&
-        draggingNodeId != targetNodeId) {
-      dragMode = DragMode.imageRowMerge;
-    } else {
-      dragMode = DragMode.reorder;
+      dragMode = DragType.none;
+      targetNodeId = null;
+      targetNodeType = null;
     }
+    // 그 외의 경우는 computeDropInfo에서 설정한 값을 그대로 사용
 
     // 항상 UI 업데이트 (드래그 오버레이 부드러운 이동을 위해)
     notifyListeners();
+
+    // 가장자리 자동 스크롤
+    _maybeAutoScroll(context);
   }
 
   void endDrag() {
@@ -107,23 +84,36 @@ class DragService extends ChangeNotifier {
       return;
     }
 
+    print('=== 드래그 종료 ===');
+    print('드래그 모드: $dragMode');
+    print('드래그 중인 노드: $draggingNodeId');
+    print('타겟 노드: $targetNodeId');
+    print('드롭 인덱스: $dropIndex');
+
     // 실제 노드 이동 실행
     switch (dragMode) {
-      case DragMode.reorder:
+      case DragType.reorder:
         if (dropIndex != null) {
+          print('노드 재정렬 실행: $draggingNodeId -> 인덱스 $dropIndex');
           editorService.reorderNode(draggingNodeId!, dropIndex!);
         }
         break;
-      case DragMode.imageRowMerge:
+      case DragType.imageRowMerge:
         if (targetNodeId != null) {
+          print(
+            '이미지 행 병합 실행: $draggingNodeId + $targetNodeId (왼쪽에서: $isDraggingFromLeft)',
+          );
           editorService.mergeImagesIntoRow(
             draggingNodeId!,
             targetNodeId!,
             isFromLeft: isDraggingFromLeft,
           );
+        } else {
+          print('타겟 노드가 null이어서 병합 실행 안됨');
         }
         break;
-      case DragMode.none:
+      case DragType.none:
+        print('드래그 모드가 none이어서 아무것도 실행 안됨');
         break;
     }
 
@@ -131,16 +121,115 @@ class DragService extends ChangeNotifier {
   }
 
   void _cleanup() {
+    _stopAutoScroll();
     draggingNodeId = null;
     draggingNodeType = null;
     targetNodeId = null;
     targetNodeType = null;
-    dragMode = DragMode.none;
+    dragMode = DragType.none;
     dropIndex = null;
     dragPosition = null;
-    lastMovedPosition = null; // 마지막 이동 위치 초기화
-    _invalidateCache(); // 드래그 종료 시 캐시 정리
+    lastMovedPosition = null;
     notifyListeners();
+  }
+
+  void _maybeAutoScroll(BuildContext context) {
+    if (scrollController == null || dragPosition == null) return;
+    if (!scrollController!.hasClients) return;
+
+    final bounds = _viewportBounds();
+    if (bounds == null) return;
+    const edgeMargin = 72.0; // 가장자리 감지 영역
+    final pos = dragPosition!;
+
+    double direction = 0.0;
+    if (pos.dy < bounds.top + edgeMargin) {
+      direction = -1.0; // 위로 스크롤
+    } else if (pos.dy > bounds.bottom - edgeMargin) {
+      direction = 1.0; // 아래로 스크롤
+    }
+
+    if (direction == 0.0) {
+      _autoScrollDirection = 0.0;
+      _stopAutoScroll();
+      return;
+    }
+
+    _autoScrollDirection = direction;
+    _startAutoScrollTimer(edgeMargin);
+  }
+
+  void _startAutoScrollTimer(double edgeMargin) {
+    if (_autoScrollTimer != null) return;
+    const interval = Duration(milliseconds: 16); // ~60 FPS
+    _autoScrollTimer = Timer.periodic(interval, (_) {
+      if (scrollController == null || dragPosition == null) {
+        _stopAutoScroll();
+        return;
+      }
+      if (!scrollController!.hasClients) {
+        _stopAutoScroll();
+        return;
+      }
+
+      final bounds = _viewportBounds();
+      if (bounds == null) {
+        _stopAutoScroll();
+        return;
+      }
+
+      final max = scrollController!.position.maxScrollExtent;
+      final min = scrollController!.position.minScrollExtent;
+      final current = scrollController!.offset;
+
+      // 속도: 가장자리 근접할수록 빠르게
+      final distanceToEdge =
+          _autoScrollDirection < 0
+              ? (dragPosition!.dy - bounds.top).clamp(0.0, edgeMargin)
+              : (bounds.bottom - dragPosition!.dy).clamp(0.0, edgeMargin);
+      final proximity = (edgeMargin - distanceToEdge) / edgeMargin; // 0..1
+      const maxSpeed = 900.0; // px/s
+      const minSpeed = 240.0; // px/s
+      final speed = minSpeed + (maxSpeed - minSpeed) * proximity;
+      final delta =
+          speed * (interval.inMilliseconds / 1000.0) * _autoScrollDirection;
+
+      double next = (current + delta).clamp(min, max);
+      if (next == current) {
+        _stopAutoScroll();
+        return;
+      }
+
+      scrollController!.jumpTo(next);
+
+      // 스크롤 후 드롭 인덱스 재계산
+      final dropInfo = computeDropInfo(dragPosition!);
+      if (dropInfo != null && dropInfo['dropIndex'] != null) {
+        dropIndex = dropInfo['dropIndex'] as int;
+      }
+      notifyListeners();
+    });
+  }
+
+  void _stopAutoScroll() {
+    _autoScrollTimer?.cancel();
+    _autoScrollTimer = null;
+  }
+
+  Rect? _viewportBounds() {
+    try {
+      final position = scrollController?.position;
+      final ctx =
+          position?.context.notificationContext ??
+          position?.context.storageContext;
+      if (ctx == null) return null;
+      final renderBox = ctx.findRenderObject() as RenderBox?;
+      if (renderBox == null) return null;
+      final topLeft = renderBox.localToGlobal(Offset.zero);
+      return topLeft & renderBox.size;
+    } catch (_) {
+      return null;
+    }
   }
 
   /// 드래그 방향을 계산 (왼쪽에서 오는지 오른쪽에서 오는지)
@@ -149,50 +238,7 @@ class DragService extends ChangeNotifier {
       return true; // 기본값은 왼쪽
     }
 
-    final targetBounds = getNodeGlobalBounds(targetNodeId!);
-    if (targetBounds == null) return true;
-
-    final targetCenterX = targetBounds.center.dx;
-    final currentX = dragPosition!.dx;
-
-    return currentX < targetCenterX; // 현재 위치가 타겟 중심보다 왼쪽이면 true
-  }
-
-  // =================== 내부 함수 ===================
-
-  NodeBounds? getNodeGlobalBounds(String nodeId) {
-    if (!_cacheValid ||
-        _lastDocumentLength != editorService.editor.document.length) {
-      _rebuildCache();
-    }
-
-    return _nodeBoundsCache[nodeId];
-  }
-
-  void _invalidateCache() {
-    _cacheValid = false;
-    _nodeBoundsCache.clear();
-  }
-
-  void _rebuildCache() {
-    _nodeBoundsCache.clear();
-    _lastDocumentLength = editorService.editor.document.length;
-
-    for (final node in editorService.editor.document) {
-      final bounds = _calculateNodeBounds(node);
-      if (bounds != null) {
-        _nodeBoundsCache[node.id] = bounds;
-      }
-    }
-    _cacheValid = true;
-  }
-
-  NodeBounds? _calculateNodeBounds(DocumentNode node) {
-    final documentLayout =
-        editorService.documentLayoutKey?.currentState as DocumentLayout?;
-    if (documentLayout == null) return null;
-
-    // RenderBox를 통해 정확한 글로벌 좌표 계산
+    // 문서 레이아웃의 로컬 좌표로 변환해서 화면 중앙 기준으로 좌/우 판정
     final renderObject =
         editorService.documentLayoutKey?.currentContext?.findRenderObject();
     RenderBox? renderBox;
@@ -201,182 +247,106 @@ class DragService extends ChangeNotifier {
     } else if (renderObject is RenderBox) {
       renderBox = renderObject;
     }
-    if (renderBox == null) return null;
+    if (renderBox == null) return true;
 
-    for (double y = 0; y < 2000; y += 5) {
-      final testPosition = documentLayout.getDocumentPositionNearestToOffset(
-        Offset(0, y),
-      );
-      if (testPosition?.nodeId == node.id) {
-        final startRect = documentLayout.getRectForPosition(testPosition!);
-        if (startRect != null) {
-          // 노드의 끝 위치 찾기
-          Rect? endRect = startRect;
-          for (double checkY = y + 5; checkY < y + 500; checkY += 5) {
-            final checkPosition = documentLayout
-                .getDocumentPositionNearestToOffset(Offset(0, checkY));
-            if (checkPosition?.nodeId == node.id) {
-              final checkRect = documentLayout.getRectForPosition(
-                checkPosition!,
-              );
-              if (checkRect != null) {
-                endRect = checkRect;
-              }
-            } else {
-              break;
-            }
-          }
-
-          // DocumentLayout의 로컬 좌표를 글로벌 좌표로 변환
-          final globalTopLeft = renderBox.localToGlobal(startRect.topLeft);
-          final globalBottomRight = renderBox.localToGlobal(
-            endRect?.bottomRight ?? startRect.bottomRight,
-          );
-
-          return NodeBounds(
-            nodeId: node.id,
-            topLeft: globalTopLeft,
-            bottomRight: globalBottomRight,
-            center: Offset(
-              (globalTopLeft.dx + globalBottomRight.dx) / 2,
-              (globalTopLeft.dy + globalBottomRight.dy) / 2,
-            ),
-            size: Size(
-              globalBottomRight.dx - globalTopLeft.dx,
-              globalBottomRight.dy - globalTopLeft.dy,
-            ),
-            top: globalTopLeft.dy,
-            bottom: globalBottomRight.dy,
-            left: globalTopLeft.dx,
-            right: globalBottomRight.dx,
-          );
-        }
-      }
-    }
-
-    return null;
+    final local = renderBox.globalToLocal(dragPosition!);
+    final halfWidth = renderBox.size.width / 2;
+    return local.dx < halfWidth;
   }
 
-  /// 드롭 인덱스와 라인 위치를 한 번에 계산
+  /// 단순한 드롭 인덱스 계산
   Map<String, dynamic>? computeDropInfo(Offset globalPosition) {
-    // 글로벌 좌표를 그대로 사용 (이미 글로벌 좌표이므로)
-    final correctedPosition = globalPosition;
+    final documentLayout =
+        editorService.documentLayoutKey?.currentState as DocumentLayout?;
+    if (documentLayout == null) return null;
 
-    // 타겟 노드 찾기 (이미지 겹침 감지를 위해)
-    DocumentNode? targetNode;
-    for (final node in editorService.editor.document) {
-      final bounds = getNodeGlobalBounds(node.id);
-      if (bounds != null &&
-          correctedPosition.dx >= bounds.left &&
-          correctedPosition.dx <= bounds.right &&
-          correctedPosition.dy >= bounds.top &&
-          correctedPosition.dy <= bounds.bottom) {
-        targetNode = node;
-        break;
-      }
+    // 글로벌 좌표를 문서의 로컬 좌표로 변환
+    final renderObject =
+        editorService.documentLayoutKey?.currentContext?.findRenderObject();
+    if (renderObject == null) return null;
+
+    RenderBox? renderBox;
+    if (renderObject is RenderSliverToBoxAdapter) {
+      renderBox = renderObject.child;
+    } else if (renderObject is RenderBox) {
+      renderBox = renderObject;
     }
+    if (renderBox == null) return null;
 
-    int index = 0;
-    int? candidate;
-    Offset? linePosition;
+    final localPosition = renderBox.globalToLocal(globalPosition);
 
-    // 현재 드래그 중인 노드의 인덱스 찾기
-    int draggingNodeIndex = -1;
+    // SuperEditor의 정확한 위치 계산 (로컬 좌표 사용)
+    final position = documentLayout.getDocumentPositionNearestToOffset(
+      localPosition,
+    );
+    if (position == null) return null;
+
+    final node = editorService.editor.document.getNodeById(position.nodeId);
+    if (node == null) return null;
+
+    // 노드 인덱스 찾기
+    final nodeIndex = editorService.editor.document.getNodeIndexById(node.id);
+    if (nodeIndex == -1) return null;
+
+    // 드롭 인덱스 계산
+    int? finalCandidate = nodeIndex;
     if (draggingNodeId != null) {
-      for (int i = 0; i < editorService.editor.document.length; i++) {
-        if (editorService.editor.document.getNodeAt(i)?.id == draggingNodeId) {
-          draggingNodeIndex = i;
-          break;
-        }
-      }
-    }
-
-    for (final node in editorService.editor.document) {
-      final bounds = getNodeGlobalBounds(node.id);
-      if (bounds == null) {
-        index += 1;
-        continue;
-      }
-
-      final top = bounds.top;
-      final bottom = bounds.bottom;
-      final center = bounds.center;
-
-      if (correctedPosition.dy < top) {
-        candidate = index;
-        linePosition = Offset(0, top - 1);
-        break;
-      }
-
-      if (correctedPosition.dy >= top && correctedPosition.dy <= bottom) {
-        candidate = correctedPosition.dy < center.dy ? index : index + 1;
-        if (candidate == index) {
-          linePosition = Offset(0, top - 1);
+      final draggingNodeIndex = editorService.editor.document.getNodeIndexById(
+        draggingNodeId!,
+      );
+      if (draggingNodeIndex != -1) {
+        // 자기 자신의 위치만 드롭 인덱스 무효화 (바로 위아래는 허용)
+        if (nodeIndex == draggingNodeIndex) {
+          finalCandidate = null;
+        } else if (draggingNodeIndex < nodeIndex) {
+          // 드래그 중인 노드가 타겟 노드보다 앞에 있으면, 타겟 노드 앞에 삽입
+          finalCandidate = nodeIndex;
         } else {
-          linePosition = Offset(0, bottom + 1);
+          // 드래그 중인 노드가 타겟 노드보다 뒤에 있으면, 타겟 노드 앞에 삽입
+          finalCandidate = nodeIndex;
         }
-        break;
-      }
-
-      candidate = index + 1;
-      index += 1;
-    }
-
-    // 마지막 위치 처리
-    if (candidate == editorService.editor.document.length) {
-      final lastNode = editorService.editor.document.last;
-      final lastBounds = getNodeGlobalBounds(lastNode.id);
-      if (lastBounds != null) {
-        linePosition = Offset(0, lastBounds.bottom + 1);
-      }
-    }
-
-    // 자기 자신의 위치면 드롭 인덱스 무효화
-    if (draggingNodeIndex != -1 && candidate != null) {
-      // 정확히 같은 위치일 때만 무효화
-      if (candidate == draggingNodeIndex) {
-        candidate = null;
-        linePosition = null;
-      }
-    }
-
-    // 드래그 모드 결정
-    if (targetNode != null &&
-        (draggingNodeType == NodeType.image ||
-            draggingNodeType == NodeType.imageRow)) {
-      final targetNodeType = editorService.getNodeType(targetNode.id);
-      if (targetNodeType == NodeType.image) {
-        dragMode = DragMode.imageRowMerge;
-      } else {
-        dragMode = DragMode.reorder;
       }
     } else {
-      dragMode = DragMode.reorder;
+      finalCandidate = nodeIndex;
     }
 
-    // 이미지 가로 배치 모드일 때 세로 라인 정보 계산
-    Map<String, dynamic>? imageRowLineInfo;
-    if (dragMode == DragMode.imageRowMerge && targetNode != null) {
-      final bounds = getNodeGlobalBounds(targetNode.id);
-      if (bounds != null) {
-        final isFromLeft = correctedPosition.dx < bounds.center.dx;
-        imageRowLineInfo = {'bounds': bounds, 'isFromLeft': isFromLeft};
-      }
+    // 맨 위 삽입을 위한 특별 처리
+    if (finalCandidate == 0) {
+      finalCandidate = 0;
+    }
+
+    // 드래그 모드 결정 (단일 이미지 또는 이미지 행 모두 가로배치 합치기 허용)
+    final targetNodeType = editorService.getNodeType(node.id);
+    if ((targetNodeType == NodeType.image ||
+            targetNodeType == NodeType.imageRow) &&
+        (draggingNodeType == NodeType.image ||
+            draggingNodeType == NodeType.imageRow) &&
+        draggingNodeId != node.id) {
+      dragMode = DragType.imageRowMerge;
+    } else {
+      dragMode = DragType.reorder;
     }
 
     // 타겟 노드 정보 업데이트
-    if (targetNode != null) {
-      targetNodeId = targetNode.id;
-      targetNodeType = editorService.getNodeType(targetNode.id);
-    } else {
-      targetNodeId = null;
-      targetNodeType = null;
-    }
+    targetNodeId = node.id;
+    this.targetNodeType = targetNodeType;
 
-    return {
-      'dropIndex': candidate,
-      'linePosition': linePosition,
-      'imageRowLineInfo': imageRowLineInfo,
-    };
+    // 디버그 로그
+    print('=== 드롭 인덱스 계산 ===');
+    print('글로벌 좌표: $globalPosition');
+    print('로컬 좌표: $localPosition');
+    print(
+      '드래그 중인 노드: $draggingNodeId (인덱스: ${draggingNodeId != null ? getNodeIndex(draggingNodeId!) : -1})',
+    );
+    print('타겟 노드: $targetNodeId (인덱스: $nodeIndex)');
+    print('최종 드롭 인덱스: $finalCandidate');
+    print('드래그 모드: $dragMode');
+
+    return {'dropIndex': finalCandidate};
+  }
+
+  /// 노드 ID로 현재 노드의 인덱스 찾기
+  int getNodeIndex(String nodeId) {
+    return editorService.editor.document.getNodeIndexById(nodeId);
   }
 }

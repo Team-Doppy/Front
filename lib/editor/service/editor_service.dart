@@ -6,9 +6,10 @@ import 'package:super_editor/super_editor.dart';
 
 class EditorService extends ChangeNotifier {
   late final Editor editor;
+  late final MutableDocument document;
   GlobalKey? _documentLayoutKey;
 
-  EditorService({required this.editor});
+  EditorService({required this.editor, required this.document});
 
   void setDocumentLayoutKey(GlobalKey key) {
     _documentLayoutKey = key;
@@ -17,13 +18,13 @@ class EditorService extends ChangeNotifier {
   GlobalKey? get documentLayoutKey => _documentLayoutKey;
 
   void reorderNode(String nodeId, int targetIndex) {
-    final node = editor.document.getNodeById(nodeId);
+    final node = document.getNodeById(nodeId);
     if (node == null) return;
 
     // 현재 노드의 인덱스 찾기
     int currentIndex = -1;
-    for (int i = 0; i < editor.document.length; i++) {
-      if (editor.document.getNodeAt(i)?.id == nodeId) {
+    for (int i = 0; i < document.length; i++) {
+      if (document.getNodeAt(i)?.id == nodeId) {
         currentIndex = i;
         break;
       }
@@ -35,13 +36,13 @@ class EditorService extends ChangeNotifier {
     if (currentIndex == targetIndex) return;
 
     // 노드 삭제 후 새 위치에 삽입
-    editor.document.deleteNode(nodeId);
+    document.deleteNode(nodeId);
 
     // targetIndex가 현재 인덱스보다 작으면 그대로 삽입
     // targetIndex가 현재 인덱스보다 크면 1을 빼서 삽입 (삭제로 인한 인덱스 변화)
     final insertIndex =
         targetIndex > currentIndex ? targetIndex - 1 : targetIndex;
-    editor.document.insertNodeAt(insertIndex, node);
+    document.insertNodeAt(insertIndex, node);
     notifyListeners();
   }
 
@@ -51,8 +52,8 @@ class EditorService extends ChangeNotifier {
     String targetImageId, {
     bool isFromLeft = true,
   }) {
-    final draggingNode = editor.document.getNodeById(draggingImageId);
-    final targetNode = editor.document.getNodeById(targetImageId);
+    final draggingNode = document.getNodeById(draggingImageId);
+    final targetNode = document.getNodeById(targetImageId);
 
     if (draggingNode == null || targetNode == null) return;
     if (draggingNode is! ImageNode || targetNode is! ImageNode) return;
@@ -64,8 +65,8 @@ class EditorService extends ChangeNotifier {
     int draggingIndex = -1;
     int targetIndex = -1;
 
-    for (int i = 0; i < editor.document.length; i++) {
-      final node = editor.document.getNodeAt(i);
+    for (int i = 0; i < document.length; i++) {
+      final node = document.getNodeAt(i);
       if (node?.id == draggingImageId) draggingIndex = i;
       if (node?.id == targetImageId) targetIndex = i;
     }
@@ -91,18 +92,18 @@ class EditorService extends ChangeNotifier {
     );
 
     // 기존 이미지들 삭제
-    editor.document.deleteNode(draggingImageId);
-    editor.document.deleteNode(targetImageId);
+    document.deleteNode(draggingImageId);
+    document.deleteNode(targetImageId);
 
     // ImageRowNode 삽입 (더 작은 인덱스 위치에)
     final insertIndex =
         draggingIndex < targetIndex ? draggingIndex : targetIndex;
-    editor.document.insertNodeAt(insertIndex, imageRowNode);
+    document.insertNodeAt(insertIndex, imageRowNode);
     notifyListeners();
   }
 
   NodeType getNodeType(String nodeId) {
-    final node = editor.document.getNodeById(nodeId);
+    final node = document.getNodeById(nodeId);
     switch (node) {
       case ParagraphNode():
         return NodeType.paragraph;
@@ -117,7 +118,10 @@ class EditorService extends ChangeNotifier {
 
   DocumentNode? findNodeAtPosition(Offset position) {
     final documentLayout = _documentLayoutKey?.currentState as DocumentLayout?;
-    if (documentLayout == null) return null;
+    if (documentLayout == null) {
+      print("DocumentLayout이 null입니다");
+      return null;
+    }
 
     try {
       // 글로벌 좌표를 DocumentLayout의 로컬 좌표로 변환
@@ -130,17 +134,30 @@ class EditorService extends ChangeNotifier {
         renderBox = renderObject;
       }
 
-      if (renderBox == null) return null;
+      if (renderBox == null) {
+        print("RenderBox가 null입니다");
+        return null;
+      }
 
       // 글로벌 좌표를 DocumentLayout의 로컬 좌표로 변환
       final localPosition = renderBox.globalToLocal(position);
+      print("글로벌 좌표: $position, 로컬 좌표: $localPosition");
 
       // SuperEditor 내장 함수 사용
       final documentPosition = documentLayout
           .getDocumentPositionNearestToOffset(localPosition);
-      if (documentPosition == null) return null;
+      if (documentPosition == null) {
+        print("DocumentPosition이 null입니다");
+        return null;
+      }
 
-      return editor.document.getNodeById(documentPosition.nodeId);
+      print(
+        "찾은 DocumentPosition: nodeId=${documentPosition.nodeId}, offset=${documentPosition.nodePosition}",
+      );
+      final node = document.getNodeById(documentPosition.nodeId);
+      print("찾은 노드: ${node?.runtimeType} (ID: ${node?.id})");
+
+      return node;
     } catch (e) {
       print("Error finding node at position: $e");
       return null;

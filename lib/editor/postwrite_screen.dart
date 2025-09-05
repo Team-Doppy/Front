@@ -1,7 +1,7 @@
 import 'package:doppy/editor/component/single_image_component_builder.dart';
 import 'package:doppy/editor/component/row_image_component_builder.dart';
-import 'package:doppy/editor/config/config.dart';
 import 'package:doppy/editor/custom_nodes/image_row_node.dart';
+import 'package:doppy/editor/custom_nodes/paragraph.dart' as custom;
 import 'package:doppy/editor/service/drag_service.dart';
 import 'package:doppy/editor/service/editor_service.dart';
 import 'package:doppy/editor/style/style_sheet.dart';
@@ -44,12 +44,12 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
 
     document = MutableDocument(
       nodes: [
-        ParagraphNode(id: '1', text: AttributedText('Hello, World1!')),
-        ParagraphNode(id: '2', text: AttributedText('Hello, World2!')),
-        ParagraphNode(id: '3', text: AttributedText('Hello, World3!')),
-        ParagraphNode(id: '4', text: AttributedText('Hello, World4!')),
-        ParagraphNode(id: '5', text: AttributedText('Hello, World5!')),
-        ParagraphNode(id: '6', text: AttributedText('Hello, World6!')),
+        custom.ParagraphNode(id: '1', text: AttributedText('Hello, World1!')),
+        custom.ParagraphNode(id: '2', text: AttributedText('Hello, World2!')),
+        custom.ParagraphNode(id: '3', text: AttributedText('Hello, World3!')),
+        custom.ParagraphNode(id: '4', text: AttributedText('Hello, World4!')),
+        custom.ParagraphNode(id: '5', text: AttributedText('Hello, World5!')),
+        custom.ParagraphNode(id: '6', text: AttributedText('Hello, World6!')),
         ImageNode(
           id: '7',
           imageUrl:
@@ -60,8 +60,24 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
           imageUrl:
               'https://media.istockphoto.com/id/1317323736/ko/%EC%82%AC%EC%A7%84/%EB%82%98%EB%AC%B4-%EB%B0%A9%ED%96%A5%EC%9C%BC%EB%A1%9C-%ED%95%98%EB%8A%98%EB%A1%9C-%EB%B0%94%EB%9D%BC%EB%B3%B4%EB%8A%94-%EA%B2%BD%EC%B9%98.jpg?s=612x612&w=0&k=20&c=0xTghmMTXJ5ITCZ-LKTABbaPIK_1kWNf0FSFl_GL_7I=',
         ),
-        ParagraphNode(id: '9', text: AttributedText('Hello, World8!')),
-        ParagraphNode(id: '10', text: AttributedText('Hello, World9!')),
+        custom.ParagraphNode(id: '9', text: AttributedText('Hello, World8!')),
+        custom.ParagraphNode(id: '10', text: AttributedText('Hello, World9!')),
+        // 스크롤 영역 확보를 위한 여유 공간
+        ImageNode(
+          id: '21',
+          imageUrl:
+              'https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcQWfMSIOQpP83ncpDgty8qB2tgKjCpqCFVTIRUdflGvJJS44tHiQjwZjMCzTBnfwARtHjc&usqp=CAU',
+        ),
+        custom.ParagraphNode(id: '11', text: AttributedText(' ')),
+        custom.ParagraphNode(id: '12', text: AttributedText(' ')),
+        custom.ParagraphNode(id: '13', text: AttributedText(' ')),
+        custom.ParagraphNode(id: '14', text: AttributedText(' ')),
+        custom.ParagraphNode(id: '15', text: AttributedText(' ')),
+        custom.ParagraphNode(id: '16', text: AttributedText(' ')),
+        custom.ParagraphNode(id: '17', text: AttributedText(' ')),
+        custom.ParagraphNode(id: '18', text: AttributedText(' ')),
+        custom.ParagraphNode(id: '19', text: AttributedText(' ')),
+        custom.ParagraphNode(id: '20', text: AttributedText(' ')),
       ],
     );
     composer = MutableDocumentComposer();
@@ -70,9 +86,13 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
       composer: composer,
     );
 
-    editorService = EditorService(editor: editor);
+    editorService = EditorService(editor: editor, document: document);
     editorService.setDocumentLayoutKey(_documentLayoutKey);
-    dragService = DragService(editorService: editorService);
+    dragService = DragService(
+      editorService: editorService,
+      scrollController: scrollController,
+    );
+    dragService.attachScrollController(scrollController);
     dragService.addListener(_onDragChange);
   }
 
@@ -103,7 +123,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
       nodeType = 'image';
     } else if (node is ImageRowNode) {
       nodeType = 'imageRow';
-    } else if (node is ParagraphNode) {
+    } else if (node is custom.ParagraphNode) {
       nodeType = 'paragraph';
     }
 
@@ -115,135 +135,87 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     );
   }
 
-  // 드롭 라인 빌드 (실시간 위치 사용)
-  Widget _buildDropLine(BuildContext context) {
-    final pos = dragService.dragPosition;
-    if (pos == null) return const SizedBox.shrink();
-
-    // computeDropInfo에서 모든 라인 정보를 가져옴
-    final dropInfo = dragService.computeDropInfo(pos);
-    if (dropInfo == null) return const SizedBox.shrink();
-
-    // 이미지 가로 배치 모드일 때 세로 라인 표시
-    final imageRowLineInfo =
-        dropInfo['imageRowLineInfo'] as Map<String, dynamic>?;
-    if (imageRowLineInfo != null) {
-      final bounds = imageRowLineInfo['bounds'] as NodeBounds;
-      final isFromLeft = imageRowLineInfo['isFromLeft'] as bool;
-
-      return Stack(
-        children: [
-          // 왼쪽에서 오는 경우 왼쪽 라인만
-          if (isFromLeft)
-            Positioned(
-              left: bounds.left - 2,
-              top:
-                  bounds.top -
-                  EditorConfig.getComplementOfGlobalToDocument(context),
-              child: Container(
-                width: 4,
-                height: bounds.size.height,
-                decoration: BoxDecoration(color: const Color(0xFF007AFF)),
-              ),
-            ),
-          // 오른쪽에서 오는 경우 오른쪽 라인만
-          if (!isFromLeft)
-            Positioned(
-              left: bounds.right - 2,
-              top:
-                  bounds.top -
-                  EditorConfig.getComplementOfGlobalToDocument(context),
-              child: Container(
-                width: 4,
-                height: bounds.size.height,
-                decoration: BoxDecoration(color: const Color(0xFF007AFF)),
-              ),
-            ),
-        ],
-      );
-    }
-
-    // 일반 모드일 때 가로 라인 표시
-    final linePos = dropInfo['linePosition'] as Offset?;
-    if (linePos == null) return const SizedBox.shrink();
-
-    return Positioned(
-      left: EditorConfig.documentPadding,
-      top: linePos.dy - EditorConfig.getComplementOfGlobalToDocument(context),
-      right: EditorConfig.documentPadding,
-      child: Container(
-        height: 3,
-        decoration: BoxDecoration(color: const Color(0xFF007AFF)),
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(),
-      body: Stack(
-        children: [
-          AnimatedOpacity(
-            duration: const Duration(milliseconds: 100),
-            opacity:
-                dragService.draggingNodeId != null
-                    ? 0.7
-                    : 1.0, // 드래그 중일 때 투명도 조정
-            child: SuperEditor(
-              gestureMode: DocumentGestureMode.iOS,
-              editor: editor,
-              stylesheet: buildCustomStylesheet(),
-              documentLayoutKey: _documentLayoutKey,
-              scrollController: scrollController,
-              componentBuilders: [
-                ...defaultComponentBuilders,
-                SingleImageComponentBuilder(),
-                RowImageComponentBuilder(),
-              ],
-            ),
-          ),
+      body: AnimatedScale(
+        duration: const Duration(milliseconds: 100),
+        scale: dragService.draggingNodeId != null ? 0.9 : 1.0,
+        child: Stack(
+          children: [
+            AnimatedOpacity(
+              duration: const Duration(milliseconds: 100),
 
-          Positioned.fill(
-            child: RawGestureDetector(
-              gestures: {
-                LongPressGestureRecognizer:
-                    GestureRecognizerFactoryWithHandlers<
-                      LongPressGestureRecognizer
-                    >(() => LongPressGestureRecognizer(), (
-                      LongPressGestureRecognizer instance,
-                    ) {
-                      instance.onLongPressStart = (details) {
-                        final nodeId =
-                            editorService
-                                .findNodeAtPosition(details.globalPosition)
-                                ?.id;
-                        if (nodeId != null) {
-                          dragService.startDrag(
-                            nodeId,
-                            context,
+              opacity:
+                  dragService.draggingNodeId != null
+                      ? 0.6
+                      : 1.0, // 드래그 중일 때 투명도 조정
+              child: Padding(
+                padding: const EdgeInsets.only(bottom: 30.0), // 하단 여유 공간 추가
+                child: SuperEditor(
+                  gestureMode: DocumentGestureMode.iOS,
+                  editor: editor,
+                  stylesheet: buildCustomStylesheet(),
+                  documentLayoutKey: _documentLayoutKey,
+                  scrollController: scrollController,
+                  componentBuilders: [
+                    // 커스텀 이미지 컴포넌트들
+                    SingleImageComponentBuilder(dragService: dragService),
+                    RowImageComponentBuilder(dragService: dragService),
+                    // 커스텀 ParagraphComponentBuilder (드래그 서비스 포함)
+                    custom.CustomParagraphComponentBuilder(
+                      dragService: dragService,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+
+            Positioned.fill(
+              child: RawGestureDetector(
+                gestures: {
+                  LongPressGestureRecognizer:
+                      GestureRecognizerFactoryWithHandlers<
+                        LongPressGestureRecognizer
+                      >(() => LongPressGestureRecognizer(), (
+                        LongPressGestureRecognizer instance,
+                      ) {
+                        instance.onLongPressStart = (details) {
+                          final nodeId =
+                              editorService
+                                  .findNodeAtPosition(details.globalPosition)
+                                  ?.id;
+                          if (nodeId != null) {
+                            print(
+                              '전역 RawGestureDetector: 롱프레스 시작 - 노드 ID: $nodeId',
+                            );
+                            dragService.startDrag(
+                              nodeId,
+                              context,
+                              details.globalPosition,
+                            );
+                          }
+                        };
+                        instance.onLongPressMoveUpdate = (details) {
+                          dragService.updateDrag(
                             details.globalPosition,
+                            context,
                           );
-                        }
-                      };
-                      instance.onLongPressMoveUpdate = (details) {
-                        dragService.updateDrag(details.globalPosition, context);
-                      };
-                      instance.onLongPressEnd = (details) {
-                        dragService.endDrag();
-                      };
-                    }),
-              },
-              behavior: HitTestBehavior.translucent,
+                        };
+                        instance.onLongPressEnd = (details) {
+                          dragService.endDrag();
+                        };
+                      }),
+                },
+                behavior: HitTestBehavior.translucent,
+              ),
             ),
-          ),
 
-          // 드래그 오버레이 (개선된 Stack 방식)
-          if (dragService.draggingNodeId != null) _buildDragOverlay(),
-
-          // 드롭 라인 (개선된 Stack 방식)
-          if (dragService.dropIndex != null) _buildDropLine(context),
-        ],
+            // 드래그 오버레이 (개선된 Stack 방식)
+            if (dragService.draggingNodeId != null) _buildDragOverlay(),
+          ],
+        ),
       ),
     );
   }

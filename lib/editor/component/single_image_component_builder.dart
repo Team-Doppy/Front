@@ -3,6 +3,10 @@ import 'package:super_editor/super_editor.dart';
 import 'package:doppy/editor/component/single_image_component.dart';
 
 class SingleImageComponentBuilder implements ComponentBuilder {
+  const SingleImageComponentBuilder({this.dragService});
+
+  final dynamic dragService; // DragService 타입을 나중에 import해서 수정
+
   @override
   Widget? createComponent(
     SingleColumnDocumentComponentContext componentContext,
@@ -13,6 +17,7 @@ class SingleImageComponentBuilder implements ComponentBuilder {
         nodeId: componentViewModel.nodeId,
         imageUrl: componentViewModel.imageUrl,
         componentKey: componentContext.componentKey,
+        dragService: dragService,
       );
     }
     return null;

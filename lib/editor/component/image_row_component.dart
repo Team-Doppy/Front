@@ -1,3 +1,7 @@
+import 'package:doppy/editor/postwrite_screen.dart';
+import 'package:doppy/editor/service/drag_service.dart';
+import 'package:doppy/editor/overlay/drag_overlay_widget.dart' show NodeType;
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:super_editor/super_editor.dart';
 
@@ -8,6 +12,7 @@ class ImageRowComponent extends StatefulWidget {
     required this.imageUrls,
     required this.spacing,
     required GlobalKey componentKey,
+    this.dragService,
     Key? key,
   }) : _componentKey = componentKey,
        super(key: componentKey);
@@ -15,6 +20,7 @@ class ImageRowComponent extends StatefulWidget {
   final String nodeId;
   final List<String> imageUrls;
   final double spacing;
+  final dynamic dragService; // DragService 타입을 나중에 import해서 수정
 
   final GlobalKey _componentKey;
 
@@ -45,13 +51,25 @@ class _ImageRowComponentState extends State<ImageRowComponent>
   Offset getOffsetForPosition(NodePosition nodePosition) => Offset.zero;
 
   @override
-  Rect getRectForPosition(NodePosition nodePosition) => Rect.zero;
+  Rect getRectForPosition(NodePosition nodePosition) {
+    final renderBox = context.findRenderObject() as RenderBox?;
+    if (renderBox == null) {
+      return Rect.zero;
+    }
+    return Offset.zero & renderBox.size;
+  }
 
   @override
   Rect getRectForSelection(
     NodePosition baseNodePosition,
     NodePosition extentNodePosition,
-  ) => Rect.zero;
+  ) {
+    final renderBox = context.findRenderObject() as RenderBox?;
+    if (renderBox == null) {
+      return Rect.zero;
+    }
+    return Offset.zero & renderBox.size;
+  }
 
   @override
   NodeSelection getCollapsedSelectionAt(NodePosition nodePosition) =>
@@ -82,7 +100,13 @@ class _ImageRowComponentState extends State<ImageRowComponent>
   );
 
   @override
-  Rect getEdgeForPosition(NodePosition nodePosition) => Rect.zero;
+  Rect getEdgeForPosition(NodePosition nodePosition) {
+    final renderBox = context.findRenderObject() as RenderBox?;
+    if (renderBox == null) {
+      return Rect.zero;
+    }
+    return Offset.zero & renderBox.size;
+  }
 
   @override
   bool isVisualSelectionSupported() => false;
@@ -118,74 +142,117 @@ class _ImageRowComponentState extends State<ImageRowComponent>
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8.0),
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          return Row(
-            children:
-                widget.imageUrls.asMap().entries.map((entry) {
-                  final imageUrl = entry.value;
-                  return Expanded(
-                    child: Container(
-                      margin: EdgeInsets.only(right: 1),
-                      child: SizedBox(
-                        height: _unifiedHeight ?? 200,
-                        child: Image.network(
-                          imageUrl,
-                          fit: BoxFit.cover,
-                          loadingBuilder: (context, child, loading) {
-                            if (loading == null) return child;
-                            return Container(
-                              height: _unifiedHeight ?? 200,
-                              color: Colors.grey.shade200,
-                              child: const Center(
-                                child: CircularProgressIndicator(),
-                              ),
-                            );
-                          },
-                          errorBuilder: (context, error, stack) {
-                            return Container(
-                              height: _unifiedHeight ?? 200,
-                              color: Colors.grey.shade300,
-                              child: const Center(
-                                child: Column(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Icon(
-                                      Icons.broken_image,
-                                      size: 40,
-                                      color: Colors.grey,
-                                    ),
-                                    SizedBox(height: 8),
-                                    Text(
-                                      "이미지 로드 실패",
-                                      style: TextStyle(color: Colors.black54),
-                                    ),
-                                  ],
+    return Column(
+      children: [
+        // 위쪽 드롭 라인
+        if (_shouldShowTopDropLine())
+          Container(
+            height: 3,
+            color: const Color(0xFF007AFF),
+            margin: const EdgeInsets.symmetric(horizontal: 16),
+          ),
+
+        // 실제 이미지 행 내용
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 8.0),
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              return Row(
+                children: [
+                  // 왼쪽 세로 라인 (가로배치 모드일 때)
+                  if (_shouldShowLeftVerticalLine())
+                    Container(
+                      width: 4,
+                      height: _unifiedHeight ?? 260,
+                      color: const Color(0xFF007AFF),
+                      margin: const EdgeInsets.only(right: 8),
+                    ),
+
+                  // 이미지들
+                  ...widget.imageUrls.asMap().entries.map((entry) {
+                    final imageUrl = entry.value;
+                    return Expanded(
+                      child: Container(
+                        margin: EdgeInsets.only(right: 1),
+                        child: SizedBox(
+                          height: _unifiedHeight ?? 260,
+                          child: Image.network(
+                            imageUrl,
+                            fit: BoxFit.cover,
+                            loadingBuilder: (context, child, loading) {
+                              if (loading == null) return child;
+                              return Container(
+                                height: _unifiedHeight ?? 260,
+                                color: Colors.grey.shade200,
+                                child: const Center(
+                                  child: CircularProgressIndicator(),
                                 ),
-                              ),
-                            );
-                          },
-                          frameBuilder: (context, child, frame, sync) {
-                            if (frame != null) {
-                              WidgetsBinding.instance.addPostFrameCallback((_) {
-                                _measureAndUnifyHeight(
-                                  imageUrl,
-                                  constraints.maxWidth,
-                                );
-                              });
-                            }
-                            return child;
-                          },
+                              );
+                            },
+                            errorBuilder: (context, error, stack) {
+                              return Container(
+                                height: _unifiedHeight ?? 260,
+                                color: Colors.grey.shade300,
+                                child: const Center(
+                                  child: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Icon(
+                                        Icons.broken_image,
+                                        size: 40,
+                                        color: Colors.grey,
+                                      ),
+                                      SizedBox(height: 8),
+                                      Text(
+                                        "이미지 로드 실패",
+                                        style: TextStyle(color: Colors.black54),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              );
+                            },
+                            frameBuilder: (context, child, frame, sync) {
+                              if (frame != null) {
+                                WidgetsBinding.instance.addPostFrameCallback((
+                                  _,
+                                ) {
+                                  _measureAndUnifyHeight(
+                                    imageUrl,
+                                    constraints.maxWidth,
+                                  );
+                                });
+                              }
+                              return child;
+                            },
+                          ),
                         ),
                       ),
+                    );
+                  }).toList(),
+
+                  // 오른쪽 세로 라인 (가로배치 모드일 때)
+                  if (_shouldShowRightVerticalLine())
+                    Container(
+                      width: 4,
+                      height: _unifiedHeight ?? 260,
+                      color: const Color(0xFF007AFF),
+                      margin: const EdgeInsets.only(left: 8),
                     ),
-                  );
-                }).toList(),
-          );
-        },
-      ),
+                ],
+              );
+            },
+          ),
+        ),
+
+        // 아래쪽 드롭 라인
+        if (_shouldShowBottomDropLine())
+          Container(
+            height: 3,
+            color: const Color(0xFF007AFF),
+            margin: const EdgeInsets.symmetric(horizontal: 16),
+          ),
+      ],
     );
   }
 
@@ -230,6 +297,79 @@ class _ImageRowComponentState extends State<ImageRowComponent>
             }
           }),
         );
+  }
+
+  bool _shouldShowTopDropLine() {
+    if (widget.dragService == null) return false;
+
+    final dropIndex = widget.dragService.dropIndex;
+    if (dropIndex == null) return false;
+
+    // 현재 노드의 인덱스 찾기
+    final currentNodeIndex = _getCurrentNodeIndex();
+    if (currentNodeIndex == -1) return false;
+
+    // 드롭 인덱스가 현재 노드와 같으면 위쪽에 라인 표시
+    return dropIndex == currentNodeIndex;
+  }
+
+  bool _shouldShowBottomDropLine() {
+    if (widget.dragService == null) return false;
+
+    final dropIndex = widget.dragService.dropIndex;
+    if (dropIndex == null) return false;
+
+    // 현재 노드의 인덱스 찾기
+    final currentNodeIndex = _getCurrentNodeIndex();
+    if (currentNodeIndex == -1) return false;
+
+    // 마지막 노드인지 확인
+    final totalNodes = widget.dragService.editorService.document.length;
+    final isLastNode = currentNodeIndex == totalNodes - 1;
+
+    // 드롭 인덱스가 현재 노드 다음이면 아래쪽에 라인 표시 (마지막 노드일 때만)
+    return dropIndex == currentNodeIndex + 1 && isLastNode;
+  }
+
+  bool _shouldShowLeftVerticalLine() {
+    if (widget.dragService == null) return false;
+    if (widget.dragService.draggingNodeId == null) return false;
+    if (widget.dragService.dragPosition == null) return false;
+    if (widget.dragService.draggingNodeId == widget.nodeId) return false;
+    if (!(widget.dragService.draggingNodeType == NodeType.image ||
+        widget.dragService.draggingNodeType == NodeType.imageRow))
+      return false;
+
+    final renderBox = context.findRenderObject() as RenderBox?;
+    if (renderBox == null) return false;
+    final rect = (renderBox.localToGlobal(Offset.zero) & renderBox.size)
+        .inflate(12);
+    if (!rect.contains(widget.dragService.dragPosition!)) return false;
+
+    return widget.dragService.dragPosition!.dx < rect.center.dx;
+  }
+
+  bool _shouldShowRightVerticalLine() {
+    if (widget.dragService == null) return false;
+    if (widget.dragService.draggingNodeId == null) return false;
+    if (widget.dragService.dragPosition == null) return false;
+    if (widget.dragService.draggingNodeId == widget.nodeId) return false;
+    if (!(widget.dragService.draggingNodeType == NodeType.image ||
+        widget.dragService.draggingNodeType == NodeType.imageRow))
+      return false;
+
+    final renderBox = context.findRenderObject() as RenderBox?;
+    if (renderBox == null) return false;
+    final rect = (renderBox.localToGlobal(Offset.zero) & renderBox.size)
+        .inflate(12);
+    if (!rect.contains(widget.dragService.dragPosition!)) return false;
+
+    return widget.dragService.dragPosition!.dx >= rect.center.dx;
+  }
+
+  int _getCurrentNodeIndex() {
+    if (widget.dragService == null) return -1;
+    return widget.dragService.getNodeIndex(widget.nodeId);
   }
 }
 
