@@ -9,7 +9,13 @@ class EditorService extends ChangeNotifier {
   late final MutableDocument document;
   GlobalKey? _documentLayoutKey;
 
-  EditorService({required this.editor, required this.document});
+  // 문단별 마진 캐시 (중앙집중 판정 결과)
+  final Map<String, EdgeInsets> _paragraphMargins = <String, EdgeInsets>{};
+
+  EditorService({required this.editor, required this.document}) {
+    // 초기 문서 상태 기준으로 문단 마진을 계산
+    recomputeParagraphMargins();
+  }
 
   void setDocumentLayoutKey(GlobalKey key) {
     _documentLayoutKey = key;
@@ -42,6 +48,8 @@ class EditorService extends ChangeNotifier {
     final insertIndex =
         targetIndex > currentIndex ? targetIndex - 1 : targetIndex;
     document.insertNodeAt(insertIndex, node);
+    // 문서 구조 변경 → 문단 마진 재계산
+    recomputeParagraphMargins();
     notifyListeners();
   }
 
@@ -112,6 +120,8 @@ class EditorService extends ChangeNotifier {
     final insertIndex =
         draggingIndex < targetIndex ? draggingIndex : targetIndex;
     document.insertNodeAt(insertIndex, imageRowNode);
+    // 문서 구조 변경 → 문단 마진 재계산
+    recomputeParagraphMargins();
     notifyListeners();
   }
 
@@ -140,6 +150,8 @@ class EditorService extends ChangeNotifier {
 
     // 기존 이미지 삭제
     document.deleteNode(imageId);
+    // 문서 구조 변경 → 문단 마진 재계산
+    recomputeParagraphMargins();
     notifyListeners();
   }
 
@@ -205,7 +217,8 @@ class EditorService extends ChangeNotifier {
   }
 
   /// 이미지 행에서 특정 이미지를 분리하고 분리된 이미지 ID 반환
-  String? splitImageFromRow(String rowId, int imageIndex) {
+  /// insertIndex가 주어지면 해당 위치에 바로 삽입한다. 주어지지 않으면 행의 위치(rowIndex)에 삽입.
+  String? splitImageFromRow(String rowId, int imageIndex, {int? insertIndex}) {
     final rowNode = document.getNodeById(rowId);
     if (rowNode == null || rowNode is! ImageRowNode) return null;
     if (imageIndex < 0 || imageIndex >= rowNode.imageUrls.length) return null;
@@ -247,10 +260,60 @@ class EditorService extends ChangeNotifier {
       document.replaceNodeById(rowId, updatedRowNode);
     }
 
-    // 분리된 이미지를 원래 위치에 삽입
-    document.insertNodeAt(rowIndex, newImageNode);
+    // 분리된 이미지를 원하는 위치에 삽입 (기본: 원래 행의 위치)
+    final int targetInsertIndex = insertIndex ?? rowIndex;
+    document.insertNodeAt(targetInsertIndex, newImageNode);
+    // 문서 구조 변경 → 문단 마진 재계산
+    recomputeParagraphMargins();
     notifyListeners();
 
     return newImageId;
+  }
+
+  // ===== 중앙집중 텍스트 마진 판정 =====
+  static const double _baseTopMarginPx = 2.0;
+  static const double _imageTextMarginPx = 16.0;
+
+  bool _isImageType(NodeType? t) =>
+      t == NodeType.image || t == NodeType.imageRow;
+
+  /// 현재 문서 스냅샷을 순회하며 모든 Paragraph에 대해
+  /// 이미지와 이웃한 쪽에만 마진을 주는 규칙을 계산한다.
+  void recomputeParagraphMargins() {
+    _paragraphMargins.clear();
+
+    for (int i = 0; i < document.length; i++) {
+      final node = document.getNodeAt(i);
+      if (node is! ParagraphNode) continue;
+
+      // 이전/다음 노드의 타입 확인
+      NodeType? prevType;
+      NodeType? nextType;
+
+      if (i > 0) {
+        final prev = document.getNodeAt(i - 1);
+        if (prev != null) prevType = getNodeType(prev.id);
+      }
+      if (i < document.length - 1) {
+        final next = document.getNodeAt(i + 1);
+        if (next != null) nextType = getNodeType(next.id);
+      }
+
+      final bool addTop = _isImageType(prevType);
+      final bool addBottom = _isImageType(nextType);
+
+      final EdgeInsets margin = EdgeInsets.only(
+        top: addTop ? _imageTextMarginPx : _baseTopMarginPx,
+        bottom: addBottom ? _imageTextMarginPx : 0,
+      );
+
+      _paragraphMargins[node.id] = margin;
+    }
+  }
+
+  /// 외부에서 문단의 마진을 조회
+  EdgeInsets getParagraphMargin(String nodeId) {
+    return _paragraphMargins[nodeId] ??
+        const EdgeInsets.only(top: _baseTopMarginPx);
   }
 }

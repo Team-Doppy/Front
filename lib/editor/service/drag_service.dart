@@ -116,24 +116,57 @@ class DragService extends ChangeNotifier {
       return;
     }
 
+    // 이미지 분리 예정이면서, 가로 병합 모드로 자신의 원래 행에 드롭한 경우만 분리하지 않음
+    if (hasSplitImageInfo && dragMode == DragType.imageRowMerge) {
+      if (targetNodeId != null && targetNodeId == _splitImageRowId) {
+        // 사용자가 원래 이미지 행에 병합하려고 드롭 → 아무 변경도 하지 않음
+        ImageService().clearSelection();
+        _cleanup();
+        return;
+      }
+    }
+
     // 이미지 분리 정보가 있으면 먼저 분리 실행
+    bool handledBySplitInsertion = false;
     if (hasSplitImageInfo) {
       final rowId = _splitImageRowId;
       final imageIndex = _splitImageIndex;
 
       if (rowId != null && imageIndex != null) {
-        // 이미지 행에서 해당 이미지 분리
-        final splitImageId = editorService.splitImageFromRow(rowId, imageIndex);
-
-        if (splitImageId != null) {
-          // 분리된 이미지의 ID로 드래그 노드 ID 업데이트
-          draggingNodeId = splitImageId;
-          draggingNodeType = editorService.getNodeType(splitImageId);
+        if (dragMode == DragType.reorder && dropIndex != null) {
+          // 분리 드래그에서 위/아래 드롭 방향을 그대로 반영해 해당 위치로 즉시 삽입
+          final splitImageId = editorService.splitImageFromRow(
+            rowId,
+            imageIndex,
+            insertIndex: dropIndex,
+          );
+          if (splitImageId != null) {
+            draggingNodeId = splitImageId;
+            draggingNodeType = editorService.getNodeType(splitImageId);
+            handledBySplitInsertion = true;
+          }
+        } else {
+          // 병합 등 다른 모드: 먼저 분리만 수행하고 이후 로직에서 처리
+          final splitImageId = editorService.splitImageFromRow(
+            rowId,
+            imageIndex,
+          );
+          if (splitImageId != null) {
+            draggingNodeId = splitImageId;
+            draggingNodeType = editorService.getNodeType(splitImageId);
+          }
         }
       }
     }
 
     // 실제 노드 이동 실행
+    // 분리하면서 이미 원하는 위치로 삽입한 경우 추가 이동 불필요
+    if (handledBySplitInsertion) {
+      ImageService().clearSelection();
+      _cleanup();
+      return;
+    }
+
     switch (dragMode) {
       case DragType.reorder:
         if (dropIndex != null) {
@@ -152,7 +185,7 @@ class DragService extends ChangeNotifier {
       case DragType.none:
         break;
     }
-
+    ImageService().clearSelection();
     _cleanup();
   }
 
@@ -351,38 +384,30 @@ class DragService extends ChangeNotifier {
     this.targetNodeType = targetNodeType;
 
     // 드래그 모드 결정
-    // 이미지 행 병합은 특정 조건에서만 발생 (예: 드래그 위치가 이미지 행의 중앙에 가까울 때)
+    // 이미지/이미지Row끼리일 때에도, 타겟의 좌/우 가장자리 근처에서만 병합 모드로 진입
+    // 그 외 대부분 영역에서는 reorder가 되도록 한다.
+    const double horizontalMergeEdgePx = 30.0; // 좌/우 가장자리 감지 폭
+
     if ((targetNodeType == NodeType.image ||
             targetNodeType == NodeType.imageRow) &&
         (draggingNodeType == NodeType.image ||
             draggingNodeType == NodeType.imageRow) &&
         draggingNodeId != node.id) {
-      // 이미지 행 병합 조건: 타겟이 이미지 행이거나, 드래그 위치가 이미지의 중앙에 가까울 때
-      if (targetNodeType == NodeType.imageRow) {
-        dragMode = DragType.imageRowMerge;
-      } else if (targetNodeType == NodeType.image) {
-        // 단일 이미지의 경우, 드래그 위치가 이미지의 중앙에 가까우면 병합, 아니면 재정렬
-        final component = documentLayout.getComponentByNodeId(node.id);
-        if (component != null) {
-          final renderBox = component.context.findRenderObject() as RenderBox?;
-          if (renderBox != null) {
-            final targetCenter =
-                renderBox.localToGlobal(Offset.zero) +
-                Offset(renderBox.size.width / 2, renderBox.size.height / 2);
-            final distance = (globalPosition - targetCenter).distance;
-            final threshold = renderBox.size.width * 0.3; // 이미지 너비의 30% 내에서 병합
+      // 문서 좌표계에서 타겟 노드의 사각형을 구해 좌/우 에지 근처인지 판단
+      final Rect? targetRect = documentLayout.getRectForPosition(position);
 
-            if (distance < threshold) {
-              dragMode = DragType.imageRowMerge;
-            } else {
-              dragMode = DragType.reorder;
-            }
-          } else {
-            dragMode = DragType.reorder;
-          }
-        } else {
-          dragMode = DragType.reorder;
-        }
+      bool nearHorizontalEdge = false;
+      if (targetRect != null) {
+        final double leftEdge = targetRect.left + horizontalMergeEdgePx;
+        final double rightEdge = targetRect.right - horizontalMergeEdgePx;
+        // localPosition은 동일 좌표계(문서 좌표) 기준
+        nearHorizontalEdge =
+            localPosition.dx <= leftEdge || localPosition.dx >= rightEdge;
+      }
+
+      // 병합 모드 점착성 유지: 한 번 병합 모드에 들어가면 드래그가 끝날 때까지 유지
+      if (dragMode == DragType.imageRowMerge || nearHorizontalEdge) {
+        dragMode = DragType.imageRowMerge;
       } else {
         dragMode = DragType.reorder;
       }
@@ -397,17 +422,23 @@ class DragService extends ChangeNotifier {
         draggingNodeId!,
       );
       if (draggingNodeIndex != -1) {
-        // 원래 위치 근처로의 드롭 차단 (자기 자신과 바로 인접한 위치들)
-        if (nodeIndex == draggingNodeIndex ||
-            nodeIndex == draggingNodeIndex + 1 ||
-            nodeIndex == draggingNodeIndex - 1) {
-          finalCandidate = null;
-        } else if (draggingNodeIndex < nodeIndex) {
-          // 드래그 중인 노드가 타겟 노드보다 앞에 있으면, 타겟 노드 앞에 삽입
+        final bool isSplitDrag = hasSplitImageInfo; // 이미지 행에서 개별 이미지 분리 드래그 중인지
+
+        if (isSplitDrag) {
+          // 분리 드래그: 위/아래 제약 없음 (자기 자신, 바로 위/아래 모두 허용)
           finalCandidate = nodeIndex;
         } else {
-          // 드래그 중인 노드가 타겟 노드보다 뒤에 있으면, 타겟 노드 뒤에 삽입
-          finalCandidate = nodeIndex + 1;
+          // 일반 드래그: 자기 자신과 바로 아래 위치 차단
+          if (nodeIndex == draggingNodeIndex ||
+              nodeIndex == draggingNodeIndex + 1) {
+            finalCandidate = null;
+          } else if (draggingNodeIndex < nodeIndex) {
+            // 드래그 중인 노드가 타겟 노드보다 앞에 있으면, 타겟 노드 앞에 삽입
+            finalCandidate = nodeIndex;
+          } else {
+            // 드래그 중인 노드가 타겟 노드보다 뒤에 있으면, 타겟 노드 앞에 삽입
+            finalCandidate = nodeIndex;
+          }
         }
       }
     } else {

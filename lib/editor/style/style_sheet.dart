@@ -24,21 +24,17 @@ Stylesheet buildCustomStylesheet() {
         }
         if (docNode is ImageNode) {
           return {
-            Styles.padding: CascadingPadding.only(
-              top: EditorConfig.imageTopPadding,
-              bottom: EditorConfig.imageBottomPadding,
-              left: 0,
-              right: 0,
+            Styles.padding: CascadingPadding.symmetric(
+              vertical: EditorConfig.imagePadding,
+              horizontal: 0,
             ),
           };
         }
         if (docNode is ImageRowNode) {
           return {
-            Styles.padding: CascadingPadding.only(
-              top: EditorConfig.imageTopPadding,
-              bottom: EditorConfig.imageBottomPadding,
-              left: 0,
-              right: 0,
+            Styles.padding: CascadingPadding.symmetric(
+              vertical: EditorConfig.imagePadding,
+              horizontal: 0,
             ),
           };
         }

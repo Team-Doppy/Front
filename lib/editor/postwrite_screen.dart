@@ -140,7 +140,10 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                     // 커스텀 이미지 컴포넌트들
                     SingleImageComponentBuilder(dragService: dragService),
                     RowImageComponentBuilder(dragService: dragService),
-                    CustomParagraphComponentBuilder(dragService: dragService),
+                    CustomParagraphComponentBuilder(
+                      dragService: dragService,
+                      editorService: editorService,
+                    ),
                     // 기본 컴포넌트들 (Paragraph 제외)
                     ...defaultComponentBuilders.where(
                       (builder) =>

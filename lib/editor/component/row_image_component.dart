@@ -1,6 +1,7 @@
 import 'package:doppy/editor/custom_nodes/image_row_node.dart';
 import 'package:doppy/editor/postwrite_screen.dart';
 import 'package:doppy/editor/service/image_service.dart';
+import 'package:doppy/editor/service/drag_service.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:super_editor/super_editor.dart';
@@ -178,6 +179,9 @@ class _ImageRowComponentState extends State<ImageRowComponent>
   @override
   MouseCursor? getDesiredCursorAtOffset(Offset localOffset) => null;
 
+  static const double marginTop = 4;
+  static const double marginBottom = 0;
+
   @override
   Widget build(BuildContext context) {
     final isSelected =
@@ -185,88 +189,90 @@ class _ImageRowComponentState extends State<ImageRowComponent>
 
     return Stack(
       children: [
-        // 메인 컨텐츠
-        Container(
-          margin: const EdgeInsets.only(top: 8),
-
-          decoration: BoxDecoration(
-            border:
-                isSelected
-                    ? Border.all(color: const Color(0xFF007AFF), width: 2)
-                    : null,
-          ),
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              return Row(
-                children: [
-                  // 이미지들
-                  ...widget.imageUrls.asMap().entries.map((entry) {
-                    final imageUrl = entry.value;
-                    return Expanded(
-                      child: Container(
-                        margin:
-                            imageUrl == widget.imageUrls.last
-                                ? EdgeInsets.zero
-                                : EdgeInsets.only(right: 1),
-                        child: SizedBox(
-                          height: _unifiedHeight ?? 260,
-                          child: Image.network(
-                            imageUrl,
-                            fit: BoxFit.cover,
-                            loadingBuilder: (context, child, loading) {
-                              if (loading == null) return child;
-                              return Container(
-                                height: _unifiedHeight ?? 260,
-                                color: Colors.grey.shade200,
-                                child: const Center(
-                                  child: CircularProgressIndicator(),
-                                ),
-                              );
-                            },
-                            errorBuilder: (context, error, stack) {
-                              return Container(
-                                height: _unifiedHeight ?? 260,
-                                color: Colors.grey.shade300,
-                                child: const Center(
-                                  child: Column(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      Icon(
-                                        Icons.broken_image,
-                                        size: 40,
-                                        color: Colors.grey,
-                                      ),
-                                      SizedBox(height: 8),
-                                      Text(
-                                        "이미지 로드 실패",
-                                        style: TextStyle(color: Colors.black54),
-                                      ),
-                                    ],
+        Padding(
+          padding: EdgeInsets.only(top: marginTop, bottom: marginBottom),
+          child: Container(
+            decoration: BoxDecoration(
+              border:
+                  isSelected
+                      ? Border.all(color: const Color(0xFF007AFF), width: 2)
+                      : null,
+            ),
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                return Row(
+                  children: [
+                    // 이미지들
+                    ...widget.imageUrls.asMap().entries.map((entry) {
+                      final imageUrl = entry.value;
+                      return Expanded(
+                        child: Container(
+                          margin:
+                              imageUrl == widget.imageUrls.last
+                                  ? EdgeInsets.zero
+                                  : EdgeInsets.only(right: 1),
+                          child: SizedBox(
+                            height: _unifiedHeight ?? 260,
+                            child: Image.network(
+                              imageUrl,
+                              fit: BoxFit.cover,
+                              loadingBuilder: (context, child, loading) {
+                                if (loading == null) return child;
+                                return Container(
+                                  height: _unifiedHeight ?? 260,
+                                  color: Colors.grey.shade200,
+                                  child: const Center(
+                                    child: CircularProgressIndicator(),
                                   ),
-                                ),
-                              );
-                            },
-                            frameBuilder: (context, child, frame, sync) {
-                              if (frame != null) {
-                                WidgetsBinding.instance.addPostFrameCallback((
-                                  _,
-                                ) {
-                                  _measureAndUnifyHeight(
-                                    imageUrl,
-                                    constraints.maxWidth,
-                                  );
-                                });
-                              }
-                              return child;
-                            },
+                                );
+                              },
+                              errorBuilder: (context, error, stack) {
+                                return Container(
+                                  height: _unifiedHeight ?? 260,
+                                  color: Colors.grey.shade300,
+                                  child: const Center(
+                                    child: Column(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Icon(
+                                          Icons.broken_image,
+                                          size: 40,
+                                          color: Colors.grey,
+                                        ),
+                                        SizedBox(height: 8),
+                                        Text(
+                                          "이미지 로드 실패",
+                                          style: TextStyle(
+                                            color: Colors.black54,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                );
+                              },
+                              frameBuilder: (context, child, frame, sync) {
+                                if (frame != null) {
+                                  WidgetsBinding.instance.addPostFrameCallback((
+                                    _,
+                                  ) {
+                                    _measureAndUnifyHeight(
+                                      imageUrl,
+                                      constraints.maxWidth,
+                                    );
+                                  });
+                                }
+                                return child;
+                              },
+                            ),
                           ),
                         ),
-                      ),
-                    );
-                  }),
-                ],
-              );
-            },
+                      );
+                    }),
+                  ],
+                );
+              },
+            ),
           ),
         ),
 
@@ -305,10 +311,10 @@ class _ImageRowComponentState extends State<ImageRowComponent>
                   if (_shouldShowLeftVerticalLine())
                     Positioned(
                       left: 0,
-                      top: 0,
-                      bottom: 0,
+                      top: marginTop,
+                      bottom: marginBottom,
                       child: Container(
-                        width: 4,
+                        width: 3,
                         color: const Color(0xFF007AFF),
                       ),
                     ),
@@ -317,8 +323,8 @@ class _ImageRowComponentState extends State<ImageRowComponent>
                   if (_shouldShowRightVerticalLine())
                     Positioned(
                       right: 0,
-                      top: 0,
-                      bottom: 0,
+                      top: marginTop,
+                      bottom: marginBottom,
                       child: Container(
                         width: 3,
                         color: const Color(0xFF007AFF),
@@ -400,12 +406,8 @@ class _ImageRowComponentState extends State<ImageRowComponent>
     final currentNodeIndex = _getCurrentNodeIndex();
     if (currentNodeIndex == -1) return false;
 
-    // 마지막 노드인지 확인
-    final totalNodes = widget.dragService.editorService.document.length;
-    final isLastNode = currentNodeIndex == totalNodes - 1;
-
-    // 드롭 인덱스가 현재 노드 다음이면 아래쪽에 라인 표시 (마지막 노드일 때만)
-    return dropIndex == currentNodeIndex + 1 && isLastNode;
+    // 정책: 경계는 상단 컴포넌트만 그린다. 하단 라인은 항상 비활성화하여 이중표시 방지
+    return false;
   }
 
   bool _shouldShowLeftVerticalLine() {
@@ -413,6 +415,9 @@ class _ImageRowComponentState extends State<ImageRowComponent>
     if (widget.dragService.draggingNodeId == null) return false;
     if (widget.dragService.dragPosition == null) return false;
     if (widget.dragService.draggingNodeId == widget.nodeId) return false;
+
+    // 병합 모드에서만 세로 라인 표시 (reorder 라인과 중복 방지)
+    if (widget.dragService.dragMode != DragType.imageRowMerge) return false;
 
     // 현재 노드가 타겟 노드가 아니면 표시하지 않음
     if (widget.dragService.targetNodeId != widget.nodeId) {
@@ -438,6 +443,9 @@ class _ImageRowComponentState extends State<ImageRowComponent>
     if (widget.dragService.draggingNodeId == null) return false;
     if (widget.dragService.dragPosition == null) return false;
     if (widget.dragService.draggingNodeId == widget.nodeId) return false;
+
+    // 병합 모드에서만 세로 라인 표시 (reorder 라인과 중복 방지)
+    if (widget.dragService.dragMode != DragType.imageRowMerge) return false;
 
     // 현재 노드가 타겟 노드가 아니면 표시하지 않음
     if (widget.dragService.targetNodeId != widget.nodeId) {

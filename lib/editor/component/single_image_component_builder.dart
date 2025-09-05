@@ -1,4 +1,3 @@
-import 'package:doppy/editor/postwrite_screen.dart';
 import 'package:doppy/editor/service/drag_service.dart';
 import 'package:doppy/editor/service/image_service.dart';
 import 'package:flutter/material.dart';
@@ -61,6 +60,9 @@ class _SingleImageComponentState extends State<SingleImageComponent>
     with DocumentComponent {
   GlobalKey get componentKey => widget._componentKey;
 
+  static const double marginTop = 4;
+  static const double marginBottom = 1;
+
   @override
   Widget build(BuildContext context) {
     return Column(
@@ -99,18 +101,24 @@ class _SingleImageComponentState extends State<SingleImageComponent>
 
             return Stack(
               children: [
-                Container(
-                  margin: const EdgeInsets.only(top: 10),
-                  decoration: BoxDecoration(
-                    border:
-                        isSelected
-                            ? Border.all(
-                              color: const Color(0xFF007AFF),
-                              width: 2,
-                            )
-                            : null,
+                Padding(
+                  padding: EdgeInsets.only(
+                    top: marginTop,
+                    bottom: marginBottom,
                   ),
-                  child: SizedBox(width: double.infinity, child: image),
+                  child: Container(
+                    decoration: BoxDecoration(
+                      border:
+                          isSelected
+                              ? Border.all(
+                                color: const Color(0xFF007AFF),
+                                width: 2,
+                              )
+                              : null,
+                    ),
+
+                    child: SizedBox(width: double.infinity, child: image),
+                  ),
                 ),
                 if (_shouldShowTopDropLine())
                   Positioned(
@@ -122,17 +130,17 @@ class _SingleImageComponentState extends State<SingleImageComponent>
 
                 if (_shouldShowLeftVerticalLine())
                   Positioned(
-                    top: 10,
-                    bottom: 0,
+                    top: marginTop,
+                    bottom: marginBottom,
                     left: 0,
-                    child: Container(width: 4, color: const Color(0xFF007AFF)),
+                    child: Container(width: 3, color: const Color(0xFF007AFF)),
                   ),
                 if (_shouldShowRightVerticalLine())
                   Positioned(
-                    top: 10,
-                    bottom: 0,
+                    top: marginTop,
+                    bottom: marginBottom,
                     right: 0,
-                    child: Container(width: 4, color: const Color(0xFF007AFF)),
+                    child: Container(width: 3, color: const Color(0xFF007AFF)),
                   ),
                 if (_shouldShowBottomDropLine())
                   Positioned(
@@ -289,12 +297,8 @@ class _SingleImageComponentState extends State<SingleImageComponent>
     final currentNodeIndex = _getCurrentNodeIndex();
     if (currentNodeIndex == -1) return false;
 
-    // 마지막 노드인지 확인
-    final totalNodes = widget.dragService.editorService.document.length;
-    final isLastNode = currentNodeIndex == totalNodes - 1;
-
-    // 드롭 인덱스가 현재 노드 다음이면 아래쪽에 라인 표시 (마지막 노드일 때만)
-    return dropIndex == currentNodeIndex + 1 && isLastNode;
+    // 정책: 경계는 상단 컴포넌트만 그린다. 하단 라인은 항상 비활성화하여 이중표시 방지
+    return false;
   }
 
   bool _shouldShowLeftVerticalLine() {

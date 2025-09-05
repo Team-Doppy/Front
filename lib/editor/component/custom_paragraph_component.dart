@@ -1,13 +1,18 @@
 import 'package:flutter/material.dart';
 import 'package:super_editor/super_editor.dart';
 import 'package:doppy/editor/service/drag_service.dart';
+import 'package:doppy/editor/service/editor_service.dart';
 
 /// 패키지 기본 ParagraphComponent를 사용하고,
 /// 드래그 드롭 라인만 오버레이로 추가하는 경량 커스텀 빌더
 class CustomParagraphComponentBuilder implements ComponentBuilder {
-  const CustomParagraphComponentBuilder({required this.dragService});
+  const CustomParagraphComponentBuilder({
+    required this.dragService,
+    required this.editorService,
+  });
 
   final DragService dragService;
+  final EditorService editorService;
   static const ParagraphComponentBuilder _defaultBuilder =
       ParagraphComponentBuilder();
 
@@ -16,8 +21,14 @@ class CustomParagraphComponentBuilder implements ComponentBuilder {
     Document document,
     DocumentNode node,
   ) {
+    print('=== CustomParagraphComponentBuilder createViewModel ===');
+    print('노드 타입: ${node.runtimeType}');
+    print('노드 ID: ${node.id}');
+
     // 기본 빌더에 위임 (패키지 ParagraphNode만 대상)
-    return _defaultBuilder.createViewModel(document, node);
+    final result = _defaultBuilder.createViewModel(document, node);
+    print('createViewModel 결과: ${result != null ? "성공" : "실패"}');
+    return result;
   }
 
   @override
@@ -39,6 +50,7 @@ class CustomParagraphComponentBuilder implements ComponentBuilder {
     return _ParagraphWithDropLines(
       nodeId: componentViewModel.nodeId,
       dragService: dragService,
+      editorService: editorService,
       child: child,
     );
   }
@@ -48,17 +60,19 @@ class _ParagraphWithDropLines extends StatelessWidget {
   const _ParagraphWithDropLines({
     required this.nodeId,
     required this.dragService,
+    required this.editorService,
     required this.child,
   });
 
   final String nodeId;
   final DragService dragService;
+  final EditorService editorService;
   final Widget child;
 
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
-      animation: dragService,
+      animation: Listenable.merge([dragService, editorService]),
       builder: (context, _) {
         final currentIndex = dragService.getNodeIndex(nodeId);
         final dropIndex = dragService.dropIndex;
@@ -68,18 +82,15 @@ class _ParagraphWithDropLines extends StatelessWidget {
             !isSelf &&
             currentIndex != -1 &&
             dropIndex == currentIndex;
-        final isLastNode =
-            currentIndex == dragService.editorService.document.length - 1;
-        final showBottom =
-            dropIndex != null &&
-            !isSelf &&
-            currentIndex != -1 &&
-            dropIndex == currentIndex + 1 &&
-            isLastNode; // 마지막 문단에서만 하단 라인 표시 (중복 방지)
+        // 정책: 경계는 상단 컴포넌트만 그린다. 하단 라인은 끈다.
+        final showBottom = false;
+
+        // 중앙집중 규칙에 따른 텍스트 마진 적용
+        final EdgeInsets margin = editorService.getParagraphMargin(nodeId);
 
         return Stack(
           children: [
-            Padding(padding: const EdgeInsets.only(top: 2), child: child),
+            Padding(padding: margin, child: child),
             if (showTop)
               Positioned(
                 top: 0,
@@ -87,13 +98,7 @@ class _ParagraphWithDropLines extends StatelessWidget {
                 right: 0,
                 child: Container(height: 3, color: const Color(0xFF007AFF)),
               ),
-            if (showBottom)
-              Positioned(
-                bottom: 0,
-                left: 0,
-                right: 0,
-                child: Container(height: 3, color: const Color(0xFF007AFF)),
-              ),
+            // 하단 라인 비활성화(이중 라인 방지)
           ],
         );
       },
