@@ -9,6 +9,7 @@ class DragOverlayWidget extends StatelessWidget {
     required this.nodeType,
     required this.position,
     required this.document,
+    this.splitImageUrl,
     super.key,
   });
 
@@ -16,6 +17,7 @@ class DragOverlayWidget extends StatelessWidget {
   final String nodeType;
   final Offset position;
   final Document document;
+  final String? splitImageUrl;
 
   @override
   Widget build(BuildContext context) {
@@ -34,6 +36,11 @@ class DragOverlayWidget extends StatelessWidget {
   }
 
   Widget _buildNodePreview(BuildContext context) {
+    // 커스텀 이미지 URL이 있으면 해당 이미지 표시
+    if (splitImageUrl != null && nodeType == 'image') {
+      return _buildSplitImagePreview(splitImageUrl!);
+    }
+
     final node = document.getNodeById(nodeId);
     if (node == null) return const SizedBox.shrink();
 
@@ -111,6 +118,27 @@ class DragOverlayWidget extends StatelessWidget {
             style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildSplitImagePreview(String imageUrl) {
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 250, maxHeight: 350),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(2),
+        child: Image.network(
+          imageUrl,
+          fit: BoxFit.cover,
+          errorBuilder: (context, error, stackTrace) {
+            return Container(
+              width: 100,
+              height: 100,
+              color: Colors.grey.shade300,
+              child: const Icon(Icons.image, color: Colors.grey),
+            );
+          },
+        ),
       ),
     );
   }

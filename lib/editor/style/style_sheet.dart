@@ -1,6 +1,5 @@
 import 'package:doppy/editor/config/config.dart';
 import 'package:doppy/editor/custom_nodes/image_row_node.dart';
-import 'package:doppy/editor/custom_nodes/paragraph.dart' as custom;
 import 'package:flutter/material.dart';
 import 'package:super_editor/super_editor.dart';
 
@@ -11,12 +10,13 @@ Stylesheet buildCustomStylesheet() {
     addRulesAfter: [
       // 텍스트 노드 스타일
       StyleRule(BlockSelector.all, (doc, docNode) {
-        if (docNode is custom.ParagraphNode) {
+        if (docNode is ParagraphNode) {
           return {
             Styles.textStyle: const TextStyle(
               fontSize: 16,
               color: Colors.black,
             ),
+
             Styles.padding: const CascadingPadding.all(
               EditorConfig.textPadding,
             ),
@@ -24,17 +24,21 @@ Stylesheet buildCustomStylesheet() {
         }
         if (docNode is ImageNode) {
           return {
-            Styles.padding: CascadingPadding.symmetric(
-              vertical: EditorConfig.imagePadding,
-              horizontal: EditorConfig.imagePadding, // 가로 패딩 제거
+            Styles.padding: CascadingPadding.only(
+              top: EditorConfig.imageTopPadding,
+              bottom: EditorConfig.imageBottomPadding,
+              left: 0,
+              right: 0,
             ),
           };
         }
         if (docNode is ImageRowNode) {
           return {
-            Styles.padding: CascadingPadding.symmetric(
-              vertical: EditorConfig.imagePadding,
-              horizontal: 0, // 가로 패딩 제거
+            Styles.padding: CascadingPadding.only(
+              top: EditorConfig.imageTopPadding,
+              bottom: EditorConfig.imageBottomPadding,
+              left: 0,
+              right: 0,
             ),
           };
         }

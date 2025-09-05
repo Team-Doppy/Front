@@ -1,9 +1,47 @@
+import 'package:doppy/editor/custom_nodes/image_row_node.dart';
 import 'package:doppy/editor/postwrite_screen.dart';
-import 'package:doppy/editor/service/drag_service.dart';
-import 'package:doppy/editor/overlay/drag_overlay_widget.dart' show NodeType;
-import 'package:flutter/gestures.dart';
+import 'package:doppy/editor/service/image_service.dart';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import 'package:super_editor/super_editor.dart';
+
+class RowImageComponentBuilder implements ComponentBuilder {
+  const RowImageComponentBuilder({this.dragService});
+
+  final dynamic dragService; // DragService 타입을 나중에 import해서 수정
+
+  @override
+  Widget? createComponent(
+    SingleColumnDocumentComponentContext componentContext,
+    SingleColumnLayoutComponentViewModel componentViewModel,
+  ) {
+    if (componentViewModel is ImageRowComponentViewModel) {
+      return ImageRowComponent(
+        nodeId: componentViewModel.nodeId,
+        imageUrls: componentViewModel.imageUrls,
+        spacing: componentViewModel.spacing,
+        componentKey: componentContext.componentKey, // ← 매우 중요
+        dragService: dragService,
+      );
+    }
+    return null;
+  }
+
+  @override
+  SingleColumnLayoutComponentViewModel? createViewModel(
+    Document document,
+    DocumentNode node,
+  ) {
+    if (node is ImageRowNode) {
+      return ImageRowComponentViewModel(
+        nodeId: node.id,
+        imageUrls: node.imageUrls,
+        spacing: node.spacing,
+      );
+    }
+    return null;
+  }
+}
 
 /// 실제로 문서에 올라가는 컴포넌트. 반드시 DocumentComponent를 구현해야 함.
 class ImageRowComponent extends StatefulWidget {
@@ -142,38 +180,34 @@ class _ImageRowComponentState extends State<ImageRowComponent>
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      children: [
-        // 위쪽 드롭 라인
-        if (_shouldShowTopDropLine())
-          Container(
-            height: 3,
-            color: const Color(0xFF007AFF),
-            margin: const EdgeInsets.symmetric(horizontal: 16),
-          ),
+    final isSelected =
+        context.watch<ImageService>().selectedImageId == widget.nodeId;
 
-        // 실제 이미지 행 내용
-        Padding(
-          padding: const EdgeInsets.symmetric(vertical: 8.0),
+    return Stack(
+      children: [
+        // 메인 컨텐츠
+        Container(
+          margin: const EdgeInsets.only(top: 8),
+
+          decoration: BoxDecoration(
+            border:
+                isSelected
+                    ? Border.all(color: const Color(0xFF007AFF), width: 2)
+                    : null,
+          ),
           child: LayoutBuilder(
             builder: (context, constraints) {
               return Row(
                 children: [
-                  // 왼쪽 세로 라인 (가로배치 모드일 때)
-                  if (_shouldShowLeftVerticalLine())
-                    Container(
-                      width: 4,
-                      height: _unifiedHeight ?? 260,
-                      color: const Color(0xFF007AFF),
-                      margin: const EdgeInsets.only(right: 8),
-                    ),
-
                   // 이미지들
                   ...widget.imageUrls.asMap().entries.map((entry) {
                     final imageUrl = entry.value;
                     return Expanded(
                       child: Container(
-                        margin: EdgeInsets.only(right: 1),
+                        margin:
+                            imageUrl == widget.imageUrls.last
+                                ? EdgeInsets.zero
+                                : EdgeInsets.only(right: 1),
                         child: SizedBox(
                           height: _unifiedHeight ?? 260,
                           child: Image.network(
@@ -229,29 +263,72 @@ class _ImageRowComponentState extends State<ImageRowComponent>
                         ),
                       ),
                     );
-                  }).toList(),
-
-                  // 오른쪽 세로 라인 (가로배치 모드일 때)
-                  if (_shouldShowRightVerticalLine())
-                    Container(
-                      width: 4,
-                      height: _unifiedHeight ?? 260,
-                      color: const Color(0xFF007AFF),
-                      margin: const EdgeInsets.only(left: 8),
-                    ),
+                  }),
                 ],
               );
             },
           ),
         ),
 
-        // 아래쪽 드롭 라인
-        if (_shouldShowBottomDropLine())
-          Container(
-            height: 3,
-            color: const Color(0xFF007AFF),
-            margin: const EdgeInsets.symmetric(horizontal: 16),
+        // 드래그 라인 오버레이
+        Positioned.fill(
+          child: AnimatedBuilder(
+            animation: widget.dragService,
+            builder: (context, _) {
+              return Stack(
+                children: [
+                  // 위쪽 가로 라인
+                  if (_shouldShowTopDropLine())
+                    Positioned(
+                      top: 0,
+                      left: 0,
+                      right: 0,
+                      child: Container(
+                        height: 3,
+                        color: const Color(0xFF007AFF),
+                      ),
+                    ),
+
+                  // 아래쪽 가로 라인
+                  if (_shouldShowBottomDropLine())
+                    Positioned(
+                      bottom: 0,
+                      left: 0,
+                      right: 0,
+                      child: Container(
+                        height: 3,
+                        color: const Color(0xFF007AFF),
+                      ),
+                    ),
+
+                  // 왼쪽 세로 라인 (가로배치 모드일 때)
+                  if (_shouldShowLeftVerticalLine())
+                    Positioned(
+                      left: 0,
+                      top: 0,
+                      bottom: 0,
+                      child: Container(
+                        width: 4,
+                        color: const Color(0xFF007AFF),
+                      ),
+                    ),
+
+                  // 오른쪽 세로 라인 (가로배치 모드일 때)
+                  if (_shouldShowRightVerticalLine())
+                    Positioned(
+                      right: 0,
+                      top: 0,
+                      bottom: 0,
+                      child: Container(
+                        width: 3,
+                        color: const Color(0xFF007AFF),
+                      ),
+                    ),
+                ],
+              );
+            },
           ),
+        ),
       ],
     );
   }
@@ -336,9 +413,16 @@ class _ImageRowComponentState extends State<ImageRowComponent>
     if (widget.dragService.draggingNodeId == null) return false;
     if (widget.dragService.dragPosition == null) return false;
     if (widget.dragService.draggingNodeId == widget.nodeId) return false;
-    if (!(widget.dragService.draggingNodeType == NodeType.image ||
-        widget.dragService.draggingNodeType == NodeType.imageRow))
+
+    // 현재 노드가 타겟 노드가 아니면 표시하지 않음
+    if (widget.dragService.targetNodeId != widget.nodeId) {
       return false;
+    }
+
+    if (!(widget.dragService.draggingNodeType == NodeType.image ||
+        widget.dragService.draggingNodeType == NodeType.imageRow)) {
+      return false;
+    }
 
     final renderBox = context.findRenderObject() as RenderBox?;
     if (renderBox == null) return false;
@@ -354,9 +438,16 @@ class _ImageRowComponentState extends State<ImageRowComponent>
     if (widget.dragService.draggingNodeId == null) return false;
     if (widget.dragService.dragPosition == null) return false;
     if (widget.dragService.draggingNodeId == widget.nodeId) return false;
-    if (!(widget.dragService.draggingNodeType == NodeType.image ||
-        widget.dragService.draggingNodeType == NodeType.imageRow))
+
+    // 현재 노드가 타겟 노드가 아니면 표시하지 않음
+    if (widget.dragService.targetNodeId != widget.nodeId) {
       return false;
+    }
+
+    if (!(widget.dragService.draggingNodeType == NodeType.image ||
+        widget.dragService.draggingNodeType == NodeType.imageRow)) {
+      return false;
+    }
 
     final renderBox = context.findRenderObject() as RenderBox?;
     if (renderBox == null) return false;

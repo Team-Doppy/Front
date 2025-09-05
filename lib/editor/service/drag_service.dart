@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:doppy/editor/postwrite_screen.dart';
 import 'package:doppy/editor/service/editor_service.dart';
+import 'package:doppy/editor/service/image_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:super_editor/super_editor.dart';
@@ -9,6 +10,7 @@ enum DragType { none, reorder, imageRowMerge }
 
 class DragService extends ChangeNotifier {
   final EditorService editorService;
+  final ImageService imageService;
   ScrollController? scrollController;
 
   String? draggingNodeId;
@@ -21,14 +23,40 @@ class DragService extends ChangeNotifier {
   int? dropIndex;
   Offset? lastMovedPosition;
 
+  // 이미지 분리 정보
+  String? _splitImageRowId;
+  int? _splitImageIndex;
+
   // Auto-scroll state
   Timer? _autoScrollTimer;
   double _autoScrollDirection = 0.0; // -1: up, 1: down, 0: none
 
-  DragService({required this.editorService, this.scrollController});
+  DragService({
+    required this.editorService,
+    required this.imageService,
+    this.scrollController,
+  });
+
+  bool get isDragging => draggingNodeId != null;
+  bool get hasSplitImageInfo =>
+      _splitImageRowId != null && _splitImageIndex != null;
 
   void attachScrollController(ScrollController controller) {
     scrollController = controller;
+  }
+
+  // 분리할 이미지 정보 설정
+  void setSplitImageInfo(String rowId, int imageIndex) {
+    _splitImageRowId = rowId;
+    _splitImageIndex = imageIndex;
+  }
+
+  // 분리할 이미지 정보 가져오기
+  Map<String, dynamic>? getSplitImageInfo() {
+    if (_splitImageRowId != null && _splitImageIndex != null) {
+      return {'rowId': _splitImageRowId, 'imageIndex': _splitImageIndex};
+    }
+    return null;
   }
 
   void startDrag(String nodeId, BuildContext context, Offset globalPosition) {
@@ -63,13 +91,17 @@ class DragService extends ChangeNotifier {
     }
 
     // computeDropInfo에서 이미 dragMode와 targetNodeId를 설정했으므로
-    // dropIndex가 null일 때만 모드를 none으로 변경
-    if (dropIndex == null) {
-      dragMode = DragType.none;
+    // dropIndex가 null이고 dragMode도 none일 때만 정리
+    if (dropIndex == null && dragMode == DragType.none) {
       targetNodeId = null;
       targetNodeType = null;
     }
     // 그 외의 경우는 computeDropInfo에서 설정한 값을 그대로 사용
+
+    print('최종 dragMode: $dragMode');
+    print('최종 dropIndex: $dropIndex');
+    print('최종 targetNodeId: $targetNodeId');
+    print('=== updateDrag 끝 ===');
 
     // 항상 UI 업데이트 (드래그 오버레이 부드러운 이동을 위해)
     notifyListeners();
@@ -84,36 +116,40 @@ class DragService extends ChangeNotifier {
       return;
     }
 
-    print('=== 드래그 종료 ===');
-    print('드래그 모드: $dragMode');
-    print('드래그 중인 노드: $draggingNodeId');
-    print('타겟 노드: $targetNodeId');
-    print('드롭 인덱스: $dropIndex');
+    // 이미지 분리 정보가 있으면 먼저 분리 실행
+    if (hasSplitImageInfo) {
+      final rowId = _splitImageRowId;
+      final imageIndex = _splitImageIndex;
+
+      if (rowId != null && imageIndex != null) {
+        // 이미지 행에서 해당 이미지 분리
+        final splitImageId = editorService.splitImageFromRow(rowId, imageIndex);
+
+        if (splitImageId != null) {
+          // 분리된 이미지의 ID로 드래그 노드 ID 업데이트
+          draggingNodeId = splitImageId;
+          draggingNodeType = editorService.getNodeType(splitImageId);
+        }
+      }
+    }
 
     // 실제 노드 이동 실행
     switch (dragMode) {
       case DragType.reorder:
         if (dropIndex != null) {
-          print('노드 재정렬 실행: $draggingNodeId -> 인덱스 $dropIndex');
           editorService.reorderNode(draggingNodeId!, dropIndex!);
         }
         break;
       case DragType.imageRowMerge:
         if (targetNodeId != null) {
-          print(
-            '이미지 행 병합 실행: $draggingNodeId + $targetNodeId (왼쪽에서: $isDraggingFromLeft)',
-          );
           editorService.mergeImagesIntoRow(
             draggingNodeId!,
             targetNodeId!,
             isFromLeft: isDraggingFromLeft,
           );
-        } else {
-          print('타겟 노드가 null이어서 병합 실행 안됨');
         }
         break;
       case DragType.none:
-        print('드래그 모드가 none이어서 아무것도 실행 안됨');
         break;
     }
 
@@ -130,6 +166,11 @@ class DragService extends ChangeNotifier {
     dropIndex = null;
     dragPosition = null;
     lastMovedPosition = null;
+
+    // 분리 정보 초기화
+    _splitImageRowId = null;
+    _splitImageIndex = null;
+
     notifyListeners();
   }
 
@@ -238,20 +279,29 @@ class DragService extends ChangeNotifier {
       return true; // 기본값은 왼쪽
     }
 
-    // 문서 레이아웃의 로컬 좌표로 변환해서 화면 중앙 기준으로 좌/우 판정
-    final renderObject =
-        editorService.documentLayoutKey?.currentContext?.findRenderObject();
-    RenderBox? renderBox;
-    if (renderObject is RenderSliverToBoxAdapter) {
-      renderBox = renderObject.child;
-    } else if (renderObject is RenderBox) {
-      renderBox = renderObject;
-    }
+    // 타겟 노드의 컴포넌트를 찾아서 그 중앙을 기준으로 판정
+    final documentLayout =
+        editorService.documentLayoutKey?.currentState as DocumentLayout?;
+    if (documentLayout == null) return true;
+
+    final component = documentLayout.getComponentByNodeId(targetNodeId!);
+    if (component == null) return true;
+
+    final renderBox = component.context.findRenderObject() as RenderBox?;
     if (renderBox == null) return true;
 
-    final local = renderBox.globalToLocal(dragPosition!);
-    final halfWidth = renderBox.size.width / 2;
-    return local.dx < halfWidth;
+    final targetCenter =
+        renderBox.localToGlobal(Offset.zero) +
+        Offset(renderBox.size.width / 2, renderBox.size.height / 2);
+
+    final isFromLeft = dragPosition!.dx < targetCenter.dx;
+
+    print('=== 드래그 방향 계산 ===');
+    print('드래그 위치: ${dragPosition!}');
+    print('타겟 중앙: $targetCenter');
+    print('왼쪽에서 오는가: $isFromLeft');
+
+    return isFromLeft;
   }
 
   /// 단순한 드롭 인덱스 계산
@@ -276,9 +326,16 @@ class DragService extends ChangeNotifier {
     final localPosition = renderBox.globalToLocal(globalPosition);
 
     // SuperEditor의 정확한 위치 계산 (로컬 좌표 사용)
-    final position = documentLayout.getDocumentPositionNearestToOffset(
-      localPosition,
-    );
+    DocumentPosition? position;
+    try {
+      position = documentLayout.getDocumentPositionNearestToOffset(
+        localPosition,
+      );
+    } catch (e) {
+      print("DragService에서 getDocumentPositionNearestToOffset 오류: $e");
+      return null;
+    }
+
     if (position == null) return null;
 
     final node = editorService.editor.document.getNodeById(position.nodeId);
@@ -288,6 +345,51 @@ class DragService extends ChangeNotifier {
     final nodeIndex = editorService.editor.document.getNodeIndexById(node.id);
     if (nodeIndex == -1) return null;
 
+    // 타겟 노드 정보 업데이트
+    final targetNodeType = editorService.getNodeType(node.id);
+    targetNodeId = node.id;
+    this.targetNodeType = targetNodeType;
+
+    // 드래그 모드 결정
+    // 이미지 행 병합은 특정 조건에서만 발생 (예: 드래그 위치가 이미지 행의 중앙에 가까울 때)
+    if ((targetNodeType == NodeType.image ||
+            targetNodeType == NodeType.imageRow) &&
+        (draggingNodeType == NodeType.image ||
+            draggingNodeType == NodeType.imageRow) &&
+        draggingNodeId != node.id) {
+      // 이미지 행 병합 조건: 타겟이 이미지 행이거나, 드래그 위치가 이미지의 중앙에 가까울 때
+      if (targetNodeType == NodeType.imageRow) {
+        dragMode = DragType.imageRowMerge;
+      } else if (targetNodeType == NodeType.image) {
+        // 단일 이미지의 경우, 드래그 위치가 이미지의 중앙에 가까우면 병합, 아니면 재정렬
+        final component = documentLayout.getComponentByNodeId(node.id);
+        if (component != null) {
+          final renderBox = component.context.findRenderObject() as RenderBox?;
+          if (renderBox != null) {
+            final targetCenter =
+                renderBox.localToGlobal(Offset.zero) +
+                Offset(renderBox.size.width / 2, renderBox.size.height / 2);
+            final distance = (globalPosition - targetCenter).distance;
+            final threshold = renderBox.size.width * 0.3; // 이미지 너비의 30% 내에서 병합
+
+            if (distance < threshold) {
+              dragMode = DragType.imageRowMerge;
+            } else {
+              dragMode = DragType.reorder;
+            }
+          } else {
+            dragMode = DragType.reorder;
+          }
+        } else {
+          dragMode = DragType.reorder;
+        }
+      } else {
+        dragMode = DragType.reorder;
+      }
+    } else {
+      dragMode = DragType.reorder;
+    }
+
     // 드롭 인덱스 계산
     int? finalCandidate = nodeIndex;
     if (draggingNodeId != null) {
@@ -295,15 +397,17 @@ class DragService extends ChangeNotifier {
         draggingNodeId!,
       );
       if (draggingNodeIndex != -1) {
-        // 자기 자신의 위치만 드롭 인덱스 무효화 (바로 위아래는 허용)
-        if (nodeIndex == draggingNodeIndex) {
+        // 원래 위치 근처로의 드롭 차단 (자기 자신과 바로 인접한 위치들)
+        if (nodeIndex == draggingNodeIndex ||
+            nodeIndex == draggingNodeIndex + 1 ||
+            nodeIndex == draggingNodeIndex - 1) {
           finalCandidate = null;
         } else if (draggingNodeIndex < nodeIndex) {
           // 드래그 중인 노드가 타겟 노드보다 앞에 있으면, 타겟 노드 앞에 삽입
           finalCandidate = nodeIndex;
         } else {
-          // 드래그 중인 노드가 타겟 노드보다 뒤에 있으면, 타겟 노드 앞에 삽입
-          finalCandidate = nodeIndex;
+          // 드래그 중인 노드가 타겟 노드보다 뒤에 있으면, 타겟 노드 뒤에 삽입
+          finalCandidate = nodeIndex + 1;
         }
       }
     } else {
@@ -315,32 +419,20 @@ class DragService extends ChangeNotifier {
       finalCandidate = 0;
     }
 
-    // 드래그 모드 결정 (단일 이미지 또는 이미지 행 모두 가로배치 합치기 허용)
-    final targetNodeType = editorService.getNodeType(node.id);
-    if ((targetNodeType == NodeType.image ||
-            targetNodeType == NodeType.imageRow) &&
-        (draggingNodeType == NodeType.image ||
-            draggingNodeType == NodeType.imageRow) &&
-        draggingNodeId != node.id) {
-      dragMode = DragType.imageRowMerge;
-    } else {
-      dragMode = DragType.reorder;
+    // 가로배치 모드일 때는 dropIndex를 null로 설정 (가로라인 표시 안함)
+    if (dragMode == DragType.imageRowMerge) {
+      finalCandidate = null;
     }
 
-    // 타겟 노드 정보 업데이트
-    targetNodeId = node.id;
-    this.targetNodeType = targetNodeType;
-
     // 디버그 로그
+    /*
     print('=== 드롭 인덱스 계산 ===');
-    print('글로벌 좌표: $globalPosition');
-    print('로컬 좌표: $localPosition');
     print(
       '드래그 중인 노드: $draggingNodeId (인덱스: ${draggingNodeId != null ? getNodeIndex(draggingNodeId!) : -1})',
     );
-    print('타겟 노드: $targetNodeId (인덱스: $nodeIndex)');
     print('최종 드롭 인덱스: $finalCandidate');
     print('드래그 모드: $dragMode');
+    */
 
     return {'dropIndex': finalCandidate};
   }

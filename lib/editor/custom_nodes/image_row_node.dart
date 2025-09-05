@@ -1,8 +1,13 @@
 import 'package:super_editor/super_editor.dart';
+import 'dart:ui';
 
-/// 여러 이미지를 가로로 배치하는 커스텀 노드
+/// 여러 이미지를 가로로 배치하는 커스텀 노드 (최대 3개)
 class ImageRowNode extends BlockNode {
-  ImageRowNode({required this.id, required this.imageUrls, this.spacing = 8.0});
+  ImageRowNode({
+    required this.id,
+    required List<String> imageUrls,
+    this.spacing = 8.0,
+  }) : imageUrls = imageUrls.take(3).toList(); // 최대 3개로 제한
 
   @override
   final String id;
@@ -20,7 +25,7 @@ class ImageRowNode extends BlockNode {
   }) {
     return ImageRowNode(
       id: id ?? this.id,
-      imageUrls: imageUrls ?? this.imageUrls,
+      imageUrls: imageUrls?.take(3).toList() ?? this.imageUrls,
       spacing: spacing ?? this.spacing,
     );
   }
@@ -46,6 +51,23 @@ class ImageRowNode extends BlockNode {
   bool containsPosition(Object position) {
     // 블록 노드는 Upstream/Downstream 포지션만 가진다고 가정
     return position is UpstreamDownstreamNodePosition;
+  }
+
+  Rect getRectForPosition(NodePosition nodePosition) {
+    // 기본 구현 - 실제로는 컴포넌트에서 계산됨
+    return const Rect.fromLTWH(0, 0, 0, 0);
+  }
+
+  NodeSelection getSelectionOfEverything() {
+    return UpstreamDownstreamNodeSelection(
+      base: const UpstreamDownstreamNodePosition.upstream(),
+      extent: const UpstreamDownstreamNodePosition.downstream(),
+    );
+  }
+
+  bool isVisualSelectionSupported() {
+    // 이미지 행은 드래그 선택 불필요
+    return false;
   }
 
   @override
