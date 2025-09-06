@@ -1,3 +1,6 @@
+import 'package:doppy/editor/image/image_edit.dart';
+import 'package:doppy/editor/image/image_editor_plus_screen.dart';
+import 'package:flutter/services.dart';
 import 'package:doppy/editor/service/drag_service.dart';
 import 'package:doppy/editor/service/image_service.dart';
 import 'package:flutter/material.dart';
@@ -111,7 +114,7 @@ class _SingleImageComponentState extends State<SingleImageComponent>
                       border:
                           isSelected
                               ? Border.all(
-                                color: const Color(0xFF007AFF),
+                                color: const Color.fromARGB(255, 136, 32, 255),
                                 width: 2,
                               )
                               : null,
@@ -148,17 +151,6 @@ class _SingleImageComponentState extends State<SingleImageComponent>
                     left: 0,
                     right: 0,
                     child: Container(height: 3, color: const Color(0xFF007AFF)),
-                  ),
-
-                //메뉴바
-                if (isSelected)
-                  Positioned(
-                    top: 12,
-                    right: 10,
-                    child: Container(
-                      height: 3,
-                      child: const Icon(Icons.check, color: Color(0xFF007AFF)),
-                    ),
                   ),
               ],
             );

@@ -45,6 +45,10 @@ dependencies:
   image_picker: ^1.1.2
   flutter_svg: ^2.2.0
   top_snackbar_flutter: ^3.3.0
+  image_editor_plus: ^1.0.4
+
+dependency_overrides:
+  screenshot: ^3.0.0
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
 

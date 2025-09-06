@@ -21,13 +21,8 @@ class CustomParagraphComponentBuilder implements ComponentBuilder {
     Document document,
     DocumentNode node,
   ) {
-    print('=== CustomParagraphComponentBuilder createViewModel ===');
-    print('노드 타입: ${node.runtimeType}');
-    print('노드 ID: ${node.id}');
-
     // 기본 빌더에 위임 (패키지 ParagraphNode만 대상)
     final result = _defaultBuilder.createViewModel(document, node);
-    print('createViewModel 결과: ${result != null ? "성공" : "실패"}');
     return result;
   }
 
@@ -82,15 +77,41 @@ class _ParagraphWithDropLines extends StatelessWidget {
             !isSelf &&
             currentIndex != -1 &&
             dropIndex == currentIndex;
-        // 정책: 경계는 상단 컴포넌트만 그린다. 하단 라인은 끈다.
-        final showBottom = false;
 
         // 중앙집중 규칙에 따른 텍스트 마진 적용
         final EdgeInsets margin = editorService.getParagraphMargin(nodeId);
 
         return Stack(
           children: [
-            Padding(padding: margin, child: child),
+            Padding(
+              padding: margin,
+              child: Builder(
+                builder: (context) {
+                  // ParagraphNode의 metadata에서 정렬 정보를 읽어 적용
+                  TextAlign resolvedAlign = TextAlign.left;
+                  try {
+                    final node = editorService.editor.document.getNodeById(
+                      nodeId,
+                    );
+                    if (node is ParagraphNode) {
+                      final alignName = node.metadata['textAlign'] as String?;
+                      if (alignName == 'center') {
+                        resolvedAlign = TextAlign.center;
+                      } else if (alignName == 'right') {
+                        resolvedAlign = TextAlign.right;
+                      } else if (alignName == 'left') {
+                        resolvedAlign = TextAlign.left;
+                      }
+                    }
+                  } catch (_) {}
+
+                  return DefaultTextStyle.merge(
+                    textAlign: resolvedAlign,
+                    child: child,
+                  );
+                },
+              ),
+            ),
             if (showTop)
               Positioned(
                 top: 0,

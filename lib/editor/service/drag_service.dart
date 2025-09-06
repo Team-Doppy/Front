@@ -450,6 +450,24 @@ class DragService extends ChangeNotifier {
       finalCandidate = 0;
     }
 
+    // 타이틀 고정: 타이틀(isTitle=true) 위로는 드롭 불가 → 항상 타이틀 바로 아래로 보정
+    try {
+      if (dragMode == DragType.reorder && finalCandidate != null) {
+        final doc = editorService.editor.document;
+        int titleIndex = -1;
+        for (int i = 0; i < doc.length; i++) {
+          final n = doc.getNodeAt(i);
+          if (n is ParagraphNode && (n.metadata['isTitle'] == true)) {
+            titleIndex = i;
+            break;
+          }
+        }
+        if (titleIndex != -1 && finalCandidate <= titleIndex) {
+          finalCandidate = titleIndex + 1;
+        }
+      }
+    } catch (_) {}
+
     // 가로배치 모드일 때는 dropIndex를 null로 설정 (가로라인 표시 안함)
     if (dragMode == DragType.imageRowMerge) {
       finalCandidate = null;

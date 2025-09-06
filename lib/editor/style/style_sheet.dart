@@ -11,9 +11,26 @@ Stylesheet buildCustomStylesheet() {
       // 텍스트 노드 스타일
       StyleRule(BlockSelector.all, (doc, docNode) {
         if (docNode is ParagraphNode) {
+          // 제목 문단 스타일
+          final isTitle = (docNode.metadata['isTitle'] == true);
+          if (isTitle) {
+            return {
+              Styles.textStyle: const TextStyle(
+                fontSize: 25,
+                fontWeight: FontWeight.w900,
+                color: Colors.black,
+              ),
+              Styles.padding: const CascadingPadding.only(
+                top: 10,
+                bottom: 20,
+                left: 0,
+                right: 0,
+              ),
+            };
+          }
           return {
             Styles.textStyle: const TextStyle(
-              fontSize: 16,
+              fontSize: 13,
               color: Colors.black,
             ),
 
