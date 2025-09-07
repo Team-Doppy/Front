@@ -11,6 +11,31 @@ Stylesheet buildCustomStylesheet() {
       // 텍스트 노드 스타일
       StyleRule(BlockSelector.all, (doc, docNode) {
         if (docNode is ParagraphNode) {
+          // 인용 문단 스타일
+          if (docNode.metadata['blockquote'] == true) {
+            return {
+              Styles.padding: const CascadingPadding.only(
+                top: 6,
+                bottom: 6,
+                left: 0,
+                right: 0,
+              ),
+              Styles.textStyle: const TextStyle(
+                fontSize: 14,
+                color: Color(0xFF4B5563), // gray-600
+              ),
+            };
+          }
+          // 구분선 스타일(빈 문단을 선으로 렌더)
+          if (docNode.metadata['isDivider'] == true) {
+            return {
+              Styles.padding: const CascadingPadding.symmetric(
+                vertical: 10,
+                horizontal: 100,
+              ),
+              Styles.maxWidth: double.infinity,
+            };
+          }
           // 제목 문단 스타일
           final isTitle = (docNode.metadata['isTitle'] == true);
           if (isTitle) {

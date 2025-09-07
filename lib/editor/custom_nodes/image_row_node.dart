@@ -10,6 +10,9 @@ class ImageRowNode extends BlockNode {
   }) : imageUrls = imageUrls.take(3).toList(); // 최대 3개로 제한
 
   @override
+  bool get isDeletable => false;
+
+  @override
   final String id;
   final List<String> imageUrls;
   final double spacing;

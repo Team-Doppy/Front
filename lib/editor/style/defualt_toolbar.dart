@@ -263,15 +263,53 @@ class TextStylingService {
       ),
     ]);
   }
+
+  /// 인용 블록 삽입: 현재 커서 아래에 인용 스타일 문단을 추가
+  void insertQuoteBlock() {
+    final position = composer.selection?.extent;
+    final insertIndex = _indexAfter(position);
+    final node = ParagraphNode(
+      id: 'quote_${DateTime.now().millisecondsSinceEpoch}',
+      text: AttributedText(''),
+      metadata: {'textAlign': getCurrentAlignment().name, 'blockquote': true},
+    );
+    editor.execute([
+      // 캐럿 기준 삽입 + 선택 이동 처리까지 내장됨
+      InsertNodeAtCaretRequest(node: node),
+    ]);
+    print('인용 블록 삽입: $insertIndex');
+  }
+
+  /// 구분선 삽입: 비어있는 문단으로 표현(스타일시트에서 선으로 렌더)
+  void insertDivider() {
+    final position = composer.selection?.extent;
+    final insertIndex = _indexAfter(position);
+    final node = ParagraphNode(
+      id: 'divider_${DateTime.now().millisecondsSinceEpoch}',
+      text: AttributedText(''),
+      metadata: {'isDivider': true},
+    );
+    editor.execute([
+      // 캐럿 기준 삽입 + 선택 이동 처리까지 내장됨
+      InsertNodeAtCaretRequest(node: node),
+    ]);
+    print('구분선 삽입: $insertIndex');
+  }
+
+  int _indexAfter(DocumentPosition? pos) {
+    if (pos == null) return editor.document.nodeCount;
+    final idx = editor.document.getNodeIndexById(pos.nodeId);
+    return idx == -1 ? editor.document.nodeCount : idx + 1;
+  }
 }
 
 /// 4개의 기본 아이콘만 보이고, 탭 시 옆으로 세부 기능이 펼쳐지는 툴바
-class TextStylingToolbar extends StatefulWidget {
+class DefaultToolbar extends StatefulWidget {
   final TextStylingService stylingService;
   final VoidCallback? onInsertImage;
   final ScrollController? scrollController;
 
-  const TextStylingToolbar({
+  const DefaultToolbar({
     super.key,
     required this.stylingService,
     this.onInsertImage,
@@ -279,12 +317,12 @@ class TextStylingToolbar extends StatefulWidget {
   });
 
   @override
-  State<TextStylingToolbar> createState() => _TextStylingToolbarState();
+  State<DefaultToolbar> createState() => _DefaultToolbarState();
 }
 
 enum ToolbarSection { none, image, insert, text, align }
 
-class _TextStylingToolbarState extends State<TextStylingToolbar> {
+class _DefaultToolbarState extends State<DefaultToolbar> {
   Map<String, bool> _currentStyles = {
     'bold': false,
     'italic': false,
@@ -317,203 +355,203 @@ class _TextStylingToolbarState extends State<TextStylingToolbar> {
   @override
   Widget build(BuildContext context) {
     final width = MediaQuery.of(context).size.width;
-    return Container(
-      height: 64,
+    return SizedBox(
+      height: 38,
       width: width,
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      margin: const EdgeInsets.only(bottom: 10, left: 10, right: 10),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+        decoration: BoxDecoration(color: Colors.white),
+        child: ListView(
+          scrollDirection: Axis.horizontal,
 
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(16),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.05),
-                blurRadius: 8,
-                offset: const Offset(0, 2),
+          children: [
+            // 이미지 섹션
+            _buildMainIcon(
+              icon: Icons.image_outlined,
+              isActive: _expanded == ToolbarSection.image,
+              onTap: () => _toggle(ToolbarSection.image),
+            ),
+            if (_expanded == ToolbarSection.image) ...[
+              const SizedBox(width: 8),
+              _buildChip(
+                icon: Icons.add_photo_alternate_outlined,
+                label: '이미지 삽입',
+                onTap: widget.onInsertImage,
               ),
             ],
-            border: Border.all(color: Colors.grey.shade200),
-          ),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              // 이미지 섹션
-              _buildMainIcon(
-                icon: Icons.image_outlined,
-                isActive: _expanded == ToolbarSection.image,
-                onTap: () => _toggle(ToolbarSection.image),
+
+            const SizedBox(width: 10),
+            _buildDivider(),
+            const SizedBox(width: 10),
+
+            // 추가(플러스) 섹션
+            _buildMainIcon(
+              icon: Icons.add_box_outlined,
+              isActive: _expanded == ToolbarSection.insert,
+              onTap: () => _toggle(ToolbarSection.insert),
+              activeColor: Colors.teal,
+            ),
+            if (_expanded == ToolbarSection.insert) ...[
+              const SizedBox(width: 8),
+              _buildColorDot(Colors.red, () {
+                widget.stylingService.applyTextColor(Colors.red);
+                _updateStyles();
+              }),
+              const SizedBox(width: 6),
+              _buildColorDot(Colors.blue, () {
+                widget.stylingService.applyTextColor(Colors.blue);
+                _updateStyles();
+              }),
+              const SizedBox(width: 6),
+              _buildColorDot(Colors.green, () {
+                widget.stylingService.applyTextColor(Colors.green);
+                _updateStyles();
+              }),
+              const SizedBox(width: 10),
+              _buildMiniButton('12', () {
+                widget.stylingService.changeFontSize(12);
+                _updateStyles();
+              }),
+              const SizedBox(width: 6),
+              _buildMiniButton('16', () {
+                widget.stylingService.changeFontSize(16);
+                _updateStyles();
+              }),
+              const SizedBox(width: 6),
+              _buildMiniButton('20', () {
+                widget.stylingService.changeFontSize(20);
+                _updateStyles();
+              }),
+              const SizedBox(width: 6),
+              _buildMiniButton('24', () {
+                widget.stylingService.changeFontSize(24);
+                _updateStyles();
+              }),
+              const SizedBox(width: 10),
+              _buildChip(
+                icon: Icons.format_quote,
+                label: '인용',
+                onTap: () {
+                  widget.stylingService.insertQuoteBlock();
+                },
               ),
-              if (_expanded == ToolbarSection.image) ...[
-                const SizedBox(width: 8),
-                _buildChip(
-                  icon: Icons.add_photo_alternate_outlined,
-                  label: '이미지 삽입',
-                  onTap: widget.onInsertImage,
-                ),
-              ],
-
-              const SizedBox(width: 10),
-              _buildDivider(),
-              const SizedBox(width: 10),
-
-              // 추가(플러스) 섹션
-              _buildMainIcon(
-                icon: Icons.add_box_outlined,
-                isActive: _expanded == ToolbarSection.insert,
-                onTap: () => _toggle(ToolbarSection.insert),
-                activeColor: Colors.teal,
+              const SizedBox(width: 6),
+              _buildChip(
+                icon: Icons.horizontal_rule,
+                label: '구분선',
+                onTap: () {
+                  widget.stylingService.insertDivider();
+                },
               ),
-              if (_expanded == ToolbarSection.insert) ...[
-                const SizedBox(width: 8),
-                _buildColorDot(Colors.red, () {
-                  widget.stylingService.applyTextColor(Colors.red);
-                  _updateStyles();
-                }),
-                const SizedBox(width: 6),
-                _buildColorDot(Colors.blue, () {
-                  widget.stylingService.applyTextColor(Colors.blue);
-                  _updateStyles();
-                }),
-                const SizedBox(width: 6),
-                _buildColorDot(Colors.green, () {
-                  widget.stylingService.applyTextColor(Colors.green);
-                  _updateStyles();
-                }),
-                const SizedBox(width: 10),
-                _buildMiniButton('12', () {
-                  widget.stylingService.changeFontSize(12);
-                  _updateStyles();
-                }),
-                const SizedBox(width: 6),
-                _buildMiniButton('16', () {
-                  widget.stylingService.changeFontSize(16);
-                  _updateStyles();
-                }),
-                const SizedBox(width: 6),
-                _buildMiniButton('20', () {
-                  widget.stylingService.changeFontSize(20);
-                  _updateStyles();
-                }),
-                const SizedBox(width: 6),
-                _buildMiniButton('24', () {
-                  widget.stylingService.changeFontSize(24);
-                  _updateStyles();
-                }),
-              ],
+            ],
 
-              const SizedBox(width: 10),
-              _buildDivider(),
-              const SizedBox(width: 10),
+            const SizedBox(width: 10),
+            _buildDivider(),
+            const SizedBox(width: 10),
 
-              // 텍스트 스타일 섹션 (A)
-              _buildMainIcon(
-                icon: Icons.text_fields,
-                isActive: _expanded == ToolbarSection.text,
-                onTap: () => _toggle(ToolbarSection.text),
+            // 텍스트 스타일 섹션 (A)
+            _buildMainIcon(
+              icon: Icons.text_fields,
+              isActive: _expanded == ToolbarSection.text,
+              onTap: () => _toggle(ToolbarSection.text),
+            ),
+            if (_expanded == ToolbarSection.text) ...[
+              const SizedBox(width: 8),
+              _buildToggleIcon(
+                icon: Icons.format_bold,
+                isActive: _currentStyles['bold'] ?? false,
+                onTap: () {
+                  widget.stylingService.toggleBold();
+                  _updateStyles();
+                },
               ),
-              if (_expanded == ToolbarSection.text) ...[
-                const SizedBox(width: 8),
-                _buildToggleIcon(
-                  icon: Icons.format_bold,
-                  isActive: _currentStyles['bold'] ?? false,
-                  onTap: () {
-                    widget.stylingService.toggleBold();
-                    _updateStyles();
-                  },
-                ),
-                const SizedBox(width: 6),
-                _buildToggleIcon(
-                  icon: Icons.format_italic,
-                  isActive: _currentStyles['italic'] ?? false,
-                  onTap: () {
-                    widget.stylingService.toggleItalic();
-                    _updateStyles();
-                  },
-                ),
-                const SizedBox(width: 6),
-                _buildToggleIcon(
-                  icon: Icons.format_underlined,
-                  isActive: _currentStyles['underline'] ?? false,
-                  onTap: () {
-                    widget.stylingService.toggleUnderline();
-                    _updateStyles();
-                  },
-                ),
-                const SizedBox(width: 6),
-                _buildToggleIcon(
-                  icon: Icons.format_strikethrough,
-                  isActive: _currentStyles['strikethrough'] ?? false,
-                  onTap: () {
-                    widget.stylingService.toggleStrikethrough();
-                    _updateStyles();
-                  },
-                ),
-              ],
+              const SizedBox(width: 6),
+              _buildToggleIcon(
+                icon: Icons.format_italic,
+                isActive: _currentStyles['italic'] ?? false,
+                onTap: () {
+                  widget.stylingService.toggleItalic();
+                  _updateStyles();
+                },
+              ),
+              const SizedBox(width: 6),
+              _buildToggleIcon(
+                icon: Icons.format_underlined,
+                isActive: _currentStyles['underline'] ?? false,
+                onTap: () {
+                  widget.stylingService.toggleUnderline();
+                  _updateStyles();
+                },
+              ),
+              const SizedBox(width: 6),
+              _buildToggleIcon(
+                icon: Icons.format_strikethrough,
+                isActive: _currentStyles['strikethrough'] ?? false,
+                onTap: () {
+                  widget.stylingService.toggleStrikethrough();
+                  _updateStyles();
+                },
+              ),
+            ],
 
-              const SizedBox(width: 10),
-              _buildDivider(),
-              const SizedBox(width: 10),
+            const SizedBox(width: 10),
+            _buildDivider(),
+            const SizedBox(width: 10),
 
-              // 정렬 섹션
-              _buildMainIcon(
+            // 정렬 섹션
+            _buildMainIcon(
+              icon: Icons.format_align_left,
+              isActive: _expanded == ToolbarSection.align,
+              onTap: () => _toggle(ToolbarSection.align),
+            ),
+            if (_expanded == ToolbarSection.align) ...[
+              const SizedBox(width: 8),
+              _buildToggleIcon(
                 icon: Icons.format_align_left,
-                isActive: _expanded == ToolbarSection.align,
-                onTap: () => _toggle(ToolbarSection.align),
+                isActive: _currentAlignment == TextAlign.left,
+                onTap: () {
+                  final offset = widget.scrollController?.offset;
+                  widget.stylingService.applyTextAlignment(TextAlign.left);
+                  _updateStyles();
+                  if (offset != null) {
+                    WidgetsBinding.instance.addPostFrameCallback((_) {
+                      widget.scrollController?.jumpTo(offset);
+                    });
+                  }
+                },
               ),
-              if (_expanded == ToolbarSection.align) ...[
-                const SizedBox(width: 8),
-                _buildToggleIcon(
-                  icon: Icons.format_align_left,
-                  isActive: _currentAlignment == TextAlign.left,
-                  onTap: () {
-                    final offset = widget.scrollController?.offset;
-                    widget.stylingService.applyTextAlignment(TextAlign.left);
-                    _updateStyles();
-                    if (offset != null) {
-                      WidgetsBinding.instance.addPostFrameCallback((_) {
-                        widget.scrollController?.jumpTo(offset);
-                      });
-                    }
-                  },
-                ),
-                const SizedBox(width: 6),
-                _buildToggleIcon(
-                  icon: Icons.format_align_center,
-                  isActive: _currentAlignment == TextAlign.center,
-                  onTap: () {
-                    final offset = widget.scrollController?.offset;
-                    widget.stylingService.applyTextAlignment(TextAlign.center);
-                    _updateStyles();
-                    if (offset != null) {
-                      WidgetsBinding.instance.addPostFrameCallback((_) {
-                        widget.scrollController?.jumpTo(offset);
-                      });
-                    }
-                  },
-                ),
-                const SizedBox(width: 6),
-                _buildToggleIcon(
-                  icon: Icons.format_align_right,
-                  isActive: _currentAlignment == TextAlign.right,
-                  onTap: () {
-                    final offset = widget.scrollController?.offset;
-                    widget.stylingService.applyTextAlignment(TextAlign.right);
-                    _updateStyles();
-                    if (offset != null) {
-                      WidgetsBinding.instance.addPostFrameCallback((_) {
-                        widget.scrollController?.jumpTo(offset);
-                      });
-                    }
-                  },
-                ),
-              ],
+              const SizedBox(width: 6),
+              _buildToggleIcon(
+                icon: Icons.format_align_center,
+                isActive: _currentAlignment == TextAlign.center,
+                onTap: () {
+                  final offset = widget.scrollController?.offset;
+                  widget.stylingService.applyTextAlignment(TextAlign.center);
+                  _updateStyles();
+                  if (offset != null) {
+                    WidgetsBinding.instance.addPostFrameCallback((_) {
+                      widget.scrollController?.jumpTo(offset);
+                    });
+                  }
+                },
+              ),
+              const SizedBox(width: 6),
+              _buildToggleIcon(
+                icon: Icons.format_align_right,
+                isActive: _currentAlignment == TextAlign.right,
+                onTap: () {
+                  final offset = widget.scrollController?.offset;
+                  widget.stylingService.applyTextAlignment(TextAlign.right);
+                  _updateStyles();
+                  if (offset != null) {
+                    WidgetsBinding.instance.addPostFrameCallback((_) {
+                      widget.scrollController?.jumpTo(offset);
+                    });
+                  }
+                },
+              ),
             ],
-          ),
+          ],
         ),
       ),
     );
@@ -568,7 +606,12 @@ class _TextStylingToolbarState extends State<TextStylingToolbar> {
   }
 
   Widget _buildDivider() {
-    return Container(width: 1, height: 28, color: Colors.grey.shade300);
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: 8),
+      width: 1,
+      height: 28,
+      color: Colors.grey.shade300,
+    );
   }
 
   Widget _buildColorDot(Color color, VoidCallback onTap) {

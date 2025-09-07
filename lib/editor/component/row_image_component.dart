@@ -1,5 +1,4 @@
 import 'package:doppy/editor/custom_nodes/image_row_node.dart';
-import 'package:doppy/editor/image/image_edit.dart';
 import 'package:doppy/editor/postwrite_screen.dart';
 import 'package:doppy/editor/service/image_service.dart';
 import 'package:doppy/editor/service/drag_service.dart';
@@ -329,15 +328,6 @@ class _ImageRowComponentState extends State<ImageRowComponent>
                       child: Container(
                         width: 3,
                         color: const Color(0xFF007AFF),
-                      ),
-                    ),
-                  //메뉴바
-                  if (isSelected)
-                    Positioned(
-                      top: 2,
-                      right: 0,
-                      child: RowImageBarWidget(
-                        imageUrl: widget.imageUrls.first,
                       ),
                     ),
                 ],

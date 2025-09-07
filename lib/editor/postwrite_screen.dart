@@ -2,20 +2,20 @@ import 'package:doppy/editor/component/single_image_component_builder.dart';
 import 'package:doppy/editor/component/row_image_component.dart';
 import 'package:doppy/editor/component/title_paragraph_component.dart';
 import 'package:doppy/editor/custom_nodes/image_row_node.dart';
+import 'package:doppy/editor/custom_nodes/protected_image_node.dart';
 import 'package:doppy/editor/component/custom_paragraph_component.dart';
-
+import 'package:doppy/editor/image/custom_image_editor_screen.dart';
+import 'package:doppy/editor/overlay/drag_overlay_widget.dart';
 import 'package:doppy/editor/service/drag_service.dart';
 import 'package:doppy/editor/service/editor_service.dart';
 import 'package:doppy/editor/service/image_service.dart';
+import 'package:doppy/editor/style/image_toolbar.dart';
 import 'package:doppy/editor/style/style_sheet.dart';
-import 'package:doppy/editor/overlay/drag_overlay_widget.dart';
-import 'package:doppy/editor/image/image_edit.dart';
-import 'package:doppy/editor/image/image_editor_plus_screen.dart';
-import 'package:flutter/services.dart';
-import 'package:doppy/editor/style/style_toolbar.dart';
+import 'package:doppy/editor/style/defualt_toolbar.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:super_editor/super_editor.dart' hide DragMode;
+import 'package:flutter/services.dart';
+import 'package:super_editor/super_editor.dart';
 
 /// 글 공개 범위 옵션
 enum VisibilityOption { public, partial, private }
@@ -62,12 +62,12 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
         ParagraphNode(id: '4', text: AttributedText('Hello, World4!')),
         ParagraphNode(id: '5', text: AttributedText('Hello, World5!')),
         ParagraphNode(id: '6', text: AttributedText('Hello, World6!')),
-        ImageNode(
+        ProtectedImageNode(
           id: '7',
           imageUrl:
               'https://image.utoimage.com/preview/cp872722/2022/12/202212008462_500.jpg',
         ),
-        ImageNode(
+        ProtectedImageNode(
           id: '8',
           imageUrl:
               'https://media.istockphoto.com/id/1317323736/ko/%EC%82%AC%EC%A7%84/%EB%82%98%EB%AC%B4-%EB%B0%A9%ED%96%A5%EC%9C%BC%EB%A1%9C-%ED%95%98%EB%8A%98%EB%A1%9C-%EB%B0%94%EB%9D%BC%EB%B3%B4%EB%8A%94-%EA%B2%BD%EC%B9%98.jpg?s=612x612&w=0&k=20&c=0xTghmMTXJ5ITCZ-LKTABbaPIK_1kWNf0FSFl_GL_7I=',
@@ -75,7 +75,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
         ParagraphNode(id: '9', text: AttributedText('Hello, World8!')),
         ParagraphNode(id: '10', text: AttributedText('Hello, World9!')),
         // 스크롤 영역 확보를 위한 여유 공간
-        ImageNode(
+        ProtectedImageNode(
           id: '21',
           imageUrl:
               'https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcQWfMSIOQpP83ncpDgty8qB2tgKjCpqCFVTIRUdflGvJJS44tHiQjwZjMCzTBnfwARtHjc&usqp=CAU',
@@ -123,9 +123,10 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final selectedId = context.watch<ImageService>().selectedImageId;
     return Scaffold(
       appBar: AppBar(
-        toolbarHeight: 32,
+        toolbarHeight: 40,
         scrolledUnderElevation: 0,
         leading: TextButton(
           onPressed: () {
@@ -142,7 +143,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
           AnimatedBuilder(
             animation: editorService,
             builder: (context, _) {
-              final enabled = editorService.canPublish;
+              final enabled = editorService.publishable;
               return TextButton(
                 onPressed: enabled ? () {} : null,
                 child: Text(
@@ -298,10 +299,13 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
           ),
           // 하단 툴바: 이미지 선택 시 이미지 퀵툴바, 아니면 텍스트 스타일 툴바
           Positioned(
-            bottom: 14,
+            bottom: 0,
             left: 0,
             right: 0,
-            child: _buildBottomToolbar(),
+            child:
+                selectedId != null
+                    ? _buildImageToolbar()
+                    : _buildDefaultToolbar(),
           ),
         ],
       ),
@@ -360,85 +364,35 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     );
   }
 
-  // 하단 이미지 전용 퀵툴바 (이미지 선택 시에만 등장)
-  Widget _buildImageQuickToolbar() {
+  Widget _buildDefaultToolbar() {
+    return DefaultToolbar(
+      stylingService: TextStylingService(editor: editor, composer: composer),
+      scrollController: scrollController,
+      onInsertImage: () async {},
+    );
+  }
+
+  Widget _buildImageToolbar() {
     final selectedId = ImageService().selectedImageId;
     if (selectedId == null) return const SizedBox.shrink();
 
     final node = document.getNodeById(selectedId);
     if (node is! ImageNode) return const SizedBox.shrink();
 
-    return Center(
-      child: ImageBarWidget(
-        imageUrl: node.imageUrl,
-        onAdjust: () async {
-          try {
-            final bundle = NetworkAssetBundle(Uri.parse(node.imageUrl));
-            final data = await bundle.load('');
-            final bytes = data.buffer.asUint8List();
-            final edited = await openImageEditorPlus(
-              context,
-              imageBytes: bytes,
-            );
-            if (edited != null) {
-              if (!mounted) return;
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('편집 완료 (반영 로직은 추후 연결)')),
-              );
-            }
-          } catch (e) {
-            if (!mounted) return;
-            ScaffoldMessenger.of(
-              context,
-            ).showSnackBar(SnackBar(content: Text('이미지 로드 실패: $e')));
-          }
-        },
-        onCrop: () async {
-          // 현재는 onAdjust와 동일 동작. 별도 크롭 UI 원하면 분기
-          try {
-            final bundle = NetworkAssetBundle(Uri.parse(node.imageUrl));
-            final data = await bundle.load('');
-            final bytes = data.buffer.asUint8List();
-            final edited = await openImageEditorPlus(
-              context,
-              imageBytes: bytes,
-            );
-            if (edited != null) {
-              if (!mounted) return;
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('크롭 완료 (반영 로직은 추후 연결)')),
-              );
-            }
-          } catch (e) {
-            if (!mounted) return;
-            ScaffoldMessenger.of(
-              context,
-            ).showSnackBar(SnackBar(content: Text('이미지 로드 실패: $e')));
-          }
-        },
-        onDelete: () {
-          // TODO: 삭제 연동
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(const SnackBar(content: Text('삭제 기능은 추후 연동 예정')));
-        },
-      ),
+    return ImageEditingToolbar(
+      onAdjust: () async {
+        try {
+          final bundle = NetworkAssetBundle(Uri.parse(node.imageUrl));
+          final bytes = await bundle
+              .load('')
+              .then((data) => data.buffer.asUint8List());
+          await openImageEditorPlus(context, imageBytes: bytes);
+        } catch (e) {
+          if (!mounted) return;
+        }
+      },
+      onDelete: () {},
     );
-  }
-
-  Widget _buildBottomToolbar() {
-    final selectedId = context.watch<ImageService>().selectedImageId;
-
-    return selectedId != null
-        ? _buildImageQuickToolbar()
-        : TextStylingToolbar(
-          stylingService: TextStylingService(
-            editor: editor,
-            composer: composer,
-          ),
-          scrollController: scrollController,
-          onInsertImage: () async {},
-        );
   }
 
   // 이미지 행에서 특정 이미지 드래그 시작 (분리는 드롭 시)

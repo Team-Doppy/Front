@@ -1,6 +1,3 @@
-import 'package:doppy/editor/image/image_edit.dart';
-import 'package:doppy/editor/image/image_editor_plus_screen.dart';
-import 'package:flutter/services.dart';
 import 'package:doppy/editor/service/drag_service.dart';
 import 'package:doppy/editor/service/image_service.dart';
 import 'package:flutter/material.dart';
@@ -73,31 +70,41 @@ class _SingleImageComponentState extends State<SingleImageComponent>
         // 실제 이미지 내용 + 좌/우 세로 라인 (머지 모드에서)
         LayoutBuilder(
           builder: (context, constraints) {
-            final image = Image.network(
-              widget.imageUrl,
-              fit: BoxFit.contain,
-              loadingBuilder: (context, child, loadingProgress) {
-                if (loadingProgress == null) return child;
-                return const Center(child: CircularProgressIndicator());
-              },
-              errorBuilder: (context, error, stackTrace) {
-                return Container(
-                  color: Colors.grey.shade300,
-                  padding: const EdgeInsets.all(8),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: const [
-                      Icon(Icons.broken_image, size: 40, color: Colors.grey),
-                      SizedBox(height: 8),
-                      Text(
-                        "이미지를 불러올 수 없습니다.",
-                        style: TextStyle(color: Colors.black54),
-                      ),
-                    ],
-                  ),
-                );
-              },
+            final editedBytes = context.watch<ImageService>().getEditedBytes(
+              widget.nodeId,
             );
+            final image =
+                editedBytes != null
+                    ? Image.memory(editedBytes, fit: BoxFit.contain)
+                    : Image.network(
+                      widget.imageUrl,
+                      fit: BoxFit.contain,
+                      loadingBuilder: (context, child, loadingProgress) {
+                        if (loadingProgress == null) return child;
+                        return const Center(child: CircularProgressIndicator());
+                      },
+                      errorBuilder: (context, error, stackTrace) {
+                        return Container(
+                          color: Colors.grey.shade300,
+                          padding: const EdgeInsets.all(8),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: const [
+                              Icon(
+                                Icons.broken_image,
+                                size: 40,
+                                color: Colors.grey,
+                              ),
+                              SizedBox(height: 8),
+                              Text(
+                                "이미지를 불러올 수 없습니다.",
+                                style: TextStyle(color: Colors.black54),
+                              ),
+                            ],
+                          ),
+                        );
+                      },
+                    );
 
             final isSelected =
                 context.watch<ImageService>().selectedImageId == widget.nodeId;

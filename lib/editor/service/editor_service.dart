@@ -10,16 +10,11 @@ class EditorService extends ChangeNotifier {
   GlobalKey? _documentLayoutKey;
 
   // 문단별 마진 캐시 (중앙집중 판정 결과)
+  bool publishable = false;
   final Map<String, EdgeInsets> _paragraphMargins = <String, EdgeInsets>{};
-  String? _lastStructureSignature;
-  bool _lastPublishable = false;
 
   EditorService({required this.editor, required this.document}) {
-    // 초기 문서 상태 기준으로 문단 마진을 계산
-    recomputeParagraphMargins();
-    // 초기 구조 시그니처 저장 및 변경 리스너 등록
-    _lastStructureSignature = _computeStructureSignature();
-    _lastPublishable = canPublish;
+    _recomputeParagraphMargins();
     document.addListener(_onDocumentChanged);
   }
 
@@ -29,58 +24,60 @@ class EditorService extends ChangeNotifier {
 
   GlobalKey? get documentLayoutKey => _documentLayoutKey;
 
-  // 문서 구조(노드 타입/순서) 시그니처 계산: 텍스트 입력만으로는 변하지 않게 설계
-  String _computeStructureSignature() {
-    final buffer = StringBuffer();
-    for (int i = 0; i < document.length; i++) {
-      final node = document.getNodeAt(i);
-      if (node == null) continue;
-      final type = getNodeType(node.id);
-      switch (type) {
-        case NodeType.paragraph:
-          buffer.write('P|');
-          break;
-        case NodeType.image:
-          buffer.write('I|');
-          break;
-        case NodeType.imageRow:
-          buffer.write('R|');
-          break;
-        case NodeType.unknown:
-          buffer.write('U|');
-          break;
-      }
-    }
-    return buffer.toString();
-  }
-
   // 문서 변경 리스너: 구조가 변했을 때만 마진 재계산
   void _onDocumentChanged(DocumentChangeLog changeLog) {
-    // 제목 노드가 항상 존재하고 맨 위에 있도록 보정
-    final bool titleFixed = _ensureTitleAtTop();
+    final change = changeLog.changes[0];
+    print('changeLog.changes[0]: $change');
 
-    final signature = _computeStructureSignature();
-    bool structureChanged = false;
-    if (signature != _lastStructureSignature) {
-      _lastStructureSignature = signature;
-      structureChanged = true;
-      // 구조 변경 시에만 마진 재계산
-      recomputeParagraphMargins();
+    if (change is NodeRemovedEvent) {
+      if (getEditingIndex() == 0) {
+        // 타이틀 문단 삭제 방지
+        _ensureTitleAtTop();
+        notifyListeners();
+        return;
+      }
+      // 삭제는 이전 인덱스 정보를 잃어서 부분 보정보다 전체 재계산이 안전
+      _recomputeParagraphMargins();
+      return;
     }
 
-    // 새로 생성된 문단이 있으면 이전 문단의 정렬을 승계하도록 정렬 메타데이터 보정
-    final bool alignmentFixed = _ensureParagraphAlignmentDefaults();
+    if (change is NodeInsertedEvent) {
+      // 새 문단의 정렬 승계
+      _ensureParagraphAlignmentForIndex(change.insertionIndex);
+      // 삽입 지점 주변(상/하/본인)만 마진 재계산
+      _recomputeParagraphMarginsAround(change.insertionIndex);
+      return;
+    }
 
-    // 게시 가능 여부가 바뀌었는지 확인 (텍스트 입력 같은 구조 비변경도 감지)
-    final currentPublishable = canPublish;
-    final publishableChanged = currentPublishable != _lastPublishable;
-    _lastPublishable = currentPublishable;
+    if (change is NodeMovedEvent) {
+      // 이동 전/후 주변만 마진 재계산
+      _recomputeParagraphMarginsAround(change.from);
+      _recomputeParagraphMarginsAround(change.to);
 
-    if (structureChanged ||
-        publishableChanged ||
-        alignmentFixed ||
-        titleFixed) {
-      notifyListeners();
+      return;
+    }
+
+    if (change is NodeChangeEvent) {
+      // 타입 변경 등 구조 영향 가능 → 해당 인덱스만 우선 보정, 없으면 전체
+      final idx = document.getNodeIndexById(change.nodeId);
+      if (idx != -1) {
+        _recomputeParagraphMarginsAround(idx);
+        _ensureParagraphAlignmentForIndex(getEditingIndex());
+      } else {
+        _recomputeParagraphMargins();
+      }
+
+      return;
+    }
+
+    if (changeLog.changes[0] is TextInsertionEvent ||
+        changeLog.changes[0] is TextDeletedEvent) {
+      if (getEditingIndex() == 0) {
+        publishable = hasNonEmptyTitle();
+        notifyListeners();
+        return;
+      }
+      return;
     }
   }
 
@@ -117,8 +114,9 @@ class EditorService extends ChangeNotifier {
     final insertIndex =
         targetIndex > currentIndex ? targetIndex - 1 : targetIndex;
     document.insertNodeAt(insertIndex, node);
-    // 문서 구조 변경 → 문단 마진 재계산
-    recomputeParagraphMargins();
+    // 문서 구조 변경 → 주변만 마진 재계산(O(1))
+    _recomputeParagraphMarginsAround(insertIndex);
+    _recomputeParagraphMarginsAround(currentIndex);
     notifyListeners();
   }
 
@@ -189,8 +187,8 @@ class EditorService extends ChangeNotifier {
     final insertIndex =
         draggingIndex < targetIndex ? draggingIndex : targetIndex;
     document.insertNodeAt(insertIndex, imageRowNode);
-    // 문서 구조 변경 → 문단 마진 재계산
-    recomputeParagraphMargins();
+    // 문서 구조 변경 → 주변만 마진 재계산(O(1))
+    _recomputeParagraphMarginsAround(insertIndex);
     notifyListeners();
   }
 
@@ -219,8 +217,11 @@ class EditorService extends ChangeNotifier {
 
     // 기존 이미지 삭제
     document.deleteNode(imageId);
-    // 문서 구조 변경 → 문단 마진 재계산
-    recomputeParagraphMargins();
+    // 문서 구조 변경 → 행 주변만 마진 재계산(O(1))
+    final int rowIndex = document.getNodeIndexById(rowId);
+    if (rowIndex != -1) {
+      _recomputeParagraphMarginsAround(rowIndex);
+    }
     notifyListeners();
   }
 
@@ -236,6 +237,13 @@ class EditorService extends ChangeNotifier {
       default:
         return NodeType.unknown;
     }
+  }
+
+  int getEditingIndex() {
+    final selection = editor.composer.selectionNotifier.value;
+    if (selection == null) return -1;
+    final nodeId = selection.extent.nodeId;
+    return document.getNodeIndexById(nodeId);
   }
 
   DocumentNode? findNodeAtPosition(Offset position) {
@@ -332,8 +340,9 @@ class EditorService extends ChangeNotifier {
     // 분리된 이미지를 원하는 위치에 삽입 (기본: 원래 행의 위치)
     final int targetInsertIndex = insertIndex ?? rowIndex;
     document.insertNodeAt(targetInsertIndex, newImageNode);
-    // 문서 구조 변경 → 문단 마진 재계산
-    recomputeParagraphMargins();
+    // 문서 구조 변경 → 분리 삽입 위치와 원래 행 주변만 마진 재계산(O(1))
+    _recomputeParagraphMarginsAround(targetInsertIndex);
+    _recomputeParagraphMarginsAround(rowIndex);
     notifyListeners();
 
     return newImageId;
@@ -348,7 +357,7 @@ class EditorService extends ChangeNotifier {
 
   /// 현재 문서 스냅샷을 순회하며 모든 Paragraph에 대해
   /// 이미지와 이웃한 쪽에만 마진을 주는 규칙을 계산한다.
-  void recomputeParagraphMargins() {
+  void _recomputeParagraphMargins() {
     _paragraphMargins.clear();
 
     for (int i = 0; i < document.length; i++) {
@@ -380,6 +389,33 @@ class EditorService extends ChangeNotifier {
     }
   }
 
+  // 변경 지점 주변(상/하/본인)만 부분적으로 마진 재계산
+  void _recomputeParagraphMarginsAround(int centerIndex) {
+    for (final i in <int>[centerIndex - 1, centerIndex, centerIndex + 1]) {
+      if (i < 0 || i >= document.length) continue;
+      final node = document.getNodeAt(i);
+      if (node is! ParagraphNode) continue;
+
+      NodeType? prevType;
+      NodeType? nextType;
+      if (i > 0) {
+        final prev = document.getNodeAt(i - 1);
+        if (prev != null) prevType = getNodeType(prev.id);
+      }
+      if (i < document.length - 1) {
+        final next = document.getNodeAt(i + 1);
+        if (next != null) nextType = getNodeType(next.id);
+      }
+
+      final bool addTop = _isImageType(prevType);
+      final bool addBottom = _isImageType(nextType);
+      _paragraphMargins[node.id] = EdgeInsets.only(
+        top: addTop ? _imageTextMarginPx : _baseTopMarginPx,
+        bottom: addBottom ? _imageTextMarginPx : 0,
+      );
+    }
+  }
+
   /// 외부에서 문단의 마진을 조회
   EdgeInsets getParagraphMargin(String nodeId) {
     return _paragraphMargins[nodeId] ??
@@ -388,69 +424,43 @@ class EditorService extends ChangeNotifier {
 
   // ===== 게시 가능 여부 판정 =====
   bool hasNonEmptyTitle() {
-    for (int i = 0; i < document.length; i++) {
-      final node = document.getNodeAt(i);
-      if (node is ParagraphNode && (node.metadata['isTitle'] == true)) {
-        // ignore: deprecated_member_use
-        final text = node.text.text.trim();
-        return text.isNotEmpty;
-      }
+    final node = document.getNodeAt(0);
+    if (node is ParagraphNode && (node.metadata['isTitle'] == true)) {
+      final text = node.text.text.trim();
+      return text.isNotEmpty;
     }
     return false;
   }
 
-  bool hasNonEmptyContent() {
-    for (int i = 0; i < document.length; i++) {
-      final node = document.getNodeAt(i);
-      if (node is ParagraphNode && (node.metadata['isTitle'] == true)) {
-        // 타이틀은 제외
-        continue;
-      }
-      if (node is ParagraphNode) {
-        // ignore: deprecated_member_use
-        if (node.text.text.trim().isNotEmpty) {
-          return true;
-        }
-      } else if (node is ImageNode || node is ImageRowNode) {
-        return true;
-      }
-    }
-    return false;
-  }
+  // 삽입된 문단 한 건만 이전 문단 정렬을 승계(O(1))
+  void _ensureParagraphAlignmentForIndex(int index) {
+    if (index < 0 || index >= document.length) return;
+    final node = document.getNodeAt(index);
+    if (node is! ParagraphNode) return;
 
-  bool get canPublish => hasNonEmptyTitle() && hasNonEmptyContent();
+    final Map<String, dynamic> meta = Map<String, dynamic>.from(node.metadata);
+    final String? align = meta['textAlign'] as String?;
+    if (align != null) return;
 
-  // ===== 정렬 승계 보정 =====
-  // 새 ParagraphNode가 생성될 때 metadata['textAlign']이 비어 있으면
-  // 바로 이전 Paragraph의 정렬을 승계한다. (없으면 'left')
-  bool _ensureParagraphAlignmentDefaults() {
-    bool updated = false;
     String previousAlign = 'left';
-
-    for (int i = 0; i < document.length; i++) {
-      final node = document.getNodeAt(i);
-      if (node is ParagraphNode) {
-        final Map<String, dynamic> meta = Map<String, dynamic>.from(
-          node.metadata,
-        );
-        final String? align = meta['textAlign'] as String?;
-        if (align == null) {
-          // 이전 문단 정렬 승계
-          meta['textAlign'] = previousAlign;
-          final replaced = ParagraphNode(
-            id: node.id,
-            text: node.text,
-            metadata: meta,
-          );
-          document.replaceNodeById(node.id, replaced);
-          updated = true;
-        } else {
-          previousAlign = align;
+    for (int i = index - 1; i >= 0; i--) {
+      final prev = document.getNodeAt(i);
+      if (prev is ParagraphNode) {
+        final String? prevAlign = prev.metadata['textAlign'] as String?;
+        if (prevAlign != null) {
+          previousAlign = prevAlign;
         }
+        break;
       }
     }
 
-    return updated;
+    meta['textAlign'] = previousAlign;
+    final replaced = ParagraphNode(
+      id: node.id,
+      text: node.text,
+      metadata: meta,
+    );
+    document.replaceNodeById(node.id, replaced);
   }
 
   // 제목 문단이 항상 존재하고 맨 위(index 0)에 있도록 보정한다.
@@ -458,7 +468,7 @@ class EditorService extends ChangeNotifier {
   bool _ensureTitleAtTop() {
     int titleIndex = -1;
     ParagraphNode? titleNode;
-    for (int i = 0; i < document.length; i++) {
+    for (int i = 0; i < 2; i++) {
       final node = document.getNodeAt(i);
       if (node is ParagraphNode && (node.metadata['isTitle'] == true)) {
         titleIndex = i;
