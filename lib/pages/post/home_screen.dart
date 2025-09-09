@@ -1,82 +1,11 @@
 import 'package:doppy/pages/components/custom_bottom_navigation_bar.dart';
-import 'package:doppy/pages/components/post_card.dart';
-import 'package:doppy/pages/post/postview_screen.dart';
+import 'package:doppy/pages/components/post_list.dart';
+import 'package:doppy/data/models/post_data.dart';
+import 'package:doppy/theme/app_colors.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import '../../../providers/auth_provider.dart';
-import '../../../theme/app_colors.dart';
-import '../../../theme/app_text_styles.dart';
-import 'dart:ui'; // Added for ImageFilter
-
-class MainCarousel extends StatefulWidget {
-  const MainCarousel({super.key});
-
-  @override
-  State<MainCarousel> createState() => _MainCarouselState();
-}
-
-class _MainCarouselState extends State<MainCarousel> {
-  late final PageController _pageController;
-
-  final _images = const [
-    'assets/image/feed1.jpg',
-    'assets/image/feed2.png',
-    'assets/image/feed3.png',
-    'assets/image/feed1.jpg', // 4번째 이미지 추가
-  ];
-
-  @override
-  void initState() {
-    super.initState();
-    _pageController = PageController(
-      viewportFraction: 0.8, // 카드가 화면의 80% 차지하여 간격 확보
-      initialPage: 0,
-    );
-  }
-
-  @override
-  void dispose() {
-    _pageController.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 0, vertical: 8),
-      child: AspectRatio(
-        aspectRatio: 4 / 3, // 전체 영역 비율 고정
-        child: PageView.builder(
-          controller: _pageController,
-          padEnds: false, // 패딩 제거
-          onPageChanged: (index) {
-            // 페이지 변경 처리
-          },
-          itemCount: _images.length, // 실제 이미지 개수만큼만
-          physics: const BouncingScrollPhysics(),
-          itemBuilder: (context, index) {
-            final img = _images[index];
-            return Container(
-              margin: const EdgeInsets.symmetric(
-                horizontal: 0,
-              ), // 좌우 마진 추가하여 간격 확보
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(20),
-              ),
-              clipBehavior: Clip.antiAlias,
-              child: Image.asset(
-                img,
-                fit: BoxFit.cover, // 4:3 비율로 맞춤
-                width: double.infinity,
-                height: double.infinity,
-              ),
-            );
-          },
-        ),
-      ),
-    );
-  }
-}
+import '../../providers/auth_provider.dart';
+import '../../theme/app_text_styles.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -86,699 +15,81 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  int _currentPage = 0; // 페이지 인디케이터용
-  late final PageController _pageController; // PageController 추가
-  bool _showCategoryModal = false; // 카테고리 모달 표시 여부
+  late final List<PostData> _posts;
 
   @override
   void initState() {
     super.initState();
-    _pageController = PageController(initialPage: 0);
-  }
-
-  @override
-  void dispose() {
-    _pageController.dispose(); // PageController 해제
-    super.dispose();
+    _posts = PostDataProvider.getSamplePosts();
   }
 
   @override
   Widget build(BuildContext context) {
     final screenWidth = MediaQuery.of(context).size.width;
-    final screenHeight = MediaQuery.of(context).size.height;
 
-    // 반응형 크기 계산
-    final containerWidth = screenWidth;
-    final containerHeight = screenHeight;
-
-    return Stack(
-      children: [
-        Scaffold(
-          body: Container(
-            width: containerWidth,
-            height: containerHeight,
-            color: const Color.fromARGB(255, 255, 255, 255),
-            child: SafeArea(
-              child: CustomScrollView(
-                slivers: [
-                  // 인스타처럼 스크롤 내릴 때 숨기고 올릴 때 나타나는 상단 앱바
-                  SliverAppBar(
-                    floating: true, // 올릴 때만 등장
-                    snap: true, // 스냅 애니메이션
-                    pinned: false,
-                    elevation: 0,
-                    scrolledUnderElevation: 0,
-                    backgroundColor: Colors.white,
-                    toolbarHeight: 44, // 낮은 높이
-                    titleSpacing: 0,
-                    centerTitle: false,
-                    title: Padding(
-                      padding: EdgeInsets.symmetric(horizontal: 16),
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: Consumer<AuthProvider>(
-                              builder: (context, auth, child) {
-                                final username = auth.username ?? '사용자';
-                                return Text(
-                                  '@$username',
-                                  style: AppTextStyles.headlineMedium.copyWith(
-                                    color: AppColors.lightTextPrimary,
-                                  ),
-                                );
-                              },
-                            ),
-                          ),
-                          Material(
-                            color: Colors.transparent,
-                            child: InkWell(
-                              borderRadius: BorderRadius.circular(12),
-                              onTap: () {
-                                print('알람 버튼 클릭');
-                              },
-                              child: Padding(
-                                padding: EdgeInsets.all(4),
-                                child: Image.asset(
-                                  'assets/icons/ic_notification.svg',
-                                  width: 24,
-                                  height: 24,
-                                  errorBuilder: (context, error, stackTrace) {
-                                    return Icon(
-                                      Icons.notifications,
-                                      size: 24,
-                                      color: AppColors.lightTextSecondary,
-                                    );
-                                  },
-                                ),
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-
-                  // 메인 이미지 PageView
-                  SliverToBoxAdapter(
-                    child: Container(
-                      width: containerWidth,
-                      height: containerHeight * 0.55,
-                      margin: EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                      child: PageView.builder(
-                        controller: _pageController,
-                        onPageChanged: (index) {
-                          setState(() {
-                            _currentPage = index % 4; // 4로 나눈 나머지로 인덱스 관리
-                          });
-                        },
-                        itemCount: 1000, // 충분히 큰 수로 설정
-                        itemBuilder: (context, index) {
-                          return Container(
-                            margin: EdgeInsets.symmetric(horizontal: 4),
-
-                            child: ClipRRect(
-                              borderRadius: BorderRadius.only(
-                                topLeft: Radius.circular(2),
-                                bottomRight: Radius.circular(20),
-                                topRight: Radius.circular(20),
-                                bottomLeft: Radius.circular(20),
-                              ),
-                              child: Stack(
-                                children: [
-                                  Image.asset(
-                                    index % 3 == 0
-                                        ? 'assets/image/feed1.jpg'
-                                        : index % 3 == 1
-                                        ? 'assets/image/feed2.png'
-                                        : 'assets/image/feed3.png',
-                                    fit: BoxFit.cover,
-                                    width: double.infinity,
-                                    height: double.infinity,
-                                  ),
-                                  // 블러+반투명 검정 오버레이
-                                  Positioned.fill(
-                                    child: Container(
-                                      decoration: BoxDecoration(
-                                        color: const Color.fromARGB(
-                                          255,
-                                          65,
-                                          65,
-                                          65,
-                                        ).withOpacity(0.35),
-                                      ),
-                                      child: BackdropFilter(
-                                        filter: ImageFilter.blur(
-                                          sigmaX: 1,
-                                          sigmaY: 1,
-                                        ),
-                                        child: Container(
-                                          color: Colors.black.withOpacity(0.1),
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                  // 왼쪽 하단 흰색 텍스트
-                                  Positioned(
-                                    left: 20,
-                                    right: 20,
-                                    bottom: 10,
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        Text(
-                                          '확실히 돕하다,\n미친 도피의 파급력!',
-                                          style: TextStyle(
-                                            letterSpacing: 0,
-                                            height: 1.4,
-                                            color: Colors.white,
-                                            fontWeight: FontWeight.bold,
-                                            fontSize: 28,
-                                          ),
-                                          textAlign: TextAlign.left,
-                                        ),
-                                        Text(
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                          " 확실히 돕하다, 미친 도피의 파급력!, 오늘은 이안을 보고 왔어됴 진짜 인정잉",
-                                          style: TextStyle(
-                                            color: const Color.fromARGB(
-                                              255,
-                                              241,
-                                              241,
-                                              241,
-                                            ),
-                                            fontSize: 11,
-                                            fontFamily: 'Pretendard Variable',
-                                            fontWeight: FontWeight.w300,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ],
-                              ),
+    return Scaffold(
+      backgroundColor: AppColors.darkBackground,
+      body: SafeArea(
+        child: Column(
+          children: [
+            // 앱바 - 항상 표시
+            Container(
+              height: 42,
+              color: AppColors.darkBackground,
+              child: Padding(
+                padding: const EdgeInsets.only(left: 16, right: 16, bottom: 16),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Consumer<AuthProvider>(
+                        builder: (context, auth, child) {
+                          final username = auth.username ?? '사용자';
+                          return Text(
+                            '@$username',
+                            style: AppTextStyles.headlineMedium.copyWith(
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold,
                             ),
                           );
                         },
                       ),
                     ),
-                  ),
-
-                  // 페이지 인디케이터
-                  SliverToBoxAdapter(
-                    child: Container(
-                      width: containerWidth,
-                      padding: EdgeInsets.symmetric(vertical: 16),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: List.generate(4, (index) {
-                          return Container(
-                            margin: EdgeInsets.symmetric(horizontal: 3),
-                            width: 8,
-                            height: 8,
+                    Stack(
+                      children: [
+                        Icon(
+                          Icons.notifications,
+                          color: AppColors.darkTextPrimary,
+                          size: 23,
+                        ),
+                        Positioned(
+                          top: 0,
+                          right: 0,
+                          child: Container(
+                            width: 6,
+                            height: 6,
                             decoration: BoxDecoration(
-                              color:
-                                  _currentPage == index
-                                      ? AppColors.lightTextPrimary
-                                      : AppColors.lightBorder,
+                              color: const Color.fromARGB(255, 238, 0, 0),
                               shape: BoxShape.circle,
                             ),
-                          );
-                        }),
-                      ),
-                    ),
-                  ),
-
-                  /*
-                      // 친한 이웃 섹션
-                      Container(
-                        width: containerWidth,
-                        padding: EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 8,
-                        ),
-                        child: Text(
-                          '친한 친구들의 도피',
-                          style: AppTextStyles.headlineSmall.copyWith(
-                            color: AppColors.lightTextSecondary,
-                          ), // 소형 제목 - 섹션 제목, 포스트 제목
-                        ),
-                      ),
-
-                      // 친한 이웃 카드들 (가로 스크롤)
-                      SizedBox(
-                        width: containerWidth,
-                        height: 160, // 높이 줄임 (180 -> 160)
-                        child: ListView.builder(
-                          scrollDirection: Axis.horizontal,
-                          padding: EdgeInsets.symmetric(horizontal: 12),
-                          itemCount: 5, // 친한 이웃 수
-                          itemBuilder: (context, index) {
-                            return Container(
-                              width: containerWidth * 0.4, // 카드 너비
-                              margin: EdgeInsets.only(right: 16),
-                              child: Material(
-                                color: Colors.transparent,
-                                child: InkWell(
-                                  borderRadius: BorderRadius.circular(10),
-                                  onTap: () {
-                                    // 친한 이웃 카드 클릭 기능 구현
-                                    print('친한 이웃 카드 ${index + 1} 클릭');
-                                  },
-                                  child: Column(
-                                    children: [
-                                      // 사진 부분
-                                      Container(
-                                        height: 108,
-                                        decoration: BoxDecoration(
-                                          color: Colors.grey[200],
-                                          borderRadius: BorderRadius.circular(
-                                            10,
-                                          ),
-                                        ),
-                                        child: Stack(
-                                          children: [
-                                            ClipRRect(
-                                              borderRadius:
-                                                  BorderRadius.circular(10),
-                                              child: Image.asset(
-                                                index % 3 == 0
-                                                    ? 'assets/image/feed1.jpg'
-                                                    : index % 3 == 1
-                                                    ? 'assets/image/feed2.png'
-                                                    : 'assets/image/feed3.png',
-                                                fit: BoxFit.cover,
-                                                width: double.infinity,
-                                                height: double.infinity,
-                                              ),
-                                            ),
-                                            // 프로필 사진 (오른쪽 하단)
-                                            Positioned(
-                                              right: 4,
-                                              bottom: 4,
-                                              child: Container(
-                                                width: 32,
-                                                height: 32,
-                                                decoration: BoxDecoration(
-                                                  shape: BoxShape.circle,
-                                                  border: Border.all(
-                                                    color: Colors.white,
-                                                    width: 2,
-                                                  ),
-                                                ),
-                                                child: ClipOval(
-                                                  child: Image.asset(
-                                                    'assets/image/profile.png',
-                                                    fit: BoxFit.cover,
-                                                    width: double.infinity,
-                                                    height: double.infinity,
-                                                  ),
-                                                ),
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                      SizedBox(height: 8),
-                                      // 텍스트 부분
-                                      Container(
-                                        width: containerWidth * 0.4,
-                                        padding: EdgeInsets.symmetric(
-                                          horizontal: 4,
-                                        ), // 좌우 패딩 추가
-                                        child: Text(
-                                          index == 0
-                                              ? '오늘은 수강신청을 망쳐\n버렸어요'
-                                              : index == 1
-                                              ? '블로그 1000억 무조건 \n부자될 것 같아'
-                                              : index == 2
-                                              ? '오늘 날씨가 너무 좋아서\n산책하고 왔어요'
-                                              : index == 3
-                                              ? '새로운 카페 발견했어요\n맛있었어요!'
-                                              : '오늘 하루도 힘내자고\n화이팅!',
-                                          style: AppTextStyles.labelSmall
-                                              .copyWith(
-                                                color:
-                                                    AppColors
-                                                        .lightTextSecondary,
-                                              ), // 작은 라벨 - 부가 정보, 작은 텍스트
-                                          overflow: TextOverflow.ellipsis,
-                                          maxLines: 2,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                            );
-                          },
-                        ),
-                      ),
-*/
-                  // 넷플릭스 스타일 타원형 선택지 (고정)
-                  SliverAppBar(
-                    pinned: true,
-                    floating: false,
-                    backgroundColor: const Color.fromARGB(255, 255, 255, 255),
-                    elevation: 0,
-                    toolbarHeight: 50,
-                    automaticallyImplyLeading: false,
-                    scrolledUnderElevation: 0,
-                    flexibleSpace: FlexibleSpaceBar(
-                      background: Padding(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 13,
-                          vertical: 2,
-                        ),
-                        child: Row(
-                          children: [
-                            _buildCategoryButton("시리즈", 0),
-
-                            _buildCategoryButton("영화", 1),
-
-                            _buildCategoryButton("카테고리", 2),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-
-                  // 전체 이웃 글들 (SliverToBoxAdapter로 감싸기)
-                  SliverToBoxAdapter(
-                    child: Column(
-                      children: List.generate(10, (index) {
-                        // 이미지 경로 결정
-                        String imagePath =
-                            index % 3 == 0
-                                ? 'assets/image/feed1.jpg'
-                                : index % 3 == 1
-                                ? 'assets/image/feed2.png'
-                                : 'assets/image/feed3.png';
-
-                        // 제목 결정
-                        String title =
-                            index == 0
-                                ? '모태솔로지만연애를해야할까///'
-                                : index == 1
-                                ? '오늘 날씨가 너무 좋아서 산책했어요'
-                                : index == 2
-                                ? '새로운 카페를 발견했어요!'
-                                : index == 3
-                                ? '블로그 1000억 무조건 부자될 것 같아'
-                                : index == 4
-                                ? '오늘은 수강신청을 망쳐버렸어요'
-                                : index == 5
-                                ? '감성 여름이고 싶은데...'
-                                : index == 6
-                                ? '새로운 영화를 봤어요'
-                                : index == 7
-                                ? '오늘 하루도 힘내자고 화이팅!'
-                                : index == 8
-                                ? '새로운 취미를 시작했어요'
-                                : '오늘은 정말 특별한 하루였어요';
-
-                        // 작성자 결정
-                        String author =
-                            index == 0
-                                ? '수최영'
-                                : index == 1
-                                ? '김여름'
-                                : index == 2
-                                ? '박카페'
-                                : index == 3
-                                ? '이블로그'
-                                : index == 4
-                                ? '정수강'
-                                : index == 5
-                                ? '한감성'
-                                : index == 6
-                                ? '최영화'
-                                : index == 7
-                                ? '강화이팅'
-                                : index == 8
-                                ? '윤취미'
-                                : '임특별';
-
-                        // 본문 내용 결정
-                        String content =
-                            index == 0
-                                ? '안녕하세여,.오늘은 모태솔로지만연애는하고싶 어후기로돌아왓어요다들키스씬은보셧나요저는보다가기절을할뻔했어요 완전 찰스엔터됨 진짜 갈!!!!!!!!!!!!할뻔함 어쩌고 저쩌고 저ㅉ고어쩌고'
-                                : index == 1
-                                ? '오늘 날씨가 정말 좋아서 산책을 다녀왔어요. 햇살이 따뜻하고 바람도 시원해서 정말 기분이 좋았어요. 특히 공원에서 만난 강아지들이 너무 귀여웠어요!'
-                                : index == 2
-                                ? '새로운 카페를 발견했어요! 분위기도 좋고 커피도 맛있어서 정말 만족스러웠어요. 다음에 친구들과 함께 가보려고 해요.'
-                                : index == 3
-                                ? '블로그로 1000억 벌어서 부자가 될 것 같아요! 열심히 글 쓰고 있으니까 조만간 성공할 것 같아요. 다들 응원해주세요!'
-                                : index == 4
-                                ? '오늘 수강신청을 망쳐버렸어요... 원하는 과목을 못 들었어요. 다음 학기에 다시 도전해보려고 해요. 화이팅!'
-                                : index == 5
-                                ? '감성적인 여름이 되고 싶은데... 바다도 가고 싶고, 별자리도 보고 싶어요. 로맨틱한 여름을 만들어보려고 해요.'
-                                : index == 6
-                                ? '새로운 영화를 봤어요! 스토리도 좋고 연기도 훌륭해서 정말 만족스러웠어요. 추천해드릴게요!'
-                                : index == 7
-                                ? '오늘 하루도 힘내자고 화이팅! 매일매일이 새로운 도전이지만 포기하지 않고 열심히 살아가려고 해요.'
-                                : index == 8
-                                ? '새로운 취미를 시작했어요! 그림 그리기를 시작했는데 생각보다 재미있어요. 시간 가는 줄 모르고 그리게 되네요.'
-                                : '오늘은 정말 특별한 하루였어요. 뜻밖의 좋은 일들이 많이 일어나서 기분이 너무 좋아요. 이런 날들이 더 많았으면 좋겠어요.';
-
-                        return Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 10),
-                          child: Stack(
-                            alignment: Alignment.centerLeft,
-                            children: [
-                              Container(
-                                margin: const EdgeInsets.only(left: 0),
-                                child: Material(
-                                  color: Colors.transparent,
-                                  child: InkWell(
-                                    onTap: () {
-                                      Navigator.push(
-                                        context,
-                                        MaterialPageRoute(
-                                          builder:
-                                              (context) =>
-                                                  PostviewScreen(postId: 47),
-                                        ),
-                                      );
-                                      print('전체 이웃 글 ${index + 10} 클릭');
-                                    },
-                                    borderRadius: BorderRadius.circular(12),
-                                    child: PostCard(
-                                      containerWidth: containerWidth,
-                                      imagePath: imagePath,
-                                      title: title,
-                                      author: author,
-                                      content: content,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ],
                           ),
-                        );
-                      }),
+                        ),
+                      ],
                     ),
-                  ),
-
-                  // 하단 여백
-                  SliverToBoxAdapter(child: SizedBox(height: 16)),
-                ],
+                  ],
+                ),
               ),
             ),
-          ),
 
-          bottomNavigationBar: CustomBottomNavigationBar(
-            currentIndex: 0,
-            onTap: (_) {}, // 2번(작성)만 콜백으로 처리됨. 필요시 모달/네비게이션 연결
-          ),
-        ),
-        // 카테고리 모달 (전체 화면을 덮음)
-        if (_showCategoryModal) _buildCategoryModal(),
-      ],
-    );
-  }
-
-  int selectedCategoryIndex = 0; // 선택된 카테고리 인덱스
-
-  Widget _buildCategoryButton(String text, int index) {
-    final isSelected = selectedCategoryIndex == index;
-
-    return GestureDetector(
-      onTap: () {
-        setState(() {
-          selectedCategoryIndex = index;
-        });
-        if (index == 2) {
-          // "카테고리" 버튼을 누르면 모달 열기
-          setState(() {
-            _showCategoryModal = true;
-          });
-        }
-      },
-      child: AnimatedContainer(
-        duration: Duration(milliseconds: 200),
-        padding: EdgeInsets.symmetric(horizontal: 2, vertical: 8),
-        decoration: BoxDecoration(
-          color: isSelected ? Colors.white : Colors.white.withOpacity(0.2),
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: Colors.white.withOpacity(0.3), width: 1),
-        ),
-        child: Container(
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(20),
-            border: Border.all(
-              color:
-                  isSelected
-                      ? Colors.black
-                      : const Color.fromARGB(
-                        255,
-                        141,
-                        141,
-                        141,
-                      ).withOpacity(0.3),
-              width: 1,
+            // 포스트 리스트 - 남은 공간 모두 사용
+            Expanded(
+              child: PostList(containerWidth: screenWidth, posts: _posts),
             ),
-          ),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 4),
-            child: Text(
-              text,
-              style: TextStyle(
-                color:
-                    isSelected
-                        ? Colors.black
-                        : const Color.fromARGB(255, 188, 188, 188),
-                fontSize: 12,
-                fontFamily: 'Pretendard Variable',
-                fontWeight: isSelected ? FontWeight.w600 : FontWeight.w400,
-              ),
-            ),
-          ),
+          ],
         ),
       ),
-    );
-  }
-
-  Widget _buildCategoryModal() {
-    return Positioned.fill(
-      child: Material(
-        color: Colors.transparent,
-        child: GestureDetector(
-          onTap: () {
-            setState(() {
-              _showCategoryModal = false;
-            });
-          },
-          child: Container(
-            color: const Color.fromARGB(255, 19, 19, 19).withOpacity(0.9),
-            child: SafeArea(
-              child: Column(
-                children: [
-                  // 카테고리 목록
-                  Expanded(
-                    child: SingleChildScrollView(
-                      padding: EdgeInsets.symmetric(
-                        horizontal: 20,
-                        vertical: 20,
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          _buildModalCategoryItem('내가 찜한 리스트', 'wishlist'),
-                          _buildModalCategoryItem('저장 가능', 'savable'),
-                          _buildModalCategoryItem('핼러윈 스페셜', 'halloween'),
-                          _buildModalCategoryItem('별자리별 콘텐츠 가이드', 'zodiac'),
-                          _buildModalCategoryItem('별종들만 모이세요', 'oddballs'),
-                          _buildModalCategoryItem('2025 넷플릭스 에미상', 'emmy2025'),
-                          _buildModalCategoryItem('SBS', 'sbs'),
-                          _buildModalCategoryItem('한국 예능', 'korean_variety'),
-                          _buildModalCategoryItem('한국', 'korean'),
-                          _buildModalCategoryItem('외국', 'foreign'),
-                          _buildModalCategoryItem('아시아', 'asian'),
-                          _buildModalCategoryItem('액션', 'action'),
-                          _buildModalCategoryItem('드라마', 'drama'),
-                          _buildModalCategoryItem('영화', 'movie'),
-                          _buildModalCategoryItem('예능', 'variety'),
-                          _buildModalCategoryItem('다큐멘터리', 'documentary'),
-                          _buildModalCategoryItem('애니메이션', 'animation'),
-                          _buildModalCategoryItem('뉴스', 'news'),
-                          _buildModalCategoryItem('스포츠', 'sports'),
-                          _buildModalCategoryItem('음악', 'music'),
-                          _buildModalCategoryItem('게임', 'game'),
-                          _buildModalCategoryItem('교육', 'education'),
-                          _buildModalCategoryItem('여행', 'travel'),
-                          _buildModalCategoryItem('요리', 'cooking'),
-                          _buildModalCategoryItem('패션', 'fashion'),
-                          _buildModalCategoryItem('뷰티', 'beauty'),
-                          _buildModalCategoryItem('건강', 'health'),
-                          _buildModalCategoryItem('기술', 'tech'),
-                          _buildModalCategoryItem('비즈니스', 'business'),
-                          _buildModalCategoryItem('과학', 'science'),
-                        ],
-                      ),
-                    ),
-                  ),
-
-                  // 하단 닫기 버튼
-                  Container(
-                    padding: EdgeInsets.only(bottom: 30),
-                    child: Center(
-                      child: GestureDetector(
-                        onTap: () {
-                          setState(() {
-                            _showCategoryModal = false;
-                          });
-                        },
-                        child: Container(
-                          width: 50,
-                          height: 50,
-                          decoration: BoxDecoration(
-                            color: Colors.white,
-                            shape: BoxShape.circle,
-                          ),
-                          child: Icon(
-                            Icons.close,
-                            color: Colors.black,
-                            size: 24,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildModalCategoryItem(String title, String value) {
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: () {
-          // 카테고리 선택 시 처리
-          print('선택된 카테고리: $title ($value)');
-          setState(() {
-            _showCategoryModal = false;
-          });
-        },
-        child: Container(
-          width: double.infinity,
-          padding: EdgeInsets.symmetric(vertical: 16, horizontal: 0),
-          child: Text(
-            title,
-            style: TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.w400,
-              color: Colors.grey[300],
-              letterSpacing: 0.5,
-            ),
-          ),
-        ),
+      bottomNavigationBar: CustomBottomNavigationBar(
+        currentIndex: 0,
+        onTap: (_) {},
       ),
     );
   }

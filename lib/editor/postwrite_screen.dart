@@ -12,6 +12,7 @@ import 'package:doppy/editor/service/image_service.dart';
 import 'package:doppy/editor/style/image_toolbar.dart';
 import 'package:doppy/editor/style/style_sheet.dart';
 import 'package:doppy/editor/style/defualt_toolbar.dart';
+import 'package:doppy/theme/app_colors.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter/services.dart';
@@ -100,9 +101,9 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
 
     editorService = EditorService(editor: editor, document: document);
     editorService.setDocumentLayoutKey(_documentLayoutKey);
+    // ImageService는 build 메서드에서 설정
     dragService = DragService(
       editorService: editorService,
-      imageService: context.read<ImageService>(),
       scrollController: scrollController,
     );
     dragService.attachScrollController(scrollController);
@@ -123,9 +124,10 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final selectedId = context.watch<ImageService>().selectedImageId;
     return Scaffold(
+      backgroundColor: AppColors.darkSurface,
       appBar: AppBar(
+        backgroundColor: AppColors.darkSurface,
         toolbarHeight: 40,
         scrolledUnderElevation: 0,
         leading: TextButton(
@@ -136,7 +138,11 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
             onTap: () {
               Navigator.pop(context);
             },
-            child: Icon(Icons.arrow_back_ios_new_rounded),
+            child: Icon(
+              Icons.arrow_back_ios_new_rounded,
+              color: AppColors.darkTextPrimary,
+              size: 20,
+            ),
           ),
         ),
         actions: [
@@ -151,8 +157,8 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                   style: TextStyle(
                     color:
                         enabled
-                            ? const Color.fromARGB(255, 9, 144, 255)
-                            : const Color.fromARGB(255, 182, 211, 255),
+                            ? AppColors.darkTextPrimary
+                            : AppColors.darkSurface,
                     fontWeight: FontWeight.w500,
                   ),
                 ),
@@ -303,7 +309,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
             left: 0,
             right: 0,
             child:
-                selectedId != null
+                context.read<ImageService>().selectedImageId != null
                     ? _buildImageToolbar()
                     : _buildDefaultToolbar(),
           ),

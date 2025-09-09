@@ -1,3 +1,4 @@
+import 'package:doppy/theme/app_colors.dart';
 import 'package:flutter/material.dart';
 import 'package:super_editor/super_editor.dart';
 import 'package:doppy/editor/service/editor_service.dart';
@@ -85,8 +86,8 @@ class TitleParagraphComponentBuilder implements ComponentBuilder {
                     textAlign: resolvedAlign,
                     style: const TextStyle(
                       fontSize: 25,
-                      fontWeight: FontWeight.w700,
-                      color: Colors.black26,
+                      fontWeight: FontWeight.w500,
+                      color: AppColors.darkTextSecondary,
                     ),
                   ),
                 ),

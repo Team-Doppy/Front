@@ -1,5 +1,6 @@
 import 'package:doppy/editor/config/config.dart';
 import 'package:doppy/editor/custom_nodes/image_row_node.dart';
+import 'package:doppy/theme/app_colors.dart';
 import 'package:flutter/material.dart';
 import 'package:super_editor/super_editor.dart';
 
@@ -43,7 +44,7 @@ Stylesheet buildCustomStylesheet() {
               Styles.textStyle: const TextStyle(
                 fontSize: 25,
                 fontWeight: FontWeight.w900,
-                color: Colors.black,
+                color: AppColors.darkTextPrimary,
               ),
               Styles.padding: const CascadingPadding.only(
                 top: 10,
@@ -56,7 +57,7 @@ Stylesheet buildCustomStylesheet() {
           return {
             Styles.textStyle: const TextStyle(
               fontSize: 13,
-              color: Colors.black,
+              color: Color.fromARGB(255, 221, 221, 221),
             ),
 
             Styles.padding: const CascadingPadding.all(

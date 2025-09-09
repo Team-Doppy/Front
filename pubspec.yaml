@@ -34,6 +34,7 @@ dependencies:
   provider: ^6.1.2
   dio: ^5.4.0
   cupertino_icons: ^1.0.8
+  shared_preferences: ^2.2.2
 
   super_editor: 0.3.0-dev.33
   http: ^1.5.0

@@ -1,3 +1,4 @@
+import 'package:doppy/theme/app_colors.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
@@ -50,29 +51,30 @@ class CustomBottomNavigationBar extends StatelessWidget {
     return Container(
       height: 64,
       decoration: const BoxDecoration(
-        color: Colors.white,
-        border: Border(top: BorderSide(width: 1, color: Color(0x7FD9D9D9))),
+        color: AppColors.darkBackground,
+        border: Border(top: BorderSide(width: 1, color: AppColors.darkBorder)),
       ),
-      child: Row(
-        children: List.generate(4, (index) {
-          final isProfile = index == 3;
-          final iconSize = isProfile ? 26.0 : 24.0;
-          final iconColor = currentIndex == index ? Colors.black : Colors.grey;
+      child: Padding(
+        padding: const EdgeInsets.only(bottom: 15),
+        child: Row(
+          children: List.generate(4, (index) {
+            final iconSize = 25.0;
 
-          return Expanded(
-            child: InkWell(
-              onTap: () => _handleTap(context, index),
-              child: Center(
-                child: SvgPicture.asset(
-                  iconAssets[index],
-                  width: iconSize,
-                  height: iconSize,
-                  colorFilter: ColorFilter.mode(iconColor, BlendMode.srcIn),
+            return Expanded(
+              child: InkWell(
+                onTap: () => _handleTap(context, index),
+                child: Center(
+                  child: SvgPicture.asset(
+                    iconAssets[index],
+                    width: iconSize,
+                    height: iconSize,
+                    color: AppColors.darkTextPrimary,
+                  ),
                 ),
               ),
-            ),
-          );
-        }),
+            );
+          }),
+        ),
       ),
     );
   }

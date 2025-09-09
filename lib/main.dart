@@ -11,6 +11,7 @@ import 'package:doppy/providers/auth_provider.dart';
 import 'package:doppy/providers/friend_provider.dart';
 import 'package:doppy/providers/group_provider.dart';
 import 'package:doppy/providers/user_provider.dart';
+import 'package:doppy/data/services/search_service.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -37,6 +38,7 @@ Future<void> main() async {
         ChangeNotifierProvider(create: (_) => FriendProvider()),
         ChangeNotifierProvider(create: (_) => UserProvider()),
         ChangeNotifierProvider(create: (_) => GroupProvider()),
+        ChangeNotifierProvider(create: (_) => SearchService()),
         ChangeNotifierProvider(create: (_) => ImageService()),
       ],
       child: MyApp(

@@ -25,6 +25,12 @@ class UserProvider with ChangeNotifier {
   String? get viewedUserSelfIntroduction => _viewedUserSelfIntroduction;
   bool get isLoading => _isLoading;
 
+  /// 다른 사용자 정보 설정
+  void setViewedUser(User user) {
+    _viewedUser = user;
+    notifyListeners();
+  }
+
   /// 내 프로필 정보 전체 로드
   Future<void> fetchMyProfile() async {
     _isLoading = true;

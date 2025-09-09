@@ -10,8 +10,10 @@ enum DragType { none, reorder, imageRowMerge }
 
 class DragService extends ChangeNotifier {
   final EditorService editorService;
-  final ImageService imageService;
+  ImageService? _imageService;
   ScrollController? scrollController;
+
+  ImageService? get imageService => _imageService;
 
   String? draggingNodeId;
   NodeType? draggingNodeType;
@@ -33,9 +35,13 @@ class DragService extends ChangeNotifier {
 
   DragService({
     required this.editorService,
-    required this.imageService,
+    ImageService? imageService,
     this.scrollController,
-  });
+  }) : _imageService = imageService;
+
+  void setImageService(ImageService imageService) {
+    _imageService = imageService;
+  }
 
   bool get isDragging => draggingNodeId != null;
   bool get hasSplitImageInfo =>
@@ -120,7 +126,7 @@ class DragService extends ChangeNotifier {
     if (hasSplitImageInfo && dragMode == DragType.imageRowMerge) {
       if (targetNodeId != null && targetNodeId == _splitImageRowId) {
         // 사용자가 원래 이미지 행에 병합하려고 드롭 → 아무 변경도 하지 않음
-        ImageService().clearSelection();
+        imageService?.clearSelection();
         _cleanup();
         return;
       }
@@ -162,7 +168,7 @@ class DragService extends ChangeNotifier {
     // 실제 노드 이동 실행
     // 분리하면서 이미 원하는 위치로 삽입한 경우 추가 이동 불필요
     if (handledBySplitInsertion) {
-      ImageService().clearSelection();
+      imageService?.clearSelection();
       _cleanup();
       return;
     }
@@ -185,7 +191,7 @@ class DragService extends ChangeNotifier {
       case DragType.none:
         break;
     }
-    ImageService().clearSelection();
+    imageService?.clearSelection();
     _cleanup();
   }
 

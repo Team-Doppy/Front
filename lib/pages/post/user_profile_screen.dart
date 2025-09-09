@@ -1,6 +1,7 @@
 import 'package:doppy/pages/components/custom_bottom_navigation_bar.dart';
-import 'package:doppy/pages/components/profile_top_bar.dart';
 import 'package:doppy/pages/components/post_card.dart';
+import 'package:doppy/pages/components/profile_top_bar.dart';
+
 import 'package:doppy/pages/user/setting_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
@@ -12,6 +13,7 @@ import '../../../theme/app_text_styles.dart';
 import 'manage_group_screen.dart';
 import 'manage_neighbor_screen.dart';
 import '../../../data/models/user_model.dart';
+import '../../../data/services/search_service.dart';
 
 class UserProfileScreen extends StatefulWidget {
   final String? username; // 다른 사용자 프로필을 볼 때 username 전달
@@ -39,7 +41,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
 
     // ✅ [구조 개선] Provider를 통해 필요한 데이터를 한번에 요청합니다.
     // 이 코드 하나로 모든 데이터 로딩이 시작됩니다.
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
       final userProvider = context.read<UserProvider>();
       if (_isOwnProfile) {
         // 내 프로필에 필요한 데이터 로딩
@@ -48,6 +50,22 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
         // 다른 사용자 프로필에 필요한 데이터 로딩
         userProvider.fetchUserProfile(widget.username!);
         context.read<FriendProvider>().checkFriendStatus(widget.username!);
+
+        // SearchService를 통해 사용자 정보 가져오기
+        final searchService = context.read<SearchService>();
+        try {
+          final userDto = await searchService.getUserByUsername(
+            username: widget.username!,
+          );
+          if (userDto != null) {
+            // 사용자 정보를 UserProvider에 설정
+            userProvider.setViewedUser(
+              User(id: userDto.id, username: userDto.username),
+            );
+          }
+        } catch (e) {
+          debugPrint('Failed to load user profile: $e');
+        }
       }
     });
   }
@@ -98,6 +116,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
         containerHeight - panelTop - bottomNavHeight - bottomMargin;
 
     return Scaffold(
+      backgroundColor: AppColors.darkBackground,
       body: SafeArea(
         child: Center(
           child: Container(
@@ -105,7 +124,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
             height: containerHeight,
             margin: EdgeInsets.symmetric(horizontal: 4.0),
             clipBehavior: Clip.antiAlias,
-            decoration: BoxDecoration(color: AppColors.lightBackground),
+            decoration: BoxDecoration(color: AppColors.darkBackground),
             child: _buildContent(
               containerWidth,
               containerHeight,
@@ -183,7 +202,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
       child: Container(
         width: containerWidth,
         height: containerHeight * 0.4,
-        decoration: BoxDecoration(color: AppColors.lightSurface),
+        decoration: BoxDecoration(color: AppColors.darkSurface),
       ),
     );
   }
@@ -209,6 +228,33 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(40), // 132/2 = 66
             ),
+          ),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(40),
+            child:
+                profileUser?.profileImageUrl != null
+                    ? Image.network(
+                      profileUser!.profileImageUrl!,
+                      fit: BoxFit.cover,
+                      errorBuilder: (context, error, stackTrace) {
+                        return Container(
+                          color: AppColors.primary,
+                          child: const Icon(
+                            Icons.person,
+                            color: Colors.white,
+                            size: 60,
+                          ),
+                        );
+                      },
+                    )
+                    : Container(
+                      color: AppColors.primary,
+                      child: const Icon(
+                        Icons.person,
+                        color: Colors.white,
+                        size: 60,
+                      ),
+                    ),
           ),
         ),
       ),
@@ -240,7 +286,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                 height: containerHeight * 0.046,
                 clipBehavior: Clip.antiAlias,
                 decoration: ShapeDecoration(
-                  color: AppColors.lightBackground,
+                  color: AppColors.darkBackground,
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(10),
                   ),
@@ -249,7 +295,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                   child: Text(
                     '그룹관리',
                     style: AppTextStyles.bodyLarge.copyWith(
-                      color: AppColors.lightTextSecondary,
+                      color: AppColors.darkTextSecondary,
                     ), // 강조 본문 - 메뉴, 중요 본문
                   ),
                 ),
@@ -280,7 +326,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                 height: containerHeight * 0.046,
                 clipBehavior: Clip.antiAlias,
                 decoration: ShapeDecoration(
-                  color: AppColors.lightSurfaceVariant,
+                  color: AppColors.darkSurfaceVariant,
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(10),
                   ),
@@ -289,7 +335,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                   child: Text(
                     '이웃관리',
                     style: AppTextStyles.bodyLarge.copyWith(
-                      color: AppColors.lightTextSecondary,
+                      color: AppColors.darkTextSecondary,
                       fontWeight: FontWeight.w500,
                     ), // 강조 본문 - 메뉴, 중요 본문
                   ),
@@ -340,10 +386,11 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
         left: containerWidth * 0.475,
         top: containerHeight * 0.11, // 위로 올림
         child: Text(
-          profileUser?.alias ?? profileUser?.username ?? '사용자',
+          profileUser?.displayName ?? profileUser?.username ?? '사용자',
           style: AppTextStyles.headlineLarge.copyWith(
             fontSize: 25,
             fontWeight: FontWeight.w700,
+            color: AppColors.darkTextPrimary,
           ),
         ),
       ),
@@ -354,7 +401,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
         child: Text(
           selfIntroduction ?? '자기소개가 없습니다.',
           style: AppTextStyles.bodySmall.copyWith(
-            color: AppColors.lightTextSecondary,
+            color: AppColors.darkTextSecondary,
           ),
         ),
       ),
@@ -362,7 +409,12 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
       Positioned(
         left: containerWidth * 0.483,
         top: containerHeight * 0.15, // 위로 올림
-        child: Text('이웃 ${friendCount ?? 0}명', style: AppTextStyles.bodyLarge),
+        child: Text(
+          '이웃 ${friendCount ?? 0}명',
+          style: AppTextStyles.bodyLarge.copyWith(
+            color: AppColors.darkTextPrimary,
+          ),
+        ),
       ),
     ];
   }
@@ -382,7 +434,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
         child: Text(
           '함께 Doppy하는 이웃 15명', // 하드코딩된 숫자
           style: AppTextStyles.bodyMedium.copyWith(
-            color: AppColors.lightTextSecondary,
+            color: AppColors.darkTextSecondary,
           ),
         ),
       ),
@@ -413,7 +465,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                         friendProvider.friendStatus == FriendRequestStatus.none
                             ? AppColors
                                 .primary // 보라색 배경
-                            : AppColors.lightSurfaceVariant, // 회색 배경
+                            : AppColors.darkSurfaceVariant, // 회색 배경
                     borderRadius: BorderRadius.circular(10),
                   ),
                   child: Center(
@@ -433,7 +485,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                                     friendProvider.friendStatus ==
                                             FriendRequestStatus.none
                                         ? Colors.white
-                                        : AppColors.lightTextSecondary,
+                                        : AppColors.darkTextSecondary,
                                 fontWeight: FontWeight.w500,
                               ),
                             ),
@@ -444,33 +496,6 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
           ),
         ),
     ];
-  }
-
-  Widget _buildNavIcon(
-    String assetPath,
-    IconData fallbackIcon,
-    double containerWidth,
-    double containerHeight,
-  ) {
-    return Container(
-      width: containerWidth * 0.2,
-      height: containerHeight * 0.065, // 네비게이션 바 높이에 맞춤
-      padding: EdgeInsets.zero, // 패딩 제거
-      child: Center(
-        child: Image.asset(
-          assetPath,
-          width: 24,
-          height: 24,
-          errorBuilder: (context, error, stackTrace) {
-            return Icon(
-              fallbackIcon,
-              size: 24,
-              color: AppColors.lightTextSecondary,
-            );
-          },
-        ),
-      ),
-    );
   }
 
   Widget _buildFeedPanel(
@@ -485,7 +510,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
         width: containerWidth,
         height: dynamicPanelHeight,
         decoration: ShapeDecoration(
-          color: AppColors.lightBackground,
+          color: AppColors.darkBackground,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.only(
               topLeft: Radius.circular(30),
@@ -530,7 +555,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                 width: 40,
                 height: 4,
                 decoration: BoxDecoration(
-                  color: AppColors.lightBorder,
+                  color: AppColors.darkBorder,
                   borderRadius: BorderRadius.circular(2),
                 ),
               ),
@@ -590,9 +615,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                   width: width,
                   height: height,
                   colorFilter: ColorFilter.mode(
-                    isSelected
-                        ? AppColors.lightTextSecondary
-                        : AppColors.accent,
+                    isSelected ? AppColors.darkTextSecondary : AppColors.accent,
                     BlendMode.srcIn,
                   ),
                 );
@@ -600,7 +623,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                 return Icon(
                   Icons.grid_view,
                   size: width,
-                  color: AppColors.lightTextSecondary,
+                  color: AppColors.darkTextSecondary,
                 );
               }
             },
@@ -653,7 +676,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
               onTap: () {}, // 피드 상세보기 페이지 이동
               child: Container(
                 decoration: ShapeDecoration(
-                  color: AppColors.lightSurfaceVariant,
+                  color: AppColors.darkSurfaceVariant,
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(2),
                   ),
@@ -744,6 +767,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
             },
             child: PostCard(
               containerWidth: containerWidth,
+
               imagePath: feed['image']!,
               title: feed['title']!,
               author: feed['author']!,
