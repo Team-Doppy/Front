@@ -465,35 +465,62 @@ class EditorService extends ChangeNotifier {
 
   // 제목 문단이 항상 존재하고 맨 위(index 0)에 있도록 보정한다.
   // 변경이 있었으면 true를 반환한다.
-  bool _ensureTitleAtTop() {
+  void _ensureTitleAtTop() {
     int titleIndex = -1;
     ParagraphNode? titleNode;
-    for (int i = 0; i < 2; i++) {
+
+    // 0,1번까지만 체크
+    for (int i = 0; i < document.length && i < 2; i++) {
       final node = document.getNodeAt(i);
-      if (node is ParagraphNode && (node.metadata['isTitle'] == true)) {
+      if (node is ParagraphNode && node.metadata['isTitle'] == true) {
         titleIndex = i;
         titleNode = node;
         break;
       }
     }
 
-    // 없으면 생성
     if (titleIndex == -1) {
-      final ParagraphNode newTitle = ParagraphNode(
-        id: 'title_${DateTime.now().millisecondsSinceEpoch}',
-        text: AttributedText(''),
-        metadata: {'isTitle': true},
+      // 제목 없으면 새로 추가
+      document.insertNodeAt(
+        0,
+        ParagraphNode(
+          id: Editor.createNodeId(),
+          text: AttributedText(),
+          metadata: {'isTitle': true, 'textAlign': 'left'},
+        ),
       );
-      document.insertNodeAt(0, newTitle);
-      return true;
+    } else if (titleIndex > 0) {
+      // 이미 맨 위에 있지 않으면 위치만 교체
+      final node = titleNode!;
+      document
+        ..deleteNode(titleNode.id) // 이벤트 발생 막고
+        ..insertNodeAt(0, node); // 최종 이벤트는 1번만
     }
 
-    // 맨 위가 아니면 이동
-    if (titleIndex != 0 && titleNode != null) {
-      document.deleteNode(titleNode.id);
-      document.insertNodeAt(0, titleNode);
-      return true;
+    // 제목 보정 후, 제목은 다른 텍스트의 정렬에 맞춰 보정
+    final title = document.getNodeAt(0);
+    if (title is ParagraphNode && title.metadata['isTitle'] == true) {
+      // 다른 텍스트 문단의 정렬을 찾아서 제목에 적용
+      String targetAlignment = 'left'; // 기본값
+      for (int i = 1; i < document.length; i++) {
+        final node = document.getNodeAt(i);
+        if (node is ParagraphNode) {
+          final String? align = node.metadata['textAlign'] as String?;
+          if (align != null) {
+            targetAlignment = align;
+            break;
+          }
+        }
+      }
+
+      final meta = Map<String, dynamic>.from(title.metadata);
+      meta['textAlign'] = targetAlignment;
+      final updated = ParagraphNode(
+        id: title.id,
+        text: title.text,
+        metadata: meta,
+      );
+      document.replaceNodeById(title.id, updated);
     }
-    return false;
   }
 }

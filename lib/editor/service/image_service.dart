@@ -19,7 +19,7 @@ class ImageService extends ChangeNotifier {
   bool get hasSelectedImage => _selectedImageId != null;
 
   /// 이미지 선택
-  void selectImage(String imageId) {
+  void selectImage(String? imageId) {
     if (imageId == _selectedImageId) {
       // 이미지 선택 취소
       _selectedImageId = null;

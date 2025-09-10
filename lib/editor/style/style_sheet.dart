@@ -56,7 +56,7 @@ Stylesheet buildCustomStylesheet() {
           }
           return {
             Styles.textStyle: const TextStyle(
-              fontSize: 13,
+              fontSize: 16,
               color: Color.fromARGB(255, 221, 221, 221),
             ),
 

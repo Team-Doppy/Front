@@ -2,7 +2,6 @@ import 'package:doppy/editor/component/single_image_component_builder.dart';
 import 'package:doppy/editor/component/row_image_component.dart';
 import 'package:doppy/editor/component/title_paragraph_component.dart';
 import 'package:doppy/editor/custom_nodes/image_row_node.dart';
-import 'package:doppy/editor/custom_nodes/protected_image_node.dart';
 import 'package:doppy/editor/component/custom_paragraph_component.dart';
 import 'package:doppy/editor/image/custom_image_editor_screen.dart';
 import 'package:doppy/editor/overlay/drag_overlay_widget.dart';
@@ -12,6 +11,8 @@ import 'package:doppy/editor/service/image_service.dart';
 import 'package:doppy/editor/style/image_toolbar.dart';
 import 'package:doppy/editor/style/style_sheet.dart';
 import 'package:doppy/editor/style/defualt_toolbar.dart';
+import 'package:doppy/editor/component/sticker_canvas.dart';
+import 'package:doppy/editor/service/sticker_service.dart';
 import 'package:doppy/theme/app_colors.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -46,6 +47,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
 
   ScrollController scrollController = ScrollController();
   Offset? _lastTapPosition; // 마지막 탭 위치 저장
+  String? _pendingImageDeleteId; // 백스페이스 2단계 삭제 대상 이미지
 
   @override
   void initState() {
@@ -63,12 +65,12 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
         ParagraphNode(id: '4', text: AttributedText('Hello, World4!')),
         ParagraphNode(id: '5', text: AttributedText('Hello, World5!')),
         ParagraphNode(id: '6', text: AttributedText('Hello, World6!')),
-        ProtectedImageNode(
+        ImageNode(
           id: '7',
           imageUrl:
               'https://image.utoimage.com/preview/cp872722/2022/12/202212008462_500.jpg',
         ),
-        ProtectedImageNode(
+        ImageNode(
           id: '8',
           imageUrl:
               'https://media.istockphoto.com/id/1317323736/ko/%EC%82%AC%EC%A7%84/%EB%82%98%EB%AC%B4-%EB%B0%A9%ED%96%A5%EC%9C%BC%EB%A1%9C-%ED%95%98%EB%8A%98%EB%A1%9C-%EB%B0%94%EB%9D%BC%EB%B3%B4%EB%8A%94-%EA%B2%BD%EC%B9%98.jpg?s=612x612&w=0&k=20&c=0xTghmMTXJ5ITCZ-LKTABbaPIK_1kWNf0FSFl_GL_7I=',
@@ -76,7 +78,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
         ParagraphNode(id: '9', text: AttributedText('Hello, World8!')),
         ParagraphNode(id: '10', text: AttributedText('Hello, World9!')),
         // 스크롤 영역 확보를 위한 여유 공간
-        ProtectedImageNode(
+        ImageNode(
           id: '21',
           imageUrl:
               'https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcQWfMSIOQpP83ncpDgty8qB2tgKjCpqCFVTIRUdflGvJJS44tHiQjwZjMCzTBnfwARtHjc&usqp=CAU',
@@ -120,6 +122,71 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
   // 드래그 프리뷰 렌더링을 위한 리스너
   void _onDragChange() {
     if (mounted) setState(() {});
+  }
+
+  KeyEventResult _handleBackspaceForImages() {
+    try {
+      final selection = composer.selection;
+      if (selection == null) return KeyEventResult.ignored;
+
+      // 커서가 위치한 노드
+      final nodeId = selection.extent.nodeId;
+      final node = document.getNodeById(nodeId);
+
+      // 텍스트 노드 내부에서 백스페이스 시, 앞쪽이 이미지인지 확인
+      if (node is ParagraphNode) {
+        final currentIndex = document.getNodeIndexById(node.id);
+        if (currentIndex <= 0) return KeyEventResult.ignored;
+        final prevNode = document.getNodeAt(currentIndex - 1);
+
+        if (prevNode is ImageNode) {
+          // 1단계: 삭제 예약(선택)만 하고 실제 삭제는 다음 백스페이스에 수행
+          if (_pendingImageDeleteId != prevNode.id) {
+            _pendingImageDeleteId = prevNode.id;
+            // 선택 표시는 ImageService를 재활용
+            ImageService().selectImage(prevNode.id);
+            return KeyEventResult.handled; // 실제 삭제는 안함
+          }
+
+          // 2단계: 같은 이미지를 연속으로 백스페이스 → 실제 삭제
+          document.deleteNode(prevNode.id);
+          _pendingImageDeleteId = null;
+          ImageService().selectImage(null); // 선택 해제 시도
+          return KeyEventResult.handled;
+        }
+
+        // 이전이 이미지 행인 경우: 동일한 2단계 삭제 정책 (행 전체 선택 → 삭제)
+        if (prevNode is ImageRowNode) {
+          if (_pendingImageDeleteId != prevNode.id) {
+            _pendingImageDeleteId = prevNode.id;
+            ImageService().selectImage(prevNode.id);
+            return KeyEventResult.handled;
+          }
+          document.deleteNode(prevNode.id);
+          _pendingImageDeleteId = null;
+          ImageService().selectImage(null);
+          return KeyEventResult.handled;
+        }
+      }
+
+      // 커서가 이미지 노드에 있는 경우(이미지가 포커스된 상태)
+      if (node is ImageNode || node is ImageRowNode) {
+        final String id = (node as DocumentNode).id;
+        if (_pendingImageDeleteId != id) {
+          _pendingImageDeleteId = id;
+          ImageService().selectImage(id);
+          return KeyEventResult.handled;
+        }
+        document.deleteNode(id);
+        _pendingImageDeleteId = null;
+        ImageService().selectImage(null);
+        return KeyEventResult.handled;
+      }
+
+      return KeyEventResult.ignored;
+    } catch (e) {
+      return KeyEventResult.ignored;
+    }
   }
 
   @override
@@ -167,153 +234,176 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
           ),
         ],
       ),
-      body: Stack(
-        children: [
-          AnimatedScale(
-            duration: const Duration(milliseconds: 100),
-            scale: dragService.draggingNodeId != null ? 0.9 : 1.0,
-            child: Stack(
-              children: [
-                AnimatedOpacity(
-                  duration: const Duration(milliseconds: 100),
+      body: ChangeNotifierProvider<StickerService>.value(
+        value: StickerService(),
+        child: Stack(
+          children: [
+            AnimatedScale(
+              duration: const Duration(milliseconds: 100),
+              scale: dragService.draggingNodeId != null ? 0.9 : 1.0,
+              child: Stack(
+                children: [
+                  AnimatedOpacity(
+                    duration: const Duration(milliseconds: 100),
 
-                  opacity:
-                      dragService.draggingNodeId != null
-                          ? 0.6
-                          : 1.0, // 드래그 중일 때 투명도 조정
-                  child: Padding(
-                    padding: const EdgeInsets.only(bottom: 10.0), // 하단 여유 공간 추가
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        // 타이틀 문단은 SuperEditor 안에서 metadata로 스타일링 처리
-                        Expanded(
-                          child: SuperEditor(
-                            gestureMode: DocumentGestureMode.iOS,
-                            editor: editor,
-                            stylesheet: buildCustomStylesheet(),
-                            documentLayoutKey: _documentLayoutKey,
-                            scrollController: scrollController,
-                            componentBuilders: [
-                              // 타이틀 문단 전용 빌더(드래그 없음)
-                              TitleParagraphComponentBuilder(
-                                editorService: editorService,
+                    opacity:
+                        dragService.draggingNodeId != null
+                            ? 0.6
+                            : 1.0, // 드래그 중일 때 투명도 조정
+                    child: Padding(
+                      padding: const EdgeInsets.only(
+                        bottom: 10.0,
+                      ), // 하단 여유 공간 추가
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          // 타이틀 문단은 SuperEditor 안에서 metadata로 스타일링 처리
+                          Expanded(
+                            child: Focus(
+                              onKeyEvent: (node, event) {
+                                if (event is KeyDownEvent &&
+                                    event.logicalKey ==
+                                        LogicalKeyboardKey.backspace) {
+                                  return _handleBackspaceForImages();
+                                }
+                                return KeyEventResult.ignored;
+                              },
+                              child: SuperEditor(
+                                gestureMode: DocumentGestureMode.android,
+                                editor: editor,
+                                stylesheet: buildCustomStylesheet(),
+                                documentLayoutKey: _documentLayoutKey,
+                                scrollController: scrollController,
+                                componentBuilders: [
+                                  // 타이틀 문단 전용 빌더(드래그 없음)
+                                  TitleParagraphComponentBuilder(
+                                    editorService: editorService,
+                                  ),
+                                  // 커스텀 이미지 컴포넌트들
+                                  SingleImageComponentBuilder(
+                                    dragService: dragService,
+                                  ),
+                                  RowImageComponentBuilder(
+                                    dragService: dragService,
+                                  ),
+                                  CustomParagraphComponentBuilder(
+                                    dragService: dragService,
+                                    editorService: editorService,
+                                  ),
+                                  // 기본 컴포넌트들 (Paragraph 제외)
+                                  ...defaultComponentBuilders.where(
+                                    (builder) =>
+                                        builder.runtimeType.toString() !=
+                                        'ParagraphComponentBuilder',
+                                  ),
+                                ],
                               ),
-                              // 커스텀 이미지 컴포넌트들
-                              SingleImageComponentBuilder(
-                                dragService: dragService,
-                              ),
-                              RowImageComponentBuilder(
-                                dragService: dragService,
-                              ),
-                              CustomParagraphComponentBuilder(
-                                dragService: dragService,
-                                editorService: editorService,
-                              ),
-                              // 기본 컴포넌트들 (Paragraph 제외)
-                              ...defaultComponentBuilders.where(
-                                (builder) =>
-                                    builder.runtimeType.toString() !=
-                                    'ParagraphComponentBuilder',
-                              ),
-                            ],
+                            ),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
                   ),
-                ),
 
-                Positioned.fill(
-                  child: GestureDetector(
-                    onTapDown: (details) {
-                      // 탭 다운 시 위치 저장
-                      _lastTapPosition = details.globalPosition;
-                    },
-                    onTap: () {
-                      // 짧은 클릭 처리
-                      if (_lastTapPosition != null) {
-                        final nodeId =
-                            editorService
-                                .findNodeAtPosition(_lastTapPosition!)
-                                ?.id;
-                        if (nodeId != null) {
-                          final node = document.getNodeById(nodeId);
-                          if (node is ImageNode || node is ImageRowNode) {
-                            // 이미지 또는 이미지 행 클릭
-                            ImageService().selectImage(nodeId);
+                  Positioned.fill(
+                    child: GestureDetector(
+                      onTapDown: (details) {
+                        // 탭 다운 시 위치 저장
+                        _lastTapPosition = details.globalPosition;
+                      },
+                      onTap: () {
+                        // 짧은 클릭 처리
+                        if (_lastTapPosition != null) {
+                          final nodeId =
+                              editorService
+                                  .findNodeAtPosition(_lastTapPosition!)
+                                  ?.id;
+                          if (nodeId != null) {
+                            final node = document.getNodeById(nodeId);
+                            if (node is ImageNode || node is ImageRowNode) {
+                              // 이미지 또는 이미지 행 클릭
+                              ImageService().selectImage(nodeId);
+                            }
                           }
                         }
-                      }
-                    },
-                    onLongPressStart: (details) {
-                      final node = editorService.findNodeAtPosition(
-                        details.globalPosition,
-                      );
-                      if (node != null) {
-                        final nodeId = node.id;
-                        final imageService = context.read<ImageService>();
+                      },
+                      onLongPressStart: (details) {
+                        final node = editorService.findNodeAtPosition(
+                          details.globalPosition,
+                        );
+                        if (node != null) {
+                          final nodeId = node.id;
+                          final imageService = context.read<ImageService>();
 
-                        if (node is ParagraphNode &&
-                            node.metadata['isTitle'] == true) {
-                          return;
-                        }
+                          if (node is ParagraphNode &&
+                              node.metadata['isTitle'] == true) {
+                            return;
+                          }
 
-                        if (node is ImageRowNode) {
-                          // 이미지 행이 선택된 상태라면 전체 행 드래그
-                          if (imageService.selectedImageId == nodeId) {
+                          if (node is ImageRowNode) {
+                            // 이미지 행이 선택된 상태라면 전체 행 드래그
+                            if (imageService.selectedImageId == nodeId) {
+                              dragService.startDrag(
+                                nodeId,
+                                context,
+                                details.globalPosition,
+                              );
+                            } else {
+                              // 손가락이 클릭한 쪽의 가장 근접한 이미지를 분리해서 드래그
+                              _startImageRowDrag(
+                                nodeId,
+                                details.globalPosition,
+                              );
+                            }
+                          } else if (node is ImageNode) {
+                            // 단일 이미지 드래그
                             dragService.startDrag(
                               nodeId,
                               context,
                               details.globalPosition,
                             );
                           } else {
-                            // 손가락이 클릭한 쪽의 가장 근접한 이미지를 분리해서 드래그
-                            _startImageRowDrag(nodeId, details.globalPosition);
+                            // 이미지가 아닌 요소 드래그
+                            dragService.startDrag(
+                              nodeId,
+                              context,
+                              details.globalPosition,
+                            );
                           }
-                        } else if (node is ImageNode) {
-                          // 단일 이미지 드래그
-                          dragService.startDrag(
-                            nodeId,
-                            context,
-                            details.globalPosition,
-                          );
-                        } else {
-                          // 이미지가 아닌 요소 드래그
-                          dragService.startDrag(
-                            nodeId,
-                            context,
-                            details.globalPosition,
-                          );
                         }
-                      }
-                    },
-                    onLongPressMoveUpdate: (details) {
-                      dragService.updateDrag(details.globalPosition, context);
-                    },
-                    onLongPressEnd: (details) {
-                      dragService.endDrag();
-                    },
-                    behavior: HitTestBehavior.translucent,
+                      },
+                      onLongPressMoveUpdate: (details) {
+                        dragService.updateDrag(details.globalPosition, context);
+                      },
+                      onLongPressEnd: (details) {
+                        dragService.endDrag();
+                      },
+                      behavior: HitTestBehavior.translucent,
+                    ),
                   ),
-                ),
 
-                // 드래그 오버레이 (개선된 Stack 방식)
-                if (dragService.draggingNodeId != null) _buildDragOverlay(),
-              ],
+                  // 드래그 오버레이 (개선된 Stack 방식)
+                  if (dragService.draggingNodeId != null) _buildDragOverlay(),
+                ],
+              ),
             ),
-          ),
-          // 하단 툴바: 이미지 선택 시 이미지 퀵툴바, 아니면 텍스트 스타일 툴바
-          Positioned(
-            bottom: 0,
-            left: 0,
-            right: 0,
-            child:
-                context.read<ImageService>().selectedImageId != null
-                    ? _buildImageToolbar()
-                    : _buildDefaultToolbar(),
-          ),
-        ],
+            // 스티커 캔버스(문서 위 오버레이)
+            Positioned.fill(
+              child: StickerCanvas(scrollController: scrollController),
+            ),
+
+            // 하단 툴바: 이미지 선택 시 이미지 퀵툴바, 아니면 텍스트 스타일 툴바
+            Positioned(
+              bottom: 0,
+              left: 0,
+              right: 0,
+              child:
+                  context.read<ImageService>().selectedImageId != null
+                      ? _buildImageToolbar()
+                      : _buildDefaultToolbar(),
+            ),
+          ],
+        ),
       ),
     );
   }
