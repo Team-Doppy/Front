@@ -11,10 +11,13 @@ class ImageService extends ChangeNotifier {
   String? _selectedImageId;
   // 편집된 이미지 바이트 저장소 (nodeId -> bytes)
   final Map<String, Uint8List> _editedBytesByNodeId = <String, Uint8List>{};
+  // 텍스트 범위 선택에 포함된 이미지/이미지행 하이라이트 id 집합
+  final Set<String> _selectionHighlightedImageIds = <String>{};
 
   // Getters
   String? get selectedImageId => _selectedImageId;
   Uint8List? getEditedBytes(String nodeId) => _editedBytesByNodeId[nodeId];
+  Set<String> get selectionHighlightedIds => _selectionHighlightedImageIds;
 
   bool get hasSelectedImage => _selectedImageId != null;
 
@@ -47,5 +50,24 @@ class ImageService extends ChangeNotifier {
     if (_editedBytesByNodeId.remove(nodeId) != null) {
       notifyListeners();
     }
+  }
+
+  /// 현재 텍스트 범위 선택에 포함된 이미지/이미지행을 하이라이트한다
+  void setHighlightedSelection(Set<String> ids) {
+    if (_selectionHighlightedImageIds.length == ids.length &&
+        _selectionHighlightedImageIds.containsAll(ids)) {
+      return;
+    }
+    _selectionHighlightedImageIds
+      ..clear()
+      ..addAll(ids);
+    notifyListeners();
+  }
+
+  /// 이미지 하이라이트 해제
+  void clearHighlightedSelection() {
+    if (_selectionHighlightedImageIds.isEmpty) return;
+    _selectionHighlightedImageIds.clear();
+    notifyListeners();
   }
 }

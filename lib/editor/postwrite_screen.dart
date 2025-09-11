@@ -110,6 +110,12 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     );
     dragService.attachScrollController(scrollController);
     dragService.addListener(_onDragChange);
+
+    // 선택 범위가 바뀔 때 이미지 하이라이트 갱신
+    composer.selectionNotifier.addListener(_updateImageSelectionHighlight);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _updateImageSelectionHighlight();
+    });
   }
 
   @override
@@ -117,11 +123,47 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     super.dispose();
     editorService.dispose();
     dragService.removeListener(_onDragChange);
+    try {
+      composer.selectionNotifier.removeListener(_updateImageSelectionHighlight);
+    } catch (_) {}
   }
 
   // 드래그 프리뷰 렌더링을 위한 리스너
   void _onDragChange() {
     if (mounted) setState(() {});
+  }
+
+  /// 텍스트 선택 범위에 포함된 이미지/이미지행을 회색 하이라이트로 표시
+  void _updateImageSelectionHighlight() {
+    try {
+      final sel = composer.selection;
+      if (sel == null) {
+        ImageService().clearHighlightedSelection();
+        return;
+      }
+
+      final baseIndex = document.getNodeIndexById(sel.base.nodeId);
+      final extentIndex = document.getNodeIndexById(sel.extent.nodeId);
+      if (baseIndex == -1 || extentIndex == -1) {
+        ImageService().clearHighlightedSelection();
+        return;
+      }
+
+      final start = baseIndex <= extentIndex ? baseIndex : extentIndex;
+      final end = baseIndex <= extentIndex ? extentIndex : baseIndex;
+      final ids = <String>{};
+      for (int i = start; i <= end; i++) {
+        final node = document.getNodeAt(i);
+        if (node == null) continue;
+        if (node is ImageNode || node is ImageRowNode) {
+          ids.add(node.id);
+        }
+      }
+
+      ImageService().setHighlightedSelection(ids);
+    } catch (_) {
+      ImageService().clearHighlightedSelection();
+    }
   }
 
   KeyEventResult _handleBackspaceForImages() {
@@ -274,6 +316,9 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                                 stylesheet: buildCustomStylesheet(),
                                 documentLayoutKey: _documentLayoutKey,
                                 scrollController: scrollController,
+                                selectionStyle: SelectionStyles(
+                                  selectionColor: Colors.grey.withOpacity(0.35),
+                                ),
                                 componentBuilders: [
                                   // 타이틀 문단 전용 빌더(드래그 없음)
                                   TitleParagraphComponentBuilder(

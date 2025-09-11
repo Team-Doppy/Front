@@ -106,8 +106,10 @@ class _SingleImageComponentState extends State<SingleImageComponent>
                       },
                     );
 
-            final isSelected =
-                context.watch<ImageService>().selectedImageId == widget.nodeId;
+            final imageService = context.watch<ImageService>();
+            final isSelected = imageService.selectedImageId == widget.nodeId;
+            final isSelectionHighlighted = imageService.selectionHighlightedIds
+                .contains(widget.nodeId);
 
             return Stack(
               children: [
@@ -116,18 +118,31 @@ class _SingleImageComponentState extends State<SingleImageComponent>
                     top: marginTop,
                     bottom: marginBottom,
                   ),
-                  child: Container(
-                    decoration: BoxDecoration(
-                      border:
-                          isSelected
-                              ? Border.all(
-                                color: const Color.fromARGB(255, 136, 32, 255),
-                                width: 2,
-                              )
-                              : null,
-                    ),
-
-                    child: SizedBox(width: double.infinity, child: image),
+                  child: Stack(
+                    children: [
+                      SizedBox(width: double.infinity, child: image),
+                      if (isSelectionHighlighted)
+                        Positioned.fill(
+                          child: IgnorePointer(
+                            child: Container(
+                              color: const Color.fromARGB(255, 35, 35, 35),
+                            ),
+                          ),
+                        ),
+                      if (isSelected)
+                        Positioned.fill(
+                          child: IgnorePointer(
+                            child: Container(
+                              decoration: BoxDecoration(
+                                border: Border.all(
+                                  color: const Color.fromARGB(255, 35, 35, 35),
+                                  width: 2,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                    ],
                   ),
                 ),
                 if (_shouldShowTopDropLine())

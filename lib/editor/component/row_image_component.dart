@@ -184,95 +184,106 @@ class _ImageRowComponentState extends State<ImageRowComponent>
 
   @override
   Widget build(BuildContext context) {
-    final isSelected =
-        context.watch<ImageService>().selectedImageId == widget.nodeId;
+    final imageService = context.watch<ImageService>();
+    final isSelected = imageService.selectedImageId == widget.nodeId;
+    final isSelectionHighlighted = imageService.selectionHighlightedIds
+        .contains(widget.nodeId);
 
     return Stack(
       children: [
         Padding(
           padding: EdgeInsets.only(top: marginTop, bottom: marginBottom),
-          child: Container(
-            decoration: BoxDecoration(
-              border:
-                  isSelected
-                      ? Border.all(color: const Color(0xFF007AFF), width: 2)
-                      : null,
-            ),
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                return Row(
-                  children: [
-                    // 이미지들
-                    ...widget.imageUrls.asMap().entries.map((entry) {
-                      final imageUrl = entry.value;
-                      return Expanded(
-                        child: Container(
-                          margin:
-                              imageUrl == widget.imageUrls.last
-                                  ? EdgeInsets.zero
-                                  : EdgeInsets.only(right: 1),
-                          child: SizedBox(
-                            height: _unifiedHeight ?? 260,
-                            child: Image.network(
-                              imageUrl,
-                              fit: BoxFit.cover,
-                              loadingBuilder: (context, child, loading) {
-                                if (loading == null) return child;
-                                return Container(
-                                  height: _unifiedHeight ?? 260,
-                                  color: Colors.grey.shade200,
-                                  child: const Center(
-                                    child: CircularProgressIndicator(),
-                                  ),
-                                );
-                              },
-                              errorBuilder: (context, error, stack) {
-                                return Container(
-                                  height: _unifiedHeight ?? 260,
-                                  color: Colors.grey.shade300,
-                                  child: const Center(
-                                    child: Column(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        Icon(
-                                          Icons.broken_image,
-                                          size: 40,
-                                          color: Colors.grey,
-                                        ),
-                                        SizedBox(height: 8),
-                                        Text(
-                                          "이미지 로드 실패",
-                                          style: TextStyle(
-                                            color: Colors.black54,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                );
-                              },
-                              frameBuilder: (context, child, frame, sync) {
-                                if (frame != null) {
-                                  WidgetsBinding.instance.addPostFrameCallback((
-                                    _,
-                                  ) {
-                                    _measureAndUnifyHeight(
-                                      imageUrl,
-                                      constraints.maxWidth,
+          child: Stack(
+            children: [
+              Container(
+                decoration: BoxDecoration(
+                  border:
+                      isSelected
+                          ? Border.all(color: const Color(0xFF007AFF), width: 2)
+                          : null,
+                ),
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    return Row(
+                      children: [
+                        // 이미지들
+                        ...widget.imageUrls.asMap().entries.map((entry) {
+                          final imageUrl = entry.value;
+                          return Expanded(
+                            child: Container(
+                              margin:
+                                  imageUrl == widget.imageUrls.last
+                                      ? EdgeInsets.zero
+                                      : EdgeInsets.only(right: 1),
+                              child: SizedBox(
+                                height: _unifiedHeight ?? 260,
+                                child: Image.network(
+                                  imageUrl,
+                                  fit: BoxFit.cover,
+                                  loadingBuilder: (context, child, loading) {
+                                    if (loading == null) return child;
+                                    return Container(
+                                      height: _unifiedHeight ?? 260,
+                                      color: Colors.grey.shade200,
+                                      child: const Center(
+                                        child: CircularProgressIndicator(),
+                                      ),
                                     );
-                                  });
-                                }
-                                return child;
-                              },
+                                  },
+                                  errorBuilder: (context, error, stack) {
+                                    return Container(
+                                      height: _unifiedHeight ?? 260,
+                                      color: Colors.grey.shade300,
+                                      child: const Center(
+                                        child: Column(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            Icon(
+                                              Icons.broken_image,
+                                              size: 40,
+                                              color: Colors.grey,
+                                            ),
+                                            SizedBox(height: 8),
+                                            Text(
+                                              "이미지 로드 실패",
+                                              style: TextStyle(
+                                                color: Colors.black54,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    );
+                                  },
+                                  frameBuilder: (context, child, frame, sync) {
+                                    if (frame != null) {
+                                      WidgetsBinding.instance
+                                          .addPostFrameCallback((_) {
+                                            _measureAndUnifyHeight(
+                                              imageUrl,
+                                              constraints.maxWidth,
+                                            );
+                                          });
+                                    }
+                                    return child;
+                                  },
+                                ),
+                              ),
                             ),
-                          ),
-                        ),
-                      );
-                    }),
-                  ],
-                );
-              },
-            ),
+                          );
+                        }),
+                      ],
+                    );
+                  },
+                ),
+              ),
+              if (isSelectionHighlighted)
+                Positioned.fill(
+                  child: IgnorePointer(
+                    child: Container(color: Colors.grey.withOpacity(0.35)),
+                  ),
+                ),
+            ],
           ),
         ),
 
