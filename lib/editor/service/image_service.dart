@@ -39,6 +39,11 @@ class ImageService extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// 선택 상태 해제 (notify 없이 조용히)
+  void clearSelectionSilently() {
+    _selectedImageId = null;
+  }
+
   /// 편집 결과 반영: 해당 이미지 노드에 편집된 바이트를 저장한다
   void applyEditedBytes({required String nodeId, required Uint8List bytes}) {
     _editedBytesByNodeId[nodeId] = bytes;
@@ -69,5 +74,11 @@ class ImageService extends ChangeNotifier {
     if (_selectionHighlightedImageIds.isEmpty) return;
     _selectionHighlightedImageIds.clear();
     notifyListeners();
+  }
+
+  /// 이미지 하이라이트 해제 (notify 없이 조용히)
+  void clearHighlightedSelectionSilently() {
+    if (_selectionHighlightedImageIds.isEmpty) return;
+    _selectionHighlightedImageIds.clear();
   }
 }

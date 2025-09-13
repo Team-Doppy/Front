@@ -1,10 +1,133 @@
-import 'package:doppy/editor/custom_nodes/image_row_node.dart';
 import 'package:doppy/editor/postwrite_screen.dart';
 import 'package:doppy/editor/service/image_service.dart';
 import 'package:doppy/editor/service/drag_service.dart';
+import 'package:doppy/theme/app_colors.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:super_editor/super_editor.dart';
+import 'dart:math' as math;
+
+/// 여러 이미지를 가로로 배치하는 커스텀 노드 (최대 3개)
+class ImageRowNode extends BlockNode {
+  ImageRowNode({
+    required this.id,
+    required List<String> imageUrls,
+    this.spacing = 8.0,
+  }) : imageUrls = imageUrls.take(3).toList(); // 최대 3개로 제한
+
+  @override
+  bool get isDeletable => false;
+
+  @override
+  final String id;
+  final List<String> imageUrls;
+  final double spacing;
+
+  String get nodeType => 'imageRow';
+
+  bool get hasContent => imageUrls.isNotEmpty;
+
+  ImageRowNode copyWith({
+    String? id,
+    List<String>? imageUrls,
+    double? spacing,
+  }) {
+    return ImageRowNode(
+      id: id ?? this.id,
+      imageUrls: imageUrls?.take(3).toList() ?? this.imageUrls,
+      spacing: spacing ?? this.spacing,
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'nodeType': nodeType,
+      'imageUrls': imageUrls,
+      'spacing': spacing,
+    };
+  }
+
+  static ImageRowNode fromJson(Map<String, dynamic> json) {
+    return ImageRowNode(
+      id: json['id'] as String,
+      imageUrls: List<String>.from(json['imageUrls'] as List),
+      spacing: (json['spacing'] as num?)?.toDouble() ?? 8.0,
+    );
+  }
+
+  @override
+  bool containsPosition(Object position) {
+    // 블록 노드는 Upstream/Downstream 포지션만 가진다고 가정
+    return position is UpstreamDownstreamNodePosition;
+  }
+
+  Rect getRectForPosition(NodePosition nodePosition) {
+    // 기본 구현 - 실제로는 컴포넌트에서 계산됨
+    return const Rect.fromLTWH(0, 0, 0, 0);
+  }
+
+  NodeSelection getSelectionOfEverything() {
+    return UpstreamDownstreamNodeSelection(
+      base: const UpstreamDownstreamNodePosition.upstream(),
+      extent: const UpstreamDownstreamNodePosition.downstream(),
+    );
+  }
+
+  bool isVisualSelectionSupported() {
+    // 이미지 행은 드래그 선택 불필요
+    return false;
+  }
+
+  @override
+  DocumentNode copyAndReplaceMetadata(Map<String, dynamic> newMetadata) {
+    // 메타데이터 사용 안 하면 동일 복제 반환
+    return ImageRowNode(
+      id: id,
+      imageUrls: List<String>.from(imageUrls),
+      spacing: spacing,
+    );
+  }
+
+  @override
+  String? copyContent(NodeSelection selection) {
+    // 이미지 행은 텍스트 복사 없음
+    return null;
+  }
+
+  @override
+  DocumentNode copyWithAddedMetadata(Map<String, dynamic> newProperties) {
+    // 동일
+    return ImageRowNode(
+      id: id,
+      imageUrls: List<String>.from(imageUrls),
+      spacing: spacing,
+    );
+  }
+
+  @override
+  UpstreamDownstreamNodeSelection computeSelection({
+    required NodePosition base,
+    required NodePosition extent,
+  }) {
+    return UpstreamDownstreamNodeSelection(
+      base: base as UpstreamDownstreamNodePosition,
+      extent: extent as UpstreamDownstreamNodePosition,
+    );
+  }
+
+  @override
+  UpstreamDownstreamNodePosition selectDownstreamPosition(
+    NodePosition base,
+    NodePosition extent,
+  ) => UpstreamDownstreamNodePosition.downstream();
+
+  @override
+  UpstreamDownstreamNodePosition selectUpstreamPosition(
+    NodePosition base,
+    NodePosition extent,
+  ) => UpstreamDownstreamNodePosition.upstream();
+}
 
 class RowImageComponentBuilder implements ComponentBuilder {
   const RowImageComponentBuilder({this.dragService});
@@ -186,8 +309,20 @@ class _ImageRowComponentState extends State<ImageRowComponent>
   Widget build(BuildContext context) {
     final imageService = context.watch<ImageService>();
     final isSelected = imageService.selectedImageId == widget.nodeId;
-    final isSelectionHighlighted = imageService.selectionHighlightedIds
-        .contains(widget.nodeId);
+    // selection 핸들이 이 행 이미지 노드를 포함할 때만, 경계가 이 노드면 Downstream일 때 포함
+    final seState = context.findAncestorStateOfType<SuperEditorState>();
+    final composerSelection = seState?.editContext.composer.selection;
+    final doc = seState?.editContext.editor.document;
+    bool isSelectionHighlighted = false;
+    if (composerSelection != null &&
+        !composerSelection.isCollapsed &&
+        doc != null) {
+      isSelectionHighlighted = _isNodeCoveredBySelection(
+        doc,
+        composerSelection,
+        widget.nodeId,
+      );
+    }
 
     return Stack(
       children: [
@@ -195,13 +330,10 @@ class _ImageRowComponentState extends State<ImageRowComponent>
           padding: EdgeInsets.only(top: marginTop, bottom: marginBottom),
           child: Stack(
             children: [
-              Container(
-                decoration: BoxDecoration(
-                  border:
-                      isSelected
-                          ? Border.all(color: const Color(0xFF007AFF), width: 2)
-                          : null,
-                ),
+              GestureDetector(
+                onTap: () {
+                  // 이미지 행 선택
+                },
                 child: LayoutBuilder(
                   builder: (context, constraints) {
                     return Row(
@@ -280,7 +412,19 @@ class _ImageRowComponentState extends State<ImageRowComponent>
               if (isSelectionHighlighted)
                 Positioned.fill(
                   child: IgnorePointer(
-                    child: Container(color: Colors.grey.withOpacity(0.35)),
+                    child: Container(color: AppColors.primary.withOpacity(0.4)),
+                  ),
+                ),
+
+              // 선택 보더
+              if (isSelected)
+                Positioned.fill(
+                  child: IgnorePointer(
+                    child: Container(
+                      decoration: BoxDecoration(
+                        border: Border.all(color: AppColors.primary, width: 3),
+                      ),
+                    ),
                   ),
                 ),
             ],
@@ -300,10 +444,7 @@ class _ImageRowComponentState extends State<ImageRowComponent>
                       top: 0,
                       left: 0,
                       right: 0,
-                      child: Container(
-                        height: 3,
-                        color: const Color(0xFF007AFF),
-                      ),
+                      child: Container(height: 3, color: AppColors.primary),
                     ),
 
                   // 아래쪽 가로 라인
@@ -312,10 +453,7 @@ class _ImageRowComponentState extends State<ImageRowComponent>
                       bottom: 0,
                       left: 0,
                       right: 0,
-                      child: Container(
-                        height: 3,
-                        color: const Color(0xFF007AFF),
-                      ),
+                      child: Container(height: 3, color: AppColors.primary),
                     ),
 
                   // 왼쪽 세로 라인 (가로배치 모드일 때)
@@ -324,10 +462,7 @@ class _ImageRowComponentState extends State<ImageRowComponent>
                       left: 0,
                       top: marginTop,
                       bottom: marginBottom,
-                      child: Container(
-                        width: 3,
-                        color: const Color(0xFF007AFF),
-                      ),
+                      child: Container(width: 3, color: AppColors.primary),
                     ),
 
                   // 오른쪽 세로 라인 (가로배치 모드일 때)
@@ -336,10 +471,7 @@ class _ImageRowComponentState extends State<ImageRowComponent>
                       right: 0,
                       top: marginTop,
                       bottom: marginBottom,
-                      child: Container(
-                        width: 3,
-                        color: const Color(0xFF007AFF),
-                      ),
+                      child: Container(width: 3, color: AppColors.primary),
                     ),
                 ],
               );
@@ -480,6 +612,37 @@ class _ImageRowComponentState extends State<ImageRowComponent>
   int _getCurrentNodeIndex() {
     if (widget.dragService == null) return -1;
     return widget.dragService.getNodeIndex(widget.nodeId);
+  }
+
+  bool _isNodeCoveredBySelection(
+    Document doc,
+    DocumentSelection selection,
+    String nodeId,
+  ) {
+    final baseIndex = doc.getNodeIndexById(selection.base.nodeId);
+    final extentIndex = doc.getNodeIndexById(selection.extent.nodeId);
+    final myIndex = doc.getNodeIndexById(nodeId);
+    if (baseIndex == -1 || extentIndex == -1 || myIndex == -1) return false;
+
+    final start = math.min(baseIndex, extentIndex);
+    final end = math.max(baseIndex, extentIndex);
+    if (myIndex < start || myIndex > end) return false;
+
+    if (myIndex == start) {
+      final boundary = baseIndex == start ? selection.base : selection.extent;
+      final pos = boundary.nodePosition;
+      if (pos is UpstreamDownstreamNodePosition) {
+        return pos.affinity == TextAffinity.downstream;
+      }
+    }
+    if (myIndex == end) {
+      final boundary = extentIndex == end ? selection.extent : selection.base;
+      final pos = boundary.nodePosition;
+      if (pos is UpstreamDownstreamNodePosition) {
+        return pos.affinity == TextAffinity.downstream;
+      }
+    }
+    return true;
   }
 }
 

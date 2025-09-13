@@ -1,5 +1,6 @@
 import 'package:doppy/editor/postwrite_screen.dart';
 import 'package:doppy/editor/service/image_service.dart';
+import 'package:doppy/editor/service/sticker_service.dart';
 import 'package:doppy/pages/post/home_screen.dart';
 import 'package:doppy/pages/post/manage_group_screen.dart';
 import 'package:doppy/pages/post/manage_neighbor_screen.dart';
@@ -40,6 +41,7 @@ Future<void> main() async {
         ChangeNotifierProvider(create: (_) => GroupProvider()),
         ChangeNotifierProvider(create: (_) => SearchService()),
         ChangeNotifierProvider(create: (_) => ImageService()),
+        ChangeNotifierProvider(create: (_) => StickerService()),
       ],
       child: MyApp(
         hasSeenOnboarding: hasSeenOnboarding,

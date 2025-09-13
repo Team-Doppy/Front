@@ -1,7 +1,9 @@
 import 'package:doppy/editor/service/drag_service.dart';
 import 'package:doppy/editor/service/image_service.dart';
+import 'package:doppy/theme/app_colors.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'dart:math' as math;
 import 'package:super_editor/super_editor.dart';
 
 class SingleImageComponentBuilder implements ComponentBuilder {
@@ -108,8 +110,23 @@ class _SingleImageComponentState extends State<SingleImageComponent>
 
             final imageService = context.watch<ImageService>();
             final isSelected = imageService.selectedImageId == widget.nodeId;
-            final isSelectionHighlighted = imageService.selectionHighlightedIds
-                .contains(widget.nodeId);
+            // selection 핸들이 이미지 노드를 포함할 때만, 그리고 경계가 이미지인 경우 Downstream일 때만 하이라이트
+            // ignore: invalid_use_of_visible_for_testing_member
+            final seState = context.findAncestorStateOfType<SuperEditorState>();
+            // ignore: invalid_use_of_visible_for_testing_member
+            final composerSelection = seState?.editContext.composer.selection;
+            // ignore: invalid_use_of_visible_for_testing_member
+            final doc = seState?.editContext.editor.document;
+            bool isSelectionHighlighted = false;
+            if (composerSelection != null &&
+                !composerSelection.isCollapsed &&
+                doc != null) {
+              isSelectionHighlighted = _isNodeCoveredBySelection(
+                doc,
+                composerSelection,
+                widget.nodeId,
+              );
+            }
 
             return Stack(
               children: [
@@ -120,12 +137,17 @@ class _SingleImageComponentState extends State<SingleImageComponent>
                   ),
                   child: Stack(
                     children: [
-                      SizedBox(width: double.infinity, child: image),
+                      GestureDetector(
+                        onTap: () {
+                          // 단일 이미지 선택
+                        },
+                        child: SizedBox(width: double.infinity, child: image),
+                      ),
                       if (isSelectionHighlighted)
                         Positioned.fill(
                           child: IgnorePointer(
                             child: Container(
-                              color: const Color.fromARGB(255, 35, 35, 35),
+                              color: AppColors.primary.withOpacity(0.4),
                             ),
                           ),
                         ),
@@ -135,8 +157,8 @@ class _SingleImageComponentState extends State<SingleImageComponent>
                             child: Container(
                               decoration: BoxDecoration(
                                 border: Border.all(
-                                  color: const Color.fromARGB(255, 35, 35, 35),
-                                  width: 2,
+                                  color: AppColors.primary,
+                                  width: 3,
                                 ),
                               ),
                             ),
@@ -150,7 +172,7 @@ class _SingleImageComponentState extends State<SingleImageComponent>
                     top: 0,
                     left: 0,
                     right: 0,
-                    child: Container(height: 3, color: const Color(0xFF007AFF)),
+                    child: Container(height: 3, color: AppColors.primary),
                   ),
 
                 if (_shouldShowLeftVerticalLine())
@@ -158,21 +180,21 @@ class _SingleImageComponentState extends State<SingleImageComponent>
                     top: marginTop,
                     bottom: marginBottom,
                     left: 0,
-                    child: Container(width: 3, color: const Color(0xFF007AFF)),
+                    child: Container(width: 3, color: AppColors.primary),
                   ),
                 if (_shouldShowRightVerticalLine())
                   Positioned(
                     top: marginTop,
                     bottom: marginBottom,
                     right: 0,
-                    child: Container(width: 3, color: const Color(0xFF007AFF)),
+                    child: Container(width: 3, color: AppColors.primary),
                   ),
                 if (_shouldShowBottomDropLine())
                   Positioned(
                     bottom: 0,
                     left: 0,
                     right: 0,
-                    child: Container(height: 3, color: const Color(0xFF007AFF)),
+                    child: Container(height: 3, color: AppColors.primary),
                   ),
               ],
             );
@@ -369,5 +391,40 @@ class _SingleImageComponentState extends State<SingleImageComponent>
   int _getCurrentNodeIndex() {
     if (widget.dragService == null) return -1;
     return widget.dragService.getNodeIndex(widget.nodeId);
+  }
+
+  // selection이 이 이미지 노드를 포함하는지 계산. 경계가 이미지인 경우 Downstream일 때만 포함
+  bool _isNodeCoveredBySelection(
+    Document doc,
+    DocumentSelection selection,
+    String nodeId,
+  ) {
+    final baseIndex = doc.getNodeIndexById(selection.base.nodeId);
+    final extentIndex = doc.getNodeIndexById(selection.extent.nodeId);
+    final myIndex = doc.getNodeIndexById(nodeId);
+    if (baseIndex == -1 || extentIndex == -1 || myIndex == -1) return false;
+
+    final start = math.min(baseIndex, extentIndex);
+    final end = math.max(baseIndex, extentIndex);
+    if (myIndex < start || myIndex > end) return false;
+
+    // 시작 경계가 이 노드인 경우: base/extent 중 누가 start인지에 따라 affinity 체크
+    if (myIndex == start) {
+      final boundary = baseIndex == start ? selection.base : selection.extent;
+      final pos = boundary.nodePosition;
+      if (pos is UpstreamDownstreamNodePosition) {
+        return pos.affinity == TextAffinity.downstream;
+      }
+    }
+    // 끝 경계가 이 노드인 경우
+    if (myIndex == end) {
+      final boundary = extentIndex == end ? selection.extent : selection.base;
+      final pos = boundary.nodePosition;
+      if (pos is UpstreamDownstreamNodePosition) {
+        return pos.affinity == TextAffinity.downstream;
+      }
+    }
+    // 범위 내부에 완전히 포함
+    return true;
   }
 }

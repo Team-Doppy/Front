@@ -57,7 +57,7 @@ class _PostCardState extends State<PostCard> {
     final screenWidth = widget.containerWidth;
 
     return Container(
-      decoration: BoxDecoration(color: AppColors.darkSurface),
+      decoration: BoxDecoration(color: AppColors.darkBackground),
       width: screenWidth,
       margin: EdgeInsets.zero,
       child: Stack(
@@ -73,10 +73,7 @@ class _PostCardState extends State<PostCard> {
                     // 이미지 컨테이너
                     Positioned.fill(
                       child: ClipRRect(
-                        borderRadius: BorderRadius.only(
-                          topLeft: Radius.circular(20),
-                          topRight: Radius.circular(20),
-                        ),
+                        borderRadius: BorderRadius.only(),
                         child: Image.asset(widget.imagePath, fit: BoxFit.cover),
                       ),
                     ),

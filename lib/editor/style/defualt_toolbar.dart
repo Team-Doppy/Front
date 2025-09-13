@@ -1,10 +1,18 @@
+import 'dart:io';
+import 'dart:typed_data';
+
+import 'package:doppy/editor/overlay/sticker_overlay.dart';
 import 'package:flutter/material.dart';
 import 'package:super_editor/super_editor.dart';
 import 'package:doppy/editor/image/gallery_bottom_sheet.dart';
+import 'package:doppy/editor/overlay/link_overlay.dart';
+import 'package:doppy/editor/overlay/location_overlay.dart';
+
+import 'package:doppy/editor/service/editor_service.dart';
+import 'package:doppy/theme/app_colors.dart';
+import 'package:doppy/editor/overlay/mention_overlay.dart';
 import 'package:provider/provider.dart';
 import 'package:doppy/editor/service/sticker_service.dart';
-import 'package:doppy/theme/app_colors.dart';
-import 'package:doppy/editor/component/mention_overlay.dart';
 
 /// 텍스트 스타일링 관리자
 class TextStylingService {
@@ -269,22 +277,6 @@ class TextStylingService {
     ]);
   }
 
-  /// 인용 블록 삽입: 현재 커서 아래에 인용 스타일 문단을 추가
-  void insertQuoteBlock() {
-    final position = composer.selection?.extent;
-    final insertIndex = _indexAfter(position);
-    final node = ParagraphNode(
-      id: 'quote_${DateTime.now().millisecondsSinceEpoch}',
-      text: AttributedText(''),
-      metadata: {'textAlign': getCurrentAlignment().name, 'blockquote': true},
-    );
-    editor.execute([
-      // 캐럿 기준 삽입 + 선택 이동 처리까지 내장됨
-      InsertNodeAtCaretRequest(node: node),
-    ]);
-    print('인용 블록 삽입: $insertIndex');
-  }
-
   /// 구분선 삽입: 비어있는 문단으로 표현(스타일시트에서 선으로 렌더)
   void insertDivider() {
     final position = composer.selection?.extent;
@@ -312,19 +304,16 @@ class TextStylingService {
 extension _TopExpandedRow on _DefaultToolbarState {
   Widget _buildTopExpandedRowContent() {
     switch (_expanded) {
+      case ToolbarSection.camera:
+        return const SizedBox.shrink();
       case ToolbarSection.text:
         return ListView(
           scrollDirection: Axis.horizontal,
           children: [
             // 축약 아이콘: 사이즈 / 색상
-            _buildSizeCollapsedButton(),
-            if (_textPanel == TextPanel.size) ...[
-              _buildDivider(),
-              const SizedBox(width: 10),
-              _buildFontSizeRow(),
-            ],
-
-            _buildColorCollapsedButton(),
+            if (_textPanel == TextPanel.none) ...[_buildSizeCollapsedButton()],
+            if (_textPanel == TextPanel.size) ...[_buildFontSizeRow()],
+            if (_textPanel == TextPanel.none) ...[_buildColorCollapsedButton()],
             if (_textPanel == TextPanel.color) ...[
               _buildDivider(),
               const SizedBox(width: 10),
@@ -367,38 +356,14 @@ extension _TopExpandedRow on _DefaultToolbarState {
                 _updateStyles();
               },
             ),
-            const SizedBox(width: 10),
+
+            // 오른쪽 끝으로 밀기
           ],
         );
-      case ToolbarSection.camera:
-        return Row(
-          children: [
-            _buildChip(
-              icon: Icons.camera_alt,
-              label: '카메라',
-              onTap: () {
-                print('카메라 선택');
-              },
-            ),
-            const SizedBox(width: 6),
-            _buildChip(
-              icon: Icons.photo_library_outlined,
-              label: '갤러리',
-              onTap: widget.onInsertImage,
-            ),
-          ],
-        );
+
       case ToolbarSection.insert:
         return Row(
           children: [
-            _buildChip(
-              icon: Icons.format_quote,
-              label: '인용',
-              onTap: () {
-                widget.stylingService.insertQuoteBlock();
-              },
-            ),
-            const SizedBox(width: 6),
             _buildChip(
               icon: Icons.horizontal_rule,
               label: '구분선',
@@ -411,7 +376,31 @@ extension _TopExpandedRow on _DefaultToolbarState {
               icon: Icons.link,
               label: '링크',
               onTap: () {
-                print('링크 삽입');
+                Navigator.of(context).push(
+                  PageRouteBuilder(
+                    opaque: false,
+                    barrierDismissible: true,
+                    pageBuilder:
+                        (_, __, ___) => LinkOverlay(
+                          onSubmit: ({
+                            required String url,
+                            String? title,
+                            String? description,
+                            String? thumbnailUrl,
+                          }) {
+                            widget.editorService.addLinkNode(
+                              url: url,
+                              title: title,
+                              description: description,
+                              thumbnailUrl: thumbnailUrl,
+                            );
+                            // 링크 추가 후 상단 두번째 툴바 자동 닫기
+                            _toggle(ToolbarSection.none);
+                            Navigator.of(context).maybePop();
+                          },
+                        ),
+                  ),
+                );
               },
             ),
             const SizedBox(width: 6),
@@ -419,8 +408,45 @@ extension _TopExpandedRow on _DefaultToolbarState {
               icon: Icons.emoji_emotions_outlined,
               label: '스티커',
               onTap: () {
-                // 스티커 섹션으로 전환
-                _toggle(ToolbarSection.sticker);
+                Navigator.of(context).push(
+                  PageRouteBuilder(
+                    opaque: false,
+                    barrierDismissible: true,
+                    pageBuilder:
+                        (_, __, ___) => StickerOverlay(
+                          onSubmit: ({
+                            required String text,
+                            String? emoji,
+                            Uint8List? image,
+                            Map<String, dynamic>? textStyle,
+                          }) {
+                            final svc = context.read<StickerService>();
+                            // 현재 화면 스크롤 위치를 고려한 초기 위치 (뷰포트 중앙 상단 근처)
+                            final Size size = MediaQuery.of(context).size;
+                            final scrollY =
+                                widget.scrollController?.offset ?? 0.0;
+                            final Offset at = Offset(
+                              size.width * 0.5 - 60,
+                              scrollY + 200,
+                            );
+                            if (image != null) {
+                              svc.addImageSticker(image, at);
+                            } else if ((emoji ?? '').isNotEmpty) {
+                              svc.addEmojiSticker(emoji!, at);
+                            } else if (text.trim().isNotEmpty) {
+                              svc.addTextStickerWithStyle(
+                                text.trim(),
+                                textStyle,
+                                at,
+                              );
+                            }
+                            // 스티커 추가 후 상단 두번째 툴바 자동 닫기
+                            _toggle(ToolbarSection.none);
+                            Navigator.of(context).maybePop();
+                          },
+                        ),
+                  ),
+                );
               },
             ),
             const SizedBox(width: 6),
@@ -428,91 +454,33 @@ extension _TopExpandedRow on _DefaultToolbarState {
               icon: Icons.location_on_outlined,
               label: '장소',
               onTap: () {
-                print('장소 삽입');
-              },
-            ),
-          ],
-        );
-      case ToolbarSection.sticker:
-        // 상단바에서 스티커 유형 선택 탭 (이미지/텍스트/이모지)
-        return Row(
-          children: [
-            GestureDetector(
-              onTap: () {
-                _toggle(ToolbarSection.insert);
-              },
-              child: Icon(
-                Icons.arrow_back_ios_new_outlined,
-                color: AppColors.darkTextSecondary,
-              ),
-            ),
-            const SizedBox(width: 6),
-            _buildChip(
-              icon: Icons.image_outlined,
-              label: '이미지',
-              onTap: () async {
-                // 갤러리에서 선택하여 이미지 스티커 추가
-                showModalBottomSheet(
-                  context: context,
-                  isScrollControlled: true,
-                  backgroundColor: Colors.transparent,
-                  builder: (_) {
-                    return GalleryBottomSheet(
-                      onImagesSelected: (files) async {
-                        if (files.isEmpty) {
-                          Navigator.of(context).pop();
-                          return;
-                        }
-                        final svc = Provider.of<StickerService>(
-                          context,
-                          listen: false,
-                        );
-                        final size = MediaQuery.of(context).size;
-                        final scroll = widget.scrollController?.offset ?? 0.0;
-                        // 화면 기준 중앙을 문서 좌표로 변환: y축에 스크롤 오프셋 가산
-                        final center = Offset(
-                          size.width * 0.5,
-                          size.height * 0.4 + scroll,
-                        );
-                        for (final f in files) {
-                          try {
-                            final bytes = await f.readAsBytes();
-                            svc.addImageSticker(bytes, center);
-                          } catch (_) {}
-                        }
-                        Navigator.of(context).pop();
-                        _toggle(ToolbarSection.none);
-                      },
-                    );
-                  },
+                FocusScope.of(context).unfocus();
+                Navigator.of(context).push(
+                  PageRouteBuilder(
+                    opaque: false,
+                    barrierDismissible: true,
+                    pageBuilder:
+                        (_, __, ___) => LocationOverlay(
+                          onSelect: (lat, lng, title, address) {
+                            widget.editorService.addLocationNode(
+                              lat: lat,
+                              lng: lng,
+                              title: title,
+                              address: address,
+                              description: '선택된 위치입니다.',
+                            );
+                            // 장소 추가 후 상단 두번째 툴바 자동 닫기
+                            _toggle(ToolbarSection.none);
+                            Navigator.of(context).maybePop();
+                          },
+                        ),
+                  ),
                 );
               },
             ),
-            const SizedBox(width: 6),
-            _buildChip(
-              icon: Icons.text_fields,
-              label: '텍스트',
-              onTap: () {
-                // 현재 커서 기준 대략적인 위치에 생성
-                final size = MediaQuery.of(context).size;
-                final center = Offset(size.width * 0.5, size.height * 0.4);
-                final svc = Provider.of<StickerService>(context, listen: false);
-                svc.addTextSticker('새 텍스트', center);
-              },
-            ),
-            const SizedBox(width: 6),
-            _buildChip(
-              icon: Icons.emoji_emotions_outlined,
-              label: '이모지',
-              onTap: () {
-                final size = MediaQuery.of(context).size;
-                final center = Offset(size.width * 0.5, size.height * 0.5);
-                final svc = Provider.of<StickerService>(context, listen: false);
-                svc.addEmojiSticker('😄', center);
-              },
-            ),
           ],
         );
+
       case ToolbarSection.align:
         return Row(
           children: [
@@ -591,21 +559,26 @@ extension _TopExpandedRow on _DefaultToolbarState {
 /// 4개의 기본 아이콘만 보이고, 탭 시 옆으로 세부 기능이 펼쳐지는 툴바
 class DefaultToolbar extends StatefulWidget {
   final TextStylingService stylingService;
-  final VoidCallback? onInsertImage;
+  final EditorService editorService;
   final ScrollController? scrollController;
+  final bool isKeyboardVisible;
+  final VoidCallback? onDismissKeyboard;
 
   const DefaultToolbar({
     super.key,
     required this.stylingService,
-    this.onInsertImage,
+    required this.editorService,
+
     this.scrollController,
+    this.isKeyboardVisible = false,
+    this.onDismissKeyboard,
   });
 
   @override
   State<DefaultToolbar> createState() => _DefaultToolbarState();
 }
 
-enum ToolbarSection { none, camera, insert, text, align, mention, sticker }
+enum ToolbarSection { none, camera, insert, text, align, mention }
 
 enum TextPanel { none, size, color }
 
@@ -660,6 +633,9 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
   @override
   Widget build(BuildContext context) {
     final width = MediaQuery.of(context).size.width;
+    print(
+      'DEBUG: DefaultToolbar build - isKeyboardVisible: ${widget.isKeyboardVisible}',
+    );
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -683,43 +659,32 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 8),
             decoration: BoxDecoration(color: AppColors.darkSurface),
-            child: ListView(
-              scrollDirection: Axis.horizontal,
+            child: Row(
               children: [
+                SizedBox(width: 10),
                 // 카메라 섹션 (아이콘만, 옵션은 상단 행)
                 _buildMainIcon(
                   icon: Icons.camera_alt_outlined,
                   isActive: false,
                   onTap: () {
+                    print('DEBUG: 카메라 아이콘 탭됨 - 갤러리 바텀시트 열기');
                     showModalBottomSheet(
                       context: context,
-                      isScrollControlled: true,
                       backgroundColor: Colors.transparent,
-                      builder: (_) {
-                        return GalleryBottomSheet(
-                          onImagesSelected: (files) {
-                            // TODO: 이미지 삽입 로직 연결
-                            Navigator.of(context).pop();
-                          },
-                        );
-                      },
+                      isScrollControlled: true,
+                      builder:
+                          (sheetContext) => GalleryBottomSheet(
+                            onImagesSelected: (List<File> files) {
+                              print('DEBUG: 갤러리에서 선택된 파일 수: ${files.length}');
+                              for (final file in files) {
+                                print('DEBUG: 이미지 추가: ${file.path}');
+                                widget.editorService.addImageNode(file.path);
+                              }
+                              print('DEBUG: 모든 이미지 추가 완료');
+                            },
+                          ),
                     );
                   },
-                ),
-
-                // 더 이상 하단에서 펼치지 않음
-                const SizedBox(width: 10),
-                _buildDivider(),
-                const SizedBox(width: 10),
-
-                // 추가(플러스) 섹션 - 상단 행에서 옵션 표시
-                _buildMainIcon(
-                  icon: Icons.add,
-                  isActive:
-                      _expanded == ToolbarSection.insert ||
-                      _expanded == ToolbarSection.sticker,
-                  onTap: () => _toggle(ToolbarSection.insert),
-                  activeColor: AppColors.darkTextPrimary,
                 ),
 
                 // 더 이상 하단에서 펼치지 않음
@@ -784,14 +749,56 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
                         pageBuilder:
                             (_, __, ___) => MentionOverlay(
                               onClose: () {},
-                              onSelect: (username) {
-                                // TODO: 문서에 언급 삽입 로직 연결
+                              onSelect: (username) {},
+                              onSubmit: (usernames) {
+                                widget.editorService.addMentionNode(usernames);
                               },
                             ),
                       ),
                     );
                   },
                 ),
+                // 더 이상 하단에서 펼치지 않음
+                const SizedBox(width: 10),
+                _buildDivider(),
+                const SizedBox(width: 10),
+
+                // 추가(플러스) 섹션 - 상단 행에서 옵션 표시
+                _buildMainIcon(
+                  icon: Icons.add,
+                  isActive: _expanded == ToolbarSection.insert,
+                  onTap: () => _toggle(ToolbarSection.insert),
+                  activeColor: AppColors.darkTextPrimary,
+                ),
+
+                // 오른쪽 끝으로 밀어내기 위한 공간
+                const Expanded(child: SizedBox()),
+
+                // 키보드가 올라와 있을 때만 키보드 내리기 버튼 표시 (오른쪽 끝)
+                if (widget.isKeyboardVisible) ...[
+                  const SizedBox(width: 10),
+                  _buildDivider(),
+                  const SizedBox(width: 10),
+                  _buildMainIcon(
+                    icon: Icons.keyboard_arrow_down,
+                    isActive: false,
+                    onTap: () {
+                      widget.onDismissKeyboard?.call();
+                    },
+                  ),
+                ],
+                if (!widget.isKeyboardVisible) ...[
+                  const SizedBox(width: 10),
+                  _buildDivider(),
+                  const SizedBox(width: 10),
+                  _buildMainIcon(
+                    icon: Icons.keyboard_arrow_up,
+                    isActive: false,
+                    onTap: () {
+                      FocusScope.of(context).requestFocus();
+                    },
+                  ),
+                ],
                 // 더 이상 하단에서 펼치지 않음
               ],
             ),
@@ -819,9 +826,9 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
         borderRadius: BorderRadius.circular(8),
         child: Container(
           width: 36,
-          height: 36,
+          height: 50,
           alignment: Alignment.center,
-          child: Icon(icon, size: 22, color: color),
+          child: Icon(icon, size: 24, color: color),
         ),
       ),
     );
@@ -894,17 +901,17 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
     VoidCallback? onTap,
   }) {
     return Material(
-      color: AppColors.darkSurface,
-      borderRadius: BorderRadius.circular(20),
+      color: Colors.transparent,
+
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(20),
+
         child: Container(
-          height: 34,
+          height: 50,
           padding: const EdgeInsets.symmetric(horizontal: 12),
           child: Row(
             mainAxisSize: MainAxisSize.min,
-            children: [Icon(icon, size: 18, color: AppColors.darkTextPrimary)],
+            children: [Icon(icon, size: 20, color: AppColors.darkTextPrimary)],
           ),
         ),
       ),
@@ -984,7 +991,7 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
           height: 24,
           padding: const EdgeInsets.symmetric(horizontal: 6),
           decoration: BoxDecoration(
-            color: isActive ? Colors.green.shade100 : Colors.transparent,
+            color: isActive ? AppColors.darkSurfaceVariant : Colors.transparent,
             borderRadius: BorderRadius.circular(4),
           ),
           child: Center(
@@ -992,7 +999,10 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
               label,
               style: TextStyle(
                 fontSize: 14,
-                color: isActive ? Colors.green.shade700 : Colors.grey.shade700,
+                color:
+                    isActive
+                        ? AppColors.darkTextPrimary
+                        : AppColors.darkTextSecondary.withOpacity(0.6),
                 fontWeight: isActive ? FontWeight.w600 : FontWeight.w500,
               ),
             ),

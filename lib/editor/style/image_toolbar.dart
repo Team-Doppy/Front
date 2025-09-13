@@ -1,29 +1,26 @@
 import 'package:flutter/material.dart';
+import 'package:doppy/theme/app_colors.dart';
 
 /// 이미지 편집 전용 툴바
-/// - 디자인은 기존 툴바와 동일(아이콘 + 펼쳐지는 칩)
+/// - 기본 툴바와 동일한 디자인
 /// - 기능: 보정, 자르기, 삭제
 class ImageEditingToolbar extends StatefulWidget {
-  const ImageEditingToolbar({super.key, this.onAdjust, this.onDelete});
+  const ImageEditingToolbar({
+    super.key,
+    this.onAdjust,
+    this.onCrop,
+    this.onDelete,
+  });
 
   final VoidCallback? onAdjust;
+  final VoidCallback? onCrop;
   final VoidCallback? onDelete;
 
   @override
   State<ImageEditingToolbar> createState() => _ImageEditingToolbarState();
 }
 
-enum ImageToolbarSection { none, edit }
-
 class _ImageEditingToolbarState extends State<ImageEditingToolbar> {
-  ImageToolbarSection _expanded = ImageToolbarSection.none;
-
-  void _toggle(ImageToolbarSection section) {
-    setState(() {
-      _expanded = _expanded == section ? ImageToolbarSection.none : section;
-    });
-  }
-
   @override
   Widget build(BuildContext context) {
     final width = MediaQuery.of(context).size.width;
@@ -32,15 +29,36 @@ class _ImageEditingToolbarState extends State<ImageEditingToolbar> {
       width: width,
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 8),
-        decoration: BoxDecoration(color: Colors.white),
-        child: ListView(
-          scrollDirection: Axis.horizontal,
+        decoration: BoxDecoration(color: AppColors.darkSurface),
+        child: Row(
           children: [
-            _buildChip(icon: Icons.tune, label: '보정', onTap: widget.onAdjust),
-            const SizedBox(width: 6),
-            _buildChip(
+            SizedBox(width: 10),
+            // 보정 버튼
+            _buildMainIcon(
+              icon: Icons.tune,
+              isActive: false,
+              onTap: widget.onAdjust,
+            ),
+
+            const SizedBox(width: 10),
+            _buildDivider(),
+            const SizedBox(width: 10),
+
+            // 자르기 버튼
+            _buildMainIcon(
+              icon: Icons.crop,
+              isActive: false,
+              onTap: widget.onCrop,
+            ),
+
+            const SizedBox(width: 10),
+            _buildDivider(),
+            const SizedBox(width: 10),
+
+            // 삭제 버튼
+            _buildMainIcon(
               icon: Icons.delete_outline,
-              label: '삭제',
+              isActive: false,
               onTap: widget.onDelete,
             ),
           ],
@@ -49,37 +67,35 @@ class _ImageEditingToolbarState extends State<ImageEditingToolbar> {
     );
   }
 
-  Widget _buildChip({
+  Widget _buildMainIcon({
     required IconData icon,
-    required String label,
+    required bool isActive,
     VoidCallback? onTap,
   }) {
-    return Material(
-      color: Colors.grey.shade100,
-      borderRadius: BorderRadius.circular(20),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(20),
-        child: Container(
-          height: 34,
-          padding: const EdgeInsets.symmetric(horizontal: 12),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(icon, size: 18, color: Colors.grey.shade900),
-              const SizedBox(width: 6),
-              Text(
-                label,
-                style: TextStyle(
-                  fontSize: 13,
-                  color: Colors.grey.shade900,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ],
-          ),
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: 34,
+        height: 34,
+        decoration: BoxDecoration(
+          color: isActive ? AppColors.primary : Colors.transparent,
+          borderRadius: BorderRadius.circular(6),
+        ),
+        child: Icon(
+          icon,
+          size: 22,
+          color:
+              icon == Icons.delete_outline
+                  ? AppColors.error.withOpacity(0.8)
+                  : isActive
+                  ? Colors.white
+                  : AppColors.darkTextSecondary.withOpacity(0.6),
         ),
       ),
     );
+  }
+
+  Widget _buildDivider() {
+    return Container(width: 1, height: 20, color: AppColors.darkBorder);
   }
 }

@@ -1,3 +1,4 @@
+import 'package:doppy/theme/app_colors.dart';
 import 'package:flutter/material.dart';
 import 'package:super_editor/super_editor.dart';
 import 'package:doppy/editor/service/drag_service.dart';
@@ -87,20 +88,6 @@ class _ParagraphWithDropLines extends StatelessWidget {
     return AnimatedBuilder(
       animation: Listenable.merge([dragService, editorService]),
       builder: (context, _) {
-        // 현재 노드 메타데이터 확인
-        final node = editorService.editor.document.getNodeById(nodeId);
-        final isParagraph = node is ParagraphNode;
-        final isDivider = isParagraph && node.metadata['isDivider'] == true;
-        final isBlockquote = isParagraph && node.metadata['blockquote'] == true;
-
-        // 구분선: 기본 Paragraph 렌더 대신 한 줄 선을 직접 그림
-        if (isDivider) {
-          return Container(
-            height: 1,
-            color: const Color.fromARGB(255, 200, 200, 203),
-          );
-        }
-
         final currentIndex = dragService.getNodeIndex(nodeId);
         final dropIndex = dragService.dropIndex;
         final isSelf = dragService.draggingNodeId == nodeId;
@@ -118,61 +105,6 @@ class _ParagraphWithDropLines extends StatelessWidget {
           child: child,
         );
 
-        // 인용 블록: 노션 스타일(왼쪽 바 + 약간의 좌측 패딩)
-        if (isBlockquote) {
-          final paragraph = node as ParagraphNode?;
-          final String mainText = paragraph?.text.text ?? '';
-          final bool isEmptyQuote = mainText.trim().isEmpty;
-
-          // 메인 인용만 렌더(출처 제거)
-          final quoteColumn = Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // 메인 인용: SuperEditor child를 그대로 사용
-              ConstrainedBox(
-                constraints: const BoxConstraints(minHeight: 20),
-                child: content,
-              ),
-            ],
-          );
-
-          content = IntrinsicHeight(
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Container(
-                  width: 3,
-                  margin: const EdgeInsets.only(right: 10),
-                  color: const Color.fromARGB(255, 96, 96, 96),
-                ),
-                Expanded(
-                  child: Padding(
-                    padding: const EdgeInsets.only(top: 2),
-                    child: Stack(
-                      children: [
-                        quoteColumn,
-                        if (isEmptyQuote)
-                          const IgnorePointer(
-                            child: Padding(
-                              padding: EdgeInsets.only(left: 2, top: 1),
-                              child: Text(
-                                '비어 있는 인용',
-                                style: TextStyle(
-                                  fontSize: 14,
-                                  color: Colors.black38,
-                                ),
-                              ),
-                            ),
-                          ),
-                      ],
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          );
-        }
-
         return Stack(
           children: [
             Padding(padding: margin, child: content),
@@ -181,8 +113,9 @@ class _ParagraphWithDropLines extends StatelessWidget {
                 top: 0,
                 left: 0,
                 right: 0,
-                child: Container(height: 3, color: const Color(0xFF007AFF)),
+                child: Container(height: 3, color: AppColors.primary),
               ),
+
             // 하단 라인 비활성화(이중 라인 방지)
           ],
         );

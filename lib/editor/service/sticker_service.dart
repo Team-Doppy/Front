@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 enum StickerType { image, text, emoji }
 
 class Sticker {
+  // 공통 속성: 컨텐츠, 위치, 스케일, 회전, 투명도, zIndex, 잠금
   final String id;
   final StickerType type;
   final dynamic content; // Uint8List | String
@@ -52,8 +53,21 @@ class Sticker {
 }
 
 class StickerService extends ChangeNotifier {
+  // 스케일 한계
+  static const double minScale = 0.4;
+  static const double maxScale = 3.0;
   final List<Sticker> _stickers = <Sticker>[];
   String? _selectedId;
+
+  // 드래그 오버레이 상태
+  String? _draggingId;
+  Offset _dragBasePos = Offset.zero;
+  double _dragBaseScale = 1.0;
+  double _dragBaseRot = 0.0;
+  Offset _dragAccum = Offset.zero;
+  double _scaleDelta = 1.0;
+  double _rotationDelta = 0.0;
+  bool _dragOverDelete = false;
 
   List<Sticker> get stickers {
     final list = List<Sticker>.from(_stickers);
@@ -62,20 +76,43 @@ class StickerService extends ChangeNotifier {
   }
 
   String? get selectedId => _selectedId;
+  String? get draggingId => _draggingId;
+  bool get isDragging => _draggingId != null;
+  Offset get dragPreviewPos => _dragBasePos + _dragAccum;
+  double get dragPreviewScale =>
+      (_dragBaseScale * _scaleDelta).clamp(minScale, maxScale);
+  double get dragPreviewRotation => _dragBaseRot + _rotationDelta;
+  bool get dragOverDelete => _dragOverDelete;
 
   void addSticker(Sticker sticker) {
-    _stickers.add(sticker);
-    _selectedId = sticker.id;
+    // 새 스티커를 항상 최상단에 배치
+    final int maxZ = _stickers.fold<int>(
+      0,
+      (p, e) => e.zIndex > p ? e.zIndex : p,
+    );
+    final Sticker withZ = sticker.copyWith(zIndex: maxZ + 1);
+    _stickers.add(withZ);
+    // 추가 시 바로 선택하여 보더 표시
+    _selectedId = withZ.id;
     notifyListeners();
   }
 
   void addTextSticker(String text, Offset at) {
+    addTextStickerWithStyle(text, null, at);
+  }
+
+  void addTextStickerWithStyle(
+    String text,
+    Map<String, dynamic>? style,
+    Offset at,
+  ) {
     addSticker(
       Sticker(
         id: 'stk_${DateTime.now().millisecondsSinceEpoch}',
         type: StickerType.text,
-        content: text,
+        content: <String, dynamic>{'text': text, 'style': style},
         position: at,
+        scale: 1.4,
       ),
     );
   }
@@ -87,6 +124,7 @@ class StickerService extends ChangeNotifier {
         type: StickerType.emoji,
         content: emoji,
         position: at,
+        scale: 1.6,
       ),
     );
   }
@@ -98,6 +136,7 @@ class StickerService extends ChangeNotifier {
         type: StickerType.image,
         content: bytes,
         position: at,
+        scale: 1.2,
       ),
     );
   }
@@ -111,6 +150,70 @@ class StickerService extends ChangeNotifier {
 
   void select(String? id) {
     _selectedId = id;
+    notifyListeners();
+  }
+
+  // ===== Drag Overlay API =====
+  void beginDrag(String id) {
+    final s = _stickers.firstWhere(
+      (e) => e.id == id,
+      orElse:
+          () => Sticker(
+            id: id,
+            type: StickerType.text,
+            content: '',
+            position: Offset.zero,
+          ),
+    );
+    _draggingId = id;
+    _dragBasePos = s.position;
+    _dragBaseScale = s.scale;
+    _dragBaseRot = s.rotation;
+    _dragAccum = Offset.zero; // 누적 델타 리셋
+    _scaleDelta = 1.0; // 배율은 항상 1.0에서 시작(상대 배율)
+    _rotationDelta = 0.0; // 회전도 상대값으로 시작
+    notifyListeners();
+  }
+
+  void updateDrag(
+    Offset delta, {
+    double scaleDelta = 1.0,
+    double rotationDelta = 0.0,
+  }) {
+    if (_draggingId == null) return;
+    _dragAccum += delta;
+    _scaleDelta = scaleDelta;
+    _rotationDelta = rotationDelta;
+    notifyListeners();
+  }
+
+  void endDrag() {
+    if (_draggingId == null) return;
+    final id = _draggingId!;
+    if (_dragOverDelete) {
+      remove(id);
+    } else {
+      var newPos = dragPreviewPos;
+      // 수직 위치를 안전 범위로 클램프 (엔드 시 최종 보정)
+      // 호출자가 스크롤/뷰포트 정보를 모르므로, 음수나 비정상 큰 값만 간단 방지
+      if (newPos.dy.isNaN || newPos.dy.isInfinite) newPos = const Offset(0, 0);
+      final newScale = dragPreviewScale.clamp(minScale, maxScale);
+      final newRot = dragPreviewRotation;
+      transform(id, position: newPos, scale: newScale, rotation: newRot);
+    }
+    _draggingId = null;
+    _dragAccum = Offset.zero;
+    _scaleDelta = 1.0;
+    _rotationDelta = 0.0;
+    _dragOverDelete = false;
+    notifyListeners();
+  }
+
+  bool isDraggingSticker(String id) => _draggingId == id;
+
+  void setDragOverDelete(bool over) {
+    if (_dragOverDelete == over) return;
+    _dragOverDelete = over;
     notifyListeners();
   }
 

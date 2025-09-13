@@ -1,5 +1,8 @@
+import 'package:doppy/editor/component/link_component.dart';
+import 'package:doppy/editor/component/mention_component.dart';
+import 'package:doppy/editor/component/location_component.dart';
+import 'package:doppy/editor/component/row_image_component.dart';
 import 'package:doppy/editor/postwrite_screen.dart';
-import 'package:doppy/editor/custom_nodes/image_row_node.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:super_editor/super_editor.dart';
@@ -8,6 +11,8 @@ class EditorService extends ChangeNotifier {
   late final Editor editor;
   late final MutableDocument document;
   GlobalKey? _documentLayoutKey;
+  // 마지막 유효 selection 캐시 (포커스가 잠시 사라져도 사용)
+  DocumentSelection? _lastSelection;
 
   // 문단별 마진 캐시 (중앙집중 판정 결과)
   bool publishable = false;
@@ -16,6 +21,7 @@ class EditorService extends ChangeNotifier {
   EditorService({required this.editor, required this.document}) {
     _recomputeParagraphMargins();
     document.addListener(_onDocumentChanged);
+    editor.composer.selectionNotifier.addListener(_onSelectionChanged);
   }
 
   void setDocumentLayoutKey(GlobalKey key) {
@@ -85,8 +91,16 @@ class EditorService extends ChangeNotifier {
   void dispose() {
     try {
       document.removeListener(_onDocumentChanged);
+      editor.composer.selectionNotifier.removeListener(_onSelectionChanged);
     } catch (_) {}
     super.dispose();
+  }
+
+  void _onSelectionChanged() {
+    final sel = editor.composer.selectionNotifier.value;
+    if (sel != null) {
+      _lastSelection = sel;
+    }
   }
 
   void reorderNode(String nodeId, int targetIndex) {
@@ -234,6 +248,8 @@ class EditorService extends ChangeNotifier {
         return NodeType.image;
       case ImageRowNode():
         return NodeType.imageRow;
+      case LocationNode():
+        return NodeType.location;
       default:
         return NodeType.unknown;
     }
@@ -244,6 +260,42 @@ class EditorService extends ChangeNotifier {
     if (selection == null) return -1;
     final nodeId = selection.extent.nodeId;
     return document.getNodeIndexById(nodeId);
+  }
+
+  /// 링크 노드를 현재 커서 다음 슬롯에 삽입
+  void addLinkNode({
+    required String url,
+    String? title,
+    String? description,
+    String? thumbnailUrl,
+  }) {
+    final safeIndex = _getCaretNodeIndexSafe();
+    final insertIndex = safeIndex;
+
+    final node = LinkNode(
+      id: 'link_${DateTime.now().millisecondsSinceEpoch}',
+      url: url,
+      title: title ?? '',
+      description: description ?? '',
+      thumbnailUrl: thumbnailUrl ?? '',
+    );
+
+    editor.execute([
+      InsertNodeAtIndexRequest(nodeIndex: insertIndex, newNode: node),
+    ]);
+  }
+
+  /// 언급 노드를 현재 커서 다음 슬롯에 삽입
+  void addMentionNode(List<String> usernames) {
+    final safeIndex = _getCaretNodeIndexSafe();
+    final insertIndex = safeIndex;
+    final node = MentionNode(
+      id: 'mention_${DateTime.now().millisecondsSinceEpoch}',
+      usernames: usernames,
+    );
+    editor.execute([
+      InsertNodeAtIndexRequest(nodeIndex: insertIndex, newNode: node),
+    ]);
   }
 
   DocumentNode? findNodeAtPosition(Offset position) {
@@ -389,6 +441,44 @@ class EditorService extends ChangeNotifier {
     }
   }
 
+  /// 변경 지점 주변(상/하/본인)만 부분적으로 마진 재계산 (public)
+  void recomputeParagraphMarginsAround(int centerIndex) {
+    _recomputeParagraphMarginsAround(centerIndex);
+  }
+
+  /// 이미지 추가: 현재 커서 위치에 로컬 경로 기반 이미지 노드 삽입
+  void addImageNode(String imagePath) {
+    try {
+      print('이미지 추가: $imagePath');
+
+      final imageNode = ImageNode(
+        id: 'image_${DateTime.now().millisecondsSinceEpoch}',
+        imageUrl:
+            "https://www.shutterstock.com/image-photo/beautiful-golden-retriever-cute-puppy-260nw-2526542701.jpg",
+        altText: '',
+      );
+      // 커서가 있는 줄의 "다음" 위치에 삽입. selection이 없으면 문서 끝 기준.
+      final safeIndex = _getCaretNodeIndexSafe();
+      final insertIndex = safeIndex;
+      print('이미지 삽입 인덱스: $insertIndex (safe: $safeIndex)');
+
+      editor.execute([
+        InsertNodeAtIndexRequest(nodeIndex: insertIndex, newNode: imageNode),
+      ]);
+    } catch (e) {
+      debugPrint('이미지 추가 중 오류: $e');
+    }
+  }
+
+  // selection이 null이거나 nodeId를 찾지 못해도 문서 끝을 반환하여 안전
+  int _getCaretNodeIndexSafe() {
+    final doc = editor.document;
+    final sel = editor.composer.selectionNotifier.value ?? _lastSelection;
+    if (sel == null) return doc.nodeCount;
+    final idx = doc.getNodeIndexById(sel.extent.nodeId);
+    return idx == -1 ? doc.nodeCount : idx;
+  }
+
   // 변경 지점 주변(상/하/본인)만 부분적으로 마진 재계산
   void _recomputeParagraphMarginsAround(int centerIndex) {
     for (final i in <int>[centerIndex - 1, centerIndex, centerIndex + 1]) {
@@ -442,7 +532,7 @@ class EditorService extends ChangeNotifier {
     final String? align = meta['textAlign'] as String?;
     if (align != null) return;
 
-    String previousAlign = 'left';
+    String previousAlign = 'center';
     for (int i = index - 1; i >= 0; i--) {
       final prev = document.getNodeAt(i);
       if (prev is ParagraphNode) {
@@ -486,7 +576,8 @@ class EditorService extends ChangeNotifier {
         ParagraphNode(
           id: Editor.createNodeId(),
           text: AttributedText(),
-          metadata: {'isTitle': true, 'textAlign': 'left'},
+          // 기본 정렬을 중앙으로 보정
+          metadata: {'isTitle': true, 'textAlign': 'center'},
         ),
       );
     } else if (titleIndex > 0) {
@@ -501,7 +592,7 @@ class EditorService extends ChangeNotifier {
     final title = document.getNodeAt(0);
     if (title is ParagraphNode && title.metadata['isTitle'] == true) {
       // 다른 텍스트 문단의 정렬을 찾아서 제목에 적용
-      String targetAlignment = 'left'; // 기본값
+      String targetAlignment = 'center'; // 기본값(중앙)
       for (int i = 1; i < document.length; i++) {
         final node = document.getNodeAt(i);
         if (node is ParagraphNode) {
@@ -522,5 +613,33 @@ class EditorService extends ChangeNotifier {
       );
       document.replaceNodeById(title.id, updated);
     }
+  }
+
+  /// 위치 노드를 현재 커서 위치에 삽입합니다
+  void addLocationNode({
+    required double lat,
+    required double lng,
+    String title = '',
+    String address = '',
+    String description = '',
+  }) {
+    final doc = editor.document;
+    final sel = editor.composer.selectionNotifier.value;
+    final currentIndex =
+        sel == null ? -1 : doc.getNodeIndexById(sel.extent.nodeId);
+    final insertIndex = currentIndex == -1 ? doc.nodeCount : currentIndex + 1;
+
+    final node = LocationNode(
+      id: 'location_${DateTime.now().millisecondsSinceEpoch}',
+      lat: lat,
+      lng: lng,
+      title: title,
+      address: address,
+      description: description,
+    );
+
+    editor.execute([
+      InsertNodeAtIndexRequest(nodeIndex: insertIndex, newNode: node),
+    ]);
   }
 }

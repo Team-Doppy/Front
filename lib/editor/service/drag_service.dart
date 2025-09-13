@@ -422,11 +422,11 @@ class DragService extends ChangeNotifier {
     }
 
     // 드롭 인덱스 계산
+    final draggingNodeIndex = editorService.editor.document.getNodeIndexById(
+      draggingNodeId!,
+    );
     int? finalCandidate = nodeIndex;
     if (draggingNodeId != null) {
-      final draggingNodeIndex = editorService.editor.document.getNodeIndexById(
-        draggingNodeId!,
-      );
       if (draggingNodeIndex != -1) {
         final bool isSplitDrag = hasSplitImageInfo; // 이미지 행에서 개별 이미지 분리 드래그 중인지
 
@@ -461,13 +461,12 @@ class DragService extends ChangeNotifier {
       if (dragMode == DragType.reorder && finalCandidate != null) {
         final doc = editorService.editor.document;
         int titleIndex = -1;
-        for (int i = 0; i < doc.length; i++) {
-          final n = doc.getNodeAt(i);
-          if (n is ParagraphNode && (n.metadata['isTitle'] == true)) {
-            titleIndex = i;
-            break;
-          }
+
+        final n = doc.getNodeAt(0);
+        if (n is ParagraphNode && (n.metadata['isTitle'] == true)) {
+          titleIndex = 0;
         }
+
         if (titleIndex != -1 && finalCandidate <= titleIndex) {
           finalCandidate = titleIndex + 1;
         }
