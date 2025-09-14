@@ -242,6 +242,12 @@ class StickerService extends ChangeNotifier {
     notifyListeners();
   }
 
+  void removeAll() {
+    _stickers.clear();
+    _selectedId = null;
+    notifyListeners();
+  }
+
   void remove(String id) {
     _stickers.removeWhere((s) => s.id == id);
     if (_selectedId == id) _selectedId = null;

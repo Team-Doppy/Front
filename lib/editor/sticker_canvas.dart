@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'dart:typed_data';
 import 'package:provider/provider.dart';
@@ -40,6 +41,7 @@ class StickerCanvas extends StatelessWidget {
                       key: ValueKey<String>(s.id),
                       sticker: s,
                       scrollController: scrollController,
+                      stackKey: _stackKey,
                     ),
 
                   // 드래그 프리뷰 오버레이 비활성화 (삭제 판정은 onScaleUpdate에서 직접 수행)
@@ -158,10 +160,12 @@ class _Measure extends StatelessWidget {
 class _StickerView extends StatefulWidget {
   final Sticker sticker;
   final ScrollController scrollController;
+  final GlobalKey stackKey;
   const _StickerView({
     super.key,
     required this.sticker,
     required this.scrollController,
+    required this.stackKey,
   });
 
   @override
@@ -174,6 +178,8 @@ class _StickerViewState extends State<_StickerView>
   bool _pressing = false;
   Size _stickerSize = const Size(140, 140);
   late final AnimationController _appearCtrl;
+  double _dragStartScale = 1.0;
+  double _dragStartRotation = 0.0;
 
   @override
   void initState() {
@@ -295,69 +301,138 @@ class _StickerViewState extends State<_StickerView>
           FocusScope.of(context).unfocus();
           svc.beginDrag(widget.sticker.id);
           svc.bringToFront(widget.sticker.id);
+          _dragStartScale = widget.sticker.scale;
+          _dragStartRotation =
+              context.read<StickerService>().dragPreviewRotation;
         },
         onScaleUpdate: (d) {
-          // 드래그와 스케일/회전을 모두 처리
-          final delta = d.focalPoint - _lastFocalPoint;
-          _lastFocalPoint = d.focalPoint;
-          // 스케일 클램프 적용: 너무 커지거나 작아지지 않도록 제한
-          final double nextScale = (d.scale).clamp(
-            StickerService.minScale,
-            StickerService.maxScale,
-          );
-          // 수직 이동 범위 제한: 현재 뷰포트 내에서만 이동
-          final double scrollY =
-              widget.scrollController.hasClients
-                  ? widget.scrollController.offset
-                  : 0.0;
-          final Size vs = MediaQuery.of(context).size;
-          final Offset cur = context.read<StickerService>().dragPreviewPos;
-          final Offset want = cur + delta;
-          // 여백을 조금 두어 하단 툴바/휴지통 등을 고려
-          const double topMargin = 0.0;
-          const double bottomMargin = 120.0;
-          const double extraBottomAllowance = 200.0; // 더 아래로 허용
-          const double leftMargin = 12.0;
-          const double rightMargin = 12.0;
-          final double effW = (_stickerSize.width) * nextScale;
-          final double effH = (_stickerSize.height) * nextScale;
-          final double minY = scrollY + topMargin;
-          final double safeBottom = MediaQuery.of(context).padding.bottom;
-          double maxY =
-              scrollY +
-              vs.height -
-              bottomMargin -
-              safeBottom -
-              effH +
-              extraBottomAllowance;
-          final double clampedY = want.dy.clamp(minY, maxY);
-          final double minX = leftMargin;
-          final double maxX = vs.width - rightMargin - effW;
-          final double clampedX = want.dx.clamp(minX, maxX);
-          final Offset clampedDelta = Offset(
-            clampedX - cur.dx,
-            clampedY - cur.dy,
-          );
+          try {
+            // 입력값 검증
+            if (!d.scale.isFinite || d.scale <= 0) return;
+            if (!d.rotation.isFinite) return;
 
-          // 휴지통 hover 판정을 오버레이 없이 직접 계산
-          final Offset newTopLeft = Offset(clampedX, clampedY);
-          final Offset centerLocal = Offset(
-            newTopLeft.dx + (effW / 2),
-            newTopLeft.dy - scrollY + (effH / 2),
-          );
-          final bool overTrash = _TrashBinState.isOverTrashLocal(
-            context,
-            centerLocal,
-          );
-          if (context.read<StickerService>().dragOverDelete != overTrash) {
-            context.read<StickerService>().setDragOverDelete(overTrash);
+            final delta = d.focalPoint - _lastFocalPoint;
+            _lastFocalPoint = d.focalPoint;
+
+            // 안전한 스케일 계산
+            final double rawScale = d.scale.clamp(0.1, 10.0);
+            final double wantedScale = _dragStartScale * rawScale;
+            final double effectiveScale = wantedScale.clamp(
+              StickerService.minScale,
+              StickerService.maxScale,
+            );
+            final double scaleDelta = (effectiveScale / _dragStartScale).clamp(
+              0.1,
+              10.0,
+            );
+
+            // 뷰포트 정보
+            final double scrollY =
+                widget.scrollController.hasClients
+                    ? widget.scrollController.offset
+                    : 0.0;
+            final Size vs = MediaQuery.of(context).size;
+            // final double safeBottom = MediaQuery.of(context).padding.bottom;
+
+            // 현재 및 목표 위치
+            final Offset cur = context.read<StickerService>().dragPreviewPos;
+            final Offset want = cur + delta;
+
+            // 실제 렌더 스케일 (등장 애니메이션 포함)
+            final double appearFactor =
+                (_appearCtrl.isAnimating || _appearCtrl.isCompleted)
+                    ? (0.82 +
+                        0.18 * Curves.easeOutBack.transform(_appearCtrl.value))
+                    : 1.0;
+            final double finalScale = effectiveScale * appearFactor;
+
+            // 레이아웃(히트박스) 베이스 크기 - Transform은 레이아웃 크기를 바꾸지 않음
+            final double baseW = _stickerSize.width;
+            final double baseH = _stickerSize.height;
+
+            // 컨텐츠 크기(히트패딩 제외) 기준으로 실제 그려지는 크기 계산
+            const double hitboxPadding = 10.0;
+            final double contentW = (baseW - hitboxPadding * 2).clamp(
+              1.0,
+              double.infinity,
+            );
+            final double contentH = (baseH - hitboxPadding * 2).clamp(
+              1.0,
+              double.infinity,
+            );
+            final double scaledContentW = contentW * finalScale;
+            final double scaledContentH = contentH * finalScale;
+
+            // 회전 포함 AABB (컨텐츠 기준)
+            final double rotation =
+                (_dragStartRotation + d.rotation) % (2 * math.pi);
+            final double cosR = math.cos(rotation).abs().clamp(0.0, 1.0);
+            final double sinR = math.sin(rotation).abs().clamp(0.0, 1.0);
+            final double aabbW = (scaledContentW * cosR + scaledContentH * sinR)
+                .clamp(1.0, vs.width * 2);
+            final double aabbH = (scaledContentW * sinR + scaledContentH * cosR)
+                .clamp(1.0, vs.height * 2);
+
+            // 경계 계산 (Stack 실제 크기 사용)
+            final RenderBox? stackBox =
+                widget.stackKey.currentContext?.findRenderObject()
+                    as RenderBox?;
+            final double viewportW = (stackBox?.size.width ?? vs.width).clamp(
+              1.0,
+              double.infinity,
+            );
+            final double viewportH = (stackBox?.size.height ?? vs.height).clamp(
+              1.0,
+              double.infinity,
+            );
+
+            // 목표 중심점 (레이아웃 기준 중심 = topLeft + base/2)
+            final double wantCenterX = want.dx + baseW / 2;
+            final double wantCenterY = want.dy + baseH / 2;
+
+            final double halfAabbW = aabbW / 2;
+            final double halfAabbH = aabbH / 2;
+
+            // 중심점 대칭 클램프
+            final double clampedCenterX = wantCenterX.clamp(
+              halfAabbW,
+              math.max(halfAabbW, viewportW - halfAabbW),
+            );
+            final double clampedCenterY = wantCenterY.clamp(
+              scrollY + halfAabbH,
+              math.max(scrollY + halfAabbH, scrollY + viewportH - halfAabbH),
+            );
+
+            // 최종 레이아웃 좌상단 (베이스 크기 기준)
+            final double finalX = clampedCenterX - baseW / 2;
+            final double finalY = clampedCenterY - baseH / 2;
+            final Offset clampedDelta = Offset(
+              finalX - cur.dx,
+              finalY - cur.dy,
+            );
+
+            // 휴지통 hover 판정 (레이아웃 중심 → 스택 로컬 Y는 scroll 보정)
+            final Offset centerLocal = Offset(
+              finalX + baseW / 2,
+              finalY - scrollY + baseH / 2,
+            );
+            final bool overTrash = _TrashBinState.isOverTrashLocal(
+              context,
+              centerLocal,
+            );
+            if (context.read<StickerService>().dragOverDelete != overTrash) {
+              context.read<StickerService>().setDragOverDelete(overTrash);
+            }
+
+            svc.updateDrag(
+              clampedDelta,
+              scaleDelta: scaleDelta,
+              rotationDelta: d.rotation,
+            );
+          } catch (e) {
+            // 수학적 오류 발생 시 안전하게 무시
+            debugPrint('Sticker boundary calculation error: $e');
           }
-
-          svc.updateDrag(
-            clampedDelta,
-            scaleDelta: nextScale,
-            rotationDelta: d.rotation,
-          );
         },
         onScaleEnd: (_) {
           // 최종 적용

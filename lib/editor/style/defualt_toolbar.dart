@@ -13,6 +13,7 @@ import 'package:doppy/theme/app_colors.dart';
 import 'package:doppy/editor/overlay/mention_overlay.dart';
 import 'package:provider/provider.dart';
 import 'package:doppy/editor/service/sticker_service.dart';
+import 'package:doppy/editor/component/divider_component.dart';
 
 /// 텍스트 스타일링 관리자
 class TextStylingService {
@@ -277,26 +278,48 @@ class TextStylingService {
     ]);
   }
 
-  /// 구분선 삽입: 비어있는 문단으로 표현(스타일시트에서 선으로 렌더)
+  /// 구분선 삽입: 전용 DividerNode를 커서 위치에 삽입
   void insertDivider() {
-    final position = composer.selection?.extent;
-    final insertIndex = _indexAfter(position);
-    final node = ParagraphNode(
-      id: 'divider_${DateTime.now().millisecondsSinceEpoch}',
-      text: AttributedText(''),
-      metadata: {'isDivider': true},
-    );
-    editor.execute([
-      // 캐럿 기준 삽입 + 선택 이동 처리까지 내장됨
-      InsertNodeAtCaretRequest(node: node),
-    ]);
-    print('구분선 삽입: $insertIndex');
-  }
+    // 현재 커서 기준 삽입 인덱스 계산
+    final selection = composer.selection;
+    final int insertIndex;
+    if (selection == null) {
+      insertIndex = editor.document.nodeCount;
+    } else {
+      final nodeId = selection.extent.nodeId;
+      final idx = editor.document.getNodeIndexById(nodeId);
+      insertIndex = idx == -1 ? editor.document.nodeCount : idx + 1;
+    }
 
-  int _indexAfter(DocumentPosition? pos) {
-    if (pos == null) return editor.document.nodeCount;
-    final idx = editor.document.getNodeIndexById(pos.nodeId);
-    return idx == -1 ? editor.document.nodeCount : idx + 1;
+    // 1) DividerNode 삽입
+    final divider = DividerNode(
+      id: 'divider_${DateTime.now().microsecondsSinceEpoch}',
+    );
+
+    // 2) Divider 뒤에 빈 문단 삽입 (정렬 승계)
+    final TextAlign align = getCurrentAlignment();
+    final paragraphId = 'p_${DateTime.now().microsecondsSinceEpoch}';
+    final paragraph = ParagraphNode(
+      id: paragraphId,
+      text: AttributedText(''),
+      metadata: {'textAlign': align.name},
+    );
+
+    editor.execute([
+      InsertNodeAtIndexRequest(nodeIndex: insertIndex, newNode: divider),
+      InsertNodeAtIndexRequest(nodeIndex: insertIndex + 1, newNode: paragraph),
+      // 커서를 새 문단 시작으로 이동
+      ChangeSelectionRequest(
+        DocumentSelection.collapsed(
+          position: DocumentPosition(
+            nodeId: paragraphId,
+            nodePosition: const TextNodePosition(offset: 0),
+          ),
+        ),
+        SelectionChangeType.placeCaret,
+        SelectionReason.userInteraction,
+      ),
+    ]);
   }
 }
 
@@ -369,6 +392,8 @@ extension _TopExpandedRow on _DefaultToolbarState {
               label: '구분선',
               onTap: () {
                 widget.stylingService.insertDivider();
+                // 추가 후 상단 두번째 툴바 닫기
+                _toggle(ToolbarSection.none);
               },
             ),
             const SizedBox(width: 6),
@@ -441,6 +466,30 @@ extension _TopExpandedRow on _DefaultToolbarState {
                               );
                             }
                             // 스티커 추가 후 상단 두번째 툴바 자동 닫기
+                            _toggle(ToolbarSection.none);
+                            Navigator.of(context).maybePop();
+                          },
+                        ),
+                  ),
+                );
+              },
+            ),
+            const SizedBox(width: 6),
+            _buildChip(
+              icon: Icons.alternate_email,
+              label: '언급',
+              onTap: () {
+                Navigator.of(context).push(
+                  PageRouteBuilder(
+                    opaque: false,
+                    barrierDismissible: true,
+                    pageBuilder:
+                        (_, __, ___) => MentionOverlay(
+                          onClose: () {},
+                          onSelect: (username) {},
+                          onSubmit: (usernames) {
+                            widget.editorService.addMentionNode(usernames);
+                            // 언급 추가 후 상단 두번째 툴바 자동 닫기
                             _toggle(ToolbarSection.none);
                             Navigator.of(context).maybePop();
                           },
@@ -737,31 +786,7 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
                 const SizedBox(width: 10),
 
                 // 언급/태그 섹션 (아이콘만, 옵션은 상단 행)
-                _buildMainIcon(
-                  icon: Icons.alternate_email,
-                  isActive: false,
-                  onTap: () {
-                    // 전체 화면 반투명 오버레이 (인스타 스타일)
-                    Navigator.of(context).push(
-                      PageRouteBuilder(
-                        opaque: false,
-                        barrierDismissible: true,
-                        pageBuilder:
-                            (_, __, ___) => MentionOverlay(
-                              onClose: () {},
-                              onSelect: (username) {},
-                              onSubmit: (usernames) {
-                                widget.editorService.addMentionNode(usernames);
-                              },
-                            ),
-                      ),
-                    );
-                  },
-                ),
-                // 더 이상 하단에서 펼치지 않음
-                const SizedBox(width: 10),
-                _buildDivider(),
-                const SizedBox(width: 10),
+                // (언급은 + 메뉴로 이동)
 
                 // 추가(플러스) 섹션 - 상단 행에서 옵션 표시
                 _buildMainIcon(

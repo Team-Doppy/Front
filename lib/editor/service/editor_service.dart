@@ -1,3 +1,4 @@
+import 'package:doppy/editor/component/app_image_node.dart';
 import 'package:doppy/editor/component/link_component.dart';
 import 'package:doppy/editor/component/mention_component.dart';
 import 'package:doppy/editor/component/location_component.dart';
@@ -17,6 +18,9 @@ class EditorService extends ChangeNotifier {
   // 문단별 마진 캐시 (중앙집중 판정 결과)
   bool publishable = false;
   final Map<String, EdgeInsets> _paragraphMargins = <String, EdgeInsets>{};
+  // 제목 스타일 전파 방지용 스냅샷(간소화 이후 미사용)
+  // ignore: unused_field
+  int _lastTitleTextLength = 0;
 
   EditorService({required this.editor, required this.document}) {
     _recomputeParagraphMargins();
@@ -44,6 +48,7 @@ class EditorService extends ChangeNotifier {
       }
       // 삭제는 이전 인덱스 정보를 잃어서 부분 보정보다 전체 재계산이 안전
       _recomputeParagraphMargins();
+      _ensureParagraphAlignmentForIndex(getEditingIndex());
       return;
     }
 
@@ -52,6 +57,8 @@ class EditorService extends ChangeNotifier {
       _ensureParagraphAlignmentForIndex(change.insertionIndex);
       // 삽입 지점 주변(상/하/본인)만 마진 재계산
       _recomputeParagraphMarginsAround(change.insertionIndex);
+      _ensureOnlyFirstIsTitle();
+
       return;
     }
 
@@ -59,6 +66,7 @@ class EditorService extends ChangeNotifier {
       // 이동 전/후 주변만 마진 재계산
       _recomputeParagraphMarginsAround(change.from);
       _recomputeParagraphMarginsAround(change.to);
+      _ensureOnlyFirstIsTitle();
 
       return;
     }
@@ -69,8 +77,10 @@ class EditorService extends ChangeNotifier {
       if (idx != -1) {
         _recomputeParagraphMarginsAround(idx);
         _ensureParagraphAlignmentForIndex(getEditingIndex());
+        _ensureOnlyFirstIsTitle();
       } else {
         _recomputeParagraphMargins();
+        _ensureOnlyFirstIsTitle();
       }
 
       return;
@@ -83,6 +93,8 @@ class EditorService extends ChangeNotifier {
         notifyListeners();
         return;
       }
+      _ensureOnlyFirstIsTitle();
+
       return;
     }
   }
@@ -270,7 +282,8 @@ class EditorService extends ChangeNotifier {
     String? thumbnailUrl,
   }) {
     final safeIndex = _getCaretNodeIndexSafe();
-    final insertIndex = safeIndex;
+    int insertIndex = safeIndex + 1;
+    if (insertIndex > document.nodeCount) insertIndex = document.nodeCount;
 
     final node = LinkNode(
       id: 'link_${DateTime.now().millisecondsSinceEpoch}',
@@ -288,7 +301,8 @@ class EditorService extends ChangeNotifier {
   /// 언급 노드를 현재 커서 다음 슬롯에 삽입
   void addMentionNode(List<String> usernames) {
     final safeIndex = _getCaretNodeIndexSafe();
-    final insertIndex = safeIndex;
+    int insertIndex = safeIndex + 1;
+    if (insertIndex > document.nodeCount) insertIndex = document.nodeCount;
     final node = MentionNode(
       id: 'mention_${DateTime.now().millisecondsSinceEpoch}',
       usernames: usernames,
@@ -367,7 +381,7 @@ class EditorService extends ChangeNotifier {
 
     // 분리할 이미지의 새 ID 생성
     final newImageId = 'image_${DateTime.now().millisecondsSinceEpoch}';
-    final newImageNode = ImageNode(id: newImageId, imageUrl: imageUrl);
+    final newImageNode = AppImageNode(id: newImageId, imageUrl: imageUrl);
 
     // 이미지 행에서 해당 이미지 제거
     final remainingUrls = List<String>.from(rowNode.imageUrls);
@@ -375,7 +389,7 @@ class EditorService extends ChangeNotifier {
 
     if (remainingUrls.length == 1) {
       // 이미지가 1개만 남으면 단일 이미지로 변경
-      final singleImageNode = ImageNode(
+      final singleImageNode = AppImageNode(
         id: rowId,
         imageUrl: remainingUrls.first,
       );
@@ -446,12 +460,12 @@ class EditorService extends ChangeNotifier {
     _recomputeParagraphMarginsAround(centerIndex);
   }
 
-  /// 이미지 추가: 현재 커서 위치에 로컬 경로 기반 이미지 노드 삽입
+  /// 이미지 추가: 현재 커서 다음 줄에 로컬 경로 기반 이미지 노드 삽입
   void addImageNode(String imagePath) {
     try {
       print('이미지 추가: $imagePath');
 
-      final imageNode = ImageNode(
+      final imageNode = AppImageNode(
         id: 'image_${DateTime.now().millisecondsSinceEpoch}',
         imageUrl:
             "https://www.shutterstock.com/image-photo/beautiful-golden-retriever-cute-puppy-260nw-2526542701.jpg",
@@ -459,7 +473,8 @@ class EditorService extends ChangeNotifier {
       );
       // 커서가 있는 줄의 "다음" 위치에 삽입. selection이 없으면 문서 끝 기준.
       final safeIndex = _getCaretNodeIndexSafe();
-      final insertIndex = safeIndex;
+      int insertIndex = safeIndex + 1;
+      if (insertIndex > document.nodeCount) insertIndex = document.nodeCount;
       print('이미지 삽입 인덱스: $insertIndex (safe: $safeIndex)');
 
       editor.execute([
@@ -613,6 +628,44 @@ class EditorService extends ChangeNotifier {
       );
       document.replaceNodeById(title.id, updated);
     }
+  }
+
+  void _ensureOnlyFirstIsTitle() {
+    try {
+      // 0번째 문단은 제목 유지
+      if (document.isNotEmpty) {
+        final node0 = document.getNodeAt(0);
+        if (node0 is ParagraphNode && node0.metadata['isTitle'] == true) {
+          _lastTitleTextLength = node0.text.text.length;
+        }
+
+        if (node0 is ParagraphNode) {
+          final meta0 = Map<String, dynamic>.from(node0.metadata);
+          if (meta0['isTitle'] != true) {
+            meta0['isTitle'] = true;
+            document.replaceNodeById(
+              node0.id,
+              ParagraphNode(id: node0.id, text: node0.text, metadata: meta0),
+            );
+          }
+        }
+      }
+
+      // 1번째 문단부터는 제목 금지(최소 수정: 바로 아래 문단만 확인)
+      if (document.length > 1) {
+        final node1 = document.getNodeAt(1);
+        if (node1 is ParagraphNode) {
+          final meta1 = Map<String, dynamic>.from(node1.metadata);
+          if (meta1['isTitle'] == true) {
+            meta1.remove('isTitle');
+            document.replaceNodeById(
+              node1.id,
+              ParagraphNode(id: node1.id, text: node1.text, metadata: meta1),
+            );
+          }
+        }
+      }
+    } catch (_) {}
   }
 
   /// 위치 노드를 현재 커서 위치에 삽입합니다

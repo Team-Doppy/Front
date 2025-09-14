@@ -96,13 +96,19 @@ class _PostReaderScreenState extends State<PostReaderScreen> {
           ),
           // 읽기 전용 스티커 렌더
           Positioned.fill(
-            child: IgnorePointer(
-              ignoring: true,
-              child: _ReadOnlyStickers(
-                stickers: stickers,
-                layoutKey: _layoutKey,
-                stackKey: _stackKey,
-              ),
+            child: AnimatedBuilder(
+              animation: _scroll,
+              builder: (context, _) {
+                return IgnorePointer(
+                  ignoring: true,
+                  child: _ReadOnlyStickers(
+                    stickers: stickers,
+                    layoutKey: _layoutKey,
+                    stackKey: _stackKey,
+                    scrollController: _scroll,
+                  ),
+                );
+              },
             ),
           ),
         ],
@@ -259,16 +265,20 @@ class _ReadOnlyStickers extends StatelessWidget {
     required this.stickers,
     required this.layoutKey,
     required this.stackKey,
+    required this.scrollController,
   });
   final List stickers;
   final GlobalKey layoutKey;
   final GlobalKey stackKey;
+  final ScrollController scrollController;
 
   @override
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
         final children = <Widget>[];
+        final double scrollY =
+            scrollController.hasClients ? scrollController.offset : 0.0;
         for (final s in stickers) {
           final m = (s as Map).cast<String, dynamic>();
           final type = (m['type'] ?? '').toString();
@@ -277,8 +287,11 @@ class _ReadOnlyStickers extends StatelessWidget {
           final scale = (m['scale'] as num?)?.toDouble() ?? 1.0;
           final anchor = (m['anchor'] as Map?)?.cast<String, dynamic>();
           late final Offset absPos;
+          late final bool needsScrollCompensation;
           if (anchor != null) {
             absPos = _resolveAnchor(anchor);
+            // anchor는 DocumentLayout 기준으로 이미 스크롤을 포함한 스택 로컬 좌표이므로 보정 불필요
+            needsScrollCompensation = false;
           } else {
             final pf =
                 (m['positionFallback'] as Map?)?.cast<String, dynamic>() ?? {};
@@ -286,6 +299,8 @@ class _ReadOnlyStickers extends StatelessWidget {
               (pf['xPx'] as num?)?.toDouble() ?? 0.0,
               (pf['yPx'] as num?)?.toDouble() ?? 0.0,
             );
+            // 절대좌표 fallback은 문서 좌표(스크롤 포함)로 저장되었으므로 화면 배치 시 스크롤 보정 필요
+            needsScrollCompensation = true;
           }
 
           Widget body;
@@ -365,9 +380,12 @@ class _ReadOnlyStickers extends StatelessWidget {
             body = const SizedBox.shrink();
           }
 
+          final double topPos =
+              needsScrollCompensation ? (absPos.dy - scrollY) : absPos.dy;
+
           final w = Positioned(
             left: absPos.dx,
-            top: absPos.dy,
+            top: topPos,
             child: Transform(
               alignment: Alignment.center,
               transform:

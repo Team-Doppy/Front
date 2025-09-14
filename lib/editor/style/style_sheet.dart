@@ -24,7 +24,8 @@ Stylesheet buildCustomStylesheet() {
           }
           // 제목 문단 스타일
           final isTitle = (docNode.metadata['isTitle'] == true);
-          if (isTitle) {
+          // 제목 스타일은 문서의 0번째 문단에만 적용
+          if (isTitle && doc.getNodeIndexById(docNode.id) == 0) {
             return {
               Styles.textStyle: const TextStyle(
                 fontSize: 25,

@@ -5,6 +5,7 @@ import 'package:doppy/editor/component/title_component.dart';
 import 'package:doppy/editor/component/paragraph_component.dart';
 import 'package:doppy/editor/component/location_component.dart';
 import 'package:doppy/editor/component/mention_component.dart';
+import 'package:doppy/editor/component/divider_component.dart';
 import 'package:doppy/editor/image/custom_image_editor_screen.dart';
 import 'package:doppy/editor/overlay/drag_overlay_widget.dart';
 import 'package:doppy/editor/service/drag_service.dart';
@@ -149,6 +150,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
       try {
         final stickerSvc = context.read<StickerService>();
         stickerSvc.select(null);
+        stickerSvc.removeAll();
         // 드래그 상태 리셋을 위해 begin/ end 없이 내부 플래그만 초기화
         // 리스트는 그대로 두되, 화면 이탈이므로 선택/플래그만 리셋
       } catch (_) {}
@@ -226,34 +228,29 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
           backgroundColor: AppColors.darkSurface,
           toolbarHeight: 40,
           scrolledUnderElevation: 0,
-          leading: TextButton(
-            onPressed: () {
-              Navigator.pop(context);
+          leading: GestureDetector(
+            onTap: () async {
+              final decision = await Navigator.of(context).push<ExitDecision>(
+                PageRouteBuilder(
+                  opaque: false,
+                  barrierDismissible: true,
+                  pageBuilder: (_, __, ___) => const SaveDraftOverlay(),
+                ),
+              );
+              if (decision == ExitDecision.saveDraft) {
+                // TODO: 실제 임시저장 로직 연결 (스토리지/로컬 DB)
+                Navigator.of(context).pop();
+              }
+              if (decision == ExitDecision.discard) {
+                // 오버레이 닫힘 애니메이션이 끝난 뒤 안전하게 종료
+                await Future.delayed(const Duration(milliseconds: 180));
+                _cleanupAndExit();
+              }
             },
-            child: GestureDetector(
-              onTap: () async {
-                final decision = await Navigator.of(context).push<ExitDecision>(
-                  PageRouteBuilder(
-                    opaque: false,
-                    barrierDismissible: true,
-                    pageBuilder: (_, __, ___) => const SaveDraftOverlay(),
-                  ),
-                );
-                if (decision == ExitDecision.saveDraft) {
-                  // TODO: 실제 임시저장 로직 연결 (스토리지/로컬 DB)
-                  Navigator.of(context).pop();
-                }
-                if (decision == ExitDecision.discard) {
-                  // 오버레이 닫힘 애니메이션이 끝난 뒤 안전하게 종료
-                  await Future.delayed(const Duration(milliseconds: 180));
-                  _cleanupAndExit();
-                }
-              },
-              child: Icon(
-                Icons.arrow_back_ios_new_rounded,
-                color: AppColors.darkTextPrimary,
-                size: 20,
-              ),
+            child: Icon(
+              Icons.arrow_back_ios_new_rounded,
+              color: AppColors.darkTextPrimary,
+              size: 20,
             ),
           ),
           actions: [
@@ -375,6 +372,10 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                                     MentionComponentBuilder(
                                       dragService: dragService,
                                     ),
+                                    // 구분선 전용 컴포넌트
+                                    DividerComponentBuilder(
+                                      dragService: dragService,
+                                    ),
 
                                     LinkComponentBuilder(
                                       dragService: dragService,
@@ -395,90 +396,89 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                     ),
                   ),
 
-                  Positioned.fill(
-                    child: GestureDetector(
-                      onTapDown: (details) {
-                        // 탭 다운 시 위치 저장
-                        _lastTapPosition = details.globalPosition;
-                        print('탭 다운: ${details.globalPosition}');
-                      },
-                      onTap: () {
-                        // 짧은 클릭 처리
-                        if (_lastTapPosition != null) {
-                          final nodeId =
-                              editorService
-                                  .findNodeAtPosition(_lastTapPosition!)
-                                  ?.id;
-                          if (nodeId != null) {
-                            final node = document.getNodeById(nodeId);
-                            if (node is ImageNode || node is ImageRowNode) {
-                              // 이미지 또는 이미지 행 클릭
-                              ImageService().selectImage(nodeId);
-                            } else {
-                              // 이미지가 아닌 곳 클릭 시 선택 해제
-                              ImageService().selectImage(null);
+                  !context.read<StickerService>().isDragging
+                      ? Positioned.fill(
+                        child: GestureDetector(
+                          onTapDown: (details) {
+                            // 탭 다운 시 위치 저장
+                            _lastTapPosition = details.globalPosition;
+                            print('탭 다운: ${details.globalPosition}');
+                          },
+                          onTap: () {
+                            // 짧은 클릭 처리
+                            if (_lastTapPosition != null) {
+                              final nodeId =
+                                  editorService
+                                      .findNodeAtPosition(_lastTapPosition!)
+                                      ?.id;
+                              if (nodeId != null) {
+                                // 이미지 또는 이미지 행 클릭
+                                final node = document.getNodeById(nodeId);
+                                if (node is ImageNode || node is ImageRowNode) {
+                                  ImageService().selectImage(nodeId);
+                                }
+                              }
                             }
-                          } else {
-                            // 아무 노드도 클릭하지 않은 경우 선택 해제
-                            ImageService().selectImage(null);
-                          }
-                        }
-                      },
-                      onLongPressStart: (details) {
-                        final node = editorService.findNodeAtPosition(
-                          details.globalPosition,
-                        );
-                        print('클릭한 노드: $node');
-                        if (node != null) {
-                          final nodeId = node.id;
-                          final imageService = context.read<ImageService>();
-
-                          if (node is ParagraphNode &&
-                              node.metadata['isTitle'] == true) {
-                            return;
-                          }
-
-                          if (node is ImageRowNode) {
-                            // 이미지 행이 선택된 상태라면 전체 행 드래그
-                            if (imageService.selectedImageId == nodeId) {
-                              dragService.startDrag(
-                                nodeId,
-                                context,
-                                details.globalPosition,
-                              );
-                            } else {
-                              // 손가락이 클릭한 쪽의 가장 근접한 이미지를 분리해서 드래그
-                              _startImageRowDrag(
-                                nodeId,
-                                details.globalPosition,
-                              );
-                            }
-                          } else if (node is ImageNode) {
-                            // 단일 이미지 드래그
-                            dragService.startDrag(
-                              nodeId,
-                              context,
+                          },
+                          onLongPressStart: (details) {
+                            final node = editorService.findNodeAtPosition(
                               details.globalPosition,
                             );
-                          } else {
-                            // 이미지가 아닌 요소 드래그
-                            dragService.startDrag(
-                              nodeId,
-                              context,
+                            print('클릭한 노드: $node');
+                            if (node != null) {
+                              final nodeId = node.id;
+                              final imageService = context.read<ImageService>();
+
+                              if (node is ParagraphNode &&
+                                  node.metadata['isTitle'] == true) {
+                                return;
+                              }
+
+                              if (node is ImageRowNode) {
+                                // 이미지 행이 선택된 상태라면 전체 행 드래그
+                                if (imageService.selectedImageId == nodeId) {
+                                  dragService.startDrag(
+                                    nodeId,
+                                    context,
+                                    details.globalPosition,
+                                  );
+                                } else {
+                                  // 손가락이 클릭한 쪽의 가장 근접한 이미지를 분리해서 드래그
+                                  _startImageRowDrag(
+                                    nodeId,
+                                    details.globalPosition,
+                                  );
+                                }
+                              } else if (node is ImageNode) {
+                                // 단일 이미지 드래그
+                                dragService.startDrag(
+                                  nodeId,
+                                  context,
+                                  details.globalPosition,
+                                );
+                              } else {
+                                // 이미지가 아닌 요소 드래그
+                                dragService.startDrag(
+                                  nodeId,
+                                  context,
+                                  details.globalPosition,
+                                );
+                              }
+                            }
+                          },
+                          onLongPressMoveUpdate: (details) {
+                            dragService.updateDrag(
                               details.globalPosition,
+                              context,
                             );
-                          }
-                        }
-                      },
-                      onLongPressMoveUpdate: (details) {
-                        dragService.updateDrag(details.globalPosition, context);
-                      },
-                      onLongPressEnd: (details) {
-                        dragService.endDrag();
-                      },
-                      behavior: HitTestBehavior.translucent,
-                    ),
-                  ),
+                          },
+                          onLongPressEnd: (details) {
+                            dragService.endDrag();
+                          },
+                          behavior: HitTestBehavior.translucent,
+                        ),
+                      )
+                      : SizedBox.shrink(),
 
                   // 드래그 오버레이 (개선된 Stack 방식)
                   if (dragService.draggingNodeId != null) _buildDragOverlay(),
