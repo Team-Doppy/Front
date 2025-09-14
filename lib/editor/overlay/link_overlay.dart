@@ -52,19 +52,30 @@ class _LinkOverlayState extends State<LinkOverlay> {
           // 배경 블러 + 반투명
           Positioned.fill(
             child: GestureDetector(
-              onVerticalDragEnd: (d) {
-                if (d.primaryVelocity != null && d.primaryVelocity! > 400) {
-                  Navigator.of(context).pop();
-                }
-              },
               child: BackdropFilter(
-                filter: ui.ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+                filter: ui.ImageFilter.blur(sigmaX: 10, sigmaY: 10),
                 child: Container(
-                  color: const ui.Color.fromARGB(66, 161, 161, 161),
+                  color: const ui.Color.fromARGB(182, 144, 144, 144),
                 ),
               ),
             ),
           ),
+
+          Positioned(
+            top: 70,
+            left: 16,
+            right: 16,
+            child: Center(
+              child: Text(
+                '링크 추가',
+                style: TextStyle(
+                  color: AppColors.darkTextPrimary.withOpacity(0.7),
+                  fontSize: 18,
+                ),
+              ),
+            ),
+          ),
+
           // 상단 입력 영역 (인스타 느낌 상단 카드 느낌)
           Positioned(
             top: 50,
@@ -85,7 +96,7 @@ class _LinkOverlayState extends State<LinkOverlay> {
                         onTap: () => Navigator.of(context).pop(),
                         child: Icon(
                           Icons.close,
-                          color: AppColors.darkTextPrimary.withOpacity(0.5),
+                          color: AppColors.darkTextPrimary.withOpacity(0.7),
                         ),
                       ),
                     ],

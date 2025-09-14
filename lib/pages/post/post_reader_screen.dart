@@ -62,6 +62,7 @@ class _PostReaderScreenState extends State<PostReaderScreen> {
     return Scaffold(
       backgroundColor: AppColors.darkSurface,
       appBar: AppBar(
+        toolbarHeight: 40,
         title: const Text('미리보기', style: TextStyle(color: Colors.white)),
         backgroundColor: AppColors.darkSurface,
       ),

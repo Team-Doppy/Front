@@ -47,6 +47,7 @@ dependencies:
   flutter_svg: ^2.2.0
   top_snackbar_flutter: ^3.3.0
   image_editor_plus: ^1.0.4
+  flutter_colorpicker: ^1.0.3
 
 dependency_overrides:
   screenshot: ^3.0.0

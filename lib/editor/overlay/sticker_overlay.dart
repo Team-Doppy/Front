@@ -1,9 +1,8 @@
-import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:doppy/editor/overlay/drawing_overlay.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:image_picker/image_picker.dart';
+import 'package:doppy/editor/image/gallery_bottom_sheet.dart';
 import 'package:doppy/editor/image/custom_image_editor_screen.dart';
 import 'package:doppy/theme/app_colors.dart';
 
@@ -43,8 +42,8 @@ class _StickerOverlayState extends State<StickerOverlay> {
   Uint8List? _imageBytes;
   bool _editing = false;
   // 텍스트 스타일 상태
-  double _fontSize = 50;
-  bool _isBold = true;
+  double _fontSize = 40;
+  bool _isBold = false;
   bool _isItalic = false;
   bool _isUnderline = false;
   Color _textColor = Colors.white;
@@ -141,7 +140,20 @@ class _StickerOverlayState extends State<StickerOverlay> {
             ),
           ),
 
-          // 상단 좌측: 초기 선택 화면(close), 편집 화면(back)
+          Positioned(
+            top: 82,
+            left: 16,
+            right: 16,
+            child: Center(
+              child: Text(
+                '스티커',
+                style: TextStyle(
+                  color: AppColors.darkTextPrimary,
+                  fontSize: 18,
+                ),
+              ),
+            ),
+          ),
           if (_kind == null)
             Positioned(
               top: 80,
@@ -476,7 +488,48 @@ class _StickerOverlayState extends State<StickerOverlay> {
           onChanged: (_) => setState(() => _editing = true),
         );
       case StickerKind.emoji:
-        const emojis = ['😀', '😎', '🔥', '❤️', '🎉'];
+        const emojis = [
+          '😀',
+          '😎',
+          '🔥',
+          '❤️',
+          '🎉',
+          '🤣',
+          '🤔',
+          '🤨',
+          '🤯',
+          '🤠',
+          '🤡',
+          '🤥',
+          '🤤',
+          '🤫',
+          '🤭',
+          '🤮',
+          '🤯',
+          '🤰',
+          '🤱',
+          '🤲',
+          '🤳',
+          '🤴',
+          '🤵',
+          '🤶',
+          '🤷',
+          '🤸',
+          '🤹',
+          '🤺',
+          '🤻',
+          '🤼',
+          '🤽',
+          '🤾',
+          '🤿',
+          '🤹',
+          '🤺',
+          '🤻',
+          '🤼',
+          '🤽',
+          '🤾',
+          '🤿',
+        ];
         return Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: List.generate(emojis.length, (i) {
@@ -607,7 +660,7 @@ class _StickerOverlayState extends State<StickerOverlay> {
                 '#${_textColor.value.toRadixString(16).padLeft(8, '0').toUpperCase()}',
             'letterSpacing': _letterSpacing,
             'neon': _useNeon,
-            'fontSize': _fontSize,
+            'fontSize': 20,
             'align': _textAlign.name,
           },
         );
@@ -627,19 +680,22 @@ class _StickerOverlayState extends State<StickerOverlay> {
   // ===== Helpers =====
   Future<void> _pickImageFromGallery() async {
     try {
-      final picker = ImagePicker();
-      final XFile? file = await picker.pickImage(
-        source: ImageSource.gallery,
-        requestFullMetadata: false,
-        imageQuality: 90,
-        maxWidth: 2048,
-        maxHeight: 2048,
-      );
-      if (file == null) return;
-      final bytes = await file.readAsBytes();
+      // 커스텀 갤러리로 대체됨: 여전히 직접 호출될 수 있으니 동일 동작 수행
       if (!mounted) return;
-      // 선택 직후에는 편집기로 진입하지 않고 미리보기만 설정
-      setState(() => _imageBytes = bytes);
+      await showModalBottomSheet(
+        context: context,
+        backgroundColor: Colors.transparent,
+        isScrollControlled: true,
+        builder:
+            (sheetContext) => GalleryBottomSheet(
+              onImagesSelected: (files) async {
+                if (files.isEmpty) return;
+                final bytes = await files.first.readAsBytes();
+                if (!mounted) return;
+                setState(() => _imageBytes = bytes);
+              },
+            ),
+      );
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(

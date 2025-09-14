@@ -12,24 +12,14 @@ Stylesheet buildCustomStylesheet() {
       // 텍스트 노드 스타일
       StyleRule(BlockSelector.all, (doc, docNode) {
         if (docNode is ParagraphNode) {
-          // 구분선 스타일(빈 문단을 선으로 렌더)
-          if (docNode.metadata['isDivider'] == true) {
-            return {
-              Styles.padding: const CascadingPadding.symmetric(
-                vertical: 10,
-                horizontal: 100,
-              ),
-              Styles.maxWidth: double.infinity,
-            };
-          }
           // 제목 문단 스타일
           final isTitle = (docNode.metadata['isTitle'] == true);
           // 제목 스타일은 문서의 0번째 문단에만 적용
           if (isTitle && doc.getNodeIndexById(docNode.id) == 0) {
             return {
               Styles.textStyle: const TextStyle(
-                fontSize: 25,
-                fontWeight: FontWeight.w900,
+                fontSize: 30,
+                fontWeight: FontWeight.bold,
                 color: AppColors.darkTextPrimary,
               ),
               Styles.padding: const CascadingPadding.only(
@@ -43,7 +33,7 @@ Stylesheet buildCustomStylesheet() {
           return {
             Styles.textStyle: const TextStyle(
               fontSize: 16,
-              color: Color.fromARGB(255, 255, 255, 255),
+              color: Color.fromARGB(213, 255, 255, 255),
             ),
 
             Styles.padding: const CascadingPadding.all(

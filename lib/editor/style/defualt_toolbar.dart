@@ -337,11 +337,7 @@ extension _TopExpandedRow on _DefaultToolbarState {
             if (_textPanel == TextPanel.none) ...[_buildSizeCollapsedButton()],
             if (_textPanel == TextPanel.size) ...[_buildFontSizeRow()],
             if (_textPanel == TextPanel.none) ...[_buildColorCollapsedButton()],
-            if (_textPanel == TextPanel.color) ...[
-              _buildDivider(),
-              const SizedBox(width: 10),
-              _buildColorPaletteRow(),
-            ],
+            if (_textPanel == TextPanel.color) ...[_buildColorPaletteRow()],
 
             // 간단 토글들
             _buildToggleIcon(
@@ -396,7 +392,7 @@ extension _TopExpandedRow on _DefaultToolbarState {
                 _toggle(ToolbarSection.none);
               },
             ),
-            const SizedBox(width: 6),
+
             _buildChip(
               icon: Icons.link,
               label: '링크',
@@ -428,9 +424,9 @@ extension _TopExpandedRow on _DefaultToolbarState {
                 );
               },
             ),
-            const SizedBox(width: 6),
+
             _buildChip(
-              icon: Icons.emoji_emotions_outlined,
+              icon: Icons.copy_all,
               label: '스티커',
               onTap: () {
                 Navigator.of(context).push(
@@ -474,7 +470,7 @@ extension _TopExpandedRow on _DefaultToolbarState {
                 );
               },
             ),
-            const SizedBox(width: 6),
+
             _buildChip(
               icon: Icons.alternate_email,
               label: '언급',
@@ -498,7 +494,7 @@ extension _TopExpandedRow on _DefaultToolbarState {
                 );
               },
             ),
-            const SizedBox(width: 6),
+
             _buildChip(
               icon: Icons.location_on_outlined,
               label: '장소',
@@ -1106,6 +1102,29 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
 
   // 펼쳐진 색상 팔레트 행
   Widget _buildColorPaletteRow() {
+    final List<Color> palette = [
+      Colors.white,
+      Colors.black,
+      const Color(0xFFE53935),
+      const Color(0xFFD81B60),
+      const Color(0xFF8E24AA),
+      const Color(0xFF5E35B1),
+      const Color(0xFF3949AB),
+      const Color(0xFF1E88E5),
+      const Color(0xFF039BE5),
+      const Color(0xFF00ACC1),
+      const Color(0xFF00897B),
+      const Color(0xFF43A047),
+      const Color(0xFF7CB342),
+      const Color(0xFFC0CA33),
+      const Color(0xFFFDD835),
+      const Color(0xFFFFB300),
+      const Color(0xFFF57C00),
+      const Color(0xFF6D4C41),
+      const Color(0xFF9E9E9E),
+      const Color(0xFF607D8B),
+    ];
+
     return Row(
       children: [
         // 왼쪽 화살표
@@ -1122,32 +1141,13 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
           ),
         ),
         const SizedBox(width: 16),
-        _buildColorDot(Colors.red, () {
-          widget.stylingService.applyTextColor(Colors.red);
-          _updateStyles();
-        }),
-        const SizedBox(width: 6),
-        _buildColorDot(Colors.blue, () {
-          widget.stylingService.applyTextColor(Colors.blue);
-          _updateStyles();
-        }),
-        const SizedBox(width: 6),
-        _buildColorDot(Colors.green, () {
-          widget.stylingService.applyTextColor(Colors.green);
-          _updateStyles();
-        }),
-        const SizedBox(width: 6),
-        _buildColorDot(Colors.orange, () {
-          widget.stylingService.applyTextColor(Colors.orange);
-          _updateStyles();
-        }),
-        const SizedBox(width: 6),
-        _buildColorDot(Colors.purple, () {
-          widget.stylingService.applyTextColor(Colors.purple);
-          _updateStyles();
-        }),
-        const SizedBox(width: 16),
-        _buildDivider(),
+        for (final c in palette) ...[
+          _buildColorDot(c, () {
+            widget.stylingService.applyTextColor(c);
+            _updateStyles();
+          }),
+        ],
+
         const SizedBox(width: 16),
       ],
     );

@@ -1,3 +1,5 @@
+import 'dart:math';
+
 import 'package:doppy/editor/component/app_image_node.dart';
 import 'package:doppy/editor/component/link_component.dart';
 import 'package:doppy/editor/component/mention_component.dart';
@@ -281,10 +283,6 @@ class EditorService extends ChangeNotifier {
     String? description,
     String? thumbnailUrl,
   }) {
-    final safeIndex = _getCaretNodeIndexSafe();
-    int insertIndex = safeIndex + 1;
-    if (insertIndex > document.nodeCount) insertIndex = document.nodeCount;
-
     final node = LinkNode(
       id: 'link_${DateTime.now().millisecondsSinceEpoch}',
       url: url,
@@ -292,24 +290,16 @@ class EditorService extends ChangeNotifier {
       description: description ?? '',
       thumbnailUrl: thumbnailUrl ?? '',
     );
-
-    editor.execute([
-      InsertNodeAtIndexRequest(nodeIndex: insertIndex, newNode: node),
-    ]);
+    _insertComponentNodeAtNextLine(node);
   }
 
   /// 언급 노드를 현재 커서 다음 슬롯에 삽입
   void addMentionNode(List<String> usernames) {
-    final safeIndex = _getCaretNodeIndexSafe();
-    int insertIndex = safeIndex + 1;
-    if (insertIndex > document.nodeCount) insertIndex = document.nodeCount;
     final node = MentionNode(
       id: 'mention_${DateTime.now().millisecondsSinceEpoch}',
       usernames: usernames,
     );
-    editor.execute([
-      InsertNodeAtIndexRequest(nodeIndex: insertIndex, newNode: node),
-    ]);
+    _insertComponentNodeAtNextLine(node);
   }
 
   DocumentNode? findNodeAtPosition(Offset position) {
@@ -471,15 +461,7 @@ class EditorService extends ChangeNotifier {
             "https://www.shutterstock.com/image-photo/beautiful-golden-retriever-cute-puppy-260nw-2526542701.jpg",
         altText: '',
       );
-      // 커서가 있는 줄의 "다음" 위치에 삽입. selection이 없으면 문서 끝 기준.
-      final safeIndex = _getCaretNodeIndexSafe();
-      int insertIndex = safeIndex + 1;
-      if (insertIndex > document.nodeCount) insertIndex = document.nodeCount;
-      print('이미지 삽입 인덱스: $insertIndex (safe: $safeIndex)');
-
-      editor.execute([
-        InsertNodeAtIndexRequest(nodeIndex: insertIndex, newNode: imageNode),
-      ]);
+      _insertComponentNodeAtNextLine(imageNode);
     } catch (e) {
       debugPrint('이미지 추가 중 오류: $e');
     }
@@ -492,6 +474,68 @@ class EditorService extends ChangeNotifier {
     if (sel == null) return doc.nodeCount;
     final idx = doc.getNodeIndexById(sel.extent.nodeId);
     return idx == -1 ? doc.nodeCount : idx;
+  }
+
+  /// 공통 삽입 유틸: 현재 커서의 다음 줄에 컴포넌트 노드를 삽입한다.
+  /// 만약 삽입 지점이 문서의 마지막(끝)이면, 그 아래에 빈 문단을 추가하고
+  /// 커서를 그 빈 문단 앞으로 이동한다.
+  void _insertComponentNodeAtNextLine(DocumentNode componentNode) {
+    final doc = editor.document;
+    final safeIndex = _getCaretNodeIndexSafe();
+    int insertIndex = safeIndex + 1;
+    if (insertIndex > doc.nodeCount) insertIndex = doc.nodeCount;
+
+    final bool insertingAtEnd = insertIndex == doc.nodeCount;
+
+    final edits = <EditRequest>[
+      InsertNodeAtIndexRequest(nodeIndex: insertIndex, newNode: componentNode),
+    ];
+
+    if (insertingAtEnd) {
+      final String paragraphId = 'p_${DateTime.now().millisecondsSinceEpoch}';
+      // 직전 문단의 정렬을 승계
+      final String inheritedAlign = _getPreviousParagraphAlign(insertIndex);
+      final ParagraphNode trailingParagraph = ParagraphNode(
+        id: paragraphId,
+        text: AttributedText(''),
+        metadata: {'textAlign': inheritedAlign},
+      );
+      edits.add(
+        InsertNodeAtIndexRequest(
+          nodeIndex: insertIndex + 1,
+          newNode: trailingParagraph,
+        ),
+      );
+      // selection 이동은 프레임 이후로 지연하여 iOS 핸들 레이어의 NPE 방지
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        editor.execute([
+          ChangeSelectionRequest(
+            DocumentSelection.collapsed(
+              position: DocumentPosition(
+                nodeId: paragraphId,
+                nodePosition: const TextNodePosition(offset: 0),
+              ),
+            ),
+            SelectionChangeType.placeCaret,
+            SelectionReason.userInteraction,
+          ),
+        ]);
+      });
+    }
+
+    editor.execute(edits);
+  }
+
+  /// insertIndex 이전의 가장 가까운 문단 정렬을 찾아 반환. 기본값은 'center'
+  String _getPreviousParagraphAlign(int beforeIndex) {
+    for (int i = beforeIndex - 1; i >= 0; i--) {
+      final node = editor.document.getNodeAt(i);
+      if (node is ParagraphNode) {
+        final String? align = node.metadata['textAlign'] as String?;
+        if (align != null) return align;
+      }
+    }
+    return 'center';
   }
 
   // 변경 지점 주변(상/하/본인)만 부분적으로 마진 재계산
@@ -676,12 +720,6 @@ class EditorService extends ChangeNotifier {
     String address = '',
     String description = '',
   }) {
-    final doc = editor.document;
-    final sel = editor.composer.selectionNotifier.value;
-    final currentIndex =
-        sel == null ? -1 : doc.getNodeIndexById(sel.extent.nodeId);
-    final insertIndex = currentIndex == -1 ? doc.nodeCount : currentIndex + 1;
-
     final node = LocationNode(
       id: 'location_${DateTime.now().millisecondsSinceEpoch}',
       lat: lat,
@@ -690,9 +728,6 @@ class EditorService extends ChangeNotifier {
       address: address,
       description: description,
     );
-
-    editor.execute([
-      InsertNodeAtIndexRequest(nodeIndex: insertIndex, newNode: node),
-    ]);
+    _insertComponentNodeAtNextLine(node);
   }
 }

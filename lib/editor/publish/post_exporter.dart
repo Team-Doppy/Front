@@ -198,6 +198,7 @@ class PostExporter {
               'text': (m['text'] ?? '').toString(),
               'style': (m['style'] as Map?)?.cast<String, dynamic>(),
             };
+            print(base['content']);
           } else {
             base['content'] = {'text': s.content.toString(), 'style': null};
           }
@@ -252,6 +253,9 @@ class PostExporter {
 
     return {
       'version': '1.0',
+      'thumnailUrl': '',
+      'title': nodes[0]['text'],
+      'writer': 'anonymous',
       'updatedAt': DateTime.now(),
       'document': {'nodes': nodes},
       'stickers': stickers,
