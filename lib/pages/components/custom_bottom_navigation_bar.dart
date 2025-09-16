@@ -49,16 +49,13 @@ class CustomBottomNavigationBar extends StatelessWidget {
     ];
 
     return Container(
-      height: 64,
-      decoration: const BoxDecoration(
-        color: AppColors.darkBackground,
-        border: Border(top: BorderSide(width: 1, color: AppColors.darkBorder)),
-      ),
+      height: 74,
+      decoration: const BoxDecoration(color: AppColors.darkBackground),
       child: Padding(
-        padding: const EdgeInsets.only(bottom: 15),
+        padding: const EdgeInsets.only(bottom: 30, top: 10),
         child: Row(
           children: List.generate(4, (index) {
-            final iconSize = 25.0;
+            final iconSize = 28.0;
 
             return Expanded(
               child: InkWell(

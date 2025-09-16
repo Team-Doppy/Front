@@ -1,3 +1,6 @@
+import 'dart:io';
+import 'dart:typed_data';
+
 import 'package:doppy/editor/service/drag_service.dart';
 import 'package:doppy/editor/service/image_service.dart';
 import 'package:doppy/theme/app_colors.dart';
@@ -5,6 +8,59 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'dart:math' as math;
 import 'package:super_editor/super_editor.dart';
+
+/// 깜빡이는 플레이스홀더 위젯
+class _ShimmerPlaceholder extends StatefulWidget {
+  const _ShimmerPlaceholder({Key? key}) : super(key: key);
+
+  @override
+  State<_ShimmerPlaceholder> createState() => _ShimmerPlaceholderState();
+}
+
+class _ShimmerPlaceholderState extends State<_ShimmerPlaceholder>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+  late Animation<double> _animation;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      duration: const Duration(milliseconds: 1000),
+      vsync: this,
+    );
+    _animation = Tween<double>(
+      begin: 0.3,
+      end: 0.7,
+    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeInOut));
+    _controller.repeat(reverse: true);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _animation,
+      builder: (context, child) {
+        return Container(
+          padding: const EdgeInsets.all(8),
+          width: double.infinity,
+          height: 200, // 적절한 높이 설정
+          decoration: BoxDecoration(
+            color: Colors.grey.withOpacity(_animation.value),
+            borderRadius: BorderRadius.circular(2),
+            border: Border.all(color: AppColors.darkSurface, width: 2),
+          ),
+        );
+      },
+    );
+  }
+}
 
 class SingleImageComponentBuilder implements ComponentBuilder {
   const SingleImageComponentBuilder({this.dragService});
@@ -63,60 +119,38 @@ class _SingleImageComponentState extends State<SingleImageComponent>
   GlobalKey get componentKey => widget._componentKey;
 
   static const double marginTop = 4;
-  static const double marginBottom = 1;
+  static const double marginBottom = 2;
+  static const double paddingWithText = 15;
 
   @override
   Widget build(BuildContext context) {
+    // selection 핸들이 이미지 노드를 포함할 때만, 그리고 경계가 이미지인 경우 Downstream일 때만 하이라이트
+    // ignore: invalid_use_of_visible_for_testing_member
+    final seState = context.findAncestorStateOfType<SuperEditorState>();
+    // ignore: invalid_use_of_visible_for_testing_member
+    final composerSelection = seState?.editContext.composer.selection;
+    // ignore: invalid_use_of_visible_for_testing_member
+    final doc = seState?.editContext.editor.document;
+    final bool hasImageAbove =
+        doc == null ? false : _hasNeighborImage(doc, widget.nodeId, -1);
+    final bool hasImageBelow =
+        doc == null ? false : _hasNeighborImage(doc, widget.nodeId, 1);
+
     return Column(
       children: [
+        if (!hasImageAbove) SizedBox(height: paddingWithText),
         // 실제 이미지 내용 + 좌/우 세로 라인 (머지 모드에서)
         LayoutBuilder(
           builder: (context, constraints) {
             final editedBytes = context.watch<ImageService>().getEditedBytes(
               widget.nodeId,
             );
-            final image =
-                editedBytes != null
-                    ? Image.memory(editedBytes, fit: BoxFit.contain)
-                    : Image.network(
-                      widget.imageUrl,
-                      fit: BoxFit.contain,
-                      loadingBuilder: (context, child, loadingProgress) {
-                        if (loadingProgress == null) return child;
-                        return const Center(child: CircularProgressIndicator());
-                      },
-                      errorBuilder: (context, error, stackTrace) {
-                        return Container(
-                          color: Colors.grey.shade300,
-                          padding: const EdgeInsets.all(8),
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: const [
-                              Icon(
-                                Icons.broken_image,
-                                size: 40,
-                                color: Colors.grey,
-                              ),
-                              SizedBox(height: 8),
-                              Text(
-                                "이미지를 불러올 수 없습니다.",
-                                style: TextStyle(color: Colors.black54),
-                              ),
-                            ],
-                          ),
-                        );
-                      },
-                    );
+            final image = _buildImage(editedBytes);
 
             final imageService = context.watch<ImageService>();
             final isSelected = imageService.selectedImageId == widget.nodeId;
             // selection 핸들이 이미지 노드를 포함할 때만, 그리고 경계가 이미지인 경우 Downstream일 때만 하이라이트
-            // ignore: invalid_use_of_visible_for_testing_member
-            final seState = context.findAncestorStateOfType<SuperEditorState>();
-            // ignore: invalid_use_of_visible_for_testing_member
-            final composerSelection = seState?.editContext.composer.selection;
-            // ignore: invalid_use_of_visible_for_testing_member
-            final doc = seState?.editContext.editor.document;
+
             bool isSelectionHighlighted = false;
             if (composerSelection != null &&
                 !composerSelection.isCollapsed &&
@@ -137,12 +171,7 @@ class _SingleImageComponentState extends State<SingleImageComponent>
                   ),
                   child: Stack(
                     children: [
-                      GestureDetector(
-                        onTap: () {
-                          // 단일 이미지 선택
-                        },
-                        child: SizedBox(width: double.infinity, child: image),
-                      ),
+                      image,
                       if (isSelectionHighlighted)
                         Positioned.fill(
                           child: IgnorePointer(
@@ -200,6 +229,7 @@ class _SingleImageComponentState extends State<SingleImageComponent>
             );
           },
         ),
+        if (!hasImageBelow) SizedBox(height: paddingWithText),
       ],
     );
   }
@@ -311,30 +341,22 @@ class _SingleImageComponentState extends State<SingleImageComponent>
 
   bool _shouldShowTopDropLine() {
     if (widget.dragService == null) return false;
-
     final dropIndex = widget.dragService.dropIndex;
     if (dropIndex == null) return false;
-
-    // 현재 노드의 인덱스 찾기
     final currentNodeIndex = _getCurrentNodeIndex();
     if (currentNodeIndex == -1) return false;
-
-    // 드롭 인덱스가 현재 노드와 같으면 위쪽에 라인 표시
+    // 이 노드의 위에 삽입하는 경우
     return dropIndex == currentNodeIndex;
   }
 
   bool _shouldShowBottomDropLine() {
     if (widget.dragService == null) return false;
-
     final dropIndex = widget.dragService.dropIndex;
     if (dropIndex == null) return false;
-
-    // 현재 노드의 인덱스 찾기
     final currentNodeIndex = _getCurrentNodeIndex();
     if (currentNodeIndex == -1) return false;
-
-    // 정책: 경계는 상단 컴포넌트만 그린다. 하단 라인은 항상 비활성화하여 이중표시 방지
-    return false;
+    // 이 노드의 아래에 삽입하는 경우 (다음 인덱스)
+    return dropIndex == currentNodeIndex + 1;
   }
 
   bool _shouldShowLeftVerticalLine() {
@@ -426,5 +448,66 @@ class _SingleImageComponentState extends State<SingleImageComponent>
     }
     // 범위 내부에 완전히 포함
     return true;
+  }
+
+  // 이미지 위젯 생성: editedBytes > 로컬 파일 경로 > 네트워크 URL 순서
+  Widget _buildImage(Uint8List? editedBytes) {
+    if (editedBytes != null) {
+      return Image.memory(editedBytes, fit: BoxFit.contain);
+    }
+
+    final url = widget.imageUrl;
+    if (_isLocalPath(url)) {
+      final filePath = url.startsWith('file://') ? url.substring(7) : url;
+      return Image.file(
+        File(filePath),
+        fit: BoxFit.contain,
+        errorBuilder: (context, error, stack) => _errorBox(),
+      );
+    }
+
+    return Image.network(
+      url,
+      fit: BoxFit.contain,
+      loadingBuilder: (context, child, progress) {
+        if (progress == null) return child; // 로드 완료
+        return const _ShimmerPlaceholder(); // 로드 중
+      },
+      errorBuilder: (context, error, stack) => _errorBox(),
+      gaplessPlayback: true,
+    );
+  }
+
+  bool _isLocalPath(String path) {
+    if (path.isEmpty) return false;
+    if (path.startsWith('http://') || path.startsWith('https://')) return false;
+    if (path.startsWith('file://')) return true;
+    return path.startsWith('/') ||
+        path.contains('/Application/') ||
+        path.contains('/Documents/');
+  }
+
+  Widget _errorBox() {
+    return Container(
+      color: Colors.grey.shade300,
+      padding: const EdgeInsets.all(8),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: const [
+          Icon(Icons.broken_image, size: 40, color: Colors.grey),
+          SizedBox(height: 8),
+          Text("이미지를 불러올 수 없습니다.", style: TextStyle(color: Colors.black54)),
+        ],
+      ),
+    );
+  }
+
+  bool _hasNeighborImage(Document doc, String nodeId, int direction) {
+    final myIndex = doc.getNodeIndexById(nodeId);
+    if (myIndex == -1) return false;
+    final neighborIndex = myIndex + direction;
+    if (neighborIndex < 0 || neighborIndex >= doc.nodeCount) return false;
+    final neighbor = doc.getNodeAt(neighborIndex);
+    return neighbor is ImageNode;
   }
 }

@@ -1,6 +1,6 @@
 import 'dart:io';
 import 'dart:typed_data';
-
+import 'package:doppy/data/services/upload_service.dart';
 import 'package:doppy/editor/overlay/sticker_overlay.dart';
 import 'package:flutter/material.dart';
 import 'package:super_editor/super_editor.dart';
@@ -712,20 +712,47 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
                   icon: Icons.camera_alt_outlined,
                   isActive: false,
                   onTap: () {
-                    print('DEBUG: 카메라 아이콘 탭됨 - 갤러리 바텀시트 열기');
                     showModalBottomSheet(
                       context: context,
                       backgroundColor: Colors.transparent,
                       isScrollControlled: true,
                       builder:
                           (sheetContext) => GalleryBottomSheet(
-                            onImagesSelected: (List<File> files) {
+                            onImagesSelected: (List<File> files) async {
                               print('DEBUG: 갤러리에서 선택된 파일 수: ${files.length}');
-                              for (final file in files) {
-                                print('DEBUG: 이미지 추가: ${file.path}');
-                                widget.editorService.addImageNode(file.path);
+                              final upload = context.read<UploadService>();
+
+                              final placeholderIds = <String>[];
+                              for (final f in files) {
+                                placeholderIds.add(
+                                  widget.editorService.addImagePlaceholderNode(
+                                    f.path,
+                                  ),
+                                );
                               }
-                              print('DEBUG: 모든 이미지 추가 완료');
+
+                              final tasks = await upload
+                                  .uploadFilesViaServerBatches(
+                                    files,
+                                    kind: UploadKind.editorImage,
+                                  );
+
+                              final count =
+                                  tasks.length < placeholderIds.length
+                                      ? tasks.length
+                                      : placeholderIds.length;
+                              for (int i = 0; i < count; i++) {
+                                final t = tasks[i];
+                                final id = placeholderIds[i];
+                                if (t.state == UploadState.success &&
+                                    (t.url ?? '').isNotEmpty) {
+                                  await widget.editorService
+                                      .replacePlaceholderWithUrl(id, t.url!);
+                                } else {
+                                  widget.editorService
+                                      .deleteImagePlaceholderNode(id);
+                                }
+                              }
                             },
                           ),
                     );

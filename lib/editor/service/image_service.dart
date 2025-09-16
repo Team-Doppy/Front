@@ -7,6 +7,12 @@ class ImageService extends ChangeNotifier {
   factory ImageService() => _instance;
   ImageService._internal();
 
+  List<String> _imageIds = [];
+  List<String> get imageIds => _imageIds;
+  void addImageId(String imageId) {
+    _imageIds.add(imageId);
+  }
+
   // 현재 선택된 이미지 정보
   String? _selectedImageId;
   // 편집된 이미지 바이트 저장소 (nodeId -> bytes)

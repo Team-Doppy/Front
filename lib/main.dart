@@ -1,7 +1,9 @@
+import 'package:doppy/data/services/upload_service.dart';
 import 'package:doppy/editor/postwrite_screen.dart';
 import 'package:doppy/editor/service/image_service.dart';
 import 'package:doppy/editor/service/sticker_service.dart';
 import 'package:doppy/pages/post/home_screen.dart';
+import 'package:doppy/pages/onboarding/splash_screen.dart';
 import 'package:doppy/pages/post/manage_group_screen.dart';
 import 'package:doppy/pages/post/manage_neighbor_screen.dart';
 import 'package:doppy/pages/post/search_screen.dart';
@@ -42,6 +44,7 @@ Future<void> main() async {
         ChangeNotifierProvider(create: (_) => SearchService()),
         ChangeNotifierProvider(create: (_) => ImageService()),
         ChangeNotifierProvider(create: (_) => StickerService()),
+        ChangeNotifierProvider(create: (_) => UploadService()),
       ],
       child: MyApp(
         hasSeenOnboarding: hasSeenOnboarding,
@@ -64,25 +67,11 @@ class MyApp extends StatelessWidget {
       darkTheme: AppTheme.darkTheme,
       themeMode: ThemeMode.system,
 
-      home: FutureBuilder<bool>(
-        future: AuthProvider().checkLoginStatus(), // 비동기 로그인 체크 함수
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
-          }
-          if (snapshot.hasError) {
-            return const Center(child: Text('에러 발생!'));
-          }
-          if (snapshot.data == true) {
-            return const HomeScreen();
-          } else {
-            return const LoginScreen();
-          }
-        },
-      ),
+      home: const SplashScreen(),
 
       routes: {
         '/home': (_) => const HomeScreen(),
+        '/login': (_) => const LoginScreen(),
         '/search': (_) => const SearchScreen(),
         '/profile': (context) {
           final args = ModalRoute.of(context)?.settings.arguments;

@@ -8,6 +8,7 @@ import 'package:doppy/editor/component/mention_component.dart';
 import 'package:doppy/editor/component/divider_component.dart';
 import 'package:doppy/editor/image/custom_image_editor_screen.dart';
 import 'package:doppy/editor/overlay/drag_overlay_widget.dart';
+import 'package:doppy/editor/publish/post_export_screen.dart';
 import 'package:doppy/editor/service/drag_service.dart';
 import 'package:doppy/editor/service/editor_service.dart';
 import 'package:doppy/editor/service/image_service.dart';
@@ -23,7 +24,6 @@ import 'package:flutter/services.dart';
 import 'package:super_editor/super_editor.dart';
 import 'package:doppy/editor/overlay/save_draft_overlay.dart';
 import 'package:doppy/editor/publish/post_exporter.dart';
-import 'package:doppy/pages/post/post_reader_screen.dart';
 
 /// 글 공개 범위 옵션
 enum VisibilityOption { public, partial, private }
@@ -271,38 +271,23 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                 // ignore: avoid_print
                 print('===== POST JSON =====\n$json');
                 Navigator.of(context).push(
-                  MaterialPageRoute(
-                    builder: (_) => PostReaderScreen(exported: exported),
+                  PageRouteBuilder(
+                    opaque: false,
+                    barrierDismissible: true,
+                    pageBuilder:
+                        (_, __, ___) => PostExportScreen(exported: exported),
                   ),
                 );
               },
               child: Text(
-                '테스트 발행',
+                '다음',
                 style: TextStyle(
                   color: AppColors.darkTextPrimary,
                   fontWeight: FontWeight.w600,
                 ),
               ),
             ),
-            AnimatedBuilder(
-              animation: editorService,
-              builder: (context, _) {
-                final enabled = editorService.publishable;
-                return TextButton(
-                  onPressed: enabled ? () {} : null,
-                  child: Text(
-                    '다음',
-                    style: TextStyle(
-                      color:
-                          enabled
-                              ? AppColors.darkTextPrimary
-                              : AppColors.darkSurface,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                );
-              },
-            ),
+            SizedBox(width: 10),
           ],
         ),
         body: Stack(

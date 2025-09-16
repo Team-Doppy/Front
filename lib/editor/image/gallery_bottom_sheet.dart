@@ -29,12 +29,7 @@ class _GalleryBottomSheetState extends State<GalleryBottomSheet> {
 
   Future<void> _loadAssets() async {
     try {
-      print('DEBUG: 갤러리 에셋 로딩 시작');
-
-      // 권한 확인
-      print('DEBUG: 사진 권한 확인 중...');
       final permission = await PhotoManager.requestPermissionExtend();
-      print('DEBUG: 권한 상태: ${permission.isAuth}, ');
 
       if (!permission.isAuth) {
         setState(() {
@@ -74,7 +69,6 @@ class _GalleryBottomSheetState extends State<GalleryBottomSheet> {
         _assetById = {for (var asset in assets) asset.id: asset};
       });
     } catch (e) {
-      print('DEBUG: 에셋 로딩 오류: $e');
       setState(() {
         _error = '사진을 불러오는 중 오류가 발생했습니다: $e';
         _isLoading = false;
@@ -92,7 +86,6 @@ class _GalleryBottomSheetState extends State<GalleryBottomSheet> {
         _selectedOrder.add(assetId);
       }
     });
-    print('DEBUG: 선택된 이미지 수: ${_selectedOrder.length}');
   }
 
   Future<void> _confirmSelection() async {
@@ -101,8 +94,6 @@ class _GalleryBottomSheetState extends State<GalleryBottomSheet> {
       return;
     }
 
-    print('DEBUG: 선택 확인 - ${_selectedOrder.length}개 이미지');
-
     try {
       final List<File> selectedFiles = [];
 
@@ -110,44 +101,28 @@ class _GalleryBottomSheetState extends State<GalleryBottomSheet> {
       for (final assetId in _selectedOrder) {
         final asset = _assetById[assetId];
         if (asset != null) {
-          print('DEBUG: 에셋 처리 중: $assetId');
-          try {
-            // 먼저 로컬 파일 시도
-            final file = await asset.file;
-            if (file != null) {
-              selectedFiles.add(file);
-              print('DEBUG: 로컬 파일 추가됨: ${file.path}');
-            } else {
-              print('DEBUG: 로컬 파일이 null, 원본 시도: $assetId');
-              // 로컬 파일이 없으면 원본 다운로드 시도
-              try {
-                final originFile = await asset.originFile;
-                if (originFile != null) {
-                  selectedFiles.add(originFile);
-                  print('DEBUG: 원본 파일 추가됨: ${originFile.path}');
-                } else {
-                  print('DEBUG: 원본 파일도 null: $assetId');
-                }
-              } catch (originError) {
-                print('DEBUG: 원본 다운로드 실패 - $assetId: $originError');
-                // iCloud 오류는 무시하고 계속 진행
+          // 먼저 로컬 파일 시도
+          final file = await asset.file;
+          if (file != null) {
+            selectedFiles.add(file);
+          } else {
+            // 로컬 파일이 없으면 원본 다운로드 시도
+            try {
+              final originFile = await asset.originFile;
+              if (originFile != null) {
+                selectedFiles.add(originFile);
+              } else {
+                print('DEBUG: 원본 파일도 null: $assetId');
               }
-            }
-          } catch (e) {
-            print('DEBUG: 파일 처리 중 오류 - $assetId: $e');
-            // CloudPhotoLibraryErrorDomain 오류는 무시하고 계속 진행
-            if (e.toString().contains('CloudPhotoLibraryErrorDomain')) {
-              print('DEBUG: iCloud 이미지 오류 무시하고 계속 진행');
+            } catch (originError) {
+              print('DEBUG: 원본 파일 오류 아마 iCloud 이미지: $originError');
             }
           }
         }
       }
 
-      print('DEBUG: 최종 선택된 파일 수: ${selectedFiles.length}');
-
       // 바텀시트 닫기
       Navigator.pop(context);
-
       // 이미지 선택 콜백 호출
       if (selectedFiles.isNotEmpty) {
         widget.onImagesSelected(selectedFiles);
@@ -164,10 +139,9 @@ class _GalleryBottomSheetState extends State<GalleryBottomSheet> {
         width: double.infinity,
         height: double.infinity,
         fit: BoxFit.cover,
-        thumbnailSize: const ThumbnailSize(200, 250), // 썸네일 크기 줄임
+        thumbnailSize: const ThumbnailSize(200, 250),
         isOriginal: false,
         errorBuilder: (context, error, stackTrace) {
-          print('DEBUG: 이미지 로딩 실패 - ${asset.id}: $error');
           return Container(
             color: AppColors.darkSurfaceVariant,
             child: Column(
@@ -235,16 +209,30 @@ class _GalleryBottomSheetState extends State<GalleryBottomSheet> {
   @override
   Widget build(BuildContext context) {
     return Container(
-      height: MediaQuery.of(context).size.height * 0.9,
+      height: MediaQuery.of(context).size.height * 0.92,
       decoration: BoxDecoration(
-        color: const Color.fromARGB(255, 32, 32, 32).withOpacity(0.9),
+        color: const Color.fromARGB(255, 56, 56, 56),
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
       child: Column(
         children: [
+          Center(
+            child: Padding(
+              padding: const EdgeInsets.only(top: 16.0),
+              child: Container(
+                width: 44,
+                height: 5,
+                decoration: BoxDecoration(
+                  color: Colors.white24,
+                  borderRadius: BorderRadius.circular(3),
+                ),
+              ),
+            ),
+          ),
+
           // 헤더
           Container(
-            padding: EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+            padding: EdgeInsets.symmetric(horizontal: 8, vertical: 0),
             decoration: BoxDecoration(
               border: Border(
                 bottom: BorderSide(color: AppColors.darkBorder, width: 0.5),
@@ -259,7 +247,8 @@ class _GalleryBottomSheetState extends State<GalleryBottomSheet> {
                     '취소',
                     style: TextStyle(
                       color: AppColors.darkTextSecondary,
-                      fontSize: 16,
+                      fontSize: 17,
+                      fontWeight: FontWeight.w600,
                     ),
                   ),
                 ),

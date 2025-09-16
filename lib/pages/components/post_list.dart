@@ -1,7 +1,7 @@
 import 'dart:math';
 import 'package:doppy/pages/components/post_card.dart';
 import 'package:flutter/material.dart';
-import 'package:doppy/pages/post/postview_screen.dart';
+import 'package:doppy/pages/post/immersive_post_screen.dart';
 import 'package:doppy/data/models/post_data.dart';
 
 class PostList extends StatefulWidget {
@@ -27,7 +27,8 @@ class _PostListState extends State<PostList> {
   @override
   void initState() {
     super.initState();
-    _pageController = PageController();
+    // 측면 프리뷰 유지 + 간격 약간 축소
+    _pageController = PageController(viewportFraction: 0.8);
     _pageController.addListener(() {
       if (_pageController.hasClients) {
         final current = _pageController.page ?? _currentIndex.toDouble();
@@ -93,8 +94,9 @@ class _PostListState extends State<PostList> {
         return false;
       },
       child: PageView.builder(
-        scrollDirection: Axis.vertical,
+        scrollDirection: Axis.horizontal,
         controller: _pageController,
+        physics: const BouncingScrollPhysics(),
         onPageChanged: (index) {
           setState(() {
             _currentIndex = index;
@@ -129,15 +131,37 @@ class _PostListState extends State<PostList> {
       progress = (_currentIndex == index) ? 1.0 : 0.0;
     }
 
+    // 중앙 확대 효과 및 패럴럭스 오프셋 계산
+    final hasClients = _pageController.hasClients;
+    final currentPage = hasClients ? _page : _currentIndex.toDouble();
+    final delta = (hasClients ? (currentPage - index) : 0.0);
+    final distance = delta.abs().clamp(0.0, 1.0);
+    final double scale = 0.92 + (1.0 - distance) * 0.08; // 0.92 ~ 1.0
+    final double parallaxX = -delta * 24.0; // 좌우 24px 패럴럭스
+
+    // 간격 좁히기: viewportFraction은 유지하되, 각 페이지의 실제 콘텐츠 폭을
+    // FractionallySizedBox로 살짝 늘려 자연스럽게 간격을 줄인다.
     return GestureDetector(
       onTap: () {
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (context) => PostviewScreen(postId: post.postId),
+        final String heroTag = 'post-hero-${post.postId}';
+        Navigator.of(context).push(
+          PageRouteBuilder(
+            transitionDuration: const Duration(milliseconds: 520),
+            reverseTransitionDuration: const Duration(milliseconds: 360),
+            opaque: true,
+            pageBuilder:
+                (_, __, ___) => ImmersivePostScreen(
+                  heroTag: heroTag,
+                  imageAsset: post.imagePath,
+                  title: post.title,
+                  content: post.content,
+                ),
+            transitionsBuilder: (_, animation, __, child) {
+              // Hero가 전환을 주도하도록 특별한 래핑 없이 그대로 반환
+              return child;
+            },
           ),
         );
-        print('전체 이웃 글 ${post.postId} 클릭');
       },
       onDoubleTap: () {
         setState(() {
@@ -148,12 +172,15 @@ class _PostListState extends State<PostList> {
       child: PostCard(
         containerWidth: widget.containerWidth,
         imagePath: post.imagePath,
+        heroTag: 'post-hero-${post.postId}',
         title: post.title,
         author: post.author,
         content: post.content,
         isVisible: _currentIndex == index,
         tags: post.tags ?? [],
         scrollProgress: progress,
+        scale: scale,
+        parallaxX: parallaxX,
       ),
     );
   }

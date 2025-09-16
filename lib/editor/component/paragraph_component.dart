@@ -91,11 +91,24 @@ class _ParagraphWithDropLines extends StatelessWidget {
         final currentIndex = dragService.getNodeIndex(nodeId);
         final dropIndex = dragService.dropIndex;
         final isSelf = dragService.draggingNodeId == nodeId;
-        final showTop =
+        bool showTop =
             dropIndex != null &&
             !isSelf &&
             currentIndex != -1 &&
             dropIndex == currentIndex;
+
+        // 방어: 위 노드가 이미지면 상단 라인 비표시(이미지가 하단 라인을 그리도록 위임)
+        if (showTop) {
+          try {
+            final doc = editorService.editor.document;
+            if (currentIndex - 1 >= 0) {
+              final prev = doc.getNodeAt(currentIndex - 1);
+              if (prev is ImageNode) {
+                showTop = false;
+              }
+            }
+          } catch (_) {}
+        }
 
         // 중앙집중 규칙에 따른 텍스트 마진 적용
         final EdgeInsets margin = editorService.getParagraphMargin(nodeId);

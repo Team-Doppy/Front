@@ -79,6 +79,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
               ),
             ),
+            SizedBox(height: 80),
 
             // 포스트 리스트 - 남은 공간 모두 사용
             Expanded(

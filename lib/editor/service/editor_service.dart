@@ -1,5 +1,4 @@
-import 'dart:math';
-
+import 'dart:async';
 import 'package:doppy/editor/component/app_image_node.dart';
 import 'package:doppy/editor/component/link_component.dart';
 import 'package:doppy/editor/component/mention_component.dart';
@@ -25,7 +24,7 @@ class EditorService extends ChangeNotifier {
   int _lastTitleTextLength = 0;
 
   EditorService({required this.editor, required this.document}) {
-    _recomputeParagraphMargins();
+    // _recomputeParagraphMargins();
     document.addListener(_onDocumentChanged);
     editor.composer.selectionNotifier.addListener(_onSelectionChanged);
   }
@@ -49,7 +48,7 @@ class EditorService extends ChangeNotifier {
         return;
       }
       // 삭제는 이전 인덱스 정보를 잃어서 부분 보정보다 전체 재계산이 안전
-      _recomputeParagraphMargins();
+      //_recomputeParagraphMargins();
       _ensureParagraphAlignmentForIndex(getEditingIndex());
       return;
     }
@@ -58,7 +57,7 @@ class EditorService extends ChangeNotifier {
       // 새 문단의 정렬 승계
       _ensureParagraphAlignmentForIndex(change.insertionIndex);
       // 삽입 지점 주변(상/하/본인)만 마진 재계산
-      _recomputeParagraphMarginsAround(change.insertionIndex);
+      //_recomputeParagraphMarginsAround(change.insertionIndex);
       _ensureOnlyFirstIsTitle();
 
       return;
@@ -66,8 +65,8 @@ class EditorService extends ChangeNotifier {
 
     if (change is NodeMovedEvent) {
       // 이동 전/후 주변만 마진 재계산
-      _recomputeParagraphMarginsAround(change.from);
-      _recomputeParagraphMarginsAround(change.to);
+      //_recomputeParagraphMarginsAround(change.from);
+      //_recomputeParagraphMarginsAround(change.to);
       _ensureOnlyFirstIsTitle();
 
       return;
@@ -77,11 +76,11 @@ class EditorService extends ChangeNotifier {
       // 타입 변경 등 구조 영향 가능 → 해당 인덱스만 우선 보정, 없으면 전체
       final idx = document.getNodeIndexById(change.nodeId);
       if (idx != -1) {
-        _recomputeParagraphMarginsAround(idx);
+        //_recomputeParagraphMarginsAround(idx);
         _ensureParagraphAlignmentForIndex(getEditingIndex());
         _ensureOnlyFirstIsTitle();
       } else {
-        _recomputeParagraphMargins();
+        // _recomputeParagraphMargins();
         _ensureOnlyFirstIsTitle();
       }
 
@@ -143,8 +142,8 @@ class EditorService extends ChangeNotifier {
         targetIndex > currentIndex ? targetIndex - 1 : targetIndex;
     document.insertNodeAt(insertIndex, node);
     // 문서 구조 변경 → 주변만 마진 재계산(O(1))
-    _recomputeParagraphMarginsAround(insertIndex);
-    _recomputeParagraphMarginsAround(currentIndex);
+    //_recomputeParagraphMarginsAround(insertIndex);
+    //_recomputeParagraphMarginsAround(currentIndex);
     notifyListeners();
   }
 
@@ -216,7 +215,7 @@ class EditorService extends ChangeNotifier {
         draggingIndex < targetIndex ? draggingIndex : targetIndex;
     document.insertNodeAt(insertIndex, imageRowNode);
     // 문서 구조 변경 → 주변만 마진 재계산(O(1))
-    _recomputeParagraphMarginsAround(insertIndex);
+    // _recomputeParagraphMarginsAround(insertIndex);
     notifyListeners();
   }
 
@@ -248,7 +247,7 @@ class EditorService extends ChangeNotifier {
     // 문서 구조 변경 → 행 주변만 마진 재계산(O(1))
     final int rowIndex = document.getNodeIndexById(rowId);
     if (rowIndex != -1) {
-      _recomputeParagraphMarginsAround(rowIndex);
+      //_recomputeParagraphMarginsAround(rowIndex);
     }
     notifyListeners();
   }
@@ -397,8 +396,8 @@ class EditorService extends ChangeNotifier {
     final int targetInsertIndex = insertIndex ?? rowIndex;
     document.insertNodeAt(targetInsertIndex, newImageNode);
     // 문서 구조 변경 → 분리 삽입 위치와 원래 행 주변만 마진 재계산(O(1))
-    _recomputeParagraphMarginsAround(targetInsertIndex);
-    _recomputeParagraphMarginsAround(rowIndex);
+    // _recomputeParagraphMarginsAround(targetInsertIndex);
+    //_recomputeParagraphMarginsAround(rowIndex);
     notifyListeners();
 
     return newImageId;
@@ -413,6 +412,8 @@ class EditorService extends ChangeNotifier {
 
   /// 현재 문서 스냅샷을 순회하며 모든 Paragraph에 대해
   /// 이미지와 이웃한 쪽에만 마진을 주는 규칙을 계산한다.
+  /// /*
+  /*
   void _recomputeParagraphMargins() {
     _paragraphMargins.clear();
 
@@ -443,11 +444,11 @@ class EditorService extends ChangeNotifier {
 
       _paragraphMargins[node.id] = margin;
     }
-  }
+  }*/
 
   /// 변경 지점 주변(상/하/본인)만 부분적으로 마진 재계산 (public)
   void recomputeParagraphMarginsAround(int centerIndex) {
-    _recomputeParagraphMarginsAround(centerIndex);
+    //_recomputeParagraphMarginsAround(centerIndex);
   }
 
   /// 이미지 추가: 현재 커서 다음 줄에 로컬 경로 기반 이미지 노드 삽입
@@ -457,14 +458,92 @@ class EditorService extends ChangeNotifier {
 
       final imageNode = AppImageNode(
         id: 'image_${DateTime.now().millisecondsSinceEpoch}',
-        imageUrl:
-            "https://www.shutterstock.com/image-photo/beautiful-golden-retriever-cute-puppy-260nw-2526542701.jpg",
+        imageUrl: imagePath,
         altText: '',
       );
       _insertComponentNodeAtNextLine(imageNode);
     } catch (e) {
       debugPrint('이미지 추가 중 오류: $e');
     }
+  }
+
+  String addImagePlaceholderNode(String localPath) {
+    final id = 'img_${DateTime.now().microsecondsSinceEpoch}';
+    // 로컬 파일 경로를 바로 imageUrl에 넣어 미리보기로 사용
+    final imageNode = AppImageNode(
+      id: id,
+      imageUrl: localPath.startsWith('file://') ? localPath : localPath,
+      altText: '',
+      metadata: {'isPlaceholder': true, 'localPath': localPath},
+    );
+    _insertComponentNodeAtNextLine(imageNode);
+    return id;
+  }
+
+  Future<void> replacePlaceholderWithUrl(String id, String url) async {
+    try {
+      // 0) 네트워크 이미지 미리 로드하여 교체 시 깜빡임 제거
+      final provider = NetworkImage(url);
+      final completer = Completer<void>();
+      final stream = provider.resolve(const ImageConfiguration());
+      late ImageStreamListener listener;
+      listener = ImageStreamListener(
+        (image, synchronousCall) {
+          if (!completer.isCompleted) completer.complete();
+        },
+        onError: (error, stackTrace) {
+          if (!completer.isCompleted) completer.complete();
+        },
+      );
+      stream.addListener(listener);
+      await completer.future.timeout(
+        const Duration(seconds: 5),
+        onTimeout: () {},
+      );
+      try {
+        stream.removeListener(listener);
+      } catch (_) {}
+
+      // 1) iOS 핸들 NPE 방지: 교체 중 selection 비우기
+      final prevSelection = editor.composer.selectionNotifier.value;
+      try {
+        editor.composer.clearSelection();
+      } catch (_) {}
+
+      // 2) 동일 id로 교체
+      final newNode = AppImageNode(
+        id: id,
+        imageUrl: url,
+        altText: '',
+        metadata: {'isPlaceholder': false},
+      );
+      editor.execute([
+        ReplaceNodeRequest(existingNodeId: id, newNode: newNode),
+      ]);
+
+      // 3) 다음 프레임에서 selection 복원
+      if (prevSelection != null) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          try {
+            editor.execute([
+              ChangeSelectionRequest(
+                prevSelection,
+                SelectionChangeType.placeCaret,
+                SelectionReason.userInteraction,
+              ),
+            ]);
+          } catch (_) {}
+        });
+      }
+    } catch (e) {
+      debugPrint('replacePlaceholderWithUrl failed: $e');
+    }
+  }
+
+  void deleteImagePlaceholderNode(String id) {
+    try {
+      document.deleteNode(id);
+    } catch (_) {}
   }
 
   // selection이 null이거나 nodeId를 찾지 못해도 문서 끝을 반환하여 안전
@@ -538,6 +617,7 @@ class EditorService extends ChangeNotifier {
     return 'center';
   }
 
+  /*
   // 변경 지점 주변(상/하/본인)만 부분적으로 마진 재계산
   void _recomputeParagraphMarginsAround(int centerIndex) {
     for (final i in <int>[centerIndex - 1, centerIndex, centerIndex + 1]) {
@@ -564,6 +644,7 @@ class EditorService extends ChangeNotifier {
       );
     }
   }
+  */
 
   /// 외부에서 문단의 마진을 조회
   EdgeInsets getParagraphMargin(String nodeId) {
