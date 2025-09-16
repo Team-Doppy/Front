@@ -1,3 +1,4 @@
+import 'package:doppy/editor/component/row_image_component.dart';
 import 'package:doppy/theme/app_colors.dart';
 import 'package:flutter/material.dart';
 import 'package:super_editor/super_editor.dart';
@@ -103,15 +104,12 @@ class _ParagraphWithDropLines extends StatelessWidget {
             final doc = editorService.editor.document;
             if (currentIndex - 1 >= 0) {
               final prev = doc.getNodeAt(currentIndex - 1);
-              if (prev is ImageNode) {
+              if (prev is ImageNode || prev is ImageRowNode) {
                 showTop = false;
               }
             }
           } catch (_) {}
         }
-
-        // 중앙집중 규칙에 따른 텍스트 마진 적용
-        final EdgeInsets margin = editorService.getParagraphMargin(nodeId);
 
         Widget content = DefaultTextStyle.merge(
           textAlign: _resolveTextAlign(),
@@ -120,7 +118,7 @@ class _ParagraphWithDropLines extends StatelessWidget {
 
         return Stack(
           children: [
-            Padding(padding: margin, child: content),
+            Padding(padding: EdgeInsets.zero, child: content),
             if (showTop)
               Positioned(
                 top: 0,

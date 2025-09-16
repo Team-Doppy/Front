@@ -310,8 +310,11 @@ class _ImageRowComponentState extends State<ImageRowComponent>
     final imageService = context.watch<ImageService>();
     final isSelected = imageService.selectedImageId == widget.nodeId;
     // selection 핸들이 이 행 이미지 노드를 포함할 때만, 경계가 이 노드면 Downstream일 때 포함
+    // ignore: invalid_use_of_visible_for_testing_member
     final seState = context.findAncestorStateOfType<SuperEditorState>();
+    // ignore: invalid_use_of_visible_for_testing_member
     final composerSelection = seState?.editContext.composer.selection;
+    // ignore: invalid_use_of_visible_for_testing_member
     final doc = seState?.editContext.editor.document;
     bool isSelectionHighlighted = false;
     if (composerSelection != null &&
@@ -323,161 +326,186 @@ class _ImageRowComponentState extends State<ImageRowComponent>
         widget.nodeId,
       );
     }
+    const double paddingWithText = 15;
 
-    return Stack(
+    // 위/아래가 이미지인지 판정하여 SingleImage와 동일한 여백 정책 적용
+    final bool hasImageAbove = _hasNeighborImage(doc, widget.nodeId, -1);
+    final bool hasImageBelow = _hasNeighborImage(doc, widget.nodeId, 1);
+
+    return Column(
       children: [
-        Padding(
-          padding: EdgeInsets.only(top: marginTop, bottom: marginBottom),
-          child: Stack(
-            children: [
-              GestureDetector(
-                onTap: () {
-                  // 이미지 행 선택
-                },
-                child: LayoutBuilder(
-                  builder: (context, constraints) {
-                    return Row(
-                      children: [
-                        // 이미지들
-                        ...widget.imageUrls.asMap().entries.map((entry) {
-                          final imageUrl = entry.value;
-                          return Expanded(
-                            child: Container(
-                              margin:
-                                  imageUrl == widget.imageUrls.last
-                                      ? EdgeInsets.zero
-                                      : EdgeInsets.only(right: 1),
-                              child: SizedBox(
-                                height: _unifiedHeight ?? 260,
-                                child: Image.network(
-                                  imageUrl,
-                                  fit: BoxFit.cover,
-                                  loadingBuilder: (context, child, loading) {
-                                    if (loading == null) return child;
-                                    return Container(
-                                      height: _unifiedHeight ?? 260,
-                                      color: Colors.grey.shade200,
-                                      child: const Center(
-                                        child: CircularProgressIndicator(),
-                                      ),
-                                    );
-                                  },
-                                  errorBuilder: (context, error, stack) {
-                                    return Container(
-                                      height: _unifiedHeight ?? 260,
-                                      color: Colors.grey.shade300,
-                                      child: const Center(
-                                        child: Column(
-                                          mainAxisSize: MainAxisSize.min,
-                                          children: [
-                                            Icon(
-                                              Icons.broken_image,
-                                              size: 40,
-                                              color: Colors.grey,
+        if (!hasImageAbove) SizedBox(height: paddingWithText),
+        Stack(
+          children: [
+            Padding(
+              padding: EdgeInsets.only(top: marginTop, bottom: marginBottom),
+              child: Stack(
+                children: [
+                  GestureDetector(
+                    onTap: () {
+                      // 이미지 행 선택
+                    },
+                    child: LayoutBuilder(
+                      builder: (context, constraints) {
+                        return Row(
+                          children: [
+                            // 이미지들
+                            ...widget.imageUrls.asMap().entries.map((entry) {
+                              final imageUrl = entry.value;
+                              return Expanded(
+                                child: Container(
+                                  margin:
+                                      imageUrl == widget.imageUrls.last
+                                          ? EdgeInsets.zero
+                                          : EdgeInsets.only(right: 1),
+                                  child: SizedBox(
+                                    height: _unifiedHeight ?? 260,
+                                    child: Image.network(
+                                      imageUrl,
+                                      fit: BoxFit.cover,
+                                      loadingBuilder: (
+                                        context,
+                                        child,
+                                        loading,
+                                      ) {
+                                        if (loading == null) return child;
+                                        return Container(
+                                          height: _unifiedHeight ?? 260,
+                                          color: Colors.grey.shade200,
+                                          child: const Center(
+                                            child: CircularProgressIndicator(),
+                                          ),
+                                        );
+                                      },
+                                      errorBuilder: (context, error, stack) {
+                                        return Container(
+                                          height: _unifiedHeight ?? 260,
+                                          color: Colors.grey.shade300,
+                                          child: const Center(
+                                            child: Column(
+                                              mainAxisSize: MainAxisSize.min,
+                                              children: [
+                                                Icon(
+                                                  Icons.broken_image,
+                                                  size: 40,
+                                                  color: Colors.grey,
+                                                ),
+                                                SizedBox(height: 8),
+                                                Text(
+                                                  "이미지 로드 실패",
+                                                  style: TextStyle(
+                                                    color: Colors.black54,
+                                                  ),
+                                                ),
+                                              ],
                                             ),
-                                            SizedBox(height: 8),
-                                            Text(
-                                              "이미지 로드 실패",
-                                              style: TextStyle(
-                                                color: Colors.black54,
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                    );
-                                  },
-                                  frameBuilder: (context, child, frame, sync) {
-                                    if (frame != null) {
-                                      WidgetsBinding.instance
-                                          .addPostFrameCallback((_) {
-                                            _measureAndUnifyHeight(
-                                              imageUrl,
-                                              constraints.maxWidth,
-                                            );
-                                          });
-                                    }
-                                    return child;
-                                  },
+                                          ),
+                                        );
+                                      },
+                                      frameBuilder: (
+                                        context,
+                                        child,
+                                        frame,
+                                        sync,
+                                      ) {
+                                        if (frame != null) {
+                                          WidgetsBinding.instance
+                                              .addPostFrameCallback((_) {
+                                                _measureAndUnifyHeight(
+                                                  imageUrl,
+                                                  constraints.maxWidth,
+                                                );
+                                              });
+                                        }
+                                        return child;
+                                      },
+                                    ),
+                                  ),
                                 ),
-                              ),
-                            ),
-                          );
-                        }),
-                      ],
-                    );
-                  },
-                ),
-              ),
-              if (isSelectionHighlighted)
-                Positioned.fill(
-                  child: IgnorePointer(
-                    child: Container(color: AppColors.primary.withOpacity(0.4)),
+                              );
+                            }),
+                          ],
+                        );
+                      },
+                    ),
                   ),
-                ),
-
-              // 선택 보더
-              if (isSelected)
-                Positioned.fill(
-                  child: IgnorePointer(
-                    child: Container(
-                      decoration: BoxDecoration(
-                        border: Border.all(color: AppColors.primary, width: 3),
+                  if (isSelectionHighlighted)
+                    Positioned.fill(
+                      child: IgnorePointer(
+                        child: Container(
+                          color: AppColors.primary.withOpacity(0.4),
+                        ),
                       ),
                     ),
-                  ),
-                ),
-            ],
-          ),
-        ),
 
-        // 드래그 라인 오버레이
-        Positioned.fill(
-          child: AnimatedBuilder(
-            animation: widget.dragService,
-            builder: (context, _) {
-              return Stack(
-                children: [
-                  // 위쪽 가로 라인
-                  if (_shouldShowTopDropLine())
-                    Positioned(
-                      top: 0,
-                      left: 0,
-                      right: 0,
-                      child: Container(height: 3, color: AppColors.primary),
-                    ),
-
-                  // 아래쪽 가로 라인
-                  if (_shouldShowBottomDropLine())
-                    Positioned(
-                      bottom: 0,
-                      left: 0,
-                      right: 0,
-                      child: Container(height: 3, color: AppColors.primary),
-                    ),
-
-                  // 왼쪽 세로 라인 (가로배치 모드일 때)
-                  if (_shouldShowLeftVerticalLine())
-                    Positioned(
-                      left: 0,
-                      top: marginTop,
-                      bottom: marginBottom,
-                      child: Container(width: 3, color: AppColors.primary),
-                    ),
-
-                  // 오른쪽 세로 라인 (가로배치 모드일 때)
-                  if (_shouldShowRightVerticalLine())
-                    Positioned(
-                      right: 0,
-                      top: marginTop,
-                      bottom: marginBottom,
-                      child: Container(width: 3, color: AppColors.primary),
+                  // 선택 보더
+                  if (isSelected)
+                    Positioned.fill(
+                      child: IgnorePointer(
+                        child: Container(
+                          decoration: BoxDecoration(
+                            border: Border.all(
+                              color: AppColors.primary,
+                              width: 3,
+                            ),
+                          ),
+                        ),
+                      ),
                     ),
                 ],
-              );
-            },
-          ),
+              ),
+            ),
+
+            // 드래그 라인 오버레이
+            Positioned.fill(
+              child: AnimatedBuilder(
+                animation: widget.dragService,
+                builder: (context, _) {
+                  return Stack(
+                    children: [
+                      // 위쪽 가로 라인
+                      if (_shouldShowTopDropLine())
+                        Positioned(
+                          top: 0,
+                          left: 0,
+                          right: 0,
+                          child: Container(height: 3, color: AppColors.primary),
+                        ),
+
+                      // 아래쪽 가로 라인
+                      if (_shouldShowBottomDropLine())
+                        Positioned(
+                          bottom: 0,
+                          left: 0,
+                          right: 0,
+                          child: Container(height: 3, color: AppColors.primary),
+                        ),
+
+                      // 왼쪽 세로 라인 (가로배치 모드일 때)
+                      if (_shouldShowLeftVerticalLine())
+                        Positioned(
+                          left: 0,
+                          top: marginTop,
+                          bottom: marginBottom,
+                          child: Container(width: 3, color: AppColors.primary),
+                        ),
+
+                      // 오른쪽 세로 라인 (가로배치 모드일 때)
+                      if (_shouldShowRightVerticalLine())
+                        Positioned(
+                          right: 0,
+                          top: marginTop,
+                          bottom: marginBottom,
+                          child: Container(width: 3, color: AppColors.primary),
+                        ),
+                    ],
+                  );
+                },
+              ),
+            ),
+          ],
         ),
+        if (!hasImageBelow) SizedBox(height: paddingWithText),
       ],
     );
   }
@@ -548,9 +576,8 @@ class _ImageRowComponentState extends State<ImageRowComponent>
     // 현재 노드의 인덱스 찾기
     final currentNodeIndex = _getCurrentNodeIndex();
     if (currentNodeIndex == -1) return false;
-
-    // 정책: 경계는 상단 컴포넌트만 그린다. 하단 라인은 항상 비활성화하여 이중표시 방지
-    return false;
+    // 이 노드의 아래에 삽입하는 경우 (다음 인덱스)
+    return dropIndex == currentNodeIndex + 1;
   }
 
   bool _shouldShowLeftVerticalLine() {
@@ -612,6 +639,16 @@ class _ImageRowComponentState extends State<ImageRowComponent>
   int _getCurrentNodeIndex() {
     if (widget.dragService == null) return -1;
     return widget.dragService.getNodeIndex(widget.nodeId);
+  }
+
+  bool _hasNeighborImage(Document? doc, String nodeId, int direction) {
+    if (doc == null) return false;
+    final myIndex = doc.getNodeIndexById(nodeId);
+    if (myIndex == -1) return false;
+    final neighborIndex = myIndex + direction;
+    if (neighborIndex < 0 || neighborIndex >= doc.nodeCount) return false;
+    final neighbor = doc.getNodeAt(neighborIndex);
+    return neighbor is ImageNode || neighbor is ImageRowNode;
   }
 
   bool _isNodeCoveredBySelection(

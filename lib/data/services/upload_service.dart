@@ -1,9 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
-import 'dart:ui' as ui;
-
 import 'package:doppy/data/services/api_service_base.dart';
 import 'package:doppy/data/services/auth_service.dart';
 import 'package:flutter/foundation.dart';
@@ -235,29 +232,7 @@ class UploadService with ChangeNotifier {
 
   String _genId() => DateTime.now().microsecondsSinceEpoch.toString();
 
-  /// 여러 파일을 배치로 큐에 등록합니다.
-  /// - batchSize: 한 번에 등록할 최대 개수(서버/네트워크 보호)
-  /// - interBatchDelay: 배치 간 지연
-  /// 업로드 자체는 기존 단건 업로드 파이프라인(동시성/재시도)에 의해 처리됩니다.
-  Future<List<UploadTask>> enqueueFilesInBatches(
-    List<File> files, {
-    required UploadKind kind,
-    int batchSize = 10,
-    Duration interBatchDelay = const Duration(milliseconds: 500),
-  }) async {
-    final List<UploadTask> all = [];
-    for (int i = 0; i < files.length; i += batchSize) {
-      final end = (i + batchSize < files.length) ? i + batchSize : files.length;
-      final batch = files.sublist(i, end);
-      for (final f in batch) {
-        all.add(enqueueFile(f, kind: kind));
-      }
-      if (end < files.length) {
-        await Future.delayed(interBatchDelay);
-      }
-    }
-    return all;
-  }
+  // enqueueFilesInBatches: 현재 사용처 없음(단순화 차원에서 제거)
 
   /// 서버 다중 업로드 API를 활용해 파일을 배치 단위로 한 요청으로 업로드합니다.
   /// - 서버 응답이 입력 순서를 보존한다는 가정 하에 index 기반으로 매핑합니다.
@@ -356,93 +331,5 @@ class UploadService with ChangeNotifier {
     }
     print('[UploadBatch] http ${resp.statusCode} body=${body}');
     throw HttpException('batch upload failed ${resp.statusCode}: $body');
-  }
-}
-
-/// 업로드 전 단계에서 한 번만 계산해 재사용할 수 있는 후보 데이터
-class UploadCandidate {
-  final File file;
-  final Uint8List bytes;
-  final String fileName;
-  final String mime;
-  final int width;
-  final int height;
-
-  const UploadCandidate({
-    required this.file,
-    required this.bytes,
-    required this.fileName,
-    required this.mime,
-    required this.width,
-    required this.height,
-  });
-}
-
-extension UploadPrepare on UploadService {
-  /// 파일 리스트를 한 번만 읽어서 bytes/mime/사이즈까지 계산합니다.
-  Future<List<UploadCandidate>> prepareCandidates(List<File> files) async {
-    print(
-      '[UploadService] prepareCandidates called with ${files.length} files',
-    );
-    final List<UploadCandidate> out = [];
-    for (final f in files) {
-      print('[UploadService] processing file: ${f.path}');
-      final bytes = await f.readAsBytes();
-      final fileName = f.path.split('/').last;
-      final media = _createMediaType(fileName);
-      int w = 0, h = 0;
-      try {
-        final codec = await ui.instantiateImageCodec(bytes);
-        final frame = await codec.getNextFrame();
-        w = frame.image.width;
-        h = frame.image.height;
-        print('[UploadService] image dimensions: ${w}x${h}');
-      } catch (e) {
-        print('[UploadService] failed to get image dimensions: $e');
-      }
-      out.add(
-        UploadCandidate(
-          file: f,
-          bytes: bytes,
-          fileName: fileName,
-          mime: '${media.type}/${media.subtype}',
-          width: w,
-          height: h,
-        ),
-      );
-    }
-    return out;
-  }
-
-  /// 파일들을 업로드하고 성공한 URL들만 리스트로 반환
-  Future<List<String>> uploadFilesAndGetUrls(
-    List<File> files, {
-    required UploadKind kind,
-    int batchSize = 10,
-    Duration interBatchDelay = const Duration(milliseconds: 500),
-  }) async {
-    print('[UploadUrls] files=${files.length} batchSize=$batchSize');
-    final tasks = await uploadFilesViaServerBatches(
-      files,
-      kind: kind,
-      batchSize: batchSize,
-      interBatchDelay: interBatchDelay,
-    );
-
-    // 성공한 업로드의 URL들만 추출
-    final urls = <String>[];
-    for (final task in tasks) {
-      if (task.state == UploadState.success &&
-          task.url != null &&
-          task.url!.isNotEmpty) {
-        urls.add(task.url!);
-        print('[UploadUrls] success: ${task.fileName} -> ${task.url}');
-      } else {
-        print('[UploadUrls] failed: ${task.fileName} (${task.state})');
-      }
-    }
-
-    print('[UploadUrls] total success: ${urls.length}/${files.length}');
-    return urls;
   }
 }

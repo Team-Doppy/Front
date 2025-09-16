@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:doppy/editor/component/row_image_component.dart';
 import 'package:doppy/editor/service/drag_service.dart';
 import 'package:doppy/editor/service/image_service.dart';
 import 'package:doppy/theme/app_colors.dart';
@@ -508,6 +509,6 @@ class _SingleImageComponentState extends State<SingleImageComponent>
     final neighborIndex = myIndex + direction;
     if (neighborIndex < 0 || neighborIndex >= doc.nodeCount) return false;
     final neighbor = doc.getNodeAt(neighborIndex);
-    return neighbor is ImageNode;
+    return neighbor is ImageNode || neighbor is ImageRowNode;
   }
 }

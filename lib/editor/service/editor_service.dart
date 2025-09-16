@@ -16,15 +16,13 @@ class EditorService extends ChangeNotifier {
   // 마지막 유효 selection 캐시 (포커스가 잠시 사라져도 사용)
   DocumentSelection? _lastSelection;
 
-  // 문단별 마진 캐시 (중앙집중 판정 결과)
   bool publishable = false;
-  final Map<String, EdgeInsets> _paragraphMargins = <String, EdgeInsets>{};
+
   // 제목 스타일 전파 방지용 스냅샷(간소화 이후 미사용)
   // ignore: unused_field
   int _lastTitleTextLength = 0;
 
   EditorService({required this.editor, required this.document}) {
-    // _recomputeParagraphMargins();
     document.addListener(_onDocumentChanged);
     editor.composer.selectionNotifier.addListener(_onSelectionChanged);
   }
@@ -403,49 +401,6 @@ class EditorService extends ChangeNotifier {
     return newImageId;
   }
 
-  // ===== 중앙집중 텍스트 마진 판정 =====
-  static const double _baseTopMarginPx = 2.0;
-  static const double _imageTextMarginPx = 16.0;
-
-  bool _isImageType(NodeType? t) =>
-      t == NodeType.image || t == NodeType.imageRow;
-
-  /// 현재 문서 스냅샷을 순회하며 모든 Paragraph에 대해
-  /// 이미지와 이웃한 쪽에만 마진을 주는 규칙을 계산한다.
-  /// /*
-  /*
-  void _recomputeParagraphMargins() {
-    _paragraphMargins.clear();
-
-    for (int i = 0; i < document.length; i++) {
-      final node = document.getNodeAt(i);
-      if (node is! ParagraphNode) continue;
-
-      // 이전/다음 노드의 타입 확인
-      NodeType? prevType;
-      NodeType? nextType;
-
-      if (i > 0) {
-        final prev = document.getNodeAt(i - 1);
-        if (prev != null) prevType = getNodeType(prev.id);
-      }
-      if (i < document.length - 1) {
-        final next = document.getNodeAt(i + 1);
-        if (next != null) nextType = getNodeType(next.id);
-      }
-
-      final bool addTop = _isImageType(prevType);
-      final bool addBottom = _isImageType(nextType);
-
-      final EdgeInsets margin = EdgeInsets.only(
-        top: addTop ? _imageTextMarginPx : _baseTopMarginPx,
-        bottom: addBottom ? _imageTextMarginPx : 0,
-      );
-
-      _paragraphMargins[node.id] = margin;
-    }
-  }*/
-
   /// 변경 지점 주변(상/하/본인)만 부분적으로 마진 재계산 (public)
   void recomputeParagraphMarginsAround(int centerIndex) {
     //_recomputeParagraphMarginsAround(centerIndex);
@@ -645,12 +600,6 @@ class EditorService extends ChangeNotifier {
     }
   }
   */
-
-  /// 외부에서 문단의 마진을 조회
-  EdgeInsets getParagraphMargin(String nodeId) {
-    return _paragraphMargins[nodeId] ??
-        const EdgeInsets.only(top: _baseTopMarginPx);
-  }
 
   // ===== 게시 가능 여부 판정 =====
   bool hasNonEmptyTitle() {
