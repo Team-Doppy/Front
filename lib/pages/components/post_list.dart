@@ -1,7 +1,7 @@
 import 'dart:math';
 import 'package:doppy/pages/components/post_card.dart';
+import 'package:doppy/pages/post/post_reader_screen.dart';
 import 'package:flutter/material.dart';
-import 'package:doppy/pages/post/immersive_post_screen.dart';
 import 'package:doppy/data/models/post_data.dart';
 
 class PostList extends StatefulWidget {
@@ -143,19 +143,12 @@ class _PostListState extends State<PostList> {
     // FractionallySizedBox로 살짝 늘려 자연스럽게 간격을 줄인다.
     return GestureDetector(
       onTap: () {
-        final String heroTag = 'post-hero-${post.postId}';
         Navigator.of(context).push(
           PageRouteBuilder(
             transitionDuration: const Duration(milliseconds: 520),
             reverseTransitionDuration: const Duration(milliseconds: 360),
             opaque: true,
-            pageBuilder:
-                (_, __, ___) => ImmersivePostScreen(
-                  heroTag: heroTag,
-                  imageAsset: post.imagePath,
-                  title: post.title,
-                  content: post.content,
-                ),
+            pageBuilder: (_, __, ___) => PostReaderScreen(exported: {}),
             transitionsBuilder: (_, animation, __, child) {
               // Hero가 전환을 주도하도록 특별한 래핑 없이 그대로 반환
               return child;

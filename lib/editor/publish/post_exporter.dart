@@ -2,6 +2,7 @@ import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:doppy/editor/component/row_image_component.dart';
 import 'package:doppy/editor/component/mention_component.dart';
+import 'package:doppy/providers/auth_provider.dart';
 import 'package:flutter/material.dart';
 
 import 'package:doppy/editor/service/editor_service.dart';
@@ -94,6 +95,7 @@ class PostExporter {
     final layout =
         editorService.documentLayoutKey?.currentState as DocumentLayout?;
     final List<Map<String, dynamic>> nodes = <Map<String, dynamic>>[];
+    String? firstImageUrl;
 
     for (int i = 0; i < doc.length; i++) {
       final node = doc.getNodeAt(i);
@@ -114,6 +116,7 @@ class PostExporter {
 
       // ImageNode (SuperEditor 내장)
       if (node is ImageNode) {
+        firstImageUrl ??= node.imageUrl;
         nodes.add({
           'id': node.id,
           'type': 'image',
@@ -253,10 +256,9 @@ class PostExporter {
 
     return {
       'version': '1.0',
-      'thumnailUrl': '',
+      'thumnailUrl': firstImageUrl ?? '',
       'title': nodes[0]['text'],
-      'writer': 'anonymous',
-      'updatedAt': DateTime.now(),
+      'writer': AuthProvider().username ?? 'anonymous',
       'document': {'nodes': nodes},
       'stickers': stickers,
     };
@@ -403,6 +405,94 @@ class PostExporter {
       case StickerType.image:
         return 'image';
     }
+  }
+
+  /// 기본 내보내기 결과(base)에 공개 범위/썸네일/최종 제목/요약/생성시각 등을 덧붙여
+  /// 최종 게시 페이로드를 구성한다. 기존 키는 최대한 보존한다.
+  static Map<String, dynamic> composeFinalPayload({
+    required Map<String, dynamic> base,
+    DateTime? createdAt,
+    bool? privateOnly = false,
+    bool? publicOnly = false,
+    List<int>? selectedGroupIds = const [],
+  }) {
+    final Map<String, dynamic> visibility = () {
+      if (privateOnly == true) {
+        return <String, dynamic>{'type': 'private', 'groupIds': <int>[]};
+      }
+      if (publicOnly == true) {
+        return <String, dynamic>{'type': 'public', 'groupIds': <int>[]};
+      }
+      return <String, dynamic>{'type': 'groups', 'groupIds': selectedGroupIds};
+    }();
+    final Map<String, dynamic> additions = <String, dynamic>{
+      'visibility': visibility,
+      'createdAt': (createdAt ?? DateTime.now()).toIso8601String(),
+    };
+
+    // 스티커 압축을 항상 적용
+    final Map<String, dynamic> result = <String, dynamic>{...base};
+    final dynamic stickers = base['stickers'];
+    if (stickers is List) {
+      result['stickers'] = _compressStickers(stickers);
+    }
+
+    return <String, dynamic>{...result, ...additions};
+  }
+
+  /// 스티커 배열 경량화: bytes → base64, anchor 최소 필드만 유지, 불필요 필드 제거
+  static List<Map<String, dynamic>> _compressStickers(List<dynamic> stickers) {
+    final List<Map<String, dynamic>> out = <Map<String, dynamic>>[];
+    for (final s in stickers) {
+      if (s is! Map) continue;
+      final Map m = s;
+      final Map<String, dynamic> compact = <String, dynamic>{
+        if (m['type'] != null) 'type': m['type'],
+        if (m['zIndex'] != null) 'zIndex': m['zIndex'],
+        if (m['opacity'] != null) 'opacity': m['opacity'],
+        if (m['rotation'] != null) 'rotation': m['rotation'],
+        if (m['scale'] != null) 'scale': m['scale'],
+      };
+
+      // content 처리
+      final dynamic content = m['content'];
+      if (content is Map) {
+        if (content['bytes'] != null) {
+          final dynamic b = content['bytes'];
+          Uint8List bytes;
+          if (b is Uint8List) {
+            bytes = b;
+          } else if (b is List<int>) {
+            bytes = Uint8List.fromList(b);
+          } else {
+            bytes = Uint8List(0);
+          }
+          compact['content'] = <String, dynamic>{'b64': base64Encode(bytes)};
+        } else if (content['url'] != null) {
+          compact['content'] = <String, dynamic>{'url': content['url']};
+        } else if (content['text'] != null) {
+          compact['content'] = <String, dynamic>{
+            'text': content['text'],
+            if (content['style'] != null) 'style': content['style'],
+          };
+        }
+      } else if (content is String) {
+        compact['content'] = content; // emoji 등
+      }
+
+      // anchor 최소화
+      final dynamic anchor = m['anchor'];
+      if (anchor is Map) {
+        compact['anchor'] = <String, dynamic>{
+          if (anchor['nodeId'] != null) 'nodeId': anchor['nodeId'],
+          if (anchor['relX'] != null) 'relX': anchor['relX'],
+          if (anchor['relY'] != null) 'relY': anchor['relY'],
+        };
+      }
+
+      out.add(compact);
+    }
+    return out;
   }
 }
 

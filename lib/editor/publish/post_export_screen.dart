@@ -1,19 +1,27 @@
-import 'package:doppy/pages/post/immersive_post_screen.dart';
+import 'dart:convert';
+import 'package:doppy/pages/post/post_reader_screen.dart';
+import 'package:flutter/foundation.dart';
 import 'package:doppy/theme/app_colors.dart';
 import 'package:flutter/material.dart';
-import 'dart:typed_data';
-import 'package:doppy/editor/overlay/sticker_overlay.dart';
 import 'package:doppy/editor/image/gallery_bottom_sheet.dart';
-import 'dart:io';
 import 'dart:ui' as ui;
 import 'package:provider/provider.dart';
 import 'package:doppy/providers/group_provider.dart';
 import 'package:doppy/data/models/group_model.dart';
 import 'package:doppy/data/models/user_model.dart';
+import 'package:doppy/editor/publish/post_exporter.dart';
+
+void printLarge(String text, {int chunkSize = 800}) {
+  final int len = text.length;
+  for (int i = 0; i < len; i += chunkSize) {
+    final int end = (i + chunkSize < len) ? i + chunkSize : len;
+    debugPrint(text.substring(i, end));
+  }
+}
 
 class PostExportScreen extends StatefulWidget {
   const PostExportScreen({super.key, required this.exported});
-  final Map<String, dynamic> exported;
+  final String exported;
 
   @override
   State<PostExportScreen> createState() => _PostExportScreenState();
@@ -22,15 +30,14 @@ class PostExportScreen extends StatefulWidget {
 class _PostExportScreenState extends State<PostExportScreen>
     with SingleTickerProviderStateMixin {
   // 더미 데이터
-  String _imagePath = 'assets/images/feed1.jpg';
-  bool _imageIsNetwork = false;
-  File? _imageFile;
+  String _exportedThumbnailImageUrl = '';
   String _title = '오늘 하루도 힘내자고 화이팅!';
   String _excerpt = '여기에 본문 요약이 들어갑니다. 간단한 설명을 추가해 주세요.';
 
+  Map<String, dynamic> _exportedBase = <String, dynamic>{};
+
   bool _editMode = false;
   final List<_Sticker> _stickers = [];
-  final GlobalKey _previewKey = GlobalKey();
   String _audienceButtonText = '전체 공개';
   final Set<int> _selectedAudienceGroupIds = {};
   bool _audienceSelectAll = true;
@@ -52,16 +59,24 @@ class _PostExportScreenState extends State<PostExportScreen>
   @override
   void initState() {
     super.initState();
-    _hydrateFromExported(widget.exported);
+    _hydrateFromExported(jsonDecode(widget.exported));
     _intro.forward();
   }
 
   void _hydrateFromExported(Map<String, dynamic> exported) {
+    _exportedBase = exported;
     // 제목
     final String? exportedTitle = _readString(exported, keys: const ['title']);
     if (exportedTitle != null && exportedTitle.trim().isNotEmpty) {
       _title = exportedTitle.trim();
     }
+
+    _exportedThumbnailImageUrl =
+        _readString(
+          exported,
+          keys: const ['thumnailUrl', 'thumbnailUrl', 'thumnailImageUrl'],
+        ) ??
+        '';
 
     // 본문 요약
     String collected = _collectText(exported);
@@ -184,20 +199,37 @@ class _PostExportScreenState extends State<PostExportScreen>
     }
   }
 
-  void _publish() {
+  Future<void> _publish() async {
+    final Map<String, dynamic> payload = await _buildFinalJson();
+    final String json = const JsonEncoder.withIndent('  ').convert(payload);
+    // 출력(긴 문자열 청크 출력)
+    debugPrint('===== FINAL POST JSON =====');
+    printLarge(json);
+
+    if (!mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('최종 JSON이 콘솔에 출력되었습니다.')));
+
+    // 데모: 미리보기 화면으로 이동 (기존 동작 유지)
+    // 발행 API 연동 시 아래를 실제 업로드 로직으로 교체하세요.
     // 발행 후 바로 우리가 만든 글보기 화면으로 연결
     Navigator.of(context).push(
       PageRouteBuilder(
         transitionDuration: const Duration(milliseconds: 420),
-        pageBuilder:
-            (_, __, ___) => ImmersivePostScreen(
-              heroTag: 'post-hero-preview',
-              imageAsset: _imagePath,
-              title: _title,
-              content: _excerpt,
-            ),
+        pageBuilder: (_, __, ___) => PostReaderScreen(exported: payload),
         transitionsBuilder: (_, animation, __, child) => child,
       ),
+    );
+  }
+
+  Future<Map<String, dynamic>> _buildFinalJson() async {
+    return PostExporter.composeFinalPayload(
+      base: Map<String, dynamic>.from(_exportedBase),
+      privateOnly: _audiencePrivateOnly,
+      publicOnly: _audienceSelectAll,
+      selectedGroupIds: _selectedAudienceGroupIds.toList(),
+      createdAt: DateTime.now(),
     );
   }
 
@@ -211,9 +243,8 @@ class _PostExportScreenState extends State<PostExportScreen>
             onImagesSelected: (files) {
               if (files.isEmpty) return;
               setState(() {
-                _imageFile = files.first;
-                _imageIsNetwork = false;
-                _imagePath = _imageFile!.path;
+                //사실 여기서 이미지 선택후 서버
+                _exportedThumbnailImageUrl = files.first.path;
               });
             },
           ),
@@ -222,7 +253,7 @@ class _PostExportScreenState extends State<PostExportScreen>
 
   @override
   Widget build(BuildContext context) {
-    final cardRadius = 15.0;
+    final cardRadius = 5.0;
 
     return Scaffold(
       backgroundColor: Colors.transparent,
@@ -308,21 +339,21 @@ class _PostExportScreenState extends State<PostExportScreen>
                                       child: Stack(
                                         children: [
                                           Positioned.fill(
-                                            child:
-                                                _imageFile != null
-                                                    ? Image.file(
-                                                      _imageFile!,
-                                                      fit: BoxFit.cover,
-                                                    )
-                                                    : _imageIsNetwork
-                                                    ? Image.network(
-                                                      _imagePath,
-                                                      fit: BoxFit.cover,
-                                                    )
-                                                    : Image.asset(
-                                                      _imagePath,
-                                                      fit: BoxFit.cover,
+                                            child: Image.network(
+                                              _exportedThumbnailImageUrl,
+                                              fit: BoxFit.cover,
+                                              errorBuilder:
+                                                  (c, e, s) => Container(
+                                                    color:
+                                                        AppColors.darkSurface,
+                                                    child: const Center(
+                                                      child: Icon(
+                                                        Icons.image,
+                                                        color: Colors.white54,
+                                                      ),
                                                     ),
+                                                  ),
+                                            ),
                                           ),
                                           Positioned.fill(
                                             child: DecoratedBox(
@@ -393,7 +424,10 @@ class _PostExportScreenState extends State<PostExportScreen>
                 Spacer(),
 
                 Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 20.0),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 20.0,
+                    vertical: 10.0,
+                  ),
                   child: ElevatedButton(
                     onPressed: _openVisibilitySheet,
                     style: ElevatedButton.styleFrom(
@@ -687,35 +721,6 @@ class _AudiencePickerState extends State<_AudiencePicker> {
             ),
           ),
         ],
-      ),
-    );
-  }
-
-  Widget _chip(String label, bool active, VoidCallback onTap) {
-    return GestureDetector(
-      onTap: onTap,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 180),
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        decoration: BoxDecoration(
-          color: active ? Colors.white : Colors.white10,
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              active ? Icons.check : Icons.public,
-              size: 16,
-              color: active ? Colors.black : Colors.white,
-            ),
-            const SizedBox(width: 6),
-            Text(
-              label,
-              style: TextStyle(color: active ? Colors.black : Colors.white),
-            ),
-          ],
-        ),
       ),
     );
   }

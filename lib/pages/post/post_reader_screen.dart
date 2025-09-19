@@ -17,23 +17,29 @@ import 'package:doppy/editor/service/drag_service.dart';
 
 /// 읽기 전용: 작성 화면에서 Export된 Map을 받아 그대로 복원하여 보여준다.
 class PostReaderScreen extends StatefulWidget {
-  const PostReaderScreen({super.key, required this.exported});
+  const PostReaderScreen({super.key, required this.exported, this.heroTag});
   final Map<String, dynamic> exported;
+  final String? heroTag; // 홈 썸네일과 자연스러운 연결(Hero)
 
   @override
   State<PostReaderScreen> createState() => _PostReaderScreenState();
 }
 
-class _PostReaderScreenState extends State<PostReaderScreen> {
+class _PostReaderScreenState extends State<PostReaderScreen>
+    with SingleTickerProviderStateMixin {
   late final MutableDocument _document;
   late final MutableDocumentComposer _composer;
   late final Editor _editor;
   late final EditorService _editorService;
   late final DragService _dragService;
   late final FocusNode _readOnlyFocus;
-  final ScrollController _scroll = ScrollController();
+  final ScrollController _outerScroll = ScrollController(); // single scroll
   final GlobalKey _layoutKey = GlobalKey();
   static final GlobalKey _stackKey = GlobalKey();
+
+  late final AnimationController _intro;
+  late final Animation<double> _introCurve;
+  // 상단 이미지는 SliverPersistentHeader에서 shrinkOffset 기반으로 오버레이 처리
 
   @override
   void initState() {
@@ -47,58 +53,90 @@ class _PostReaderScreenState extends State<PostReaderScreen> {
     _editorService = EditorService(editor: _editor, document: _document);
     _dragService = DragService(
       editorService: _editorService,
-      scrollController: _scroll,
+      scrollController: _outerScroll,
     );
     _readOnlyFocus = FocusNode(canRequestFocus: false);
     try {
       _composer.clearSelection();
     } catch (_) {}
+
+    _intro = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 420),
+    );
+    _introCurve = CurvedAnimation(parent: _intro, curve: Curves.easeOutCubic);
+    _intro.forward();
+
+    // overlay는 header delegate에서 처리
+  }
+
+  @override
+  void dispose() {
+    _intro.dispose();
+    _readOnlyFocus.dispose();
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     final stickers = (widget.exported['stickers'] as List?) ?? const [];
 
+    // 썸네일 우선순위: URL 키들 → base64 → 자산
+    final String? thumbnailUrl = widget.exported['thumbnailImageUrl'];
+
+    final double topHeight = MediaQuery.of(context).size.width * 3 / 4;
+
     return Scaffold(
       backgroundColor: AppColors.darkSurface,
-      appBar: AppBar(
-        toolbarHeight: 40,
-        title: const Text('미리보기', style: TextStyle(color: Colors.white)),
-        backgroundColor: AppColors.darkSurface,
-      ),
       body: Stack(
         key: _stackKey,
         children: [
-          SuperEditor(
-            editor: _editor,
-            stylesheet: _readerStylesheet(),
-            selectionStyle: SelectionStyles(
-              selectionColor: const ui.Color.fromARGB(
-                255,
-                255,
-                255,
-                255,
-              ).withOpacity(0.3),
-            ),
-            componentBuilders: [
-              // 커스텀 컴포넌트들 등록 (읽기 전용이라도 드래그 서비스는 더미로 전달)
-              // 이미지/이미지행은 기본 Paragraph 외 내장 렌더 사용
-              SingleImageComponentBuilder(dragService: _dragService),
-              RowImageComponentBuilder(dragService: _dragService),
-              LinkComponentBuilder(),
-              LocationComponentBuilder(dragService: _dragService),
-              MentionComponentBuilder(dragService: _dragService),
-              ...defaultComponentBuilders,
+          CustomScrollView(
+            controller: _outerScroll,
+            slivers: [
+              SliverPersistentHeader(
+                pinned: false,
+                floating: false,
+                delegate: _ReaderHeaderDelegate(
+                  heroTag: widget.heroTag,
+                  url: thumbnailUrl,
+
+                  assetFallback: 'assets/images/feed2.png',
+                  maxHeight: topHeight,
+                  intro: _introCurve,
+                  buildTopImage: _buildTopImage,
+                ),
+              ),
+              // SuperEditor는 슬리버 기반 렌더러이므로 slivers에 직접 배치
+              SliverToBoxAdapter(child: SizedBox(height: 100)),
+              SuperEditor(
+                editor: _editor,
+                stylesheet: buildCustomStylesheet(),
+                selectionStyle: SelectionStyles(
+                  selectionColor: const ui.Color.fromARGB(
+                    255,
+                    255,
+                    255,
+                    255,
+                  ).withOpacity(0.3),
+                ),
+                componentBuilders: [
+                  SingleImageComponentBuilder(dragService: _dragService),
+                  RowImageComponentBuilder(dragService: _dragService),
+                  LinkComponentBuilder(),
+                  LocationComponentBuilder(dragService: _dragService),
+                  MentionComponentBuilder(dragService: _dragService),
+                  ...defaultComponentBuilders,
+                ],
+                documentLayoutKey: _layoutKey,
+                focusNode: _readOnlyFocus,
+                gestureMode: DocumentGestureMode.mouse,
+              ),
             ],
-            scrollController: _scroll,
-            documentLayoutKey: _layoutKey,
-            focusNode: _readOnlyFocus,
-            gestureMode: DocumentGestureMode.mouse,
           ),
-          // 읽기 전용 스티커 렌더
           Positioned.fill(
             child: AnimatedBuilder(
-              animation: _scroll,
+              animation: _outerScroll,
               builder: (context, _) {
                 return IgnorePointer(
                   ignoring: true,
@@ -106,7 +144,7 @@ class _PostReaderScreenState extends State<PostReaderScreen> {
                     stickers: stickers,
                     layoutKey: _layoutKey,
                     stackKey: _stackKey,
-                    scrollController: _scroll,
+                    scrollController: _outerScroll,
                   ),
                 );
               },
@@ -115,6 +153,28 @@ class _PostReaderScreenState extends State<PostReaderScreen> {
         ],
       ),
     );
+  }
+
+  Widget _buildTopImage({
+    required String? heroTag,
+    required String? url,
+    required String assetFallback,
+  }) {
+    Widget image;
+    if (url != null && url.isNotEmpty) {
+      if (url.startsWith('http')) {
+        image = Image.network(url, fit: BoxFit.cover);
+      } else {
+        image = Image.asset(url, fit: BoxFit.cover);
+      }
+    } else {
+      image = Image.asset(assetFallback, fit: BoxFit.cover);
+    }
+
+    if (heroTag != null && heroTag.isNotEmpty) {
+      return Hero(tag: heroTag, child: image);
+    }
+    return image;
   }
 
   MutableDocument _rebuildDocument(Map<String, dynamic> data) {
@@ -227,37 +287,6 @@ class _PostReaderScreenState extends State<PostReaderScreen> {
     var v = hex.replaceAll('#', '');
     if (v.length == 6) v = 'FF$v';
     return ui.Color(int.parse(v, radix: 16));
-  }
-
-  /// 읽기 전용 뷰에서 텍스트/이미지 접점에 얇은 여백을 강제 부여한다.
-  Stylesheet _readerStylesheet() {
-    final base = buildCustomStylesheet();
-    return base.copyWith(
-      addRulesAfter: [
-        StyleRule(BlockSelector.all, (doc, node) {
-          if (node is ImageRowNode) {
-            print('>>>>>ImageRowNode');
-            return {
-              Styles.padding: const CascadingPadding.symmetric(
-                vertical: 15,
-                horizontal: 0,
-              ),
-            };
-          }
-          // 문단-문단 간 여백은 기본 스타일 그대로 사용
-          if (node is ImageNode) {
-            return {
-              Styles.padding: const CascadingPadding.symmetric(
-                vertical: 15,
-                horizontal: 0,
-              ),
-            };
-          }
-
-          return {};
-        }),
-      ],
-    );
   }
 }
 
@@ -439,5 +468,74 @@ class _ReadOnlyStickers extends StatelessWidget {
       return Color(int.parse(hex, radix: 16));
     }
     return null;
+  }
+}
+
+class _ReaderHeaderDelegate extends SliverPersistentHeaderDelegate {
+  final String? heroTag;
+  final String? url;
+  final String assetFallback;
+  final double maxHeight;
+  final Animation<double> intro;
+  final Widget Function({
+    required String? heroTag,
+    required String? url,
+    required String assetFallback,
+  })
+  buildTopImage;
+
+  _ReaderHeaderDelegate({
+    required this.heroTag,
+    required this.url,
+    required this.assetFallback,
+    required this.maxHeight,
+    required this.intro,
+    required this.buildTopImage,
+  });
+
+  @override
+  double get minExtent => 0;
+
+  @override
+  double get maxExtent => this.maxHeight;
+
+  @override
+  Widget build(
+    BuildContext context,
+    double shrinkOffset,
+    bool overlapsContent,
+  ) {
+    final double visible = (maxExtent - shrinkOffset).clamp(0.0, maxExtent);
+    final double overlay = (shrinkOffset / maxExtent).clamp(0.0, 1.0) * 0.15;
+    final scale = 0.94 + 0.06 * intro.value;
+    final translateY = (1 - intro.value) * 10;
+    return SizedBox(
+      height: visible,
+      width: double.infinity,
+      child: Transform.translate(
+        offset: Offset(0, translateY),
+        child: Transform.scale(
+          scale: scale,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              buildTopImage(
+                heroTag: heroTag,
+                url: url,
+                assetFallback: assetFallback,
+              ),
+              Container(color: Colors.black.withOpacity(overlay)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  bool shouldRebuild(covariant _ReaderHeaderDelegate oldDelegate) {
+    return oldDelegate.url != url ||
+        oldDelegate.maxHeight != maxHeight ||
+        oldDelegate.heroTag != heroTag;
   }
 }

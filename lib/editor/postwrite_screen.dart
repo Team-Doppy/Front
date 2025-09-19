@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:doppy/editor/component/link_component.dart';
 import 'package:doppy/editor/component/single_image_component.dart';
 import 'package:doppy/editor/component/row_image_component.dart';
@@ -256,18 +258,16 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
           actions: [
             TextButton(
               onPressed: () {
-                // 테스트: JSON 추출 후 콘솔 출력 및 Reader 화면으로 이동
-                final exported = PostExporter.exportToMap(
-                  editorService: editorService,
-                  stickerService: context.read<StickerService>(),
-                  viewportSize: MediaQuery.of(context).size,
-                );
+                //키보드 내리기
+                FocusScope.of(context).unfocus();
+
                 final json = PostExporter.exportToJsonString(
                   editorService: editorService,
                   stickerService: context.read<StickerService>(),
                   viewportSize: MediaQuery.of(context).size,
                   pretty: true,
                 );
+                ImageService().selectImage(null);
                 // ignore: avoid_print
                 print('===== POST JSON =====\n$json');
                 Navigator.of(context).push(
@@ -275,7 +275,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                     opaque: false,
                     barrierDismissible: true,
                     pageBuilder:
-                        (_, __, ___) => PostExportScreen(exported: exported),
+                        (_, __, ___) => PostExportScreen(exported: json),
                   ),
                 );
               },
@@ -324,7 +324,10 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                                   ),
                                 ),
                                 child: SuperEditor(
-                                  gestureMode: DocumentGestureMode.iOS,
+                                  gestureMode:
+                                      Platform.isIOS
+                                          ? DocumentGestureMode.iOS
+                                          : DocumentGestureMode.android,
                                   editor: editor,
                                   stylesheet: buildCustomStylesheet(),
                                   documentLayoutKey: _documentLayoutKey,
