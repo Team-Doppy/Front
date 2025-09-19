@@ -7,11 +7,17 @@ import 'package:doppy/data/models/post_data.dart';
 class PostList extends StatefulWidget {
   final double containerWidth;
   final List<PostData> posts;
+  final VoidCallback? onLoadMore;
+  final bool isLoadingMore;
+  final Future<void> Function()? onRefresh;
 
   const PostList({
     super.key,
     required this.containerWidth,
     required this.posts,
+    this.onLoadMore,
+    this.isLoadingMore = false,
+    this.onRefresh,
   });
 
   @override
@@ -49,7 +55,7 @@ class _PostListState extends State<PostList> {
 
   @override
   Widget build(BuildContext context) {
-    return NotificationListener<ScrollNotification>(
+    Widget content = NotificationListener<ScrollNotification>(
       onNotification: (notification) {
         if (notification is ScrollUpdateNotification) {
           // 페이지 정지 직전(정확히 맞물리기 직전)으로 가까워지면 미리 밝기 복원
@@ -101,14 +107,50 @@ class _PostListState extends State<PostList> {
           setState(() {
             _currentIndex = index;
           });
+
+          // 무한 스크롤: 마지막 페이지 근처에서 더 로드
+          if (widget.onLoadMore != null &&
+              index >= widget.posts.length - 2 &&
+              !widget.isLoadingMore) {
+            widget.onLoadMore!();
+          }
         },
-        itemCount: widget.posts.length,
+        itemCount: widget.posts.length + (widget.isLoadingMore ? 1 : 0),
         itemBuilder: (context, index) {
+          if (index >= widget.posts.length) {
+            // 로딩 인디케이터
+            return Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const CircularProgressIndicator(color: Colors.white),
+                  const SizedBox(height: 16),
+                  Text(
+                    '더 많은 포스트를 불러오는 중...',
+                    style: TextStyle(color: Colors.white70),
+                  ),
+                ],
+              ),
+            );
+          }
+
           final post = widget.posts[index];
           return _buildPostItem(context, post, index);
         },
       ),
     );
+
+    // 새로고침 기능이 있으면 RefreshIndicator로 감싸기
+    if (widget.onRefresh != null) {
+      return RefreshIndicator(
+        onRefresh: widget.onRefresh!,
+        color: Colors.white,
+        backgroundColor: Colors.black54,
+        child: content,
+      );
+    }
+
+    return content;
   }
 
   Widget _buildPostItem(BuildContext context, PostData post, int index) {
@@ -148,7 +190,11 @@ class _PostListState extends State<PostList> {
             transitionDuration: const Duration(milliseconds: 520),
             reverseTransitionDuration: const Duration(milliseconds: 360),
             opaque: true,
-            pageBuilder: (_, __, ___) => PostReaderScreen(exported: {}),
+            pageBuilder:
+                (_, __, ___) => PostReaderScreen(
+                  exported: {'thumbnailImageUrl': post.thumbnailImageUrl},
+                  heroTag: 'post-hero-${post.id}-$index',
+                ),
             transitionsBuilder: (_, animation, __, child) {
               // Hero가 전환을 주도하도록 특별한 래핑 없이 그대로 반환
               return child;
@@ -156,21 +202,16 @@ class _PostListState extends State<PostList> {
           ),
         );
       },
-      onDoubleTap: () {
-        setState(() {
-          post.isLiked = !post.isLiked;
-          post.likeCount++;
-        });
-      },
+      onDoubleTap: () {},
       child: PostCard(
         containerWidth: widget.containerWidth,
-        imagePath: post.imagePath,
-        heroTag: 'post-hero-${post.postId}',
+        thumbnailImageUrl: post.thumbnailImageUrl,
+        heroTag: 'post-hero-${post.id}-$index',
         title: post.title,
         author: post.author,
-        content: post.content,
+        content: post.parsedContent,
         isVisible: _currentIndex == index,
-        tags: post.tags ?? [],
+
         scrollProgress: progress,
         scale: scale,
         parallaxX: parallaxX,

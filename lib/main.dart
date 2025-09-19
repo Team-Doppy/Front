@@ -13,6 +13,7 @@ import 'package:doppy/pages/user/login_screen.dart';
 import 'package:doppy/providers/auth_provider.dart';
 import 'package:doppy/providers/friend_provider.dart';
 import 'package:doppy/providers/group_provider.dart';
+import 'package:doppy/providers/theme_provider.dart';
 import 'package:doppy/providers/user_provider.dart';
 import 'package:doppy/data/services/search_service.dart';
 import 'package:flutter/material.dart';
@@ -37,6 +38,7 @@ Future<void> main() async {
   runApp(
     MultiProvider(
       providers: [
+        ChangeNotifierProvider(create: (_) => ThemeProvider()),
         ChangeNotifierProvider(create: (_) => AuthProvider()),
         ChangeNotifierProvider(create: (_) => FriendProvider()),
         ChangeNotifierProvider(create: (_) => UserProvider()),
@@ -65,10 +67,8 @@ class MyApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       theme: AppTheme.lightTheme,
       darkTheme: AppTheme.darkTheme,
-      themeMode: ThemeMode.system,
-
+      themeMode: context.watch<ThemeProvider>().themeMode,
       home: const SplashScreen(),
-
       routes: {
         '/home': (_) => const HomeScreen(),
         '/login': (_) => const LoginScreen(),

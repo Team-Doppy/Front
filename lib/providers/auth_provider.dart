@@ -37,13 +37,35 @@ class AuthProvider extends ChangeNotifier {
 
   Future<bool> checkLoginStatus() async {
     _token = await _authService.getToken();
-    print('token: $_token');
     _username = await _authService.getUsername();
+
+    print('[AuthProvider] checkLoginStatus - token: $_token');
+    print('[AuthProvider] checkLoginStatus - username: $_username');
+
     if (_token != null && _username != null) {
       _isLoggedIn = true;
+      print('[AuthProvider] User is logged in');
     } else {
       _isLoggedIn = false;
+      print('[AuthProvider] User is not logged in');
     }
     return _isLoggedIn;
+  }
+
+  /// 토큰 검증 및 갱신
+  Future<bool> validateAndRefreshToken() async {
+    final isValid = await _authService.validateAndRefreshToken();
+    if (isValid) {
+      _isLoggedIn = true;
+      _token = await _authService.getToken();
+      _username = await _authService.getUsername();
+      notifyListeners();
+    } else {
+      _isLoggedIn = false;
+      _token = null;
+      _username = null;
+      notifyListeners();
+    }
+    return isValid;
   }
 }

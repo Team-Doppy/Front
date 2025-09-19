@@ -10,6 +10,7 @@ import 'package:doppy/providers/group_provider.dart';
 import 'package:doppy/data/models/group_model.dart';
 import 'package:doppy/data/models/user_model.dart';
 import 'package:doppy/editor/publish/post_exporter.dart';
+import 'package:doppy/data/services/blog_service.dart';
 
 void printLarge(String text, {int chunkSize = 800}) {
   final int len = text.length;
@@ -42,6 +43,7 @@ class _PostExportScreenState extends State<PostExportScreen>
   final Set<int> _selectedAudienceGroupIds = {};
   bool _audienceSelectAll = true;
   bool _audiencePrivateOnly = false;
+  bool _isUploading = false;
 
   late final AnimationController _controller = AnimationController(
     vsync: this,
@@ -74,7 +76,7 @@ class _PostExportScreenState extends State<PostExportScreen>
     _exportedThumbnailImageUrl =
         _readString(
           exported,
-          keys: const ['thumnailUrl', 'thumbnailUrl', 'thumnailImageUrl'],
+          keys: const ['thumbnailUrl', 'thumnailUrl', 'thumnailImageUrl'],
         ) ??
         '';
 
@@ -200,27 +202,76 @@ class _PostExportScreenState extends State<PostExportScreen>
   }
 
   Future<void> _publish() async {
-    final Map<String, dynamic> payload = await _buildFinalJson();
-    final String json = const JsonEncoder.withIndent('  ').convert(payload);
-    // 출력(긴 문자열 청크 출력)
-    debugPrint('===== FINAL POST JSON =====');
-    printLarge(json);
+    try {
+      // 업로드 시작 - 로딩 상태 표시
+      setState(() {
+        _isUploading = true;
+      });
 
-    if (!mounted) return;
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(const SnackBar(content: Text('최종 JSON이 콘솔에 출력되었습니다.')));
+      final Map<String, dynamic> payload = await _buildFinalJson();
+      final String json = const JsonEncoder.withIndent('  ').convert(payload);
+      debugPrint('===== FINAL POST JSON =====');
+      printLarge(json);
 
-    // 데모: 미리보기 화면으로 이동 (기존 동작 유지)
-    // 발행 API 연동 시 아래를 실제 업로드 로직으로 교체하세요.
-    // 발행 후 바로 우리가 만든 글보기 화면으로 연결
-    Navigator.of(context).push(
-      PageRouteBuilder(
-        transitionDuration: const Duration(milliseconds: 420),
-        pageBuilder: (_, __, ___) => PostReaderScreen(exported: payload),
-        transitionsBuilder: (_, animation, __, child) => child,
-      ),
-    );
+      if (!mounted) return;
+
+      // BlogService를 통한 서버 업로드
+      final blogService = BlogService();
+      final uploadResult = await blogService.uploadPost(
+        postData: payload,
+        thumbnailImageId: payload['thumbnailImageId']?.toString(),
+      );
+
+      debugPrint('===== UPLOAD RESULT =====');
+      debugPrint('Upload successful: ${uploadResult}');
+
+      if (!mounted) return;
+
+      // 성공 메시지 표시
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('블로그가 성공적으로 발행되었습니다!'),
+          backgroundColor: Colors.green,
+        ),
+      );
+
+      // 업로드 성공 시 바로 글보기 화면으로 이동
+      Navigator.of(context).push(
+        PageRouteBuilder(
+          transitionDuration: const Duration(milliseconds: 420),
+          pageBuilder:
+              (_, __, ___) => PostReaderScreen(
+                exported: uploadResult, // 서버 응답 데이터 직접 사용
+                heroTag:
+                    'uploaded-post-${DateTime.now().millisecondsSinceEpoch}',
+              ),
+          transitionsBuilder: (_, animation, __, child) => child,
+        ),
+      );
+    } catch (e) {
+      debugPrint('Upload failed: $e');
+
+      if (!mounted) return;
+
+      // 에러 메시지 표시
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('발행 중 오류가 발생했습니다: ${e.toString()}'),
+          backgroundColor: Colors.red,
+          action: SnackBarAction(
+            label: '다시 시도',
+            textColor: Colors.white,
+            onPressed: () => _publish(),
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isUploading = false;
+        });
+      }
+    }
   }
 
   Future<Map<String, dynamic>> _buildFinalJson() async {
@@ -266,17 +317,46 @@ class _PostExportScreenState extends State<PostExportScreen>
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 20.0),
             child: TextButton(
-              onPressed: () {
-                _publish();
-              },
-              child: Text(
-                '등록',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.w800,
-                  fontSize: 18,
-                ),
-              ),
+              onPressed:
+                  _isUploading
+                      ? null
+                      : () {
+                        _publish();
+                      },
+              child:
+                  _isUploading
+                      ? Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              valueColor: AlwaysStoppedAnimation<Color>(
+                                Colors.white,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            '발행 중...',
+                            style: TextStyle(
+                              color: Colors.white70,
+                              fontWeight: FontWeight.w800,
+                              fontSize: 18,
+                            ),
+                          ),
+                        ],
+                      )
+                      : Text(
+                        '등록',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w800,
+                          fontSize: 18,
+                        ),
+                      ),
             ),
           ),
         ],
@@ -408,6 +488,8 @@ class _PostExportScreenState extends State<PostExportScreen>
                               const SizedBox(height: 6),
                               Text(
                                 _excerpt,
+                                maxLines: 3,
+                                overflow: TextOverflow.ellipsis,
                                 style: const TextStyle(
                                   color: Colors.white70,
                                   fontSize: 13,

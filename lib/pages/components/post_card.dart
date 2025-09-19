@@ -7,7 +7,7 @@ import 'package:flutter/material.dart';
 // ignore: must_be_immutable
 class PostCard extends StatefulWidget {
   final double containerWidth;
-  final String imagePath;
+  final String thumbnailImageUrl;
   final String? heroTag;
   final String title;
   final String author;
@@ -23,7 +23,7 @@ class PostCard extends StatefulWidget {
   PostCard({
     super.key,
     required this.containerWidth,
-    required this.imagePath,
+    required this.thumbnailImageUrl,
     this.heroTag,
     required this.title,
     required this.author,
@@ -41,7 +41,81 @@ class PostCard extends StatefulWidget {
   State<PostCard> createState() => _PostCardState();
 }
 
-class _PostCardState extends State<PostCard> {
+class _PostCardState extends State<PostCard> with TickerProviderStateMixin {
+  late AnimationController _pulseController;
+  late Animation<double> _pulseAnimation;
+
+  @override
+  void initState() {
+    super.initState();
+    _pulseController = AnimationController(
+      duration: const Duration(milliseconds: 1000),
+      vsync: this,
+    );
+    _pulseAnimation = Tween<double>(begin: 0.3, end: 0.7).animate(
+      CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
+    );
+    _pulseController.repeat(reverse: true);
+  }
+
+  @override
+  void dispose() {
+    _pulseController.dispose();
+    super.dispose();
+  }
+
+  // ignore: non_constant_identifier_names
+  Widget _PulseLoadingWidget() {
+    return AnimatedBuilder(
+      animation: _pulseAnimation,
+      builder: (context, child) {
+        return Container(
+          padding: const EdgeInsets.all(8),
+          width: double.infinity,
+          height: double.infinity,
+          decoration: BoxDecoration(
+            color: Colors.grey[800]!.withOpacity(_pulseAnimation.value),
+            borderRadius: BorderRadius.circular(2),
+            border: Border.all(color: AppColors.darkSurface, width: 2),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildImage() {
+    // URL인지 로컬 에셋인지 판단
+    if (widget.thumbnailImageUrl.isNotEmpty) {
+      return Image.network(
+        widget.thumbnailImageUrl,
+        fit: BoxFit.cover,
+        loadingBuilder: (context, child, loadingProgress) {
+          if (loadingProgress == null) return child;
+          return _PulseLoadingWidget();
+        },
+        errorBuilder: (context, error, stackTrace) {
+          return Container(
+            color: Colors.grey[800],
+            child: const Center(
+              child: Icon(Icons.error, color: Colors.white54, size: 40),
+            ),
+          );
+        },
+
+        // 고화질을 위한 최적화
+        filterQuality: FilterQuality.high,
+      );
+    } else {
+      // 로컬 에셋
+      return Container(
+        color: Colors.grey[800],
+        child: const Center(
+          child: Icon(Icons.error, color: Colors.white54, size: 40),
+        ),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final double scaleProgress = ((widget.scale - 0.92) / 0.06).clamp(0.0, 1.0);
@@ -70,16 +144,10 @@ class _PostCardState extends State<PostCard> {
                             offset: Offset(widget.parallaxX, 0),
                             child:
                                 (widget.heroTag == null)
-                                    ? Image.asset(
-                                      widget.imagePath,
-                                      fit: BoxFit.cover,
-                                    )
+                                    ? _buildImage()
                                     : Hero(
                                       tag: widget.heroTag!,
-                                      child: Image.asset(
-                                        widget.imagePath,
-                                        fit: BoxFit.cover,
-                                      ),
+                                      child: _buildImage(),
                                     ),
                           ),
                         ),
@@ -156,7 +224,7 @@ class _PostCardState extends State<PostCard> {
                 fontWeight: FontWeight.w300,
               ),
               overflow: TextOverflow.ellipsis,
-              maxLines: 2,
+              maxLines: 3,
             ),
           ],
         ),

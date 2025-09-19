@@ -25,7 +25,10 @@ import 'package:provider/provider.dart';
 import 'package:flutter/services.dart';
 import 'package:super_editor/super_editor.dart';
 import 'package:doppy/editor/overlay/save_draft_overlay.dart';
+import 'package:doppy/editor/overlay/draft_list_overlay.dart';
 import 'package:doppy/editor/publish/post_exporter.dart';
+import 'package:doppy/data/services/draft_service.dart';
+import 'package:doppy/utils/snackbar_utils.dart';
 
 /// 글 공개 범위 옵션
 enum VisibilityOption { public, partial, private }
@@ -49,6 +52,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
   //service
   late final EditorService editorService;
   late final DragService dragService;
+  late final DraftService draftService;
 
   OverlayEntry? overlayEntry;
   GlobalKey overlayKey = GlobalKey();
@@ -57,6 +61,9 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
   ScrollController scrollController = ScrollController();
   Offset? _lastTapPosition; // 마지막 탭 위치 저장
   bool _isKeyboardVisible = false; // 키보드 표시 상태
+
+  // 임시저장 관련
+  String? _currentDraftId;
 
   @override
   void initState() {
@@ -92,6 +99,10 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     );
     dragService.attachScrollController(scrollController);
     dragService.addListener(_onDragChange);
+
+    // 임시저장 서비스 초기화
+    draftService = DraftService();
+    _initializeDraft();
 
     // 선택 범위가 바뀔 때 이미지 하이라이트 갱신
     composer.selectionNotifier.addListener(_updateImageSelectionHighlight);
@@ -240,7 +251,8 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                 ),
               );
               if (decision == ExitDecision.saveDraft) {
-                // TODO: 실제 임시저장 로직 연결 (스토리지/로컬 DB)
+                // 임시저장 실행
+                await _manualSaveDraft();
                 Navigator.of(context).pop();
               }
               if (decision == ExitDecision.discard) {
@@ -256,6 +268,24 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
             ),
           ),
           actions: [
+            // 임시저장 목록 버튼
+            IconButton(
+              onPressed: _showDraftList,
+              icon: const Icon(
+                Icons.folder_outlined,
+                color: AppColors.darkTextPrimary,
+                size: 20,
+              ),
+            ),
+            // 수동 임시저장 버튼
+            IconButton(
+              onPressed: _manualSaveDraft,
+              icon: const Icon(
+                Icons.save_outlined,
+                color: AppColors.darkTextPrimary,
+                size: 20,
+              ),
+            ),
             TextButton(
               onPressed: () {
                 //키보드 내리기
@@ -603,9 +633,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
           }
         } catch (e) {
           if (!mounted) return;
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(SnackBar(content: Text('이미지 보정을 불러올 수 없습니다: $e')));
+          SnackBarUtils.showError(context, '이미지 보정을 불러올 수 없습니다: $e');
         }
       },
       onDelete: () {
@@ -694,6 +722,177 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     } catch (e) {
       print('이미지 인덱스 계산 에러: $e');
       return 0; // 에러 시 첫 번째 이미지 반환
+    }
+  }
+
+  /// 임시저장 초기화
+  Future<void> _initializeDraft() async {
+    try {
+      // 기존 임시저장이 있는지 확인
+      _currentDraftId = await draftService.getCurrentDraftId();
+
+      print('[PostwriteScreen] Draft initialized: $_currentDraftId');
+    } catch (e) {
+      print('[PostwriteScreen] Error initializing draft: $e');
+    }
+  }
+
+  /// 수동 임시저장 (새 버전 생성)
+  Future<void> _manualSaveDraft() async {
+    try {
+      final title = _getTitleFromDocument();
+      final thumbnailUrl = _getThumbnailFromDocument();
+
+      // 항상 새로운 버전으로 저장 (existingDraftId를 null로)
+      _currentDraftId = await draftService.saveDraft(
+        editorService: editorService,
+        stickerService: context.read<StickerService>(),
+        title: title,
+        thumbnailUrl: thumbnailUrl,
+        visibility: 'public', // 기본값
+        selectedGroupIds: [],
+        existingDraftId: null, // 새 버전 생성
+      );
+
+      if (mounted) {
+        SnackBarUtils.showSuccess(context, '새 버전으로 임시저장되었습니다');
+      }
+
+      print('[PostwriteScreen] Manual save completed: $_currentDraftId');
+    } catch (e) {
+      print('[PostwriteScreen] Manual save failed: $e');
+      if (mounted) {
+        SnackBarUtils.showError(context, '임시저장 실패: $e');
+      }
+    }
+  }
+
+  /// 문서에서 제목 추출
+  String _getTitleFromDocument() {
+    try {
+      for (int i = 0; i < document.length; i++) {
+        final node = document.getNodeAt(i);
+        if (node is ParagraphNode && node.metadata['isTitle'] == true) {
+          return node.text.text.trim();
+        }
+      }
+    } catch (e) {
+      print('[PostwriteScreen] Error getting title: $e');
+    }
+    return '제목 없음';
+  }
+
+  /// 문서에서 썸네일 URL 추출
+  String _getThumbnailFromDocument() {
+    try {
+      for (int i = 0; i < document.length; i++) {
+        final node = document.getNodeAt(i);
+        if (node is ImageNode) {
+          return node.imageUrl;
+        } else if (node is ImageRowNode && node.imageUrls.isNotEmpty) {
+          return node.imageUrls.first;
+        }
+      }
+    } catch (e) {
+      print('[PostwriteScreen] Error getting thumbnail: $e');
+    }
+    return '';
+  }
+
+  /// 임시저장 목록 보기
+  Future<void> _showDraftList() async {
+    try {
+      final groupedDrafts = await draftService.getDraftsByTitle();
+
+      if (!mounted) return;
+
+      Navigator.of(context).push(
+        PageRouteBuilder(
+          opaque: false,
+          barrierDismissible: true,
+          pageBuilder:
+              (_, __, ___) => DraftListOverlay(
+                drafts: groupedDrafts,
+                currentDraftId: _currentDraftId,
+                onLoadDraft: _loadDraft,
+                onDeleteDraft: _deleteDraft,
+              ),
+        ),
+      );
+    } catch (e) {
+      print('[PostwriteScreen] Error showing draft list: $e');
+      if (mounted) {
+        SnackBarUtils.showError(context, '임시저장 목록을 불러올 수 없습니다: $e');
+      }
+    }
+  }
+
+  /// 임시저장 불러오기
+  Future<void> _loadDraft(String draftId) async {
+    try {
+      // 로딩 표시
+      if (mounted) {
+        SnackBarUtils.showLoading(context, '임시저장을 불러오는 중...');
+      }
+
+      final success = await draftService.loadDraft(
+        draftId: draftId,
+        editorService: editorService,
+        stickerService: context.read<StickerService>(),
+      );
+
+      if (success) {
+        _currentDraftId = draftId;
+
+        // UI 강제 업데이트
+        if (mounted) {
+          setState(() {});
+
+          // 포커스 요청
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) {
+              _editorFocusNode.requestFocus();
+            }
+          });
+
+          SnackBarUtils.showSuccess(context, '임시저장을 불러왔습니다');
+        }
+      } else {
+        if (mounted) {
+          SnackBarUtils.showError(context, '임시저장을 불러올 수 없습니다');
+        }
+      }
+    } catch (e) {
+      print('[PostwriteScreen] Error loading draft: $e');
+      if (mounted) {
+        SnackBarUtils.showError(context, '임시저장 불러오기 실패: $e');
+      }
+    }
+  }
+
+  /// 임시저장 삭제
+  Future<void> _deleteDraft(String draftId) async {
+    try {
+      final success = await draftService.deleteDraft(draftId);
+
+      if (success) {
+        if (_currentDraftId == draftId) {
+          _currentDraftId = null;
+        }
+
+        if (mounted) {
+          SnackBarUtils.showSuccess(context, '임시저장이 삭제되었습니다');
+        }
+      } else {
+        if (mounted) {
+          SnackBarUtils.showError(context, '임시저장 삭제에 실패했습니다');
+        }
+      }
+    } catch (e) {
+      print('[PostwriteScreen] Error deleting draft: $e');
+      if (mounted) {
+        SnackBarUtils.showError(context, '임시저장 삭제 실패: $e');
+      }
     }
   }
 }

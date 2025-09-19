@@ -407,13 +407,13 @@ class EditorService extends ChangeNotifier {
   }
 
   /// 이미지 추가: 현재 커서 다음 줄에 로컬 경로 기반 이미지 노드 삽입
-  void addImageNode(String imagePath) {
+  void addImageNode(String thumbnailImageUrl) {
     try {
-      print('이미지 추가: $imagePath');
+      print('이미지 추가: $thumbnailImageUrl');
 
       final imageNode = AppImageNode(
         id: 'image_${DateTime.now().millisecondsSinceEpoch}',
-        imageUrl: imagePath,
+        imageUrl: thumbnailImageUrl,
         altText: '',
       );
       _insertComponentNodeAtNextLine(imageNode);

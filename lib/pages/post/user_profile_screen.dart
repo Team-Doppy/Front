@@ -767,8 +767,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
             },
             child: PostCard(
               containerWidth: containerWidth,
-
-              imagePath: feed['image']!,
+              thumbnailImageUrl: feed['image']!,
               title: feed['title']!,
               author: feed['author']!,
               content: feed['content']!,

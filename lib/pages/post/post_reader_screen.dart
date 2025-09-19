@@ -37,10 +37,6 @@ class _PostReaderScreenState extends State<PostReaderScreen>
   final GlobalKey _layoutKey = GlobalKey();
   static final GlobalKey _stackKey = GlobalKey();
 
-  late final AnimationController _intro;
-  late final Animation<double> _introCurve;
-  // 상단 이미지는 SliverPersistentHeader에서 shrinkOffset 기반으로 오버레이 처리
-
   @override
   void initState() {
     super.initState();
@@ -59,56 +55,73 @@ class _PostReaderScreenState extends State<PostReaderScreen>
     try {
       _composer.clearSelection();
     } catch (_) {}
-
-    _intro = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 420),
-    );
-    _introCurve = CurvedAnimation(parent: _intro, curve: Curves.easeOutCubic);
-    _intro.forward();
-
-    // overlay는 header delegate에서 처리
   }
 
   @override
   void dispose() {
-    _intro.dispose();
     _readOnlyFocus.dispose();
     super.dispose();
+  }
+
+  ImageProvider _buildBackgroundImage() {
+    final imageUrl =
+        widget.exported['thumbnailImageUrl'] ?? 'assets/images/feed2.png';
+
+    if (imageUrl.startsWith('http')) {
+      return NetworkImage(imageUrl);
+    } else {
+      return AssetImage(imageUrl);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     final stickers = (widget.exported['stickers'] as List?) ?? const [];
 
-    // 썸네일 우선순위: URL 키들 → base64 → 자산
-    final String? thumbnailUrl = widget.exported['thumbnailImageUrl'];
-
-    final double topHeight = MediaQuery.of(context).size.width * 3 / 4;
-
     return Scaffold(
       backgroundColor: AppColors.darkSurface,
+
       body: Stack(
         key: _stackKey,
         children: [
+          // Hero 배경 이미지
+          if (widget.heroTag != null)
+            Positioned.fill(
+              child: Hero(
+                tag: widget.heroTag!,
+                child: Container(
+                  decoration: BoxDecoration(
+                    image: DecorationImage(
+                      image: _buildBackgroundImage(),
+                      fit: BoxFit.cover,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+
+          // 그라데이션 오버레이
+          Positioned.fill(
+            child: Container(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    Colors.black.withOpacity(0.6),
+                    Colors.black.withOpacity(0.2),
+                    Colors.transparent,
+                  ],
+                  stops: const [0.0, 0.5, 1.0],
+                ),
+              ),
+            ),
+          ),
+
+          // 메인 콘텐츠
           CustomScrollView(
             controller: _outerScroll,
             slivers: [
-              SliverPersistentHeader(
-                pinned: false,
-                floating: false,
-                delegate: _ReaderHeaderDelegate(
-                  heroTag: widget.heroTag,
-                  url: thumbnailUrl,
-
-                  assetFallback: 'assets/images/feed2.png',
-                  maxHeight: topHeight,
-                  intro: _introCurve,
-                  buildTopImage: _buildTopImage,
-                ),
-              ),
-              // SuperEditor는 슬리버 기반 렌더러이므로 slivers에 직접 배치
-              SliverToBoxAdapter(child: SizedBox(height: 100)),
               SuperEditor(
                 editor: _editor,
                 stylesheet: buildCustomStylesheet(),
@@ -150,31 +163,22 @@ class _PostReaderScreenState extends State<PostReaderScreen>
               },
             ),
           ),
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            child: AppBar(
+              backgroundColor: Colors.transparent,
+              elevation: 0,
+              leading: IconButton(
+                icon: const Icon(Icons.arrow_back, color: Colors.white),
+                onPressed: () => Navigator.of(context).pop(),
+              ),
+            ),
+          ),
         ],
       ),
     );
-  }
-
-  Widget _buildTopImage({
-    required String? heroTag,
-    required String? url,
-    required String assetFallback,
-  }) {
-    Widget image;
-    if (url != null && url.isNotEmpty) {
-      if (url.startsWith('http')) {
-        image = Image.network(url, fit: BoxFit.cover);
-      } else {
-        image = Image.asset(url, fit: BoxFit.cover);
-      }
-    } else {
-      image = Image.asset(assetFallback, fit: BoxFit.cover);
-    }
-
-    if (heroTag != null && heroTag.isNotEmpty) {
-      return Hero(tag: heroTag, child: image);
-    }
-    return image;
   }
 
   MutableDocument _rebuildDocument(Map<String, dynamic> data) {
@@ -468,74 +472,5 @@ class _ReadOnlyStickers extends StatelessWidget {
       return Color(int.parse(hex, radix: 16));
     }
     return null;
-  }
-}
-
-class _ReaderHeaderDelegate extends SliverPersistentHeaderDelegate {
-  final String? heroTag;
-  final String? url;
-  final String assetFallback;
-  final double maxHeight;
-  final Animation<double> intro;
-  final Widget Function({
-    required String? heroTag,
-    required String? url,
-    required String assetFallback,
-  })
-  buildTopImage;
-
-  _ReaderHeaderDelegate({
-    required this.heroTag,
-    required this.url,
-    required this.assetFallback,
-    required this.maxHeight,
-    required this.intro,
-    required this.buildTopImage,
-  });
-
-  @override
-  double get minExtent => 0;
-
-  @override
-  double get maxExtent => this.maxHeight;
-
-  @override
-  Widget build(
-    BuildContext context,
-    double shrinkOffset,
-    bool overlapsContent,
-  ) {
-    final double visible = (maxExtent - shrinkOffset).clamp(0.0, maxExtent);
-    final double overlay = (shrinkOffset / maxExtent).clamp(0.0, 1.0) * 0.15;
-    final scale = 0.94 + 0.06 * intro.value;
-    final translateY = (1 - intro.value) * 10;
-    return SizedBox(
-      height: visible,
-      width: double.infinity,
-      child: Transform.translate(
-        offset: Offset(0, translateY),
-        child: Transform.scale(
-          scale: scale,
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              buildTopImage(
-                heroTag: heroTag,
-                url: url,
-                assetFallback: assetFallback,
-              ),
-              Container(color: Colors.black.withOpacity(overlay)),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  @override
-  bool shouldRebuild(covariant _ReaderHeaderDelegate oldDelegate) {
-    return oldDelegate.url != url ||
-        oldDelegate.maxHeight != maxHeight ||
-        oldDelegate.heroTag != heroTag;
   }
 }

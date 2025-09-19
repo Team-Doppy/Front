@@ -95,7 +95,7 @@ class PostExporter {
     final layout =
         editorService.documentLayoutKey?.currentState as DocumentLayout?;
     final List<Map<String, dynamic>> nodes = <Map<String, dynamic>>[];
-    String? firstImageUrl;
+    String? thumbnailImageUrl;
 
     for (int i = 0; i < doc.length; i++) {
       final node = doc.getNodeAt(i);
@@ -116,7 +116,7 @@ class PostExporter {
 
       // ImageNode (SuperEditor 내장)
       if (node is ImageNode) {
-        firstImageUrl ??= node.imageUrl;
+        thumbnailImageUrl ??= node.imageUrl;
         nodes.add({
           'id': node.id,
           'type': 'image',
@@ -128,6 +128,10 @@ class PostExporter {
 
       // ImageRowNode (프로젝트에 존재하는 경우)
       if (node is ImageRowNode) {
+        // ImageRowNode의 첫 번째 이미지를 썸네일로 사용
+        if (node.imageUrls.isNotEmpty) {
+          thumbnailImageUrl ??= node.imageUrls.first;
+        }
         nodes.add({
           'id': node.id,
           'type': 'imageRow',
@@ -256,8 +260,10 @@ class PostExporter {
 
     return {
       'version': '1.0',
-      'thumnailUrl': firstImageUrl ?? '',
-      'title': nodes[0]['text'],
+      'thumbnailUrl':
+          thumbnailImageUrl ?? '', // 오타 수정: thumnailUrl -> thumbnailUrl
+      'title': nodes.isNotEmpty ? nodes[0]['text'] : '',
+      'content': {'nodes': nodes}, // content 필드 추가
       'writer': AuthProvider().username ?? 'anonymous',
       'document': {'nodes': nodes},
       'stickers': stickers,
