@@ -1,6 +1,7 @@
-import 'package:doppy/data/services/auth_service.dart';
 import 'package:doppy/providers/auth_provider.dart';
+import 'package:doppy/providers/theme_provider.dart';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 
 class SettingScreen extends StatelessWidget {
   const SettingScreen({super.key});
@@ -97,7 +98,9 @@ class SettingScreen extends StatelessWidget {
                 _SettingTile(
                   icon: Icons.brightness_6,
                   label: '테마 설정',
-                  onTap: () {},
+                  onTap: () {
+                    context.read<ThemeProvider>().toggleTheme();
+                  },
                 ),
                 _SettingTile(
                   icon: Icons.favorite_border,

@@ -211,7 +211,7 @@ class _GalleryBottomSheetState extends State<GalleryBottomSheet> {
     return Container(
       height: MediaQuery.of(context).size.height * 0.92,
       decoration: BoxDecoration(
-        color: const Color.fromARGB(255, 56, 56, 56),
+        color: Theme.of(context).colorScheme.surface,
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
       child: Column(
@@ -223,7 +223,9 @@ class _GalleryBottomSheetState extends State<GalleryBottomSheet> {
                 width: 44,
                 height: 5,
                 decoration: BoxDecoration(
-                  color: Colors.white24,
+                  color: Theme.of(
+                    context,
+                  ).colorScheme.onSurface.withOpacity(0.24),
                   borderRadius: BorderRadius.circular(3),
                 ),
               ),
@@ -235,7 +237,12 @@ class _GalleryBottomSheetState extends State<GalleryBottomSheet> {
             padding: EdgeInsets.symmetric(horizontal: 8, vertical: 0),
             decoration: BoxDecoration(
               border: Border(
-                bottom: BorderSide(color: AppColors.darkBorder, width: 0.5),
+                bottom: BorderSide(
+                  color: Theme.of(
+                    context,
+                  ).colorScheme.outlineVariant.withOpacity(0.5),
+                  width: 0.5,
+                ),
               ),
             ),
             child: Row(
@@ -246,7 +253,9 @@ class _GalleryBottomSheetState extends State<GalleryBottomSheet> {
                   child: Text(
                     '취소',
                     style: TextStyle(
-                      color: AppColors.darkTextSecondary,
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.onSurface.withOpacity(0.7),
                       fontSize: 17,
                       fontWeight: FontWeight.w600,
                     ),
@@ -260,8 +269,10 @@ class _GalleryBottomSheetState extends State<GalleryBottomSheet> {
                     style: TextStyle(
                       color:
                           _selectedOrder.isNotEmpty
-                              ? AppColors.primary
-                              : AppColors.darkTextSecondary,
+                              ? Theme.of(context).colorScheme.primary
+                              : Theme.of(
+                                context,
+                              ).colorScheme.onSurface.withOpacity(0.7),
                       fontSize: 16,
                       fontWeight: FontWeight.w600,
                     ),
@@ -277,7 +288,7 @@ class _GalleryBottomSheetState extends State<GalleryBottomSheet> {
                 _isLoading
                     ? Center(
                       child: CircularProgressIndicator(
-                        color: AppColors.primary,
+                        color: Theme.of(context).colorScheme.primary,
                       ),
                     )
                     : _error != null
@@ -287,14 +298,18 @@ class _GalleryBottomSheetState extends State<GalleryBottomSheet> {
                         children: [
                           Icon(
                             Icons.error_outline,
-                            color: AppColors.darkTextSecondary,
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.onSurface.withOpacity(0.7),
                             size: 48,
                           ),
                           SizedBox(height: 16),
                           Text(
                             _error!,
                             style: TextStyle(
-                              color: AppColors.darkTextSecondary,
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.onSurface.withOpacity(0.7),
                               fontSize: 16,
                             ),
                             textAlign: TextAlign.center,
@@ -312,7 +327,9 @@ class _GalleryBottomSheetState extends State<GalleryBottomSheet> {
                       child: Text(
                         '사진이 없습니다',
                         style: TextStyle(
-                          color: AppColors.darkTextSecondary,
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.onSurface.withOpacity(0.7),
                           fontSize: 16,
                         ),
                       ),

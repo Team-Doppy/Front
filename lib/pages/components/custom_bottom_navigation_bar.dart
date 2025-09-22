@@ -1,4 +1,3 @@
-import 'package:doppy/theme/app_colors.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
@@ -49,10 +48,12 @@ class CustomBottomNavigationBar extends StatelessWidget {
     ];
 
     return Container(
-      height: 74,
-      decoration: const BoxDecoration(color: AppColors.darkBackground),
+      height: 70,
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.background,
+      ),
       child: Padding(
-        padding: const EdgeInsets.only(bottom: 30, top: 10),
+        padding: const EdgeInsets.only(bottom: 20, top: 10),
         child: Row(
           children: List.generate(4, (index) {
             final iconSize = 28.0;
@@ -65,7 +66,10 @@ class CustomBottomNavigationBar extends StatelessWidget {
                     iconAssets[index],
                     width: iconSize,
                     height: iconSize,
-                    color: AppColors.darkTextPrimary,
+                    color:
+                        index == currentIndex
+                            ? Theme.of(context).colorScheme.primary
+                            : Theme.of(context).colorScheme.onSurface,
                   ),
                 ),
               ),

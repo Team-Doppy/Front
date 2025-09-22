@@ -2,11 +2,9 @@ import 'package:doppy/pages/components/custom_bottom_navigation_bar.dart';
 import 'package:doppy/pages/components/post_list.dart';
 import 'package:doppy/data/models/post_data.dart';
 import 'package:doppy/data/services/blog_service.dart';
-import 'package:doppy/theme/app_colors.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../providers/auth_provider.dart';
-import '../../theme/app_text_styles.dart';
 
 class HomeScreen extends StatefulWidget {
   final List<PostData>? preloadedPosts;
@@ -98,14 +96,13 @@ class _HomeScreenState extends State<HomeScreen> {
     final screenWidth = MediaQuery.of(context).size.width;
 
     return Scaffold(
-      backgroundColor: AppColors.darkBackground,
       body: SafeArea(
         child: Column(
           children: [
             // 앱바 - 항상 표시
             Container(
               height: 42,
-              color: AppColors.darkBackground,
+              color: Theme.of(context).colorScheme.background,
               child: Padding(
                 padding: const EdgeInsets.only(left: 16, right: 16, bottom: 16),
                 child: Row(
@@ -114,13 +111,11 @@ class _HomeScreenState extends State<HomeScreen> {
                       child: Consumer<AuthProvider>(
                         builder: (context, auth, child) {
                           final username = auth.username ?? '사용자';
-                          return Text(
-                            '@$username',
-                            style: AppTextStyles.headlineMedium.copyWith(
-                              color: Colors.white,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          );
+                          final textStyle = Theme.of(context)
+                              .textTheme
+                              .headlineMedium
+                              ?.copyWith(fontWeight: FontWeight.bold);
+                          return Text('@$username', style: textStyle);
                         },
                       ),
                     ),
@@ -128,7 +123,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       children: [
                         Icon(
                           Icons.notifications,
-                          color: AppColors.darkTextPrimary,
+                          color: Theme.of(context).colorScheme.onBackground,
                           size: 23,
                         ),
                         Positioned(
@@ -165,13 +160,22 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _buildContent(double screenWidth) {
     if (_isLoading) {
-      return const Center(
+      return Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            CircularProgressIndicator(color: Colors.white),
-            SizedBox(height: 16),
-            Text('포스트를 불러오는 중...', style: TextStyle(color: Colors.white70)),
+            CircularProgressIndicator(
+              color: Theme.of(context).colorScheme.primary,
+            ),
+            const SizedBox(height: 16),
+            Text(
+              '포스트를 불러오는 중...',
+              style: TextStyle(
+                color: Theme.of(
+                  context,
+                ).colorScheme.onBackground.withOpacity(0.7),
+              ),
+            ),
           ],
         ),
       );
@@ -186,12 +190,22 @@ class _HomeScreenState extends State<HomeScreen> {
             const SizedBox(height: 16),
             Text(
               '포스트를 불러올 수 없습니다',
-              style: TextStyle(color: Colors.white70, fontSize: 16),
+              style: TextStyle(
+                color: Theme.of(
+                  context,
+                ).colorScheme.onBackground.withOpacity(0.7),
+                fontSize: 16,
+              ),
             ),
             const SizedBox(height: 8),
             Text(
               '서버 연결을 확인해주세요',
-              style: TextStyle(color: Colors.white54, fontSize: 14),
+              style: TextStyle(
+                color: Theme.of(
+                  context,
+                ).colorScheme.onBackground.withOpacity(0.54),
+                fontSize: 14,
+              ),
             ),
             const SizedBox(height: 16),
             ElevatedButton(onPressed: _loadPosts, child: const Text('다시 시도')),

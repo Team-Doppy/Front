@@ -152,11 +152,11 @@ class _PostExportScreenState extends State<PostExportScreen>
   void _openVisibilitySheet() async {
     final result = await showModalBottomSheet(
       context: context,
-      backgroundColor: AppColors.darkSurface,
+      backgroundColor: Theme.of(context).colorScheme.surface,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
-      barrierColor: Colors.transparent,
+      barrierColor: Colors.black54,
       builder: (_) {
         return ChangeNotifierProvider.value(
           value: context.read<GroupProvider>(),
@@ -514,8 +514,8 @@ class _PostExportScreenState extends State<PostExportScreen>
                     onPressed: _openVisibilitySheet,
                     style: ElevatedButton.styleFrom(
                       minimumSize: const Size(double.infinity, 50),
-                      backgroundColor: const Color.fromARGB(255, 70, 70, 70),
-                      foregroundColor: Colors.white,
+                      backgroundColor: Theme.of(context).colorScheme.primary,
+                      foregroundColor: Theme.of(context).colorScheme.onPrimary,
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(12),
                       ),
@@ -643,7 +643,9 @@ class _AudiencePickerState extends State<_AudiencePicker> {
               width: 44,
               height: 5,
               decoration: BoxDecoration(
-                color: Colors.white24,
+                color: Theme.of(
+                  context,
+                ).colorScheme.onSurface.withOpacity(0.24),
                 borderRadius: BorderRadius.circular(3),
               ),
             ),
@@ -662,24 +664,39 @@ class _AudiencePickerState extends State<_AudiencePicker> {
                     if (i == 0) {
                       final bool checked = _selectAll;
                       return ListTile(
-                        leading: const CircleAvatar(
+                        leading: CircleAvatar(
                           radius: 30,
-                          backgroundColor: AppColors.darkBorder,
-                          child: Icon(Icons.public, color: Colors.white),
+                          backgroundColor:
+                              Theme.of(context).colorScheme.surfaceVariant,
+                          child: Icon(
+                            Icons.public,
+                            color: Theme.of(context).colorScheme.onSurface,
+                          ),
                         ),
-                        title: const Text(
+                        title: Text(
                           '전체 공개',
-                          style: TextStyle(color: Colors.white),
+                          style: TextStyle(
+                            color: Theme.of(context).colorScheme.onSurface,
+                          ),
                         ),
-                        subtitle: const Text(
+                        subtitle: Text(
                           '모든 사용자에게 공개',
-                          style: TextStyle(color: Colors.white70),
+                          style: TextStyle(
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.onSurface.withOpacity(0.7),
+                          ),
                         ),
                         trailing: Icon(
                           checked
                               ? Icons.check_circle
                               : Icons.radio_button_unchecked,
-                          color: checked ? Colors.white : Colors.white24,
+                          color:
+                              checked
+                                  ? Theme.of(context).colorScheme.primary
+                                  : Theme.of(
+                                    context,
+                                  ).colorScheme.onSurface.withOpacity(0.24),
                         ),
                         onTap: () {
                           setState(() {
@@ -694,24 +711,39 @@ class _AudiencePickerState extends State<_AudiencePicker> {
                     if (i == 1) {
                       final bool checked = _privateOnly;
                       return ListTile(
-                        leading: const CircleAvatar(
+                        leading: CircleAvatar(
                           radius: 30,
-                          backgroundColor: AppColors.darkBorder,
-                          child: Icon(Icons.lock, color: Colors.white),
+                          backgroundColor:
+                              Theme.of(context).colorScheme.surfaceVariant,
+                          child: Icon(
+                            Icons.lock,
+                            color: Theme.of(context).colorScheme.onSurface,
+                          ),
                         ),
-                        title: const Text(
+                        title: Text(
                           '나만 보기',
-                          style: TextStyle(color: Colors.white),
+                          style: TextStyle(
+                            color: Theme.of(context).colorScheme.onSurface,
+                          ),
                         ),
-                        subtitle: const Text(
+                        subtitle: Text(
                           '본인만 볼 수 있음',
-                          style: TextStyle(color: Colors.white70),
+                          style: TextStyle(
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.onSurface.withOpacity(0.7),
+                          ),
                         ),
                         trailing: Icon(
                           checked
                               ? Icons.check_circle
                               : Icons.radio_button_unchecked,
-                          color: checked ? Colors.white : Colors.white24,
+                          color:
+                              checked
+                                  ? Theme.of(context).colorScheme.primary
+                                  : Theme.of(
+                                    context,
+                                  ).colorScheme.onSurface.withOpacity(0.24),
                         ),
                         onTap: () {
                           setState(() {
@@ -729,22 +761,34 @@ class _AudiencePickerState extends State<_AudiencePicker> {
                     return ListTile(
                       leading: CircleAvatar(
                         radius: 30,
-                        backgroundColor: AppColors.darkBorder,
+                        backgroundColor:
+                            Theme.of(context).colorScheme.surfaceVariant,
                         child: Text(g.name.substring(0, 1)),
                       ),
                       title: Text(
                         g.name,
-                        style: const TextStyle(color: Colors.white),
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.onSurface,
+                        ),
                       ),
                       subtitle: Text(
                         g.description,
-                        style: const TextStyle(color: Colors.white70),
+                        style: TextStyle(
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.onSurface.withOpacity(0.7),
+                        ),
                       ),
                       trailing: Icon(
                         checked
                             ? Icons.check_circle
                             : Icons.radio_button_unchecked,
-                        color: checked ? Colors.white : Colors.white24,
+                        color:
+                            checked
+                                ? Theme.of(context).colorScheme.primary
+                                : Theme.of(
+                                  context,
+                                ).colorScheme.onSurface.withOpacity(0.24),
                       ),
                       onTap: () {
                         setState(() {

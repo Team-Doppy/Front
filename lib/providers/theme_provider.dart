@@ -9,4 +9,11 @@ class ThemeProvider extends ChangeNotifier {
     _themeMode = themeMode;
     notifyListeners();
   }
+
+  /// 라이트/다크 테마를 단순 토글합니다.
+  void toggleTheme() {
+    _themeMode =
+        _themeMode == ThemeMode.dark ? ThemeMode.light : ThemeMode.dark;
+    notifyListeners();
+  }
 }

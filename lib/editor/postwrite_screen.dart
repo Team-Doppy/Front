@@ -19,7 +19,6 @@ import 'package:doppy/editor/style/image_toolbar.dart';
 import 'package:doppy/editor/style/style_sheet.dart';
 import 'package:doppy/editor/style/defualt_toolbar.dart';
 import 'package:doppy/editor/sticker_canvas.dart';
-import 'package:doppy/theme/app_colors.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter/services.dart';
@@ -235,10 +234,10 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
         return false;
       },
       child: Scaffold(
-        backgroundColor: AppColors.darkSurface,
+        backgroundColor: Theme.of(context).scaffoldBackgroundColor,
         resizeToAvoidBottomInset: true,
         appBar: AppBar(
-          backgroundColor: AppColors.darkSurface,
+          backgroundColor: Theme.of(context).appBarTheme.backgroundColor,
           toolbarHeight: 40,
           scrolledUnderElevation: 0,
           leading: GestureDetector(
@@ -263,7 +262,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
             },
             child: Icon(
               Icons.arrow_back_ios_new_rounded,
-              color: AppColors.darkTextPrimary,
+              color: Theme.of(context).colorScheme.onSurface,
               size: 20,
             ),
           ),
@@ -271,18 +270,18 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
             // 임시저장 목록 버튼
             IconButton(
               onPressed: _showDraftList,
-              icon: const Icon(
+              icon: Icon(
                 Icons.folder_outlined,
-                color: AppColors.darkTextPrimary,
+                color: Theme.of(context).colorScheme.onSurface,
                 size: 20,
               ),
             ),
             // 수동 임시저장 버튼
             IconButton(
               onPressed: _manualSaveDraft,
-              icon: const Icon(
+              icon: Icon(
                 Icons.save_outlined,
-                color: AppColors.darkTextPrimary,
+                color: Theme.of(context).colorScheme.onSurface,
                 size: 20,
               ),
             ),
@@ -312,7 +311,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
               child: Text(
                 '다음',
                 style: TextStyle(
-                  color: AppColors.darkTextPrimary,
+                  color: Theme.of(context).colorScheme.onSurface,
                   fontWeight: FontWeight.w600,
                 ),
               ),
@@ -348,9 +347,11 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                               child: Theme(
                                 data: Theme.of(context).copyWith(
                                   textSelectionTheme: TextSelectionThemeData(
-                                    cursorColor: AppColors.primary,
-                                    selectionColor: AppColors.primary
-                                        .withOpacity(0.3),
+                                    cursorColor:
+                                        Theme.of(context).colorScheme.primary,
+                                    selectionColor: Theme.of(
+                                      context,
+                                    ).colorScheme.primary.withOpacity(0.3),
                                   ),
                                 ),
                                 child: SuperEditor(
@@ -363,8 +364,9 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                                   documentLayoutKey: _documentLayoutKey,
                                   scrollController: scrollController,
                                   selectionStyle: SelectionStyles(
-                                    selectionColor: AppColors.primary
-                                        .withOpacity(0.3),
+                                    selectionColor: Theme.of(
+                                      context,
+                                    ).colorScheme.primary.withOpacity(0.3),
                                   ),
                                   componentBuilders: [
                                     // 타이틀 문단 전용 빌더(드래그 없음)

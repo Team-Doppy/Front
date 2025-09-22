@@ -116,7 +116,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
         containerHeight - panelTop - bottomNavHeight - bottomMargin;
 
     return Scaffold(
-      backgroundColor: AppColors.darkBackground,
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       body: SafeArea(
         child: Center(
           child: Container(
@@ -124,7 +124,9 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
             height: containerHeight,
             margin: EdgeInsets.symmetric(horizontal: 4.0),
             clipBehavior: Clip.antiAlias,
-            decoration: BoxDecoration(color: AppColors.darkBackground),
+            decoration: BoxDecoration(
+              color: Theme.of(context).colorScheme.background,
+            ),
             child: _buildContent(
               containerWidth,
               containerHeight,
@@ -202,7 +204,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
       child: Container(
         width: containerWidth,
         height: containerHeight * 0.4,
-        decoration: BoxDecoration(color: AppColors.darkSurface),
+        decoration: BoxDecoration(color: Theme.of(context).colorScheme.surface),
       ),
     );
   }
@@ -224,7 +226,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
           width: 132, // 고정 크기 132
           height: 132, // 고정 크기 132
           decoration: ShapeDecoration(
-            color: AppColors.primary,
+            color: Theme.of(context).colorScheme.primary,
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(40), // 132/2 = 66
             ),
@@ -248,7 +250,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                       },
                     )
                     : Container(
-                      color: AppColors.primary,
+                      color: Theme.of(context).colorScheme.primary,
                       child: const Icon(
                         Icons.person,
                         color: Colors.white,
@@ -286,7 +288,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                 height: containerHeight * 0.046,
                 clipBehavior: Clip.antiAlias,
                 decoration: ShapeDecoration(
-                  color: AppColors.darkBackground,
+                  color: Theme.of(context).colorScheme.surfaceVariant,
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(10),
                   ),
@@ -295,7 +297,9 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                   child: Text(
                     '그룹관리',
                     style: AppTextStyles.bodyLarge.copyWith(
-                      color: AppColors.darkTextSecondary,
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.onSurface.withOpacity(0.7),
                     ), // 강조 본문 - 메뉴, 중요 본문
                   ),
                 ),
@@ -326,7 +330,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                 height: containerHeight * 0.046,
                 clipBehavior: Clip.antiAlias,
                 decoration: ShapeDecoration(
-                  color: AppColors.darkSurfaceVariant,
+                  color: Theme.of(context).colorScheme.surfaceVariant,
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(10),
                   ),
@@ -335,7 +339,9 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                   child: Text(
                     '이웃관리',
                     style: AppTextStyles.bodyLarge.copyWith(
-                      color: AppColors.darkTextSecondary,
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.onSurface.withOpacity(0.7),
                       fontWeight: FontWeight.w500,
                     ), // 강조 본문 - 메뉴, 중요 본문
                   ),
@@ -390,18 +396,18 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
           style: AppTextStyles.headlineLarge.copyWith(
             fontSize: 25,
             fontWeight: FontWeight.w700,
-            color: AppColors.darkTextPrimary,
+            color: Theme.of(context).colorScheme.onBackground,
           ),
         ),
       ),
       // 사용자 설명 (모든 프로필에서 표시)
       Positioned(
         left: containerWidth * 0.475,
-        top: containerHeight * 0.16, // 위로 올림
+        top: containerHeight * 0.2, // 위로 올림
         child: Text(
           selfIntroduction ?? '자기소개가 없습니다.',
           style: AppTextStyles.bodySmall.copyWith(
-            color: AppColors.darkTextSecondary,
+            color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
           ),
         ),
       ),
@@ -412,7 +418,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
         child: Text(
           '이웃 ${friendCount ?? 0}명',
           style: AppTextStyles.bodyLarge.copyWith(
-            color: AppColors.darkTextPrimary,
+            color: Theme.of(context).colorScheme.onSurface,
           ),
         ),
       ),
@@ -434,7 +440,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
         child: Text(
           '함께 Doppy하는 이웃 15명', // 하드코딩된 숫자
           style: AppTextStyles.bodyMedium.copyWith(
-            color: AppColors.darkTextSecondary,
+            color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
           ),
         ),
       ),
@@ -463,9 +469,8 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                   decoration: BoxDecoration(
                     color:
                         friendProvider.friendStatus == FriendRequestStatus.none
-                            ? AppColors
-                                .primary // 보라색 배경
-                            : AppColors.darkSurfaceVariant, // 회색 배경
+                            ? Theme.of(context).colorScheme.primary
+                            : Theme.of(context).colorScheme.surfaceVariant,
                     borderRadius: BorderRadius.circular(10),
                   ),
                   child: Center(
@@ -484,8 +489,13 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                                 color:
                                     friendProvider.friendStatus ==
                                             FriendRequestStatus.none
-                                        ? Colors.white
-                                        : AppColors.darkTextSecondary,
+                                        ? Theme.of(
+                                          context,
+                                        ).colorScheme.onPrimary
+                                        : Theme.of(context)
+                                            .colorScheme
+                                            .onSurface
+                                            .withOpacity(0.7),
                                 fontWeight: FontWeight.w500,
                               ),
                             ),
@@ -510,7 +520,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
         width: containerWidth,
         height: dynamicPanelHeight,
         decoration: ShapeDecoration(
-          color: AppColors.darkBackground,
+          color: Theme.of(context).colorScheme.surface,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.only(
               topLeft: Radius.circular(30),
@@ -555,7 +565,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                 width: 40,
                 height: 4,
                 decoration: BoxDecoration(
-                  color: AppColors.darkBorder,
+                  color: Theme.of(context).colorScheme.outlineVariant,
                   borderRadius: BorderRadius.circular(2),
                 ),
               ),
@@ -615,7 +625,11 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                   width: width,
                   height: height,
                   colorFilter: ColorFilter.mode(
-                    isSelected ? AppColors.darkTextSecondary : AppColors.accent,
+                    isSelected
+                        ? Theme.of(
+                          context,
+                        ).colorScheme.onSurface.withOpacity(0.7)
+                        : Theme.of(context).colorScheme.secondary,
                     BlendMode.srcIn,
                   ),
                 );
@@ -623,7 +637,9 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                 return Icon(
                   Icons.grid_view,
                   size: width,
-                  color: AppColors.darkTextSecondary,
+                  color: Theme.of(
+                    context,
+                  ).colorScheme.onSurface.withOpacity(0.7),
                 );
               }
             },
@@ -676,7 +692,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
               onTap: () {}, // 피드 상세보기 페이지 이동
               child: Container(
                 decoration: ShapeDecoration(
-                  color: AppColors.darkSurfaceVariant,
+                  color: Theme.of(context).colorScheme.surfaceVariant,
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(2),
                   ),
@@ -690,8 +706,8 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                       return Container(
                         color:
                             index % 2 == 0
-                                ? AppColors.accent
-                                : AppColors.primary,
+                                ? Theme.of(context).colorScheme.secondary
+                                : Theme.of(context).colorScheme.primary,
                         child: const Center(
                           child: Icon(
                             Icons.image,

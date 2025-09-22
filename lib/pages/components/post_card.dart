@@ -1,7 +1,6 @@
 import 'dart:ui';
 
 import 'package:doppy/pages/post/user_profile_screen.dart';
-import 'package:doppy/theme/app_colors.dart';
 import 'package:flutter/material.dart';
 
 // ignore: must_be_immutable
@@ -74,9 +73,14 @@ class _PostCardState extends State<PostCard> with TickerProviderStateMixin {
           width: double.infinity,
           height: double.infinity,
           decoration: BoxDecoration(
-            color: Colors.grey[800]!.withOpacity(_pulseAnimation.value),
+            color: Theme.of(
+              context,
+            ).colorScheme.onSurface.withOpacity(_pulseAnimation.value),
             borderRadius: BorderRadius.circular(2),
-            border: Border.all(color: AppColors.darkSurface, width: 2),
+            border: Border.all(
+              color: Theme.of(context).colorScheme.surface,
+              width: 2,
+            ),
           ),
         );
       },
@@ -95,9 +99,15 @@ class _PostCardState extends State<PostCard> with TickerProviderStateMixin {
         },
         errorBuilder: (context, error, stackTrace) {
           return Container(
-            color: Colors.grey[800],
-            child: const Center(
-              child: Icon(Icons.error, color: Colors.white54, size: 40),
+            color: Theme.of(context).colorScheme.surfaceVariant,
+            child: Center(
+              child: Icon(
+                Icons.error,
+                color: Theme.of(
+                  context,
+                ).colorScheme.onSurface.withOpacity(0.54),
+                size: 40,
+              ),
             ),
           );
         },
@@ -108,9 +118,13 @@ class _PostCardState extends State<PostCard> with TickerProviderStateMixin {
     } else {
       // 로컬 에셋
       return Container(
-        color: Colors.grey[800],
-        child: const Center(
-          child: Icon(Icons.error, color: Colors.white54, size: 40),
+        color: Theme.of(context).colorScheme.surfaceVariant,
+        child: Center(
+          child: Icon(
+            Icons.error,
+            color: Theme.of(context).colorScheme.onSurface.withOpacity(0.54),
+            size: 40,
+          ),
         ),
       );
     }
@@ -121,7 +135,9 @@ class _PostCardState extends State<PostCard> with TickerProviderStateMixin {
     final double scaleProgress = ((widget.scale - 0.92) / 0.06).clamp(0.0, 1.0);
 
     return Container(
-      decoration: BoxDecoration(color: AppColors.darkBackground),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.background,
+      ),
       margin: EdgeInsets.zero,
       child: ClipRRect(
         clipBehavior: Clip.hardEdge,
@@ -204,7 +220,7 @@ class _PostCardState extends State<PostCard> with TickerProviderStateMixin {
             Text(
               widget.title,
               style: TextStyle(
-                color: AppColors.darkTextPrimary,
+                color: Theme.of(context).colorScheme.onBackground,
                 fontSize: 20,
                 fontFamily: 'Pretendard Variable',
                 fontWeight: FontWeight.bold,
@@ -218,7 +234,7 @@ class _PostCardState extends State<PostCard> with TickerProviderStateMixin {
             Text(
               widget.content,
               style: TextStyle(
-                color: AppColors.darkTextSecondary,
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
                 fontSize: 14,
                 fontFamily: 'Pretendard Variable',
                 fontWeight: FontWeight.w300,
