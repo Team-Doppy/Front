@@ -15,13 +15,47 @@ class DraftListOverlay extends StatefulWidget {
   final Map<String, List<DraftData>> drafts;
   final String? currentDraftId;
   final void Function(String draftId) onLoadDraft;
-  final void Function(String draftId) onDeleteDraft;
+  final Future<void> Function(String draftId) onDeleteDraft;
 
   @override
   State<DraftListOverlay> createState() => _DraftListOverlayState();
 }
 
-class _DraftListOverlayState extends State<DraftListOverlay> {
+class _DraftListOverlayState extends State<DraftListOverlay>
+    with SingleTickerProviderStateMixin {
+  late Map<String, List<DraftData>> _drafts;
+  String? _swipingDraftId;
+  double _swipeProgress = 0.0;
+  late final AnimationController _ctrl;
+  late final Animation<double> _fade;
+  late final Animation<double> _scale;
+  late final Animation<double> _slideY;
+
+  @override
+  void initState() {
+    super.initState();
+    // 깊은 복사로 로컬 상태 보관 (UI 반영 위해 직접 수정)
+    _drafts = {
+      for (final e in widget.drafts.entries)
+        e.key: List<DraftData>.from(e.value),
+    };
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 240),
+      reverseDuration: const Duration(milliseconds: 200),
+    );
+    _fade = CurvedAnimation(parent: _ctrl, curve: Curves.easeOutCubic);
+    _scale = Tween<double>(
+      begin: 0.98,
+      end: 1.0,
+    ).animate(CurvedAnimation(parent: _ctrl, curve: Curves.easeOut));
+    _slideY = Tween<double>(
+      begin: 24.0,
+      end: 0.0,
+    ).animate(CurvedAnimation(parent: _ctrl, curve: Curves.easeOut));
+    _ctrl.forward();
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -31,6 +65,7 @@ class _DraftListOverlayState extends State<DraftListOverlay> {
         elevation: 0,
         title: const Text('임시저장 목록', style: TextStyle(color: Colors.white)),
         iconTheme: const IconThemeData(color: Colors.white),
+        scrolledUnderElevation: 0,
       ),
       body: Stack(
         children: [
@@ -49,21 +84,31 @@ class _DraftListOverlayState extends State<DraftListOverlay> {
 
           // 임시저장 목록
           Positioned(
-            top: 120,
-            left: 8,
-            right: 8,
+            top: 0,
+            left: 0,
+            right: 0,
             bottom: 100,
-            child: Container(
-              decoration: BoxDecoration(
-                color: Colors.transparent,
-                borderRadius: BorderRadius.circular(16),
-              ),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(16),
-                child:
-                    widget.drafts.isEmpty
-                        ? _buildEmptyState()
-                        : _buildDraftList(),
+            child: AnimatedBuilder(
+              animation: _ctrl,
+              builder: (context, child) {
+                return Opacity(
+                  opacity: _fade.value,
+                  child: Transform.translate(
+                    offset: Offset(0, _slideY.value),
+                    child: Transform.scale(scale: _scale.value, child: child),
+                  ),
+                );
+              },
+              child: Container(
+                decoration: BoxDecoration(
+                  color: Colors.transparent,
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(16),
+                  child:
+                      _drafts.isEmpty ? _buildEmptyState() : _buildDraftList(),
+                ),
               ),
             ),
           ),
@@ -99,10 +144,10 @@ class _DraftListOverlayState extends State<DraftListOverlay> {
   Widget _buildDraftList() {
     return ListView.builder(
       padding: const EdgeInsets.all(20),
-      itemCount: widget.drafts.length,
+      itemCount: _drafts.length,
       itemBuilder: (context, index) {
-        final title = widget.drafts.keys.elementAt(index);
-        final drafts = widget.drafts[title]!;
+        final title = _drafts.keys.elementAt(index);
+        final drafts = _drafts[title]!;
         return _buildDraftGroup(title, drafts);
       },
     );
@@ -119,8 +164,6 @@ class _DraftListOverlayState extends State<DraftListOverlay> {
             padding: const EdgeInsets.only(bottom: 12),
             child: Row(
               children: [
-                Icon(Icons.folder_outlined, color: AppColors.primary, size: 18),
-                const SizedBox(width: 8),
                 Expanded(
                   child: Text(
                     title,
@@ -154,79 +197,125 @@ class _DraftListOverlayState extends State<DraftListOverlay> {
   Widget _buildDraftItem(DraftData draft) {
     final title = draft.title.isNotEmpty ? draft.title : '무제';
 
-    return Container(
-      margin: const EdgeInsets.only(bottom: 8, left: 16),
-      decoration: BoxDecoration(
-        color: AppColors.darkBorder.withOpacity(0.3),
-        borderRadius: BorderRadius.circular(8),
-        border:
-            widget.currentDraftId == draft.id
-                ? Border.all(color: AppColors.primary, width: 2)
-                : null,
-      ),
-      child: ListTile(
-        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        onTap: () {
-          widget.onLoadDraft(draft.id);
-          Navigator.of(context).pop();
-        },
-        leading: CircleAvatar(
-          radius: 16,
-          backgroundColor:
-              widget.currentDraftId == draft.id
-                  ? AppColors.primary
-                  : AppColors.darkTextSecondary,
-          child: Text(
-            title.substring(0, 1).toUpperCase(),
-            style: const TextStyle(
-              color: Colors.white,
-              fontWeight: FontWeight.bold,
-              fontSize: 12,
-            ),
-          ),
+    return Dismissible(
+      key: ValueKey('draft_${draft.id}'),
+      direction: DismissDirection.endToStart, // 오른쪽→왼쪽으로 밀어 삭제
+      background: Container(
+        margin: const EdgeInsets.only(bottom: 8, left: 0),
+        decoration: BoxDecoration(
+          color: Colors.red.withOpacity(0.15),
+          borderRadius: BorderRadius.circular(8),
         ),
-        title: Text(
-          title,
-          style: TextStyle(
-            color:
-                widget.currentDraftId == draft.id
-                    ? AppColors.primary
-                    : AppColors.darkTextPrimary,
-            fontWeight:
-                widget.currentDraftId == draft.id
-                    ? FontWeight.w600
-                    : FontWeight.w400,
-            fontSize: 14,
-          ),
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-        ),
-        subtitle: Text(
-          '저장: ${_formatDateTime(draft.updatedAt)}',
-          style: const TextStyle(
-            color: AppColors.darkTextSecondary,
-            fontSize: 11,
-          ),
-        ),
-        trailing: Row(
-          mainAxisSize: MainAxisSize.min,
+        alignment: Alignment.centerRight,
+        padding: const EdgeInsets.only(right: 16),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.end,
           children: [
-            if (widget.currentDraftId == draft.id)
-              const Icon(
-                Icons.check_circle,
-                color: AppColors.primary,
-                size: 18,
-              ),
+            Icon(Icons.delete, color: Colors.red.withOpacity(0.9)),
             const SizedBox(width: 8),
-            GestureDetector(
-              onTap: () => widget.onDeleteDraft(draft.id),
-              child: const Icon(
-                Icons.delete_outline,
-                color: Colors.red,
-                size: 18,
+            Text('삭제', style: TextStyle(color: Colors.red.withOpacity(0.9))),
+          ],
+        ),
+      ),
+      onUpdate: (details) {
+        setState(() {
+          if (details.direction == DismissDirection.endToStart &&
+              details.progress > 0) {
+            _swipingDraftId = draft.id;
+            _swipeProgress = details.progress;
+          } else {
+            _swipingDraftId = null;
+            _swipeProgress = 0.0;
+          }
+        });
+      },
+      confirmDismiss: (direction) async {
+        // 일정 거리 넘어가면 바로 삭제. 추가 확인 없음
+        return true;
+      },
+      onDismissed: (direction) async {
+        setState(() {
+          _swipingDraftId = null;
+          _swipeProgress = 0.0;
+          // 즉시 로컬에서 제거하여 Dismissible가 트리에서 사라지도록 함
+          for (final list in _drafts.values) {
+            list.removeWhere((d) => d.id == draft.id);
+          }
+          _drafts.removeWhere((key, value) => value.isEmpty);
+        });
+        // 비동기 삭제 및 최신 목록 재동기화(실패해도 UI는 즉시 반영됨)
+        try {
+          await widget.onDeleteDraft(draft.id);
+          final updated = await DraftService().getDraftsByTitle();
+          if (!mounted) return;
+          setState(() {
+            _drafts = {
+              for (final e in updated.entries)
+                e.key: List<DraftData>.from(e.value),
+            };
+          });
+        } catch (_) {
+          // ignore: rethrow or rollback; UI는 이미 제거됨
+        }
+      },
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 8, left: 0),
+        decoration: BoxDecoration(
+          color: AppColors.darkBorder.withOpacity(0.3),
+          borderRadius:
+              (_swipingDraftId == draft.id && _swipeProgress > 0.0)
+                  ? const BorderRadius.only(
+                    topLeft: Radius.circular(8),
+                    bottomLeft: Radius.circular(8),
+                    topRight: Radius.circular(0),
+                    bottomRight: Radius.circular(0),
+                  )
+                  : BorderRadius.circular(8),
+          border:
+              widget.currentDraftId == draft.id
+                  ? Border.all(color: AppColors.primary, width: 2)
+                  : null,
+        ),
+        child: ListTile(
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 24,
+            vertical: 8,
+          ),
+          onTap: () {
+            widget.onLoadDraft(draft.id);
+            Navigator.of(context).pop();
+          },
+          title: Text(
+            title,
+            style: TextStyle(
+              color: AppColors.darkTextPrimary,
+              fontWeight: FontWeight.w600,
+              fontSize: 14,
+            ),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+          subtitle: Text(
+            '저장: ${_formatDateTime(draft.updatedAt)}',
+            style: const TextStyle(
+              color: AppColors.darkTextSecondary,
+              fontSize: 11,
+            ),
+          ),
+          // 오른쪽 끝에 스와이프 힌트 핸들
+          trailing: Container(
+            width: 16,
+            height: 28,
+            alignment: Alignment.centerRight,
+            child: Container(
+              width: 4,
+              height: 20,
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.35),
+                borderRadius: BorderRadius.circular(2),
               ),
             ),
-          ],
+          ),
         ),
       ),
     );

@@ -37,6 +37,10 @@ class _PostReaderScreenState extends State<PostReaderScreen>
   final GlobalKey _layoutKey = GlobalKey();
   static final GlobalKey _stackKey = GlobalKey();
 
+  // 스크롤 애니메이션을 위한 변수들
+  static const double _appBarHeight = 36.0; // AppBar 높이
+  double _scrollOffset = 0.0;
+
   @override
   void initState() {
     super.initState();
@@ -52,13 +56,24 @@ class _PostReaderScreenState extends State<PostReaderScreen>
       scrollController: _outerScroll,
     );
     _readOnlyFocus = FocusNode(canRequestFocus: false);
+
+    // 스크롤 리스너 추가
+    _outerScroll.addListener(_onScroll);
+
     try {
       _composer.clearSelection();
     } catch (_) {}
   }
 
+  void _onScroll() {
+    setState(() {
+      _scrollOffset = _outerScroll.offset;
+    });
+  }
+
   @override
   void dispose() {
+    _outerScroll.removeListener(_onScroll);
     _readOnlyFocus.dispose();
     super.dispose();
   }
@@ -78,53 +93,123 @@ class _PostReaderScreenState extends State<PostReaderScreen>
   Widget build(BuildContext context) {
     final stickers = (widget.exported['stickers'] as List?) ?? const [];
 
+    // 이미지 높이를 화면의 75%로 설정
+    final screenHeight = MediaQuery.of(context).size.height;
+    final imageHeight = screenHeight * 0.9;
+
+    // AppBar가 나타나야 하는 시점 계산
+    final shouldShowAppBar =
+        _scrollOffset >=
+        imageHeight - _appBarHeight - MediaQuery.of(context).padding.top;
+    final appBarOpacity = shouldShowAppBar ? 1.0 : 0.0;
+
     return Scaffold(
-      backgroundColor: AppColors.darkSurface,
-
+      backgroundColor: Theme.of(context).colorScheme.surface,
       body: Stack(
-        key: _stackKey,
         children: [
-          // Hero 배경 이미지
-          if (widget.heroTag != null)
-            Positioned.fill(
-              child: Hero(
-                tag: widget.heroTag!,
-                child: Container(
-                  decoration: BoxDecoration(
-                    image: DecorationImage(
-                      image: _buildBackgroundImage(),
-                      fit: BoxFit.cover,
-                    ),
-                  ),
-                ),
-              ),
-            ),
-
-          // 그라데이션 오버레이
-          Positioned.fill(
-            child: Container(
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                  colors: [
-                    Colors.black.withOpacity(0.6),
-                    Colors.black.withOpacity(0.2),
-                    Colors.transparent,
-                  ],
-                  stops: const [0.0, 0.5, 1.0],
-                ),
-              ),
-            ),
-          ),
-
-          // 메인 콘텐츠
           CustomScrollView(
             controller: _outerScroll,
             slivers: [
+              // 상단 이미지 영역
+              if (widget.heroTag != null)
+                SliverToBoxAdapter(
+                  child: Hero(
+                    tag: widget.heroTag!,
+                    child: Container(
+                      height: imageHeight,
+                      width: double.infinity,
+                      decoration: BoxDecoration(
+                        image: DecorationImage(
+                          image: _buildBackgroundImage(),
+                          fit: BoxFit.cover,
+                        ),
+                      ),
+                      child: Stack(
+                        children: [
+                          // 그라데이션 오버레이
+                          Container(
+                            decoration: BoxDecoration(
+                              gradient: LinearGradient(
+                                begin: Alignment.topCenter,
+                                end: Alignment.bottomCenter,
+                                colors: [
+                                  Colors.transparent,
+                                  Colors.transparent,
+                                  Theme.of(context).colorScheme.surface,
+                                ],
+                                stops: const [0.0, 0.7, 1.0],
+                              ),
+                            ),
+                          ),
+                          // 뒤로가기 버튼
+                          Positioned(
+                            top: 0,
+                            left: 0,
+                            right: 0,
+                            child: SafeArea(
+                              child: Padding(
+                                padding: const EdgeInsets.all(16.0),
+                                child: Row(
+                                  children: [
+                                    GestureDetector(
+                                      onTap: () {
+                                        // Hero 애니메이션과 함께 자연스러운 뒤로가기
+                                        Navigator.of(context).pop();
+                                      },
+                                      child: Container(
+                                        padding: const EdgeInsets.all(8.0),
+                                        decoration: BoxDecoration(
+                                          color: Colors.black.withOpacity(0.3),
+                                          shape: BoxShape.circle,
+                                        ),
+                                        child: const Icon(
+                                          Icons.arrow_back,
+                                          color: Colors.white,
+                                          size: 20,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                          // 하단 제목
+                          Positioned(
+                            bottom: 0,
+                            left: 0,
+                            right: 0,
+                            child: Container(
+                              padding: const EdgeInsets.all(24.0),
+                              child: Text(
+                                widget.exported['title'] ?? '포스트',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 28,
+                                  fontWeight: FontWeight.bold,
+                                  shadows: [
+                                    Shadow(
+                                      color: Colors.black,
+                                      blurRadius: 8,
+                                      offset: Offset(0, 2),
+                                    ),
+                                  ],
+                                ),
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+
+              // 본문 영역
               SuperEditor(
                 editor: _editor,
-                stylesheet: buildCustomStylesheet(),
+                stylesheet: buildCustomStylesheet(context),
                 selectionStyle: SelectionStyles(
                   selectionColor: const ui.Color.fromARGB(
                     255,
@@ -132,6 +217,7 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                     255,
                     255,
                   ).withOpacity(0.3),
+                  highlightEmptyTextBlocks: false,
                 ),
                 componentBuilders: [
                   SingleImageComponentBuilder(dragService: _dragService),
@@ -147,32 +233,74 @@ class _PostReaderScreenState extends State<PostReaderScreen>
               ),
             ],
           ),
+
+          // 스티커 오버레이
           Positioned.fill(
-            child: AnimatedBuilder(
-              animation: _outerScroll,
-              builder: (context, _) {
-                return IgnorePointer(
-                  ignoring: true,
-                  child: _ReadOnlyStickers(
-                    stickers: stickers,
-                    layoutKey: _layoutKey,
-                    stackKey: _stackKey,
-                    scrollController: _outerScroll,
-                  ),
-                );
-              },
+            child: IgnorePointer(
+              ignoring: true,
+              child: _ReadOnlyStickers(
+                stickers: stickers,
+                layoutKey: _layoutKey,
+                stackKey: _stackKey,
+                scrollController: _outerScroll,
+              ),
             ),
           ),
-          Positioned(
-            top: 0,
+
+          // 동적 AppBar
+          AnimatedPositioned(
+            duration: const Duration(milliseconds: 200),
+            curve: Curves.easeInOut,
             left: 0,
             right: 0,
-            child: AppBar(
-              backgroundColor: Colors.transparent,
-              elevation: 0,
-              leading: IconButton(
-                icon: const Icon(Icons.arrow_back, color: Colors.white),
-                onPressed: () => Navigator.of(context).pop(),
+            child: AnimatedOpacity(
+              duration: const Duration(milliseconds: 200),
+              opacity: appBarOpacity,
+              child: Container(
+                height: _appBarHeight + MediaQuery.of(context).padding.top,
+                decoration: BoxDecoration(
+                  color: AppColors.darkSurface,
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.1),
+                      blurRadius: 4,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
+                ),
+
+                child: Padding(
+                  padding: EdgeInsets.only(
+                    top: MediaQuery.of(context).padding.top,
+
+                    bottom: 8.0,
+                  ),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      IconButton(
+                        icon: const Icon(
+                          Icons.arrow_back_ios_new_rounded,
+                          color: Colors.white,
+                          size: 18,
+                        ),
+                        onPressed: () => Navigator.of(context).pop(),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          widget.exported['title'] ?? '포스트',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               ),
             ),
           ),
@@ -182,7 +310,7 @@ class _PostReaderScreenState extends State<PostReaderScreen>
   }
 
   MutableDocument _rebuildDocument(Map<String, dynamic> data) {
-    final nodes = (data['document']?['nodes'] as List?) ?? const [];
+    final nodes = (data['content']?['nodes'] as List?) ?? const [];
     final rebuilt = <DocumentNode>[];
     for (final raw in nodes) {
       final m = (raw as Map).cast<String, dynamic>();
@@ -193,10 +321,11 @@ class _PostReaderScreenState extends State<PostReaderScreen>
           final text = (m['text'] ?? '').toString();
           final align = (m['align'] ?? 'center').toString();
           final isTitle = m['isTitle'] == true;
+          // 제목 문단은 화면 상단 이미지 오버레이로 별도 표시되므로 본문에서는 제외
+          if (isTitle) break;
           final spans = (m['spans'] as List?) ?? const [];
           final attributed = _buildAttributedText(text, spans);
           final meta = <String, dynamic>{'textAlign': align};
-          if (isTitle) meta['isTitle'] = true;
           rebuilt.add(ParagraphNode(id: id, text: attributed, metadata: meta));
           break;
         case 'image':

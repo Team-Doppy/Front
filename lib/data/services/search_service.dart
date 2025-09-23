@@ -45,129 +45,7 @@ class SearchService extends ChangeNotifier {
   static const String _searchHistoryKey = 'search_history';
 
   // 통합 컨텐츠 데이터 초기화
-  late final List<SearchContentItem> _allContentItems = [
-    // 계정 아이템들
-    SearchContentItem.account(
-      id: 'user1',
-      username: '푸른하늘',
-      displayName: '푸른하늘',
-      profileImageUrl: 'https://picsum.photos/200/200?random=1',
-      followers: 1200,
-    ),
-    SearchContentItem.account(
-      id: 'user2',
-      username: '여행러민준',
-      displayName: '여행러 민준',
-      profileImageUrl: 'https://picsum.photos/200/200?random=2',
-      followers: 3200,
-    ),
-    SearchContentItem.account(
-      id: 'user3',
-      username: '사진찍는수진',
-      displayName: '사진찍는 수진',
-      profileImageUrl: 'https://picsum.photos/200/200?random=3',
-      followers: 2700,
-    ),
-    SearchContentItem.account(
-      id: 'user4',
-      username: '코딩하는도치',
-      displayName: '코딩하는도치',
-      profileImageUrl: 'https://picsum.photos/200/200?random=4',
-      followers: 4100,
-    ),
-    SearchContentItem.account(
-      id: 'user5',
-      username: '제주살이현우',
-      displayName: '제주살이 현우',
-      profileImageUrl: 'https://picsum.photos/200/200?random=5',
-      followers: 1900,
-    ),
-
-    // 게시글 아이템들
-    SearchContentItem.post(
-      id: 'post1',
-      title: '도피(doppy)로 기록하는 나의 일상',
-      author: '푸른하늘',
-      imageUrl: 'https://picsum.photos/400/400?random=10',
-      likes: 120,
-      comments: 15,
-    ),
-    SearchContentItem.post(
-      id: 'post2',
-      title: '여행 준비 체크리스트 30가지',
-      author: '여행러 민준',
-      imageUrl: 'https://picsum.photos/400/400?random=11',
-      likes: 320,
-      comments: 42,
-    ),
-    SearchContentItem.post(
-      id: 'post3',
-      title: '사진 구도 10분 핵심',
-      author: '사진찍는 수진',
-      imageUrl: 'https://picsum.photos/400/400?random=12',
-      likes: 270,
-      comments: 28,
-    ),
-    SearchContentItem.post(
-      id: 'post4',
-      title: 'Flutter로 감정 기록 앱 만들기',
-      author: '코딩하는도치',
-      imageUrl: 'https://picsum.photos/400/400?random=13',
-      likes: 410,
-      comments: 35,
-    ),
-    SearchContentItem.post(
-      id: 'post5',
-      title: '제주살이 한 달 후기',
-      author: '제주살이 현우',
-      imageUrl: 'https://picsum.photos/400/400?random=14',
-      likes: 190,
-      comments: 22,
-    ),
-    SearchContentItem.post(
-      id: 'post6',
-      title: '강아지 분리불안 훈련 루틴',
-      author: '강아지훈련사',
-      imageUrl: 'https://picsum.photos/400/400?random=15',
-      likes: 450,
-      comments: 38,
-    ),
-    SearchContentItem.post(
-      id: 'post7',
-      title: '최애 고양이 사료 비교',
-      author: '고양이집사',
-      imageUrl: 'https://picsum.photos/400/400?random=16',
-      likes: 210,
-      comments: 19,
-    ),
-    SearchContentItem.post(
-      id: 'post8',
-      title: '도피(doppy) 시작 가이드',
-      author: '도피 doppy',
-      imageUrl: 'https://picsum.photos/400/400?random=17',
-      likes: 999,
-      comments: 67,
-    ),
-
-    // 추가 컨텐츠들
-    for (int i = 1; i <= 12; i++) ...[
-      SearchContentItem.account(
-        id: 'user${i + 5}',
-        username: 'user$i',
-        displayName: '사용자 $i',
-        profileImageUrl: 'https://picsum.photos/200/200?random=${20 + i}',
-        followers: 100 + i * 50,
-      ),
-      SearchContentItem.post(
-        id: 'post${i + 8}',
-        title: '추천 컨텐츠 $i',
-        author: '사용자 $i',
-        imageUrl: 'https://picsum.photos/400/400?random=${30 + i}',
-        likes: 50 + i * 10,
-        comments: 5 + i,
-      ),
-    ],
-  ];
+  late final List<SearchContentItem> _allContentItems = [];
 
   // Getters
   String get query => _query;
@@ -208,9 +86,8 @@ class SearchService extends ChangeNotifier {
           (query) => SearchContentItem.account(
             id: 'history_$query',
             username: query,
-            displayName: query,
-            profileImageUrl:
-                'https://picsum.photos/200/200?random=${query.hashCode}',
+            alias: query,
+            profileImageUrl: '',
             followers: 0,
           ),
         )
@@ -540,28 +417,9 @@ class SearchService extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 검색창 포커스
-  void onFocusChanged(bool focused) {
-    _isFocused = focused;
-    if (focused) {
-      if (_query.isNotEmpty) {
-        _isSearching = true;
-        _performRealTimeSearch(_query);
-      } else {
-        // 포커스만 있고 검색어가 없을 때는 빈 배열로 설정하여 검색 기록만 표시
-        _filteredItems = [];
-        _isSearching = false;
-      }
-    } else if (!focused && _query.isNotEmpty) {
-      // 포커스 해제 시 검색 수행
-      _debounce?.cancel();
-      _debounce = Timer(const Duration(milliseconds: 100), _performSearch);
-    }
-    notifyListeners();
-  }
-
   /// 검색어 변경
   void onSearchChanged(String q) {
+    debugPrint('[Search] onSearchChanged: $q');
     _query = q;
     _debounce?.cancel();
 
@@ -569,25 +427,12 @@ class SearchService extends ChangeNotifier {
       _filteredItems = List.from(_allContentItems);
       _selectedCategory = '추천';
       _isSearching = false;
-    } else if (_isFocused) {
-      // 포커스된 상태에서만 실시간 검색
+    } else {
+      // 포커스 여부와 관계없이 실시간 검색
       _isSearching = true;
       _performRealTimeSearch(q);
     }
 
-    notifyListeners();
-    // 포커스된 상태에서는 타이머를 사용하지 않음
-    if (!_isFocused) {
-      _debounce = Timer(const Duration(milliseconds: 350), _performSearch);
-    }
-  }
-
-  /// 검색어 제출
-  void onSearchSubmitted(String q) {
-    _query = q;
-    _debounce?.cancel();
-    _isFocused = false; // 포커스 해제
-    _performSearch();
     notifyListeners();
   }
 
@@ -626,19 +471,50 @@ class SearchService extends ChangeNotifier {
       List<SearchContentItem> accountResults = [];
 
       if (res.ok) {
-        accountResults =
-            res.usernames
-                .map(
-                  (username) => SearchContentItem.account(
+        if (res.body is List) {
+          final list = res.body as List;
+          accountResults =
+              list.map((e) {
+                if (e is Map<String, dynamic>) {
+                  final username = e['username']?.toString() ?? '';
+                  final alias =
+                      (e['alias']?.toString() ?? '').isNotEmpty
+                          ? e['alias'].toString()
+                          : username;
+                  final imageUrl = e['profileImageUrl']?.toString() ?? '';
+                  return SearchContentItem.account(
                     id: 'remote_$username',
                     username: username,
-                    displayName: username,
-                    profileImageUrl:
-                        'https://picsum.photos/200/200?random=${username.hashCode}',
+                    alias: alias,
+                    profileImageUrl: imageUrl,
                     followers: 0,
-                  ),
-                )
-                .toList();
+                  );
+                } else {
+                  final u = e?.toString() ?? '';
+                  return SearchContentItem.account(
+                    id: 'remote_$u',
+                    username: u,
+                    alias: u,
+                    profileImageUrl: '',
+                    followers: 0,
+                  );
+                }
+              }).toList();
+        } else {
+          // fallback: usernames만 있는 경우
+          accountResults =
+              res.usernames
+                  .map(
+                    (username) => SearchContentItem.account(
+                      id: 'remote_$username',
+                      username: username,
+                      alias: username,
+                      profileImageUrl: '',
+                      followers: 0,
+                    ),
+                  )
+                  .toList();
+        }
       }
 
       _filteredItems = accountResults;
@@ -658,26 +534,7 @@ class SearchService extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 검색 수행 (전체 컨텐츠)
-  Future<void> _performSearch() async {
-    final q = _query.trim();
-    debugPrint('[Search] perform | query="$q"');
-
-    if (q.isEmpty) {
-      _filteredItems = List.from(_allContentItems);
-      _selectedCategory = '추천';
-      _isSearching = false;
-      notifyListeners();
-      debugPrint(
-        '[Search] empty -> showing all content, count=${_filteredItems.length}',
-      );
-      return;
-    }
-
-    await _searchContent(q);
-    _isSearching = false; // 검색 완료
-    notifyListeners();
-  }
+  // (사용 중지) 전체 컨텐츠 검색은 현재 비활성화
 
   /// 통합 컨텐츠 검색
   Future<void> _searchContent(String q) async {
@@ -691,19 +548,49 @@ class SearchService extends ChangeNotifier {
       List<SearchContentItem> remoteAccounts = [];
 
       if (res.ok) {
-        remoteAccounts =
-            res.usernames
-                .map(
-                  (u) => SearchContentItem.account(
+        if (res.body is List) {
+          final list = res.body as List;
+          remoteAccounts =
+              list.map((e) {
+                if (e is Map<String, dynamic>) {
+                  final username = e['username']?.toString() ?? '';
+                  final alias =
+                      (e['alias']?.toString() ?? '').isNotEmpty
+                          ? e['alias'].toString()
+                          : username;
+                  final imageUrl = e['profileImageUrl']?.toString() ?? '';
+                  return SearchContentItem.account(
+                    id: 'remote_$username',
+                    username: username,
+                    alias: alias,
+                    profileImageUrl: imageUrl,
+                    followers: 0,
+                  );
+                } else {
+                  final u = e?.toString() ?? '';
+                  return SearchContentItem.account(
                     id: 'remote_$u',
                     username: u,
-                    displayName: u,
-                    profileImageUrl:
-                        'https://picsum.photos/200/200?random=${u.hashCode}',
+                    alias: u,
+                    profileImageUrl: '',
                     followers: 0,
-                  ),
-                )
-                .toList();
+                  );
+                }
+              }).toList();
+        } else {
+          remoteAccounts =
+              res.usernames
+                  .map(
+                    (u) => SearchContentItem.account(
+                      id: 'remote_$u',
+                      username: u,
+                      alias: u,
+                      profileImageUrl: '',
+                      followers: 0,
+                    ),
+                  )
+                  .toList();
+        }
       }
 
       // 로컬 컨텐츠 필터링
@@ -829,7 +716,6 @@ class SearchService extends ChangeNotifier {
 
   /// 초기화 (뒤로가기)
   void resetToInitial() {
-    debugPrint('[Search] reset to initial');
     _query = '';
     _filteredItems = List.from(_allContentItems);
     _isFocused = false;
@@ -873,27 +759,6 @@ class SearchService extends ChangeNotifier {
     }
   }
 
-  /// 프로필 이동
-  Future<UserDto?> goToProfile(String username) async {
-    try {
-      final dto = await getUserByUsername(username: username);
-      if (dto == null) {
-        return null;
-      }
-      debugPrint(
-        '[NAV] /profile | id=${dto.id}, username=${dto.username}, role=${dto.role}',
-      );
-      return dto;
-    } on DioException catch (e) {
-      final code = e.response?.statusCode;
-      debugPrint('[-] 프로필 조회 실패 | code=$code | ${e.message}');
-      return null;
-    } catch (e) {
-      debugPrint('[-] 프로필 조회 예외: $e');
-      return null;
-    }
-  }
-
   /// 친구 액션 실행
   Future<bool> executeFriendAction({
     required String actionName,
@@ -933,8 +798,8 @@ class SearchContentItem {
 
   // 계정 관련 필드
   final String? username;
-  final String? displayName;
   final String? profileImageUrl;
+  final String? alias;
   final int? followers;
 
   // 게시글 관련 필드
@@ -948,8 +813,8 @@ class SearchContentItem {
     required this.id,
     required this.isAccount,
     this.username,
-    this.displayName,
     this.profileImageUrl,
+    this.alias,
     this.followers,
     this.title,
     this.author,
@@ -961,7 +826,7 @@ class SearchContentItem {
   factory SearchContentItem.account({
     required String id,
     required String username,
-    required String displayName,
+    required String alias,
     required String profileImageUrl,
     required int followers,
   }) {
@@ -969,8 +834,8 @@ class SearchContentItem {
       id: id,
       isAccount: true,
       username: username,
-      displayName: displayName,
       profileImageUrl: profileImageUrl,
+      alias: alias,
       followers: followers,
     );
   }

@@ -32,11 +32,15 @@ class Friend {
     }
 
     return Friend(
-      id: json['id'],
-      username: json['username'],
+      id: (json['id'] as num?)?.toInt() ?? 0,
+      username: (json['username'] ?? '').toString(),
       status: parsedStatus,
-      createdAt: DateTime.parse(json['createdAt']),
-      isRequester: json['requester'] ?? false,
+      createdAt:
+          (json['createdAt'] != null &&
+                  (json['createdAt'] as String).isNotEmpty)
+              ? DateTime.parse(json['createdAt'])
+              : DateTime.fromMillisecondsSinceEpoch(0),
+      isRequester: (json['requester'] as bool?) ?? false,
     );
   }
 }

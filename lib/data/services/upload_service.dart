@@ -144,7 +144,10 @@ class UploadService with ChangeNotifier {
     try {
       final started = DateTime.now();
       print('[Upload] start id=${task.id} attempt=${task.attempt}');
-      final result = await _uploadSingle(task);
+      final Map<String, dynamic> result =
+          task.kind == UploadKind.profile
+              ? await _uploadProfileImage(task)
+              : await _uploadSingle(task);
       task.url = result['accessUrl'] as String?;
       task.imageId = result['imageId']?.toString();
       task._setProgress(1);
@@ -171,6 +174,60 @@ class UploadService with ChangeNotifier {
         notifyListeners();
         _pump();
       }
+    }
+  }
+
+  Future<Map<String, dynamic>> _uploadProfileImage(UploadTask task) async {
+    final uri = Uri.parse('$_baseUrl/api/profile/image/upload');
+    final token = await AuthService().getToken();
+    print('[UploadService] token: $token');
+    final request = http.MultipartRequest('POST', uri)
+      ..headers['Authorization'] = 'Bearer $token';
+
+    final bytes = task.bytes ?? await task.file!.readAsBytes();
+    final mediaType = _createMediaType(task.fileName);
+    request.files.add(
+      http.MultipartFile.fromBytes(
+        'file',
+        bytes,
+        filename: task.fileName,
+        contentType: mediaType,
+      ),
+    );
+
+    print(
+      '[Upload] POST ${uri.toString()} size=${bytes.length} type=${mediaType.type}/${mediaType.subtype}',
+    );
+    final streamResp = await request.send().timeout(
+      const Duration(seconds: 30),
+    );
+    final body = await streamResp.stream.bytesToString();
+    if (streamResp.statusCode == 200) {
+      print('[Upload] 200 body=${body}');
+      final Map<String, dynamic> decoded =
+          json.decode(body) as Map<String, dynamic>;
+      String? imageId = (decoded['imageId'] ?? decoded['id'])?.toString();
+      String? accessUrl =
+          decoded['accessUrl']?.toString() ?? decoded['url']?.toString();
+      if ((imageId == null || accessUrl == null) &&
+          decoded['data'] is Map<String, dynamic>) {
+        final data = decoded['data'] as Map<String, dynamic>;
+        imageId ??= (data['imageId'] ?? data['id'])?.toString();
+        accessUrl ??= data['accessUrl']?.toString() ?? data['url']?.toString();
+      }
+      if ((accessUrl == null || accessUrl.isEmpty) &&
+          imageId != null &&
+          imageId.isNotEmpty) {
+        try {
+          accessUrl = await _getAccessUrlByImageId(imageId);
+        } catch (e) {
+          print('[Upload] failed to fetch access url by imageId=$imageId: $e');
+        }
+      }
+      return {...decoded, 'imageId': imageId, 'accessUrl': accessUrl};
+    } else {
+      print('[Upload] http ${streamResp.statusCode} body=${body}');
+      throw HttpException('upload failed ${streamResp.statusCode}: $body');
     }
   }
 
@@ -331,5 +388,23 @@ class UploadService with ChangeNotifier {
     }
     print('[UploadBatch] http ${resp.statusCode} body=${body}');
     throw HttpException('batch upload failed ${resp.statusCode}: $body');
+  }
+
+  Future<String?> _getAccessUrlByImageId(String imageId) async {
+    final uri = Uri.parse('$_baseUrl/api/images/$imageId/url');
+    final token = await AuthService().getToken();
+    final resp = await http
+        .get(uri, headers: {'Authorization': 'Bearer $token'})
+        .timeout(const Duration(seconds: 10));
+    if (resp.statusCode == 200) {
+      final decoded = json.decode(resp.body);
+      if (decoded is String) return decoded;
+      if (decoded is Map<String, dynamic>) {
+        return decoded['url']?.toString();
+      }
+    }
+    throw HttpException(
+      'failed to get access url for imageId=$imageId (${resp.statusCode})',
+    );
   }
 }

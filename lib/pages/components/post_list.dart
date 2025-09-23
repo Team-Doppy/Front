@@ -1,6 +1,8 @@
-import 'dart:math';
+// import 'dart:math';
+import 'dart:convert';
+import 'dart:ui' as ui;
 import 'package:doppy/pages/components/post_card.dart';
-import 'package:doppy/pages/post/post_reader_screen.dart';
+import 'package:doppy/pages/screens/post_reader_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:doppy/data/models/post_data.dart';
 
@@ -34,7 +36,7 @@ class _PostListState extends State<PostList> {
   void initState() {
     super.initState();
     // 측면 프리뷰 유지 + 간격 약간 축소
-    _pageController = PageController(viewportFraction: 0.8);
+    _pageController = PageController(viewportFraction: 0.95);
     _pageController.addListener(() {
       if (_pageController.hasClients) {
         final current = _pageController.page ?? _currentIndex.toDouble();
@@ -51,6 +53,22 @@ class _PostListState extends State<PostList> {
   void dispose() {
     _pageController.dispose();
     super.dispose();
+  }
+
+  void _printLarge(String text, {int chunkSize = 800}) {
+    for (int i = 0; i < text.length; i += chunkSize) {
+      final end = (i + chunkSize < text.length) ? i + chunkSize : text.length;
+      debugPrint(text.substring(i, end));
+    }
+  }
+
+  void _printJsonFull(dynamic data) {
+    try {
+      final json = const JsonEncoder.withIndent('  ').convert(data);
+      _printLarge(json);
+    } catch (_) {
+      _printLarge(data.toString());
+    }
   }
 
   @override
@@ -100,8 +118,9 @@ class _PostListState extends State<PostList> {
         return false;
       },
       child: PageView.builder(
-        scrollDirection: Axis.horizontal,
+        scrollDirection: Axis.vertical,
         controller: _pageController,
+        pageSnapping: true,
         physics: const BouncingScrollPhysics(),
         onPageChanged: (index) {
           setState(() {
@@ -154,67 +173,92 @@ class _PostListState extends State<PostList> {
   }
 
   Widget _buildPostItem(BuildContext context, PostData post, int index) {
-    // 인접 페이지 여부에 따라 부드럽게 밝아짐/어두워짐
-    double progress;
-    if (_pageController.hasClients) {
-      final distance = (_page - index).abs();
-      // 0(멀리) ~ 1(정확히 맞물림)
-      final raw = (1.0 - distance).clamp(0.0, 1.0);
-      // 멈추었거나 매우 가까우면 즉시 밝게
-      if (!_isScrolling && _currentIndex == index) {
-        progress = 1.0;
-      } else if (distance < 0.12) {
-        progress = 1.0;
-      } else {
-        // 부드러운 커브
-        progress = 1.0 - pow(1.0 - raw, 3).toDouble();
-      }
-    } else {
-      progress = (_currentIndex == index) ? 1.0 : 0.0;
-    }
+    // 스크롤 진행도 기반 전환 효과 설정 (세로 스크롤 유지)
+    final bool hasClients = _pageController.hasClients;
+    final double pageNow = hasClients ? _page : _currentIndex.toDouble();
+    final double delta = pageNow - index; // 현재 페이지로부터의 거리 (0이면 중앙)
+    final double ad = delta.abs();
 
-    // 중앙 확대 효과 및 패럴럭스 오프셋 계산
-    final hasClients = _pageController.hasClients;
-    final currentPage = hasClients ? _page : _currentIndex.toDouble();
-    final delta = (hasClients ? (currentPage - index) : 0.0);
-    final distance = delta.abs().clamp(0.0, 1.0);
-    final double scale = 0.92 + (1.0 - distance) * 0.08; // 0.92 ~ 1.0
-    final double parallaxX = -delta * 24.0; // 좌우 24px 패럴럭스
+    // 심플 모드: 공존 연출 제거. 오직 축소/페이드/블러만 거리 비례로 적용
+    // proximity: 0(멀리) ~ 1(정확히 중앙)
+    final double proximity = (1.0 - ad).clamp(0.0, 1.0);
+    // 중앙에서 1.00, 멀수록 0.76까지 축소
+    double scale = 0.76 + 0.24 * proximity;
+    // 중앙에서 완전 불투명, 멀수록 완전 투명
+    double opacity = proximity;
+    // 멀수록 블러 강하게(최대 12)
+    double blur = (1.0 - proximity) * 12.0;
 
-    // 간격 좁히기: viewportFraction은 유지하되, 각 페이지의 실제 콘텐츠 폭을
-    // FractionallySizedBox로 살짝 늘려 자연스럽게 간격을 줄인다.
     return GestureDetector(
       onTap: () {
         Navigator.of(context).push(
           PageRouteBuilder(
-            transitionDuration: const Duration(milliseconds: 520),
-            reverseTransitionDuration: const Duration(milliseconds: 360),
-            opaque: true,
+            transitionDuration: const Duration(milliseconds: 400),
+            reverseTransitionDuration: const Duration(milliseconds: 500),
+            opaque: false,
             pageBuilder:
                 (_, __, ___) => PostReaderScreen(
-                  exported: {'thumbnailImageUrl': post.thumbnailImageUrl},
+                  exported: post.toExportedData(),
                   heroTag: 'post-hero-${post.id}-$index',
                 ),
-            transitionsBuilder: (_, animation, __, child) {
-              // Hero가 전환을 주도하도록 특별한 래핑 없이 그대로 반환
-              return child;
+            transitionsBuilder: (
+              context,
+              animation,
+              secondaryAnimation,
+              child,
+            ) {
+              // 부드러운 페이드 인/아웃과 스케일 효과
+              const begin = Offset(0.0, 0.1);
+              const end = Offset.zero;
+              const curve = Curves.easeOutCubic;
+
+              var tween = Tween(
+                begin: begin,
+                end: end,
+              ).chain(CurveTween(curve: curve));
+
+              var offsetAnimation = animation.drive(tween);
+              var fadeAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
+                CurvedAnimation(parent: animation, curve: Curves.easeOut),
+              );
+
+              return FadeTransition(
+                opacity: fadeAnimation,
+                child: SlideTransition(position: offsetAnimation, child: child),
+              );
             },
           ),
         );
       },
-      onDoubleTap: () {},
-      child: PostCard(
-        containerWidth: widget.containerWidth,
-        thumbnailImageUrl: post.thumbnailImageUrl,
-        heroTag: 'post-hero-${post.id}-$index',
-        title: post.title,
-        author: post.author,
-        content: post.parsedContent,
-        isVisible: _currentIndex == index,
 
-        scrollProgress: progress,
-        scale: scale,
-        parallaxX: parallaxX,
+      onDoubleTap: () {
+        debugPrint('double tap');
+        _printJsonFull(post.toServerLikeMap());
+      },
+      child: Center(
+        child: Container(
+          margin: const EdgeInsets.symmetric(vertical: 22, horizontal: 12),
+          // 카드 자체에 스케일/투명도/블러 적용
+          child: Transform.scale(
+            scale: scale,
+            child: Opacity(
+              opacity: opacity,
+              child: ImageFiltered(
+                imageFilter: ui.ImageFilter.blur(sigmaX: blur, sigmaY: blur),
+                child: PostCard(
+                  containerWidth: widget.containerWidth,
+                  thumbnailImageUrl: post.thumbnailImageUrl,
+                  heroTag: 'post-hero-${post.id}-$index',
+                  title: post.title,
+                  author: post.author,
+                  authorProfileImageUrl: post.authorProfileImageUrl,
+                  content: post.parsedContent,
+                  isVisible: _currentIndex == index,
+                ),
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }

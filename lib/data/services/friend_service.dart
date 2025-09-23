@@ -14,7 +14,28 @@ class FriendService extends ApiServiceBase {
       '/api/friends/request',
       body: {'targetUsername': targetUsername},
     );
-    if (response.statusCode != 200) throw Exception('친구 신청 실패');
+    final code = response.statusCode;
+    final body = response.body;
+    // 일부 서버는 201/204를 반환할 수 있음 → 2xx 모두 성공 처리
+    if (code < 200 || code >= 300) {
+      // 특수 케이스: 서버가 바디 파싱 실패(예: No value present) 응답 시
+      if (code == 400 && body.contains('No value present')) {
+        // 쿼리파라미터 방식으로 재시도 (서버 구현 케이스 대응)
+        final fallback = await post(
+          '/api/friends/request?targetUsername=${Uri.encodeComponent(targetUsername)}',
+        );
+        final fcode = fallback.statusCode;
+        if (fcode >= 200 && fcode < 300) return;
+        // ignore: avoid_print
+        print(
+          '[FriendService] fallback also failed | code=$fcode body=${fallback.body}',
+        );
+      }
+      // 디버그를 위해 상태/본문 로그 남김
+      // ignore: avoid_print
+      print('[FriendService] sendFriendRequest failed | code=$code body=$body');
+      throw Exception('친구 신청 실패');
+    }
   }
 
   /// 9. 친구 수락

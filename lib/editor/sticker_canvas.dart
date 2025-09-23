@@ -8,8 +8,9 @@ import 'package:doppy/editor/overlay/sticker_overlay.dart';
 
 class StickerCanvas extends StatelessWidget {
   final ScrollController scrollController;
-  const StickerCanvas({super.key, required this.scrollController});
-  static final GlobalKey _stackKey = GlobalKey();
+  StickerCanvas({super.key, required this.scrollController});
+  // 인스턴스별 고유 키로 변경하여 GlobalKey 중복 방지
+  final GlobalKey _stackKey = GlobalKey();
 
   @override
   Widget build(BuildContext context) {

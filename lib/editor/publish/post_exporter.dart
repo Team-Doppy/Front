@@ -95,7 +95,7 @@ class PostExporter {
     final layout =
         editorService.documentLayoutKey?.currentState as DocumentLayout?;
     final List<Map<String, dynamic>> nodes = <Map<String, dynamic>>[];
-    String? thumbnailImageUrl;
+    String titleText = '';
 
     for (int i = 0; i < doc.length; i++) {
       final node = doc.getNodeAt(i);
@@ -103,6 +103,9 @@ class PostExporter {
 
       if (node is ParagraphNode) {
         final meta = node.metadata;
+        if ((meta['isTitle'] == true) && titleText.isEmpty) {
+          titleText = node.text.text;
+        }
         nodes.add({
           'id': node.id,
           'type': 'paragraph',
@@ -116,7 +119,6 @@ class PostExporter {
 
       // ImageNode (SuperEditor 내장)
       if (node is ImageNode) {
-        thumbnailImageUrl ??= node.imageUrl;
         nodes.add({
           'id': node.id,
           'type': 'image',
@@ -128,10 +130,6 @@ class PostExporter {
 
       // ImageRowNode (프로젝트에 존재하는 경우)
       if (node is ImageRowNode) {
-        // ImageRowNode의 첫 번째 이미지를 썸네일로 사용
-        if (node.imageUrls.isNotEmpty) {
-          thumbnailImageUrl ??= node.imageUrls.first;
-        }
         nodes.add({
           'id': node.id,
           'type': 'imageRow',
@@ -258,14 +256,22 @@ class PostExporter {
       stickers.add(base);
     }
 
+    final String author = AuthProvider().username ?? '';
+    if (author.isEmpty) {
+      throw StateError('author is required');
+    }
+
+    //초안 뽑기
     return {
       'version': '1.0',
-      'thumbnailUrl':
-          thumbnailImageUrl ?? '', // 오타 수정: thumnailUrl -> thumbnailUrl
-      'title': nodes.isNotEmpty ? nodes[0]['text'] : '',
-      'content': {'nodes': nodes}, // content 필드 추가
-      'writer': AuthProvider().username ?? 'anonymous',
-      'document': {'nodes': nodes},
+      'title':
+          titleText.isNotEmpty
+              ? titleText
+              : (nodes.isNotEmpty
+                  ? (nodes.first['text'] ?? '').toString()
+                  : ''),
+      'author': author,
+      'content': {'nodes': nodes},
       'stickers': stickers,
     };
   }
@@ -278,7 +284,7 @@ class PostExporter {
 
     final List<Map<String, dynamic>> spans = <Map<String, dynamic>>[];
 
-    Map<String, dynamic> _attrsAt(int offset) {
+    Map<String, dynamic> attrsAt(int offset) {
       // offset이 범위를 벗어나면 빈 속성
       if (offset < 0 || offset >= text.text.length) return <String, dynamic>{};
       final atts = text.getAllAttributionsAt(offset);
@@ -286,11 +292,11 @@ class PostExporter {
     }
 
     int runStart = 0;
-    Map<String, dynamic> prev = _attrsAt(0);
+    Map<String, dynamic> prev = attrsAt(0);
     for (int i = 1; i <= text.text.length; i++) {
       // 마지막 i == length에서는 강제로 종료 스팬 배출
       final Map<String, dynamic> curr =
-          (i == text.text.length) ? <String, dynamic>{} : _attrsAt(i);
+          (i == text.text.length) ? <String, dynamic>{} : attrsAt(i);
       final bool changed = !_shallowMapEquals(prev, curr);
       if (changed) {
         spans.add({'start': runStart, 'end': i, 'attrs': prev});
@@ -416,6 +422,7 @@ class PostExporter {
   /// 기본 내보내기 결과(base)에 공개 범위/썸네일/최종 제목/요약/생성시각 등을 덧붙여
   /// 최종 게시 페이로드를 구성한다. 기존 키는 최대한 보존한다.
   static Map<String, dynamic> composeFinalPayload({
+    required String thumbnailImageUrl,
     required Map<String, dynamic> base,
     DateTime? createdAt,
     bool? privateOnly = false,
@@ -442,6 +449,18 @@ class PostExporter {
     if (stickers is List) {
       result['stickers'] = _compressStickers(stickers);
     }
+
+    // 썸네일 주입 및 검증 (키 통일: thumbnailImageUrl)
+    if ((result['thumbnailImageUrl'] ?? '').toString().isEmpty &&
+        (thumbnailImageUrl).isNotEmpty) {
+      result['thumbnailImageUrl'] = thumbnailImageUrl;
+    }
+    if ((result['thumbnailImageUrl'] ?? '').toString().isEmpty) {
+      throw StateError('thumbnailImageUrl is required');
+    }
+
+    print('==============================================');
+    print(result);
 
     return <String, dynamic>{...result, ...additions};
   }

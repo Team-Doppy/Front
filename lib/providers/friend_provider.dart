@@ -103,7 +103,17 @@ class FriendProvider with ChangeNotifier {
   /// 친구 신청 보내기
   Future<bool> sendFriendRequest(String targetUsername) async {
     try {
-      await _friendService.sendFriendRequest(targetUsername);
+      final String username = targetUsername.trim();
+      if (username.isEmpty) {
+        print("친구 신청 실패: targetUsername 비어있음");
+        return false;
+      }
+      if (_friendStatus != FriendRequestStatus.none) {
+        // 이미 요청했거나 수락된 상태는 중복 요청 방지
+        return false;
+      }
+
+      await _friendService.sendFriendRequest(username);
       _friendStatus = FriendRequestStatus.requested; // UI 즉시 반영
       notifyListeners();
       return true;

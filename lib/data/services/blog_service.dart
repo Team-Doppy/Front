@@ -7,6 +7,26 @@ import 'package:http/http.dart' as http;
 class BlogService {
   static final String _baseUrl = ApiServiceBase.baseUrl;
 
+  // 포스트 캐시
+  static List<Map<String, dynamic>> _cachedPosts = [];
+  static DateTime? _lastCacheTime;
+  static const Duration _cacheExpiry = Duration(minutes: 30); // 5분 캐시
+
+  /// 캐시가 유효한지 확인
+  static bool _isCacheValid() {
+    if (_lastCacheTime == null || _cachedPosts.isEmpty) {
+      return false;
+    }
+    return DateTime.now().difference(_lastCacheTime!) < _cacheExpiry;
+  }
+
+  /// 캐시 무효화
+  static void _invalidateCache() {
+    _cachedPosts.clear();
+    _lastCacheTime = null;
+    print('[BlogService] Cache invalidated');
+  }
+
   /// 블로그 포스트를 서버에 업로드합니다.
   ///
   /// [postData] - 포스트 데이터 (제목, 내용, 썸네일 URL, 태그 등)
@@ -24,13 +44,34 @@ class BlogService {
       '[UploadPost] uploading post with thumbnailImageId: $thumbnailImageId',
     );
 
-    final requestBody = {
+    // 서버 DTO에 맞춰 매핑: title, author, thumbnailImageUrl, content(JsonNode), accessLevel
+    // accessLevel 매핑 (PUBLIC | PRIVATE | GROUPS)
+    final Map<String, dynamic> visibility =
+        (postData['visibility'] as Map?)?.cast<String, dynamic>() ??
+        const <String, dynamic>{'type': 'public'};
+    final String vType =
+        (visibility['type'] ?? 'public').toString().toUpperCase();
+    final String accessLevel =
+        (vType == 'PRIVATE')
+            ? 'PRIVATE'
+            : (vType == 'GROUPS' ? 'GROUPS' : 'PUBLIC');
+
+    // content(JsonNode) 전송: 문자열이면 decode, 맵/리스트면 그대로 사용
+    dynamic contentJson = postData['content'];
+    if (contentJson is String && contentJson.isNotEmpty) {
+      try {
+        contentJson = json.decode(contentJson);
+      } catch (_) {
+        contentJson = <String, dynamic>{'raw': contentJson};
+      }
+    }
+
+    final requestBody = <String, dynamic>{
       'title': postData['title'] ?? '',
-      'content': postData['content'] ?? '',
-      'tags': postData['tags'] ?? <String>[],
-      'isPublic': postData['isPublic'] ?? true,
-      'thumbnailImageUrl': postData['thumbnailUrl'],
-      'metadata': postData['metadata'] ?? {},
+      'author': postData['author'] ?? '',
+      'thumbnailImageUrl': postData['thumbnailImageUrl'] ?? '',
+      'content': contentJson ?? const <String, dynamic>{'nodes': []},
+      'accessLevel': accessLevel,
     };
 
     print('[UploadPost] request body: ${json.encode(requestBody)}');
@@ -51,6 +92,10 @@ class BlogService {
     if (response.statusCode == 200 || response.statusCode == 201) {
       print('[UploadPost] success ${response.statusCode} body=$responseBody');
       final decoded = json.decode(responseBody) as Map<String, dynamic>;
+
+      // 새 포스트 업로드 시 캐시 무효화
+      _invalidateCache();
+
       return decoded;
     } else {
       print('[UploadPost] error ${response.statusCode} body=$responseBody');
@@ -77,17 +122,34 @@ class BlogService {
       '[UpdatePost] updating post $postId with thumbnailImageId: $thumbnailImageId',
     );
 
+    // 서버 DTO 규격에 맞게 업데이트 바디 구성
+    final Map<String, dynamic> visibility =
+        (postData['visibility'] as Map?)?.cast<String, dynamic>() ??
+        const <String, dynamic>{'type': 'public'};
+    final String vType =
+        (visibility['type'] ?? 'public').toString().toUpperCase();
+    final String accessLevel =
+        (vType == 'PRIVATE')
+            ? 'PRIVATE'
+            : (vType == 'GROUPS' ? 'GROUPS' : 'PUBLIC');
+
+    dynamic contentJson = postData['content'];
+    if (contentJson is String && contentJson.isNotEmpty) {
+      try {
+        contentJson = json.decode(contentJson);
+      } catch (_) {
+        contentJson = <String, dynamic>{'raw': contentJson};
+      }
+    }
+
     final requestBody = <String, dynamic>{
       'title': postData['title'] ?? '',
-      'content': postData['content'] ?? '',
-      'tags': postData['tags'] ?? <String>[],
-      'isPublic': postData['isPublic'] ?? true,
-      'metadata': postData['metadata'] ?? {},
+      'author': postData['author'] ?? '',
+      'thumbnailImageUrl': postData['thumbnailImageUrl'] ?? '',
+      'content': contentJson ?? const <String, dynamic>{'nodes': []},
+      'accessLevel': accessLevel,
+      if (thumbnailImageId != null) 'thumbnailImageId': thumbnailImageId,
     };
-
-    if (thumbnailImageId != null) {
-      requestBody['thumbnailImageId'] = thumbnailImageId;
-    }
 
     print('[UpdatePost] request body: ${json.encode(requestBody)}');
 
@@ -145,8 +207,17 @@ class BlogService {
   Future<List<Map<String, dynamic>>> getHomePosts({
     int page = 0,
     int size = 10,
+    bool forceRefresh = false,
   }) async {
     try {
+      // 캐시 확인 (첫 페이지만 캐시 사용)
+      if (page == 0 && !forceRefresh && _isCacheValid()) {
+        print(
+          '[BlogService] Using cached posts (${_cachedPosts.length} posts)',
+        );
+        return _cachedPosts.take(size).toList();
+      }
+
       print(
         '[BlogService] Fetching home posts by sequential IDs: page=$page, size=$size',
       );
@@ -168,6 +239,13 @@ class BlogService {
       }
 
       print('[BlogService] Successfully fetched ${posts.length} home posts');
+
+      // 첫 페이지면 캐시 업데이트
+      if (page == 0) {
+        _cachedPosts = posts;
+        _lastCacheTime = DateTime.now();
+        print('[BlogService] Cache updated with ${posts.length} posts');
+      }
 
       // 포스트가 없으면 fallback 데이터 반환
       if (posts.isEmpty) {
@@ -202,9 +280,21 @@ class BlogService {
           .timeout(const Duration(seconds: 10));
 
       if (response.statusCode == 200) {
-        final data = json.decode(response.body);
+        final decoded = json.decode(utf8.decode(response.bodyBytes));
         print('[BlogService] Successfully fetched post detail');
-        return data;
+
+        if (decoded is Map<String, dynamic>) {
+          return decoded;
+        } else if (decoded is List && decoded.isNotEmpty) {
+          final first = decoded.first;
+          if (first is Map<String, dynamic>) {
+            return first;
+          }
+        }
+
+        throw Exception(
+          'Unexpected post detail response type: ${decoded.runtimeType}',
+        );
       } else {
         print('[BlogService] Error ${response.statusCode}: ${response.body}');
         throw Exception('Failed to fetch post detail: ${response.statusCode}');

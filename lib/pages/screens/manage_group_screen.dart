@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import 'group_profile_screen.dart';
 import '../../../data/models/group_model.dart';
-import '../../../data/services/group_service.dart';
+import '../../../providers/group_provider.dart';
 import '../../../pages/components/custom_bottom_navigation_bar.dart';
 
 // 그룹 관리 화면 메인 위젯
@@ -12,71 +13,24 @@ class ManageGroupScreen extends StatefulWidget {
   State<ManageGroupScreen> createState() => _ManageGroupScreenState();
 }
 
-class _ManageGroupScreenState extends State<ManageGroupScreen>
-    with WidgetsBindingObserver {
+class _ManageGroupScreenState extends State<ManageGroupScreen> {
   // 하단 네비게이션 바의 현재 선택된 인덱스
   int _selectedIndex = 3;
-
-  // API 서비스
-  final GroupService _groupService = GroupService();
-
-  // 그룹 목록
-  List<Group> _groups = [];
-  bool _isLoading = true;
-  String? _error;
 
   @override
   void initState() {
     super.initState();
-    _loadGroups();
-
-    // 화면 포커스 감지를 위한 observer 등록
-    WidgetsBinding.instance.addObserver(this);
-  }
-
-  @override
-  void dispose() {
-    // observer 해제
-    WidgetsBinding.instance.removeObserver(this);
-    super.dispose();
-  }
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    // 앱이 포그라운드로 돌아올 때 그룹 목록 새로고침
-    if (state == AppLifecycleState.resumed) {
-      _loadGroups();
-    }
-  }
-
-  // 그룹 목록 로드
-  Future<void> _loadGroups() async {
-    try {
-      print('🔍 [ManageGroupScreen] 그룹 목록 로드 시작');
-
-      setState(() {
-        _isLoading = true;
-        _error = null;
-      });
-
-      final groups = await _groupService.getMyGroups();
-      print('✅ [ManageGroupScreen] 그룹 목록 로드 성공: ${groups.length}개');
-
-      setState(() {
-        _groups = groups;
-        _isLoading = false;
-      });
-    } catch (e) {
-      print('❌ [ManageGroupScreen] 그룹 목록 로드 실패: $e');
-      setState(() {
-        _error = '그룹 목록을 불러오는데 실패했습니다: $e';
-        _isLoading = false;
-      });
-    }
+    // 첫 빌드 후 캐시 우선 로드
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      context.read<GroupProvider>().fetchMyGroups();
+    });
   }
 
   @override
   Widget build(BuildContext context) {
+    final groupProv = context.watch<GroupProvider>();
+    final List<Group> groups = groupProv.myGroups;
     return Scaffold(
       backgroundColor: Colors.white,
       // 상단 앱 바
@@ -112,33 +66,18 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
           // 스크롤 가능한 그룹 목록
           Expanded(
             child:
-                _isLoading
+                groupProv.isLoading
                     ? const Center(child: CircularProgressIndicator())
-                    : _error != null
-                    ? Center(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Text(
-                            _error!,
-                            style: const TextStyle(color: Colors.red),
-                          ),
-                          const SizedBox(height: 16),
-                          ElevatedButton(
-                            onPressed: _loadGroups,
-                            child: const Text('다시 시도'),
-                          ),
-                        ],
-                      ),
-                    )
                     : ListView.builder(
-                      itemCount: _groups.length,
+                      itemCount: groups.length,
                       itemBuilder: (context, index) {
                         return _GroupListTile(
-                          group: _groups[index],
-                          onGroupDeleted: () {
-                            // 그룹이 삭제되었으면 목록 새로고침
-                            _loadGroups();
+                          group: groups[index],
+                          onGroupDeleted: () async {
+                            // 삭제 후 강제 새로고침 (Provider가 무효화 처리)
+                            await context.read<GroupProvider>().fetchMyGroups(
+                              forceRefresh: true,
+                            );
                           },
                         );
                       },
@@ -224,17 +163,30 @@ class _GroupListTile extends StatelessWidget {
               children: [
                 Row(
                   children: [
-                    Text(
-                      group.name,
-                      style: const TextStyle(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 16,
+                    Flexible(
+                      fit: FlexFit.tight,
+                      child: Text(
+                        group.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 16,
+                        ),
                       ),
                     ),
                     const SizedBox(width: 8),
-                    Text(
-                      group.description,
-                      style: const TextStyle(color: Colors.grey, fontSize: 14),
+                    Flexible(
+                      fit: FlexFit.tight,
+                      child: Text(
+                        group.description,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Colors.grey,
+                          fontSize: 14,
+                        ),
+                      ),
                     ),
                   ],
                 ),

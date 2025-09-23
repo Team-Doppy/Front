@@ -1,6 +1,5 @@
-import 'package:doppy/pages/post/home_screen.dart';
-import 'package:doppy/pages/user/login_screen.dart';
 import 'package:doppy/providers/auth_provider.dart';
+import 'package:doppy/providers/user_provider.dart';
 import 'package:doppy/data/services/blog_service.dart';
 import 'package:doppy/data/models/post_data.dart';
 import 'package:flutter/material.dart';
@@ -23,6 +22,9 @@ class _SplashScreenState extends State<SplashScreen>
   late final Animation<double> _flash;
 
   final BlogService _blogService = BlogService();
+  // RootShell 사용으로 초기 홈 데이터 프리패스 불필요
+  // 제거 예정: 프리로드 리스트는 현재 미사용
+  // ignore: unused_field
   List<PostData> _preloadedPosts = [];
   bool _isDataLoaded = false;
   bool _isTokenValidated = false;
@@ -67,6 +69,7 @@ class _SplashScreenState extends State<SplashScreen>
   }
 
   void _startSequence() {
+    _initializeApp();
     // 두둥 느낌: 타이밍에 맞춘 햅틱
     Future.delayed(const Duration(milliseconds: 550), () {
       HapticFeedback.heavyImpact();
@@ -74,8 +77,6 @@ class _SplashScreenState extends State<SplashScreen>
     Future.delayed(const Duration(milliseconds: 900), () {
       HapticFeedback.mediumImpact();
     });
-
-    _initializeApp();
   }
 
   Future<void> _initializeApp() async {
@@ -111,7 +112,20 @@ class _SplashScreenState extends State<SplashScreen>
         setState(() {
           _loadingStatus = '데이터를 불러오는 중...';
         });
-        await _loadHomeData();
+        // 내 프로필 선로딩 - 실패 시 전체 진행 중단
+        try {
+          await context.read<UserProvider>().fetchMyProfile();
+        } catch (e) {
+          print('[SplashScreen] Failed to fetch my profile: $e');
+          setState(() {
+            _isTokenValidated = false; // 게이트 다운
+            _isDataLoaded = true;
+            _loadingStatus = '프로필 로딩 실패';
+          });
+        }
+        if (_isTokenValidated) {
+          await _loadHomeData();
+        }
       } else {
         // 토큰이 없거나 유효하지 않은 경우 빈 데이터로 설정
         setState(() {
@@ -211,23 +225,11 @@ class _SplashScreenState extends State<SplashScreen>
     if (!mounted) return;
 
     // 토큰 검증 결과에 따라 네비게이션
-    Navigator.of(context).pushReplacement(
-      PageRouteBuilder(
-        transitionDuration: const Duration(milliseconds: 400),
-        pageBuilder:
-            (_, __, ___) =>
-                _isTokenValidated
-                    ? HomeScreen(preloadedPosts: _preloadedPosts)
-                    : const LoginScreen(),
-        transitionsBuilder: (_, animation, __, child) {
-          final fade = CurvedAnimation(
-            parent: animation,
-            curve: Curves.easeOut,
-          );
-          return FadeTransition(opacity: fade, child: child);
-        },
-      ),
-    );
+    if (_isTokenValidated) {
+      Navigator.of(context).pushReplacementNamed('/home');
+    } else {
+      Navigator.of(context).pushReplacementNamed('/login');
+    }
   }
 
   @override

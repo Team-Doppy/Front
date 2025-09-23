@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:doppy/editor/component/app_image_node.dart';
 import 'package:doppy/editor/component/link_component.dart';
 import 'package:doppy/editor/component/mention_component.dart';
@@ -17,6 +18,9 @@ class EditorService extends ChangeNotifier {
   DocumentSelection? _lastSelection;
 
   bool publishable = false;
+
+  // 최근 저장 스냅샷 지문
+  String? _lastSavedFingerprint;
 
   // 제목 스타일 전파 방지용 스냅샷(간소화 이후 미사용)
   // ignore: unused_field
@@ -112,6 +116,88 @@ class EditorService extends ChangeNotifier {
     if (sel != null) {
       _lastSelection = sel;
     }
+  }
+
+  /// 제목이 비어있지 않은지 판단
+  bool hasNonEmptyTitle() {
+    final node = document.getNodeAt(0);
+    if (node is ParagraphNode && (node.metadata['isTitle'] == true)) {
+      final text = node.text.text.trim();
+      return text.isNotEmpty;
+    }
+    return false;
+  }
+
+  /// 본문(제목 제외)에 유의미한 내용이 있는지 판단
+  bool hasNonEmptyBody() {
+    for (int i = 1; i < document.length; i++) {
+      final node = document.getNodeAt(i);
+      if (node == null) continue;
+      if (node is ParagraphNode) {
+        if (node.text.text.trim().isNotEmpty) return true;
+      } else if (node is ImageNode || node is AppImageNode) {
+        return true;
+      } else if (node is ImageRowNode ||
+          node is LinkNode ||
+          node is LocationNode ||
+          node is MentionNode) {
+        return true;
+      } else {
+        // 기타 노드가 존재하면 본문이 있다고 간주
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /// 문서 내용을 간단 스냅샷으로 직렬화하여 지문(fingerprint)을 생성
+  String computeDocumentFingerprint() {
+    final nodes = <Map<String, dynamic>>[];
+    for (int i = 0; i < document.length; i++) {
+      final node = document.getNodeAt(i);
+      if (node == null) continue;
+      if (node is ParagraphNode) {
+        nodes.add({
+          't': 'p',
+          'title': node.metadata['isTitle'] == true,
+          'align': node.metadata['textAlign'],
+          'text': node.text.text,
+        });
+      } else if (node is AppImageNode) {
+        nodes.add({'t': 'img', 'url': node.imageUrl});
+      } else if (node is ImageNode) {
+        nodes.add({'t': 'img', 'url': node.imageUrl});
+      } else if (node is ImageRowNode) {
+        nodes.add({'t': 'row', 'urls': List<String>.from(node.imageUrls)});
+      } else if (node is LinkNode) {
+        nodes.add({'t': 'link', 'url': node.url, 'title': node.title});
+      } else if (node is LocationNode) {
+        nodes.add({'t': 'loc', 'lat': node.lat, 'lng': node.lng});
+      } else if (node is MentionNode) {
+        nodes.add({'t': 'mention', 'users': List<String>.from(node.usernames)});
+      } else {
+        nodes.add({'t': node.runtimeType.toString(), 'id': node.id});
+      }
+    }
+    return jsonEncode({'nodes': nodes});
+  }
+
+  /// 현재 문서 상태를 저장 스냅샷으로 마크
+  void markSavedSnapshot() {
+    _lastSavedFingerprint = computeDocumentFingerprint();
+  }
+
+  /// 종료 시 임시저장 다이얼로그 노출 필요 여부
+  bool shouldPromptSaveOnExit() {
+    // 제목 또는 본문 중 하나라도 유효한 입력이 있어야 함
+    final bool anyContent = hasNonEmptyTitle() || hasNonEmptyBody();
+    if (!anyContent) return false;
+    final now = computeDocumentFingerprint();
+    if (_lastSavedFingerprint == null) {
+      // 저장 이력이 없다면 변경이 있는 상태로 간주
+      return true;
+    }
+    return now != _lastSavedFingerprint;
   }
 
   void reorderNode(String nodeId, int targetIndex) {
@@ -602,14 +688,6 @@ class EditorService extends ChangeNotifier {
   */
 
   // ===== 게시 가능 여부 판정 =====
-  bool hasNonEmptyTitle() {
-    final node = document.getNodeAt(0);
-    if (node is ParagraphNode && (node.metadata['isTitle'] == true)) {
-      final text = node.text.text.trim();
-      return text.isNotEmpty;
-    }
-    return false;
-  }
 
   // 삽입된 문단 한 건만 이전 문단 정렬을 승계(O(1))
   void _ensureParagraphAlignmentForIndex(int index) {

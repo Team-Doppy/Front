@@ -192,6 +192,12 @@ class AppTheme {
         systemOverlayStyle: SystemUiOverlayStyle.light,
       ),
 
+      // ===== Text Selection Theme =====
+      textSelectionTheme: TextSelectionThemeData(
+        cursorColor: AppColors.primary,
+        selectionHandleColor: AppColors.primary,
+      ),
+
       // ===== Scaffold Background =====
       scaffoldBackgroundColor: AppColors.darkBackground,
     );

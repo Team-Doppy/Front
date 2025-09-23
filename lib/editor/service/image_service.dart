@@ -27,6 +27,29 @@ class ImageService extends ChangeNotifier {
 
   bool get hasSelectedImage => _selectedImageId != null;
 
+  // ====== Transient thumbnail storage (session-scoped, in-memory only) ======
+  final Map<String, String> _tempThumbnailUrlBySession = <String, String>{};
+  final Map<String, String> _tempThumbnailIdBySession = <String, String>{};
+
+  String? getTempThumbnailUrl(String sessionKey) =>
+      _tempThumbnailUrlBySession[sessionKey];
+  String? getTempThumbnailId(String sessionKey) =>
+      _tempThumbnailIdBySession[sessionKey];
+
+  void setTempThumbnail(String sessionKey, {required String url, String? id}) {
+    _tempThumbnailUrlBySession[sessionKey] = url;
+    if (id != null) {
+      _tempThumbnailIdBySession[sessionKey] = id;
+    }
+    notifyListeners();
+  }
+
+  void clearTempThumbnail(String sessionKey) {
+    _tempThumbnailUrlBySession.remove(sessionKey);
+    _tempThumbnailIdBySession.remove(sessionKey);
+    notifyListeners();
+  }
+
   /// 이미지 선택
   void selectImage(String? imageId) {
     if (imageId == _selectedImageId) {

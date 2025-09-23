@@ -19,6 +19,7 @@ import 'package:doppy/editor/style/image_toolbar.dart';
 import 'package:doppy/editor/style/style_sheet.dart';
 import 'package:doppy/editor/style/defualt_toolbar.dart';
 import 'package:doppy/editor/sticker_canvas.dart';
+import 'package:doppy/theme/app_colors.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter/services.dart';
@@ -122,6 +123,8 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
         );
         _editorFocusNode.requestFocus();
       }
+      // 최초 진입 스냅샷 마크(현재 상태를 저장 기준으로 간주)
+      editorService.markSavedSnapshot();
     });
   }
 
@@ -231,6 +234,28 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     // ignore: deprecated_member_use
     return WillPopScope(
       onWillPop: () async {
+        // 나가기 전 저장 필요 여부 판단(서비스 로직)
+        final needPrompt = editorService.shouldPromptSaveOnExit();
+        if (needPrompt) {
+          final decision = await Navigator.of(context).push<ExitDecision>(
+            PageRouteBuilder(
+              opaque: false,
+              barrierDismissible: true,
+              pageBuilder: (_, __, ___) => const SaveDraftOverlay(),
+            ),
+          );
+          if (decision == ExitDecision.saveDraft) {
+            await _manualSaveDraft();
+            // 저장 후 종료
+            Navigator.of(context).pop();
+          } else if (decision == ExitDecision.discard) {
+            await Future.delayed(const Duration(milliseconds: 180));
+            _cleanupAndExit();
+          }
+        } else {
+          // 바로 종료(서비스 상태만 정리)
+          _cleanupAndExit();
+        }
         return false;
       },
       child: Scaffold(
@@ -242,21 +267,23 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
           scrolledUnderElevation: 0,
           leading: GestureDetector(
             onTap: () async {
-              final decision = await Navigator.of(context).push<ExitDecision>(
-                PageRouteBuilder(
-                  opaque: false,
-                  barrierDismissible: true,
-                  pageBuilder: (_, __, ___) => const SaveDraftOverlay(),
-                ),
-              );
-              if (decision == ExitDecision.saveDraft) {
-                // 임시저장 실행
-                await _manualSaveDraft();
-                Navigator.of(context).pop();
-              }
-              if (decision == ExitDecision.discard) {
-                // 오버레이 닫힘 애니메이션이 끝난 뒤 안전하게 종료
-                await Future.delayed(const Duration(milliseconds: 180));
+              final needPrompt = editorService.shouldPromptSaveOnExit();
+              if (needPrompt) {
+                final decision = await Navigator.of(context).push<ExitDecision>(
+                  PageRouteBuilder(
+                    opaque: false,
+                    barrierDismissible: true,
+                    pageBuilder: (_, __, ___) => const SaveDraftOverlay(),
+                  ),
+                );
+                if (decision == ExitDecision.saveDraft) {
+                  await _manualSaveDraft();
+                  Navigator.of(context).pop();
+                } else if (decision == ExitDecision.discard) {
+                  await Future.delayed(const Duration(milliseconds: 180));
+                  _cleanupAndExit();
+                }
+              } else {
                 _cleanupAndExit();
               }
             },
@@ -268,23 +295,20 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
           ),
           actions: [
             // 임시저장 목록 버튼
-            IconButton(
+            TextButton(
               onPressed: _showDraftList,
-              icon: Icon(
-                Icons.folder_outlined,
-                color: Theme.of(context).colorScheme.onSurface,
-                size: 20,
+              child: Text(
+                '불러오기',
+                style: TextStyle(
+                  fontWeight: FontWeight.w600,
+
+                  color: Theme.of(
+                    context,
+                  ).colorScheme.onSurface.withOpacity(0.5),
+                ),
               ),
             ),
-            // 수동 임시저장 버튼
-            IconButton(
-              onPressed: _manualSaveDraft,
-              icon: Icon(
-                Icons.save_outlined,
-                color: Theme.of(context).colorScheme.onSurface,
-                size: 20,
-              ),
-            ),
+
             TextButton(
               onPressed: () {
                 //키보드 내리기
@@ -345,29 +369,24 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                             child: Focus(
                               focusNode: _editorFocusNode,
                               child: Theme(
-                                data: Theme.of(context).copyWith(
-                                  textSelectionTheme: TextSelectionThemeData(
-                                    cursorColor:
-                                        Theme.of(context).colorScheme.primary,
-                                    selectionColor: Theme.of(
-                                      context,
-                                    ).colorScheme.primary.withOpacity(0.3),
-                                  ),
-                                ),
+                                data: Theme.of(context),
                                 child: SuperEditor(
                                   gestureMode:
                                       Platform.isIOS
                                           ? DocumentGestureMode.iOS
                                           : DocumentGestureMode.android,
                                   editor: editor,
-                                  stylesheet: buildCustomStylesheet(),
+                                  stylesheet: buildCustomStylesheet(context),
                                   documentLayoutKey: _documentLayoutKey,
                                   scrollController: scrollController,
+                                  androidHandleColor: AppColors.primary,
+                                  iOSHandleColor: AppColors.primary,
                                   selectionStyle: SelectionStyles(
-                                    selectionColor: Theme.of(
-                                      context,
-                                    ).colorScheme.primary.withOpacity(0.3),
+                                    selectionColor: AppColors.primary
+                                        .withOpacity(0.3),
+                                    highlightEmptyTextBlocks: false,
                                   ),
+
                                   componentBuilders: [
                                     // 타이틀 문단 전용 빌더(드래그 없음)
                                     TitleParagraphComponentBuilder(
@@ -757,10 +776,12 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
       );
 
       if (mounted) {
-        SnackBarUtils.showSuccess(context, '새 버전으로 임시저장되었습니다');
+        SnackBarUtils.showSuccess(context, '저장되었습니다');
       }
 
       print('[PostwriteScreen] Manual save completed: $_currentDraftId');
+      // 저장 스냅샷 마크
+      editorService.markSavedSnapshot();
     } catch (e) {
       print('[PostwriteScreen] Manual save failed: $e');
       if (mounted) {
@@ -834,8 +855,16 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     try {
       // 로딩 표시
       if (mounted) {
-        SnackBarUtils.showLoading(context, '임시저장을 불러오는 중...');
+        SnackBarUtils.showLoading(context, '임시저장을 불러오는 중');
       }
+
+      // 기존 선택/하이라이트를 먼저 정리하여 SuperEditor가
+      // 사라진 노드에 대한 selection을 적용하지 않도록 방지
+      try {
+        ImageService().clearHighlightedSelection();
+        ImageService().selectImage(null);
+        composer.clearSelection();
+      } catch (_) {}
 
       final success = await draftService.loadDraft(
         draftId: draftId,
@@ -850,15 +879,53 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
         if (mounted) {
           setState(() {});
 
-          // 포커스 요청
+          // 안전한 위치로 캐럿 배치(문서 끝의 문단 또는 첫 문단 끝)
           WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted) {
+            try {
+              // 가능한 한 본문 문단(제목 아님)으로 이동
+              ParagraphNode? targetPara;
+              for (int i = 0; i < document.length; i++) {
+                final node = document.getNodeAt(i);
+                if (node is ParagraphNode && node.metadata['isTitle'] != true) {
+                  targetPara = node;
+                  break;
+                }
+              }
+              // 없으면 마지막 노드를 문단으로 시도
+              targetPara ??= () {
+                for (int i = document.length - 1; i >= 0; i--) {
+                  final node = document.getNodeAt(i);
+                  if (node is ParagraphNode) return node;
+                }
+                return null;
+              }();
+
+              if (targetPara != null) {
+                final end = targetPara.text.text.length;
+                composer.setSelectionWithReason(
+                  DocumentSelection.collapsed(
+                    position: DocumentPosition(
+                      nodeId: targetPara.id,
+                      nodePosition: TextNodePosition(offset: end),
+                    ),
+                  ),
+                  SelectionReason.userInteraction,
+                );
+              } else {
+                // 문단이 전혀 없으면 선택을 비움
+                composer.clearSelection();
+              }
               _editorFocusNode.requestFocus();
+            } catch (_) {
+              try {
+                composer.clearSelection();
+                _editorFocusNode.requestFocus();
+              } catch (_) {}
             }
           });
-
-          SnackBarUtils.showSuccess(context, '임시저장을 불러왔습니다');
         }
+        // 불러온 상태를 저장 스냅샷으로 간주
+        editorService.markSavedSnapshot();
       } else {
         if (mounted) {
           SnackBarUtils.showError(context, '임시저장을 불러올 수 없습니다');
@@ -880,10 +947,6 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
       if (success) {
         if (_currentDraftId == draftId) {
           _currentDraftId = null;
-        }
-
-        if (mounted) {
-          SnackBarUtils.showSuccess(context, '임시저장이 삭제되었습니다');
         }
       } else {
         if (mounted) {

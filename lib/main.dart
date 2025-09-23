@@ -2,12 +2,13 @@ import 'package:doppy/data/services/upload_service.dart';
 import 'package:doppy/editor/postwrite_screen.dart';
 import 'package:doppy/editor/service/image_service.dart';
 import 'package:doppy/editor/service/sticker_service.dart';
-import 'package:doppy/pages/post/home_screen.dart';
+import 'package:doppy/pages/screens/home_screen.dart';
+import 'package:doppy/pages/components/custom_bottom_navigation_bar.dart';
 import 'package:doppy/pages/onboarding/splash_screen.dart';
-import 'package:doppy/pages/post/manage_group_screen.dart';
-import 'package:doppy/pages/post/manage_neighbor_screen.dart';
-import 'package:doppy/pages/post/search_screen.dart';
-import 'package:doppy/pages/post/user_profile_screen.dart';
+import 'package:doppy/pages/screens/manage_group_screen.dart';
+import 'package:doppy/pages/screens/manage_neighbor_screen.dart';
+import 'package:doppy/pages/screens/search_screen.dart';
+import 'package:doppy/pages/screens/user_profile_screen.dart';
 
 import 'package:doppy/pages/user/login_screen.dart';
 import 'package:doppy/providers/auth_provider.dart';
@@ -70,14 +71,10 @@ class MyApp extends StatelessWidget {
       themeMode: context.watch<ThemeProvider>().themeMode,
       home: const SplashScreen(),
       routes: {
-        '/home': (_) => const HomeScreen(),
+        '/home': (_) => const RootShell(initialIndex: 0),
         '/login': (_) => const LoginScreen(),
-        '/search': (_) => const SearchScreen(),
-        '/profile': (context) {
-          final args = ModalRoute.of(context)?.settings.arguments;
-          final String? username = (args is Map) ? args['username'] : null;
-          return UserProfileScreen(username: username);
-        },
+        '/search': (_) => const RootShell(initialIndex: 1),
+        '/profile': (context) => const RootShell(initialIndex: 3),
         // 필요 시 확장
         '/manage-group': (_) => const ManageGroupScreen(),
         '/manage-neighbor': (_) => const ManageNeighborScreen(),
@@ -86,6 +83,53 @@ class MyApp extends StatelessWidget {
 
       onUnknownRoute:
           (_) => MaterialPageRoute(builder: (_) => const HomeScreen()),
+    );
+  }
+}
+
+class RootShell extends StatefulWidget {
+  final int initialIndex; // 0:홈,1:검색,2:작성,3:프로필
+  const RootShell({super.key, this.initialIndex = 0});
+
+  @override
+  State<RootShell> createState() => _RootShellState();
+}
+
+class _RootShellState extends State<RootShell> {
+  late int _index;
+
+  // 각 탭의 페이지 유지용
+  final _pages = const [
+    HomeScreen(),
+    SearchScreen(),
+    SizedBox.shrink(), // 작성은 라우트로 별도 push
+    UserProfileScreen(),
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    _index = widget.initialIndex;
+  }
+
+  void _onTap(int i) {
+    if (i == 2) {
+      final screenWidth = MediaQuery.of(context).size.width;
+      Navigator.of(context).pushNamed('/post-write', arguments: screenWidth);
+      return;
+    }
+    setState(() => _index = i);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Theme.of(context).colorScheme.background,
+      body: SafeArea(child: IndexedStack(index: _index, children: _pages)),
+      bottomNavigationBar: CustomBottomNavigationBar(
+        currentIndex: _index,
+        onTap: _onTap,
+      ),
     );
   }
 }

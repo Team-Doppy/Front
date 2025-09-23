@@ -14,29 +14,6 @@ class CustomBottomNavigationBar extends StatelessWidget {
     required this.onTap,
   }) : super(key: key);
 
-  void _handleTap(BuildContext context, int index) {
-    if (index == currentIndex) return; // 같은 탭 재탭 시 무시
-
-    switch (index) {
-      case 0:
-        // 홈
-        Navigator.of(context).pushReplacementNamed('/home');
-        break;
-      case 1:
-        // 검색
-        Navigator.of(context).pushReplacementNamed('/search');
-        break;
-      case 2:
-        // 작성
-        Navigator.of(context).pushNamed('/post-write');
-        return;
-      case 3:
-        // 프로필
-        Navigator.of(context).pushReplacementNamed('/profile');
-        break;
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     // 아이콘 에셋 경로
@@ -48,19 +25,19 @@ class CustomBottomNavigationBar extends StatelessWidget {
     ];
 
     return Container(
-      height: 70,
+      height: 90,
       decoration: BoxDecoration(
         color: Theme.of(context).colorScheme.background,
       ),
       child: Padding(
-        padding: const EdgeInsets.only(bottom: 20, top: 10),
+        padding: const EdgeInsets.only(bottom: 40, top: 10),
         child: Row(
           children: List.generate(4, (index) {
             final iconSize = 28.0;
 
             return Expanded(
               child: InkWell(
-                onTap: () => _handleTap(context, index),
+                onTap: () => onTap(index),
                 child: Center(
                   child: SvgPicture.asset(
                     iconAssets[index],

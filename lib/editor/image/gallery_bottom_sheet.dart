@@ -6,9 +6,13 @@ import 'package:doppy/theme/app_colors.dart';
 
 class GalleryBottomSheet extends StatefulWidget {
   final Function(List<File>) onImagesSelected;
+  final bool singleSelect;
 
-  const GalleryBottomSheet({Key? key, required this.onImagesSelected})
-    : super(key: key);
+  const GalleryBottomSheet({
+    Key? key,
+    required this.onImagesSelected,
+    this.singleSelect = false,
+  }) : super(key: key);
 
   @override
   State<GalleryBottomSheet> createState() => _GalleryBottomSheetState();
@@ -78,12 +82,17 @@ class _GalleryBottomSheetState extends State<GalleryBottomSheet> {
 
   void _togglePhotoSelection(String assetId) {
     setState(() {
-      if (_selectedOrder.contains(assetId)) {
-        // 이미 선택된 경우 제거
-        _selectedOrder.remove(assetId);
+      if (widget.singleSelect) {
+        // 단일 선택 모드: 항상 하나만 유지
+        _selectedOrder
+          ..clear()
+          ..add(assetId);
       } else {
-        // 선택되지 않은 경우 추가 (순서대로)
-        _selectedOrder.add(assetId);
+        if (_selectedOrder.contains(assetId)) {
+          _selectedOrder.remove(assetId);
+        } else {
+          _selectedOrder.add(assetId);
+        }
       }
     });
   }
@@ -97,8 +106,13 @@ class _GalleryBottomSheetState extends State<GalleryBottomSheet> {
     try {
       final List<File> selectedFiles = [];
 
-      // 선택된 순서대로 파일 처리
-      for (final assetId in _selectedOrder) {
+      // 선택된 순서대로 파일 처리 (단일 선택 모드면 첫 번째만 처리)
+      final ids =
+          widget.singleSelect && _selectedOrder.isNotEmpty
+              ? <String>[_selectedOrder.first]
+              : _selectedOrder;
+
+      for (final assetId in ids) {
         final asset = _assetById[assetId];
         if (asset != null) {
           // 먼저 로컬 파일 시도
@@ -208,161 +222,169 @@ class _GalleryBottomSheetState extends State<GalleryBottomSheet> {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      height: MediaQuery.of(context).size.height * 0.92,
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surface,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      child: Column(
-        children: [
-          Center(
-            child: Padding(
-              padding: const EdgeInsets.only(top: 16.0),
-              child: Container(
-                width: 44,
-                height: 5,
-                decoration: BoxDecoration(
-                  color: Theme.of(
-                    context,
-                  ).colorScheme.onSurface.withOpacity(0.24),
-                  borderRadius: BorderRadius.circular(3),
+    return SafeArea(
+      top: false,
+      bottom: false,
+      child: Container(
+        padding: const EdgeInsets.only(bottom: 28),
+        height: MediaQuery.of(context).size.height * 0.92,
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.surface,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        child: Column(
+          children: [
+            // 핸들
+            Center(
+              child: Padding(
+                padding: const EdgeInsets.only(top: 8.0),
+                child: Container(
+                  width: 44,
+                  height: 5,
+                  decoration: BoxDecoration(
+                    color: Theme.of(
+                      context,
+                    ).colorScheme.onSurface.withOpacity(0.24),
+                    borderRadius: BorderRadius.circular(3),
+                  ),
                 ),
               ),
             ),
-          ),
 
-          // 헤더
-          Container(
-            padding: EdgeInsets.symmetric(horizontal: 8, vertical: 0),
-            decoration: BoxDecoration(
-              border: Border(
-                bottom: BorderSide(
-                  color: Theme.of(
-                    context,
-                  ).colorScheme.outlineVariant.withOpacity(0.5),
-                  width: 0.5,
+            // 헤더
+            Container(
+              padding: EdgeInsets.symmetric(horizontal: 8, vertical: 0),
+              decoration: BoxDecoration(
+                border: Border(
+                  bottom: BorderSide(
+                    color: Theme.of(
+                      context,
+                    ).colorScheme.outlineVariant.withOpacity(0.5),
+                    width: 0.5,
+                  ),
                 ),
               ),
-            ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                TextButton(
-                  onPressed: () => Navigator.pop(context),
-                  child: Text(
-                    '취소',
-                    style: TextStyle(
-                      color: Theme.of(
-                        context,
-                      ).colorScheme.onSurface.withOpacity(0.7),
-                      fontSize: 17,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-
-                TextButton(
-                  onPressed: _confirmSelection,
-                  child: Text(
-                    '완료 (${_selectedOrder.length})',
-                    style: TextStyle(
-                      color:
-                          _selectedOrder.isNotEmpty
-                              ? Theme.of(context).colorScheme.primary
-                              : Theme.of(
-                                context,
-                              ).colorScheme.onSurface.withOpacity(0.7),
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-
-          // 갤러리 그리드
-          Expanded(
-            child:
-                _isLoading
-                    ? Center(
-                      child: CircularProgressIndicator(
-                        color: Theme.of(context).colorScheme.primary,
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(context),
+                    child: Text(
+                      '취소',
+                      style: TextStyle(
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.onSurface.withOpacity(0.7),
+                        fontSize: 17,
+                        fontWeight: FontWeight.w600,
                       ),
-                    )
-                    : _error != null
-                    ? Center(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(
-                            Icons.error_outline,
-                            color: Theme.of(
-                              context,
-                            ).colorScheme.onSurface.withOpacity(0.7),
-                            size: 48,
-                          ),
-                          SizedBox(height: 16),
-                          Text(
-                            _error!,
-                            style: TextStyle(
+                    ),
+                  ),
+
+                  TextButton(
+                    onPressed: _confirmSelection,
+                    child: Text(
+                      '완료 (${_selectedOrder.length})',
+                      style: TextStyle(
+                        color:
+                            _selectedOrder.isNotEmpty
+                                ? Theme.of(context).colorScheme.primary
+                                : Theme.of(
+                                  context,
+                                ).colorScheme.onSurface.withOpacity(0.7),
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+            // 갤러리 그리드
+            Expanded(
+              child:
+                  _isLoading
+                      ? Center(
+                        child: CircularProgressIndicator(
+                          color: Theme.of(context).colorScheme.primary,
+                        ),
+                      )
+                      : _error != null
+                      ? Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(
+                              Icons.error_outline,
                               color: Theme.of(
                                 context,
                               ).colorScheme.onSurface.withOpacity(0.7),
-                              fontSize: 16,
+                              size: 48,
                             ),
-                            textAlign: TextAlign.center,
-                          ),
-                          SizedBox(height: 16),
-                          ElevatedButton(
-                            onPressed: _loadAssets,
-                            child: Text('다시 시도'),
-                          ),
-                        ],
-                      ),
-                    )
-                    : _assets.isEmpty
-                    ? Center(
-                      child: Text(
-                        '사진이 없습니다',
-                        style: TextStyle(
-                          color: Theme.of(
-                            context,
-                          ).colorScheme.onSurface.withOpacity(0.7),
-                          fontSize: 16,
+                            SizedBox(height: 16),
+                            Text(
+                              _error!,
+                              style: TextStyle(
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.onSurface.withOpacity(0.7),
+                                fontSize: 16,
+                              ),
+                              textAlign: TextAlign.center,
+                            ),
+                            SizedBox(height: 16),
+                            ElevatedButton(
+                              onPressed: _loadAssets,
+                              child: Text('다시 시도'),
+                            ),
+                          ],
                         ),
-                      ),
-                    )
-                    : GridView.builder(
-                      padding: EdgeInsets.symmetric(horizontal: 8),
-                      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                        crossAxisCount: 3,
-                        crossAxisSpacing: 2,
-                        mainAxisSpacing: 2,
-                        childAspectRatio: 4 / 5, // 4:5 비율
-                      ),
-                      itemCount: _assets.length,
-                      itemBuilder: (context, index) {
-                        final asset = _assets[index];
-                        final isSelected = _selectedOrder.contains(asset.id);
-                        final selectionIndex =
-                            isSelected ? _selectedOrder.indexOf(asset.id) : -1;
-
-                        return GestureDetector(
-                          onTap: () => _togglePhotoSelection(asset.id),
-                          child: Stack(
-                            children: [
-                              _buildOptimizedImage(asset),
-                              if (isSelected)
-                                _buildSelectionBadge(selectionIndex),
-                            ],
+                      )
+                      : _assets.isEmpty
+                      ? Center(
+                        child: Text(
+                          '사진이 없습니다',
+                          style: TextStyle(
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.onSurface.withOpacity(0.7),
+                            fontSize: 16,
                           ),
-                        );
-                      },
-                    ),
-          ),
-        ],
+                        ),
+                      )
+                      : GridView.builder(
+                        padding: EdgeInsets.symmetric(horizontal: 8),
+                        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: 3,
+                          crossAxisSpacing: 2,
+                          mainAxisSpacing: 2,
+                          childAspectRatio: 4 / 5, // 4:5 비율
+                        ),
+                        itemCount: _assets.length,
+                        itemBuilder: (context, index) {
+                          final asset = _assets[index];
+                          final isSelected = _selectedOrder.contains(asset.id);
+                          final selectionIndex =
+                              isSelected
+                                  ? _selectedOrder.indexOf(asset.id)
+                                  : -1;
+
+                          return GestureDetector(
+                            onTap: () => _togglePhotoSelection(asset.id),
+                            child: Stack(
+                              children: [
+                                _buildOptimizedImage(asset),
+                                if (isSelected)
+                                  _buildSelectionBadge(selectionIndex),
+                              ],
+                            ),
+                          );
+                        },
+                      ),
+            ),
+          ],
+        ),
       ),
     );
   }

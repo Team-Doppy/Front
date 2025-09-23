@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
-import '../../data/services/group_service.dart';
+import 'package:provider/provider.dart';
 import '../../data/models/group_model.dart';
-import '../../data/models/group_member_model.dart';
 import 'add_member_screen.dart';
 import '../components/custom_bottom_navigation_bar.dart';
 import 'group_edit_screen.dart'; // GroupEditScreen 추가
+import '../../providers/group_provider.dart';
 
 // 그룹 프로필 화면 메인 위젯
 class GroupProfileScreen extends StatefulWidget {
@@ -20,23 +20,17 @@ class _GroupProfileScreenState extends State<GroupProfileScreen>
     with WidgetsBindingObserver {
   int _selectedIndex = 3;
 
-  // API 서비스
-  final GroupService _groupService = GroupService();
-
   // 그룹 정보 (상태로 관리)
   late Group _group;
 
-  // 그룹 멤버 목록
-  List<GroupMember> _members = [];
-  bool _isLoading = true;
-  String? _error;
+  // 멤버 목록 표시 제거 (서버 500 회피). 필요 시 향후 별도 화면에서 구현
 
   @override
   void initState() {
     super.initState();
     // 초기 그룹 정보 설정
     _group = widget.group;
-    _loadGroupMembers();
+    // 멤버 목록 요청 제거
 
     // 화면 포커스 감지를 위한 observer 등록
     WidgetsBinding.instance.addObserver(this);
@@ -57,52 +51,24 @@ class _GroupProfileScreenState extends State<GroupProfileScreen>
     }
   }
 
-  // 그룹 멤버 목록 로드
-  Future<void> _loadGroupMembers() async {
-    try {
-      print('🔍 [GroupProfileScreen] 그룹 멤버 목록 로드 시작');
-      print('🔍 [GroupProfileScreen] 그룹 ID: ${widget.group.id}');
-      print('🔍 [GroupProfileScreen] 그룹 이름: ${widget.group.name}');
-
-      setState(() {
-        _isLoading = true;
-        _error = null;
-      });
-
-      final members = await _groupService.getGroupMembers(widget.group.id);
-      print('✅ [GroupProfileScreen] 그룹 멤버 목록 로드 성공: ${members.length}개');
-
-      setState(() {
-        _members = members;
-        _isLoading = false;
-      });
-    } catch (e) {
-      print('❌ [GroupProfileScreen] 그룹 멤버 목록 로드 실패: $e');
-      setState(() {
-        _error = '멤버 목록을 불러오는데 실패했습니다: $e';
-        _isLoading = false;
-      });
-    }
-  }
+  // 멤버 목록 로드는 제거
 
   // 그룹 정보 새로고침
   Future<void> _refreshGroupInfo() async {
     try {
       print('🔍 [GroupProfileScreen] 그룹 정보 새로고침 시작');
-
-      // 그룹 목록에서 최신 정보 가져오기
-      final groups = await _groupService.getMyGroups();
-      final updatedGroup = groups.firstWhere((g) => g.id == _group.id);
-
-      print('✅ [GroupProfileScreen] 그룹 정보 새로고침 성공: ${updatedGroup.name}');
-
-      // 그룹 정보 업데이트
+      await context.read<GroupProvider>().fetchMyGroups();
+      final prov = context.read<GroupProvider>();
+      final updated = prov.myGroups.firstWhere(
+        (g) => g.id == _group.id,
+        orElse: () => _group,
+      );
       setState(() {
-        _group = updatedGroup;
+        _group = updated;
       });
+      print('✅ [GroupProfileScreen] 그룹 정보 새로고침 성공: ${_group.name}');
     } catch (e) {
       print('❌ [GroupProfileScreen] 그룹 정보 새로고침 실패: $e');
-      // 에러가 발생해도 기존 정보 유지
     }
   }
 
@@ -136,45 +102,7 @@ class _GroupProfileScreenState extends State<GroupProfileScreen>
       ),
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _buildGroupHeader(),
-          _buildSearchBar(),
-          _buildMemberListHeader(),
-          Expanded(
-            child:
-                _isLoading
-                    ? const Center(child: CircularProgressIndicator())
-                    : _error != null
-                    ? Center(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Text(
-                            _error!,
-                            style: const TextStyle(color: Colors.red),
-                          ),
-                          const SizedBox(height: 16),
-                          ElevatedButton(
-                            onPressed: _loadGroupMembers,
-                            child: const Text('다시 시도'),
-                          ),
-                        ],
-                      ),
-                    )
-                    : ListView.builder(
-                      itemCount: _members.length,
-                      itemBuilder: (context, index) {
-                        return _MemberTile(
-                          member: _members[index],
-                          onDelete: () {
-                            // 멤버 삭제 로직을 여기서 처리
-                            _removeMember(index);
-                          },
-                        );
-                      },
-                    ),
-          ),
-        ],
+        children: [_buildGroupHeader(), _buildSearchBar()],
       ),
       bottomNavigationBar: CustomBottomNavigationBar(
         currentIndex: _selectedIndex,
@@ -256,16 +184,16 @@ class _GroupProfileScreenState extends State<GroupProfileScreen>
                             }
                           });
                         },
-                        child: const Text(
-                          '그룹 편집',
-                          style: TextStyle(color: Colors.black, fontSize: 12),
-                        ),
                         style: OutlinedButton.styleFrom(
                           padding: const EdgeInsets.symmetric(horizontal: 12),
                           side: BorderSide(color: Colors.grey[300]!),
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(20),
                           ),
+                        ),
+                        child: const Text(
+                          '그룹 편집',
+                          style: TextStyle(color: Colors.black, fontSize: 12),
                         ),
                       ),
                     ),
@@ -281,10 +209,13 @@ class _GroupProfileScreenState extends State<GroupProfileScreen>
                               builder:
                                   (context) => AddMemberScreen(group: _group),
                             ),
-                          ).then((result) {
+                          ).then((result) async {
                             if (result != null) {
-                              // 멤버 추가 후 멤버 목록 새로고침
-                              _loadGroupMembers();
+                              // 멤버 추가 후 그룹 목록만 새로고침
+                              await context.read<GroupProvider>().fetchMyGroups(
+                                forceRefresh: true,
+                              );
+                              await _refreshGroupInfo();
                               ScaffoldMessenger.of(context).showSnackBar(
                                 SnackBar(
                                   content: Text(
@@ -331,134 +262,6 @@ class _GroupProfileScreenState extends State<GroupProfileScreen>
           border: OutlineInputBorder(
             borderRadius: BorderRadius.circular(12.0),
             borderSide: BorderSide.none,
-          ),
-        ),
-      ),
-    );
-  }
-
-  // 멤버 목록 헤더
-  Widget _buildMemberListHeader() {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
-      child: Text(
-        '멤버 ${_members.length}명',
-        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-      ),
-    );
-  }
-
-  // 멤버 삭제 로직
-  Future<void> _removeMember(int index) async {
-    final memberToRemove = _members[index];
-    try {
-      print('🔍 [GroupProfileScreen] 멤버 제거 시작: ${memberToRemove.userId}');
-
-      // 실제 멤버 제거 API 호출
-      await _groupService.removeMemberFromGroup(
-        _group.id,
-        memberToRemove.userId,
-      );
-
-      print('✅ [GroupProfileScreen] 멤버 제거 성공');
-
-      // 성공 메시지 표시
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('${memberToRemove.displayName}님이 그룹에서 제거되었습니다'),
-          ),
-        );
-      }
-
-      // 멤버 목록 새로고침
-      _loadGroupMembers();
-    } catch (e) {
-      print('❌ [GroupProfileScreen] 멤버 제거 실패: $e');
-
-      if (mounted) {
-        // 에러 메시지 표시
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('멤버 제거에 실패했습니다: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-    }
-  }
-}
-
-// 멤버 목록의 각 항목을 구성하는 위젯
-class _MemberTile extends StatelessWidget {
-  final GroupMember member;
-  final VoidCallback onDelete; // 삭제 콜백 추가
-
-  const _MemberTile({
-    Key? key,
-    required this.member,
-    required this.onDelete, // onDelete 매개변수 추가
-  }) : super(key: key);
-
-  @override
-  Widget build(BuildContext context) {
-    return ListTile(
-      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      leading: CircleAvatar(
-        radius: 28,
-        backgroundColor: Colors.grey[200],
-        child:
-            member.profileImageUrl != null
-                ? ClipOval(child: Image.network(member.profileImageUrl!))
-                : const Icon(Icons.person, color: Colors.white, size: 30),
-      ),
-      title: Row(
-        children: [
-          Text(
-            member.displayName,
-            style: const TextStyle(fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(width: 8),
-          Text(
-            '@${member.userId}',
-            style: const TextStyle(color: Colors.grey, fontSize: 14),
-          ),
-        ],
-      ),
-      subtitle: Text('이웃 ${member.neighborCount}명'),
-      trailing: OutlinedButton(
-        onPressed: () async {
-          // 삭제 확인 다이얼로그 표시
-          final shouldDelete = await showDialog<bool>(
-            context: context,
-            builder: (BuildContext context) {
-              return AlertDialog(
-                title: const Text('멤버 제거'),
-                content: Text('${member.displayName}님을 그룹에서 제거하시겠습니까?'),
-                actions: [
-                  TextButton(
-                    onPressed: () => Navigator.of(context).pop(false),
-                    child: const Text('취소'),
-                  ),
-                  TextButton(
-                    onPressed: () => Navigator.of(context).pop(true),
-                    style: TextButton.styleFrom(foregroundColor: Colors.red),
-                    child: const Text('제거'),
-                  ),
-                ],
-              );
-            },
-          );
-
-          if (shouldDelete == true) {
-            onDelete(); // 부모 위젯에 삭제 로직 위임
-          }
-        },
-        child: const Text('삭제', style: TextStyle(color: Colors.black)),
-        style: OutlinedButton.styleFrom(
-          side: BorderSide(color: Colors.grey[300]!),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(20),
           ),
         ),
       ),

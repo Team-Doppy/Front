@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'api_service_base.dart';
+import '../models/user_model.dart';
 
 class UserService extends ApiServiceBase {
   static final UserService _instance = UserService._internal();
@@ -42,5 +43,23 @@ class UserService extends ApiServiceBase {
       return jsonDecode(utf8.decode(response.bodyBytes))['selfIntroduction'];
     }
     throw Exception('타인 자기소개 조회 실패');
+  }
+
+  /// 프로필 정보 조회 (/api/profile/info)
+  Future<User> getMyProfile() async {
+    final response = await get('/api/profile/info');
+    if (response.statusCode == 200) {
+      final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+      // 일반 Map 또는 { data: {...} } 형태 모두 대응
+      if (decoded is Map<String, dynamic>) {
+        final map =
+            decoded['data'] is Map<String, dynamic>
+                ? decoded['data'] as Map<String, dynamic>
+                : decoded;
+        return User.fromJson(map);
+      }
+      throw Exception('프로필 응답 형식 오류: ${decoded.runtimeType}');
+    }
+    throw Exception('프로필 정보 조회 실패: ${response.statusCode}');
   }
 }

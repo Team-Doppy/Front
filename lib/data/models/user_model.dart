@@ -3,7 +3,6 @@ class User {
   final String username;
   final String? role;
   final String? alias; // alias 필드 추가
-  final String? displayName;
   final String? profileImageUrl;
   final String? selfIntroduction;
   final int? friendCount;
@@ -13,7 +12,6 @@ class User {
     required this.username,
     this.role,
     this.alias,
-    this.displayName,
     this.profileImageUrl,
     this.selfIntroduction,
     this.friendCount,
@@ -21,14 +19,14 @@ class User {
 
   factory User.fromJson(Map<String, dynamic> json) {
     return User(
-      id: json['id'],
-      username: json['username'],
-      role: json['role'],
-      alias: json['alias'],
-      displayName: json['displayName'],
-      profileImageUrl: json['profileImageUrl'],
-      selfIntroduction: json['selfIntroduction'],
-      friendCount: json['friendCount'],
+      id: (json['id'] as num?)?.toInt() ?? 0,
+      username: (json['username'] ?? json['userId'] ?? '').toString(),
+      role: json['role']?.toString(),
+      alias: json['alias']?.toString(),
+      profileImageUrl:
+          json['profileImageUrl']?.toString() ?? json['imageUrl']?.toString(),
+      selfIntroduction: json['selfIntroduction']?.toString(),
+      friendCount: (json['friendCount'] as num?)?.toInt(),
     );
   }
 }

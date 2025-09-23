@@ -1,14 +1,14 @@
 import 'dart:convert';
-import 'package:doppy/pages/post/post_reader_screen.dart';
+import 'package:doppy/data/services/upload_service.dart';
+import 'package:doppy/editor/service/image_service.dart';
+import 'package:doppy/pages/screens/post_reader_screen.dart';
 import 'package:flutter/foundation.dart';
 import 'package:doppy/theme/app_colors.dart';
 import 'package:flutter/material.dart';
 import 'package:doppy/editor/image/gallery_bottom_sheet.dart';
-import 'dart:ui' as ui;
 import 'package:provider/provider.dart';
 import 'package:doppy/providers/group_provider.dart';
 import 'package:doppy/data/models/group_model.dart';
-import 'package:doppy/data/models/user_model.dart';
 import 'package:doppy/editor/publish/post_exporter.dart';
 import 'package:doppy/data/services/blog_service.dart';
 
@@ -21,8 +21,9 @@ void printLarge(String text, {int chunkSize = 800}) {
 }
 
 class PostExportScreen extends StatefulWidget {
-  const PostExportScreen({super.key, required this.exported});
+  const PostExportScreen({super.key, required this.exported, this.sessionKey});
   final String exported;
+  final String? sessionKey; // 블로그/드래프트별 네임스페이스 키
 
   @override
   State<PostExportScreen> createState() => _PostExportScreenState();
@@ -30,6 +31,7 @@ class PostExportScreen extends StatefulWidget {
 
 class _PostExportScreenState extends State<PostExportScreen>
     with SingleTickerProviderStateMixin {
+  String get _nsKey => widget.sessionKey ?? 'default';
   // 더미 데이터
   String _exportedThumbnailImageUrl = '';
   String _title = '오늘 하루도 힘내자고 화이팅!';
@@ -38,12 +40,14 @@ class _PostExportScreenState extends State<PostExportScreen>
   Map<String, dynamic> _exportedBase = <String, dynamic>{};
 
   bool _editMode = false;
-  final List<_Sticker> _stickers = [];
+
   String _audienceButtonText = '전체 공개';
   final Set<int> _selectedAudienceGroupIds = {};
   bool _audienceSelectAll = true;
   bool _audiencePrivateOnly = false;
   bool _isUploading = false;
+  bool _isUploadingThumb = false;
+  String? _thumbnailImageId;
 
   late final AnimationController _controller = AnimationController(
     vsync: this,
@@ -63,6 +67,7 @@ class _PostExportScreenState extends State<PostExportScreen>
     super.initState();
     _hydrateFromExported(jsonDecode(widget.exported));
     _intro.forward();
+    _loadPersistedThumbnail();
   }
 
   void _hydrateFromExported(Map<String, dynamic> exported) {
@@ -76,7 +81,7 @@ class _PostExportScreenState extends State<PostExportScreen>
     _exportedThumbnailImageUrl =
         _readString(
           exported,
-          keys: const ['thumbnailUrl', 'thumnailUrl', 'thumnailImageUrl'],
+          keys: const ['thumbnailImageUrl', 'thumbnailUrl', 'thumnailUrl'],
         ) ??
         '';
 
@@ -99,6 +104,29 @@ class _PostExportScreenState extends State<PostExportScreen>
     }
     _excerpt = preview;
     setState(() {});
+  }
+
+  // ImageService의 휘발성 캐시에 저장/로드/삭제
+  void _loadPersistedThumbnail() {
+    final svc = ImageService();
+    final url = svc.getTempThumbnailUrl(_nsKey) ?? '';
+    final id = svc.getTempThumbnailId(_nsKey);
+    if (mounted && _exportedThumbnailImageUrl.isEmpty && url.isNotEmpty) {
+      setState(() {
+        _exportedThumbnailImageUrl = url;
+        _thumbnailImageId = id;
+      });
+    }
+  }
+
+  Future<void> _persistThumbnail() async {
+    if (_exportedThumbnailImageUrl.isNotEmpty) {
+      ImageService().setTempThumbnail(
+        _nsKey,
+        url: _exportedThumbnailImageUrl,
+        id: _thumbnailImageId,
+      );
+    }
   }
 
   String? _readString(Map<String, dynamic> map, {required List<String> keys}) {
@@ -184,11 +212,13 @@ class _PostExportScreenState extends State<PostExportScreen>
         label = '전체 공개';
       } else if (privateOnly) {
         label = '나만 보기';
-      } else if (names.isEmpty) {
-        label = '그룹 선택';
       } else {
-        final int extra = names.length - 1;
-        label = extra > 0 ? '${names.first} 외 $extra' : names.first.toString();
+        if (names.length > 3) {
+          final int extra = names.length - 3;
+          label = '${names[0]}, ${names[1]}, ${names[2]} +$extra';
+        } else {
+          label = names.join(', ');
+        }
       }
       setState(() {
         _audienceButtonText = label;
@@ -203,12 +233,28 @@ class _PostExportScreenState extends State<PostExportScreen>
 
   Future<void> _publish() async {
     try {
+      // 썸네일 필수 검증 (이중 방어)
+      if (_exportedThumbnailImageUrl.trim().isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('썸네일 이미지를 먼저 선택하세요.'),
+            backgroundColor: Colors.red,
+          ),
+        );
+        return;
+      }
+
       // 업로드 시작 - 로딩 상태 표시
       setState(() {
         _isUploading = true;
       });
 
       final Map<String, dynamic> payload = await _buildFinalJson();
+      // 썸네일 정보 포함 (키 통일)
+      payload['thumbnailImageUrl'] = _exportedThumbnailImageUrl;
+      if (_thumbnailImageId != null) {
+        payload['thumbnailImageId'] = _thumbnailImageId;
+      }
       final String json = const JsonEncoder.withIndent('  ').convert(payload);
       debugPrint('===== FINAL POST JSON =====');
       printLarge(json);
@@ -276,6 +322,7 @@ class _PostExportScreenState extends State<PostExportScreen>
 
   Future<Map<String, dynamic>> _buildFinalJson() async {
     return PostExporter.composeFinalPayload(
+      thumbnailImageUrl: _exportedThumbnailImageUrl,
       base: Map<String, dynamic>.from(_exportedBase),
       privateOnly: _audiencePrivateOnly,
       publicOnly: _audienceSelectAll,
@@ -291,12 +338,45 @@ class _PostExportScreenState extends State<PostExportScreen>
       isScrollControlled: true,
       builder:
           (_) => GalleryBottomSheet(
-            onImagesSelected: (files) {
+            onImagesSelected: (files) async {
               if (files.isEmpty) return;
-              setState(() {
-                //사실 여기서 이미지 선택후 서버
-                _exportedThumbnailImageUrl = files.first.path;
-              });
+              if (!mounted) return;
+              setState(() => _isUploadingThumb = true);
+              try {
+                final upload = context.read<UploadService>();
+                final tasks = await upload.uploadFilesViaServerBatches([
+                  files.first,
+                ], kind: UploadKind.editorImage);
+                if (tasks.isNotEmpty) {
+                  final t = tasks.first;
+                  if (t.state == UploadState.success &&
+                      (t.url ?? '').isNotEmpty) {
+                    setState(() {
+                      _exportedThumbnailImageUrl = t.url!;
+                      _thumbnailImageId = t.imageId ?? t.id;
+                    });
+                    await _persistThumbnail();
+                  } else {
+                    if (mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('이미지 업로드에 실패했습니다.'),
+                          backgroundColor: Colors.red,
+                        ),
+                      );
+                    }
+                  }
+                }
+              } catch (e) {
+                if (mounted) {
+                  ScaffoldMessenger.of(
+                    context,
+                  ).showSnackBar(SnackBar(content: Text('업로드 오류: $e')));
+                }
+              } finally {
+                if (mounted) setState(() => _isUploadingThumb = false);
+                // 이전 화면으로 돌아가지 않음. 바텀시트만 닫도록 유지.
+              }
             },
           ),
     );
@@ -304,288 +384,318 @@ class _PostExportScreenState extends State<PostExportScreen>
 
   @override
   Widget build(BuildContext context) {
-    final cardRadius = 5.0;
+    final cardRadius = 15.0; // PostCard와 동일한 라운드
 
-    return Scaffold(
-      backgroundColor: Colors.transparent,
-      appBar: AppBar(
-        backgroundColor: const ui.Color.fromARGB(182, 144, 144, 144),
-        elevation: 0,
-        title: const Text('', style: TextStyle(color: Colors.white)),
-        iconTheme: const IconThemeData(color: Colors.white),
-        actions: [
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20.0),
-            child: TextButton(
-              onPressed:
-                  _isUploading
-                      ? null
-                      : () {
-                        _publish();
-                      },
-              child:
-                  _isUploading
-                      ? Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              valueColor: AlwaysStoppedAnimation<Color>(
-                                Colors.white,
+    return WillPopScope(
+      onWillPop: () async {
+        Navigator.of(context).pop({
+          'thumbnailImageUrl': _exportedThumbnailImageUrl,
+          'thumbnailImageId': _thumbnailImageId,
+        });
+        return false;
+      },
+      child: Scaffold(
+        backgroundColor: Theme.of(context).colorScheme.surface,
+        appBar: AppBar(
+          backgroundColor: Theme.of(context).colorScheme.surface,
+          elevation: 0,
+          title: Text(
+            '',
+            style: TextStyle(color: Theme.of(context).colorScheme.onSurface),
+          ),
+          iconTheme: IconThemeData(
+            color: Theme.of(context).colorScheme.onSurface,
+          ),
+          actions: [
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20.0),
+              child: TextButton(
+                onPressed: () {
+                  final bool canPublish =
+                      !_isUploading &&
+                      !_isUploadingThumb &&
+                      _exportedThumbnailImageUrl.isNotEmpty;
+                  if (canPublish) {
+                    _publish();
+                  } else {
+                    String msg =
+                        _isUploadingThumb
+                            ? '이미지 업로드 중입니다.'
+                            : '썸네일 이미지를 먼저 선택하세요.';
+                    ScaffoldMessenger.of(
+                      context,
+                    ).showSnackBar(SnackBar(content: Text(msg)));
+                  }
+                },
+                child:
+                    _isUploading
+                        ? Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                valueColor: AlwaysStoppedAnimation<Color>(
+                                  Theme.of(context).colorScheme.onSurface,
+                                ),
                               ),
                             ),
-                          ),
-                          const SizedBox(width: 8),
-                          Text(
-                            '발행 중...',
-                            style: TextStyle(
-                              color: Colors.white70,
-                              fontWeight: FontWeight.w800,
-                              fontSize: 18,
-                            ),
-                          ),
-                        ],
-                      )
-                      : Text(
-                        '등록',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w800,
-                          fontSize: 18,
+                          ],
+                        )
+                        : Builder(
+                          builder: (context) {
+                            final bool canPublish =
+                                !_isUploading &&
+                                !_isUploadingThumb &&
+                                _exportedThumbnailImageUrl.isNotEmpty;
+                            return Text(
+                              '등록',
+                              style: TextStyle(
+                                color: Theme.of(context).colorScheme.onSurface
+                                    .withValues(alpha: canPublish ? 1.0 : 0.4),
+                                fontWeight: FontWeight.w600,
+                                fontSize: 18,
+                              ),
+                            );
+                          },
                         ),
-                      ),
-            ),
-          ),
-        ],
-      ),
-      body: Stack(
-        children: [
-          // 배경 블러 + 반투명
-          Positioned.fill(
-            child: GestureDetector(
-              child: BackdropFilter(
-                filter: ui.ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-                child: Container(
-                  color: const ui.Color.fromARGB(182, 144, 144, 144),
-                ),
               ),
             ),
-          ),
+          ],
+        ),
+        body: Stack(
+          children: [
+            SafeArea(
+              child: Column(
+                children: [
+                  Spacer(),
 
-          SafeArea(
-            child: Column(
-              children: [
-                Spacer(),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 25.0),
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        '미리보기',
-                        style: TextStyle(
-                          color: AppColors.darkTextSecondary,
-                          fontSize: 18,
-                          fontWeight: FontWeight.w800,
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 22.0),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '미리보기',
+                          style: TextStyle(
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.onSurface.withValues(alpha: 0.6),
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                          ),
                         ),
-                      ),
-                      SizedBox(height: 10),
-                      AspectRatio(
-                        aspectRatio: 3 / 4,
-                        child: GestureDetector(
-                          onTap: _openGalleryPicker,
-                          onLongPress: _toggleEditMode,
-                          child: AnimatedBuilder(
-                            animation: _introCurve,
-                            builder: (context, _) {
-                              final double scale =
-                                  0.9 + 0.1 * _introCurve.value;
-                              final double translateY =
-                                  (1 - _introCurve.value) * 10;
-                              return Transform.translate(
-                                offset: Offset(0, translateY),
-                                child: Transform.scale(
-                                  scale: scale,
-                                  child: ClipRRect(
-                                    borderRadius: BorderRadius.circular(
-                                      cardRadius,
-                                    ),
+                        AspectRatio(
+                          aspectRatio: 9 / 15, // PostCard와 동일한 4:5 비율
+                          child: GestureDetector(
+                            onTap: _openGalleryPicker,
+                            onLongPress: _toggleEditMode,
+                            child: AnimatedBuilder(
+                              animation: _introCurve,
+                              builder: (context, _) {
+                                final double scale =
+                                    0.9 + 0.1 * _introCurve.value;
+                                final double translateY =
+                                    (1 - _introCurve.value) * 10;
+                                return Transform.translate(
+                                  offset: Offset(0, translateY),
+                                  child: Transform.scale(
+                                    scale: scale,
                                     child: Container(
-                                      color: AppColors.darkSurface,
-                                      child: Stack(
-                                        children: [
-                                          Positioned.fill(
-                                            child: Image.network(
-                                              _exportedThumbnailImageUrl,
-                                              fit: BoxFit.cover,
-                                              errorBuilder:
-                                                  (c, e, s) => Container(
-                                                    color:
-                                                        AppColors.darkSurface,
-                                                    child: const Center(
-                                                      child: Icon(
-                                                        Icons.image,
-                                                        color: Colors.white54,
-                                                      ),
-                                                    ),
-                                                  ),
+                                      decoration: BoxDecoration(
+                                        borderRadius: BorderRadius.circular(
+                                          cardRadius,
+                                        ),
+                                        boxShadow: [
+                                          BoxShadow(
+                                            color: Colors.black.withOpacity(
+                                              0.2,
                                             ),
-                                          ),
-                                          Positioned.fill(
-                                            child: DecoratedBox(
-                                              decoration: BoxDecoration(
-                                                color: Colors.black.withOpacity(
-                                                  0.0,
-                                                ),
-                                              ),
-                                            ),
-                                          ),
-                                          // 스티커들
-                                          ..._stickers.map(
-                                            (s) => _DraggableSticker(
-                                              sticker: s,
-                                              enabled: _editMode,
-                                            ),
-                                          ),
-                                          Positioned(
-                                            top: 12,
-                                            left: 10,
-                                            child: _buildProfileInfo(),
+                                            blurRadius: 8,
+                                            offset: const Offset(0, 4),
                                           ),
                                         ],
                                       ),
+                                      child: ClipRRect(
+                                        borderRadius: BorderRadius.circular(
+                                          cardRadius,
+                                        ),
+                                        child: Stack(
+                                          children: [
+                                            // 배경 이미지
+                                            Positioned.fill(
+                                              child:
+                                                  _isUploadingThumb
+                                                      ? const _ShimmerPlaceholder()
+                                                      : (_exportedThumbnailImageUrl
+                                                              .isEmpty
+                                                          ? const _EmptyImagePlaceholder()
+                                                          : Image.network(
+                                                            _exportedThumbnailImageUrl,
+                                                            fit: BoxFit.cover,
+                                                            errorBuilder:
+                                                                (c, e, s) =>
+                                                                    const _EmptyImagePlaceholder(),
+                                                          )),
+                                            ),
+                                            // 하단 그라데이션 오버레이 (PostCard와 동일)
+                                            Positioned.fill(
+                                              child: Container(
+                                                decoration: BoxDecoration(
+                                                  gradient: LinearGradient(
+                                                    begin: Alignment.topCenter,
+                                                    end: Alignment.bottomCenter,
+                                                    colors: [
+                                                      Colors.transparent,
+                                                      Colors.transparent,
+                                                      Colors.black.withOpacity(
+                                                        0.2,
+                                                      ),
+                                                      Colors.black.withOpacity(
+                                                        0.35,
+                                                      ),
+                                                    ],
+                                                    stops: const [
+                                                      0.0,
+                                                      0.4,
+                                                      0.7,
+                                                      1.0,
+                                                    ],
+                                                  ),
+                                                ),
+                                              ),
+                                            ),
+                                            // 상단 작성자 정보 (PostCard 스타일)
+                                            Positioned(
+                                              left: 12,
+                                              right: 12,
+                                              top: 12,
+                                              child:
+                                                  _buildOverlayAuthorPreview(),
+                                            ),
+                                            // 하단 제목 텍스트 (PostCard 스타일)
+                                            Positioned(
+                                              left: 16,
+                                              right: 16,
+                                              bottom: 16,
+                                              child: _buildOverlayTextPreview(),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
                                     ),
                                   ),
-                                ),
-                              );
-                            },
+                                );
+                              },
+                            ),
                           ),
                         ),
-                      ),
-                      const SizedBox(height: 15),
-                      Align(
-                        alignment: Alignment.bottomLeft,
-                        child: Padding(
-                          padding: const EdgeInsets.only(right: 30.0),
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                _title,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.w800,
-                                ),
-                              ),
-                              const SizedBox(height: 6),
-                              Text(
-                                _excerpt,
-                                maxLines: 3,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  color: Colors.white70,
-                                  fontSize: 13,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                      SizedBox(height: 30),
-                    ],
+                      ],
+                    ),
                   ),
-                ),
-                Spacer(),
+                  Spacer(flex: 5),
 
-                Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 20.0,
-                    vertical: 10.0,
-                  ),
-                  child: ElevatedButton(
-                    onPressed: _openVisibilitySheet,
-                    style: ElevatedButton.styleFrom(
-                      minimumSize: const Size(double.infinity, 50),
-                      backgroundColor: Theme.of(context).colorScheme.primary,
-                      foregroundColor: Theme.of(context).colorScheme.onPrimary,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 22.0,
+                      vertical: 10.0,
+                    ),
+                    child: ElevatedButton(
+                      onPressed: _openVisibilitySheet,
+                      style: ElevatedButton.styleFrom(
+                        minimumSize: const Size(double.infinity, 50),
+
+                        foregroundColor:
+                            Theme.of(context).colorScheme.onSurface,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                      ),
+                      child: Row(
+                        children: [
+                          Text(
+                            _audienceButtonText,
+                            style: TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w300,
+                            ),
+                          ),
+                          Spacer(),
+                          Icon(Icons.arrow_drop_up_outlined, size: 20),
+                        ],
                       ),
                     ),
-                    child: Text(_audienceButtonText),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
 
-  Widget _buildProfileInfo() {
-    return Padding(
-      padding: const EdgeInsets.symmetric(),
-      child: Row(
-        children: [
-          Container(
-            width: 40,
-            height: 40,
-            decoration: BoxDecoration(
-              color: const Color.fromARGB(255, 255, 255, 255),
-              borderRadius: BorderRadius.circular(300),
-              border: Border.all(
-                color: const Color.fromARGB(255, 202, 202, 202),
-                width: 1,
-              ),
-            ),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(300),
-              child: Image.network(
-                "https://thumbnews.nateimg.co.kr/view610///news.nateimg.co.kr/orgImg/pt/2025/06/12/202506122116776778_684ac5398c368.jpg",
-                fit: BoxFit.cover,
-                width: 33,
-                height: 33,
-              ),
+  // PostCard와 동일한 상단 작성자 오버레이 (미리보기용)
+  Widget _buildOverlayAuthorPreview() {
+    return Row(
+      children: [
+        Container(
+          width: 50,
+          height: 50,
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(300),
+            border: Border.all(color: Colors.white.withOpacity(0.3), width: 2),
+          ),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(300),
+            child: Image.network(
+              "https://thumbnews.nateimg.co.kr/view610///news.nateimg.co.kr/orgImg/pt/2025/06/12/202506122116776778_684ac5398c368.jpg",
+              fit: BoxFit.cover,
+              width: 50,
+              height: 50,
             ),
           ),
-          SizedBox(width: 4),
-          Container(
-            margin: const EdgeInsets.only(top: 10),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  "affection-jk",
-                  style: TextStyle(
-                    color: const Color.fromARGB(255, 225, 225, 225),
-                    fontSize: 14,
-                    fontFamily: 'Pretendard Variable',
-                    fontWeight: FontWeight.w600,
-                    height: 0.9,
+        ),
+        const SizedBox(width: 12),
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: const [
+            Text(
+              'affection-jk',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 16,
+                fontFamily: 'Pretendard Variable',
+                fontWeight: FontWeight.w600,
+                shadows: [
+                  Shadow(
+                    color: Colors.black,
+                    blurRadius: 2,
+                    offset: Offset(0, 1),
                   ),
-                ),
-                Text(
-                  "@affection-jk",
-                  style: TextStyle(
-                    color: const Color.fromARGB(255, 255, 255, 255),
-                    fontSize: 14,
-                    fontFamily: 'Pretendard Variable',
-                    fontWeight: FontWeight.w400,
-                  ),
-                ),
-              ],
+                ],
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
+      ],
+    );
+  }
+
+  // PostCard와 동일한 하단 제목 텍스트 (미리보기용)
+  Widget _buildOverlayTextPreview() {
+    return Text(
+      _title,
+      maxLines: 2,
+      overflow: TextOverflow.ellipsis,
+      style: const TextStyle(
+        color: Colors.white,
+        fontSize: 36,
+        fontFamily: 'Pretendard Variable',
+        fontWeight: FontWeight.bold,
       ),
     );
   }
@@ -626,12 +736,21 @@ class _AudiencePickerState extends State<_AudiencePicker> {
     _initialSelectedIds = Set<int>.from(widget.initialSelectedIds);
     _initialSelectAll = widget.initialSelectAll;
     _initialPrivateOnly = widget.initialPrivateOnly;
+
+    // 바텀시트 진입 시 실제 그룹 목록 로드
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      try {
+        if (context.read<GroupProvider>().myGroups.isEmpty) {
+          context.read<GroupProvider>().fetchMyGroups();
+        }
+      } catch (_) {}
+    });
   }
 
   @override
   Widget build(BuildContext context) {
     final groupProv = context.watch<GroupProvider>();
-    final List<Group> groups = const [];
+    final List<Group> groups = groupProv.myGroups;
     return SizedBox(
       height: MediaQuery.of(context).size.height,
       child: Column(
@@ -831,8 +950,12 @@ class _AudiencePickerState extends State<_AudiencePicker> {
                   final selected = _selectedGroupIds;
                   final all = _selectAll;
                   final onlyMe = _privateOnly;
+                  final current = _displayGroups(
+                    context.read<GroupProvider>().myGroups,
+                    false,
+                  );
                   final names =
-                      _displayGroups(const [], false)
+                      current
                           .where((g) => selected.contains(g.id))
                           .map((g) => g.name)
                           .toList();
@@ -852,62 +975,7 @@ class _AudiencePickerState extends State<_AudiencePicker> {
   }
 
   List<Group> _displayGroups(List<Group> original, bool isLoading) {
-    if (isLoading) return original;
-    final List<Group> result = List<Group>.from(original);
-    // UI 테스트용: 최소 5개까지 데모 그룹으로 채우기
-    if (result.length < 5) {
-      final now = DateTime.now();
-      final owner = User(id: 0, username: 'me', alias: 'me');
-      final demo = [
-        Group(
-          id: 1001,
-          name: '친구들',
-          description: '지인 모임',
-          ownerId: 'me',
-          owner: owner,
-          createdAt: now,
-        ),
-        Group(
-          id: 1002,
-          name: '동네런닝',
-          description: '러닝 크루',
-          ownerId: 'me',
-          owner: owner,
-          createdAt: now,
-        ),
-        Group(
-          id: 1003,
-          name: '회사동료',
-          description: '팀/동료',
-          ownerId: 'me',
-          owner: owner,
-          createdAt: now,
-        ),
-        Group(
-          id: 1004,
-          name: '가족',
-          description: '패밀리',
-          ownerId: 'me',
-          owner: owner,
-          createdAt: now,
-        ),
-        Group(
-          id: 1005,
-          name: '비공개클럽',
-          description: '초대 전용',
-          ownerId: 'me',
-          owner: owner,
-          createdAt: now,
-        ),
-      ];
-      for (final g in demo) {
-        if (result.length >= 5) break;
-        if (!result.any((x) => x.name == g.name)) {
-          result.add(g);
-        }
-      }
-    }
-    return result;
+    return List<Group>.from(original);
   }
 
   bool _hasChanges() {
@@ -1006,6 +1074,73 @@ class _DraggableStickerState extends State<_DraggableSticker> {
     return ClipRRect(
       borderRadius: BorderRadius.circular(6),
       child: Image.memory(bytes, width: 96, height: 96, fit: BoxFit.cover),
+    );
+  }
+}
+
+/// 빈 이미지 자리표시자 (업로드 전/오류 시 사용)
+class _EmptyImagePlaceholder extends StatelessWidget {
+  const _EmptyImagePlaceholder();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      color: AppColors.darkSurface,
+      child: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: const [
+            Icon(Icons.image_outlined, color: Colors.white54, size: 32),
+            SizedBox(height: 6),
+            Text(
+              '클릭해서 이미지를 선택해주세요.',
+              style: TextStyle(color: Colors.white54, fontSize: 12),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 간단한 쉬머 플레이스홀더 (썸네일 업로드 중 표시)
+class _ShimmerPlaceholder extends StatefulWidget {
+  const _ShimmerPlaceholder();
+
+  @override
+  State<_ShimmerPlaceholder> createState() => _ShimmerPlaceholderState();
+}
+
+class _ShimmerPlaceholderState extends State<_ShimmerPlaceholder>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1200),
+  )..repeat();
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _ctrl,
+      builder: (context, _) {
+        final gradient = LinearGradient(
+          begin: Alignment(-1.0 + 2.0 * _ctrl.value, 0),
+          end: Alignment(1.0 + 2.0 * _ctrl.value, 0),
+          colors: [
+            Colors.grey.shade800,
+            Colors.grey.shade700,
+            Colors.grey.shade800,
+          ],
+          stops: const [0.25, 0.5, 0.75],
+        );
+        return Container(decoration: BoxDecoration(gradient: gradient));
+      },
     );
   }
 }

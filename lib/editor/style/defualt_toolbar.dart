@@ -9,7 +9,6 @@ import 'package:doppy/editor/overlay/link_overlay.dart';
 import 'package:doppy/editor/overlay/location_overlay.dart';
 
 import 'package:doppy/editor/service/editor_service.dart';
-import 'package:doppy/theme/app_colors.dart';
 import 'package:doppy/editor/overlay/mention_overlay.dart';
 import 'package:provider/provider.dart';
 import 'package:doppy/editor/service/sticker_service.dart';
@@ -681,6 +680,11 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
     print(
       'DEBUG: DefaultToolbar build - isKeyboardVisible: ${widget.isKeyboardVisible}',
     );
+    final Color surface = Theme.of(context).colorScheme.surface;
+    final Color surfaceVariant = Theme.of(context).colorScheme.surfaceVariant;
+    final Color onSurface = Theme.of(context).colorScheme.onSurface;
+    final Color borderColor = onSurface.withOpacity(0.15);
+
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -691,8 +695,8 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
             width: width,
             padding: const EdgeInsets.symmetric(horizontal: 8),
             decoration: BoxDecoration(
-              color: AppColors.darkSurfaceVariant,
-              border: Border(bottom: BorderSide(color: AppColors.darkBorder)),
+              color: surfaceVariant,
+              border: Border(bottom: BorderSide(color: borderColor)),
             ),
             child: _buildTopExpandedRowContent(),
           ),
@@ -703,7 +707,7 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
           width: width,
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 8),
-            decoration: BoxDecoration(color: AppColors.darkSurface),
+            decoration: BoxDecoration(color: surface),
             child: Row(
               children: [
                 SizedBox(width: 10),
@@ -816,7 +820,7 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
                   icon: Icons.add,
                   isActive: _expanded == ToolbarSection.insert,
                   onTap: () => _toggle(ToolbarSection.insert),
-                  activeColor: AppColors.darkTextPrimary,
+                  activeColor: onSurface,
                 ),
 
                 // 오른쪽 끝으로 밀어내기 위한 공간
@@ -862,11 +866,9 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
     required VoidCallback onTap,
     Color? activeColor,
   }) {
+    final Color onSurface = Theme.of(context).colorScheme.onSurface;
     final Color color =
-        isActive
-            ? (activeColor ?? AppColors.darkTextPrimary)
-            // ignore: deprecated_member_use
-            : AppColors.darkTextSecondary.withOpacity(0.6);
+        isActive ? (activeColor ?? onSurface) : onSurface.withOpacity(0.6);
     return Material(
       color: Colors.transparent,
       child: InkWell(
@@ -887,8 +889,10 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
     required bool isActive,
     required VoidCallback onTap,
   }) {
+    final Color surfaceVariant = Theme.of(context).colorScheme.surfaceVariant;
+    final Color onSurface = Theme.of(context).colorScheme.onSurface;
     return Material(
-      color: isActive ? AppColors.darkSurfaceVariant : Colors.transparent,
+      color: isActive ? surfaceVariant : Colors.transparent,
       borderRadius: BorderRadius.circular(8),
       child: InkWell(
         onTap: onTap,
@@ -900,10 +904,7 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
           child: Icon(
             icon,
             size: 20,
-            color:
-                isActive
-                    ? AppColors.darkTextPrimary
-                    : AppColors.darkTextSecondary,
+            color: isActive ? onSurface : onSurface.withOpacity(0.6),
           ),
         ),
       ),
@@ -911,15 +912,21 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
   }
 
   Widget _buildDivider() {
+    final Color borderColor = Theme.of(
+      context,
+    ).colorScheme.onSurface.withOpacity(0.15);
     return Container(
       margin: const EdgeInsets.symmetric(vertical: 8),
       width: 1,
       height: 28,
-      color: AppColors.darkBorder,
+      color: borderColor,
     );
   }
 
   Widget _buildColorDot(Color color, VoidCallback onTap) {
+    final Color borderColor = Theme.of(
+      context,
+    ).colorScheme.onSurface.withOpacity(0.15);
     return Material(
       color: Colors.transparent,
       child: InkWell(
@@ -931,7 +938,7 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
           alignment: Alignment.center,
           decoration: BoxDecoration(
             shape: BoxShape.circle,
-            border: Border.all(color: AppColors.darkBorder),
+            border: Border.all(color: borderColor),
           ),
           child: Container(
             width: 18,
@@ -948,6 +955,7 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
     required String label,
     VoidCallback? onTap,
   }) {
+    final Color onSurface = Theme.of(context).colorScheme.onSurface;
     return Material(
       color: Colors.transparent,
 
@@ -959,7 +967,7 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
           padding: const EdgeInsets.symmetric(horizontal: 12),
           child: Row(
             mainAxisSize: MainAxisSize.min,
-            children: [Icon(icon, size: 20, color: AppColors.darkTextPrimary)],
+            children: [Icon(icon, size: 20, color: onSurface)],
           ),
         ),
       ),
@@ -1024,6 +1032,8 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
 
   // 폰트 사이즈 버튼
   Widget _buildFontSizeButton(String label, double size) {
+    final Color surfaceVariant = Theme.of(context).colorScheme.surfaceVariant;
+    final Color onSurface = Theme.of(context).colorScheme.onSurface;
     final currentSize = _getCurrentFontSize();
     final isActive = currentSize == size;
 
@@ -1039,7 +1049,7 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
           height: 24,
           padding: const EdgeInsets.symmetric(horizontal: 6),
           decoration: BoxDecoration(
-            color: isActive ? AppColors.darkSurfaceVariant : Colors.transparent,
+            color: isActive ? surfaceVariant : Colors.transparent,
             borderRadius: BorderRadius.circular(4),
           ),
           child: Center(
@@ -1047,10 +1057,7 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
               label,
               style: TextStyle(
                 fontSize: 14,
-                color:
-                    isActive
-                        ? AppColors.darkTextPrimary
-                        : AppColors.darkTextSecondary.withOpacity(0.6),
+                color: isActive ? onSurface : onSurface.withOpacity(0.6),
                 fontWeight: isActive ? FontWeight.w600 : FontWeight.w500,
               ),
             ),
@@ -1062,12 +1069,11 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
 
   // 축약 버튼: 사이즈
   Widget _buildSizeCollapsedButton() {
+    final Color surfaceVariant = Theme.of(context).colorScheme.surfaceVariant;
+    final Color onSurface = Theme.of(context).colorScheme.onSurface;
     final currentSize = _getCurrentFontSize().toInt();
     return Material(
-      color:
-          _textPanel == TextPanel.size
-              ? AppColors.darkSurfaceVariant
-              : Colors.transparent,
+      color: _textPanel == TextPanel.size ? surfaceVariant : Colors.transparent,
       borderRadius: BorderRadius.circular(8),
       child: InkWell(
         onTap: () {
@@ -1084,10 +1090,7 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
             children: [
               Text(
                 '$currentSize',
-                style: const TextStyle(
-                  color: AppColors.darkTextPrimary,
-                  fontWeight: FontWeight.w600,
-                ),
+                style: TextStyle(color: onSurface, fontWeight: FontWeight.w600),
               ),
             ],
           ),
@@ -1098,11 +1101,11 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
 
   // 축약 버튼: 색상
   Widget _buildColorCollapsedButton() {
+    final Color surfaceVariant = Theme.of(context).colorScheme.surfaceVariant;
+    final Color onSurface = Theme.of(context).colorScheme.onSurface;
     return Material(
       color:
-          _textPanel == TextPanel.color
-              ? AppColors.darkSurfaceVariant
-              : Colors.transparent,
+          _textPanel == TextPanel.color ? surfaceVariant : Colors.transparent,
       borderRadius: BorderRadius.circular(8),
       child: InkWell(
         onTap: () {
@@ -1118,9 +1121,7 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
           height: 36,
           padding: const EdgeInsets.symmetric(horizontal: 10),
           child: Row(
-            children: const [
-              Icon(Icons.circle, size: 18, color: AppColors.darkTextPrimary),
-            ],
+            children: [Icon(Icons.circle, size: 18, color: onSurface)],
           ),
         ),
       ),

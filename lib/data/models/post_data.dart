@@ -7,20 +7,26 @@ class PostData {
   final String thumbnailImageUrl;
   final String title;
   final String author;
+  final String authorProfileImageUrl;
   final String content;
-  final List<String>? mentionedFriends; // 언급된 친구들
   final String createdAt;
+  final String updatedAt;
   final AccessLevel accessLevel;
+  final int viewCount;
+  final int likeCount;
 
   PostData({
     required this.id,
     required this.thumbnailImageUrl,
     required this.title,
     required this.author,
+    required this.authorProfileImageUrl,
     required this.content,
-    this.mentionedFriends,
     required this.accessLevel,
     required this.createdAt,
+    required this.updatedAt,
+    required this.viewCount,
+    required this.likeCount,
   });
 
   // 서버 데이터에서 PostData 생성
@@ -51,11 +57,23 @@ class PostData {
       id: data['id']?.toString() ?? '',
       thumbnailImageUrl: data['thumbnailImageUrl'] ?? 'assets/images/feed2.png',
       title: data['title'] ?? '',
-      author: data['author'] ?? '',
+      author: data['author'] ?? data['username'] ?? '',
+      authorProfileImageUrl: data['authorProfileImageUrl'] ?? '',
       content: content,
-      mentionedFriends: (data['mentionedFriends'] as List?)?.cast<String>(),
       accessLevel: accessLevel,
       createdAt: data['createdAt'] ?? DateTime.now().toIso8601String(),
+      updatedAt:
+          data['updatedAt'] ??
+          data['createdAt'] ??
+          DateTime.now().toIso8601String(),
+      viewCount:
+          (data['viewCount'] is int)
+              ? (data['viewCount'] as int)
+              : int.tryParse('${data['viewCount'] ?? 0}') ?? 0,
+      likeCount:
+          (data['likeCount'] is int)
+              ? (data['likeCount'] as int)
+              : int.tryParse('${data['likeCount'] ?? 0}') ?? 0,
     );
   }
 
@@ -65,11 +83,15 @@ class PostData {
       'id': id,
       'title': title,
       'author': author,
+      'authorProfileImageUrl': authorProfileImageUrl,
       'content': content,
-      'mentionedFriends': mentionedFriends,
       'thumbnailImageUrl': thumbnailImageUrl,
-      'accessLevel': accessLevel,
+      // 서버 전송 시 accessLevel은 문자열로 전달하는 편이 안전
+      'accessLevel': accessLevel.name.toUpperCase(),
       'createdAt': createdAt,
+      'updatedAt': updatedAt,
+      'viewCount': viewCount,
+      'likeCount': likeCount,
     };
   }
 
@@ -119,5 +141,71 @@ class PostData {
       // 파싱 실패 시 원본 content 반환
       return content;
     }
+  }
+
+  /// PostReaderScreen에 필요한 exported 데이터 생성
+  Map<String, dynamic> toExportedData() {
+    try {
+      // content가 JSON 문자열인지 확인하고 파싱
+      Map<String, dynamic> contentData = {};
+      if (content.isNotEmpty) {
+        try {
+          final parsed = json.decode(content);
+          if (parsed is Map<String, dynamic>) {
+            contentData = parsed;
+          } else if (parsed is List) {
+            contentData = {'nodes': parsed};
+          }
+        } catch (e) {
+          print('[PostData] Error parsing content for export: $e');
+          // 파싱 실패 시 빈 문서로 생성
+          contentData = {'nodes': []};
+        }
+      }
+
+      return {
+        'version': '1.0',
+        'thumbnailImageUrl': thumbnailImageUrl,
+        'title': title,
+        'author': author,
+        'authorProfileImageUrl': authorProfileImageUrl,
+        'content': contentData,
+        'stickers': [], // 서버에서 가져온 데이터에는 스티커가 없음
+      };
+    } catch (e) {
+      print('[PostData] Error creating exported data: $e');
+      // 에러 시 기본 데이터 반환
+      return {
+        'version': '1.0',
+        'thumbnailImageUrl': thumbnailImageUrl,
+        'title': title,
+        'author': author,
+        'authorProfileImageUrl': authorProfileImageUrl,
+        'content': {'nodes': []},
+        'stickers': [],
+      };
+    }
+  }
+
+  /// 서버 DTO(BlogResponse)와 동일한 키로 디버깅 출력용 맵 생성
+  Map<String, dynamic> toServerLikeMap() {
+    dynamic contentJson;
+    try {
+      contentJson = content.isNotEmpty ? json.decode(content) : null;
+    } catch (_) {
+      contentJson = {'raw': content};
+    }
+    return {
+      'title': title,
+      'thumbnailImageUrl': thumbnailImageUrl,
+      'content': contentJson ?? const {'nodes': []},
+      'author': author,
+      'authorProfileImageUrl': authorProfileImageUrl,
+      'accessLevel': accessLevel.name.toUpperCase(),
+      'viewCount': viewCount,
+      'likeCount': likeCount,
+      'createdAt': createdAt,
+      'updatedAt': updatedAt,
+    };
   }
 }

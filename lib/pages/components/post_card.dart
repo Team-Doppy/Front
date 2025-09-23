@@ -1,6 +1,4 @@
 import 'dart:ui';
-
-import 'package:doppy/pages/post/user_profile_screen.dart';
 import 'package:flutter/material.dart';
 
 // ignore: must_be_immutable
@@ -10,12 +8,10 @@ class PostCard extends StatefulWidget {
   final String? heroTag;
   final String title;
   final String author;
+  final String? authorProfileImageUrl;
   final String content;
   final bool isVisible;
-  final List<String> tags; // 태그
-  final double scrollProgress; // 스크롤 진행도 (0.0 ~ 1.0)
-  final double scale; // 중앙 확대 스케일
-  final double parallaxX; // 패럴럭스 X 오프셋
+
   bool isLiked;
   int likeCount;
 
@@ -26,12 +22,10 @@ class PostCard extends StatefulWidget {
     this.heroTag,
     required this.title,
     required this.author,
+    this.authorProfileImageUrl,
     required this.content,
     this.isVisible = false,
-    this.tags = const [],
-    this.scrollProgress = 1.0,
-    this.scale = 1.0,
-    this.parallaxX = 0.0,
+
     this.isLiked = false,
     this.likeCount = 0,
   });
@@ -40,50 +34,17 @@ class PostCard extends StatefulWidget {
   State<PostCard> createState() => _PostCardState();
 }
 
-class _PostCardState extends State<PostCard> with TickerProviderStateMixin {
-  late AnimationController _pulseController;
-  late Animation<double> _pulseAnimation;
-
-  @override
-  void initState() {
-    super.initState();
-    _pulseController = AnimationController(
-      duration: const Duration(milliseconds: 1000),
-      vsync: this,
-    );
-    _pulseAnimation = Tween<double>(begin: 0.3, end: 0.7).animate(
-      CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
-    );
-    _pulseController.repeat(reverse: true);
-  }
-
-  @override
-  void dispose() {
-    _pulseController.dispose();
-    super.dispose();
-  }
-
+class _PostCardState extends State<PostCard> {
   // ignore: non_constant_identifier_names
   Widget _PulseLoadingWidget() {
-    return AnimatedBuilder(
-      animation: _pulseAnimation,
-      builder: (context, child) {
-        return Container(
-          padding: const EdgeInsets.all(8),
-          width: double.infinity,
-          height: double.infinity,
-          decoration: BoxDecoration(
-            color: Theme.of(
-              context,
-            ).colorScheme.onSurface.withOpacity(_pulseAnimation.value),
-            borderRadius: BorderRadius.circular(2),
-            border: Border.all(
-              color: Theme.of(context).colorScheme.surface,
-              width: 2,
-            ),
-          ),
-        );
-      },
+    return Container(
+      padding: const EdgeInsets.all(8),
+      width: double.infinity,
+      height: double.infinity,
+      decoration: BoxDecoration(
+        color: Colors.grey[300],
+        borderRadius: BorderRadius.circular(2),
+      ),
     );
   }
 
@@ -132,72 +93,66 @@ class _PostCardState extends State<PostCard> with TickerProviderStateMixin {
 
   @override
   Widget build(BuildContext context) {
-    final double scaleProgress = ((widget.scale - 0.92) / 0.06).clamp(0.0, 1.0);
+    final double width = widget.containerWidth;
+    final double height = width * 16 / 9; // 4:5 비율 (width:height)
 
-    return Container(
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.background,
-      ),
-      margin: EdgeInsets.zero,
-      child: ClipRRect(
-        clipBehavior: Clip.hardEdge,
-        child: Transform.scale(
-          scale: widget.scale,
-          alignment: Alignment.center,
+    return SizedBox(
+      width: width,
+      height: height,
+      child: Container(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(15),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.2),
+              blurRadius: 8,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(15),
           child: Stack(
             children: [
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // 이미지 영역 - Flex 기반으로 유연하게
-                  Expanded(
-                    flex: 9,
-                    child: Stack(
-                      children: [
-                        // 이미지 컨테이너
-                        Positioned.fill(
-                          child: Transform.translate(
-                            offset: Offset(widget.parallaxX, 0),
-                            child:
-                                (widget.heroTag == null)
-                                    ? _buildImage()
-                                    : Hero(
-                                      tag: widget.heroTag!,
-                                      child: _buildImage(),
-                                    ),
-                          ),
-                        ),
-                        // 프로필 정보 오버레이
-                        Positioned(
-                          top: 12,
-                          left: 10,
-                          child: AnimatedOpacity(
-                            opacity: widget.scrollProgress,
-                            duration: Duration(milliseconds: 120),
-                            curve: Curves.easeOutCubic,
-                            child: Transform.scale(
-                              scale: lerpDouble(0.95, 1.08, scaleProgress)!,
-                              alignment: Alignment.topLeft,
-                              child: _buildProfileInfo(),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-
-                  Expanded(
-                    flex: 3,
-                    child: AnimatedOpacity(
-                      opacity: scaleProgress,
-                      duration: Duration(milliseconds: 200),
-                      curve: Curves.easeOutCubic,
-                      child: _buildText(),
-                    ),
-                  ),
-                ],
+              // 배경 이미지 - 전체 카드를 덮음
+              Positioned.fill(
+                child:
+                    (widget.heroTag == null)
+                        ? _buildImage()
+                        : Hero(tag: widget.heroTag!, child: _buildImage()),
               ),
-              // 카드 오버레이 제거 (페이드 인/아웃 제거)
+              // 하단 그라데이션 오버레이
+              Positioned.fill(
+                child: Container(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [
+                        Colors.transparent,
+                        Colors.transparent,
+                        Colors.black.withOpacity(0.2),
+                        Colors.black.withOpacity(0.35),
+                      ],
+                      stops: const [0.0, 0.4, 0.7, 1.0],
+                    ),
+                  ),
+                ),
+              ),
+              // 직성자 정보
+              Positioned(
+                left: 12,
+                right: 12,
+                top: 12,
+                child: _buildOverlayAuthor(),
+              ),
+              // 텍스트 오버레이 - 하단에 위치
+              Positioned(
+                left: 16,
+                right: 16,
+                bottom: 16,
+                child: _buildOverlayText(),
+              ),
             ],
           ),
         ),
@@ -205,115 +160,78 @@ class _PostCardState extends State<PostCard> with TickerProviderStateMixin {
     );
   }
 
-  Widget _buildText() {
-    print(widget.scrollProgress);
-    return Padding(
-      padding: EdgeInsets.only(
-        top: 20.0,
-        left: (1 - widget.scrollProgress) * 30,
-      ),
-      child: Padding(
-        padding: const EdgeInsets.only(right: 30),
-        child: Column(
+  Widget _buildOverlayAuthor() {
+    return Row(
+      children: [
+        Container(
+          width: 50,
+          height: 50,
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(300),
+            border: Border.all(color: Colors.white.withOpacity(0.3), width: 2),
+          ),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(300),
+            child:
+                (widget.authorProfileImageUrl != null &&
+                        widget.authorProfileImageUrl!.isNotEmpty)
+                    ? Image.network(
+                      widget.authorProfileImageUrl!,
+                      fit: BoxFit.cover,
+                      width: 40,
+                      height: 40,
+                    )
+                    : Container(
+                      color: Colors.white,
+                      child: Icon(Icons.person, color: Colors.black54),
+                    ),
+          ),
+        ),
+        const SizedBox(width: 12),
+        Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              widget.title,
-              style: TextStyle(
-                color: Theme.of(context).colorScheme.onBackground,
-                fontSize: 20,
+              widget.author,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 16,
                 fontFamily: 'Pretendard Variable',
-                fontWeight: FontWeight.bold,
-              ),
-              overflow: TextOverflow.ellipsis,
-              maxLines: 1,
-            ),
-
-            SizedBox(height: 10),
-            // 본문 내용 미리보기
-            Text(
-              widget.content,
-              style: TextStyle(
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
-                fontSize: 14,
-                fontFamily: 'Pretendard Variable',
-                fontWeight: FontWeight.w300,
-              ),
-              overflow: TextOverflow.ellipsis,
-              maxLines: 3,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildProfileInfo() {
-    return GestureDetector(
-      onTap: () {
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (context) => UserProfileScreen(username: widget.author),
-          ),
-        );
-      },
-      child: Padding(
-        padding: const EdgeInsets.symmetric(),
-        child: Row(
-          children: [
-            Container(
-              width: 40,
-              height: 40,
-              decoration: BoxDecoration(
-                color: const Color.fromARGB(255, 255, 255, 255),
-                borderRadius: BorderRadius.circular(300),
-                border: Border.all(
-                  color: const Color.fromARGB(255, 202, 202, 202),
-                  width: 1,
-                ),
-              ),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(300),
-                child: Image.network(
-                  "https://thumbnews.nateimg.co.kr/view610///news.nateimg.co.kr/orgImg/pt/2025/06/12/202506122116776778_684ac5398c368.jpg",
-                  fit: BoxFit.cover,
-                  width: 33,
-                  height: 33,
-                ),
-              ),
-            ),
-            SizedBox(width: 4),
-            Container(
-              margin: const EdgeInsets.only(top: 10),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    widget.author,
-                    style: TextStyle(
-                      color: const Color.fromARGB(255, 225, 225, 225),
-                      fontSize: 14,
-                      fontFamily: 'Pretendard Variable',
-                      fontWeight: FontWeight.w600,
-                      height: 0.9,
-                    ),
-                  ),
-                  Text(
-                    "@affection-jk",
-                    style: TextStyle(
-                      color: const Color.fromARGB(255, 255, 255, 255),
-                      fontSize: 14,
-                      fontFamily: 'Pretendard Variable',
-                      fontWeight: FontWeight.w400,
-                    ),
+                fontWeight: FontWeight.w600,
+                shadows: [
+                  Shadow(
+                    color: Colors.black,
+                    blurRadius: 2,
+                    offset: Offset(0, 1),
                   ),
                 ],
               ),
             ),
           ],
         ),
-      ),
+      ],
+    );
+  }
+
+  Widget _buildOverlayText() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // 제목 - 큰 텍스트
+        Text(
+          widget.title,
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 36,
+            fontFamily: 'Pretendard Variable',
+            fontWeight: FontWeight.bold,
+          ),
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+        ),
+      ],
     );
   }
 }

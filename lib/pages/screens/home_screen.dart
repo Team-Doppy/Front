@@ -1,10 +1,7 @@
-import 'package:doppy/pages/components/custom_bottom_navigation_bar.dart';
 import 'package:doppy/pages/components/post_list.dart';
 import 'package:doppy/data/models/post_data.dart';
 import 'package:doppy/data/services/blog_service.dart';
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
-import '../../providers/auth_provider.dart';
 
 class HomeScreen extends StatefulWidget {
   final List<PostData>? preloadedPosts;
@@ -54,7 +51,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
       final serverData = await _blogService.getHomePosts(
         page: _currentPage,
-        size: 10,
+        size: 30,
+        forceRefresh: refresh, // 새로고침 시에만 강제 갱신
       );
       final posts =
           serverData.map((data) => PostData.fromServer(data)).toList();
@@ -96,27 +94,27 @@ class _HomeScreenState extends State<HomeScreen> {
     final screenWidth = MediaQuery.of(context).size.width;
 
     return Scaffold(
+      backgroundColor: Theme.of(context).colorScheme.background,
       body: SafeArea(
         child: Column(
           children: [
             // 앱바 - 항상 표시
             Container(
-              height: 42,
+              height: 54,
               color: Theme.of(context).colorScheme.background,
               child: Padding(
-                padding: const EdgeInsets.only(left: 16, right: 16, bottom: 16),
+                padding: const EdgeInsets.only(left: 16, right: 16, bottom: 0),
                 child: Row(
                   children: [
                     Expanded(
-                      child: Consumer<AuthProvider>(
-                        builder: (context, auth, child) {
-                          final username = auth.username ?? '사용자';
-                          final textStyle = Theme.of(context)
-                              .textTheme
-                              .headlineMedium
-                              ?.copyWith(fontWeight: FontWeight.bold);
-                          return Text('@$username', style: textStyle);
-                        },
+                      child: Text(
+                        'doppy',
+                        style: Theme.of(
+                          context,
+                        ).textTheme.headlineMedium?.copyWith(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 22,
+                        ),
                       ),
                     ),
                     Stack(
@@ -144,43 +142,61 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
               ),
             ),
-            SizedBox(height: 80),
 
             // 포스트 리스트 또는 로딩/에러 상태
-            Expanded(child: _buildContent(screenWidth)),
+            Expanded(
+              child:
+                  _isLoading ? _buildLoadingCard() : _buildContent(screenWidth),
+            ),
+            const SizedBox(height: 16),
           ],
         ),
       ),
-      bottomNavigationBar: CustomBottomNavigationBar(
-        currentIndex: 0,
-        onTap: (_) {},
+      // 하단 네비게이션은 RootShell에서 고정 제공
+    );
+  }
+
+  Widget _buildLoadingCard() {
+    final double width = MediaQuery.of(context).size.width;
+    final double height = width * 16 / 9; // 4:5 비율 (width:height)
+    return Container(
+      width: width,
+      height: height,
+      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 40),
+
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(15),
+        color: const Color.fromARGB(255, 38, 38, 38),
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(15),
+        child: Stack(
+          children: [
+            // 하단 그라데이션 오버레이
+            Positioned.fill(
+              child: Container(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [
+                      Colors.transparent,
+                      Colors.transparent,
+                      Colors.black.withOpacity(0.2),
+                      Colors.black.withOpacity(0.35),
+                    ],
+                    stops: const [0.0, 0.4, 0.7, 1.0],
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
 
   Widget _buildContent(double screenWidth) {
-    if (_isLoading) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            CircularProgressIndicator(
-              color: Theme.of(context).colorScheme.primary,
-            ),
-            const SizedBox(height: 16),
-            Text(
-              '포스트를 불러오는 중...',
-              style: TextStyle(
-                color: Theme.of(
-                  context,
-                ).colorScheme.onBackground.withOpacity(0.7),
-              ),
-            ),
-          ],
-        ),
-      );
-    }
-
     if (_error != null) {
       return Center(
         child: Column(

@@ -19,19 +19,36 @@ class GroupService extends ApiServiceBase {
     try {
       print('🔍 [GroupService] 내가 소유한 그룹 목록 조회 시작');
 
-      final response = await get('/api/groups/my');
+      final response = await get('/api/groups/owned');
       print('📡 [GroupService] API 응답 상태: ${response.statusCode}');
       print('📡 [GroupService] API 응답 헤더: ${response.headers}');
       print('📡 [GroupService] API 응답 바디: ${response.body}');
 
       if (response.statusCode == 200) {
-        final Map<String, dynamic> data = jsonDecode(
-          utf8.decode(response.bodyBytes),
-        );
-        print('✅ [GroupService] 파싱된 데이터: $data');
+        final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+        print('✅ [GroupService] 파싱된 데이터 타입: ${decoded.runtimeType}');
 
-        final List<dynamic> groupsData = data['groups'] ?? [];
-        final groups = groupsData.map((item) => Group.fromJson(item)).toList();
+        List<Group> groups;
+        if (decoded is List) {
+          groups = decoded.map<Group>((item) => Group.fromJson(item)).toList();
+        } else if (decoded is Map<String, dynamic>) {
+          final dynamic groupsData =
+              decoded['groups'] ??
+              decoded['data'] ??
+              decoded['content'] ??
+              decoded['items'] ??
+              decoded['results'];
+          if (groupsData is List) {
+            groups =
+                groupsData.map<Group>((item) => Group.fromJson(item)).toList();
+          } else {
+            print('⚠️ [GroupService] 예상치 못한 응답 구조입니다. groups 배열을 찾지 못했습니다.');
+            groups = <Group>[];
+          }
+        } else {
+          print('⚠️ [GroupService] 알 수 없는 응답 형태입니다.');
+          groups = <Group>[];
+        }
 
         print('✅ [GroupService] 변환된 그룹 수: ${groups.length}');
         return groups;
@@ -76,14 +93,37 @@ class GroupService extends ApiServiceBase {
       print('📡 [GroupService] API 응답 바디: ${response.body}');
 
       if (response.statusCode == 200) {
-        final Map<String, dynamic> data = jsonDecode(
-          utf8.decode(response.bodyBytes),
-        );
-        print('✅ [GroupService] 파싱된 데이터: $data');
+        final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+        print('✅ [GroupService] 파싱된 데이터 타입: ${decoded.runtimeType}');
 
-        final List<dynamic> membersData = data['members'] ?? [];
-        final members =
-            membersData.map((item) => GroupMember.fromJson(item)).toList();
+        List<GroupMember> members;
+        if (decoded is List) {
+          // 최상위 배열 형태
+          members =
+              decoded
+                  .map<GroupMember>((item) => GroupMember.fromJson(item))
+                  .toList();
+        } else if (decoded is Map<String, dynamic>) {
+          // 래핑된 형태 대비
+          final dynamic membersData =
+              decoded['members'] ??
+              decoded['data'] ??
+              decoded['content'] ??
+              decoded['items'] ??
+              decoded['results'];
+          if (membersData is List) {
+            members =
+                membersData
+                    .map<GroupMember>((item) => GroupMember.fromJson(item))
+                    .toList();
+          } else {
+            print('⚠️ [GroupService] 예상치 못한 응답 구조입니다. members 배열을 찾지 못했습니다.');
+            members = <GroupMember>[];
+          }
+        } else {
+          print('⚠️ [GroupService] 알 수 없는 응답 형태입니다.');
+          members = <GroupMember>[];
+        }
 
         print('✅ [GroupService] 변환된 멤버 수: ${members.length}');
         return members;
