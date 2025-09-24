@@ -1,4 +1,6 @@
 import 'dart:io';
+import 'dart:convert';
+import 'dart:ui' as ui;
 
 import 'package:doppy/editor/component/link_component.dart';
 import 'package:doppy/editor/component/single_image_component.dart';
@@ -37,7 +39,12 @@ enum NodeType { paragraph, image, imageRow, location, unknown }
 
 class PostwriteScreen extends StatefulWidget {
   final double screenWidth;
-  const PostwriteScreen({super.key, required this.screenWidth});
+  final Map<String, dynamic>? initialExported; // 기존 글 불러오기용
+  const PostwriteScreen({
+    super.key,
+    required this.screenWidth,
+    this.initialExported,
+  });
 
   @override
   State<PostwriteScreen> createState() => _PostwriteScreenState();
@@ -104,6 +111,15 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     draftService = DraftService();
     _initializeDraft();
 
+    // 초기 콘텐츠가 전달되었다면 문서를 교체하여 불러오기
+    try {
+      final initData = widget.initialExported;
+      if (initData != null) {
+        final newDoc = _rebuildDocument(initData);
+        _replaceDocumentSafely(newDoc);
+      }
+    } catch (_) {}
+
     // 선택 범위가 바뀔 때 이미지 하이라이트 갱신
     composer.selectionNotifier.addListener(_updateImageSelectionHighlight);
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -149,6 +165,146 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
       _editorFocusNode.dispose();
     } catch (_) {}
     super.dispose();
+  }
+
+  // 전달된 exported(Map)으로 문서를 구성
+  MutableDocument _rebuildDocument(Map<String, dynamic> data) {
+    dynamic content = data['content'];
+    if (content is String) {
+      try {
+        content = json.decode(content);
+      } catch (_) {
+        content = const {'nodes': []};
+      }
+    }
+    if (content is! Map) {
+      content = const {'nodes': []};
+    }
+    final nodes = (content['nodes'] as List?) ?? const [];
+    final rebuilt = <DocumentNode>[];
+    for (final raw in nodes) {
+      final m = (raw as Map).cast<String, dynamic>();
+      final id = (m['id'] ?? '').toString();
+      final type = (m['type'] ?? '').toString();
+      switch (type) {
+        case 'paragraph':
+          final text = (m['text'] ?? '').toString();
+          final align = (m['align'] ?? 'center').toString();
+          final isTitle = m['isTitle'] == true;
+          final spans = (m['spans'] as List?) ?? const [];
+          final attributed = _buildAttributedText(text, spans);
+          final meta = <String, dynamic>{'textAlign': align};
+          if (isTitle) meta['isTitle'] = true;
+          rebuilt.add(ParagraphNode(id: id, text: attributed, metadata: meta));
+          break;
+        case 'image':
+          rebuilt.add(
+            ImageNode(
+              id: id,
+              imageUrl: (m['url'] ?? '').toString(),
+              altText: (m['altText'] ?? '').toString(),
+            ),
+          );
+          break;
+        case 'imageRow':
+          rebuilt.add(
+            ImageRowNode(
+              id: id,
+              imageUrls:
+                  ((m['urls'] as List?) ?? const [])
+                      .map((e) => e.toString())
+                      .toList(),
+              spacing: (m['spacing'] as num?)?.toDouble() ?? 4.0,
+            ),
+          );
+          break;
+        case 'link':
+          rebuilt.add(
+            LinkNode(
+              id: id,
+              url: (m['url'] ?? '').toString(),
+              title: (m['title'] ?? '').toString(),
+              description: (m['description'] ?? '').toString(),
+              thumbnailUrl: (m['thumbnailUrl'] ?? '').toString(),
+            ),
+          );
+          break;
+        case 'location':
+          rebuilt.add(
+            LocationNode(
+              id: id,
+              lat: (m['lat'] as num?)?.toDouble() ?? 0,
+              lng: (m['lng'] as num?)?.toDouble() ?? 0,
+              title: (m['title'] ?? '').toString(),
+              address: (m['address'] ?? '').toString(),
+              description: (m['description'] ?? '').toString(),
+            ),
+          );
+          break;
+        case 'mention':
+          rebuilt.add(
+            MentionNode(
+              id: id,
+              usernames:
+                  ((m['usernames'] as List?) ?? const [])
+                      .map((e) => e.toString())
+                      .toList(),
+            ),
+          );
+          break;
+        default:
+          rebuilt.add(ParagraphNode(id: id, text: AttributedText('[$type]')));
+      }
+    }
+    return MutableDocument(nodes: rebuilt);
+  }
+
+  AttributedText _buildAttributedText(String text, List spans) {
+    final attributed = AttributedText(text);
+    for (final s in spans) {
+      final m = (s as Map).cast<String, dynamic>();
+      final start = (m['start'] as num?)?.toInt() ?? 0;
+      final end = (m['end'] as num?)?.toInt() ?? start;
+      final ann = (m['attrs'] as Map?)?.cast<String, dynamic>() ?? {};
+      final atts = <Attribution>{};
+      if (ann['bold'] == true) atts.add(boldAttribution);
+      if (ann['italic'] == true) atts.add(italicsAttribution);
+      if (ann['underline'] == true) atts.add(underlineAttribution);
+      if (ann['strikethrough'] == true) atts.add(strikethroughAttribution);
+      final fs = (ann['font_size'] as num?)?.toDouble();
+      if (fs != null) atts.add(FontSizeAttribution(fs));
+      final colorHex = ann['color'] as String?;
+      if (colorHex != null && colorHex.isNotEmpty) {
+        atts.add(ColorAttribution(_parseHexColor(colorHex)));
+      }
+      for (final a in atts) {
+        attributed.addAttribution(a, SpanRange(start, end - 1));
+      }
+    }
+    return attributed;
+  }
+
+  ui.Color _parseHexColor(String hex) {
+    var v = hex.replaceAll('#', '');
+    if (v.length == 6) v = 'FF$v';
+    return ui.Color(int.parse(v, radix: 16));
+  }
+
+  void _replaceDocumentSafely(MutableDocument newDocument) {
+    try {
+      for (int i = document.length - 1; i >= 0; i--) {
+        final node = document.getNodeAt(i);
+        if (node != null) {
+          document.deleteNode(node.id);
+        }
+      }
+      for (int i = 0; i < newDocument.length; i++) {
+        final node = newDocument.getNodeAt(i);
+        if (node != null) {
+          document.insertNodeAt(i, node);
+        }
+      }
+    } catch (_) {}
   }
 
   void _cleanupAndExit() {

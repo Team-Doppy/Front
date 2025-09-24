@@ -5,12 +5,16 @@ import 'package:doppy/data/services/auth_service.dart';
 import 'package:http/http.dart' as http;
 
 class BlogService {
+  static final BlogService _instance = BlogService._internal();
+  factory BlogService() => _instance;
+  BlogService._internal();
+
   static final String _baseUrl = ApiServiceBase.baseUrl;
 
   // 포스트 캐시
   static List<Map<String, dynamic>> _cachedPosts = [];
   static DateTime? _lastCacheTime;
-  static const Duration _cacheExpiry = Duration(minutes: 30); // 5분 캐시
+  static const Duration _cacheExpiry = Duration(hours: 12);
 
   /// 캐시가 유효한지 확인
   static bool _isCacheValid() {
@@ -24,7 +28,6 @@ class BlogService {
   static void _invalidateCache() {
     _cachedPosts.clear();
     _lastCacheTime = null;
-    print('[BlogService] Cache invalidated');
   }
 
   /// 블로그 포스트를 서버에 업로드합니다.

@@ -33,7 +33,10 @@ class CustomBottomNavigationBar extends StatelessWidget {
         padding: const EdgeInsets.only(bottom: 40, top: 10),
         child: Row(
           children: List.generate(4, (index) {
-            final iconSize = 28.0;
+            var iconSize = 28.0;
+            if (index == 3) {
+              iconSize = 32.0;
+            }
 
             return Expanded(
               child: InkWell(

@@ -2,14 +2,17 @@ import 'package:doppy/pages/user/setting_screen.dart';
 import 'package:flutter/material.dart';
 import 'dart:io';
 import 'package:provider/provider.dart';
+import 'package:doppy/data/services/blog_service.dart';
+import 'package:doppy/pages/screens/post_reader_screen.dart';
+import 'package:doppy/editor/postwrite_screen.dart';
 import 'package:doppy/data/services/upload_service.dart';
 import 'package:doppy/providers/user_provider.dart';
 import 'package:doppy/providers/friend_provider.dart';
+import 'package:doppy/providers/profile_feed_provider.dart';
 import 'package:doppy/data/models/user_model.dart';
 import 'package:doppy/theme/app_text_styles.dart';
 import 'package:doppy/editor/image/profile_image_bottom_sheet.dart';
 import 'package:flutter_svg/flutter_svg.dart';
-import 'package:doppy/pages/components/post_card.dart';
 import 'package:doppy/pages/screens/manage_neighbor_screen.dart';
 import 'package:doppy/pages/screens/manage_group_screen.dart';
 
@@ -65,6 +68,10 @@ class _UserProfileScreenState extends State<UserProfileScreen>
       }
       // 헤더 측정 이후 초기 패널 위치 설정
       _scheduleMeasureHeader();
+      // 프로필 피드 초기 로드
+      try {
+        await context.read<ProfileFeedProvider>().loadInitial();
+      } catch (_) {}
     });
   }
 
@@ -654,80 +661,118 @@ class _UserProfileScreenState extends State<UserProfileScreen>
             ),
           ),
         ),
-        child: GestureDetector(
-          behavior: HitTestBehavior.translucent,
-          onVerticalDragStart: (_) {
-            if (_panelAnimCtrl.isAnimating) {
-              _panelAnimCtrl.stop();
-            }
-          },
-          onVerticalDragUpdate: (details) {
-            // 패널 top을 직접 갱신: 0(최상단) .. _headerHeight(초기 위치)
-            final double next = (_panelTop + details.delta.dy).clamp(
-              0.0,
-              _headerHeight,
-            );
-            if (next != _panelTop) {
-              setState(() => _panelTop = next);
-            }
-          },
-          onVerticalDragEnd: (details) {
-            final double velocity =
-                details.primaryVelocity ?? 0.0; // +down, -up
-            // 스냅 임계값
-            const double snapThreshold = 0.5; // 위치 기준
-            const double flingVelocity = 600.0; // px/s
+        child: Column(
+          children: [
+            SizedBox(height: 16),
+            // 상단 핸들/토글 영역에서만 드래그 제스처 처리
+            GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onVerticalDragStart: (_) {
+                if (_panelAnimCtrl.isAnimating) {
+                  _panelAnimCtrl.stop();
+                }
+              },
+              onVerticalDragUpdate: (details) {
+                final double next = (_panelTop + details.delta.dy).clamp(
+                  0.0,
+                  _headerHeight,
+                );
+                if (next != _panelTop) {
+                  setState(() => _panelTop = next);
+                }
+              },
+              onVerticalDragEnd: (details) {
+                final double velocity =
+                    details.primaryVelocity ?? 0.0; // +down, -up
+                const double snapThreshold = 0.5;
+                const double flingVelocity = 600.0; // px/s
 
-            double target;
-            if (velocity < -flingVelocity) {
-              // 빠르게 위로 플링 → 상단으로 스냅
-              target = 0.0;
-            } else if (velocity > flingVelocity) {
-              // 빠르게 아래로 플링 → 하단으로 스냅
-              target = _headerHeight;
-            } else {
-              // 속도가 크지 않으면 위치 비율로 결정
-              final double ratio = (_panelTop /
-                      (_headerHeight == 0 ? 1 : _headerHeight))
-                  .clamp(0.0, 1.0);
-              target = (ratio < snapThreshold) ? 0.0 : _headerHeight;
-            }
+                double target;
+                if (velocity < -flingVelocity) {
+                  target = 0.0;
+                } else if (velocity > flingVelocity) {
+                  target = _headerHeight;
+                } else {
+                  final double ratio = (_panelTop /
+                          (_headerHeight == 0 ? 1 : _headerHeight))
+                      .clamp(0.0, 1.0);
+                  target = (ratio < snapThreshold) ? 0.0 : _headerHeight;
+                }
 
-            _animatePanelTo(target);
-          },
-          child: Column(
-            children: [
-              SizedBox(height: 16),
-              // 핸들 바
-              Container(
-                width: 40,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: Theme.of(context).colorScheme.outlineVariant,
-                  borderRadius: BorderRadius.circular(2),
-                ),
+                _animatePanelTo(target);
+              },
+              child: Column(
+                children: [
+                  // 핸들 바
+                  Container(
+                    width: 40,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).colorScheme.outlineVariant,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                  SizedBox(height: 16),
+                  // shape1/2 아이콘 행
+                  Padding(
+                    padding: EdgeInsets.only(left: 20, right: 20, bottom: 12),
+                    child: Row(
+                      children: [
+                        _buildShapeIcon(
+                          'assets/icons/card.svg',
+                          20.0,
+                          20.0,
+                          true,
+                        ),
+                        SizedBox(width: 12.0),
+                        _buildShapeIcon(
+                          'assets/icons/list.svg',
+                          20.0,
+                          20.0,
+                          false,
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
               ),
-              SizedBox(height: 16),
-              // shape1/2 아이콘 행
-              Padding(
-                padding: EdgeInsets.only(left: 20, right: 20, bottom: 12),
-                child: Row(
-                  children: [
-                    _buildShapeIcon('assets/icons/card.svg', 20.0, 20.0, true),
-                    SizedBox(width: 12.0),
-                    _buildShapeIcon('assets/icons/list.svg', 20.0, 20.0, false),
-                  ],
-                ),
+            ),
+            // 피드 컨텐츠 (Provider 기반) — 제스처 영향에서 분리
+            Expanded(
+              child: Consumer<ProfileFeedProvider>(
+                builder: (context, feed, _) {
+                  if (feed.isLoading && feed.posts.isEmpty) {
+                    return const Center(
+                      child: SizedBox(
+                        width: 24,
+                        height: 24,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                    );
+                  }
+                  final posts = feed.posts;
+                  return NotificationListener<ScrollNotification>(
+                    onNotification: (sn) {
+                      if (sn.metrics.pixels >=
+                              sn.metrics.maxScrollExtent - 300 &&
+                          feed.hasMore &&
+                          !feed.isLoadingMore) {
+                        context.read<ProfileFeedProvider>().loadMore();
+                      }
+                      return false;
+                    },
+                    child:
+                        isCardView
+                            ? _buildFeedImagesFromProvider(
+                              containerWidth,
+                              posts,
+                            )
+                            : _buildFeedListFromProvider(containerWidth, posts),
+                  );
+                },
               ),
-              // 피드 컨텐츠
-              Expanded(
-                child:
-                    isCardView
-                        ? _buildFeedImages(containerWidth, dynamicPanelHeight)
-                        : _buildFeedList(containerWidth, dynamicPanelHeight),
-              ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );
@@ -787,47 +832,73 @@ class _UserProfileScreenState extends State<UserProfileScreen>
     );
   }
 
-  Widget _buildFeedImages(double containerWidth, double panelHeight) {
-    final List<String> feedImages = [
-      'assets/images/feed1.jpg',
-      'assets/images/feed4.png',
-      'assets/images/feed3.png',
-      'assets/images/feed2.png',
-      'assets/images/feed5.jpg',
-      'assets/images/feed6.jpg',
-      'assets/images/feed1.jpg',
-      'assets/images/feed3.png',
-      'assets/images/feed2.png',
-      'assets/images/feed4.png',
-      'assets/images/feed5.jpg',
-      'assets/images/feed6.jpg',
-      'assets/images/feed1.jpg',
-      'assets/images/feed2.png',
-      'assets/images/feed3.png',
-      'assets/images/feed4.png',
-      'assets/images/feed5.jpg',
-      'assets/images/feed6.jpg',
-    ];
+  // legacy (sample) grid renderer - replaced by provider-backed version
+  // kept temporarily for reference; not used
 
+  Widget _buildFeedImagesFromProvider(
+    double containerWidth,
+    List<Map<String, dynamic>> posts,
+  ) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16.0),
       child: GridView.builder(
+        padding: const EdgeInsets.only(bottom: 200),
         gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
           crossAxisCount: 2,
-          childAspectRatio: 180 / 135, // width / height 비율
-          crossAxisSpacing: 4,
-          mainAxisSpacing: 4,
+          childAspectRatio: 9 / 13,
+          crossAxisSpacing: 3,
+          mainAxisSpacing: 3,
         ),
-        itemCount: feedImages.length,
+        itemCount: posts.length,
         physics: const AlwaysScrollableScrollPhysics(),
         itemBuilder: (context, index) {
+          final post = posts[index];
+          final thumb = (post['thumbnailImageUrl'] ?? '').toString();
           return Material(
             color: Colors.transparent,
             child: InkWell(
               borderRadius: BorderRadius.circular(2),
               splashColor: Colors.grey.withOpacity(0.6),
               highlightColor: Colors.grey.withOpacity(0.3),
-              onTap: () {}, // 피드 상세보기 페이지 이동
+              onTap: () async {
+                final String postId = (post['id'] ?? '').toString();
+                final String username = (post['username'] ?? '').toString();
+                final me = context.read<UserProvider>().currentUser;
+                final bool isMine = me != null && me.username == username;
+
+                // 상세 데이터 필요 시 서버에서 재조회
+                Map<String, dynamic> exported = post;
+                try {
+                  if ((post['content'] == null ||
+                          post['content'].toString().isEmpty) &&
+                      postId.isNotEmpty) {
+                    exported = await BlogService().getPostDetail(postId);
+                  }
+                } catch (_) {}
+
+                if (!mounted) return;
+                if (isMine) {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder:
+                          (_) => PostwriteScreen(
+                            screenWidth: MediaQuery.of(context).size.width,
+                            initialExported: exported,
+                          ),
+                    ),
+                  );
+                } else {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder:
+                          (_) => PostReaderScreen(
+                            exported: exported,
+                            heroTag: 'post_$postId',
+                          ),
+                    ),
+                  );
+                }
+              },
               child: Container(
                 decoration: ShapeDecoration(
                   color: Theme.of(context).colorScheme.surfaceVariant,
@@ -837,25 +908,7 @@ class _UserProfileScreenState extends State<UserProfileScreen>
                 ),
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(2),
-                  child: Image.asset(
-                    feedImages[index],
-                    fit: BoxFit.cover,
-                    errorBuilder: (context, error, stackTrace) {
-                      return Container(
-                        color:
-                            index % 2 == 0
-                                ? Theme.of(context).colorScheme.secondary
-                                : Theme.of(context).colorScheme.primary,
-                        child: const Center(
-                          child: Icon(
-                            Icons.image,
-                            color: Colors.white,
-                            size: 40,
-                          ),
-                        ),
-                      );
-                    },
-                  ),
+                  child: _buildThumb(thumb, index),
                 ),
               ),
             ),
@@ -865,70 +918,174 @@ class _UserProfileScreenState extends State<UserProfileScreen>
     );
   }
 
-  Widget _buildFeedList(double containerWidth, double panelHeight) {
-    final List<Map<String, String>> feedData = [
-      {
-        'image': 'assets/images/feed1.jpg',
-        'title': '모태솔로지만연애를해야할까///',
-        'author': '수최영',
-        'content':
-            '안녕하세여,.오늘은 모태솔로지만연애는하고싶 어후기로돌아왓어요다들키스씬은보셧나요저는보다가기절을할뻔했어요 완전 찰스엔터됨 진짜 갈!!!!!!!!!!!!할뻔함 어쩌고 저쩌고 저ㅉ고어쩌고',
-      },
-      {
-        'image': 'assets/images/feed2.png',
-        'title': '오늘 날씨가 너무 좋아서 산책했어요',
-        'author': '김여름',
-        'content':
-            '오늘 날씨가 정말 좋아서 산책을 다녀왔어요. 햇살이 따뜻하고 바람도 시원해서 정말 기분이 좋았어요. 특히 공원에서 만난 강아지들이 너무 귀여웠어요!',
-      },
-      {
-        'image': 'assets/images/feed3.png',
-        'title': '새로운 카페를 발견했어요!',
-        'author': '박카페',
-        'content':
-            '새로운 카페를 발견했어요! 분위기도 좋고 커피도 맛있어서 정말 만족스러웠어요. 다음에 친구들과 함께 가보려고 해요.',
-      },
-      {
-        'image': 'assets/images/feed4.png',
-        'title': '블로그 1000억 무조건 부자될 것 같아',
-        'author': '이블로그',
-        'content':
-            '블로그로 1000억 벌어서 부자가 될 것 같아요! 열심히 글 쓰고 있으니까 조만간 성공할 것 같아요. 다들 응원해주세요!',
-      },
-      {
-        'image': 'assets/images/feed5.jpg',
-        'title': '오늘은 수강신청을 망쳐버렸어요',
-        'author': '정수강',
-        'content':
-            '오늘 수강신청을 망쳐버렸어요... 원하는 과목을 못 들었어요. 다음 학기에 다시 도전해보려고 해요. 화이팅!',
-      },
-    ];
-
+  Widget _buildFeedListFromProvider(
+    double containerWidth,
+    List<Map<String, dynamic>> posts,
+  ) {
+    final onSurface = Theme.of(context).colorScheme.onSurface;
+    final onVariant = Theme.of(context).colorScheme.onSurfaceVariant;
     return ListView.builder(
-      itemCount: feedData.length,
+      padding: const EdgeInsets.only(bottom: 200),
+      itemCount: posts.length,
       physics: const AlwaysScrollableScrollPhysics(),
       itemBuilder: (context, index) {
-        final feed = feedData[index];
-        return Material(
-          color: Colors.transparent,
-          child: InkWell(
-            borderRadius: BorderRadius.circular(8),
-            splashColor: Colors.grey.withOpacity(0.6),
-            highlightColor: Colors.grey.withOpacity(0.3),
-            onTap: () {
-              // 피드 상세보기 페이지 이동
-              // TODO: 피드 상세보기 페이지로 이동
-            },
-            child: PostCard(
-              containerWidth: containerWidth,
-              thumbnailImageUrl: feed['image']!,
-              title: feed['title']!,
-              author: feed['author']!,
-              content: feed['content']!,
-            ),
+        final feed = posts[index];
+        final String title = (feed['title'] ?? '').toString();
+        final String content = (feed['content'] ?? '').toString();
+        final String thumb = (feed['thumbnailImageUrl'] ?? '').toString();
+        final int views =
+            (feed['viewCount'] ?? 0) is int ? feed['viewCount'] as int : 0;
+        final int likes =
+            (feed['likeCount'] ?? 0) is int ? feed['likeCount'] as int : 0;
+
+        return Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SizedBox(
+                width: 120,
+                child: AspectRatio(
+                  aspectRatio: 9 / 13,
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(2),
+                    child: InkWell(
+                      onTap: () async {
+                        final String postId = (feed['id'] ?? '').toString();
+                        final String username =
+                            (feed['username'] ?? '').toString();
+                        final me = context.read<UserProvider>().currentUser;
+                        final bool isMine =
+                            me != null && me.username == username;
+
+                        Map<String, dynamic> exported = feed;
+                        try {
+                          if ((feed['content'] == null ||
+                                  feed['content'].toString().isEmpty) &&
+                              postId.isNotEmpty) {
+                            exported = await BlogService().getPostDetail(
+                              postId,
+                            );
+                          }
+                        } catch (_) {}
+
+                        if (!mounted) return;
+                        if (isMine) {
+                          Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder:
+                                  (_) => PostwriteScreen(
+                                    screenWidth:
+                                        MediaQuery.of(context).size.width,
+                                    initialExported: exported,
+                                  ),
+                            ),
+                          );
+                        } else {
+                          Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder:
+                                  (_) => PostReaderScreen(
+                                    exported: exported,
+                                    heroTag: 'post_$postId',
+                                  ),
+                            ),
+                          );
+                        }
+                      },
+                      child: _buildThumb(thumb, index),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: AppTextStyles.bodyLarge.copyWith(
+                        color: onSurface,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      content,
+                      maxLines: 3,
+                      overflow: TextOverflow.ellipsis,
+                      style: AppTextStyles.bodyMedium.copyWith(
+                        color: onVariant,
+                        height: 1.35,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.remove_red_eye_outlined,
+                          size: 16,
+                          color: onVariant,
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          '$views',
+                          style: AppTextStyles.bodySmall.copyWith(
+                            color: onVariant,
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Icon(Icons.favorite_border, size: 16, color: onVariant),
+                        const SizedBox(width: 4),
+                        Text(
+                          '$likes',
+                          style: AppTextStyles.bodySmall.copyWith(
+                            color: onVariant,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
         );
       },
+    );
+  }
+
+  Widget _buildThumb(String pathOrUrl, int index) {
+    final isNetwork = pathOrUrl.startsWith('http');
+    if (isNetwork) {
+      return Image.network(
+        pathOrUrl,
+        fit: BoxFit.cover,
+        errorBuilder: (_, __, ___) => _thumbFallback(index),
+      );
+    } else if (pathOrUrl.isNotEmpty) {
+      return Image.asset(
+        pathOrUrl,
+        fit: BoxFit.cover,
+        errorBuilder: (_, __, ___) => _thumbFallback(index),
+      );
+    }
+    return _thumbFallback(index);
+  }
+
+  Widget _thumbFallback(int index) {
+    return Container(
+      color:
+          index % 2 == 0
+              ? Theme.of(context).colorScheme.secondary
+              : Theme.of(context).colorScheme.primary,
+      child: const Center(
+        child: Icon(Icons.image, color: Colors.white, size: 40),
+      ),
     );
   }
 }

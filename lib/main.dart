@@ -4,7 +4,7 @@ import 'package:doppy/editor/service/image_service.dart';
 import 'package:doppy/editor/service/sticker_service.dart';
 import 'package:doppy/pages/screens/home_screen.dart';
 import 'package:doppy/pages/components/custom_bottom_navigation_bar.dart';
-import 'package:doppy/pages/onboarding/splash_screen.dart';
+import 'package:doppy/pages/onboarding/splash.dart';
 import 'package:doppy/pages/screens/manage_group_screen.dart';
 import 'package:doppy/pages/screens/manage_neighbor_screen.dart';
 import 'package:doppy/pages/screens/search_screen.dart';
@@ -16,6 +16,7 @@ import 'package:doppy/providers/friend_provider.dart';
 import 'package:doppy/providers/group_provider.dart';
 import 'package:doppy/providers/theme_provider.dart';
 import 'package:doppy/providers/user_provider.dart';
+import 'package:doppy/providers/profile_feed_provider.dart';
 import 'package:doppy/data/services/search_service.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -43,6 +44,7 @@ Future<void> main() async {
         ChangeNotifierProvider(create: (_) => AuthProvider()),
         ChangeNotifierProvider(create: (_) => FriendProvider()),
         ChangeNotifierProvider(create: (_) => UserProvider()),
+        ChangeNotifierProvider(create: (_) => ProfileFeedProvider()),
         ChangeNotifierProvider(create: (_) => GroupProvider()),
         ChangeNotifierProvider(create: (_) => SearchService()),
         ChangeNotifierProvider(create: (_) => ImageService()),

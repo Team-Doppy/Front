@@ -22,8 +22,7 @@ class _SplashScreenState extends State<SplashScreen>
   late final Animation<double> _flash;
 
   final BlogService _blogService = BlogService();
-  // RootShell 사용으로 초기 홈 데이터 프리패스 불필요
-  // 제거 예정: 프리로드 리스트는 현재 미사용
+
   // ignore: unused_field
   List<PostData> _preloadedPosts = [];
   bool _isDataLoaded = false;
@@ -65,21 +64,21 @@ class _SplashScreenState extends State<SplashScreen>
       ),
     );
 
-    _startSequence();
+    startSequence();
   }
 
-  void _startSequence() {
-    _initializeApp();
+  void startSequence() {
     // 두둥 느낌: 타이밍에 맞춘 햅틱
     Future.delayed(const Duration(milliseconds: 550), () {
       HapticFeedback.heavyImpact();
     });
+    initializeApp();
     Future.delayed(const Duration(milliseconds: 900), () {
       HapticFeedback.mediumImpact();
     });
   }
 
-  Future<void> _initializeApp() async {
+  Future<void> initializeApp() async {
     try {
       // 1. 토큰 검증 및 갱신
       setState(() {
@@ -89,18 +88,13 @@ class _SplashScreenState extends State<SplashScreen>
       final authProvider = context.read<AuthProvider>();
       final hasToken = await authProvider.checkLoginStatus();
 
-      print('[SplashScreen] hasToken: $hasToken');
-
       if (hasToken) {
-        print('[SplashScreen] Token found, validating...');
         final isValid = await authProvider.validateAndRefreshToken();
-        print('[SplashScreen] Token validation result: $isValid');
         setState(() {
           _isTokenValidated = isValid;
           _loadingStatus = isValid ? '데이터를 불러오는 중...' : '토큰이 만료되었습니다';
         });
       } else {
-        print('[SplashScreen] No token found');
         setState(() {
           _isTokenValidated = false;
           _loadingStatus = '로그인이 필요합니다';
@@ -114,9 +108,9 @@ class _SplashScreenState extends State<SplashScreen>
         });
         // 내 프로필 선로딩 - 실패 시 전체 진행 중단
         try {
+          // ignore: use_build_context_synchronously
           await context.read<UserProvider>().fetchMyProfile();
         } catch (e) {
-          print('[SplashScreen] Failed to fetch my profile: $e');
           setState(() {
             _isTokenValidated = false; // 게이트 다운
             _isDataLoaded = true;
@@ -137,7 +131,6 @@ class _SplashScreenState extends State<SplashScreen>
       // 3. 네비게이션
       await _navigateAfterReady();
     } catch (e) {
-      print('[SplashScreen] Initialization error: $e');
       setState(() {
         _isTokenValidated = false;
         _isDataLoaded = true;

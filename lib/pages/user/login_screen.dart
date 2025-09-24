@@ -1,6 +1,7 @@
 import 'dart:math' as math;
-import 'package:doppy/data/services/auth_service.dart';
 import 'package:doppy/providers/auth_provider.dart';
+import 'package:doppy/providers/user_provider.dart';
+import 'package:provider/provider.dart';
 import 'package:flutter/material.dart';
 import '../../theme/app_text_styles.dart';
 
@@ -78,9 +79,11 @@ class _LoginScreenState extends State<LoginScreen> {
     if (!mounted) return;
 
     if (success) {
-      // 로그인 성공 시 AuthProvider가 상태를 변경하여
-      // main.dart의 Consumer가 자동으로 HomeScreen으로 전환해줍니다.
-      // 따라서 여기서 직접 화면을 전환하는 코드는 필요 없습니다.
+      // 로그인 직후 내 프로필을 선조회하여 초기 화면에서도 사용자 정보를 보장
+      try {
+        await context.read<UserProvider>().fetchMyProfile();
+      } catch (_) {}
+
       Navigator.of(context).pushNamedAndRemoveUntil('/home', (route) => false);
     } else {
       // 로그인 실패 시 사용자에게 피드백 제공

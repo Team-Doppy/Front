@@ -310,7 +310,18 @@ class _PostReaderScreenState extends State<PostReaderScreen>
   }
 
   MutableDocument _rebuildDocument(Map<String, dynamic> data) {
-    final nodes = (data['content']?['nodes'] as List?) ?? const [];
+    dynamic content = data['content'];
+    if (content is String) {
+      try {
+        content = json.decode(content);
+      } catch (_) {
+        content = const {'nodes': []};
+      }
+    }
+    if (content is! Map) {
+      content = const {'nodes': []};
+    }
+    final nodes = (content['nodes'] as List?) ?? const [];
     final rebuilt = <DocumentNode>[];
     for (final raw in nodes) {
       final m = (raw as Map).cast<String, dynamic>();
