@@ -275,7 +275,12 @@ class DraftService {
 
   /// PostReaderScreen의 _rebuildDocument 로직을 활용
   MutableDocument _rebuildDocument(Map<String, dynamic> data) {
-    final nodes = (data['content']?['nodes'] as List?) ?? const [];
+    // 저장 포맷(document | content 모두)과 과거 포맷까지 호환
+    final List nodes =
+        (data['document']?['nodes'] as List?) ??
+        (data['content']?['nodes'] as List?) ??
+        (data['content'] as List?) ??
+        const [];
     final rebuilt = <DocumentNode>[];
 
     for (final raw in nodes) {

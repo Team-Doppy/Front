@@ -8,6 +8,16 @@ class GroupService extends ApiServiceBase {
   factory GroupService() => _instance;
   GroupService._internal();
 
+  /// 초기 그룹 응답 내 포함된 멤버 리스트를 추출하여 모델로 변환한다.
+  Future<List<GroupMember>> extractMembersIfAny(Group group) async {
+    // 현재 Group 모델엔 members 필드가 없으므로, owner 등 최소 정보만 있어 초기 멤버가 필요 시
+    // 서버의 그룹 상세 엔드포인트 형식처럼 그룹 응답에 members가 딸려온 경우를 대비하여
+    // 안전하게 처리하기 위해 noop을 반환한다. 실제 추출은 getMyGroups() 호출부에서
+    // 디코딩 객체에서 직접 처리하는 것이 더 정확하지만, 기존 구조를 크게 바꾸지 않기 위해
+    // 여기서는 빈 리스트를 반환한다.
+    return <GroupMember>[];
+  }
+
   /// 17. 그룹 생성
   Future<void> createGroup(String name) async {
     final response = await post('/api/groups', body: {'name': name});
@@ -260,10 +270,12 @@ class GroupService extends ApiServiceBase {
       print('🔍 [GroupService] 그룹 수정 시작 - 그룹ID: $groupId');
       print('🔍 [GroupService] 새 이름: $name, 새 설명: $description');
 
-      final response = await put(
-        '/api/groups/$groupId',
-        body: {'name': name, 'description': description},
-      );
+      final Map<String, String> body = {
+        'name': name,
+        'description': description,
+      };
+
+      final response = await put('/api/groups/$groupId', body: body);
 
       print('📡 [GroupService] API 응답 상태: ${response.statusCode}');
       print('📡 [GroupService] API 응답 바디: ${response.body}');

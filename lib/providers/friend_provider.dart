@@ -14,6 +14,7 @@ class FriendProvider with ChangeNotifier {
   // '이웃 관리' 화면용 데이터
   List<Friend> _acceptedFriends = [];
   List<Friend> _receivedRequests = [];
+  List<Friend> _sentRequests = [];
   bool _isLoading = false; // 목록 로딩 상태
   String? _errorMessage;
 
@@ -29,6 +30,7 @@ class FriendProvider with ChangeNotifier {
   // --- Getter ---
   List<Friend> get acceptedFriends => _acceptedFriends;
   List<Friend> get receivedRequests => _receivedRequests;
+  List<Friend> get sentRequests => _sentRequests;
   bool get isLoading => _isLoading;
   String? get errorMessage => _errorMessage;
 
@@ -50,9 +52,11 @@ class FriendProvider with ChangeNotifier {
       final results = await Future.wait([
         _friendService.getAcceptedFriends(),
         _friendService.getReceivedFriendRequests(),
+        _friendService.getSentFriendRequests(),
       ]);
       _acceptedFriends = results[0];
       _receivedRequests = results[1];
+      _sentRequests = results[2];
     } catch (e) {
       _errorMessage = "데이터 로딩에 실패했습니다: $e";
     } finally {
@@ -65,12 +69,81 @@ class FriendProvider with ChangeNotifier {
   Future<bool> acceptFriendRequest(String requesterUsername) async {
     try {
       await _friendService.acceptFriendRequest(requesterUsername);
-      // 성공 시, 목록을 새로고침하여 UI에 즉시 반영
-      await fetchAllFriendData();
+      // 성공 시, 받은 요청 → 수락으로 이동 (글로벌 로딩 없이 국소 업데이트)
+      final int idx = _receivedRequests.indexWhere(
+        (f) => f.username == requesterUsername,
+      );
+      if (idx != -1) {
+        final moved = _receivedRequests.removeAt(idx);
+        _acceptedFriends.add(moved);
+      }
+      notifyListeners();
       return true;
     } catch (e) {
       print("친구 요청 수락 실패: $e");
       // TODO: UI에 에러 메시지 표시 (예: 스낵바)
+      return false;
+    }
+  }
+
+  /// 로딩 스피너(전체 쉬머) 없이 낙관적 갱신으로 처리
+  Future<bool> acceptFriendRequestOptimistic(String requesterUsername) async {
+    try {
+      await _friendService.acceptFriendRequest(requesterUsername);
+      // 받은 요청 목록에서 제거하고, 수락된 친구 목록에 추가
+      final int idx = _receivedRequests.indexWhere(
+        (f) => f.username == requesterUsername,
+      );
+      if (idx != -1) {
+        final friend = _receivedRequests.removeAt(idx);
+        _acceptedFriends.add(friend);
+      }
+      notifyListeners();
+      return true;
+    } catch (e) {
+      debugPrint('acceptFriendRequestOptimistic failed: $e');
+      return false;
+    }
+  }
+
+  Future<bool> cancelSentRequest(String targetUsername) async {
+    try {
+      await _friendService.cancelFriendRequest(targetUsername);
+      _sentRequests.removeWhere((f) => f.username == targetUsername);
+      notifyListeners();
+      return true;
+    } catch (e) {
+      print("친구 요청 취소 실패: $e");
+      return false;
+    }
+  }
+
+  /// 로딩 스피너(전체 쉬머) 없이 낙관적 취소 처리
+  Future<bool> cancelSentRequestOptimistic(String targetUsername) async {
+    try {
+      await _friendService.cancelFriendRequest(targetUsername);
+      _sentRequests.removeWhere((f) => f.username == targetUsername);
+      notifyListeners();
+      return true;
+    } catch (e) {
+      debugPrint('cancelSentRequestOptimistic failed: $e');
+      return false;
+    }
+  }
+
+  /// 이웃(친구) 해제
+  Future<bool> deleteFriend(String targetUsername) async {
+    try {
+      await _friendService.deleteFriend(targetUsername);
+      // 목록/상태 국소 업데이트
+      _acceptedFriends.removeWhere((f) => f.username == targetUsername);
+      _receivedRequests.removeWhere((f) => f.username == targetUsername);
+      _sentRequests.removeWhere((f) => f.username == targetUsername);
+      _friendStatus = FriendRequestStatus.none;
+      notifyListeners();
+      return true;
+    } catch (e) {
+      debugPrint('이웃 해제 실패: $e');
       return false;
     }
   }

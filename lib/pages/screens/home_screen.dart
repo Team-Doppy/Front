@@ -94,8 +94,20 @@ class _HomeScreenState extends State<HomeScreen> {
     final screenWidth = MediaQuery.of(context).size.width;
 
     return Scaffold(
-      backgroundColor: Colors.black,
-      body: _isLoading ? _buildLoadingCard() : _buildContent(screenWidth),
+      appBar: AppBar(
+        title: Text(
+          '',
+          style: TextStyle(
+            fontWeight: FontWeight.bold,
+            fontSize: 24,
+            color: Theme.of(context).colorScheme.primary,
+          ),
+        ),
+        centerTitle: false,
+      ),
+      body: SafeArea(
+        child: _isLoading ? _buildLoadingCard() : _buildContent(screenWidth),
+      ),
       // 하단 네비게이션은 RootShell에서 고정 제공
     );
   }

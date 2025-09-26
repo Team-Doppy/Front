@@ -344,6 +344,49 @@ class BlogService {
     }
   }
 
+  /// 특정 사용자의 블로그 목록을 가져옵니다.
+  Future<List<Map<String, dynamic>>> getUserPosts({
+    required String username,
+    int page = 0,
+    int size = 10,
+  }) async {
+    try {
+      final token = await AuthService().getToken();
+      final uri = Uri.parse(
+        '$_baseUrl/api/posts/user/$username?page=$page&size=$size',
+      );
+
+      print(
+        '[BlogService] Fetching user posts: username=$username page=$page, size=$size',
+      );
+
+      final response = await http
+          .get(
+            uri,
+            headers: {
+              'Authorization': 'Bearer $token',
+              'Content-Type': 'application/json',
+            },
+          )
+          .timeout(const Duration(seconds: 10));
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        final posts = List<Map<String, dynamic>>.from(
+          data['content'] ?? data as List? ?? [],
+        );
+        print('[BlogService] Successfully fetched ${posts.length} user posts');
+        return posts;
+      } else {
+        print('[BlogService] Error ${response.statusCode}: ${response.body}');
+        throw Exception('Failed to fetch user posts: ${response.statusCode}');
+      }
+    } catch (e) {
+      print('[BlogService] Exception: $e');
+      throw Exception('Failed to fetch user posts: $e');
+    }
+  }
+
   /// 제목으로 블로그를 검색합니다.
   Future<List<Map<String, dynamic>>> searchPosts({
     required String keyword,

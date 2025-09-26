@@ -50,30 +50,33 @@ class _PostCardState extends State<PostCard> {
   Widget _buildImage() {
     // URL인지 로컬 에셋인지 판단
     if (widget.thumbnailImageUrl.isNotEmpty) {
-      return Image.network(
-        widget.thumbnailImageUrl,
-        fit: BoxFit.cover,
-        loadingBuilder: (context, child, loadingProgress) {
-          if (loadingProgress == null) return child;
-          return _PulseLoadingWidget();
-        },
-        errorBuilder: (context, error, stackTrace) {
-          return Container(
-            color: Theme.of(context).colorScheme.surfaceVariant,
-            child: Center(
-              child: Icon(
-                Icons.error,
-                color: Theme.of(
-                  context,
-                ).colorScheme.onSurface.withOpacity(0.54),
-                size: 40,
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(8),
+        child: Image.network(
+          widget.thumbnailImageUrl,
+          fit: BoxFit.cover,
+          loadingBuilder: (context, child, loadingProgress) {
+            if (loadingProgress == null) return child;
+            return _PulseLoadingWidget();
+          },
+          errorBuilder: (context, error, stackTrace) {
+            return Container(
+              color: Theme.of(context).colorScheme.surfaceVariant,
+              child: Center(
+                child: Icon(
+                  Icons.error,
+                  color: Theme.of(
+                    context,
+                  ).colorScheme.onSurface.withOpacity(0.54),
+                  size: 40,
+                ),
               ),
-            ),
-          );
-        },
+            );
+          },
 
-        // 고화질을 위한 최적화
-        filterQuality: FilterQuality.high,
+          // 고화질을 위한 최적화
+          filterQuality: FilterQuality.high,
+        ),
       );
     } else {
       // 로컬 에셋
@@ -92,134 +95,37 @@ class _PostCardState extends State<PostCard> {
 
   @override
   Widget build(BuildContext context) {
-    final screenSize = MediaQuery.of(context).size;
-    final bottomPadding = MediaQuery.of(context).padding.bottom;
-
-    // 전체 화면 크기 사용 (바텀네비게이션바 위까지)
-    final double width = screenSize.width;
-    final double height = screenSize.height - bottomPadding;
-
-    return SizedBox(
-      width: width,
-      height: height,
-      child: Container(
-        decoration: const BoxDecoration(
-          color: Colors.black,
-          borderRadius: BorderRadius.only(
-            topLeft: Radius.circular(16),
-            topRight: Radius.circular(16),
-          ),
-        ),
-        child: Stack(
-          children: [
-            // 배경 이미지 - 전체 카드를 덮음
-            Positioned.fill(
-              child:
-                  (widget.heroTag == null)
-                      ? _buildImage()
-                      : Hero(tag: widget.heroTag!, child: _buildImage()),
-            ),
-            // 하단 그라데이션 오버레이
-            Positioned.fill(
-              child: Container(
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                    colors: [
-                      Colors.transparent,
-                      Colors.transparent,
-                      Colors.black.withOpacity(0.2),
-                      Colors.black.withOpacity(0.2),
-                    ],
-                    stops: const [0.0, 0.5, 0.9, 0.98],
-                  ),
-                ),
-              ),
-            ),
-            // 상단 작성자 정보
-            Positioned(
-              left: 16,
-              right: 16,
-              top: MediaQuery.of(context).padding.top + 16,
-              child: _buildOverlayAuthor(),
-            ),
-            // 텍스트 오버레이 - 하단에 위치
-            Positioned(
-              left: 20,
-              right: 20,
-              bottom: 20,
-              child: _buildOverlayText(),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildOverlayAuthor() {
-    return Row(
+    return Stack(
       children: [
-        Container(
-          width: 60,
-          height: 60,
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(30),
-            border: Border.all(color: Colors.white, width: 3),
-          ),
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(30),
-            child:
-                (widget.authorProfileImageUrl != null &&
-                        widget.authorProfileImageUrl!.isNotEmpty)
-                    ? Image.network(
-                      widget.authorProfileImageUrl!,
-                      fit: BoxFit.cover,
-                      width: 54,
-                      height: 54,
-                    )
-                    : Container(
-                      color: Colors.white,
-                      child: Icon(
-                        Icons.person,
-                        color: Colors.black54,
-                        size: 30,
-                      ),
-                    ),
-          ),
+        // 배경 이미지 - 전체 카드를 덮음
+        Positioned.fill(
+          child:
+              (widget.heroTag == null)
+                  ? _buildImage()
+                  : Hero(tag: widget.heroTag!, child: _buildImage()),
         ),
-        const SizedBox(width: 16),
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              widget.author,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 18,
-                fontFamily: 'Pretendard Variable',
-                fontWeight: FontWeight.w700,
+        // 하단 그라데이션 오버레이
+        Positioned.fill(
+          child: Container(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(8),
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [
+                  Colors.transparent,
+                  Colors.transparent,
+                  Colors.black.withOpacity(0.2),
+                  Colors.black.withOpacity(0.2),
+                ],
+                stops: const [0.0, 0.5, 0.9, 0.98],
               ),
             ),
+          ),
+        ),
 
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-              decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.2),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Text(
-                widget.author,
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ),
-          ],
-        ),
+        // 텍스트 오버레이 - 하단에 위치
+        Positioned(left: 20, right: 20, bottom: 20, child: _buildOverlayText()),
       ],
     );
   }

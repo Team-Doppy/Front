@@ -19,14 +19,28 @@ class GroupMember {
   });
 
   factory GroupMember.fromJson(Map<String, dynamic> json) {
+    final dynamic createdAt = json['joinedAt'] ?? json['createdAt'];
     return GroupMember(
-      id: json['id'],
-      groupId: json['groupId'],
-      userId: json['userId'] ?? '', // userId 파싱
-      displayName: json['userId'] ?? '', // userId를 displayName으로 사용
-      neighborCount: 0, // API 응답에 없으므로 기본값 0
-      profileImageUrl: null, // API 응답에 없으므로 null
-      joinedAt: DateTime.now(), // API 응답에 없으므로 현재 시간
+      id: (json['id'] as num?)?.toInt() ?? 0,
+      groupId:
+          (json['groupId'] as num?)?.toInt() ??
+          (json['group_id'] as num?)?.toInt() ??
+          0,
+      userId: (json['userId'] ?? json['username'] ?? '').toString(),
+      displayName:
+          (json['displayName'] ??
+                  json['alias'] ??
+                  json['username'] ??
+                  json['userId'] ??
+                  '')
+              .toString(),
+      neighborCount: (json['neighborCount'] as num?)?.toInt() ?? 0,
+      profileImageUrl:
+          (json['profileImageUrl'] ?? json['profile_image_url']) as String?,
+      joinedAt:
+          (createdAt is String && createdAt.isNotEmpty)
+              ? DateTime.tryParse(createdAt) ?? DateTime.now()
+              : DateTime.now(),
     );
   }
 }

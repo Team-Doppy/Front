@@ -22,6 +22,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'theme/theme.dart';
+import 'utils/route_observer.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -72,14 +73,16 @@ class MyApp extends StatelessWidget {
       darkTheme: AppTheme.darkTheme,
       themeMode: context.watch<ThemeProvider>().themeMode,
       home: const SplashScreen(),
+      navigatorObservers: [routeObserver],
       routes: {
         '/home': (_) => const RootShell(initialIndex: 0),
         '/login': (_) => const LoginScreen(),
         '/search': (_) => const RootShell(initialIndex: 1),
         '/profile': (context) => const RootShell(initialIndex: 3),
         // 필요 시 확장
-        '/manage-group': (_) => const ManageGroupScreen(),
-        '/manage-neighbor': (_) => const ManageNeighborScreen(),
+        '/manage-group': (_) => const ManageNeighborScreen(initialTabIndex: 1),
+        '/manage-neighbor':
+            (_) => const ManageNeighborScreen(initialTabIndex: 0),
         '/post-write': (_) => PostwriteScreen(screenWidth: screenWidth),
       },
 
@@ -121,13 +124,24 @@ class _RootShellState extends State<RootShell> {
       return;
     }
     setState(() => _index = i);
+    // 프로필 탭 선택 시 항상 피드 새로 로드
+    if (i == 3) {
+      // 기본 내 프로필(다른 사용자 없음)
+      context.read<ProfileFeedProvider>().loadInitial(
+        username: null,
+        force: true,
+      );
+    }
   }
 
   @override
   Widget build(BuildContext context) {
+    final stack = IndexedStack(index: _index, children: _pages);
     return Scaffold(
       backgroundColor: Theme.of(context).colorScheme.background,
-      body: SafeArea(child: IndexedStack(index: _index, children: _pages)),
+
+      // 모든 탭에서 동일하게 SafeArea를 적용해 전환 시 패딩 점프(깜빡임) 제거
+      body: SafeArea(child: stack),
       bottomNavigationBar: CustomBottomNavigationBar(
         currentIndex: _index,
         onTap: _onTap,

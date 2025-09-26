@@ -89,6 +89,19 @@ class FriendService extends ApiServiceBase {
     throw Exception('보낸 친구 신청 목록 조회 실패');
   }
 
+  /// 15-1. 보낸 친구 신청 취소
+  Future<void> cancelFriendRequest(String targetUsername) async {
+    // 명세 준수: DELETE /api/friends/cancel-request/{username}
+    final response = await delete(
+      '/api/friends/cancel-request/$targetUsername',
+    );
+    print('┌─[RES] ${response.statusCode} ${response.body}');
+    print('└────────────────────────────────');
+    if (response.statusCode != 200) {
+      throw Exception('친구 요청 취소 실패');
+    }
+  }
+
   /// 16. 받은 친구 신청 목록
   Future<List<Friend>> getReceivedFriendRequests() async {
     final response = await get('/api/friends/received-requests');

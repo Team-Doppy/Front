@@ -24,37 +24,43 @@ class CustomBottomNavigationBar extends StatelessWidget {
       'assets/icons/ic_profile.svg',
     ];
 
-    return Container(
-      height: 90,
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.background,
+    return ClipRRect(
+      borderRadius: BorderRadius.only(
+        topLeft: Radius.circular(16),
+        topRight: Radius.circular(16),
       ),
-      child: Padding(
-        padding: const EdgeInsets.only(bottom: 40, top: 10),
-        child: Row(
-          children: List.generate(4, (index) {
-            var iconSize = 28.0;
-            if (index == 3) {
-              iconSize = 32.0;
-            }
+      child: Container(
+        height: 80,
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.background,
+        ),
+        child: Padding(
+          padding: const EdgeInsets.only(bottom: 30, top: 10),
+          child: Row(
+            children: List.generate(4, (index) {
+              var iconSize = 28.0;
+              if (index == 3) {
+                iconSize = 32.0;
+              }
 
-            return Expanded(
-              child: InkWell(
-                onTap: () => onTap(index),
-                child: Center(
-                  child: SvgPicture.asset(
-                    iconAssets[index],
-                    width: iconSize,
-                    height: iconSize,
-                    color:
-                        index == currentIndex
-                            ? Theme.of(context).colorScheme.primary
-                            : Theme.of(context).colorScheme.onSurface,
+              return Expanded(
+                child: InkWell(
+                  onTap: () => onTap(index),
+                  child: Center(
+                    child: SvgPicture.asset(
+                      iconAssets[index],
+                      width: iconSize,
+                      height: iconSize,
+                      color:
+                          index == currentIndex
+                              ? Theme.of(context).colorScheme.primary
+                              : Theme.of(context).colorScheme.onSurface,
+                    ),
                   ),
                 ),
-              ),
-            );
-          }),
+              );
+            }),
+          ),
         ),
       ),
     );

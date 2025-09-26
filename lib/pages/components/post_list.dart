@@ -36,7 +36,7 @@ class _PostListState extends State<PostList> {
   void initState() {
     super.initState();
     // 전체 화면 사용 (인스타그램 릴스 스타일)
-    _pageController = PageController(viewportFraction: 1.0);
+    _pageController = PageController(viewportFraction: 0.88);
     _pageController.addListener(() {
       if (_pageController.hasClients) {
         final current = _pageController.page ?? _currentIndex.toDouble();
@@ -73,7 +73,7 @@ class _PostListState extends State<PostList> {
 
   @override
   Widget build(BuildContext context) {
-    Widget content = NotificationListener<ScrollNotification>(
+    Widget pageView = NotificationListener<ScrollNotification>(
       onNotification: (notification) {
         if (notification is ScrollUpdateNotification) {
           // 페이지 정지 직전(정확히 맞물리기 직전)으로 가까워지면 미리 밝기 복원
@@ -118,10 +118,12 @@ class _PostListState extends State<PostList> {
         return false;
       },
       child: PageView.builder(
-        scrollDirection: Axis.vertical,
+        scrollDirection: Axis.horizontal,
         controller: _pageController,
         pageSnapping: true,
-        physics: const BouncingScrollPhysics(),
+
+        clipBehavior: Clip.none,
+        padEnds: true,
         onPageChanged: (index) {
           setState(() {
             _currentIndex = index;
@@ -159,17 +161,32 @@ class _PostListState extends State<PostList> {
       ),
     );
 
-    // 새로고침 기능이 있으면 RefreshIndicator로 감싸기
-    if (widget.onRefresh != null) {
-      return RefreshIndicator(
-        onRefresh: widget.onRefresh!,
-        color: Colors.white,
-        backgroundColor: Colors.black54,
-        child: content,
-      );
-    }
+    // 헤더(작가 프로필/이름) + 본문(PageView)를 컬럼으로 분리하여 겹침 제거
+    final double topInset = MediaQuery.of(context).padding.top;
 
-    return content;
+    final Widget header = Padding(
+      padding: EdgeInsets.fromLTRB(24, topInset + 8, 20, 0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [_buildTopRightAvatar(context), _buildStickyAuthor(context)],
+      ),
+    );
+
+    // 새로고침 기능이 있으면 RefreshIndicator로 감싸기
+    Widget contentWithRefresh =
+        widget.onRefresh != null
+            ? RefreshIndicator(
+              onRefresh: widget.onRefresh!,
+              color: Colors.white,
+              backgroundColor: Colors.black54,
+              child: pageView,
+            )
+            : pageView;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [header, Expanded(child: contentWithRefresh)],
+    );
   }
 
   Widget _buildPostItem(BuildContext context, PostData post, int index) {
@@ -182,12 +199,12 @@ class _PostListState extends State<PostList> {
     // 심플 모드: 공존 연출 제거. 오직 축소/페이드/블러만 거리 비례로 적용
     // proximity: 0(멀리) ~ 1(정확히 중앙)
     final double proximity = (1.0 - ad).clamp(0.0, 1.0);
-    // 중앙에서 1.00, 멀수록 0.76까지 축소
-    double scale = 0.76 + 0.24 * proximity;
-    // 중앙에서 완전 불투명, 멀수록 완전 투명
-    double opacity = proximity;
-    // 멀수록 블러 강하게(최대 12)
-    double blur = (1.0 - proximity) * 12.0;
+    // 중앙 1.0, 가장자리도 살짝 보이도록 최소 0.9 유지
+    double scale = 0.90 + 0.10 * proximity;
+    // 이웃 카드가 완전히 사라지지 않도록 최소 0.35 유지
+    double opacity = 0.35 + 0.65 * proximity;
+    // 멀수록 블러(최대 6) – 카드 존재감만 암시
+    double blur = (1.0 - proximity) * 2.0;
 
     return GestureDetector(
       onTap: () {
@@ -239,20 +256,103 @@ class _PostListState extends State<PostList> {
         scale: scale,
         child: Opacity(
           opacity: opacity,
-          child: ImageFiltered(
-            imageFilter: ui.ImageFilter.blur(sigmaX: blur, sigmaY: blur),
-            child: PostCard(
-              containerWidth: widget.containerWidth,
-              thumbnailImageUrl: post.thumbnailImageUrl,
-              heroTag: 'post-hero-${post.id}-$index',
-              title: post.title,
-              author: post.author,
-              authorProfileImageUrl: post.authorProfileImageUrl,
-              content: post.parsedContent,
-              isVisible: _currentIndex == index,
+          child: Center(
+            child: AspectRatio(
+              aspectRatio: 9 / 14,
+              child: ImageFiltered(
+                imageFilter: ui.ImageFilter.blur(sigmaX: blur, sigmaY: blur),
+                child: PostCard(
+                  containerWidth: widget.containerWidth,
+                  thumbnailImageUrl: post.thumbnailImageUrl,
+                  heroTag: 'post-hero-${post.id}-$index',
+                  title: post.title,
+                  author: post.author,
+                  authorProfileImageUrl: post.authorProfileImageUrl,
+                  content: post.parsedContent,
+                  isVisible: _currentIndex == index,
+                ),
+              ),
             ),
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildStickyAuthor(BuildContext context) {
+    if (widget.posts.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    final safeIndex = _currentIndex.clamp(0, widget.posts.length - 1);
+    final post = widget.posts[safeIndex];
+    final alias = '@${post.author.toLowerCase()}';
+
+    return Column(
+      key: ValueKey('author-${post.id}-$safeIndex'),
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          post.author,
+          textAlign: TextAlign.left,
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 16,
+            fontWeight: FontWeight.w400,
+            letterSpacing: -0.2,
+          ),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+        const SizedBox(height: 2),
+        Text(
+          alias,
+          textAlign: TextAlign.left,
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 25,
+            fontWeight: FontWeight.w700,
+            letterSpacing: -0.2,
+          ),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+      ],
+    );
+  }
+
+  Widget _buildTopRightAvatar(BuildContext context) {
+    if (widget.posts.isEmpty) return const SizedBox.shrink();
+    final safeIndex = _currentIndex.clamp(0, widget.posts.length - 1);
+    final post = widget.posts[safeIndex];
+    return Container(
+      width: 60,
+      height: 60,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(60),
+        border: Border.all(color: Colors.white, width: 3),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.15),
+            blurRadius: 8,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(60),
+        child:
+            (post.authorProfileImageUrl.isNotEmpty)
+                ? Image.network(
+                  post.authorProfileImageUrl,
+                  width: 60,
+                  height: 60,
+                  fit: BoxFit.cover,
+                )
+                : Container(
+                  color: Colors.white,
+                  child: const Icon(Icons.person, color: Colors.black54),
+                ),
       ),
     );
   }
