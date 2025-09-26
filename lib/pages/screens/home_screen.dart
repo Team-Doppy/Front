@@ -94,104 +94,22 @@ class _HomeScreenState extends State<HomeScreen> {
     final screenWidth = MediaQuery.of(context).size.width;
 
     return Scaffold(
-      backgroundColor: Theme.of(context).colorScheme.background,
-      body: SafeArea(
-        child: Column(
-          children: [
-            // 앱바 - 항상 표시
-            Container(
-              height: 54,
-              color: Theme.of(context).colorScheme.background,
-              child: Padding(
-                padding: const EdgeInsets.only(left: 16, right: 16, bottom: 0),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        'doppy',
-                        style: Theme.of(
-                          context,
-                        ).textTheme.headlineMedium?.copyWith(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 22,
-                        ),
-                      ),
-                    ),
-                    Stack(
-                      children: [
-                        Icon(
-                          Icons.notifications,
-                          color: Theme.of(context).colorScheme.onBackground,
-                          size: 23,
-                        ),
-                        Positioned(
-                          top: 0,
-                          right: 0,
-                          child: Container(
-                            width: 6,
-                            height: 6,
-                            decoration: BoxDecoration(
-                              color: const Color.fromARGB(255, 238, 0, 0),
-                              shape: BoxShape.circle,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-            ),
-
-            // 포스트 리스트 또는 로딩/에러 상태
-            Expanded(
-              child:
-                  _isLoading ? _buildLoadingCard() : _buildContent(screenWidth),
-            ),
-            const SizedBox(height: 16),
-          ],
-        ),
-      ),
+      backgroundColor: Colors.black,
+      body: _isLoading ? _buildLoadingCard() : _buildContent(screenWidth),
       // 하단 네비게이션은 RootShell에서 고정 제공
     );
   }
 
   Widget _buildLoadingCard() {
-    final double width = MediaQuery.of(context).size.width;
-    final double height = width * 16 / 9; // 4:5 비율 (width:height)
-    return Container(
-      width: width,
-      height: height,
-      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 40),
+    final screenSize = MediaQuery.of(context).size;
+    final bottomPadding = MediaQuery.of(context).padding.bottom;
 
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(15),
-        color: const Color.fromARGB(255, 38, 38, 38),
-      ),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(15),
-        child: Stack(
-          children: [
-            // 하단 그라데이션 오버레이
-            Positioned.fill(
-              child: Container(
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                    colors: [
-                      Colors.transparent,
-                      Colors.transparent,
-                      Colors.black.withOpacity(0.2),
-                      Colors.black.withOpacity(0.35),
-                    ],
-                    stops: const [0.0, 0.4, 0.7, 1.0],
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
+    return Container(
+      width: screenSize.width,
+      height: screenSize.height - bottomPadding,
+      decoration: const BoxDecoration(color: Color.fromARGB(255, 38, 38, 38)),
+      child: const Center(
+        child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
       ),
     );
   }

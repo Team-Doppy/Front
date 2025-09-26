@@ -1,4 +1,3 @@
-import 'dart:ui';
 import 'package:flutter/material.dart';
 
 // ignore: must_be_immutable
@@ -93,68 +92,66 @@ class _PostCardState extends State<PostCard> {
 
   @override
   Widget build(BuildContext context) {
-    final double width = widget.containerWidth;
-    final double height = width * 16 / 9; // 4:5 비율 (width:height)
+    final screenSize = MediaQuery.of(context).size;
+    final bottomPadding = MediaQuery.of(context).padding.bottom;
+
+    // 전체 화면 크기 사용 (바텀네비게이션바 위까지)
+    final double width = screenSize.width;
+    final double height = screenSize.height - bottomPadding;
 
     return SizedBox(
       width: width,
       height: height,
       child: Container(
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(15),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.2),
-              blurRadius: 8,
-              offset: const Offset(0, 4),
-            ),
-          ],
+        decoration: const BoxDecoration(
+          color: Colors.black,
+          borderRadius: BorderRadius.only(
+            topLeft: Radius.circular(16),
+            topRight: Radius.circular(16),
+          ),
         ),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(15),
-          child: Stack(
-            children: [
-              // 배경 이미지 - 전체 카드를 덮음
-              Positioned.fill(
-                child:
-                    (widget.heroTag == null)
-                        ? _buildImage()
-                        : Hero(tag: widget.heroTag!, child: _buildImage()),
-              ),
-              // 하단 그라데이션 오버레이
-              Positioned.fill(
-                child: Container(
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
-                      colors: [
-                        Colors.transparent,
-                        Colors.transparent,
-                        Colors.black.withOpacity(0.2),
-                        Colors.black.withOpacity(0.35),
-                      ],
-                      stops: const [0.0, 0.4, 0.7, 1.0],
-                    ),
+        child: Stack(
+          children: [
+            // 배경 이미지 - 전체 카드를 덮음
+            Positioned.fill(
+              child:
+                  (widget.heroTag == null)
+                      ? _buildImage()
+                      : Hero(tag: widget.heroTag!, child: _buildImage()),
+            ),
+            // 하단 그라데이션 오버레이
+            Positioned.fill(
+              child: Container(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [
+                      Colors.transparent,
+                      Colors.transparent,
+                      Colors.black.withOpacity(0.2),
+                      Colors.black.withOpacity(0.2),
+                    ],
+                    stops: const [0.0, 0.5, 0.9, 0.98],
                   ),
                 ),
               ),
-              // 직성자 정보
-              Positioned(
-                left: 12,
-                right: 12,
-                top: 12,
-                child: _buildOverlayAuthor(),
-              ),
-              // 텍스트 오버레이 - 하단에 위치
-              Positioned(
-                left: 16,
-                right: 16,
-                bottom: 16,
-                child: _buildOverlayText(),
-              ),
-            ],
-          ),
+            ),
+            // 상단 작성자 정보
+            Positioned(
+              left: 16,
+              right: 16,
+              top: MediaQuery.of(context).padding.top + 16,
+              child: _buildOverlayAuthor(),
+            ),
+            // 텍스트 오버레이 - 하단에 위치
+            Positioned(
+              left: 20,
+              right: 20,
+              bottom: 20,
+              child: _buildOverlayText(),
+            ),
+          ],
         ),
       ),
     );
@@ -164,31 +161,35 @@ class _PostCardState extends State<PostCard> {
     return Row(
       children: [
         Container(
-          width: 50,
-          height: 50,
+          width: 60,
+          height: 60,
           decoration: BoxDecoration(
             color: Colors.white,
-            borderRadius: BorderRadius.circular(300),
-            border: Border.all(color: Colors.white.withOpacity(0.3), width: 2),
+            borderRadius: BorderRadius.circular(30),
+            border: Border.all(color: Colors.white, width: 3),
           ),
           child: ClipRRect(
-            borderRadius: BorderRadius.circular(300),
+            borderRadius: BorderRadius.circular(30),
             child:
                 (widget.authorProfileImageUrl != null &&
                         widget.authorProfileImageUrl!.isNotEmpty)
                     ? Image.network(
                       widget.authorProfileImageUrl!,
                       fit: BoxFit.cover,
-                      width: 40,
-                      height: 40,
+                      width: 54,
+                      height: 54,
                     )
                     : Container(
                       color: Colors.white,
-                      child: Icon(Icons.person, color: Colors.black54),
+                      child: Icon(
+                        Icons.person,
+                        color: Colors.black54,
+                        size: 30,
+                      ),
                     ),
           ),
         ),
-        const SizedBox(width: 12),
+        const SizedBox(width: 16),
         Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -196,16 +197,25 @@ class _PostCardState extends State<PostCard> {
               widget.author,
               style: const TextStyle(
                 color: Colors.white,
-                fontSize: 16,
+                fontSize: 18,
                 fontFamily: 'Pretendard Variable',
-                fontWeight: FontWeight.w600,
-                shadows: [
-                  Shadow(
-                    color: Colors.black,
-                    blurRadius: 2,
-                    offset: Offset(0, 1),
-                  ),
-                ],
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.2),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Text(
+                widget.author,
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
             ),
           ],
@@ -224,9 +234,24 @@ class _PostCardState extends State<PostCard> {
           widget.title,
           style: const TextStyle(
             color: Colors.white,
-            fontSize: 36,
+            fontSize: 30,
             fontFamily: 'Pretendard Variable',
             fontWeight: FontWeight.bold,
+            height: 1.2,
+          ),
+          maxLines: 3,
+          overflow: TextOverflow.ellipsis,
+        ),
+        const SizedBox(height: 12),
+        // 내용
+        Text(
+          widget.content,
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 14,
+            fontFamily: 'Pretendard Variable',
+            fontWeight: FontWeight.w500,
+            height: 1.3,
           ),
           maxLines: 2,
           overflow: TextOverflow.ellipsis,

@@ -7,6 +7,7 @@ import 'package:super_editor/super_editor.dart';
 import 'package:doppy/editor/style/style_sheet.dart';
 import 'package:doppy/editor/component/row_image_component.dart'
     show ImageRowNode, RowImageComponentBuilder;
+
 // 읽기 전용에서는 에디터 전용 컴포넌트를 사용하지 않음
 import 'package:doppy/editor/component/link_component.dart';
 import 'package:doppy/editor/component/location_component.dart';
@@ -95,7 +96,7 @@ class _PostReaderScreenState extends State<PostReaderScreen>
 
     // 이미지 높이를 화면의 75%로 설정
     final screenHeight = MediaQuery.of(context).size.height;
-    final imageHeight = screenHeight * 0.9;
+    final imageHeight = screenHeight * 0.5;
 
     // AppBar가 나타나야 하는 시점 계산
     final shouldShowAppBar =

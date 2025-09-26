@@ -35,8 +35,8 @@ class _PostListState extends State<PostList> {
   @override
   void initState() {
     super.initState();
-    // 측면 프리뷰 유지 + 간격 약간 축소
-    _pageController = PageController(viewportFraction: 0.95);
+    // 전체 화면 사용 (인스타그램 릴스 스타일)
+    _pageController = PageController(viewportFraction: 1.0);
     _pageController.addListener(() {
       if (_pageController.hasClients) {
         final current = _pageController.page ?? _currentIndex.toDouble();
@@ -235,27 +235,21 @@ class _PostListState extends State<PostList> {
         debugPrint('double tap');
         _printJsonFull(post.toServerLikeMap());
       },
-      child: Center(
-        child: Container(
-          margin: const EdgeInsets.symmetric(vertical: 22, horizontal: 12),
-          // 카드 자체에 스케일/투명도/블러 적용
-          child: Transform.scale(
-            scale: scale,
-            child: Opacity(
-              opacity: opacity,
-              child: ImageFiltered(
-                imageFilter: ui.ImageFilter.blur(sigmaX: blur, sigmaY: blur),
-                child: PostCard(
-                  containerWidth: widget.containerWidth,
-                  thumbnailImageUrl: post.thumbnailImageUrl,
-                  heroTag: 'post-hero-${post.id}-$index',
-                  title: post.title,
-                  author: post.author,
-                  authorProfileImageUrl: post.authorProfileImageUrl,
-                  content: post.parsedContent,
-                  isVisible: _currentIndex == index,
-                ),
-              ),
+      child: Transform.scale(
+        scale: scale,
+        child: Opacity(
+          opacity: opacity,
+          child: ImageFiltered(
+            imageFilter: ui.ImageFilter.blur(sigmaX: blur, sigmaY: blur),
+            child: PostCard(
+              containerWidth: widget.containerWidth,
+              thumbnailImageUrl: post.thumbnailImageUrl,
+              heroTag: 'post-hero-${post.id}-$index',
+              title: post.title,
+              author: post.author,
+              authorProfileImageUrl: post.authorProfileImageUrl,
+              content: post.parsedContent,
+              isVisible: _currentIndex == index,
             ),
           ),
         ),
