@@ -328,6 +328,7 @@ extension _TopExpandedRow on _DefaultToolbarState {
     switch (_expanded) {
       case ToolbarSection.camera:
         return const SizedBox.shrink();
+
       case ToolbarSection.text:
         return ListView(
           scrollDirection: Axis.horizontal,
@@ -380,149 +381,156 @@ extension _TopExpandedRow on _DefaultToolbarState {
         );
 
       case ToolbarSection.insert:
-        return Row(
-          children: [
-            _buildChip(
-              icon: Icons.horizontal_rule,
-              label: '구분선',
-              onTap: () {
-                widget.stylingService.insertDivider();
-                // 추가 후 상단 두번째 툴바 닫기
-                _toggle(ToolbarSection.none);
-              },
-            ),
-
-            _buildChip(
-              icon: Icons.link,
-              label: '링크',
-              onTap: () {
-                Navigator.of(context).push(
-                  PageRouteBuilder(
-                    opaque: false,
-                    barrierDismissible: true,
-                    pageBuilder:
-                        (_, __, ___) => LinkOverlay(
-                          onSubmit: ({
-                            required String url,
-                            String? title,
-                            String? description,
-                            String? thumbnailUrl,
-                          }) {
-                            widget.editorService.addLinkNode(
-                              url: url,
-                              title: title,
-                              description: description,
-                              thumbnailUrl: thumbnailUrl,
-                            );
-                            // 링크 추가 후 상단 두번째 툴바 자동 닫기
-                            _toggle(ToolbarSection.none);
-                            Navigator.of(context).maybePop();
-                          },
-                        ),
+        return SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            children: [
+              _stickerPanel == StickerPanel.none
+                  ? _buildChip(
+                    icon: Icons.copy_all,
+                    label: '스티커',
+                    onTap: () {
+                      _toggleSticker(StickerPanel.sticker);
+                    },
+                  )
+                  : GestureDetector(
+                    onTap: () {
+                      _toggleSticker(StickerPanel.none);
+                    },
+                    child: Padding(
+                      padding: const EdgeInsets.only(left: 8.0),
+                      child: Icon(Icons.keyboard_arrow_left, size: 19),
+                    ),
                   ),
-                );
-              },
-            ),
 
-            _buildChip(
-              icon: Icons.copy_all,
-              label: '스티커',
-              onTap: () {
-                Navigator.of(context).push(
-                  PageRouteBuilder(
-                    opaque: false,
-                    barrierDismissible: true,
-                    pageBuilder:
-                        (_, __, ___) => StickerOverlay(
-                          onSubmit: ({
-                            required String text,
-                            String? emoji,
-                            Uint8List? image,
-                            Map<String, dynamic>? textStyle,
-                          }) {
-                            final svc = context.read<StickerService>();
-                            // 현재 화면 스크롤 위치를 고려한 초기 위치 (뷰포트 중앙 상단 근처)
-                            final Size size = MediaQuery.of(context).size;
-                            final scrollY =
-                                widget.scrollController?.offset ?? 0.0;
-                            final Offset at = Offset(
-                              size.width * 0.5 - 60,
-                              scrollY + 200,
-                            );
-                            if (image != null) {
-                              svc.addImageSticker(image, at);
-                            } else if ((emoji ?? '').isNotEmpty) {
-                              svc.addEmojiSticker(emoji!, at);
-                            } else if (text.trim().isNotEmpty) {
-                              svc.addTextStickerWithStyle(
-                                text.trim(),
-                                textStyle,
-                                at,
+              if (_stickerPanel == StickerPanel.sticker) ...[
+                const SizedBox(width: 12),
+                _buildDivider(),
+                const SizedBox(width: 8),
+                _buildStickerOption(
+                  icon: Icons.text_fields,
+                  label: '텍스트',
+                  onTap: () => _selectStickerType(StickerKind.text),
+                ),
+                const SizedBox(width: 8),
+                _buildStickerOption(
+                  icon: Icons.image,
+                  label: '이미지',
+                  onTap: () => _selectStickerType(StickerKind.image),
+                ),
+                const SizedBox(width: 8),
+                _buildStickerOption(
+                  icon: Icons.emoji_emotions,
+                  label: '이모지',
+                  onTap: () => _selectStickerType(StickerKind.emoji),
+                ),
+                const SizedBox(width: 8),
+                _buildStickerOption(
+                  icon: Icons.brush,
+                  label: '그리기',
+                  onTap: () => _selectStickerType(StickerKind.draw),
+                ),
+                const SizedBox(width: 8),
+                _buildDivider(),
+                const SizedBox(width: 12),
+              ],
+
+              _buildChip(
+                icon: Icons.horizontal_rule,
+                label: '구분선',
+                onTap: () {
+                  widget.stylingService.insertDivider();
+                  // 추가 후 상단 두번째 툴바 닫기
+                  _toggle(ToolbarSection.none);
+                },
+              ),
+
+              _buildChip(
+                icon: Icons.link,
+                label: '링크',
+                onTap: () {
+                  Navigator.of(context).push(
+                    PageRouteBuilder(
+                      opaque: false,
+                      barrierDismissible: true,
+                      pageBuilder:
+                          (_, __, ___) => LinkOverlay(
+                            onSubmit: ({
+                              required String url,
+                              String? title,
+                              String? description,
+                              String? thumbnailUrl,
+                            }) {
+                              widget.editorService.addLinkNode(
+                                url: url,
+                                title: title,
+                                description: description,
+                                thumbnailUrl: thumbnailUrl,
                               );
-                            }
-                            // 스티커 추가 후 상단 두번째 툴바 자동 닫기
-                            _toggle(ToolbarSection.none);
-                            Navigator.of(context).maybePop();
-                          },
-                        ),
-                  ),
-                );
-              },
-            ),
+                              // 링크 추가 후 상단 두번째 툴바 자동 닫기
+                              _toggle(ToolbarSection.none);
+                              Navigator.of(context).maybePop();
+                            },
+                          ),
+                    ),
+                  );
+                },
+              ),
 
-            _buildChip(
-              icon: Icons.alternate_email,
-              label: '언급',
-              onTap: () {
-                Navigator.of(context).push(
-                  PageRouteBuilder(
-                    opaque: false,
-                    barrierDismissible: true,
-                    pageBuilder:
-                        (_, __, ___) => MentionOverlay(
-                          onClose: () {},
-                          onSelect: (username) {},
-                          onSubmit: (usernames) {
-                            widget.editorService.addMentionNode(usernames);
-                            // 언급 추가 후 상단 두번째 툴바 자동 닫기
-                            _toggle(ToolbarSection.none);
-                            Navigator.of(context).maybePop();
-                          },
-                        ),
-                  ),
-                );
-              },
-            ),
+              _buildChip(
+                icon: Icons.alternate_email,
+                label: '언급',
+                onTap: () {
+                  Navigator.of(context).push(
+                    PageRouteBuilder(
+                      opaque: false,
+                      barrierDismissible: true,
+                      pageBuilder:
+                          (_, __, ___) => MentionOverlay(
+                            onClose: () {},
+                            onSelect: (username) {},
+                            onSubmit: (usernames) {
+                              widget.editorService.addMentionNode(usernames);
+                              // 언급 추가 후 상단 두번째 툴바 자동 닫기
+                              _toggle(ToolbarSection.none);
+                              Navigator.of(context).maybePop();
+                            },
+                          ),
+                    ),
+                  );
+                },
+              ),
 
-            _buildChip(
-              icon: Icons.location_on_outlined,
-              label: '장소',
-              onTap: () {
-                FocusScope.of(context).unfocus();
-                Navigator.of(context).push(
-                  PageRouteBuilder(
-                    opaque: false,
-                    barrierDismissible: true,
-                    pageBuilder:
-                        (_, __, ___) => LocationOverlay(
-                          onSelect: (lat, lng, title, address) {
-                            widget.editorService.addLocationNode(
-                              lat: lat,
-                              lng: lng,
-                              title: title,
-                              address: address,
-                              description: '선택된 위치입니다.',
-                            );
-                            // 장소 추가 후 상단 두번째 툴바 자동 닫기
-                            _toggle(ToolbarSection.none);
-                            Navigator.of(context).maybePop();
-                          },
-                        ),
-                  ),
-                );
-              },
-            ),
-          ],
+              _buildChip(
+                icon: Icons.location_on_outlined,
+                label: '장소',
+                onTap: () {
+                  FocusScope.of(context).unfocus();
+                  Navigator.of(context).push(
+                    PageRouteBuilder(
+                      opaque: false,
+                      barrierDismissible: true,
+                      pageBuilder:
+                          (_, __, ___) => LocationOverlay(
+                            onSelect: (lat, lng, title, address) {
+                              widget.editorService.addLocationNode(
+                                lat: lat,
+                                lng: lng,
+                                title: title,
+                                address: address,
+                                description: '선택된 위치입니다.',
+                              );
+                              // 장소 추가 후 상단 두번째 툴바 자동 닫기
+                              _toggle(ToolbarSection.none);
+                              Navigator.of(context).maybePop();
+                            },
+                          ),
+                    ),
+                  );
+                },
+              ),
+            ],
+          ),
         );
 
       case ToolbarSection.align:
@@ -626,6 +634,8 @@ enum ToolbarSection { none, camera, insert, text, align, mention }
 
 enum TextPanel { none, size, color }
 
+enum StickerPanel { none, sticker }
+
 class _DefaultToolbarState extends State<DefaultToolbar> {
   Map<String, bool> _currentStyles = {
     'bold': false,
@@ -636,6 +646,7 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
 
   TextAlign _currentAlignment = TextAlign.left;
   ToolbarSection _expanded = ToolbarSection.none;
+  StickerPanel _stickerPanel = StickerPanel.none;
   TextPanel _textPanel = TextPanel.none;
   // (reserved) 대표 아이콘 기준 정렬이 필요할 때 사용할 수 있는 앵커 키
   final GlobalKey _textIconKey = GlobalKey();
@@ -658,6 +669,16 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
       _expanded = _expanded == section ? ToolbarSection.none : section;
     });
     if (_expanded == ToolbarSection.text) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _updateTopAnchor());
+    }
+  }
+
+  void _toggleSticker(StickerPanel panel) {
+    setState(() {
+      _stickerPanel = _stickerPanel == panel ? StickerPanel.none : panel;
+    });
+
+    if (_stickerPanel == StickerPanel.sticker) {
       WidgetsBinding.instance.addPostFrameCallback((_) => _updateTopAnchor());
     }
   }
@@ -1201,6 +1222,69 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
     }
 
     return 16.0; // 기본값
+  }
+
+  // 스티커 종류 선택 메서드
+  void _selectStickerType(StickerKind kind) {
+    _toggle(ToolbarSection.none); // 메뉴 닫기
+
+    // 선택된 종류에 따라 해당 오버레이로 이동
+    Navigator.of(context).push(
+      PageRouteBuilder(
+        opaque: false,
+        barrierDismissible: true,
+        pageBuilder:
+            (_, __, ___) => StickerOverlay(
+              initialKind: kind,
+              onSubmit: ({
+                required String text,
+                String? emoji,
+                Uint8List? image,
+                Map<String, dynamic>? textStyle,
+              }) {
+                final svc = context.read<StickerService>();
+                // 현재 화면 스크롤 위치를 고려한 초기 위치 (뷰포트 중앙 상단 근처)
+                final Size size = MediaQuery.of(context).size;
+                final scrollY = widget.scrollController?.offset ?? 0.0;
+                final Offset at = Offset(size.width * 0.5 - 60, scrollY + 200);
+                if (image != null) {
+                  svc.addImageSticker(image, at);
+                } else if ((emoji ?? '').isNotEmpty) {
+                  svc.addEmojiSticker(emoji!, at);
+                } else if (text.trim().isNotEmpty) {
+                  svc.addTextStickerWithStyle(text.trim(), textStyle, at);
+                }
+                // 스티커 추가 후 상단 두번째 툴바 자동 닫기
+                _toggle(ToolbarSection.none);
+              },
+            ),
+      ),
+    );
+  }
+
+  // 스티커 선택지 위젯
+  Widget _buildStickerOption({
+    required IconData icon,
+    required String label,
+    required VoidCallback onTap,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              icon,
+              size: 16,
+              color: Theme.of(context).colorScheme.onSurface,
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   // legacy helpers (not used in the new expandable UI)

@@ -3,7 +3,6 @@ import 'package:doppy/editor/overlay/drawing_overlay.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:doppy/editor/image/gallery_bottom_sheet.dart';
-import 'package:doppy/editor/image/custom_image_editor_screen.dart';
 import 'package:doppy/theme/app_colors.dart';
 
 enum StickerKind { text, emoji, image, draw }
@@ -12,7 +11,7 @@ class StickerOverlay extends StatefulWidget {
   const StickerOverlay({
     super.key,
     required this.onSubmit,
-    this.initialKind,
+    required this.initialKind,
     this.initialText,
     this.initialEmoji,
     this.initialImage,
@@ -25,7 +24,7 @@ class StickerOverlay extends StatefulWidget {
     Map<String, dynamic>? textStyle,
   })
   onSubmit;
-  final StickerKind? initialKind;
+  final StickerKind initialKind;
   final String? initialText;
   final String? initialEmoji;
   final Uint8List? initialImage;
@@ -35,13 +34,11 @@ class StickerOverlay extends StatefulWidget {
 }
 
 class _StickerOverlayState extends State<StickerOverlay> {
-  StickerKind? _kind; // 처음엔 어떤 항목도 선택되지 않음
+  late StickerKind _kind; // 툴바에서 항상 초기 종류가 제공됨
   final TextEditingController _text = TextEditingController();
   final FocusNode _focus = FocusNode();
   String _emoji = '😀';
-  Uint8List? _imageBytes;
   bool _editing = false;
-  // 텍스트 스타일 상태
   double _fontSize = 40;
   bool _isBold = false;
   bool _isItalic = false;
@@ -52,32 +49,33 @@ class _StickerOverlayState extends State<StickerOverlay> {
   double _letterSpacing = 0;
   bool _useNeon = false;
   Color _neonColor = Colors.cyanAccent;
-  // 하단 토글 패널 상태
   bool _showFontPanel = false;
   bool _showColorPanel = false;
-  // 개별 토글 제거로 더 이상 사용되지 않음 (프리셋 내부에서만 상태 사용)
-  // bool _bgBox = false; // A 배경
-  // bool _glow = false; // 점선 A 느낌의 글로우
 
   @override
   void initState() {
     super.initState();
+    // 툴바에서 항상 initialKind가 제공됨
+    _kind = widget.initialKind;
+
     // 초기 편집 값 주입(스티커 수정 진입)
-    if (widget.initialKind != null) {
-      _kind = widget.initialKind;
-      if (widget.initialText != null) {
-        _text.text = widget.initialText!;
-      }
-      if (widget.initialEmoji != null) {
-        _emoji = widget.initialEmoji!;
-      }
-      if (widget.initialImage != null) {
-        _imageBytes = widget.initialImage!;
-      }
-      _editing = true;
+    if (widget.initialText != null) {
+      _text.text = widget.initialText!;
     }
-    // 이미지 모드로 진입했는데 초기 이미지가 없다면, 갤러리를 바로 연다
-    if (_kind == StickerKind.image && _imageBytes == null) {
+    if (widget.initialEmoji != null) {
+      _emoji = widget.initialEmoji!;
+    }
+    _editing = true;
+
+    // 텍스트 종류인 경우 자동으로 포커스
+    if (_kind == StickerKind.text) {
+      Future.delayed(
+        const Duration(milliseconds: 100),
+        () => _focus.requestFocus(),
+      );
+    }
+    // 이미지 모드로 진입했을 때 갤러리를 바로 연다
+    if (_kind == StickerKind.image) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) _pickImageFromGallery();
       });
@@ -102,7 +100,7 @@ class _StickerOverlayState extends State<StickerOverlay> {
       case StickerKind.emoji:
         return _emoji.isNotEmpty;
       case StickerKind.image:
-        return _imageBytes != null;
+        return false; // 이미지는 갤러리에서 바로 선택하므로 완료 버튼 불필요
       default:
         return false;
     }
@@ -110,544 +108,418 @@ class _StickerOverlayState extends State<StickerOverlay> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.transparent,
-      body: Stack(
-        children: [
-          // 배경 블러 + 반투명
-          Positioned.fill(
-            child: GestureDetector(
-              child: BackdropFilter(
-                filter: ui.ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-                child: Container(
-                  color: const ui.Color.fromARGB(182, 144, 144, 144),
-                ),
-              ),
-            ),
-          ),
+    return GestureDetector(
+      onPanUpdate: (details) {
+        // 드래그 중에는 아무것도 하지 않음 (시각적 피드백만)
+      },
+      onPanEnd: (details) {
+        // 드래그 방향에 따라 오버레이 닫기
+        final velocity = details.velocity.pixelsPerSecond;
+        if (velocity.dy.abs() > velocity.dx.abs()) {
+          // 세로 드래그 (아래로)
+          if (velocity.dy > 300) {
+            Navigator.of(context).pop();
+          }
+        } else {
+          // 가로 드래그 (좌우)
+          if (velocity.dx.abs() > 300) {
+            Navigator.of(context).pop();
+          }
+        }
+      },
+      child:
+          _kind == StickerKind.draw
+              ? _buildDrawEditor()
+              : Scaffold(
+                backgroundColor: Colors.transparent,
 
-          // 중앙 프리뷰/에디터 (텍스트는 인라인 에디터)
-          Align(
-            alignment: Alignment.center,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 24),
-              child:
-                  _kind == null
-                      ? const SizedBox.shrink()
-                      : (_kind == StickerKind.text
-                          ? _buildEditor()
-                          : _buildPreview()),
-            ),
-          ),
-
-          Positioned(
-            top: 82,
-            left: 16,
-            right: 16,
-            child: Center(
-              child: Text(
-                '스티커',
-                style: TextStyle(
-                  color: AppColors.darkTextPrimary,
-                  fontSize: 18,
-                ),
-              ),
-            ),
-          ),
-          if (_kind == null)
-            Positioned(
-              top: 80,
-              left: 16,
-              child: GestureDetector(
-                onTap: () => Navigator.of(context).pop(),
-                child: Icon(Icons.close, color: Colors.white.withOpacity(0.8)),
-              ),
-            )
-          else
-            Positioned(
-              top: 80,
-              left: 16,
-              child: GestureDetector(
-                onTap: () {
-                  _focus.unfocus();
-                  setState(() {
-                    _editing = false;
-                    _showFontPanel = false;
-                    _showColorPanel = false;
-                    _kind = null; // 뒤로가기 → 종류 선택 화면으로
-                  });
-                },
-                child: Icon(
-                  Icons.arrow_back_ios_new,
-                  color: Colors.white.withOpacity(0.9),
-                  size: 20,
-                ),
-              ),
-            ),
-          // 상단 우측: 완료(가능 시) 또는 닫기
-          if (_kind != null)
-            Positioned(
-              top: 74,
-              right: 10,
-              child:
-                  _canSubmit
-                      ? TextButton(
-                        onPressed: _submit,
-                        style: TextButton.styleFrom(
-                          foregroundColor: Colors.white,
-                        ),
-                        child: const Text(
-                          '완료',
-                          style: TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.w400,
-                          ),
-                        ),
-                      )
-                      : GestureDetector(
-                        onTap: () => Navigator.of(context).pop(),
-                        child: Icon(
-                          Icons.close,
-                          color: Colors.white.withOpacity(0.8),
+                body: ClipRect(
+                  child: BackdropFilter(
+                    filter: ui.ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+                    child: Container(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [
+                            const ui.Color.fromARGB(182, 144, 144, 144),
+                            const ui.Color.fromARGB(200, 100, 100, 100),
+                          ],
                         ),
                       ),
-            ),
-
-          // 플로팅 편집 컨트롤 (바텀시트 제거)
-          // 상단 종류 선택 완료 버튼은 제거 (이미지에서 none으로만 바뀌는 문제 방지)
-          if (!_editing && _kind == null)
-            Positioned(
-              left: 0,
-              right: 0,
-              top: 100,
-              bottom: 100,
-              child: Center(
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: _buildKindSelector(),
-                ),
-              ),
-            ),
-          // 텍스트 편집 하단 2-버튼 바 + 펼쳐지는 패널들
-          if (_kind == StickerKind.text)
-            Positioned(
-              left: 0,
-              right: 0,
-              bottom: 24,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  // 패널: 폰트 프리셋
-                  AnimatedSwitcher(
-                    duration: const Duration(milliseconds: 180),
-                    child:
-                        !_showFontPanel
-                            ? const SizedBox.shrink()
-                            : Container(
-                              key: const ValueKey('font_panel'),
-                              margin: const EdgeInsets.only(bottom: 10),
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 10,
-                                vertical: 8,
-                              ),
-                              decoration: BoxDecoration(
-                                color: Colors.black.withOpacity(0.28),
-                                borderRadius: BorderRadius.circular(16),
-                                border: Border.all(color: Colors.white24),
-                              ),
-                              child: SingleChildScrollView(
-                                scrollDirection: Axis.horizontal,
-                                child: Row(
-                                  children: [
-                                    for (final p in const [
-                                      'Strong',
-                                      'Meme',
-                                      'Elegant',
-                                      'Cute',
-                                      'Handwrite',
-                                      'Comic',
-                                      'Neon',
-                                      'Shadow',
-                                      'Underline',
-                                      'Thin',
-                                      'Wide',
-                                      'Tight',
-                                      'Directional',
-                                      'Literal',
-                                    ]) ...[
-                                      _styleChip(
-                                        p,
-                                        onTap: () {
-                                          setState(() {
-                                            _stylePreset = p;
-                                            _applyPreset(p);
-                                          });
-                                        },
-                                        selected: _stylePreset == p,
-                                      ),
-                                      const SizedBox(width: 8),
-                                    ],
-                                  ],
-                                ),
-                              ),
-                            ),
-                  ),
-
-                  // 패널: 색상 팔레트
-                  AnimatedSwitcher(
-                    duration: const Duration(milliseconds: 180),
-                    child:
-                        !_showColorPanel
-                            ? const SizedBox.shrink()
-                            : Container(
-                              key: const ValueKey('color_panel'),
-                              margin: const EdgeInsets.only(bottom: 10),
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 10,
-                                vertical: 10,
-                              ),
-                              decoration: BoxDecoration(
-                                color: Colors.black.withOpacity(0.28),
-                                borderRadius: BorderRadius.circular(16),
-                                border: Border.all(color: Colors.white24),
-                              ),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 20),
+                        child: Column(
+                          children: [
+                            SizedBox(
+                              height: MediaQuery.of(context).padding.top + 50,
                               child: Row(
-                                mainAxisSize: MainAxisSize.min,
                                 children: [
-                                  for (final c in const [
-                                    Colors.white,
-                                    Colors.black,
-                                    Colors.yellow,
-                                    Colors.redAccent,
-                                    Colors.orangeAccent,
-                                    Colors.lightBlueAccent,
-                                    Colors.greenAccent,
-                                    Colors.purpleAccent,
-                                    Colors.pinkAccent,
-                                    Colors.cyanAccent,
-                                  ]) ...[
-                                    _colorDot(c),
-                                    const SizedBox(width: 8),
-                                  ],
+                                  const SizedBox(width: 20),
+                                  GestureDetector(
+                                    onTap: () {
+                                      _focus.unfocus();
+
+                                      _editing = false;
+                                      _showFontPanel = false;
+                                      _showColorPanel = false;
+
+                                      Navigator.of(context).pop();
+                                    },
+                                    child: Icon(
+                                      Icons.arrow_back_ios_new,
+                                      color: Colors.white.withOpacity(0.9),
+                                      size: 20,
+                                    ),
+                                  ),
+                                  Spacer(),
+                                  _canSubmit
+                                      ? TextButton(
+                                        onPressed: _submit,
+                                        style: TextButton.styleFrom(
+                                          foregroundColor: Colors.white,
+                                        ),
+                                        child: const Text(
+                                          '완료',
+                                          style: TextStyle(
+                                            fontSize: 18,
+                                            fontWeight: FontWeight.w400,
+                                          ),
+                                        ),
+                                      )
+                                      : Padding(
+                                        padding: const EdgeInsets.only(
+                                          right: 20,
+                                        ),
+                                        child: GestureDetector(
+                                          onTap:
+                                              () => Navigator.of(context).pop(),
+                                          child: Icon(
+                                            Icons.close,
+                                            color: Colors.white.withOpacity(
+                                              0.8,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
                                 ],
                               ),
                             ),
-                  ),
 
-                  // 하단 2-버튼 바
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      _bottomGlassButton(
-                        icon: Icons.text_fields,
-                        label: _stylePreset.isEmpty ? '기본' : _stylePreset,
-                        active: _showFontPanel,
-                        onTap:
-                            () => setState(() {
-                              _showFontPanel = !_showFontPanel;
-                              if (_showFontPanel) _showColorPanel = false;
-                            }),
+                            // 중앙 프리뷰/에디터 영역
+                            Expanded(
+                              flex: 3,
+                              child: Center(
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 24,
+                                  ),
+                                  child: _buildEditor(),
+                                ),
+                              ),
+                            ),
+
+                            // 이모지 편집 컨트롤 (이미지는 갤러리에서 바로 선택)
+                            if (_kind == StickerKind.emoji && !_editing)
+                              Expanded(
+                                flex: 2,
+                                child: Center(
+                                  child: Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 16,
+                                    ),
+                                    child: _buildEditor(),
+                                  ),
+                                ),
+                              ),
+
+                            // 텍스트 편집 하단 컨트롤
+                          ],
+                        ),
                       ),
-                      const SizedBox(width: 12),
-                      _bottomGlassButton(
-                        icon: Icons.color_lens_outlined,
-                        label: '색상',
-                        active: _showColorPanel,
-                        sampleColor: _textColor,
-                        onTap:
-                            () => setState(() {
-                              _showColorPanel = !_showColorPanel;
-                              if (_showColorPanel) _showFontPanel = false;
-                            }),
-                      ),
-                    ],
+                    ),
                   ),
-                ],
-              ),
-            ),
-          // 이모지/이미지 편집 컨트롤(텍스트는 중앙 인라인 편집이므로 제외)
-          if (_kind != StickerKind.text && _kind != null && !_editing)
-            Positioned(
-              left: 0,
-              right: 0,
-              bottom: 150,
-              child: Center(
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: _buildEditor(),
                 ),
               ),
-            ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildKindSelector() {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        _kindChip(Icons.text_fields, '텍스트', StickerKind.text),
-        const SizedBox(width: 8),
-        _kindChip(Icons.image_outlined, '이미지', StickerKind.image),
-        const SizedBox(width: 8),
-        _kindChip(Icons.emoji_emotions_outlined, '이모지', StickerKind.emoji),
-        const SizedBox(width: 8),
-        _kindChip(Icons.brush_outlined, '그리기', StickerKind.draw),
-      ],
-    );
-  }
-
-  Widget _kindChip(IconData icon, String label, StickerKind kind) {
-    final Widget chip = ClipRRect(
-      borderRadius: BorderRadius.circular(10),
-      child: BackdropFilter(
-        filter: ui.ImageFilter.blur(sigmaX: 8, sigmaY: 8),
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 180),
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
-          decoration: BoxDecoration(
-            color: AppColors.darkBackground.withOpacity(0.3),
-            borderRadius: BorderRadius.circular(10),
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(icon, size: 18, color: Colors.white),
-              const SizedBox(width: 20, height: 4),
-              Text(
-                label,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.w600,
-                  fontSize: 12,
-                  letterSpacing: 0.2,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-
-    return GestureDetector(
-      onTap: () async {
-        if (kind == StickerKind.draw) {
-          // 드로잉은 별도 풀스크린로 진입하고, 완료 후 현재 오버레이까지 닫음
-          await Navigator.of(context).push(
-            PageRouteBuilder(
-              opaque: false,
-              barrierDismissible: true,
-              pageBuilder:
-                  (_, __, ___) => DrawingOverlay(
-                    onSubmitImage: (Uint8List png) {
-                      widget.onSubmit(text: '', image: png);
-                    },
-                  ),
-            ),
-          );
-          if (mounted) Navigator.of(context).pop();
-          return;
-        }
-
-        setState(() => _kind = kind);
-        if (kind == StickerKind.text) {
-          Future.delayed(
-            const Duration(milliseconds: 50),
-            () => _focus.requestFocus(),
-          );
-        } else if (kind == StickerKind.image) {
-          // 이미지 선택 칩을 누르면 즉시 갤러리 열기
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted) _pickImageFromGallery();
-          });
-        }
-      },
-      child: chip,
     );
   }
 
   Widget _buildEditor() {
     switch (_kind) {
-      case null:
-        return const SizedBox.shrink();
       case StickerKind.text:
-        return TextField(
-          controller: _text,
-          focusNode: _focus,
-          autofocus: true,
-          cursorColor: AppColors.darkTextPrimary,
-          style: _currentTextStyle(),
-          textAlign: _textAlign,
-          decoration: InputDecoration(
-            hintText: _hintText(),
-            hintStyle: const TextStyle(color: Colors.white54, fontSize: 50),
-            border: const OutlineInputBorder(borderSide: BorderSide.none),
-          ),
-          onTap: () => setState(() => _editing = true),
-          onChanged: (_) => setState(() => _editing = true),
-        );
+        return _buildTextEditor();
       case StickerKind.emoji:
-        const emojis = [
-          '😀',
-          '😎',
-          '🔥',
-          '❤️',
-          '🎉',
-          '🤣',
-          '🤔',
-          '🤨',
-          '🤯',
-          '🤠',
-          '🤡',
-          '🤥',
-          '🤤',
-          '🤫',
-          '🤭',
-          '🤮',
-          '🤯',
-          '🤰',
-          '🤱',
-          '🤲',
-          '🤳',
-          '🤴',
-          '🤵',
-          '🤶',
-          '🤷',
-          '🤸',
-          '🤹',
-          '🤺',
-          '🤻',
-          '🤼',
-          '🤽',
-          '🤾',
-          '🤿',
-          '🤹',
-          '🤺',
-          '🤻',
-          '🤼',
-          '🤽',
-          '🤾',
-          '🤿',
-        ];
-        return Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: List.generate(emojis.length, (i) {
-            final e = emojis[i];
-            final sel = e == _emoji;
-            return GestureDetector(
-              onTap: () => setState(() => _emoji = e),
-              child: Container(
-                margin: const EdgeInsets.symmetric(horizontal: 6),
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: sel ? AppColors.primary : Colors.white10,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Text(e, style: const TextStyle(fontSize: 26)),
-              ),
-            );
-          }),
-        );
+        return _buildEmojiEditor();
       case StickerKind.image:
-        return Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                OutlinedButton(
-                  onPressed: _pickImageFromGallery,
-                  style: OutlinedButton.styleFrom(
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    foregroundColor: AppColors.darkBackground,
-                    backgroundColor: Colors.white,
-                  ),
-                  child: const Text('갤러리에서 선택'),
-                ),
-                const SizedBox(width: 8),
-                if (_imageBytes != null)
-                  OutlinedButton(
-                    onPressed: () async {
-                      final edited = await _openEditorFor(_imageBytes!);
-                      if (!mounted) return;
-                      if (edited != null) setState(() => _imageBytes = edited);
-                    },
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: AppColors.darkBackground,
-                      backgroundColor: Colors.white,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                    ),
-                    child: const Text(
-                      '편집',
-                      style: TextStyle(color: Colors.black),
-                    ),
-                  ),
-                const SizedBox(width: 8),
-                if (_imageBytes != null)
-                  OutlinedButton(
-                    onPressed: () => setState(() => _imageBytes = null),
-                    style: OutlinedButton.styleFrom(
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      foregroundColor: AppColors.darkBackground,
-                      backgroundColor: Colors.white,
-                    ),
-                    child: const Text('지우기'),
-                  ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            if (_imageBytes == null)
-              const Text('이미지를 선택하세요', style: TextStyle(color: Colors.white60)),
-          ],
-        );
+        return const SizedBox.shrink(); // 이미지는 갤러리에서 바로 선택하므로 UI 불필요
       case StickerKind.draw:
-        return const SizedBox.shrink();
+        return const SizedBox.shrink(); // 드로잉은 오버레이에서 처리
     }
   }
 
-  Widget _buildPreview() {
-    switch (_kind) {
-      case null:
-        return const SizedBox.shrink();
-      case StickerKind.text:
-        final t = _text.text.trim();
-        return t.isEmpty
-            ? const SizedBox.shrink()
-            : Text(
-              t,
-              textAlign: TextAlign.center,
-              style: _currentTextStyle().copyWith(fontSize: (_fontSize + 6)),
-            );
-      case StickerKind.emoji:
-        return Text(_emoji, style: const TextStyle(fontSize: 64));
-      case StickerKind.image:
-        if (_imageBytes == null) return const SizedBox.shrink();
-        return ClipRRect(
-          borderRadius: BorderRadius.circular(4),
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 200, maxHeight: 200),
-            child: Image.memory(
-              _imageBytes!,
-              fit: BoxFit.contain, // 원본 비율 유지
+  Widget _buildDrawEditor() {
+    return DrawingOverlay(
+      onSubmitImage: (image) {
+        widget.onSubmit(text: '', image: image);
+      },
+    );
+  }
+
+  Widget _buildTextEditor() {
+    return Column(
+      children: [
+        Expanded(
+          child: Center(
+            child: TextField(
+              controller: _text,
+              focusNode: _focus,
+              autofocus: true,
+              cursorColor: AppColors.darkTextPrimary,
+              style: _currentTextStyle(),
+              textAlign: _textAlign,
+              decoration: InputDecoration(
+                hintText: _hintText(),
+                hintStyle: const TextStyle(color: Colors.white54, fontSize: 50),
+                border: const OutlineInputBorder(borderSide: BorderSide.none),
+              ),
+              onTap: () => setState(() => _editing = true),
+              onChanged: (_) => setState(() => _editing = true),
             ),
           ),
-        );
-      case StickerKind.draw:
-        return const SizedBox.shrink();
-    }
+        ),
+        Container(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // 패널: 폰트 프리셋
+              AnimatedSwitcher(
+                duration: const Duration(milliseconds: 180),
+                child:
+                    !_showFontPanel
+                        ? const SizedBox.shrink()
+                        : Container(
+                          key: const ValueKey('font_panel'),
+                          margin: const EdgeInsets.only(bottom: 10),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 8,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.black.withOpacity(0.28),
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(color: Colors.white24),
+                          ),
+                          child: SingleChildScrollView(
+                            scrollDirection: Axis.horizontal,
+                            child: Row(
+                              children: [
+                                for (final p in const [
+                                  'Strong',
+                                  'Meme',
+                                  'Elegant',
+                                  'Cute',
+                                  'Handwrite',
+                                  'Comic',
+                                  'Neon',
+                                  'Shadow',
+                                  'Underline',
+                                  'Thin',
+                                  'Wide',
+                                  'Tight',
+                                  'Directional',
+                                  'Literal',
+                                ]) ...[
+                                  _styleChip(
+                                    p,
+                                    onTap: () {
+                                      setState(() {
+                                        _stylePreset = p;
+                                        _applyPreset(p);
+                                      });
+                                    },
+                                    selected: _stylePreset == p,
+                                  ),
+                                  const SizedBox(width: 8),
+                                ],
+                              ],
+                            ),
+                          ),
+                        ),
+              ),
+
+              // 패널: 색상 팔레트
+              AnimatedSwitcher(
+                duration: const Duration(milliseconds: 180),
+                child:
+                    !_showColorPanel
+                        ? const SizedBox.shrink()
+                        : Container(
+                          key: const ValueKey('color_panel'),
+                          margin: const EdgeInsets.only(bottom: 10),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 10,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.black.withOpacity(0.28),
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(color: Colors.white24),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              for (final c in const [
+                                Colors.white,
+                                Colors.black,
+                                Colors.yellow,
+                                Colors.redAccent,
+                                Colors.orangeAccent,
+                                Colors.lightBlueAccent,
+                                Colors.greenAccent,
+                                Colors.purpleAccent,
+                                Colors.pinkAccent,
+                                Colors.cyanAccent,
+                              ]) ...[_colorDot(c), const SizedBox(width: 8)],
+                            ],
+                          ),
+                        ),
+              ),
+
+              // 하단 2-버튼 바
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  _bottomGlassButton(
+                    icon: Icons.text_fields,
+                    label: _stylePreset.isEmpty ? '기본' : _stylePreset,
+                    active: _showFontPanel,
+                    onTap:
+                        () => setState(() {
+                          _showFontPanel = !_showFontPanel;
+                          if (_showFontPanel) _showColorPanel = false;
+                        }),
+                  ),
+                  const SizedBox(width: 12),
+                  _bottomGlassButton(
+                    icon: Icons.color_lens_outlined,
+                    label: '색상',
+                    active: _showColorPanel,
+                    sampleColor: _textColor,
+                    onTap:
+                        () => setState(() {
+                          _showColorPanel = !_showColorPanel;
+                          if (_showColorPanel) _showFontPanel = false;
+                        }),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildEmojiEditor() {
+    const emojis = [
+      '😀',
+      '😎',
+      '🔥',
+      '❤️',
+      '🎉',
+      '🤣',
+      '🤔',
+      '🤨',
+      '🤯',
+      '🤠',
+      '🤡',
+      '🤥',
+      '🤤',
+      '🤫',
+      '🤭',
+      '🤮',
+      '🤯',
+      '🤰',
+      '🤱',
+      '🤲',
+      '🤳',
+      '🤴',
+      '🤵',
+      '🤶',
+      '🤷',
+      '🤸',
+      '🤹',
+      '🤺',
+      '🤻',
+      '🤼',
+      '🤽',
+      '🤾',
+      '🤿',
+      '🤹',
+      '🤺',
+      '🤻',
+      '🤼',
+      '🤽',
+      '🤾',
+      '🤿',
+    ];
+    return Column(
+      children: [
+        Expanded(
+          child: Container(
+            decoration: BoxDecoration(
+              // ignore: deprecated_member_use
+              color: Colors.white.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Center(
+              child: Text(_emoji, style: const TextStyle(fontSize: 100)),
+            ),
+          ),
+        ),
+        const SizedBox(height: 10),
+        Expanded(
+          flex: 3,
+          child: SizedBox(
+            child: GridView.builder(
+              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 3, // 3열
+                crossAxisSpacing: 3,
+                mainAxisSpacing: 3,
+                childAspectRatio: 1.2, // 정사각형에 가깝게
+              ),
+              itemCount: emojis.length,
+              itemBuilder: (context, index) {
+                final e = emojis[index];
+                final sel = e == _emoji;
+                return GestureDetector(
+                  onTap: () => setState(() => _emoji = e),
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: sel ? AppColors.primary : Colors.white10,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: sel ? AppColors.primary : Colors.transparent,
+                        width: 2,
+                      ),
+                    ),
+                    child: Center(
+                      child: Text(e, style: const TextStyle(fontSize: 32)),
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+        ),
+      ],
+    );
   }
 
   void _submit() {
+    Navigator.of(context).pop();
     switch (_kind) {
-      case null:
-        return;
       case StickerKind.text:
         widget.onSubmit(
           text: _text.text.trim(),
@@ -669,18 +541,16 @@ class _StickerOverlayState extends State<StickerOverlay> {
         widget.onSubmit(text: '', emoji: _emoji);
         break;
       case StickerKind.image:
-        widget.onSubmit(text: '', image: _imageBytes);
+        // 이미지는 갤러리에서 바로 선택하므로 여기서는 처리하지 않음
         break;
       case StickerKind.draw:
         return;
     }
-    Navigator.of(context).pop();
   }
 
   // ===== Helpers =====
   Future<void> _pickImageFromGallery() async {
     try {
-      // 커스텀 갤러리로 대체됨: 여전히 직접 호출될 수 있으니 동일 동작 수행
       if (!mounted) return;
       await showModalBottomSheet(
         context: context,
@@ -692,7 +562,10 @@ class _StickerOverlayState extends State<StickerOverlay> {
                 if (files.isEmpty) return;
                 final bytes = await files.first.readAsBytes();
                 if (!mounted) return;
-                setState(() => _imageBytes = bytes);
+
+                // 이미지 선택 시 바로 스티커로 추가하고 오버레이 닫기
+                widget.onSubmit(text: '', image: bytes);
+                Navigator.of(context).pop();
               },
             ),
       );
@@ -701,15 +574,6 @@ class _StickerOverlayState extends State<StickerOverlay> {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text('이미지를 불러올 수 없습니다: $e')));
-    }
-  }
-
-  Future<Uint8List?> _openEditorFor(Uint8List bytes) async {
-    try {
-      final editedBytes = await openImageEditorPlus(context, imageBytes: bytes);
-      return editedBytes;
-    } catch (e) {
-      return null;
     }
   }
 

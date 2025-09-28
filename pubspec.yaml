@@ -35,8 +35,7 @@ dependencies:
   dio: ^5.4.0
   cupertino_icons: ^1.0.8
   shared_preferences: ^2.2.2
-
-  super_editor: 0.3.0-dev.33
+  super_editor: ^0.3.0-dev.33
   http: ^1.5.0
   image_picker_for_web: ^3.0.0
   http_parser: ^4.0.2
@@ -48,6 +47,7 @@ dependencies:
   top_snackbar_flutter: ^3.3.0
   image_editor_plus: ^1.0.4
   flutter_colorpicker: ^1.0.3
+  cached_network_image: ^3.4.1
 
 dependency_overrides:
   screenshot: ^3.0.0

@@ -18,6 +18,10 @@ class FriendProvider with ChangeNotifier {
   bool _isLoading = false; // 목록 로딩 상태
   String? _errorMessage;
 
+  // 캐싱 관련 변수
+  DateTime? _lastFetchTime;
+  static const Duration _cacheExpiry = Duration(minutes: 30);
+
   // ✨ 사용자 검색을 위한 상태 변수 추가
   List<User> _searchedUsers = [];
   bool _isSearching = false;
@@ -44,7 +48,13 @@ class FriendProvider with ChangeNotifier {
   // --- API 호출 메소드 ---
 
   /// ✨ [추가] '이웃 관리' 화면에 필요한 모든 데이터를 한번에 불러옵니다.
-  Future<void> fetchAllFriendData() async {
+  Future<void> fetchAllFriendData({bool forceRefresh = false}) async {
+    // 캐시가 유효하고 강제 새로고침이 아닌 경우 스킵
+    if (!forceRefresh && _isCacheValid()) {
+      print('[FriendProvider] 캐시된 데이터 사용');
+      return;
+    }
+
     _isLoading = true;
     _errorMessage = null;
     notifyListeners();
@@ -57,12 +67,20 @@ class FriendProvider with ChangeNotifier {
       _acceptedFriends = results[0];
       _receivedRequests = results[1];
       _sentRequests = results[2];
+      _lastFetchTime = DateTime.now();
+      print('[FriendProvider] 서버에서 데이터 새로고침 완료');
     } catch (e) {
       _errorMessage = "데이터 로딩에 실패했습니다: $e";
     } finally {
       _isLoading = false;
       notifyListeners();
     }
+  }
+
+  /// 캐시 유효성 검사
+  bool _isCacheValid() {
+    if (_lastFetchTime == null) return false;
+    return DateTime.now().difference(_lastFetchTime!) < _cacheExpiry;
   }
 
   /// ✨ [추가] 친구 요청을 수락합니다.
@@ -77,6 +95,8 @@ class FriendProvider with ChangeNotifier {
         final moved = _receivedRequests.removeAt(idx);
         _acceptedFriends.add(moved);
       }
+      // 캐시 무효화
+      _lastFetchTime = null;
       notifyListeners();
       return true;
     } catch (e) {
@@ -98,6 +118,8 @@ class FriendProvider with ChangeNotifier {
         final friend = _receivedRequests.removeAt(idx);
         _acceptedFriends.add(friend);
       }
+      // 캐시 무효화
+      _lastFetchTime = null;
       notifyListeners();
       return true;
     } catch (e) {
@@ -110,6 +132,8 @@ class FriendProvider with ChangeNotifier {
     try {
       await _friendService.cancelFriendRequest(targetUsername);
       _sentRequests.removeWhere((f) => f.username == targetUsername);
+      // 캐시 무효화
+      _lastFetchTime = null;
       notifyListeners();
       return true;
     } catch (e) {
@@ -123,6 +147,8 @@ class FriendProvider with ChangeNotifier {
     try {
       await _friendService.cancelFriendRequest(targetUsername);
       _sentRequests.removeWhere((f) => f.username == targetUsername);
+      // 캐시 무효화
+      _lastFetchTime = null;
       notifyListeners();
       return true;
     } catch (e) {

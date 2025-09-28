@@ -77,6 +77,8 @@ class _GroupProfileScreenState extends State<GroupProfileScreen>
     Widget network(String u) => Image.network(
       u,
       fit: BoxFit.cover,
+
+      filterQuality: FilterQuality.medium,
       errorBuilder: (_, __, ___) => Container(color: const Color(0xFF3A3A3A)),
     );
 
@@ -661,7 +663,13 @@ class _MemberRow extends StatelessWidget {
             child:
                 member.profileImageUrl != null &&
                         member.profileImageUrl!.isNotEmpty
-                    ? Image.network(member.profileImageUrl!, fit: BoxFit.cover)
+                    ? Image.network(
+                      member.profileImageUrl!,
+                      fit: BoxFit.cover,
+                      cacheWidth: 120,
+                      cacheHeight: 120,
+                      filterQuality: FilterQuality.low,
+                    )
                     : Container(
                       color: Colors.white,
                       child: const Icon(Icons.person, color: Colors.black54),

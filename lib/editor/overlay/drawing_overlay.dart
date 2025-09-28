@@ -25,123 +25,152 @@ class _DrawingOverlayState extends State<DrawingOverlay> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.transparent,
-      body: Stack(
+      body: Column(
         children: [
-          // 배경 블러
-          Positioned.fill(
-            child: BackdropFilter(
-              filter: ui.ImageFilter.blur(sigmaX: 3, sigmaY: 3),
-              child: Container(color: const Color.fromARGB(140, 0, 0, 0)),
-            ),
-          ),
-
-          // 캔버스
-          Center(
-            child: GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onScaleStart: (d) {
-                _redo.clear();
-                _strokes.add(
-                  _Stroke(
-                    color: _eraser ? Colors.transparent : _color,
-                    width: _width,
-                    erase: _eraser,
-                  )..points.add(_toCanvas(d.localFocalPoint)),
-                );
-                setState(() {});
-              },
-              onScaleUpdate: (d) {
-                if (d.pointerCount >= 2) {
-                  setState(() {
-                    _scale = (_scale * d.scale).clamp(0.5, 3.0);
-                    _pan += d.focalPointDelta;
-                  });
-                  return;
-                }
-                if (_strokes.isEmpty) return;
-                _strokes.last.points.add(_toCanvas(d.localFocalPoint));
-                setState(() {});
-              },
-              child: RepaintBoundary(
-                key: _canvasKey,
-                child: CustomPaint(
-                  painter: _DrawingPainter(
-                    strokes: _strokes,
-                    scale: _scale,
-                    pan: _pan,
-                  ),
-                  size: Size(
-                    MediaQuery.of(context).size.width * 0.86,
-                    MediaQuery.of(context).size.height * 0.6,
-                  ),
-                ),
-              ),
-            ),
-          ),
-
-          // 상단 바
-          Positioned(
-            top: 60,
-            left: 16,
-            right: 16,
-            child: Row(
+          Expanded(
+            child: Stack(
               children: [
-                IconButton(
-                  onPressed: () => Navigator.of(context).pop(),
-                  icon: const Icon(Icons.close, color: Colors.white),
-                ),
-                const SizedBox(width: 8),
-                IconButton(
-                  onPressed: _undo,
-                  icon: const Icon(Icons.undo, color: Colors.white),
-                ),
-                IconButton(
-                  onPressed: _redoAct,
-                  icon: const Icon(Icons.redo, color: Colors.white),
-                ),
-                const Spacer(),
-                TextButton(
-                  onPressed: _export,
-                  child: const Text(
-                    '완료',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w700,
+                // 배경 블러
+                Positioned.fill(
+                  child: BackdropFilter(
+                    filter: ui.ImageFilter.blur(sigmaX: 1, sigmaY: 1),
+                    child: Container(
+                      color: const ui.Color.fromARGB(182, 144, 144, 144),
                     ),
                   ),
                 ),
+
+                Positioned(
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  child: Container(
+                    height: 100,
+                    decoration: BoxDecoration(
+                      color: const Color.fromARGB(255, 106, 106, 106),
+                    ),
+                  ),
+                ),
+
+                // 캔버스
+                Center(
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onScaleStart: (d) {
+                      _redo.clear();
+                      _strokes.add(
+                        _Stroke(
+                          color: _eraser ? Colors.transparent : _color,
+                          width: _width,
+                          erase: _eraser,
+                        )..points.add(_toCanvas(d.localFocalPoint)),
+                      );
+                      setState(() {});
+                    },
+                    onScaleUpdate: (d) {
+                      if (d.pointerCount >= 2) {
+                        setState(() {
+                          _scale = (_scale * d.scale).clamp(0.5, 3.0);
+                          _pan += d.focalPointDelta;
+                        });
+                        return;
+                      }
+                      if (_strokes.isEmpty) return;
+                      _strokes.last.points.add(_toCanvas(d.localFocalPoint));
+                      setState(() {});
+                    },
+                    child: RepaintBoundary(
+                      key: _canvasKey,
+                      child: CustomPaint(
+                        painter: _DrawingPainter(
+                          strokes: _strokes,
+                          scale: _scale,
+                          pan: _pan,
+                        ),
+                        size: Size(
+                          MediaQuery.of(context).size.width * 0.86,
+                          MediaQuery.of(context).size.height * 0.6,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+
+                // 상단 바
+                Positioned(
+                  top: 60,
+                  left: 16,
+                  right: 16,
+                  child: Row(
+                    children: [
+                      IconButton(
+                        onPressed: () => Navigator.of(context).pop(),
+                        icon: const Icon(
+                          Icons.close,
+                          color: Colors.white,
+                          size: 20,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      IconButton(
+                        onPressed: _undo,
+                        icon: const Icon(
+                          Icons.undo_outlined,
+                          color: Colors.white,
+                        ),
+                      ),
+                      IconButton(
+                        onPressed: _redoAct,
+                        icon: const Icon(
+                          Icons.redo_outlined,
+                          color: Colors.white,
+                        ),
+                      ),
+                      const Spacer(),
+                      TextButton(
+                        onPressed: _export,
+                        child: const Text(
+                          '완료',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               ],
             ),
           ),
-
-          // 하단 툴바
-          Positioned(
-            bottom: 40,
-            left: 0,
-            right: 0,
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                _toolButton(
-                  Icons.brush,
-                  active: !_eraser,
-                  onTap: () => setState(() => _eraser = false),
-                ),
-                const SizedBox(width: 10),
-                _toolButton(
-                  Icons.auto_fix_high,
-                  active: _eraser,
-                  onTap: () => setState(() => _eraser = true),
-                ),
-                const SizedBox(width: 16),
-                _colorDot(Colors.white),
-                _colorDot(Colors.yellow),
-                _colorDot(Colors.cyanAccent),
-                _colorDot(Colors.pinkAccent),
-                _colorDot(Colors.limeAccent),
-                const SizedBox(width: 16),
-                _thickness(),
-              ],
+          Container(
+            decoration: BoxDecoration(color: Colors.black),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 20),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  _toolButton(
+                    Icons.brush,
+                    active: !_eraser,
+                    onTap: () => setState(() => _eraser = false),
+                  ),
+                  const SizedBox(width: 10),
+                  _toolButton(
+                    Icons.auto_fix_high,
+                    active: _eraser,
+                    onTap: () => setState(() => _eraser = true),
+                  ),
+                  const SizedBox(width: 16),
+                  _colorDot(Colors.white),
+                  _colorDot(Colors.yellow),
+                  _colorDot(Colors.cyanAccent),
+                  _colorDot(Colors.pinkAccent),
+                  _colorDot(Colors.limeAccent),
+                  const SizedBox(width: 16),
+                  _thickness(),
+                ],
+              ),
             ),
           ),
         ],

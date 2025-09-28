@@ -513,7 +513,7 @@ class _StickerViewState extends State<_StickerView>
         final content = widget.sticker.content;
         if (content is Uint8List) {
           body = ClipRRect(
-            borderRadius: BorderRadius.circular(4),
+            borderRadius: BorderRadius.circular(0),
             child: ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 200, maxHeight: 200),
               child: Image.memory(
@@ -524,7 +524,7 @@ class _StickerViewState extends State<_StickerView>
           );
         } else if (content is String && content.startsWith('http')) {
           body = ClipRRect(
-            borderRadius: BorderRadius.circular(3),
+            borderRadius: BorderRadius.circular(0),
             child: ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 200, maxHeight: 200),
               child: Image.network(
@@ -566,7 +566,7 @@ class _StickerViewState extends State<_StickerView>
             child: Container(
               decoration: BoxDecoration(
                 border: Border.all(color: Colors.greenAccent, width: 1.5),
-                borderRadius: BorderRadius.circular(8),
+                borderRadius: BorderRadius.circular(0),
               ),
             ),
           ),

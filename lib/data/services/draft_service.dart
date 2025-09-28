@@ -174,13 +174,14 @@ class DraftService {
       // 안전한 문서 교체 방식
       await _replaceDocumentSafely(editorService, document);
 
-      // 스티커 복원 (StickerService에 구현 필요)
+      // 스티커 복원
       stickerService.removeAll();
-      // TODO: StickerService에 addStickerFromData 메서드 구현 필요
-      // final stickers = (exportedData['stickers'] as List?) ?? [];
-      // for (final stickerData in stickers) {
-      //   await stickerService.addStickerFromData(stickerData);
-      // }
+      final stickers = (exportedData['stickers'] as List?) ?? [];
+      for (final stickerData in stickers) {
+        if (stickerData is Map<String, dynamic>) {
+          stickerService.addStickerFromData(stickerData);
+        }
+      }
 
       print('[DraftService] Draft loaded: $draftId');
       return true;

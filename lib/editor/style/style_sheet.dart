@@ -1,18 +1,22 @@
 import 'package:doppy/editor/component/row_image_component.dart';
 import 'package:doppy/editor/config.dart';
+import 'package:doppy/providers/theme_provider.dart';
 import 'package:doppy/theme/app_colors.dart';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import 'package:super_editor/super_editor.dart';
 
 /// 커스텀 스타일시트 (테마에 따라 텍스트/타이틀 색을 적용)
 Stylesheet buildCustomStylesheet(BuildContext context) {
-  final bool isDark = Theme.of(context).brightness == Brightness.dark;
+  final bool isDark =
+      context.watch<ThemeProvider>().themeMode == ThemeMode.dark;
   final Color titleColor =
       isDark ? AppColors.darkTextPrimary : AppColors.lightTextPrimary;
   final Color bodyColor =
       isDark
           ? const Color.fromARGB(230, 255, 255, 255)
           : AppColors.lightTextPrimary;
+
   return defaultStylesheet.copyWith(
     documentPadding: const EdgeInsets.all(EditorConfig.documentPadding),
     addRulesAfter: [

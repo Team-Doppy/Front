@@ -1,6 +1,5 @@
 import 'dart:math' as math;
 import 'dart:ui' as ui;
-import 'package:doppy/pages/components/shimmer_box.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../../data/models/group_model.dart';
@@ -354,26 +353,21 @@ class _GroupCollage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final tiles = urls.take(4).toList();
-    Widget network(String u) => Stack(
-      fit: StackFit.expand,
-      children: [
-        const ShimmerBox(width: double.infinity, height: double.infinity),
-        Image.network(
-          u,
-          fit: BoxFit.cover,
-          loadingBuilder: (ctx, child, progress) {
-            if (progress == null) return child;
-            return const SizedBox.expand(
-              child: ShimmerBox(
-                width: double.infinity,
-                height: double.infinity,
-              ),
-            );
-          },
-          errorBuilder:
-              (_, __, ___) => Container(color: const Color(0xFF3A3A3A)),
-        ),
-      ],
+    Widget network(String u) => Image.network(
+      u,
+      fit: BoxFit.cover,
+      cacheWidth: 200,
+      cacheHeight: 200,
+      filterQuality: FilterQuality.medium,
+      frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
+        if (wasSynchronouslyLoaded) return child;
+        return AnimatedOpacity(
+          opacity: frame == null ? 0 : 1,
+          duration: const Duration(milliseconds: 300),
+          child: child,
+        );
+      },
+      errorBuilder: (_, __, ___) => Container(color: const Color(0xFF3A3A3A)),
     );
 
     if (tiles.isEmpty) {

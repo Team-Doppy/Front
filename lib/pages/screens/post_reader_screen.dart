@@ -3,16 +3,23 @@ import 'dart:ui' as ui;
 import 'dart:convert';
 import 'package:doppy/editor/component/single_image_component.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:provider/provider.dart';
 import 'package:super_editor/super_editor.dart';
 import 'package:doppy/editor/style/style_sheet.dart';
 import 'package:doppy/editor/component/row_image_component.dart'
     show ImageRowNode, RowImageComponentBuilder;
+import 'package:doppy/editor/postwrite_screen.dart';
+import 'package:doppy/providers/user_provider.dart';
+import 'package:doppy/data/services/comment_service.dart';
+import 'package:doppy/data/services/like_service.dart';
+import 'package:doppy/pages/components/comment_bottom_sheet.dart';
+import 'package:doppy/pages/components/comment_shimmer.dart';
 
 // 읽기 전용에서는 에디터 전용 컴포넌트를 사용하지 않음
 import 'package:doppy/editor/component/link_component.dart';
 import 'package:doppy/editor/component/location_component.dart';
 import 'package:doppy/editor/component/mention_component.dart';
-import 'package:doppy/theme/app_colors.dart';
 import 'package:doppy/editor/service/editor_service.dart';
 import 'package:doppy/editor/service/drag_service.dart';
 
@@ -34,13 +41,97 @@ class _PostReaderScreenState extends State<PostReaderScreen>
   late final EditorService _editorService;
   late final DragService _dragService;
   late final FocusNode _readOnlyFocus;
-  final ScrollController _outerScroll = ScrollController(); // single scroll
+  final ScrollController _scrollCtrl = ScrollController();
   final GlobalKey _layoutKey = GlobalKey();
   static final GlobalKey _stackKey = GlobalKey();
 
   // 스크롤 애니메이션을 위한 변수들
-  static const double _appBarHeight = 36.0; // AppBar 높이
+  static const double _appBarHeight = 38.0; // AppBar 높이
   double _scrollOffset = 0.0;
+  // 상단 이미지
+  double _imageH = 0.0; // 상단 이미지 높이(px)
+  double _headerFadeEnd = 0.0; // 이미지가 완전 투명해지는 오프셋
+  double _lastScrollOffset = 0.0;
+  bool _didAutoSnapHeader = false;
+  bool _isAutoAnimating = false;
+
+  // 댓글 진입 시 순차 등장 애니메이션
+  late final AnimationController _commentsAnimCtrl;
+  bool _commentsAnimStarted = false;
+
+  // 좋아요/댓글 데이터
+  final CommentService _commentService = CommentService();
+  final LikeService _likeService = LikeService();
+
+  void _toggleLike() async {
+    final postId = widget.exported['id']?.toString();
+    if (postId == null || postId.isEmpty) {
+      print('[PostReaderScreen] 유효하지 않은 포스트 ID: $postId');
+      return;
+    }
+
+    try {
+      await _likeService.togglePostLike(postId);
+      // setState() 제거 - LikeService 리스너가 자동으로 UI 업데이트
+    } catch (e) {
+      print('[PostReaderScreen] 좋아요 토글 오류: $e');
+      // 오류 발생 시 사용자에게 알림
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('좋아요 처리 중 오류가 발생했습니다'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  void _showCommentBottomSheet() {
+    // 댓글 창 열기 전에 WebSocket 연결 시도
+    _commentService.setPostId(widget.exported['id']?.toString() ?? '');
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => const CommentBottomSheet(),
+    );
+  }
+
+  void _onCommentServiceChanged() {
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
+  void _onLikeServiceChanged() {
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
+  String _formatRelativeTime(String isoString) {
+    try {
+      final dateTime = DateTime.parse(isoString);
+      final now = DateTime.now();
+      final difference = now.difference(dateTime);
+
+      if (difference.inMinutes < 1) {
+        return '방금';
+      } else if (difference.inHours < 1) {
+        return '${difference.inMinutes}분 전';
+      } else if (difference.inDays < 1) {
+        return '${difference.inHours}시간 전';
+      } else if (difference.inDays < 7) {
+        return '${difference.inDays}일 전';
+      } else {
+        return '${(difference.inDays / 7).floor()}주 전';
+      }
+    } catch (e) {
+      return '방금';
+    }
+  }
 
   @override
   void initState() {
@@ -52,31 +143,117 @@ class _PostReaderScreenState extends State<PostReaderScreen>
       composer: _composer,
     );
     _editorService = EditorService(editor: _editor, document: _document);
-    _dragService = DragService(
-      editorService: _editorService,
-      scrollController: _outerScroll,
-    );
+    _dragService = DragService(editorService: _editorService);
     _readOnlyFocus = FocusNode(canRequestFocus: false);
+    _scrollCtrl.addListener(_onScroll);
 
-    // 스크롤 리스너 추가
-    _outerScroll.addListener(_onScroll);
+    _commentsAnimCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 800),
+    )..addListener(() {
+      if (mounted) setState(() {});
+    });
+
+    // 포스트 ID 설정 및 서비스 초기화
+    print('[PostReaderScreen] exported 데이터: ${widget.exported}');
+    final postId = widget.exported['id']?.toString();
+    if (postId != null && postId.isNotEmpty) {
+      print('[PostReaderScreen] 포스트 ID: $postId');
+      _commentService.setPostId(postId);
+
+      // 초기 좋아요 상태와 수 설정
+      final initialLikeCount = widget.exported['likeCount'] ?? 0;
+      final initialIsLiked = widget.exported['isLiked'] == true;
+      _likeService.setInitialLikeData(postId, initialIsLiked, initialLikeCount);
+
+      print(
+        '[PostReaderScreen] 초기 좋아요 상태: $initialIsLiked, 카운트: $initialLikeCount',
+      );
+    } else {
+      print('[PostReaderScreen] 유효하지 않은 포스트 ID: $postId');
+      print('[PostReaderScreen] exported 키들: ${widget.exported.keys.toList()}');
+    }
+
+    // 서비스 변경사항 감지
+    _commentService.addListener(_onCommentServiceChanged);
+    _likeService.addListener(_onLikeServiceChanged);
 
     try {
       _composer.clearSelection();
     } catch (_) {}
   }
 
-  void _onScroll() {
-    setState(() {
-      _scrollOffset = _outerScroll.offset;
-    });
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _imageH = MediaQuery.of(context).size.height * 0.80;
+    _headerFadeEnd = _imageH * 0.60; // 페이드 완료 지점
   }
 
   @override
   void dispose() {
-    _outerScroll.removeListener(_onScroll);
+    _commentService.removeListener(_onCommentServiceChanged);
+    _likeService.removeListener(_onLikeServiceChanged);
+
+    // WebSocket 연결 해제
+    _commentService.disconnectWebSocket();
+
     _readOnlyFocus.dispose();
+    _scrollCtrl.removeListener(_onScroll);
+    _commentsAnimCtrl.dispose();
     super.dispose();
+  }
+
+  void _onScroll() {
+    final double nextOffset = _scrollCtrl.offset;
+
+    // 타이밍 시어: 스크롤 위치 업데이트
+    _commentService.updateScrollPosition(nextOffset);
+
+    // 첫 하향 스크롤 감지 시 헤더가 투명해질 지점까지 자동 스크롤
+    final double delta = nextOffset - _lastScrollOffset;
+    if (delta > 0.5 &&
+        !_didAutoSnapHeader &&
+        !_isAutoAnimating &&
+        nextOffset < _headerFadeEnd) {
+      _isAutoAnimating = true;
+      _scrollCtrl
+          .animateTo(
+            _headerFadeEnd,
+            duration: const Duration(milliseconds: 800),
+            curve: Curves.fastOutSlowIn,
+          )
+          .whenComplete(() {
+            if (mounted) {
+              setState(() {
+                _didAutoSnapHeader = true;
+                _isAutoAnimating = false;
+              });
+            } else {
+              _didAutoSnapHeader = true;
+              _isAutoAnimating = false;
+            }
+          });
+    }
+
+    // 상단으로 거의 복귀하면 스냅을 다시 허용
+    if (nextOffset < 2.0 && _didAutoSnapHeader) {
+      _didAutoSnapHeader = false;
+    }
+
+    setState(() {
+      _scrollOffset = nextOffset;
+    });
+    _lastScrollOffset = nextOffset;
+
+    // 댓글 섹션이 화면 하단 근처에 들어오기 시작하면 순차 애니메이션 시작
+    if (!_commentsAnimStarted && _scrollCtrl.hasClients) {
+      final pos = _scrollCtrl.position;
+      if (pos.extentAfter <= 360.0) {
+        _commentsAnimStarted = true;
+        _commentsAnimCtrl.forward(from: 0.0);
+      }
+    }
   }
 
   ImageProvider _buildBackgroundImage() {
@@ -94,145 +271,817 @@ class _PostReaderScreenState extends State<PostReaderScreen>
   Widget build(BuildContext context) {
     final stickers = (widget.exported['stickers'] as List?) ?? const [];
 
-    // 이미지 높이를 화면의 75%로 설정
-    final screenHeight = MediaQuery.of(context).size.height;
-    final imageHeight = screenHeight * 0.5;
-
-    // AppBar가 나타나야 하는 시점 계산
-    final shouldShowAppBar =
-        _scrollOffset >=
-        imageHeight - _appBarHeight - MediaQuery.of(context).padding.top;
+    // AppBar가 나타나야 하는 시점 계산 (상단 이미지가 상당히 사라졌을 때)
+    final shouldShowAppBar = _scrollOffset >= _imageH - _appBarHeight + 0;
     final appBarOpacity = shouldShowAppBar ? 1.0 : 0.0;
+    final currentUser = context.read<UserProvider>().currentUser;
+    final String postAuthor = (widget.exported['author'] ?? '').toString();
+    final bool isMyPost =
+        currentUser != null && currentUser.username == postAuthor;
 
     return Scaffold(
       backgroundColor: Theme.of(context).colorScheme.surface,
       body: Stack(
         children: [
-          CustomScrollView(
-            controller: _outerScroll,
-            slivers: [
-              // 상단 이미지 영역
-              if (widget.heroTag != null)
+          // 전체 스크롤: 상단 이미지가 스크롤로 사라지고, 아래에 본문이 이어짐
+          GestureDetector(
+            behavior: HitTestBehavior.translucent,
+            child: CustomScrollView(
+              controller: _scrollCtrl,
+              physics: const ClampingScrollPhysics(),
+              slivers: [
+                SliverPersistentHeader(
+                  pinned: false,
+                  floating: false,
+                  delegate: _ImageHeaderDelegate(
+                    image: _buildBackgroundImage(),
+                    maxHeight: _imageH,
+                    heroTag: widget.heroTag,
+                  ),
+                ),
                 SliverToBoxAdapter(
-                  child: Hero(
-                    tag: widget.heroTag!,
-                    child: Container(
-                      height: imageHeight,
-                      width: double.infinity,
-                      decoration: BoxDecoration(
-                        image: DecorationImage(
-                          image: _buildBackgroundImage(),
-                          fit: BoxFit.cover,
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 40, 20, 30),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          widget.exported['title'] ?? '포스트',
+                          style: TextStyle(
+                            color: Theme.of(context).colorScheme.onSurface,
+                            fontSize: 30,
+                            fontWeight: FontWeight.w800,
+                            height: 1.15,
+                          ),
                         ),
-                      ),
-                      child: Stack(
-                        children: [
-                          // 그라데이션 오버레이
-                          Container(
-                            decoration: BoxDecoration(
-                              gradient: LinearGradient(
-                                begin: Alignment.topCenter,
-                                end: Alignment.bottomCenter,
-                                colors: [
-                                  Colors.transparent,
-                                  Colors.transparent,
-                                  Theme.of(context).colorScheme.surface,
-                                ],
-                                stops: const [0.0, 0.7, 1.0],
+                        const SizedBox(height: 12),
+                        Row(
+                          children: [
+                            Container(
+                              width: 30,
+                              height: 30,
+                              decoration: BoxDecoration(
+                                color:
+                                    Theme.of(
+                                      context,
+                                    ).colorScheme.surfaceVariant,
+                                shape: BoxShape.circle,
+                                border: Border.all(
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .onSurfaceVariant
+                                      .withOpacity(0.3),
+                                  width: 1,
+                                ),
                               ),
-                            ),
-                          ),
-                          // 뒤로가기 버튼
-                          Positioned(
-                            top: 0,
-                            left: 0,
-                            right: 0,
-                            child: SafeArea(
-                              child: Padding(
-                                padding: const EdgeInsets.all(16.0),
-                                child: Row(
-                                  children: [
-                                    GestureDetector(
-                                      onTap: () {
-                                        // Hero 애니메이션과 함께 자연스러운 뒤로가기
-                                        Navigator.of(context).pop();
-                                      },
-                                      child: Container(
-                                        padding: const EdgeInsets.all(8.0),
-                                        decoration: BoxDecoration(
-                                          color: Colors.black.withOpacity(0.3),
-                                          shape: BoxShape.circle,
-                                        ),
-                                        child: const Icon(
-                                          Icons.arrow_back,
-                                          color: Colors.white,
-                                          size: 20,
-                                        ),
+                              clipBehavior: Clip.antiAlias,
+                              child:
+                                  (widget.exported['authorProfileImageUrl']
+                                              ?.toString()
+                                              .isNotEmpty ??
+                                          false)
+                                      ? Image.network(
+                                        widget.exported['authorProfileImageUrl']
+                                            .toString(),
+                                        fit: BoxFit.cover,
+                                        cacheWidth: 200,
+                                        cacheHeight: 200,
+                                        filterQuality: FilterQuality.low,
+                                      )
+                                      : Icon(
+                                        Icons.person,
+                                        color:
+                                            Theme.of(
+                                              context,
+                                            ).colorScheme.onSurfaceVariant,
                                       ),
-                                    ),
-                                  ],
-                                ),
-                              ),
                             ),
-                          ),
-                          // 하단 제목
-                          Positioned(
-                            bottom: 0,
-                            left: 0,
-                            right: 0,
-                            child: Container(
-                              padding: const EdgeInsets.all(24.0),
+                            const SizedBox(width: 5),
+                            Expanded(
                               child: Text(
-                                widget.exported['title'] ?? '포스트',
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 28,
-                                  fontWeight: FontWeight.bold,
-                                  shadows: [
-                                    Shadow(
-                                      color: Colors.black,
-                                      blurRadius: 8,
-                                      offset: Offset(0, 2),
-                                    ),
-                                  ],
-                                ),
-                                maxLines: 2,
+                                (widget.exported['author'] ?? '').toString(),
+                                maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: Theme.of(
+                                    context,
+                                  ).colorScheme.onSurface.withOpacity(0.8),
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.w300,
+                                ),
                               ),
                             ),
-                          ),
-                        ],
-                      ),
+                          ],
+                        ),
+                      ],
                     ),
                   ),
                 ),
-
-              // 본문 영역
-              SuperEditor(
-                editor: _editor,
-                stylesheet: buildCustomStylesheet(context),
-                selectionStyle: SelectionStyles(
-                  selectionColor: const ui.Color.fromARGB(
-                    255,
-                    255,
-                    255,
-                    255,
-                  ).withOpacity(0.3),
-                  highlightEmptyTextBlocks: false,
+                // SuperEditor 슬리버
+                SuperEditor(
+                  editor: _editor,
+                  stylesheet: buildCustomStylesheet(context),
+                  selectionStyle: SelectionStyles(
+                    selectionColor: Colors.transparent,
+                    highlightEmptyTextBlocks: false,
+                  ),
+                  componentBuilders: [
+                    SingleImageComponentBuilder(dragService: _dragService),
+                    RowImageComponentBuilder(dragService: _dragService),
+                    LinkComponentBuilder(),
+                    LocationComponentBuilder(dragService: _dragService),
+                    MentionComponentBuilder(dragService: _dragService),
+                    ...defaultComponentBuilders,
+                  ],
+                  documentLayoutKey: _layoutKey,
+                  focusNode: _readOnlyFocus,
+                  gestureMode: DocumentGestureMode.mouse,
                 ),
-                componentBuilders: [
-                  SingleImageComponentBuilder(dragService: _dragService),
-                  RowImageComponentBuilder(dragService: _dragService),
-                  LinkComponentBuilder(),
-                  LocationComponentBuilder(dragService: _dragService),
-                  MentionComponentBuilder(dragService: _dragService),
-                  ...defaultComponentBuilders,
-                ],
-                documentLayoutKey: _layoutKey,
-                focusNode: _readOnlyFocus,
-                gestureMode: DocumentGestureMode.mouse,
-              ),
-            ],
+                SliverToBoxAdapter(child: SizedBox(height: 100)),
+
+                // 댓글 미리보기 (최근 5개)
+                SliverToBoxAdapter(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 20,
+                    ),
+                    child: Stack(
+                      children: [
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.start,
+                              children: [
+                                // 좋아요 버튼
+                                GestureDetector(
+                                  behavior: HitTestBehavior.opaque,
+                                  onTap: _toggleLike,
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 12,
+                                      vertical: 8,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color:
+                                          _likeService.isPostLiked(
+                                                widget.exported['id']
+                                                        ?.toString() ??
+                                                    '',
+                                              )
+                                              ? Colors.redAccent.withOpacity(
+                                                0.1,
+                                              )
+                                              : Theme.of(context)
+                                                  .colorScheme
+                                                  .surfaceVariant
+                                                  .withOpacity(0.5),
+                                      borderRadius: BorderRadius.circular(20),
+                                      border: Border.all(
+                                        color:
+                                            _likeService.isPostLiked(
+                                                  widget.exported['id']
+                                                          ?.toString() ??
+                                                      '',
+                                                )
+                                                ? Colors.redAccent.withOpacity(
+                                                  0.3,
+                                                )
+                                                : Theme.of(context)
+                                                    .colorScheme
+                                                    .outline
+                                                    .withOpacity(0.2),
+                                        width: 1,
+                                      ),
+                                    ),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        AnimatedSwitcher(
+                                          duration: const Duration(
+                                            milliseconds: 200,
+                                          ),
+                                          child: Icon(
+                                            _likeService.isPostLiked(
+                                                  widget.exported['id']
+                                                          ?.toString() ??
+                                                      '',
+                                                )
+                                                ? Icons.favorite
+                                                : Icons.favorite_border,
+                                            key: ValueKey(
+                                              _likeService.isPostLiked(
+                                                widget.exported['id']
+                                                        ?.toString() ??
+                                                    '',
+                                              ),
+                                            ),
+                                            color:
+                                                _likeService.isPostLiked(
+                                                      widget.exported['id']
+                                                              ?.toString() ??
+                                                          '',
+                                                    )
+                                                    ? Colors.redAccent
+                                                    : Theme.of(context)
+                                                        .colorScheme
+                                                        .onSurface
+                                                        .withOpacity(0.7),
+                                            size: 18,
+                                          ),
+                                        ),
+                                        const SizedBox(width: 6),
+                                        Text(
+                                          '${_likeService.getPostLikeCount(widget.exported['id']?.toString() ?? '')}',
+                                          style: TextStyle(
+                                            color:
+                                                _likeService.isPostLiked(
+                                                      widget.exported['id']
+                                                              ?.toString() ??
+                                                          '',
+                                                    )
+                                                    ? Colors.redAccent
+                                                    : Theme.of(
+                                                      context,
+                                                    ).colorScheme.onSurface,
+                                            fontSize: 14,
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 10),
+
+                                // 댓글 정보
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 12,
+                                    vertical: 8,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: Theme.of(context)
+                                        .colorScheme
+                                        .surfaceVariant
+                                        .withOpacity(0.5),
+                                    borderRadius: BorderRadius.circular(20),
+                                    border: Border.all(
+                                      color: Theme.of(
+                                        context,
+                                      ).colorScheme.outline.withOpacity(0.2),
+                                      width: 1,
+                                    ),
+                                  ),
+                                  child: GestureDetector(
+                                    behavior: HitTestBehavior.opaque,
+                                    onTap: _showCommentBottomSheet,
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        const SizedBox(width: 4),
+                                        Icon(
+                                          Icons.chat_bubble_outline,
+                                          color: Theme.of(context)
+                                              .colorScheme
+                                              .onSurface
+                                              .withOpacity(0.7),
+                                          size: 18,
+                                        ),
+                                        const SizedBox(width: 6),
+                                        Text(
+                                          '${_commentService.getAllComments().length}',
+                                          style: TextStyle(
+                                            color:
+                                                Theme.of(
+                                                  context,
+                                                ).colorScheme.onSurface,
+                                            fontSize: 14,
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
+                                        const SizedBox(width: 4),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 32),
+                            _commentService.isLoading &&
+                                    _commentService.getAllComments().isEmpty
+                                ? const CommentShimmer(
+                                  itemCount: 3,
+                                  isPreview: true,
+                                )
+                                : Column(
+                                  children: () {
+                                    final comments =
+                                        _commentService.getRecentComments();
+                                    comments.sort(
+                                      (a, b) =>
+                                          a.createdAt.compareTo(b.createdAt),
+                                    );
+                                    return comments.take(5).map((comment) {
+                                      final currentUser =
+                                          context
+                                              .read<UserProvider>()
+                                              .currentUser;
+                                      final isMe =
+                                          currentUser != null &&
+                                          comment.author ==
+                                              currentUser.username;
+                                      final hasReactions =
+                                          comment.emotionCounts.isNotEmpty;
+
+                                      return Padding(
+                                        padding: const EdgeInsets.symmetric(
+                                          vertical: 8,
+                                        ),
+                                        child: Row(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          mainAxisAlignment:
+                                              isMe
+                                                  ? MainAxisAlignment.end
+                                                  : MainAxisAlignment.start,
+                                          children: [
+                                            if (!isMe) ...[
+                                              Container(
+                                                width: 40,
+                                                height: 40,
+                                                decoration: BoxDecoration(
+                                                  color:
+                                                      Theme.of(context)
+                                                          .colorScheme
+                                                          .surfaceVariant,
+                                                  shape: BoxShape.circle,
+                                                  border: Border.all(
+                                                    color:
+                                                        Theme.of(context)
+                                                            .colorScheme
+                                                            .onSurfaceVariant,
+                                                    width: 1,
+                                                  ),
+                                                ),
+                                                clipBehavior: Clip.antiAlias,
+                                                child:
+                                                    comment
+                                                            .authorProfileImageUrl
+                                                            .isNotEmpty
+                                                        ? Image.network(
+                                                          comment
+                                                              .authorProfileImageUrl,
+                                                          fit: BoxFit.cover,
+                                                          cacheWidth: 120,
+                                                          cacheHeight: 120,
+                                                          filterQuality:
+                                                              FilterQuality.low,
+                                                        )
+                                                        : Icon(
+                                                          Icons.person,
+                                                          size: 16,
+                                                          color:
+                                                              Theme.of(context)
+                                                                  .colorScheme
+                                                                  .onSurfaceVariant,
+                                                        ),
+                                              ),
+                                              const SizedBox(width: 8),
+                                            ],
+
+                                            Flexible(
+                                              child: Column(
+                                                crossAxisAlignment:
+                                                    isMe
+                                                        ? CrossAxisAlignment.end
+                                                        : CrossAxisAlignment
+                                                            .start,
+                                                children: [
+                                                  // 답글인 경우 타겟 댓글 표시
+                                                  if (comment.parentId !=
+                                                          null &&
+                                                      comment.parentId != '0' &&
+                                                      comment.parentId != '')
+                                                    ...() {
+                                                      // 타겟 댓글 찾기 (간단한 버전)
+                                                      final allComments =
+                                                          _commentService
+                                                              .getAllComments();
+                                                      Comment? targetComment;
+                                                      try {
+                                                        targetComment = allComments
+                                                            .firstWhere(
+                                                              (c) =>
+                                                                  c.id ==
+                                                                  comment
+                                                                      .parentId,
+                                                            );
+                                                      } catch (e) {
+                                                        targetComment = null;
+                                                      }
+
+                                                      if (targetComment == null)
+                                                        return <Widget>[];
+
+                                                      return [
+                                                        // 타겟 댓글 (투명한 말풍선)
+                                                        GestureDetector(
+                                                          onTap: () {
+                                                            // 타겟 댓글로 스크롤 점프 (댓글 시트 열기)
+                                                            _showCommentBottomSheet();
+                                                          },
+                                                          child: Container(
+                                                            constraints: BoxConstraints(
+                                                              maxWidth:
+                                                                  MediaQuery.of(
+                                                                    context,
+                                                                  ).size.width *
+                                                                  0.75,
+                                                            ),
+                                                            margin:
+                                                                const EdgeInsets.only(
+                                                                  bottom: 8,
+                                                                ),
+                                                            padding:
+                                                                const EdgeInsets.symmetric(
+                                                                  horizontal:
+                                                                      12,
+                                                                  vertical: 8,
+                                                                ),
+                                                            decoration: BoxDecoration(
+                                                              color: Theme.of(
+                                                                    context,
+                                                                  )
+                                                                  .colorScheme
+                                                                  .surfaceVariant
+                                                                  .withOpacity(
+                                                                    0.3,
+                                                                  ),
+                                                              borderRadius:
+                                                                  BorderRadius.circular(
+                                                                    16,
+                                                                  ),
+                                                              border: Border.all(
+                                                                color: Theme.of(
+                                                                      context,
+                                                                    )
+                                                                    .colorScheme
+                                                                    .outline
+                                                                    .withOpacity(
+                                                                      0.2,
+                                                                    ),
+                                                                width: 1,
+                                                              ),
+                                                            ),
+                                                            child: Column(
+                                                              crossAxisAlignment:
+                                                                  CrossAxisAlignment
+                                                                      .start,
+                                                              children: [
+                                                                Text(
+                                                                  '${targetComment.author}',
+                                                                  style: TextStyle(
+                                                                    color: Theme.of(
+                                                                          context,
+                                                                        )
+                                                                        .colorScheme
+                                                                        .onSurface
+                                                                        .withOpacity(
+                                                                          0.7,
+                                                                        ),
+                                                                    fontSize:
+                                                                        12,
+                                                                    fontWeight:
+                                                                        FontWeight
+                                                                            .w600,
+                                                                  ),
+                                                                ),
+                                                                const SizedBox(
+                                                                  height: 2,
+                                                                ),
+                                                                Text(
+                                                                  targetComment
+                                                                      .content,
+                                                                  style: TextStyle(
+                                                                    color: Theme.of(
+                                                                          context,
+                                                                        )
+                                                                        .colorScheme
+                                                                        .onSurface
+                                                                        .withOpacity(
+                                                                          0.6,
+                                                                        ),
+                                                                    fontSize:
+                                                                        13,
+                                                                  ),
+                                                                  maxLines: 2,
+                                                                  overflow:
+                                                                      TextOverflow
+                                                                          .ellipsis,
+                                                                ),
+                                                              ],
+                                                            ),
+                                                          ),
+                                                        ),
+                                                      ];
+                                                    }(),
+
+                                                  // 댓글 버블
+                                                  Container(
+                                                    constraints: BoxConstraints(
+                                                      maxWidth:
+                                                          MediaQuery.of(
+                                                            context,
+                                                          ).size.width *
+                                                          0.75,
+                                                    ),
+                                                    padding:
+                                                        const EdgeInsets.symmetric(
+                                                          horizontal: 12,
+                                                          vertical: 8,
+                                                        ),
+                                                    decoration: BoxDecoration(
+                                                      color:
+                                                          isMe
+                                                              ? Theme.of(
+                                                                    context,
+                                                                  )
+                                                                  .colorScheme
+                                                                  .primary
+                                                              : Theme.of(
+                                                                    context,
+                                                                  )
+                                                                  .colorScheme
+                                                                  .surfaceVariant,
+                                                      borderRadius: BorderRadius.only(
+                                                        topLeft:
+                                                            const Radius.circular(
+                                                              16,
+                                                            ),
+                                                        topRight:
+                                                            const Radius.circular(
+                                                              16,
+                                                            ),
+                                                        bottomLeft:
+                                                            Radius.circular(
+                                                              isMe ? 16 : 4,
+                                                            ),
+                                                        bottomRight:
+                                                            Radius.circular(
+                                                              isMe ? 4 : 16,
+                                                            ),
+                                                      ),
+                                                    ),
+                                                    child: Text(
+                                                      comment.content,
+                                                      style: TextStyle(
+                                                        color:
+                                                            isMe
+                                                                ? Colors.white
+                                                                : Theme.of(
+                                                                      context,
+                                                                    )
+                                                                    .colorScheme
+                                                                    .onSurface,
+                                                        fontSize: 15,
+                                                        height: 1.35,
+                                                      ),
+                                                    ),
+                                                  ),
+
+                                                  // 반응 표시
+                                                  if (hasReactions)
+                                                    Padding(
+                                                      padding:
+                                                          const EdgeInsets.only(
+                                                            top: 4,
+                                                          ),
+                                                      child: Row(
+                                                        mainAxisSize:
+                                                            MainAxisSize.min,
+                                                        children: [
+                                                          for (final entry
+                                                              in comment
+                                                                  .emotionCounts
+                                                                  .entries)
+                                                            if (entry.value !=
+                                                                '0')
+                                                              Container(
+                                                                margin:
+                                                                    const EdgeInsets.only(
+                                                                      right: 4,
+                                                                    ),
+                                                                padding:
+                                                                    const EdgeInsets.symmetric(
+                                                                      horizontal:
+                                                                          6,
+                                                                      vertical:
+                                                                          2,
+                                                                    ),
+                                                                decoration: BoxDecoration(
+                                                                  color:
+                                                                      Theme.of(
+                                                                        context,
+                                                                      ).colorScheme.surface,
+                                                                  borderRadius:
+                                                                      BorderRadius.circular(
+                                                                        10,
+                                                                      ),
+                                                                  boxShadow: [
+                                                                    BoxShadow(
+                                                                      color: Colors
+                                                                          .black
+                                                                          .withOpacity(
+                                                                            0.1,
+                                                                          ),
+                                                                      blurRadius:
+                                                                          2,
+                                                                    ),
+                                                                  ],
+                                                                ),
+                                                                child: Text(
+                                                                  '${entry.key} ${entry.value}',
+                                                                  style:
+                                                                      const TextStyle(
+                                                                        fontSize:
+                                                                            12,
+                                                                      ),
+                                                                ),
+                                                              ),
+                                                        ],
+                                                      ),
+                                                    ),
+
+                                                  // 시간 표시
+                                                  Padding(
+                                                    padding:
+                                                        const EdgeInsets.only(
+                                                          top: 4,
+                                                        ),
+                                                    child: Text(
+                                                      '${comment.author} • ${_formatRelativeTime(comment.createdAt)}',
+                                                      style: TextStyle(
+                                                        color: Theme.of(context)
+                                                            .colorScheme
+                                                            .onSurface
+                                                            .withOpacity(0.6),
+                                                        fontSize: 11,
+                                                      ),
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                            ),
+
+                                            if (isMe) ...[
+                                              const SizedBox(width: 8),
+                                              Container(
+                                                width: 40,
+                                                height: 40,
+                                                decoration: BoxDecoration(
+                                                  color:
+                                                      Theme.of(context)
+                                                          .colorScheme
+                                                          .surfaceVariant,
+                                                  shape: BoxShape.circle,
+                                                  border: Border.all(
+                                                    color:
+                                                        Theme.of(context)
+                                                            .colorScheme
+                                                            .onSurfaceVariant,
+                                                    width: 1,
+                                                  ),
+                                                ),
+                                                clipBehavior: Clip.antiAlias,
+                                                child:
+                                                    comment
+                                                            .authorProfileImageUrl
+                                                            .isNotEmpty
+                                                        ? Image.network(
+                                                          comment
+                                                              .authorProfileImageUrl,
+                                                          fit: BoxFit.cover,
+                                                          cacheWidth: 120,
+                                                          cacheHeight: 120,
+                                                          filterQuality:
+                                                              FilterQuality.low,
+                                                        )
+                                                        : Icon(
+                                                          Icons.person,
+                                                          size: 16,
+                                                          color:
+                                                              Theme.of(context)
+                                                                  .colorScheme
+                                                                  .onSurfaceVariant,
+                                                        ),
+                                              ),
+                                            ],
+                                          ],
+                                        ),
+                                      );
+                                    }).toList();
+                                  }(),
+                                ),
+                          ],
+                        ),
+
+                        // 댓글 위에 겹치는 블러 그라데이션 효과 (5개 이상일 때만)
+                        if (_commentService.getAllComments().length >= 5)
+                          Positioned(
+                            left: 0,
+                            right: 0,
+                            bottom: 0,
+                            child: Container(
+                              height: 80,
+                              decoration: BoxDecoration(
+                                gradient: LinearGradient(
+                                  begin: Alignment.topCenter,
+                                  end: Alignment.bottomCenter,
+                                  colors: [
+                                    Colors.transparent,
+                                    Theme.of(
+                                      context,
+                                    ).colorScheme.surface.withOpacity(0.2),
+                                    Theme.of(
+                                      context,
+                                    ).colorScheme.surface.withOpacity(0.5),
+                                    Theme.of(context).colorScheme.surface,
+                                  ],
+                                  stops: const [0.0, 0.4, 0.7, 1.0],
+                                ),
+                              ),
+                              child: Column(
+                                children: [
+                                  Spacer(),
+                                  GestureDetector(
+                                    onTap: _showCommentBottomSheet,
+                                    child: Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 16,
+                                        vertical: 8,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: Theme.of(
+                                          context,
+                                        ).colorScheme.surface.withOpacity(0.9),
+                                        borderRadius: BorderRadius.circular(20),
+                                        border: Border.all(
+                                          color: Theme.of(context)
+                                              .colorScheme
+                                              .outline
+                                              .withOpacity(0.6),
+                                        ),
+                                        boxShadow: [
+                                          BoxShadow(
+                                            color: Colors.black.withOpacity(
+                                              0.1,
+                                            ),
+                                            blurRadius: 8,
+                                            offset: const Offset(0, 2),
+                                          ),
+                                        ],
+                                      ),
+                                      child: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Icon(
+                                            Icons.keyboard_arrow_down,
+                                            size: 16,
+                                            color:
+                                                Theme.of(
+                                                  context,
+                                                ).colorScheme.onSurface,
+                                          ),
+                                          const SizedBox(width: 4),
+                                          Text(
+                                            '더 많은 댓글 보기',
+                                            style: TextStyle(
+                                              color:
+                                                  Theme.of(
+                                                    context,
+                                                  ).colorScheme.onSurface,
+                                              fontSize: 12,
+                                              fontWeight: FontWeight.w500,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 20),
+                                ],
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+                SliverToBoxAdapter(child: const SizedBox(height: 22)),
+              ],
+            ),
           ),
 
           // 스티커 오버레이
@@ -243,7 +1092,7 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                 stickers: stickers,
                 layoutKey: _layoutKey,
                 stackKey: _stackKey,
-                scrollController: _outerScroll,
+                scrollController: _scrollCtrl,
               ),
             ),
           ),
@@ -257,49 +1106,118 @@ class _PostReaderScreenState extends State<PostReaderScreen>
             child: AnimatedOpacity(
               duration: const Duration(milliseconds: 200),
               opacity: appBarOpacity,
-              child: Container(
-                height: _appBarHeight + MediaQuery.of(context).padding.top,
-                decoration: BoxDecoration(
-                  color: AppColors.darkSurface,
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.1),
-                      blurRadius: 4,
-                      offset: const Offset(0, 2),
+              child: ClipRect(
+                child: BackdropFilter(
+                  filter: ui.ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+                  child: Container(
+                    height: _appBarHeight + MediaQuery.of(context).padding.top,
+                    decoration: BoxDecoration(
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.surface.withOpacity(0.8),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.2),
+                          blurRadius: 4,
+                          offset: const Offset(0, 2),
+                        ),
+                      ],
                     ),
-                  ],
-                ),
 
-                child: Padding(
-                  padding: EdgeInsets.only(
-                    top: MediaQuery.of(context).padding.top,
+                    child: Padding(
+                      padding: EdgeInsets.only(
+                        top: MediaQuery.of(context).padding.top,
 
-                    bottom: 8.0,
-                  ),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.center,
-                    children: [
-                      IconButton(
-                        icon: const Icon(
-                          Icons.arrow_back_ios_new_rounded,
-                          color: Colors.white,
-                          size: 18,
-                        ),
-                        onPressed: () => Navigator.of(context).pop(),
+                        bottom: 5.0,
                       ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          widget.exported['title'] ?? '포스트',
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 16,
-                            fontWeight: FontWeight.w600,
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.center,
+                        children: [
+                          SizedBox(width: 12),
+                          GestureDetector(
+                            onTap: () => Navigator.of(context).pop(),
+                            child: Icon(
+                              Icons.arrow_back_ios_new_rounded,
+                              color: Theme.of(context).colorScheme.onSurface,
+                              size: 18,
+                            ),
                           ),
-                          overflow: TextOverflow.ellipsis,
-                        ),
+
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Text(
+                              widget.exported['title'] ?? '포스트',
+                              style: TextStyle(
+                                color: Theme.of(context).colorScheme.onSurface,
+                                fontSize: 16,
+                                fontWeight: FontWeight.w600,
+                              ),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          if (isMyPost) ...[
+                            GestureDetector(
+                              onTap: () {
+                                print('widget.exported: ${widget.exported}');
+                                if (widget.exported['id'] != null) {
+                                  Navigator.of(context).push(
+                                    MaterialPageRoute(
+                                      builder:
+                                          (_) => PostwriteScreen(
+                                            screenWidth:
+                                                MediaQuery.of(
+                                                  context,
+                                                ).size.width,
+                                            isEditMode: true,
+                                            postId:
+                                                widget.exported['id']
+                                                    ?.toString(),
+                                            initialExported: widget.exported,
+                                          ),
+                                    ),
+                                  );
+                                }
+                              },
+                              child: Icon(
+                                Icons.edit_outlined,
+                                color: Theme.of(context).colorScheme.onSurface,
+                                size: 18,
+                              ),
+                            ),
+                          ] else ...[
+                            GestureDetector(
+                              onTap: _showCommentBottomSheet,
+                              child: Container(
+                                margin: const EdgeInsets.only(right: 8),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                  vertical: 6,
+                                ),
+                                child: Container(
+                                  margin: const EdgeInsets.only(bottom: 10),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Text(
+                                        '${_commentService.getAllComments().length}',
+                                        style: TextStyle(
+                                          color:
+                                              Theme.of(
+                                                context,
+                                              ).colorScheme.onSurface,
+                                          fontSize: 13,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ],
                       ),
-                    ],
+                    ),
                   ),
                 ),
               ),
@@ -541,7 +1459,13 @@ class _ReadOnlyStickers extends StatelessWidget {
                     maxWidth: 200,
                     maxHeight: 200,
                   ),
-                  child: Image.network(url, fit: BoxFit.contain),
+                  child: Image.network(
+                    url,
+                    fit: BoxFit.contain,
+                    cacheWidth: 300,
+                    cacheHeight: 300,
+                    filterQuality: FilterQuality.medium,
+                  ),
                 ),
               );
             } else {
@@ -613,5 +1537,154 @@ class _ReadOnlyStickers extends StatelessWidget {
       return Color(int.parse(hex, radix: 16));
     }
     return null;
+  }
+}
+
+class _ImageHeaderDelegate extends SliverPersistentHeaderDelegate {
+  final ImageProvider image;
+  final double maxHeight;
+  double _pullAccum = 0.0;
+  final String? heroTag;
+
+  _ImageHeaderDelegate({
+    required this.image,
+    required this.maxHeight,
+    this.heroTag,
+  });
+
+  @override
+  double get minExtent => 0.0;
+
+  @override
+  double get maxExtent => maxHeight;
+
+  @override
+  Widget build(
+    BuildContext context,
+    double shrinkOffset,
+    bool overlapsContent,
+  ) {
+    return StatefulBuilder(
+      builder: (context, setLocalState) {
+        double slideY = 0.0; // 0 ~ 140px
+        // 스크롤 진행도에 따른 페이드아웃
+        final double fadeProgress = (shrinkOffset / (maxHeight * 0.6)).clamp(
+          0.0,
+          1.0,
+        );
+        final double imgOpacity = 1.0 - fadeProgress;
+        bool snapping = false;
+        return GestureDetector(
+          onVerticalDragUpdate: (details) {
+            if (details.delta.dy > 0) {
+              _pullAccum = (_pullAccum + details.delta.dy).clamp(0.0, 400.0);
+              final next = (slideY + details.delta.dy).clamp(0.0, 140.0);
+              setLocalState(() => slideY = next);
+            } else if (details.delta.dy < -4) {
+              // 이미지 영역에서 위로 스크롤할 때 헤더 페이드 종료 지점까지 부드럽게 스냅
+              final scrollable = Scrollable.of(context);
+              final position = scrollable.position;
+              final double target = maxHeight * 0.6;
+              if (!snapping && position.pixels < target) {
+                snapping = true;
+                position
+                    .animateTo(
+                      target,
+                      duration: const Duration(milliseconds: 550),
+                      curve: Curves.fastOutSlowIn,
+                    )
+                    .whenComplete(() {
+                      snapping = false;
+                    });
+              }
+            }
+          },
+          onVerticalDragEnd: (_) {
+            if (_pullAccum >= 80.0) {
+              Navigator.of(context).maybePop();
+            }
+            _pullAccum = 0.0;
+            setLocalState(() => slideY = 0.0);
+          },
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              AnimatedSlide(
+                offset: Offset(0, (slideY / (maxHeight == 0 ? 1 : maxHeight))),
+                duration: const Duration(milliseconds: 150),
+                curve: Curves.easeOut,
+                child: Opacity(
+                  opacity: imgOpacity,
+                  child: Builder(
+                    builder: (context) {
+                      final BorderRadius radius = BorderRadius.only(
+                        topLeft: Radius.circular(4),
+                        topRight: Radius.circular(4),
+                      );
+                      Widget rounded() => ClipRRect(
+                        borderRadius: radius,
+                        clipBehavior: Clip.antiAlias,
+                        child: Image(image: image, fit: BoxFit.cover),
+                      );
+                      if (heroTag == null) {
+                        return rounded();
+                      }
+                      return Hero(
+                        tag: heroTag!,
+                        transitionOnUserGestures: true,
+                        flightShuttleBuilder: (
+                          context,
+                          animation,
+                          direction,
+                          fromContext,
+                          toContext,
+                        ) {
+                          return rounded();
+                        },
+                        child: rounded(),
+                      );
+                    },
+                  ),
+                ),
+              ),
+              // 상단 좌측 뒤로가기
+              Positioned(
+                top: 0,
+                left: 0,
+                right: 0,
+                child: SafeArea(
+                  child: Align(
+                    alignment: Alignment.topLeft,
+                    child: Padding(
+                      padding: const EdgeInsets.all(12.0),
+                      child: GestureDetector(
+                        onTap: () => Navigator.of(context).maybePop(),
+                        child: Container(
+                          padding: const EdgeInsets.all(8.0),
+                          decoration: BoxDecoration(
+                            color: Colors.black.withOpacity(0.3),
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(
+                            Icons.arrow_back,
+                            color: Colors.white,
+                            size: 20,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  @override
+  bool shouldRebuild(covariant _ImageHeaderDelegate oldDelegate) {
+    return oldDelegate.image != image || oldDelegate.maxHeight != maxHeight;
   }
 }

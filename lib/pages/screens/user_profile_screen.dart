@@ -40,11 +40,12 @@ class _UserProfileScreenState extends State<UserProfileScreen>
 
   // ✅ 프로필 구분 상태는 그대로 유지
   late final bool _isOwnProfile;
-  String? _lastRequestedFor; // 'me' 또는 username
+  // String? _lastRequestedFor; // 제거: 빌드 트리거 삭제로 불필요
 
   // 업로드 진행 상태
   UploadTask? _profileUploadTask;
   VoidCallback? _profileTaskListener;
+  PageRoute<dynamic>? _activeRoute; // RouteObserver 중복 구독 방지
 
   @override
   void initState() {
@@ -85,8 +86,16 @@ class _UserProfileScreenState extends State<UserProfileScreen>
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    // RouteObserver 구독
-    routeObserver.subscribe(this, ModalRoute.of(context) as PageRoute<dynamic>);
+    // RouteObserver 구독 (중복 방지)
+    final modal = ModalRoute.of(context);
+    if (modal is PageRoute<dynamic>) {
+      if (!identical(_activeRoute, modal)) {
+        // 이전 라우트 구독 해제 후 새 라우트로 구독
+        routeObserver.unsubscribe(this);
+        _activeRoute = modal;
+        routeObserver.subscribe(this, modal);
+      }
+    }
   }
 
   @override
@@ -97,16 +106,6 @@ class _UserProfileScreenState extends State<UserProfileScreen>
     }
     routeObserver.unsubscribe(this);
     super.dispose();
-  }
-
-  // 뒤로가기 등으로 다시 보일 때 항상 새로 로드
-  @override
-  void didPopNext() {
-    final bool isOther = widget.otherUser != null;
-    context.read<ProfileFeedProvider>().loadInitial(
-      username: isOther ? widget.otherUser!.username : null,
-      force: true,
-    );
   }
 
   Widget _buildEmptyFeed(double containerWidth, bool isOther) {
@@ -225,6 +224,10 @@ class _UserProfileScreenState extends State<UserProfileScreen>
                       ? Image.network(
                         imageUrl!,
                         fit: BoxFit.cover,
+                        loadingBuilder: (context, child, progress) {
+                          if (progress == null) return child;
+                          return ShimmerBox(width: size, height: size);
+                        },
                         errorBuilder: (_, __, ___) => _fallbackAvatar(theme),
                       )
                       : _fallbackAvatar(theme),
@@ -246,7 +249,6 @@ class _UserProfileScreenState extends State<UserProfileScreen>
     );
   }
 
-  @override
   void _startProfileUpload(File file) {
     final upload = context.read<UploadService>();
     final task = upload.enqueueFile(file, kind: UploadKind.profile);
@@ -337,19 +339,7 @@ class _UserProfileScreenState extends State<UserProfileScreen>
     final maxWidth = screenWidth > 500 ? 500.0 : screenWidth;
     final containerWidth = maxWidth - 8.0; // 오버플로우 방지를 위해 8px 여백 추가
     final containerHeight = screenHeight;
-    // 항상 새로 로드: 대상이 바뀌었거나 이전 요청 대상과 다르면 강제 로드
-    final feedProvider = context.watch<ProfileFeedProvider>();
-    final String targetKey = isOther ? (other?.username ?? '') : 'me';
-    if (!feedProvider.isLoading && _lastRequestedFor != targetKey) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted) return;
-        context.read<ProfileFeedProvider>().loadInitial(
-          username: isOther ? other?.username : null,
-          force: true,
-        );
-        _lastRequestedFor = targetKey;
-      });
-    }
+    // 빌드 타임 재호출 제거: initState/didPopNext에서만 로드 트리거
 
     // 헤더 높이를 아직 모르면 측정 예약
     if (_headerHeight <= 0) _scheduleMeasureHeader();
@@ -366,6 +356,7 @@ class _UserProfileScreenState extends State<UserProfileScreen>
       appBar: AppBar(
         backgroundColor: Theme.of(context).scaffoldBackgroundColor,
         elevation: 0,
+        toolbarHeight: 50,
         scrolledUnderElevation: 0,
         automaticallyImplyLeading: false,
         title: Text(
@@ -373,7 +364,7 @@ class _UserProfileScreenState extends State<UserProfileScreen>
           style: AppTextStyles.headlineLarge.copyWith(
             fontSize: 24,
             fontWeight: FontWeight.w600,
-            color: Theme.of(context).colorScheme.onBackground,
+            color: Theme.of(context).colorScheme.primary,
           ),
         ),
         centerTitle: false,
@@ -394,7 +385,8 @@ class _UserProfileScreenState extends State<UserProfileScreen>
             IconButton(
               icon: Icon(
                 Icons.menu,
-                color: Theme.of(context).colorScheme.onSurface,
+                size: 20,
+                color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
               ),
               onPressed: () {
                 Navigator.push(
@@ -413,7 +405,7 @@ class _UserProfileScreenState extends State<UserProfileScreen>
           child: Container(
             width: containerWidth,
             height: containerHeight,
-            margin: EdgeInsets.symmetric(horizontal: 4.0),
+
             clipBehavior: Clip.antiAlias,
             decoration: BoxDecoration(
               color: Theme.of(context).colorScheme.background,
@@ -476,12 +468,12 @@ class _UserProfileScreenState extends State<UserProfileScreen>
                 Hero(
                   tag: 'user-${other.username}',
                   child: _avatarWithUploadIndicator(
-                    size: 132,
+                    size: 110,
                     imageUrl: other.profileImageUrl,
                     uploading: false,
                   ),
                 ),
-                const SizedBox(width: 20),
+                const SizedBox(width: 10),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -673,14 +665,14 @@ class _UserProfileScreenState extends State<UserProfileScreen>
                   child: Hero(
                     tag: 'user-${me?.username ?? 'me'}',
                     child: _avatarWithUploadIndicator(
-                      size: 132,
+                      size: 110,
                       imageUrl: me?.profileImageUrl,
                       uploading:
                           _profileUploadTask?.state == UploadState.uploading,
                     ),
                   ),
                 ),
-                const SizedBox(width: 20),
+                const SizedBox(width: 10),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -715,8 +707,9 @@ class _UserProfileScreenState extends State<UserProfileScreen>
             ),
           ),
           const SizedBox(width: 16),
+          SizedBox(height: 15),
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 0),
             child: Container(
               decoration: BoxDecoration(
                 color: theme.colorScheme.surfaceVariant,
@@ -777,7 +770,7 @@ class _UserProfileScreenState extends State<UserProfileScreen>
   }) {
     final theme = Theme.of(context);
     return SizedBox(
-      height: 44,
+      height: 40,
       child: ElevatedButton.icon(
         label: Text(
           label,
@@ -930,28 +923,32 @@ class _UserProfileScreenState extends State<UserProfileScreen>
       child: GridView.builder(
         padding: const EdgeInsets.only(bottom: 200),
         gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-          crossAxisCount: 2,
-          childAspectRatio: 9 / 13,
-          crossAxisSpacing: 3,
-          mainAxisSpacing: 3,
+          crossAxisCount: 3,
+          childAspectRatio: 9 / 12,
+          crossAxisSpacing: 2,
+          mainAxisSpacing: 2,
         ),
         itemCount: posts.length,
-        physics: const AlwaysScrollableScrollPhysics(),
+        shrinkWrap: false,
+        physics: const BouncingScrollPhysics(),
         itemBuilder: (context, index) {
           final post = posts[index];
+          final String postId = (post['id'] ?? '').toString();
+          final String username = (post['username'] ?? '').toString();
+          final meUser = context.read<UserProvider>().currentUser;
+          final bool isMine = meUser != null && meUser.username == username;
+          final String heroTag =
+              !isMine
+                  ? (postId.isNotEmpty ? 'post_$postId' : 'post_idx_$index')
+                  : '';
           final thumb = (post['thumbnailImageUrl'] ?? '').toString();
           return Material(
             color: Colors.transparent,
             child: InkWell(
-              borderRadius: BorderRadius.circular(2),
+              borderRadius: BorderRadius.circular(0),
               splashColor: Colors.grey.withOpacity(0.6),
               highlightColor: Colors.grey.withOpacity(0.3),
               onTap: () async {
-                final String postId = (post['id'] ?? '').toString();
-                final String username = (post['username'] ?? '').toString();
-                final me = context.read<UserProvider>().currentUser;
-                final bool isMine = me != null && me.username == username;
-
                 // 상세 데이터 필요 시 서버에서 재조회
                 Map<String, dynamic> exported = post;
                 try {
@@ -969,7 +966,6 @@ class _UserProfileScreenState extends State<UserProfileScreen>
                       builder:
                           (_) => PostwriteScreen(
                             screenWidth: MediaQuery.of(context).size.width,
-                            initialExported: exported,
                           ),
                     ),
                   );
@@ -979,7 +975,7 @@ class _UserProfileScreenState extends State<UserProfileScreen>
                       builder:
                           (_) => PostReaderScreen(
                             exported: exported,
-                            heroTag: 'post_$postId',
+                            heroTag: heroTag.isNotEmpty ? heroTag : null,
                           ),
                     ),
                   );
@@ -992,9 +988,35 @@ class _UserProfileScreenState extends State<UserProfileScreen>
                     borderRadius: BorderRadius.circular(2),
                   ),
                 ),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(2),
-                  child: _buildThumb(thumb, index),
+                child: Builder(
+                  builder: (_) {
+                    final border = BorderRadius.circular(2);
+                    Widget body = ClipRRect(
+                      borderRadius: border,
+                      child: _buildThumb(thumb, index),
+                    );
+                    if (heroTag.isNotEmpty) {
+                      // Hero는 리더 화면의 heroTag와 동일한 태그 사용
+                      body = Hero(
+                        tag: heroTag,
+                        transitionOnUserGestures: true,
+                        flightShuttleBuilder: (
+                          context,
+                          animation,
+                          direction,
+                          fromContext,
+                          toContext,
+                        ) {
+                          return ClipRRect(
+                            borderRadius: border,
+                            child: _buildThumb(thumb, index),
+                          );
+                        },
+                        child: body,
+                      );
+                    }
+                    return body;
+                  },
                 ),
               ),
             ),
@@ -1007,25 +1029,15 @@ class _UserProfileScreenState extends State<UserProfileScreen>
   Widget _buildThumb(String pathOrUrl, int index) {
     final isNetwork = pathOrUrl.startsWith('http');
     if (isNetwork) {
-      return Stack(
-        fit: StackFit.expand,
-        children: [
-          const ShimmerBox(width: double.infinity, height: double.infinity),
-          Image.network(
-            pathOrUrl,
-            fit: BoxFit.cover,
-            loadingBuilder: (ctx, child, progress) {
-              if (progress == null) return child;
-              return const SizedBox.expand(
-                child: ShimmerBox(
-                  width: double.infinity,
-                  height: double.infinity,
-                ),
-              );
-            },
-            errorBuilder: (_, __, ___) => _thumbFallback(index),
-          ),
-        ],
+      return Image.network(
+        pathOrUrl,
+        fit: BoxFit.cover,
+        filterQuality: FilterQuality.low,
+        loadingBuilder: (context, child, progress) {
+          if (progress == null) return child;
+          return ShimmerBox(width: double.infinity, height: double.infinity);
+        },
+        errorBuilder: (_, __, ___) => _thumbFallback(index),
       );
     } else if (pathOrUrl.isNotEmpty) {
       return Image.asset(

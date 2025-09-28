@@ -30,6 +30,7 @@ class SearchService extends ChangeNotifier {
   String _selectedCategory = '추천'; // '추천', '계정'
   bool _isSearching = false; // 검색 중인지 여부
   bool _isFocused = false; // 검색창 포커스 여부
+  bool _viewLocked = false; // 화면 전환 잠금 (네비게이션 중 레이아웃 고정)
 
   // 통합 컨텐츠 데이터
   List<SearchContentItem> _filteredItems = [];
@@ -39,8 +40,8 @@ class SearchService extends ChangeNotifier {
   String _lastAccountQuery = '';
   int _lastAccountCount = -1;
 
-  // 검색 기록
-  List<String> _searchHistory = [];
+  // 검색 기록 (사용자 객체 기반)
+  List<_SearchHistoryEntry> _searchHistory = [];
   static const int _maxHistorySize = 10;
   static const String _searchHistoryKey = 'search_history';
 
@@ -54,11 +55,12 @@ class SearchService extends ChangeNotifier {
   String get selectedCategory => _selectedCategory;
   bool get isSearching => _isSearching;
   bool get isFocused => _isFocused;
+  bool get isViewLocked => _viewLocked;
   bool get hasSearched => _query.isNotEmpty && !_isSearching;
   List<SearchContentItem> get contentItems {
     if (!hasSearched) {
-      // 검색 전에는 계정만 표시
-      return _allItems.where((item) => item.isAccount).toList();
+      // 검색 전에는 추천 컨텐츠(포스트)만 노출
+      return _allItems.where((item) => !item.isAccount).toList();
     }
 
     // 검색 완료 후에는 선택된 카테고리에 따라 필터링
@@ -73,25 +75,38 @@ class SearchService extends ChangeNotifier {
 
   // 검색 중일 때 계정 리스트 (프로필 형태)
   List<SearchContentItem> get searchingAccounts {
-    return _filteredItems.where((item) => item.isAccount).toList();
+    final seen = <String>{};
+    final uniques = <SearchContentItem>[];
+    for (final item in _filteredItems) {
+      if (!item.isAccount) continue;
+      final u = item.username ?? '';
+      if (u.isEmpty) continue;
+      if (seen.add(u)) uniques.add(item);
+    }
+    return uniques;
   }
 
-  // 검색 기록
-  List<String> get searchHistory => _searchHistory;
+  // 검색 기록 (계정 리스트 형태)
+  List<SearchContentItem> get searchHistory => searchHistoryAsAccounts;
 
   // 검색 기록을 계정 형태로 변환
   List<SearchContentItem> get searchHistoryAsAccounts {
-    return _searchHistory
-        .map(
-          (query) => SearchContentItem.account(
-            id: 'history_$query',
-            username: query,
-            alias: query,
-            profileImageUrl: '',
+    final seen = <String>{};
+    final result = <SearchContentItem>[];
+    for (final e in _searchHistory) {
+      if (seen.add(e.username)) {
+        result.add(
+          SearchContentItem.account(
+            id: 'history_${e.username}',
+            username: e.username,
+            alias: e.title?.isNotEmpty == true ? e.title! : e.username,
+            profileImageUrl: e.imageUrl ?? '',
             followers: 0,
           ),
-        )
-        .toList();
+        );
+      }
+    }
+    return result;
   }
 
   // ---- 공통 로깅 유틸
@@ -410,6 +425,59 @@ class SearchService extends ChangeNotifier {
 
   /// 초기화
   Future<void> initialize() async {
+    // 추천 콘텐츠(샘플) - OTT 느낌의 썸네일용
+    _allContentItems.clear();
+    _allContentItems.addAll([
+      SearchContentItem.post(
+        id: 'rcmd_1',
+        title: '보내기 싫은 일요일 밤',
+        author: 'editor',
+        imageUrl: 'assets/images/feed1.jpg',
+        likes: 120,
+        comments: 34,
+      ),
+      SearchContentItem.post(
+        id: 'rcmd_2',
+        title: '외워 우먼',
+        author: 'editor',
+        imageUrl: 'assets/images/feed2.png',
+        likes: 88,
+        comments: 12,
+      ),
+      SearchContentItem.post(
+        id: 'rcmd_3',
+        title: '월간 스냅',
+        author: 'editor',
+        imageUrl: 'assets/images/feed3.png',
+        likes: 77,
+        comments: 9,
+      ),
+      SearchContentItem.post(
+        id: 'rcmd_4',
+        title: '베스트 픽',
+        author: 'editor',
+        imageUrl: 'assets/images/feed4.png',
+        likes: 150,
+        comments: 41,
+      ),
+      SearchContentItem.post(
+        id: 'rcmd_5',
+        title: 'HOT',
+        author: 'editor',
+        imageUrl: 'assets/images/feed5.jpg',
+        likes: 203,
+        comments: 55,
+      ),
+      SearchContentItem.post(
+        id: 'rcmd_6',
+        title: 'TREND',
+        author: 'editor',
+        imageUrl: 'assets/images/feed6.jpg',
+        likes: 95,
+        comments: 7,
+      ),
+    ]);
+
     _allItems = List.from(_allContentItems);
     _filteredItems = List.from(_allContentItems);
     _selectedCategory = '추천';
@@ -621,43 +689,42 @@ class SearchService extends ChangeNotifier {
     }
   }
 
-  /// 검색 기록에 추가 (public)
-  void addToSearchHistory(String query) {
-    _addToSearchHistory(query);
-  }
+  /// 계정을 검색 기록에 추가 (객체 기반)
+  void addHistoryFromAccount(SearchContentItem account) {
+    if (!account.isAccount || (account.username?.isNotEmpty != true)) return;
 
-  /// 검색 기록에 추가 (private)
-  void _addToSearchHistory(String query) {
-    if (query.trim().isEmpty) return;
+    final entry = _SearchHistoryEntry(
+      username: account.username!,
+      title: account.alias ?? account.username!,
+      imageUrl: account.profileImageUrl,
+    );
 
-    final trimmedQuery = query.trim();
-
-    // 이미 존재하는 경우 제거
-    _searchHistory.remove(trimmedQuery);
+    // 중복 제거 (username 기준)
+    _searchHistory.removeWhere((e) => e.username == entry.username);
 
     // 맨 앞에 추가
-    _searchHistory.insert(0, trimmedQuery);
+    _searchHistory.insert(0, entry);
 
-    // 최대 크기 제한
+    // 최대 개수 제한
     if (_searchHistory.length > _maxHistorySize) {
       _searchHistory = _searchHistory.take(_maxHistorySize).toList();
     }
 
-    // SharedPreferences에 저장
     _saveSearchHistory();
+    notifyListeners();
 
     debugPrint(
-      '[SearchHistory] added: $trimmedQuery, total: ${_searchHistory.length}',
+      '[SearchHistory] added(username=${entry.username}) total=${_searchHistory.length}',
     );
   }
 
   /// 검색 기록에서 제거
-  void removeFromSearchHistory(String query) {
-    _searchHistory.remove(query);
+  void removeFromSearchHistory(String username) {
+    _searchHistory.removeWhere((e) => e.username == username);
     _saveSearchHistory();
     notifyListeners();
     debugPrint(
-      '[SearchHistory] removed: $query, total: ${_searchHistory.length}',
+      '[SearchHistory] removed: $username, total: ${_searchHistory.length}',
     );
   }
 
@@ -677,8 +744,25 @@ class SearchService extends ChangeNotifier {
 
       if (historyJson != null) {
         final List<dynamic> historyList = jsonDecode(historyJson);
-        _searchHistory = historyList.cast<String>();
-        debugPrint('[SearchHistory] loaded: ${_searchHistory.length} items');
+        final loaded =
+            historyList
+                .whereType<Map<String, dynamic>>()
+                .map((m) => _SearchHistoryEntry.fromJson(m))
+                .toList();
+        // username 기준 최신 우선 중복 제거
+        final seen = <String>{};
+        _searchHistory = [];
+        for (final e in loaded) {
+          final u = e.username;
+          if (u.isEmpty) continue;
+          if (!seen.contains(u)) {
+            _searchHistory.add(e);
+            seen.add(u);
+          }
+        }
+        debugPrint(
+          '[SearchHistory] loaded(objects): ${_searchHistory.length} items',
+        );
       } else {
         _searchHistory = [];
         debugPrint('[SearchHistory] no saved history found');
@@ -693,7 +777,9 @@ class SearchService extends ChangeNotifier {
   Future<void> _saveSearchHistory() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      final historyJson = jsonEncode(_searchHistory);
+      final historyJson = jsonEncode(
+        _searchHistory.map((e) => e.toJson()).toList(),
+      );
       await prefs.setString(_searchHistoryKey, historyJson);
       debugPrint('[SearchHistory] saved: ${_searchHistory.length} items');
     } catch (e) {
@@ -747,7 +833,7 @@ class SearchService extends ChangeNotifier {
     if (item.isAccount) {
       // 계정 액션 - 검색 기록에 추가
       debugPrint('[Tap] Account: ${item.username}');
-      _addToSearchHistory(_query);
+      addHistoryFromAccount(item);
 
       // 프로필로 네비게이션
       if (onNavigateToProfile != null) {
@@ -782,6 +868,26 @@ class SearchService extends ChangeNotifier {
       debugPrint('[Friend:$actionName][UNEXPECTED] $e');
       return false;
     }
+  }
+
+  /// 포커스 상태 업데이트
+  void setFocused(bool v) {
+    if (_viewLocked) return; // 잠금 중에는 포커스 변화 무시
+    if (_isFocused == v) return;
+    _isFocused = v;
+    notifyListeners();
+  }
+
+  void lockView() {
+    if (_viewLocked) return;
+    _viewLocked = true;
+    notifyListeners();
+  }
+
+  void unlockView() {
+    if (!_viewLocked) return;
+    _viewLocked = false;
+    notifyListeners();
   }
 
   @override
@@ -911,4 +1017,26 @@ class FriendSearchResult {
     required this.elapsed,
     required this.serverMessage,
   });
+}
+
+class _SearchHistoryEntry {
+  final String username;
+  final String? title; // alias 또는 표시명
+  final String? imageUrl;
+
+  _SearchHistoryEntry({required this.username, this.title, this.imageUrl});
+
+  factory _SearchHistoryEntry.fromJson(Map<String, dynamic> json) {
+    return _SearchHistoryEntry(
+      username: json['username']?.toString() ?? '',
+      title: json['title']?.toString(),
+      imageUrl: json['imageUrl']?.toString(),
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+    'username': username,
+    'title': title,
+    'imageUrl': imageUrl,
+  };
 }

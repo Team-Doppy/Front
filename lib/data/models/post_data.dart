@@ -14,6 +14,7 @@ class PostData {
   final AccessLevel accessLevel;
   final int viewCount;
   final int likeCount;
+  final bool isLiked;
 
   PostData({
     required this.id,
@@ -27,6 +28,7 @@ class PostData {
     required this.updatedAt,
     required this.viewCount,
     required this.likeCount,
+    required this.isLiked,
   });
 
   // 서버 데이터에서 PostData 생성
@@ -52,6 +54,8 @@ class PostData {
     }
 
     print('[PostData] content: ${data['thumbnailImageUrl']}');
+    print('[PostData] id: ${data['id']}');
+    print('[PostData] 전체 데이터: $data');
 
     return PostData(
       id: data['id']?.toString() ?? '',
@@ -74,6 +78,7 @@ class PostData {
           (data['likeCount'] is int)
               ? (data['likeCount'] as int)
               : int.tryParse('${data['likeCount'] ?? 0}') ?? 0,
+      isLiked: data['isLiked'] == true,
     );
   }
 
@@ -164,24 +169,28 @@ class PostData {
       }
 
       return {
-        'version': '1.0',
+        'id': id,
         'thumbnailImageUrl': thumbnailImageUrl,
         'title': title,
         'author': author,
         'authorProfileImageUrl': authorProfileImageUrl,
         'content': contentData,
+        'likeCount': likeCount,
+        'isLiked': isLiked,
         'stickers': [], // 서버에서 가져온 데이터에는 스티커가 없음
       };
     } catch (e) {
       print('[PostData] Error creating exported data: $e');
       // 에러 시 기본 데이터 반환
       return {
-        'version': '1.0',
+        'id': id,
         'thumbnailImageUrl': thumbnailImageUrl,
         'title': title,
         'author': author,
         'authorProfileImageUrl': authorProfileImageUrl,
         'content': {'nodes': []},
+        'likeCount': likeCount,
+        'isLiked': isLiked,
         'stickers': [],
       };
     }

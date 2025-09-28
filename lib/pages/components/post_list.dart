@@ -1,10 +1,9 @@
 // import 'dart:math';
-import 'dart:convert';
-import 'dart:ui' as ui;
 import 'package:doppy/pages/components/post_card.dart';
 import 'package:doppy/pages/screens/post_reader_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:doppy/data/models/post_data.dart';
+import 'package:doppy/data/services/like_service.dart';
 
 class PostList extends StatefulWidget {
   final double containerWidth;
@@ -31,12 +30,16 @@ class _PostListState extends State<PostList> {
   int _currentIndex = 0;
   bool _isScrolling = false;
   double _page = 0.0;
+  late List<PostData> _items;
+  final Set<String> _likingInFlight = <String>{};
+  final LikeService _likeService = LikeService();
 
   @override
   void initState() {
     super.initState();
     // 전체 화면 사용 (인스타그램 릴스 스타일)
     _pageController = PageController(viewportFraction: 0.88);
+    _items = List<PostData>.from(widget.posts);
     _pageController.addListener(() {
       if (_pageController.hasClients) {
         final current = _pageController.page ?? _currentIndex.toDouble();
@@ -47,29 +50,65 @@ class _PostListState extends State<PostList> {
         }
       }
     });
+
+    // LikeService 변경사항 감지
+    _likeService.addListener(_onLikeServiceChanged);
+
+    // 각 게시물의 좋아요 상태 확인
+    _loadLikeStatusForAllPosts();
+  }
+
+  void _onLikeServiceChanged() {
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
+  void _loadLikeStatusForAllPosts() {
+    // PostData에서 직접 좋아요 상태와 수 설정
+    for (final post in _items) {
+      final postId = post.id.toString();
+      if (postId.isNotEmpty) {
+        _likeService.setInitialLikeData(postId, post.isLiked, post.likeCount);
+      }
+    }
+  }
+
+  void _loadLikeStatusForNewPosts(List<PostData> newPosts) {
+    // 새로운 게시물들의 좋아요 상태와 수 설정
+    for (final post in newPosts) {
+      final postId = post.id.toString();
+      if (postId.isNotEmpty) {
+        _likeService.setInitialLikeData(postId, post.isLiked, post.likeCount);
+      }
+    }
+  }
+
+  @override
+  void didUpdateWidget(PostList oldWidget) {
+    super.didUpdateWidget(oldWidget);
+
+    // 새로운 게시물이 추가되었을 때 좋아요 상태 확인
+    if (widget.posts.length > oldWidget.posts.length) {
+      final newPosts = widget.posts.skip(oldWidget.posts.length).toList();
+      _loadLikeStatusForNewPosts(newPosts);
+    }
+
+    // 게시물 목록이 완전히 바뀌었을 때
+    if (widget.posts != oldWidget.posts) {
+      _items = List<PostData>.from(widget.posts);
+      _loadLikeStatusForAllPosts();
+    }
   }
 
   @override
   void dispose() {
+    _likeService.removeListener(_onLikeServiceChanged);
     _pageController.dispose();
     super.dispose();
   }
 
-  void _printLarge(String text, {int chunkSize = 800}) {
-    for (int i = 0; i < text.length; i += chunkSize) {
-      final end = (i + chunkSize < text.length) ? i + chunkSize : text.length;
-      debugPrint(text.substring(i, end));
-    }
-  }
-
-  void _printJsonFull(dynamic data) {
-    try {
-      final json = const JsonEncoder.withIndent('  ').convert(data);
-      _printLarge(json);
-    } catch (_) {
-      _printLarge(data.toString());
-    }
-  }
+  // debug helpers 제거 (미사용)
 
   @override
   Widget build(BuildContext context) {
@@ -155,7 +194,7 @@ class _PostListState extends State<PostList> {
             );
           }
 
-          final post = widget.posts[index];
+          final post = _items[index];
           return _buildPostItem(context, post, index);
         },
       ),
@@ -165,10 +204,10 @@ class _PostListState extends State<PostList> {
     final double topInset = MediaQuery.of(context).padding.top;
 
     final Widget header = Padding(
-      padding: EdgeInsets.fromLTRB(24, topInset + 8, 20, 0),
+      padding: EdgeInsets.fromLTRB(24, topInset, 20, 0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
-        children: [_buildTopRightAvatar(context), _buildStickyAuthor(context)],
+        children: [_buildStickyAuthor(context)],
       ),
     );
 
@@ -185,7 +224,11 @@ class _PostListState extends State<PostList> {
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
-      children: [header, Expanded(child: contentWithRefresh)],
+      children: [
+        SizedBox(height: 20),
+        Expanded(flex: 4, child: contentWithRefresh),
+        Expanded(flex: 1, child: header),
+      ],
     );
   }
 
@@ -201,12 +244,10 @@ class _PostListState extends State<PostList> {
     final double proximity = (1.0 - ad).clamp(0.0, 1.0);
     // 중앙 1.0, 가장자리도 살짝 보이도록 최소 0.9 유지
     double scale = 0.90 + 0.10 * proximity;
-    // 이웃 카드가 완전히 사라지지 않도록 최소 0.35 유지
-    double opacity = 0.35 + 0.65 * proximity;
-    // 멀수록 블러(최대 6) – 카드 존재감만 암시
-    double blur = (1.0 - proximity) * 2.0;
 
-    return GestureDetector(
+    // 블러 제거, 스케일/페이드만 유지
+
+    final content = GestureDetector(
       onTap: () {
         Navigator.of(context).push(
           PageRouteBuilder(
@@ -248,35 +289,87 @@ class _PostListState extends State<PostList> {
         );
       },
 
-      onDoubleTap: () {
-        debugPrint('double tap');
-        _printJsonFull(post.toServerLikeMap());
+      onDoubleTap: () async {
+        final id = post.id.toString();
+        if (id.isEmpty) {
+          print('[PostList] 유효하지 않은 포스트 ID: $id');
+          return;
+        }
+
+        if (_likingInFlight.contains(id)) return;
+        setState(() => _likingInFlight.add(id));
+
+        try {
+          await _likeService.togglePostLike(id);
+          // setState() 제거 - LikeService의 notifyListeners()가 자동으로 UI 업데이트
+        } catch (e) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('좋아요 처리 중 오류가 발생했습니다 $e'),
+                behavior: SnackBarBehavior.floating,
+                duration: const Duration(milliseconds: 900),
+              ),
+            );
+          }
+        } finally {
+          if (mounted) {
+            setState(() => _likingInFlight.remove(id));
+          }
+        }
       },
       child: Transform.scale(
         scale: scale,
-        child: Opacity(
-          opacity: opacity,
-          child: Center(
-            child: AspectRatio(
-              aspectRatio: 9 / 14,
-              child: ImageFiltered(
-                imageFilter: ui.ImageFilter.blur(sigmaX: blur, sigmaY: blur),
-                child: PostCard(
-                  containerWidth: widget.containerWidth,
-                  thumbnailImageUrl: post.thumbnailImageUrl,
-                  heroTag: 'post-hero-${post.id}-$index',
-                  title: post.title,
-                  author: post.author,
-                  authorProfileImageUrl: post.authorProfileImageUrl,
-                  content: post.parsedContent,
-                  isVisible: _currentIndex == index,
-                ),
-              ),
+        child: Center(
+          child: AspectRatio(
+            aspectRatio: 9 / 12,
+            child: PostCard(
+              containerWidth: widget.containerWidth,
+              thumbnailImageUrl: post.thumbnailImageUrl,
+              heroTag: 'post-hero-${post.id}-$index',
+              title: post.title,
+              author: post.author,
+              authorProfileImageUrl: post.authorProfileImageUrl,
+              content: post.parsedContent,
+              isVisible: _currentIndex == index,
+              postId: post.id.toString(),
+              isLiked: _likeService.isPostLiked(post.id.toString()),
+              likeCount: _likeService.getPostLikeCount(post.id.toString()),
+              onLikePressed: () async {
+                final id = post.id.toString();
+                if (id.isEmpty) {
+                  print('[PostList] 유효하지 않은 포스트 ID: $id');
+                  return;
+                }
+
+                if (_likingInFlight.contains(id)) return;
+                setState(() => _likingInFlight.add(id));
+
+                try {
+                  await _likeService.togglePostLike(id);
+                  // setState() 제거 - LikeService의 notifyListeners()가 자동으로 UI 업데이트
+                } catch (e) {
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('좋아요 처리 중 오류가 발생했습니다'),
+                        behavior: SnackBarBehavior.floating,
+                        duration: const Duration(milliseconds: 900),
+                      ),
+                    );
+                  }
+                } finally {
+                  if (mounted) {
+                    setState(() => _likingInFlight.remove(id));
+                  }
+                }
+              },
             ),
           ),
         ),
       ),
     );
+    return content;
   }
 
   Widget _buildStickyAuthor(BuildContext context) {
@@ -285,74 +378,39 @@ class _PostListState extends State<PostList> {
     }
     final safeIndex = _currentIndex.clamp(0, widget.posts.length - 1);
     final post = widget.posts[safeIndex];
-    final alias = '@${post.author.toLowerCase()}';
 
-    return Column(
-      key: ValueKey('author-${post.id}-$safeIndex'),
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          post.author,
-          textAlign: TextAlign.left,
-          style: const TextStyle(
-            color: Colors.white,
-            fontSize: 16,
-            fontWeight: FontWeight.w400,
-            letterSpacing: -0.2,
+    return Padding(
+      padding: const EdgeInsets.only(right: 20, left: 5),
+      child: Column(
+        key: ValueKey('author-${post.id}-$safeIndex'),
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            post.title,
+            textAlign: TextAlign.left,
+            style: TextStyle(
+              color: Theme.of(context).colorScheme.onSurface,
+              fontSize: 22,
+              fontWeight: FontWeight.bold,
+              letterSpacing: -0.2,
+            ),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
           ),
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-        ),
-        const SizedBox(height: 2),
-        Text(
-          alias,
-          textAlign: TextAlign.left,
-          style: const TextStyle(
-            color: Colors.white,
-            fontSize: 25,
-            fontWeight: FontWeight.w700,
-            letterSpacing: -0.2,
-          ),
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-        ),
-      ],
-    );
-  }
-
-  Widget _buildTopRightAvatar(BuildContext context) {
-    if (widget.posts.isEmpty) return const SizedBox.shrink();
-    final safeIndex = _currentIndex.clamp(0, widget.posts.length - 1);
-    final post = widget.posts[safeIndex];
-    return Container(
-      width: 60,
-      height: 60,
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(60),
-        border: Border.all(color: Colors.white, width: 3),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.15),
-            blurRadius: 8,
-            offset: const Offset(0, 3),
+          const SizedBox(height: 4),
+          Text(
+            post.parsedContent,
+            textAlign: TextAlign.left,
+            style: TextStyle(
+              color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+              letterSpacing: -0.2,
+            ),
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
           ),
         ],
-      ),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(60),
-        child:
-            (post.authorProfileImageUrl.isNotEmpty)
-                ? Image.network(
-                  post.authorProfileImageUrl,
-                  width: 60,
-                  height: 60,
-                  fit: BoxFit.cover,
-                )
-                : Container(
-                  color: Colors.white,
-                  child: const Icon(Icons.person, color: Colors.black54),
-                ),
       ),
     );
   }

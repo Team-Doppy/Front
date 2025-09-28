@@ -6,7 +6,6 @@ import '../../data/models/friend_model.dart';
 import 'manage_group_screen.dart';
 import '../../data/models/user_model.dart';
 import 'user_profile_screen.dart';
-import '../components/shimmer_box.dart';
 
 // 이웃 관리 화면 메인 위젯
 class ManageNeighborScreen extends StatefulWidget {
@@ -27,6 +26,7 @@ class _ManageNeighborScreenState extends State<ManageNeighborScreen> {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
+      // 캐시된 데이터 사용 (30분 내 재방문 시 네트워크 요청 없음)
       context.read<FriendProvider>().fetchAllFriendData();
     });
   }
@@ -39,9 +39,9 @@ class _ManageNeighborScreenState extends State<ManageNeighborScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final friendProv = context.watch<FriendProvider>();
+    // context.read로 변경하여 불필요한 재빌드 방지
+    final friendProv = context.read<FriendProvider>();
     final List<Friend> friends = friendProv.acceptedFriends;
-    final bool loading = friendProv.isLoading;
 
     // 로컬 필터링
     final lower = _query.trim().toLowerCase();
@@ -93,125 +93,121 @@ class _ManageNeighborScreenState extends State<ManageNeighborScreen> {
         body: TabBarView(
           children: [
             // 이웃 탭
-            loading
-                ? const _ShimmerNeighbors()
-                : RefreshIndicator(
-                  onRefresh:
-                      () => context.read<FriendProvider>().fetchAllFriendData(),
-                  child: Builder(
-                    builder: (context) {
-                      final received = friendProv.receivedRequests;
-                      final sent = friendProv.sentRequests;
-                      final List<dynamic> items = [];
-                      if (received.isNotEmpty) {
-                        items.add('title:받은 요청');
-                        for (final f in received) {
-                          items.add({'type': 'recv', 'friend': f});
-                        }
-                      }
-                      if (sent.isNotEmpty) {
-                        if (items.isNotEmpty) items.add('divider');
-                        items.add('title:보낸 요청');
-                        for (final f in sent) {
-                          items.add({'type': 'sent', 'friend': f});
-                        }
-                      }
-                      if (filtered.isNotEmpty) {
-                        if (items.isNotEmpty) items.add('divider');
-                        for (final f in filtered) {
-                          items.add({'type': 'friend', 'friend': f});
-                        }
-                      }
+            RefreshIndicator(
+              onRefresh:
+                  () => context.read<FriendProvider>().fetchAllFriendData(),
+              child: Builder(
+                builder: (context) {
+                  final received = friendProv.receivedRequests;
+                  final sent = friendProv.sentRequests;
+                  final List<dynamic> items = [];
+                  if (received.isNotEmpty) {
+                    items.add('title:받은 요청');
+                    for (final f in received) {
+                      items.add({'type': 'recv', 'friend': f});
+                    }
+                  }
+                  if (sent.isNotEmpty) {
+                    if (items.isNotEmpty) items.add('divider');
+                    items.add('title:보낸 요청');
+                    for (final f in sent) {
+                      items.add({'type': 'sent', 'friend': f});
+                    }
+                  }
+                  if (filtered.isNotEmpty) {
+                    if (items.isNotEmpty) items.add('divider');
+                    for (final f in filtered) {
+                      items.add({'type': 'friend', 'friend': f});
+                    }
+                  }
 
-                      return ListView.separated(
-                        padding: const EdgeInsets.fromLTRB(0, 8, 0, 24),
-                        itemBuilder: (context, index) {
-                          final it = items[index];
-                          if (it is String) {
-                            if (it == 'divider') {
-                              return Padding(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 2,
-                                ),
-                                child: Divider(
-                                  height: 10,
-                                  color: Colors.grey.withOpacity(0.4),
-                                ),
-                              );
-                            }
-                            if (it.startsWith('title:')) {
-                              final t = it.substring('title:'.length);
-                              return Padding(
-                                padding: const EdgeInsets.only(
-                                  left: 12,
-                                  bottom: 6,
-                                  top: 2,
-                                ),
-                                child: Text(
-                                  t,
-                                  style: TextStyle(
-                                    fontWeight: FontWeight.w700,
-                                    color: Theme.of(
-                                      context,
-                                    ).colorScheme.onSurface.withOpacity(0.7),
-                                  ),
-                                ),
-                              );
-                            }
-                          }
-                          final map = it as Map<String, dynamic>;
-                          final f = map['friend'] as Friend;
-                          final type = map['type'] as String;
-                          if (type == 'recv') {
-                            return _ReceivedFriendRow(
-                              friend: f,
-                              onAccept: () async {
-                                final ok = await context
-                                    .read<FriendProvider>()
-                                    .acceptFriendRequestOptimistic(f.username);
-                                if (ok && context.mounted) {
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    const SnackBar(content: Text('요청을 수락했어요')),
-                                  );
-                                }
-                              },
-                            );
-                          }
-                          if (type == 'sent') {
-                            return _PendingFriendRow(
-                              friend: f,
-                              onCancel: () async {
-                                final ok = await context
-                                    .read<FriendProvider>()
-                                    .cancelSentRequestOptimistic(f.username);
-                                if (ok && context.mounted) {
-                                  print('요청 취소 성공');
-                                }
-                              },
-                            );
-                          }
-                          return _FriendRow(
-                            friend: f,
-                            onDelete: () async {
-                              final ok = await context
-                                  .read<FriendProvider>()
-                                  .deleteFriend(f.username);
-                              if (ok && context.mounted) {
-                                print('이웃 해제 성공');
-
-                                await context
-                                    .read<GroupProvider>()
-                                    .fetchMyGroups(forceRefresh: true);
-                              }
-                            },
+                  return ListView.separated(
+                    padding: const EdgeInsets.fromLTRB(0, 8, 0, 24),
+                    itemBuilder: (context, index) {
+                      final it = items[index];
+                      if (it is String) {
+                        if (it == 'divider') {
+                          return Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 2),
+                            child: Divider(
+                              height: 10,
+                              color: Colors.grey.withOpacity(0.4),
+                            ),
                           );
+                        }
+                        if (it.startsWith('title:')) {
+                          final t = it.substring('title:'.length);
+                          return Padding(
+                            padding: const EdgeInsets.only(
+                              left: 12,
+                              bottom: 6,
+                              top: 2,
+                            ),
+                            child: Text(
+                              t,
+                              style: TextStyle(
+                                fontWeight: FontWeight.w700,
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.onSurface.withOpacity(0.7),
+                              ),
+                            ),
+                          );
+                        }
+                      }
+                      final map = it as Map<String, dynamic>;
+                      final f = map['friend'] as Friend;
+                      final type = map['type'] as String;
+                      if (type == 'recv') {
+                        return _ReceivedFriendRow(
+                          friend: f,
+                          onAccept: () async {
+                            final ok = await context
+                                .read<FriendProvider>()
+                                .acceptFriendRequestOptimistic(f.username);
+                            if (ok && context.mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(content: Text('요청을 수락했어요')),
+                              );
+                            }
+                          },
+                        );
+                      }
+                      if (type == 'sent') {
+                        return _PendingFriendRow(
+                          friend: f,
+                          onCancel: () async {
+                            final ok = await context
+                                .read<FriendProvider>()
+                                .cancelSentRequestOptimistic(f.username);
+                            if (ok && context.mounted) {
+                              print('요청 취소 성공');
+                            }
+                          },
+                        );
+                      }
+                      return _FriendRow(
+                        friend: f,
+                        onDelete: () async {
+                          final ok = await context
+                              .read<FriendProvider>()
+                              .deleteFriend(f.username);
+                          if (ok && context.mounted) {
+                            print('이웃 해제 성공');
+
+                            await context.read<GroupProvider>().fetchMyGroups(
+                              forceRefresh: true,
+                            );
+                          }
                         },
-                        separatorBuilder: (_, __) => const SizedBox(height: 8),
-                        itemCount: items.length,
                       );
                     },
-                  ),
-                ),
+                    separatorBuilder: (_, __) => const SizedBox(height: 8),
+                    itemCount: items.length,
+                  );
+                },
+              ),
+            ),
             // 그룹 탭: 기존 그룹 관리 UI를 임베드
             ManageGroupScreen(embedded: true, filterText: _query),
           ],
@@ -266,33 +262,18 @@ class _FriendRow extends StatelessWidget {
                     height: 60,
                     child:
                         ((friend.profileImageUrl ?? '').isNotEmpty)
-                            ? Stack(
-                              fit: StackFit.expand,
-                              children: [
-                                const ShimmerBox(
-                                  width: double.infinity,
-                                  height: double.infinity,
-                                ),
-                                Image.network(
-                                  friend.profileImageUrl!,
-                                  fit: BoxFit.cover,
-                                  loadingBuilder: (ctx, child, prog) {
-                                    if (prog == null) return child;
-                                    return const ShimmerBox(
-                                      width: double.infinity,
-                                      height: double.infinity,
-                                    );
-                                  },
-                                  errorBuilder:
-                                      (_, __, ___) => Icon(
-                                        Icons.person,
-                                        color:
-                                            Theme.of(
-                                              context,
-                                            ).colorScheme.onSurfaceVariant,
-                                      ),
-                                ),
-                              ],
+                            ? Image.network(
+                              friend.profileImageUrl!,
+                              fit: BoxFit.cover,
+
+                              errorBuilder:
+                                  (_, __, ___) => Icon(
+                                    Icons.person,
+                                    color:
+                                        Theme.of(
+                                          context,
+                                        ).colorScheme.onSurfaceVariant,
+                                  ),
                             )
                             : Icon(
                               Icons.person,
@@ -476,14 +457,29 @@ class _ProfileRow extends StatelessWidget {
           child: CircleAvatar(
             radius: 30,
             backgroundColor: Theme.of(context).colorScheme.surfaceVariant,
-            foregroundImage:
+            child:
                 (friend.profileImageUrl ?? '').isNotEmpty
-                    ? NetworkImage(friend.profileImageUrl!)
-                    : null,
-            child: Icon(
-              Icons.person,
-              color: Theme.of(context).colorScheme.onSurfaceVariant,
-            ),
+                    ? ClipOval(
+                      child: Image.network(
+                        friend.profileImageUrl!,
+                        width: 60,
+                        height: 60,
+                        fit: BoxFit.cover,
+                        filterQuality: FilterQuality.low,
+                        errorBuilder:
+                            (_, __, ___) => Icon(
+                              Icons.person,
+                              color:
+                                  Theme.of(
+                                    context,
+                                  ).colorScheme.onSurfaceVariant,
+                            ),
+                      ),
+                    )
+                    : Icon(
+                      Icons.person,
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
           ),
         ),
         title: Hero(
@@ -626,45 +622,6 @@ class _SearchField extends StatelessWidget {
           borderRadius: BorderRadius.circular(20),
         ),
       ),
-    );
-  }
-}
-
-class _ShimmerNeighbors extends StatelessWidget {
-  const _ShimmerNeighbors();
-
-  @override
-  Widget build(BuildContext context) {
-    return ListView.separated(
-      padding: const EdgeInsets.fromLTRB(12, 12, 12, 24),
-      itemBuilder: (_, __) {
-        return Row(
-          children: [
-            const ClipOval(child: ShimmerBox(width: 60, height: 60)),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: const [
-                  ShimmerBox(
-                    width: 160,
-                    height: 14,
-                    borderRadius: BorderRadius.all(Radius.circular(6)),
-                  ),
-                  SizedBox(height: 8),
-                  ShimmerBox(
-                    width: 100,
-                    height: 12,
-                    borderRadius: BorderRadius.all(Radius.circular(6)),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        );
-      },
-      separatorBuilder: (_, __) => const SizedBox(height: 12),
-      itemCount: 10,
     );
   }
 }

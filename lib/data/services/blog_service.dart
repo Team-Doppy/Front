@@ -16,6 +16,11 @@ class BlogService {
   static DateTime? _lastCacheTime;
   static const Duration _cacheExpiry = Duration(hours: 12);
 
+  // 내 포스트 캐시 (page/size 별)
+  static final Map<String, List<Map<String, dynamic>>> _myPostsCache = {};
+  static DateTime? _myPostsCachedAt;
+  static const Duration _myPostsExpiry = Duration(minutes: 30);
+
   /// 캐시가 유효한지 확인
   static bool _isCacheValid() {
     if (_lastCacheTime == null || _cachedPosts.isEmpty) {
@@ -28,6 +33,16 @@ class BlogService {
   static void _invalidateCache() {
     _cachedPosts.clear();
     _lastCacheTime = null;
+  }
+
+  static bool _isMyPostsCacheValid() {
+    if (_myPostsCachedAt == null || _myPostsCache.isEmpty) return false;
+    return DateTime.now().difference(_myPostsCachedAt!) < _myPostsExpiry;
+  }
+
+  static void _invalidateMyPostsCache() {
+    _myPostsCache.clear();
+    _myPostsCachedAt = null;
   }
 
   /// 블로그 포스트를 서버에 업로드합니다.
@@ -98,6 +113,7 @@ class BlogService {
 
       // 새 포스트 업로드 시 캐시 무효화
       _invalidateCache();
+      _invalidateMyPostsCache();
 
       return decoded;
     } else {
@@ -202,6 +218,42 @@ class BlogService {
       throw HttpException(
         'post delete failed ${response.statusCode}: $responseBody',
       );
+    }
+  }
+
+  /// 좋아요 추가
+  Future<void> likePost(String postId) async {
+    final uri = Uri.parse('$_baseUrl/api/posts/$postId/like');
+    final token = await AuthService().getToken();
+    final response = await http
+        .post(
+          uri,
+          headers: {
+            'Authorization': 'Bearer $token',
+            'Content-Type': 'application/json',
+          },
+        )
+        .timeout(const Duration(seconds: 10));
+    if (response.statusCode != 200 && response.statusCode != 204) {
+      throw HttpException('Failed to like post: ${response.statusCode}');
+    }
+  }
+
+  /// 좋아요 취소
+  Future<void> unlikePost(String postId) async {
+    final uri = Uri.parse('$_baseUrl/api/posts/$postId/unlike');
+    final token = await AuthService().getToken();
+    final response = await http
+        .post(
+          uri,
+          headers: {
+            'Authorization': 'Bearer $token',
+            'Content-Type': 'application/json',
+          },
+        )
+        .timeout(const Duration(seconds: 10));
+    if (response.statusCode != 200 && response.statusCode != 204) {
+      throw HttpException('Failed to unlike post: ${response.statusCode}');
     }
   }
 
@@ -314,6 +366,13 @@ class BlogService {
     int size = 10,
   }) async {
     try {
+      // 캐시 키: page|size
+      final String cacheKey = '$page|$size';
+      if (_isMyPostsCacheValid() && _myPostsCache.containsKey(cacheKey)) {
+        print('[BlogService] Using cached my posts: key=$cacheKey');
+        return _myPostsCache[cacheKey]!;
+      }
+
       final token = await AuthService().getToken();
       final uri = Uri.parse('$_baseUrl/api/posts/my?page=$page&size=$size');
 
@@ -333,6 +392,9 @@ class BlogService {
         final data = json.decode(response.body);
         final posts = List<Map<String, dynamic>>.from(data['content'] ?? []);
         print('[BlogService] Successfully fetched ${posts.length} my posts');
+        // 캐시 저장
+        _myPostsCache[cacheKey] = posts;
+        _myPostsCachedAt = DateTime.now();
         return posts;
       } else {
         print('[BlogService] Error ${response.statusCode}: ${response.body}');

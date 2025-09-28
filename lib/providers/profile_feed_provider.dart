@@ -20,16 +20,8 @@ class ProfileFeedProvider extends ChangeNotifier {
 
   int _page = 0;
 
-  DateTime? _lastLoadedAt;
-  Duration ttl = const Duration(hours: 12);
-
   String? _username; // 조회 대상
 
-  final Map<String, List<Map<String, dynamic>>> _userPosts = {};
-  final Map<String, DateTime> _userLastLoadedAt = {};
-  final Map<String, int> _userPage = {};
-  final Map<String, bool> _userHasMore = {};
-  // 대상 사용자별 인플라이트 로딩 가드
   final Set<String> _inFlightUsers = <String>{};
 
   Future<void> loadInitial({String? username, bool force = false}) async {
@@ -75,17 +67,13 @@ class ProfileFeedProvider extends ChangeNotifier {
         ..addAll(fetched);
       _hasMore = fetched.length == 10;
       if (_hasMore) _page += 1;
-      _lastLoadedAt = DateTime.now();
+      // 로드 타임스탬프는 사용하지 않음
       // 캐시 비활성화: 저장하지 않음
     } catch (e) {
       // 실패(예: 404) 시 빈 피드로 표시는 유지. 캐시는 사용하지 않음
       _posts.clear();
       _hasMore = false;
-      _lastLoadedAt = DateTime.now();
-      _userPosts.remove(_username!);
-      _userLastLoadedAt.remove(_username!);
-      _userPage.remove(_username!);
-      _userHasMore[_username!] = false;
+      // 캐시 사용 안함
     } finally {
       _loading = false;
       if (_username != null) _inFlightUsers.remove(_username!);
@@ -93,11 +81,8 @@ class ProfileFeedProvider extends ChangeNotifier {
     }
   }
 
-  Future<void> refresh() async {
-    await loadInitial(force: true);
-  }
+  Future<void> refresh() async => loadInitial(force: true);
 
-  /// 사용자 요청에 의한 풀 리프레시(끌어내려 새로고침):
   /// 즉시 화면에서 기존 목록을 비우고 강제 재로딩
   Future<void> hardRefresh({String? username}) async {
     _posts.clear();
@@ -132,19 +117,5 @@ class ProfileFeedProvider extends ChangeNotifier {
       _loadingMore = false;
       notifyListeners();
     }
-  }
-
-  void invalidate() {
-    _lastLoadedAt = null;
-    if (_username != null) {
-      _userLastLoadedAt.remove(_username!);
-    }
-  }
-
-  // 내 글이 변경되었다는 이벤트를 외부에서 호출할 때 사용
-  void onMyPostsChanged() {
-    invalidate();
-    // 화면에 즉시 반영되도록 캐시 클리어는 하지 않고, 다음 진입/다시 보기에서 재로딩
-    notifyListeners();
   }
 }

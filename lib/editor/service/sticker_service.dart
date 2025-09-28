@@ -1,5 +1,6 @@
 import 'dart:ui';
 import 'dart:typed_data';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 
 enum StickerType { image, text, emoji }
@@ -246,6 +247,87 @@ class StickerService extends ChangeNotifier {
     _stickers.clear();
     _selectedId = null;
     notifyListeners();
+  }
+
+  /// 임시저장 데이터에서 스티커 복원
+  void addStickerFromData(Map<String, dynamic> stickerData) {
+    try {
+      final id =
+          stickerData['id']?.toString() ??
+          DateTime.now().millisecondsSinceEpoch.toString();
+      final typeString = stickerData['type']?.toString() ?? 'text';
+      final StickerType type = _parseStickerType(typeString);
+
+      // 위치 복원
+      final positionData = stickerData['anchor'];
+      Offset position = const Offset(100, 100); // 기본값
+      if (positionData is Map) {
+        final relX = positionData['relX']?.toDouble() ?? 0.0;
+        final relY = positionData['relY']?.toDouble() ?? 0.0;
+        position = Offset(relX, relY);
+      }
+
+      // 기타 속성들
+      final scale = (stickerData['scale'] ?? 1.0).toDouble();
+      final rotation = (stickerData['rotation'] ?? 0.0).toDouble();
+      final opacity = (stickerData['opacity'] ?? 1.0).toDouble();
+      final zIndex = (stickerData['zIndex'] ?? 0).toInt();
+
+      // 컨텐츠 복원
+      dynamic content;
+      switch (type) {
+        case StickerType.text:
+          final contentData = stickerData['content'];
+          if (contentData is Map) {
+            content = contentData; // {text, style} 형태 그대로 저장
+          } else {
+            content = {'text': contentData?.toString() ?? '', 'style': null};
+          }
+          break;
+        case StickerType.emoji:
+          content = stickerData['content']?.toString() ?? '😀';
+          break;
+        case StickerType.image:
+          final contentData = stickerData['content'];
+          if (contentData is Map && contentData['bytes'] != null) {
+            // base64 문자열을 Uint8List로 복원
+            final base64String = contentData['bytes'].toString();
+            content = base64Decode(base64String);
+          } else {
+            return; // 이미지 데이터가 없으면 스킵
+          }
+          break;
+      }
+
+      final sticker = Sticker(
+        id: id,
+        type: type,
+        content: content,
+        position: position,
+        scale: scale,
+        rotation: rotation,
+        opacity: opacity,
+        zIndex: zIndex,
+      );
+
+      _stickers.add(sticker);
+      notifyListeners();
+    } catch (e) {
+      print('[StickerService] Error adding sticker from data: $e');
+    }
+  }
+
+  StickerType _parseStickerType(String typeString) {
+    switch (typeString) {
+      case 'text':
+        return StickerType.text;
+      case 'emoji':
+        return StickerType.emoji;
+      case 'image':
+        return StickerType.image;
+      default:
+        return StickerType.text;
+    }
   }
 
   void remove(String id) {

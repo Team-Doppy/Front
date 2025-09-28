@@ -22,6 +22,7 @@ import 'package:doppy/editor/style/style_sheet.dart';
 import 'package:doppy/editor/style/defualt_toolbar.dart';
 import 'package:doppy/editor/sticker_canvas.dart';
 import 'package:doppy/theme/app_colors.dart';
+import 'package:doppy/theme/app_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter/services.dart';
@@ -40,10 +41,15 @@ enum NodeType { paragraph, image, imageRow, location, unknown }
 class PostwriteScreen extends StatefulWidget {
   final double screenWidth;
   final Map<String, dynamic>? initialExported; // 기존 글 불러오기용
+  final bool isEditMode; // 수정 모드 여부
+  final String? postId; // 수정할 포스트 ID
+
   const PostwriteScreen({
     super.key,
     required this.screenWidth,
     this.initialExported,
+    this.isEditMode = false,
+    this.postId,
   });
 
   @override
@@ -415,7 +421,6 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
         return false;
       },
       child: Scaffold(
-        backgroundColor: Theme.of(context).scaffoldBackgroundColor,
         resizeToAvoidBottomInset: true,
         appBar: AppBar(
           backgroundColor: Theme.of(context).appBarTheme.backgroundColor,
@@ -451,51 +456,53 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
           ),
           actions: [
             // 임시저장 목록 버튼
-            TextButton(
-              onPressed: _showDraftList,
-              child: Text(
-                '불러오기',
-                style: TextStyle(
-                  fontWeight: FontWeight.w600,
+            if (!widget.isEditMode)
+              TextButton(
+                onPressed: _showDraftList,
+                child: Text(
+                  '불러오기',
+                  style: TextStyle(
+                    fontWeight: FontWeight.w600,
 
-                  color: Theme.of(
-                    context,
-                  ).colorScheme.onSurface.withOpacity(0.5),
-                ),
-              ),
-            ),
-
-            TextButton(
-              onPressed: () {
-                //키보드 내리기
-                FocusScope.of(context).unfocus();
-
-                final json = PostExporter.exportToJsonString(
-                  editorService: editorService,
-                  stickerService: context.read<StickerService>(),
-                  viewportSize: MediaQuery.of(context).size,
-                  pretty: true,
-                );
-                ImageService().selectImage(null);
-                // ignore: avoid_print
-                print('===== POST JSON =====\n$json');
-                Navigator.of(context).push(
-                  PageRouteBuilder(
-                    opaque: false,
-                    barrierDismissible: true,
-                    pageBuilder:
-                        (_, __, ___) => PostExportScreen(exported: json),
+                    color: Theme.of(
+                      context,
+                    ).colorScheme.onSurface.withOpacity(0.5),
                   ),
-                );
-              },
-              child: Text(
-                '다음',
-                style: TextStyle(
-                  color: Theme.of(context).colorScheme.onSurface,
-                  fontWeight: FontWeight.w600,
                 ),
               ),
-            ),
+
+            if (!widget.isEditMode)
+              TextButton(
+                onPressed: () {
+                  //키보드 내리기
+                  FocusScope.of(context).unfocus();
+
+                  final json = PostExporter.exportToJsonString(
+                    editorService: editorService,
+                    stickerService: context.read<StickerService>(),
+                    viewportSize: MediaQuery.of(context).size,
+                    pretty: true,
+                  );
+                  ImageService().selectImage(null);
+                  // ignore: avoid_print
+                  print('===== POST JSON =====\n$json');
+                  Navigator.of(context).push(
+                    PageRouteBuilder(
+                      opaque: false,
+                      barrierDismissible: true,
+                      pageBuilder:
+                          (_, __, ___) => PostExportScreen(exported: json),
+                    ),
+                  );
+                },
+                child: Text(
+                  '다음',
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.onSurface,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
             SizedBox(width: 10),
           ],
         ),
@@ -522,10 +529,10 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                         children: [
                           // 타이틀 문단은 SuperEditor 안에서 metadata로 스타일링 처리
                           Expanded(
-                            child: Focus(
-                              focusNode: _editorFocusNode,
-                              child: Theme(
-                                data: Theme.of(context),
+                            child: Theme(
+                              data: AppTheme.lightTheme,
+                              child: Focus(
+                                focusNode: _editorFocusNode,
                                 child: SuperEditor(
                                   gestureMode:
                                       Platform.isIOS
@@ -535,8 +542,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                                   stylesheet: buildCustomStylesheet(context),
                                   documentLayoutKey: _documentLayoutKey,
                                   scrollController: scrollController,
-                                  androidHandleColor: AppColors.primary,
-                                  iOSHandleColor: AppColors.primary,
+
                                   selectionStyle: SelectionStyles(
                                     selectionColor: AppColors.primary
                                         .withOpacity(0.3),
@@ -780,8 +786,9 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     if (selectedId == null) return const SizedBox.shrink();
 
     final node = document.getNodeById(selectedId);
-    if (node is! ImageNode && node is! ImageRowNode)
+    if (node is! ImageNode && node is! ImageRowNode) {
       return const SizedBox.shrink();
+    }
 
     // 이미지 URL 가져오기
     String imageUrl;
