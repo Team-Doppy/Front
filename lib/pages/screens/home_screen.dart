@@ -98,7 +98,7 @@ class _HomeScreenState extends State<HomeScreen> {
         title: Text(
           ' doppy',
           style: TextStyle(
-            fontWeight: FontWeight.bold,
+            fontWeight: FontWeight.w300,
             fontSize: 24,
             color: Theme.of(context).colorScheme.primary,
           ),

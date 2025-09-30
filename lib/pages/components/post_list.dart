@@ -225,7 +225,6 @@ class _PostListState extends State<PostList> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        SizedBox(height: 20),
         Expanded(flex: 4, child: contentWithRefresh),
         Expanded(flex: 1, child: header),
       ],

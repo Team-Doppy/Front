@@ -6,6 +6,7 @@ import '../../data/models/friend_model.dart';
 import 'manage_group_screen.dart';
 import '../../data/models/user_model.dart';
 import 'user_profile_screen.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 
 // 이웃 관리 화면 메인 위젯
 class ManageNeighborScreen extends StatefulWidget {
@@ -262,18 +263,36 @@ class _FriendRow extends StatelessWidget {
                     height: 60,
                     child:
                         ((friend.profileImageUrl ?? '').isNotEmpty)
-                            ? Image.network(
-                              friend.profileImageUrl!,
+                            ? CachedNetworkImage(
+                              imageUrl: friend.profileImageUrl!,
                               fit: BoxFit.cover,
-
-                              errorBuilder:
-                                  (_, __, ___) => Icon(
+                              placeholder:
+                                  (context, url) => const SizedBox(
+                                    width: 60,
+                                    height: 60,
+                                    child: Center(
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                      ),
+                                    ),
+                                  ),
+                              errorWidget:
+                                  (context, url, error) => Icon(
                                     Icons.person,
                                     color:
                                         Theme.of(
                                           context,
                                         ).colorScheme.onSurfaceVariant,
                                   ),
+                              // 프로필 이미지 캐시 설정
+                              memCacheWidth: 120,
+
+                              maxWidthDiskCache: 120,
+
+                              fadeInDuration: Duration.zero,
+                              fadeOutDuration: Duration.zero,
+                              cacheKey:
+                                  'manage_profile_${friend.profileImageUrl}',
                             )
                             : Icon(
                               Icons.person,
@@ -460,20 +479,35 @@ class _ProfileRow extends StatelessWidget {
             child:
                 (friend.profileImageUrl ?? '').isNotEmpty
                     ? ClipOval(
-                      child: Image.network(
-                        friend.profileImageUrl!,
+                      child: CachedNetworkImage(
+                        imageUrl: friend.profileImageUrl!,
                         width: 60,
                         height: 60,
                         fit: BoxFit.cover,
-                        filterQuality: FilterQuality.low,
-                        errorBuilder:
-                            (_, __, ___) => Icon(
+                        placeholder:
+                            (context, url) => const SizedBox(
+                              width: 60,
+                              height: 60,
+                              child: Center(
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              ),
+                            ),
+                        errorWidget:
+                            (context, url, error) => Icon(
                               Icons.person,
                               color:
                                   Theme.of(
                                     context,
                                   ).colorScheme.onSurfaceVariant,
                             ),
+                        // 프로필 이미지 캐시 설정
+                        memCacheWidth: 120,
+                        maxWidthDiskCache: 120,
+                        fadeInDuration: Duration.zero,
+                        fadeOutDuration: Duration.zero,
+                        cacheKey: 'manage_profile_${friend.profileImageUrl}',
                       ),
                     )
                     : Icon(

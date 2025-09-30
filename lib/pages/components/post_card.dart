@@ -72,7 +72,7 @@ class _PostCardState extends State<PostCard> {
           ),
         ),
         child: ClipRRect(
-          borderRadius: BorderRadius.circular(7), // 보더 두께만큼 작게
+          borderRadius: BorderRadius.circular(3), // 보더 두께만큼 작게
           child: Image.network(
             widget.thumbnailImageUrl,
             fit: BoxFit.cover,

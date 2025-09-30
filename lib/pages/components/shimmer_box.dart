@@ -1,7 +1,7 @@
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
-/// Lightweight shimmer without external packages.
-/// Uses an animated sweeping gradient.
+/// Modern shimmer effect with smooth wave animation
 class ShimmerBox extends StatefulWidget {
   final double width;
   final double height;
@@ -22,45 +22,52 @@ class ShimmerBox extends StatefulWidget {
 
 class _ShimmerBoxState extends State<ShimmerBox>
     with SingleTickerProviderStateMixin {
-  late final AnimationController _ctrl;
+  late final AnimationController _controller;
 
   @override
   void initState() {
     super.initState();
-    _ctrl = AnimationController(
+    _controller = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 1200),
+      duration: const Duration(milliseconds: 2000),
     )..repeat();
   }
 
   @override
   void dispose() {
-    _ctrl.dispose();
+    _controller.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    final base = Theme.of(context).colorScheme.surfaceVariant;
-    final highlight = base.withOpacity(0.6);
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+
+    // 화이트 모드에서도 잘 보이도록 색상 조정
+    final baseColor =
+        isDark ? theme.colorScheme.surfaceVariant : Colors.grey[300]!;
+    final highlightColor = isDark ? theme.colorScheme.surface : Colors.white;
+
     return AnimatedBuilder(
-      animation: _ctrl,
-      builder: (_, __) {
-        final double t = _ctrl.value; // 0..1
+      animation: _controller,
+      builder: (context, child) {
+        // 펄스 효과를 위한 투명도 계산
+        final double pulseValue =
+            (1.0 + math.sin(2 * math.pi * _controller.value)) / 2.0;
+        final double opacity = 0.2 + (0.6 * pulseValue);
+
         return Container(
           width: widget.width,
           height: widget.height,
-          decoration: ShapeDecoration(
-            shape:
-                widget.shape ??
-                RoundedRectangleBorder(
-                  borderRadius: widget.borderRadius ?? BorderRadius.circular(8),
-                ),
-            gradient: LinearGradient(
-              begin: Alignment(-1 + 2 * t, -1),
-              end: Alignment(1 + 2 * t, 1),
-              colors: [base, highlight, base],
-              stops: const [0.25, 0.5, 0.75],
+          decoration: BoxDecoration(
+            borderRadius: widget.borderRadius ?? BorderRadius.circular(8),
+            color: baseColor,
+          ),
+          child: Container(
+            decoration: BoxDecoration(
+              borderRadius: widget.borderRadius ?? BorderRadius.circular(8),
+              color: highlightColor.withOpacity(opacity),
             ),
           ),
         );

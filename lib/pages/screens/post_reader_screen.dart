@@ -15,6 +15,7 @@ import 'package:doppy/data/services/comment_service.dart';
 import 'package:doppy/data/services/like_service.dart';
 import 'package:doppy/pages/components/comment_bottom_sheet.dart';
 import 'package:doppy/pages/components/comment_shimmer.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 
 // 읽기 전용에서는 에디터 전용 컴포넌트를 사용하지 않음
 import 'package:doppy/editor/component/link_component.dart';
@@ -340,13 +341,37 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                                               ?.toString()
                                               .isNotEmpty ??
                                           false)
-                                      ? Image.network(
-                                        widget.exported['authorProfileImageUrl']
-                                            .toString(),
+                                      ? CachedNetworkImage(
+                                        imageUrl:
+                                            widget
+                                                .exported['authorProfileImageUrl']
+                                                .toString(),
                                         fit: BoxFit.cover,
-                                        cacheWidth: 200,
-                                        cacheHeight: 200,
-                                        filterQuality: FilterQuality.low,
+                                        placeholder:
+                                            (context, url) => const SizedBox(
+                                              width: 30,
+                                              height: 30,
+                                              child: Center(
+                                                child:
+                                                    CircularProgressIndicator(
+                                                      strokeWidth: 2,
+                                                    ),
+                                              ),
+                                            ),
+                                        errorWidget:
+                                            (context, url, error) => Icon(
+                                              Icons.person,
+                                              color:
+                                                  Theme.of(context)
+                                                      .colorScheme
+                                                      .onSurfaceVariant,
+                                            ),
+                                        memCacheWidth: 60,
+                                        maxWidthDiskCache: 60,
+                                        fadeInDuration: Duration.zero,
+                                        fadeOutDuration: Duration.zero,
+                                        cacheKey:
+                                            'post_author_${widget.exported['authorProfileImageUrl']}',
                                       )
                                       : Icon(
                                         Icons.person,
@@ -630,14 +655,48 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                                                     comment
                                                             .authorProfileImageUrl
                                                             .isNotEmpty
-                                                        ? Image.network(
-                                                          comment
-                                                              .authorProfileImageUrl,
+                                                        ? CachedNetworkImage(
+                                                          imageUrl:
+                                                              comment
+                                                                  .authorProfileImageUrl,
                                                           fit: BoxFit.cover,
-                                                          cacheWidth: 120,
-                                                          cacheHeight: 120,
-                                                          filterQuality:
-                                                              FilterQuality.low,
+                                                          placeholder:
+                                                              (
+                                                                context,
+                                                                url,
+                                                              ) => const SizedBox(
+                                                                width: 40,
+                                                                height: 40,
+                                                                child: Center(
+                                                                  child: CircularProgressIndicator(
+                                                                    strokeWidth:
+                                                                        2,
+                                                                  ),
+                                                                ),
+                                                              ),
+                                                          errorWidget:
+                                                              (
+                                                                context,
+                                                                url,
+                                                                error,
+                                                              ) => Icon(
+                                                                Icons.person,
+                                                                size: 16,
+                                                                color:
+                                                                    Theme.of(
+                                                                          context,
+                                                                        )
+                                                                        .colorScheme
+                                                                        .onSurfaceVariant,
+                                                              ),
+                                                          memCacheWidth: 80,
+                                                          maxWidthDiskCache: 80,
+                                                          fadeInDuration:
+                                                              Duration.zero,
+                                                          fadeOutDuration:
+                                                              Duration.zero,
+                                                          cacheKey:
+                                                              'comment_profile_${comment.authorProfileImageUrl}',
                                                         )
                                                         : Icon(
                                                           Icons.person,
@@ -959,14 +1018,48 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                                                     comment
                                                             .authorProfileImageUrl
                                                             .isNotEmpty
-                                                        ? Image.network(
-                                                          comment
-                                                              .authorProfileImageUrl,
+                                                        ? CachedNetworkImage(
+                                                          imageUrl:
+                                                              comment
+                                                                  .authorProfileImageUrl,
                                                           fit: BoxFit.cover,
-                                                          cacheWidth: 120,
-                                                          cacheHeight: 120,
-                                                          filterQuality:
-                                                              FilterQuality.low,
+                                                          placeholder:
+                                                              (
+                                                                context,
+                                                                url,
+                                                              ) => const SizedBox(
+                                                                width: 40,
+                                                                height: 40,
+                                                                child: Center(
+                                                                  child: CircularProgressIndicator(
+                                                                    strokeWidth:
+                                                                        2,
+                                                                  ),
+                                                                ),
+                                                              ),
+                                                          errorWidget:
+                                                              (
+                                                                context,
+                                                                url,
+                                                                error,
+                                                              ) => Icon(
+                                                                Icons.person,
+                                                                size: 16,
+                                                                color:
+                                                                    Theme.of(
+                                                                          context,
+                                                                        )
+                                                                        .colorScheme
+                                                                        .onSurfaceVariant,
+                                                              ),
+                                                          memCacheWidth: 80,
+                                                          maxWidthDiskCache: 80,
+                                                          fadeInDuration:
+                                                              Duration.zero,
+                                                          fadeOutDuration:
+                                                              Duration.zero,
+                                                          cacheKey:
+                                                              'comment_profile_${comment.authorProfileImageUrl}',
                                                         )
                                                         : Icon(
                                                           Icons.person,

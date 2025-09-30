@@ -16,6 +16,8 @@ import 'package:doppy/data/models/user_model.dart';
 import 'package:doppy/theme/app_text_styles.dart';
 import 'package:doppy/editor/image/profile_image_bottom_sheet.dart';
 import 'package:doppy/pages/screens/manage_neighbor_screen.dart';
+import 'package:cached_network_image/cached_network_image.dart';
+import 'dart:ui' as ui;
 
 class UserProfileScreen extends StatefulWidget {
   final User? otherUser; // 다른 사용자 프로필을 볼 때 username 전달
@@ -203,7 +205,9 @@ class _UserProfileScreenState extends State<UserProfileScreen>
             decoration: BoxDecoration(
               shape: BoxShape.circle,
               border: Border.all(
-                color: Colors.transparent,
+                color: Theme.of(
+                  context,
+                ).colorScheme.onBackground.withOpacity(0.1),
                 width: borderThickness,
               ),
             ),
@@ -218,17 +222,26 @@ class _UserProfileScreenState extends State<UserProfileScreen>
               ),
             ),
             child: ClipRRect(
-              borderRadius: BorderRadius.circular(400),
+              borderRadius: BorderRadius.circular(size / 2),
               child:
                   (imageUrl?.isNotEmpty ?? false)
-                      ? Image.network(
-                        imageUrl!,
+                      ? CachedNetworkImage(
+                        imageUrl: imageUrl!,
                         fit: BoxFit.cover,
-                        loadingBuilder: (context, child, progress) {
-                          if (progress == null) return child;
-                          return ShimmerBox(width: size, height: size);
-                        },
-                        errorBuilder: (_, __, ___) => _fallbackAvatar(theme),
+                        placeholder:
+                            (context, url) =>
+                                ShimmerBox(width: size, height: size),
+                        errorWidget:
+                            (context, url, error) => _fallbackAvatar(theme),
+                        // 캐시 설정으로 깜빡임 방지
+                        memCacheWidth: (size * 2).round(),
+                        maxWidthDiskCache: (size * 2).round(),
+
+                        // 페이드 인 애니메이션 제거로 깜빡임 방지
+                        fadeInDuration: Duration.zero,
+                        fadeOutDuration: Duration.zero,
+                        // 이미지 키로 캐시 안정성 확보
+                        cacheKey: 'profile_${imageUrl}',
                       )
                       : _fallbackAvatar(theme),
             ),
@@ -351,54 +364,61 @@ class _UserProfileScreenState extends State<UserProfileScreen>
         containerHeight - _panelTop - bottomNavHeight - bottomMargin;
 
     return Scaffold(
-      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
-      extendBodyBehindAppBar: false,
+      backgroundColor: Theme.of(context).colorScheme.background,
+
       appBar: AppBar(
-        backgroundColor: Theme.of(context).scaffoldBackgroundColor,
-        elevation: 0,
-        toolbarHeight: 50,
-        scrolledUnderElevation: 0,
-        automaticallyImplyLeading: false,
-        title: Text(
-          isOther ? "@${other?.username ?? ''}" : "@${me?.username ?? ''}",
-          style: AppTextStyles.headlineLarge.copyWith(
-            fontSize: 24,
-            fontWeight: FontWeight.w600,
-            color: Theme.of(context).colorScheme.primary,
-          ),
+        toolbarHeight: 26,
+        backgroundColor: Theme.of(context).colorScheme.background,
+
+        title: Row(
+          children: [
+            Text(
+              isOther ? '@${other?.username}' : '@${me?.username}',
+              style: AppTextStyles.headlineLarge.copyWith(
+                fontSize: 20,
+                fontWeight: FontWeight.w700,
+                color: Theme.of(context).colorScheme.onBackground,
+              ),
+            ),
+          ],
         ),
         centerTitle: false,
         leading:
             isOther
-                ? GestureDetector(
-                  onTap: () => Navigator.of(context).pop(),
-                  child: Icon(
-                    Icons.arrow_back_ios_new_rounded,
-                    color: Theme.of(context).colorScheme.onSurface,
-                    size: 20,
+                ? Padding(
+                  padding: const EdgeInsets.only(top: 4.0),
+                  child: GestureDetector(
+                    onTap: () => Navigator.of(context).pop(),
+                    child: Icon(
+                      Icons.arrow_back_ios_new_rounded,
+                      color: Theme.of(context).colorScheme.onBackground,
+                      size: 18,
+                    ),
                   ),
                 )
                 : null,
 
-        actions: [
-          if (_isOwnProfile)
-            IconButton(
-              icon: Icon(
-                Icons.menu,
-                size: 20,
-                color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
-              ),
-              onPressed: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => const SettingScreen(),
+        actions:
+            !isOther
+                ? [
+                  Padding(
+                    padding: const EdgeInsets.only(right: 10.0),
+                    child: GestureDetector(
+                      child: Icon(
+                        Icons.menu,
+                        color: Theme.of(context).colorScheme.onBackground,
+                        size: 20,
+                      ),
+                      onTap:
+                          () => Navigator.of(context).push(
+                            MaterialPageRoute(builder: (_) => SettingScreen()),
+                          ),
+                    ),
                   ),
-                );
-              },
-            ),
-        ],
+                ]
+                : [],
       ),
+
       body: SafeArea(
         top: true,
         child: Center(
@@ -465,12 +485,24 @@ class _UserProfileScreenState extends State<UserProfileScreen>
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Hero(
-                  tag: 'user-${other.username}',
-                  child: _avatarWithUploadIndicator(
-                    size: 110,
-                    imageUrl: other.profileImageUrl,
-                    uploading: false,
+                GestureDetector(
+                  onTap: () {
+                    if (other.profileImageUrl?.isNotEmpty == true) {
+                      _showProfileImageOverlay(
+                        context,
+                        other.profileImageUrl!,
+                        other.username,
+                        other.alias,
+                      );
+                    }
+                  },
+                  child: Padding(
+                    padding: const EdgeInsets.only(top: 8.0),
+                    child: _avatarWithUploadIndicator(
+                      size: 100,
+                      imageUrl: other.profileImageUrl,
+                      uploading: false,
+                    ),
                   ),
                 ),
                 const SizedBox(width: 10),
@@ -662,13 +694,16 @@ class _UserProfileScreenState extends State<UserProfileScreen>
                           ),
                     );
                   },
-                  child: Hero(
-                    tag: 'user-${me?.username ?? 'me'}',
-                    child: _avatarWithUploadIndicator(
-                      size: 110,
-                      imageUrl: me?.profileImageUrl,
-                      uploading:
-                          _profileUploadTask?.state == UploadState.uploading,
+                  child: Padding(
+                    padding: const EdgeInsets.only(top: 8.0),
+                    child: Hero(
+                      tag: 'user-${me?.username ?? 'me'}',
+                      child: _avatarWithUploadIndicator(
+                        size: 100,
+                        imageUrl: me?.profileImageUrl,
+                        uploading:
+                            _profileUploadTask?.state == UploadState.uploading,
+                      ),
                     ),
                   ),
                 ),
@@ -726,7 +761,12 @@ class _UserProfileScreenState extends State<UserProfileScreen>
                           MaterialPageRoute(
                             builder: (_) => const ManageNeighborScreen(),
                           ),
-                        );
+                        ).then((_) {
+                          context.read<ProfileFeedProvider>().loadInitial(
+                            username: me?.username,
+                            force: true,
+                          );
+                        });
                       },
                       isEnabled: false,
                     ),
@@ -1029,15 +1069,22 @@ class _UserProfileScreenState extends State<UserProfileScreen>
   Widget _buildThumb(String pathOrUrl, int index) {
     final isNetwork = pathOrUrl.startsWith('http');
     if (isNetwork) {
-      return Image.network(
-        pathOrUrl,
+      return CachedNetworkImage(
+        imageUrl: pathOrUrl,
         fit: BoxFit.cover,
-        filterQuality: FilterQuality.low,
-        loadingBuilder: (context, child, progress) {
-          if (progress == null) return child;
-          return ShimmerBox(width: double.infinity, height: double.infinity);
-        },
-        errorBuilder: (_, __, ___) => _thumbFallback(index),
+        placeholder:
+            (context, url) =>
+                ShimmerBox(width: double.infinity, height: double.infinity),
+        errorWidget: (context, url, error) => _thumbFallback(index),
+        // 썸네일용 캐시 설정
+        memCacheWidth: 600,
+        maxWidthDiskCache: 600,
+
+        // 페이드 애니메이션 제거로 깜빡임 방지
+        fadeInDuration: Duration.zero,
+        fadeOutDuration: Duration.zero,
+        // 썸네일 캐시 키 설정
+        cacheKey: 'thumb_${pathOrUrl}',
       );
     } else if (pathOrUrl.isNotEmpty) {
       return Image.asset(
@@ -1057,6 +1104,189 @@ class _UserProfileScreenState extends State<UserProfileScreen>
               : Theme.of(context).colorScheme.primary,
       child: const Center(
         child: Icon(Icons.image, color: Colors.white, size: 40),
+      ),
+    );
+  }
+
+  void _showProfileImageOverlay(
+    BuildContext context,
+    String imageUrl,
+    String username,
+    String? alias,
+  ) {
+    showGeneralDialog(
+      context: context,
+      barrierDismissible: true,
+      barrierLabel: '프로필 이미지',
+      barrierColor: const Color.fromARGB(182, 144, 144, 144),
+      transitionDuration: const Duration(milliseconds: 300),
+      pageBuilder: (context, animation, secondaryAnimation) {
+        return _ProfileImageOverlay(
+          imageUrl: imageUrl,
+          username: username,
+          alias: alias,
+        );
+      },
+      transitionBuilder: (context, animation, secondaryAnimation, child) {
+        return FadeTransition(
+          opacity: animation,
+          child: ScaleTransition(
+            scale: Tween<double>(begin: 0.8, end: 1.0).animate(
+              CurvedAnimation(parent: animation, curve: Curves.easeOutCubic),
+            ),
+            child: child,
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _ProfileImageOverlay extends StatefulWidget {
+  final String imageUrl;
+  final String username;
+  final String? alias;
+
+  const _ProfileImageOverlay({
+    required this.imageUrl,
+    required this.username,
+    this.alias,
+  });
+
+  @override
+  State<_ProfileImageOverlay> createState() => _ProfileImageOverlayState();
+}
+
+class _ProfileImageOverlayState extends State<_ProfileImageOverlay> {
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: Stack(
+        children: [
+          // 배경 탭으로 닫기 (블러 효과 포함)
+          Positioned.fill(
+            child: BackdropFilter(
+              filter: ui.ImageFilter.blur(sigmaX: 8, sigmaY: 8),
+              child: GestureDetector(
+                onTap: () => Navigator.of(context).pop(),
+                child: Container(
+                  width: double.infinity,
+                  height: double.infinity,
+                  color: const Color.fromARGB(182, 144, 144, 144),
+                ),
+              ),
+            ),
+          ),
+          // 이미지 뷰어
+          Positioned.fill(
+            child: Listener(
+              onPointerMove: (details) {
+                // 왼쪽으로 스와이프 (음수 delta.dx)
+                if (details.delta.dx < 30) {
+                  Navigator.of(context).pop();
+                }
+                // 아래로 스와이프 (양수 delta.dy)
+                if (details.delta.dy > 30) {
+                  Navigator.of(context).pop();
+                }
+              },
+              child: InteractiveViewer(
+                minScale: 0.5,
+                maxScale: 3.0,
+                child: CachedNetworkImage(
+                  imageUrl: widget.imageUrl,
+                  fit: BoxFit.cover,
+                  placeholder:
+                      (context, url) => const Center(
+                        child: CircularProgressIndicator(
+                          valueColor: AlwaysStoppedAnimation<Color>(
+                            Colors.white,
+                          ),
+                        ),
+                      ),
+                  errorWidget:
+                      (context, url, error) => const Center(
+                        child: Icon(
+                          Icons.person,
+                          color: Colors.white,
+                          size: 100,
+                        ),
+                      ),
+                  // 고해상도 이미지 캐시 설정
+                  memCacheWidth: 800,
+
+                  maxWidthDiskCache: 800,
+
+                  fadeInDuration: Duration.zero,
+                  fadeOutDuration: Duration.zero,
+                  cacheKey: 'profile_overlay_${widget.imageUrl}',
+                ),
+              ),
+            ),
+          ),
+          // 상단 닫기 버튼
+          Positioned(
+            top: MediaQuery.of(context).padding.top + 10,
+            right: 20,
+            child: GestureDetector(
+              onTap: () => Navigator.of(context).pop(),
+              child: Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.black.withOpacity(0.1),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(Icons.close, color: Colors.white, size: 20),
+              ),
+            ),
+          ),
+          // 하단 사용자 정보
+          Positioned(
+            bottom: 0,
+            left: 0,
+            right: 0,
+            child: Container(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [Colors.transparent, Colors.black.withOpacity(0.8)],
+                ),
+              ),
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 30),
+              child: SafeArea(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      widget.alias ??
+                          widget.username, // alias가 있으면 사용, 없으면 username
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w400,
+                      ),
+                    ),
+                    // Username
+                    Text(
+                      '@${widget.username}',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 30,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+
+                    // Alias (사용자 이름)
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
