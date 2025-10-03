@@ -596,13 +596,13 @@ class EditorService extends ChangeNotifier {
     return idx == -1 ? doc.nodeCount : idx;
   }
 
-  /// 공통 삽입 유틸: 현재 커서의 다음 줄에 컴포넌트 노드를 삽입한다.
+  /// 공통 삽입 유틸: 현재 커서 위치에 컴포넌트 노드를 삽입한다.
   /// 만약 삽입 지점이 문서의 마지막(끝)이면, 그 아래에 빈 문단을 추가하고
   /// 커서를 그 빈 문단 앞으로 이동한다.
   void _insertComponentNodeAtNextLine(DocumentNode componentNode) {
     final doc = editor.document;
     final safeIndex = _getCaretNodeIndexSafe();
-    int insertIndex = safeIndex + 1;
+    int insertIndex = safeIndex;
     if (insertIndex > doc.nodeCount) insertIndex = doc.nodeCount;
 
     final bool insertingAtEnd = insertIndex == doc.nodeCount;

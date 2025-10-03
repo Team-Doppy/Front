@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
+import 'dart:ui';
 
 class CustomBottomNavigationBar extends StatelessWidget {
   /// 현재 선택된 인덱스 (0: 홈, 1: 검색, 2: 작성, 3: 프로필)
@@ -24,42 +25,50 @@ class CustomBottomNavigationBar extends StatelessWidget {
       'assets/icons/ic_profile.svg',
     ];
 
-    return ClipRRect(
-      borderRadius: BorderRadius.only(
-        topLeft: Radius.circular(16),
-        topRight: Radius.circular(16),
-      ),
-      child: Container(
-        height: 80,
-        decoration: BoxDecoration(
-          color: Theme.of(context).colorScheme.background,
-        ),
-        child: Padding(
-          padding: const EdgeInsets.only(bottom: 30, top: 10),
-          child: Row(
-            children: List.generate(4, (index) {
-              var iconSize = 28.0;
-              if (index == 3) {
-                iconSize = 32.0;
-              }
+    return Positioned(
+      left: 25,
+      right: 25,
+      bottom: 24,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(30),
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+          child: Container(
+            height: 56,
+            decoration: BoxDecoration(
+              color: Theme.of(context).colorScheme.background.withOpacity(1),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.only(bottom: 0, top: 0),
+              child: Row(
+                children: List.generate(4, (index) {
+                  var iconSize = 28.0;
+                  if (index == 3) {
+                    iconSize = 32.0;
+                  }
 
-              return Expanded(
-                child: InkWell(
-                  onTap: () => onTap(index),
-                  child: Center(
-                    child: SvgPicture.asset(
-                      iconAssets[index],
-                      width: iconSize,
-                      height: iconSize,
-                      color:
-                          index == currentIndex
-                              ? Theme.of(context).colorScheme.primary
-                              : Theme.of(context).colorScheme.onSurface,
+                  return Expanded(
+                    child: InkWell(
+                      onTap: () => onTap(index),
+                      borderRadius: BorderRadius.circular(20),
+                      child: Center(
+                        child: SvgPicture.asset(
+                          iconAssets[index],
+                          width: iconSize,
+                          height: iconSize,
+                          color:
+                              index == currentIndex
+                                  ? Theme.of(context).colorScheme.primary
+                                  : Theme.of(
+                                    context,
+                                  ).colorScheme.onSurface.withOpacity(0.7),
+                        ),
+                      ),
                     ),
-                  ),
-                ),
-              );
-            }),
+                  );
+                }),
+              ),
+            ),
           ),
         ),
       ),

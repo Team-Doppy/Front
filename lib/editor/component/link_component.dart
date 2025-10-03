@@ -14,11 +14,11 @@ class LinkNode extends BlockNode {
   });
 
   @override
-  bool get isDeletable => true;
+  bool get isDeletable => false;
+  String get nodeType => 'link';
 
   @override
   final String id;
-
   final String url;
   final String title;
   final String description;
@@ -176,7 +176,6 @@ class _LinkComponentState extends State<_LinkComponent> with DocumentComponent {
       decoration: BoxDecoration(
         color: const Color(0xFF1A1A1A),
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: const Color(0xFF333333)),
       ),
       child: Row(
         children: [

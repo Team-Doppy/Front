@@ -1,3 +1,4 @@
+import 'package:doppy/editor/component/link_component.dart';
 import 'package:doppy/editor/component/location_component.dart';
 import 'package:doppy/editor/component/row_image_component.dart';
 import 'package:flutter/material.dart';
@@ -46,6 +47,7 @@ class DragOverlayWidget extends StatelessWidget {
     if (node == null) return const SizedBox.shrink();
 
     Widget preview;
+    print('nodeType: $nodeType');
     switch (nodeType) {
       case 'image':
         preview = _buildImagePreview(node as ImageNode);
@@ -59,11 +61,64 @@ class DragOverlayWidget extends StatelessWidget {
       case 'paragraph':
         preview = _buildParagraphPreview(node as dynamic); // 타입 캐스팅 제거
         break;
+      case 'link':
+        preview = _buildLinkPreview(node as LinkNode);
+        break;
       default:
         preview = _buildDefaultPreview(node);
     }
 
     return preview;
+  }
+
+  Widget _buildLinkPreview(LinkNode node) {
+    return Container(
+      width: 100,
+      height: 100,
+
+      decoration: BoxDecoration(
+        color: const Color(0xFF1A1A1A),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        children: [
+          if (node.thumbnailUrl.isNotEmpty)
+            ClipRRect(
+              borderRadius: const BorderRadius.only(
+                topLeft: Radius.circular(8),
+                bottomLeft: Radius.circular(8),
+              ),
+              child: Image.network(
+                node.thumbnailUrl,
+                width: 100,
+                height: 100,
+                fit: BoxFit.cover,
+                errorBuilder:
+                    (_, __, ___) => Container(
+                      width: 100,
+                      height: 100,
+                      color: const Color(0xFF2A2A2A),
+                      child: const Icon(Icons.link, color: Colors.white54),
+                    ),
+              ),
+            )
+          else
+            Container(
+              width: 100,
+              height: 100,
+              alignment: Alignment.center,
+              decoration: const BoxDecoration(
+                color: Color(0xFF2A2A2A),
+                borderRadius: BorderRadius.only(
+                  topLeft: Radius.circular(8),
+                  bottomLeft: Radius.circular(8),
+                ),
+              ),
+              child: const Icon(Icons.link, color: Colors.white54),
+            ),
+        ],
+      ),
+    );
   }
 
   Widget _buildLocationPreview(LocationNode node) {

@@ -4,7 +4,7 @@ import '../data/models/user_model.dart';
 import '../data/services/friend_service.dart';
 
 // 친구 요청 상태를 나타내는 enum
-enum FriendRequestStatus { none, requested, accepted }
+enum FriendRequestStatus { none, requested, accepted, pending }
 
 class FriendProvider with ChangeNotifier {
   final FriendService _friendService = FriendService();
@@ -220,5 +220,36 @@ class FriendProvider with ChangeNotifier {
       print("친구 신청 실패: $e");
       return false;
     }
+  }
+
+  /// 사용자 검색
+  Future<void> searchUsers(String query) async {
+    if (query.trim().isEmpty) {
+      _searchedUsers.clear();
+      _searchError = null;
+      notifyListeners();
+      return;
+    }
+
+    _isSearching = true;
+    _searchError = null;
+    notifyListeners();
+
+    try {
+      _searchedUsers = await _friendService.searchUsers(query.trim());
+    } catch (e) {
+      _searchError = "검색에 실패했습니다: $e";
+      _searchedUsers.clear();
+    } finally {
+      _isSearching = false;
+      notifyListeners();
+    }
+  }
+
+  /// 검색 결과 초기화
+  void clearSearchResults() {
+    _searchedUsers.clear();
+    _searchError = null;
+    notifyListeners();
   }
 }

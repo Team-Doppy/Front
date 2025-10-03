@@ -1,13 +1,15 @@
 // lib/pages/post/search_screen.dart
+import 'dart:ui';
 import 'package:doppy/data/models/user_model.dart';
 import 'package:doppy/pages/components/shimmer_box.dart';
+import 'package:doppy/pages/components/common_profile_avatar.dart';
 import 'package:doppy/pages/screens/user_profile_screen.dart';
+import 'package:doppy/pages/screens/post_reader_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../../theme/app_text_styles.dart';
 // import '../../../theme/app_colors.dart';
 import '../../../data/services/search_service.dart';
-import 'package:cached_network_image/cached_network_image.dart';
 
 class SearchScreen extends StatefulWidget {
   const SearchScreen({super.key});
@@ -75,51 +77,88 @@ class _SearchScreenState extends State<SearchScreen> {
     return Consumer<SearchService>(
       builder: (context, searchService, child) {
         return Scaffold(
-          backgroundColor: Theme.of(context).colorScheme.background,
-          body: SafeArea(
-            child: Column(
-              children: [
-                _SearchTopBar(
-                  controller: _searchController,
-                  focusNode: _searchFocusNode,
-                  query: searchService.query,
-                  onClear: _clearSearch,
-                  onBack: _resetToInitial,
+          body: Stack(
+            children: [
+              /*
+              // 배경 이미지 (블러 처리)
+              Positioned.fill(
+                child: Image.asset(
+                  'assets/images/feed3.png', // 배경용 asset 이미지
+                  fit: BoxFit.cover,
                 ),
-                Expanded(
-                  child: AnimatedBuilder(
-                    animation: searchService,
-                    builder: (_, __) {
-                      final bool disableAnim =
-                          _freezeDuringPush || searchService.query.isNotEmpty;
-                      return AnimatedSwitcher(
-                        duration:
-                            disableAnim
-                                ? const Duration(milliseconds: 0)
-                                : const Duration(milliseconds: 250),
-                        switchInCurve: Curves.easeOut,
-                        switchOutCurve: Curves.easeIn,
-                        transitionBuilder: (child, anim) {
-                          if (disableAnim) return child;
-                          final slide = Tween<Offset>(
-                            begin: const Offset(0.0, 0.04),
-                            end: Offset.zero,
-                          ).animate(anim);
-                          return FadeTransition(
-                            opacity: anim,
-                            child: SlideTransition(
-                              position: slide,
-                              child: child,
-                            ),
-                          );
-                        },
-                        child: _buildSearchBody(context, searchService),
-                      );
-                    },
+              ),
+
+              // 블러 오버레이
+              Positioned.fill(
+                child: BackdropFilter(
+                  filter: ImageFilter.blur(sigmaX: 15, sigmaY: 15),
+                  child: Container(
+                    color: Theme.of(
+                      context,
+                    ).colorScheme.background.withOpacity(0.8),
                   ),
                 ),
-              ],
-            ),
+              ),
+              */
+
+              // 메인 콘텐츠
+              SafeArea(
+                child: Column(
+                  children: [
+                    _SearchTopBar(
+                      controller: _searchController,
+                      focusNode: _searchFocusNode,
+                      query: searchService.query,
+                      onClear: _clearSearch,
+                      onBack: _resetToInitial,
+                      onSubmitted: () {
+                        print('onSubmitted: ${searchService.query}');
+                        searchService.searchBlogsByTitleOnce(
+                          keyword: searchService.query,
+                        );
+                      },
+                    ),
+                    // 검색 입력 종료 후 작은 탭 (계정/블로그)
+                    if (!searchService.isFocused &&
+                        searchService.query.isNotEmpty)
+                      const _ResultTabs(),
+                    Expanded(
+                      child: AnimatedBuilder(
+                        animation: searchService,
+                        builder: (_, __) {
+                          final bool disableAnim =
+                              _freezeDuringPush ||
+                              searchService.query.isNotEmpty;
+                          return AnimatedSwitcher(
+                            duration:
+                                disableAnim
+                                    ? const Duration(milliseconds: 0)
+                                    : const Duration(milliseconds: 250),
+                            switchInCurve: Curves.easeOut,
+                            switchOutCurve: Curves.easeIn,
+                            transitionBuilder: (child, anim) {
+                              if (disableAnim) return child;
+                              final slide = Tween<Offset>(
+                                begin: const Offset(0.0, 0.04),
+                                end: Offset.zero,
+                              ).animate(anim);
+                              return FadeTransition(
+                                opacity: anim,
+                                child: SlideTransition(
+                                  position: slide,
+                                  child: child,
+                                ),
+                              );
+                            },
+                            child: _buildSearchBody(context, searchService),
+                          );
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
           // 하단 네비게이션은 RootShell에서 고정 제공
         );
@@ -151,7 +190,7 @@ class _SearchScreenState extends State<SearchScreen> {
       ),
       builder: (_) {
         // 1) 입력 중: 실시간 계정 검색 결과
-        if (searchService.query.isNotEmpty) {
+        if (searchService.query.isNotEmpty && searchService.isFocused) {
           return _SearchResults(
             accounts: searchService.searchingAccounts,
             searchHistory: const [],
@@ -190,6 +229,41 @@ class _SearchScreenState extends State<SearchScreen> {
             enableHero: true,
           );
         }
+        // 1.5) 입력 종료 후: 탭 기반 결과 (블로그/계정)
+        if (searchService.query.isNotEmpty && !searchService.isFocused) {
+          if (searchService.selectedCategory == '추천') {
+            // 블로그 그리드
+            final posts = context.watch<SearchService>().blogResults;
+            return _StaggeredGrid(items: posts, controller: ScrollController());
+          } else {
+            // 계정 리스트
+            return _SearchResults(
+              accounts: searchService.searchingAccounts,
+              searchHistory: const [],
+              query: searchService.query,
+              onAnyTapDown: () {},
+              onTapAccount: (item) {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder:
+                        (context) => UserProfileScreen(
+                          otherUser: User(
+                            id: 0,
+                            username: item.username ?? '',
+                            alias: item.alias,
+                            profileImageUrl: item.profileImageUrl,
+                          ),
+                        ),
+                  ),
+                );
+              },
+              onTapHistory: (_) {},
+              onRemoveHistory: (_) {},
+              enableHero: false,
+            );
+          }
+        }
         // 2) 포커스 O & 쿼리 없음: 검색 기록 펼침
         if (searchService.isFocused) {
           return _SearchResults(
@@ -222,7 +296,7 @@ class _SearchScreenState extends State<SearchScreen> {
             },
             onTapHistory: (_) {},
             onRemoveHistory: (_) {},
-            enableHero: false, // 기록 화면에서는 Hero 비활성화로 깜빡임/중복 회피
+            enableHero: false,
           );
         }
         // 3) 기본: 추천 컨텐츠(OTT 느낌)
@@ -262,7 +336,6 @@ class _SearchResults extends StatelessWidget {
       final seen = <String>{};
       for (final account in accounts) {
         final uname = account.username ?? '';
-        final allowHero = uname.isNotEmpty && !seen.contains(uname);
         if (uname.isNotEmpty) seen.add(uname);
         children.add(
           _AccountListItem(
@@ -271,7 +344,6 @@ class _SearchResults extends StatelessWidget {
             onTap: () => onTapAccount(account),
             onRemove: () => onRemoveHistory(uname),
             showRemoveButton: query.isEmpty,
-            useHero: enableHero && allowHero,
           ),
         );
       }
@@ -302,15 +374,12 @@ class _AccountListItem extends StatelessWidget {
   final VoidCallback? onTapDown;
   final VoidCallback? onRemove;
   final bool showRemoveButton;
-  final bool useHero;
-
   const _AccountListItem({
     required this.account,
     required this.onTap,
     this.onTapDown,
     this.onRemove,
     this.showRemoveButton = false,
-    this.useHero = true,
   });
 
   @override
@@ -322,132 +391,34 @@ class _AccountListItem extends StatelessWidget {
         onTapDown: (_) => onTapDown?.call(),
         onTap: onTap,
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
           child: Row(
             children: [
-              // 프로필 이미지 (60x60) + 원형 Hero (user-<username>)
-              (useHero && (account.username ?? '').isNotEmpty)
-                  ? Hero(
-                    tag: 'user-${account.username}',
-                    child: ClipOval(
-                      child: SizedBox(
-                        width: 60,
-                        height: 60,
-                        child:
-                            (account.profileImageUrl != null &&
-                                    account.profileImageUrl!.isNotEmpty)
-                                ? CachedNetworkImage(
-                                  imageUrl: account.profileImageUrl!,
-                                  fit: BoxFit.cover,
-                                  placeholder:
-                                      (context, url) => const ShimmerBox(
-                                        width: 60,
-                                        height: 60,
-                                      ),
-                                  errorWidget:
-                                      (context, url, error) => Icon(
-                                        Icons.person,
-                                        color:
-                                            Theme.of(
-                                              context,
-                                            ).colorScheme.onSurfaceVariant,
-                                      ),
-                                  // 프로필 이미지 캐시 설정
-                                  memCacheWidth: 120,
-                                  maxWidthDiskCache: 120,
-                                  fadeInDuration: Duration.zero,
-                                  fadeOutDuration: Duration.zero,
-                                  cacheKey:
-                                      'search_profile_${account.profileImageUrl}',
-                                )
-                                : Icon(
-                                  Icons.person,
-                                  color:
-                                      Theme.of(
-                                        context,
-                                      ).colorScheme.onSurfaceVariant,
-                                ),
-                      ),
-                    ),
-                  )
-                  : ClipOval(
-                    child: SizedBox(
-                      width: 60,
-                      height: 60,
-                      child:
-                          (account.profileImageUrl != null &&
-                                  account.profileImageUrl!.isNotEmpty)
-                              ? CachedNetworkImage(
-                                imageUrl: account.profileImageUrl!,
-                                fit: BoxFit.cover,
-                                placeholder:
-                                    (context, url) =>
-                                        const ShimmerBox(width: 60, height: 60),
-                                errorWidget:
-                                    (context, url, error) => Icon(
-                                      Icons.person,
-                                      color:
-                                          Theme.of(
-                                            context,
-                                          ).colorScheme.onSurfaceVariant,
-                                    ),
-                                // 프로필 이미지 캐시 설정
-                                memCacheWidth: 120,
-
-                                maxWidthDiskCache: 120,
-
-                                fadeInDuration: Duration.zero,
-                                fadeOutDuration: Duration.zero,
-                                cacheKey:
-                                    'search_profile_${account.profileImageUrl}',
-                              )
-                              : Icon(
-                                Icons.person,
-                                color:
-                                    Theme.of(
-                                      context,
-                                    ).colorScheme.onSurfaceVariant,
-                              ),
-                    ),
-                  ),
-              const SizedBox(width: 12),
+              // 프로필 이미지 (70x70)
+              CommonProfileAvatar(
+                imageUrl: account.profileImageUrl,
+                username: account.username ?? '',
+                size: 70.0,
+              ),
+              const SizedBox(width: 22),
 
               // 계정 정보 (alias + @username)
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // 이름 텍스트 Hero (user-name-<username>)
-                    (useHero && (account.username ?? '').isNotEmpty)
-                        ? Hero(
-                          tag: 'user-name-${account.username}',
-                          transitionOnUserGestures: true,
-                          child: Material(
-                            type: MaterialType.transparency,
-                            child: Text(
-                              (account.alias?.isNotEmpty == true)
-                                  ? account.alias!
-                                  : (account.username ?? ''),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                fontWeight: FontWeight.w700,
-                                fontSize: 16,
-                              ),
-                            ),
-                          ),
-                        )
-                        : Text(
-                          (account.alias?.isNotEmpty == true)
-                              ? account.alias!
-                              : (account.username ?? ''),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            fontWeight: FontWeight.w700,
-                            fontSize: 16,
-                          ),
-                        ),
+                    // 이름 텍스트
+                    Text(
+                      (account.alias?.isNotEmpty == true)
+                          ? account.alias!
+                          : (account.username ?? ''),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 16,
+                      ),
+                    ),
                     const SizedBox(height: 2),
                     Text(
                       '@${account.username ?? ''}',
@@ -505,6 +476,7 @@ class _SearchTopBar extends StatelessWidget {
   final String query;
   final VoidCallback onClear;
   final VoidCallback onBack;
+  final VoidCallback onSubmitted;
 
   const _SearchTopBar({
     required this.controller,
@@ -512,13 +484,14 @@ class _SearchTopBar extends StatelessWidget {
     required this.query,
     required this.onClear,
     required this.onBack,
+    required this.onSubmitted,
   });
 
   @override
   Widget build(BuildContext context) {
     final searchService = context.watch<SearchService>();
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
       child: Row(
         children: [
           if (searchService.isFocused) ...[
@@ -552,6 +525,12 @@ class _SearchTopBar extends StatelessWidget {
                 controller: controller,
                 focusNode: focusNode,
                 textInputAction: TextInputAction.search,
+                onSubmitted: (v) {
+                  FocusScope.of(context).unfocus();
+                  context.read<SearchService>().searchBlogsByTitleOnce(
+                    keyword: v,
+                  );
+                },
                 onTap: () => context.read<SearchService>().setFocused(true),
                 style: AppTextStyles.bodyLarge.copyWith(
                   color: Theme.of(context).colorScheme.onSurface,
@@ -565,23 +544,32 @@ class _SearchTopBar extends StatelessWidget {
                     AppTextStyles.bodyLarge,
                     FontWeight.w500,
                   ).copyWith(color: const Color(0xFF989898)),
-                  prefixIcon: const Icon(
-                    Icons.search,
-                    size: 22,
-                    color: Color(0xFF989898),
-                  ),
+
                   suffixIcon:
                       query.isNotEmpty
                           ? IconButton(
-                            tooltip: '지우기',
-                            onPressed: onClear,
+                            tooltip: '검색',
+                            onPressed: () {
+                              FocusScope.of(context).unfocus();
+                              onSubmitted();
+                            },
                             icon: const Icon(
-                              Icons.clear,
+                              Icons.search,
                               color: Color(0xFF989898),
+                              size: 22,
                             ),
                           )
-                          : null,
-                  contentPadding: const EdgeInsets.symmetric(vertical: 8),
+                          : Icon(
+                            Icons.search,
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.onSurfaceVariant.withOpacity(0.6),
+                            size: 22,
+                          ),
+                  contentPadding: const EdgeInsets.symmetric(
+                    vertical: 8,
+                    horizontal: 16,
+                  ),
 
                   isDense: true,
                   border: const OutlineInputBorder(
@@ -616,40 +604,211 @@ class _SearchTopBar extends StatelessWidget {
   }
 }
 
-class _RecommendHome extends StatelessWidget {
+class _ResultTabs extends StatelessWidget {
+  const _ResultTabs();
+
+  @override
+  Widget build(BuildContext context) {
+    final svc = context.watch<SearchService>();
+    final theme = Theme.of(context);
+
+    return Container(
+      height: 40,
+      margin: const EdgeInsets.only(top: 0, bottom: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 10),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.start,
+        children: [
+          Container(
+            decoration: BoxDecoration(),
+            child: DropdownButtonHideUnderline(
+              child: DropdownButton<String>(
+                value: svc.selectedCategory,
+                isDense: true,
+                alignment: Alignment.centerRight,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 4,
+                ),
+                items: [
+                  DropdownMenuItem<String>(
+                    value: '추천',
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          '블로그',
+                          style: TextStyle(
+                            fontSize: 16,
+                            color: theme.colorScheme.onSurface,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  DropdownMenuItem<String>(
+                    value: '계정',
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          '계정',
+                          style: TextStyle(
+                            fontSize: 16,
+                            color: theme.colorScheme.onSurface,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+                onChanged: (String? newValue) {
+                  if (newValue != null) {
+                    svc.changeCategory(newValue);
+                  }
+                },
+                icon: Padding(
+                  padding: const EdgeInsets.only(left: 4.0),
+                  child: Icon(
+                    Icons.keyboard_arrow_down,
+                    color: theme.colorScheme.onSurfaceVariant,
+                    size: 20,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _RecommendHome extends StatefulWidget {
   final List<SearchContentItem> items;
   const _RecommendHome({required this.items});
 
   @override
+  State<_RecommendHome> createState() => _RecommendHomeState();
+}
+
+class _RecommendHomeState extends State<_RecommendHome> {
+  final ScrollController _scrollController = ScrollController();
+
+  @override
+  void initState() {
+    super.initState();
+    _scrollController.addListener(_onScroll);
+  }
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  void _onScroll() {
+    if (_scrollController.position.pixels >=
+        _scrollController.position.maxScrollExtent - 200) {
+      final searchService = context.read<SearchService>();
+      searchService.loadRecommendations();
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final hasData = items.isNotEmpty;
+    final hasData = widget.items.isNotEmpty;
 
-    return Padding(
-      padding: const EdgeInsets.all(0),
-      child:
-          !hasData ? _StaggeredGrid(items: items) : _LoadingGrid(theme: theme),
+    return Consumer<SearchService>(
+      builder: (context, searchService, _) {
+        return Stack(
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(0),
+              child:
+                  hasData
+                      ? _StaggeredGrid(
+                        items: widget.items,
+                        controller: _scrollController,
+                      )
+                      : _LoadingGrid(theme: theme),
+            ),
+            if (searchService.isLoadingMore)
+              Positioned(
+                bottom: 16,
+                left: 0,
+                right: 0,
+                child: Center(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 8,
+                    ),
+                    decoration: BoxDecoration(
+                      color: theme.colorScheme.surface,
+                      borderRadius: BorderRadius.circular(20),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.1),
+                          blurRadius: 8,
+                          offset: const Offset(0, 2),
+                        ),
+                      ],
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            valueColor: AlwaysStoppedAnimation<Color>(
+                              theme.colorScheme.primary,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          '추천 컨텐츠 불러오는 중...',
+                          style: TextStyle(
+                            color: theme.colorScheme.onSurface,
+                            fontSize: 14,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        );
+      },
     );
   }
 }
 
 class _StaggeredGrid extends StatelessWidget {
   final List<SearchContentItem> items;
-  const _StaggeredGrid({required this.items});
+  final ScrollController controller;
+  const _StaggeredGrid({required this.items, required this.controller});
 
   @override
   Widget build(BuildContext context) {
-    return GridView.builder(
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 2, // 3열 고정
-        mainAxisSpacing: 1,
-        crossAxisSpacing: 1,
-        childAspectRatio: 3 / 4, // 3:4 비율
-      ),
-      itemCount: items.length,
-      itemBuilder: (context, index) {
-        final item = items[index];
-        return _GridCard(item: item);
+    return Consumer<SearchService>(
+      builder: (context, searchService, _) {
+        return RefreshIndicator(
+          onRefresh: () => searchService.refreshRecommendations(),
+          child: ListView.builder(
+            controller: controller,
+            itemCount: items.length,
+            padding: const EdgeInsets.symmetric(vertical: 12),
+            itemBuilder: (context, index) {
+              return _BlogCard(item: items[index], index: index);
+            },
+          ),
+        );
       },
     );
   }
@@ -661,28 +820,18 @@ class _LoadingGrid extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GridView.builder(
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 2, // 3열 고정
-        mainAxisSpacing: 1,
-        crossAxisSpacing: 1,
-        childAspectRatio: 3 / 4, // 3:4 비율
-      ),
-      itemCount: 50, // 로딩 시 6개 placeholder
+    return ListView.builder(
+      physics: const NeverScrollableScrollPhysics(),
+      itemCount: 6, // 초기 로딩 시 6개 placeholder
       itemBuilder: (context, index) {
-        return const ShimmerBox(
-          width: double.infinity,
-          height: double.infinity,
-          borderRadius: BorderRadius.zero,
-        );
+        return const _GridCardPlaceholder();
       },
     );
   }
 }
 
-class _GridCard extends StatelessWidget {
-  final SearchContentItem item;
-  const _GridCard({required this.item});
+class _GridCardPlaceholder extends StatelessWidget {
+  const _GridCardPlaceholder();
 
   @override
   Widget build(BuildContext context) {
@@ -690,67 +839,216 @@ class _GridCard extends StatelessWidget {
       child: Stack(
         fit: StackFit.expand,
         children: [
-          // 이미지
-          item.imageUrl != null && item.imageUrl!.startsWith('http')
-              ? CachedNetworkImage(
-                imageUrl: item.imageUrl!,
-                fit: BoxFit.cover,
-                placeholder:
-                    (context, url) => const ShimmerBox(
-                      width: double.infinity,
-                      height: double.infinity,
-                    ),
-                errorWidget:
-                    (context, url, error) => Container(
-                      color: Theme.of(context).colorScheme.surfaceVariant,
-                      child: const Icon(Icons.image, size: 50),
-                    ),
-                memCacheWidth: 300,
-                maxWidthDiskCache: 300,
-                fadeInDuration: Duration.zero,
-                fadeOutDuration: Duration.zero,
-                cacheKey: 'grid_${item.imageUrl}',
-              )
-              : Image.asset(
-                item.imageUrl ?? 'assets/images/feed1.jpg',
-                fit: BoxFit.cover,
-              ),
-
-          // 그라데이션 오버레이
-          Container(
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                colors: [
-                  Colors.transparent,
-                  Colors.black.withOpacity(0.3),
-                  Colors.black.withOpacity(0.7),
-                ],
-                stops: const [0.0, 0.6, 1.0],
-              ),
-            ),
+          const ShimmerBox(
+            width: double.infinity,
+            height: double.infinity,
+            borderRadius: BorderRadius.zero,
           ),
-
-          // 제목
           Positioned(
             left: 8,
             right: 8,
             bottom: 8,
-            child: Text(
-              item.title ?? '',
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 14,
-                fontWeight: FontWeight.w700,
-                height: 1.2,
-              ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                ShimmerBox(
+                  width: 120,
+                  height: 16,
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                const SizedBox(height: 4),
+                ShimmerBox(
+                  width: 80,
+                  height: 14,
+                  borderRadius: BorderRadius.circular(4),
+                ),
+              ],
             ),
           ),
         ],
       ),
+    );
+  }
+}
+
+class _BlogCard extends StatelessWidget {
+  final SearchContentItem item;
+  final int index;
+
+  const _BlogCard({required this.item, required this.index});
+
+  @override
+  Widget build(BuildContext context) {
+    return Consumer<SearchService>(
+      builder: (context, searchService, _) {
+        return GestureDetector(
+          onTap: () {
+            searchService.addToRecentlyViewed(item.id);
+            final postData = searchService.getPostData(item.id);
+            if (postData != null) {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder:
+                      (context) => PostReaderScreen(
+                        exported: postData,
+                        heroTag: 'search_blog_${item.id}_$index',
+                      ),
+                ),
+              );
+            }
+          },
+          child: Container(
+            margin: const EdgeInsets.symmetric(vertical: 12),
+            child: Padding(
+              padding: const EdgeInsets.only(),
+              child: SizedBox(
+                height: 570,
+                child: ClipRRect(
+                  child: Stack(
+                    children: [
+                      // 콘텐츠
+                      Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 16,
+                        ),
+                        child: Column(
+                          children: [
+                            // 왼쪽: 텍스트 영역
+                            Expanded(
+                              flex: 2,
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  // 상단: 작성자 프로필
+                                  GestureDetector(
+                                    onTap: () {
+                                      // 프로필로 이동
+                                      Navigator.push(
+                                        context,
+                                        MaterialPageRoute(
+                                          builder:
+                                              (context) => UserProfileScreen(
+                                                otherUser: User(
+                                                  id: 0,
+                                                  username: item.author ?? '',
+                                                  alias: item.author,
+                                                  profileImageUrl:
+                                                      item.profileImageUrl,
+                                                ),
+                                              ),
+                                        ),
+                                      );
+                                    },
+                                    child: Row(
+                                      children: [
+                                        // 프로필 아바타
+                                        CommonProfileAvatar(
+                                          imageUrl: item.profileImageUrl,
+                                          username: item.author ?? '',
+                                          size: 36,
+                                        ),
+                                        const SizedBox(width: 8),
+                                        // 작성자 이름
+                                        Text(
+                                          item.author ?? '작성자',
+                                          style: TextStyle(
+                                            fontSize: 14,
+                                            fontWeight: FontWeight.w600,
+                                            color:
+                                                Theme.of(
+                                                  context,
+                                                ).colorScheme.onSurface,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  const SizedBox(height: 12),
+
+                                  // 제목
+                                  Padding(
+                                    padding: const EdgeInsets.only(left: 4.0),
+                                    child: Text(
+                                      item.title ?? '',
+                                      style: TextStyle(
+                                        fontSize: 24,
+                                        fontWeight: FontWeight.w800,
+                                        color:
+                                            Theme.of(
+                                              context,
+                                            ).colorScheme.onSurface,
+                                        height: 1.3,
+                                      ),
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+
+                                  const SizedBox(height: 8),
+
+                                  // 내용 (미리보기)
+                                  if (item.parsedContent != null &&
+                                      item.parsedContent!.isNotEmpty)
+                                    Padding(
+                                      padding: const EdgeInsets.only(left: 4.0),
+                                      child: Text(
+                                        item.parsedContent ?? '',
+                                        style: TextStyle(
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.w300,
+                                          color: Theme.of(context)
+                                              .colorScheme
+                                              .onSurface
+                                              .withOpacity(0.8),
+                                          height: 1.6,
+                                        ),
+                                        maxLines: 5,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
+                                  const SizedBox(height: 22),
+
+                                  Expanded(
+                                    child: Padding(
+                                      padding: const EdgeInsets.only(left: 4.0),
+                                      child: ClipRRect(
+                                        borderRadius: BorderRadius.circular(8),
+                                        child: Image.network(
+                                          fit: BoxFit.cover,
+                                          item.imageUrl ?? '',
+                                          errorBuilder: (
+                                            context,
+                                            error,
+                                            stackTrace,
+                                          ) {
+                                            return ShimmerBox(
+                                              width: double.infinity,
+                                              height: double.infinity,
+                                              borderRadius:
+                                                  BorderRadius.circular(8),
+                                            );
+                                          },
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 8),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 }

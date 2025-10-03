@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:dio/dio.dart';
 import 'package:doppy/data/services/api_service_base.dart';
 import 'package:doppy/data/services/auth_service.dart';
+import 'package:doppy/data/models/post_data.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -31,10 +32,15 @@ class SearchService extends ChangeNotifier {
   bool _isSearching = false; // 검색 중인지 여부
   bool _isFocused = false; // 검색창 포커스 여부
   bool _viewLocked = false; // 화면 전환 잠금 (네비게이션 중 레이아웃 고정)
+  // 블로그 제목 검색 단발 결과 보관
+  List<SearchContentItem> _blogResults = [];
 
   // 통합 컨텐츠 데이터
   List<SearchContentItem> _filteredItems = [];
   List<SearchContentItem> _allItems = [];
+  // 최근 검색 결과(탭 전환용): 계정/블로그 각각 보관
+  List<SearchContentItem> _lastAccountResults = [];
+  List<SearchContentItem> _lastBlogResults = [];
 
   // 검색 최적화
   String _lastAccountQuery = '';
@@ -47,6 +53,15 @@ class SearchService extends ChangeNotifier {
 
   // 통합 컨텐츠 데이터 초기화
   late final List<SearchContentItem> _allContentItems = [];
+  int _currentPage = 0;
+  bool _hasMorePosts = true;
+  bool isLoadingMore = false;
+
+  // 최근 본 컨텐츠 관리
+  final Set<String> _recentlyViewedIds = {};
+
+  // 실제 포스트 데이터 저장
+  final Map<String, Map<String, dynamic>> _postData = {};
 
   // Getters
   String get query => _query;
@@ -85,6 +100,9 @@ class SearchService extends ChangeNotifier {
     }
     return uniques;
   }
+
+  // 블로그 제목 검색 결과 (단발)
+  List<SearchContentItem> get blogResults => _blogResults;
 
   // 검색 기록 (계정 리스트 형태)
   List<SearchContentItem> get searchHistory => searchHistoryAsAccounts;
@@ -425,64 +443,112 @@ class SearchService extends ChangeNotifier {
 
   /// 초기화
   Future<void> initialize() async {
-    // 추천 콘텐츠(샘플) - OTT 느낌의 썸네일용
     _allContentItems.clear();
-    _allContentItems.addAll([
-      SearchContentItem.post(
-        id: 'rcmd_1',
-        title: '보내기 싫은 일요일 밤',
-        author: 'editor',
-        imageUrl: 'assets/images/feed1.jpg',
-        likes: 120,
-        comments: 34,
-      ),
-      SearchContentItem.post(
-        id: 'rcmd_2',
-        title: '외워 우먼',
-        author: 'editor',
-        imageUrl: 'assets/images/feed2.png',
-        likes: 88,
-        comments: 12,
-      ),
-      SearchContentItem.post(
-        id: 'rcmd_3',
-        title: '월간 스냅',
-        author: 'editor',
-        imageUrl: 'assets/images/feed3.png',
-        likes: 77,
-        comments: 9,
-      ),
-      SearchContentItem.post(
-        id: 'rcmd_4',
-        title: '베스트 픽',
-        author: 'editor',
-        imageUrl: 'assets/images/feed4.png',
-        likes: 150,
-        comments: 41,
-      ),
-      SearchContentItem.post(
-        id: 'rcmd_5',
-        title: 'HOT',
-        author: 'editor',
-        imageUrl: 'assets/images/feed5.jpg',
-        likes: 203,
-        comments: 55,
-      ),
-      SearchContentItem.post(
-        id: 'rcmd_6',
-        title: 'TREND',
-        author: 'editor',
-        imageUrl: 'assets/images/feed6.jpg',
-        likes: 95,
-        comments: 7,
-      ),
-    ]);
-
-    _allItems = List.from(_allContentItems);
-    _filteredItems = List.from(_allContentItems);
-    _selectedCategory = '추천';
+    _currentPage = 0;
+    _hasMorePosts = true;
     await _loadSearchHistory();
+    await loadRecommendations();
     notifyListeners();
+  }
+
+  /// 추천 게시글 새로고침
+  Future<void> refreshRecommendations() async {
+    _allContentItems.clear();
+    _currentPage = 0;
+    _hasMorePosts = true;
+    await loadRecommendations();
+  }
+
+  /// 최근 본 컨텐츠에 추가
+  void addToRecentlyViewed(String id) {
+    _recentlyViewedIds.add(id);
+    notifyListeners();
+  }
+
+  /// 최근 본 컨텐츠인지 확인
+  bool isRecentlyViewed(String id) {
+    return _recentlyViewedIds.contains(id);
+  }
+
+  /// 포스트 데이터 가져오기
+  Map<String, dynamic>? getPostData(String id) {
+    return _postData[id];
+  }
+
+  /// 추천 게시글 불러오기
+  Future<void> loadRecommendations() async {
+    if (isLoadingMore || !_hasMorePosts) return;
+
+    try {
+      isLoadingMore = true;
+      final baseUrl = ApiServiceBase.baseUrl;
+      final token = await _getAuthToken();
+
+      if (token == null || token.isEmpty) {
+        throw Exception('로그인이 필요합니다(토큰 없음).');
+      }
+
+      final uri =
+          '$baseUrl/api/posts/recommendation?page=$_currentPage&size=10';
+      final res = await _dio.get(
+        uri,
+        options: Options(
+          headers: {'Authorization': 'Bearer $token'},
+          responseType: ResponseType.json,
+        ),
+      );
+
+      if (res.statusCode == 200 && res.data != null) {
+        final data = res.data;
+        final posts =
+            (data['content'] as List? ?? []).map((post) {
+              final id = post['id']?.toString() ?? '';
+              final title = post['title']?.toString() ?? '';
+              final author = post['author']?.toString() ?? '';
+              final imageUrl = post['thumbnailImageUrl']?.toString() ?? '';
+              final likes = (post['likeCount'] as num?)?.toInt() ?? 0;
+              final comments = (post['commentCount'] as num?)?.toInt() ?? 0;
+              final content = post['content']?.toString() ?? '';
+
+              // PostData의 parsedContent getter를 활용
+              final tempPostData = PostData.fromServer(post);
+              final parsedContent = tempPostData.parsedContent;
+              debugPrint(
+                '[loadRecommendations] parsedContent: "$parsedContent"',
+              );
+
+              // 실제 포스트 데이터 저장
+              _postData[id] = post;
+
+              return SearchContentItem.post(
+                id: id,
+                title: title,
+                author: author,
+                imageUrl: imageUrl,
+                likes: likes,
+                comments: comments,
+                content: content,
+                parsedContent: parsedContent,
+              );
+            }).toList();
+
+        if (posts.isEmpty) {
+          _hasMorePosts = false;
+        } else {
+          _allContentItems.addAll(posts);
+          _currentPage++;
+        }
+
+        _allItems = List.from(_allContentItems);
+        _filteredItems = List.from(_allContentItems);
+        _selectedCategory = '추천';
+      }
+    } catch (e) {
+      debugPrint('[SearchService] Failed to load recommendations: $e');
+    } finally {
+      isLoadingMore = false;
+      notifyListeners();
+    }
   }
 
   /// 검색어 변경
@@ -586,6 +652,7 @@ class SearchService extends ChangeNotifier {
       }
 
       _filteredItems = accountResults;
+      _lastAccountResults = accountResults;
       _lastAccountQuery = q;
       _lastAccountCount = accountResults.length;
 
@@ -602,90 +669,68 @@ class SearchService extends ChangeNotifier {
     notifyListeners();
   }
 
-  // (사용 중지) 전체 컨텐츠 검색은 현재 비활성화
-
-  /// 통합 컨텐츠 검색
-  Future<void> _searchContent(String q) async {
-    _isLoading = true;
-    _error = null;
-    notifyListeners();
-
+  /// 제목으로 블로그 단발 검색 (검색 버튼/엔터 콜백에서 호출)
+  Future<void> searchBlogsByTitleOnce({
+    required String keyword,
+    int page = 0,
+    int size = 10,
+  }) async {
+    if (keyword.isEmpty) return;
     try {
-      // 원격 계정 검색
-      final res = await searchUsers(query: q);
-      List<SearchContentItem> remoteAccounts = [];
+      final baseUrl = ApiServiceBase.baseUrl;
+      final token = await _getAuthToken();
+      if (token == null || token.isEmpty) {
+        throw Exception('로그인이 필요합니다(토큰 없음).');
+      }
 
-      if (res.ok) {
-        if (res.body is List) {
-          final list = res.body as List;
-          remoteAccounts =
-              list.map((e) {
-                if (e is Map<String, dynamic>) {
-                  final username = e['username']?.toString() ?? '';
-                  final alias =
-                      (e['alias']?.toString() ?? '').isNotEmpty
-                          ? e['alias'].toString()
-                          : username;
-                  final imageUrl = e['profileImageUrl']?.toString() ?? '';
-                  return SearchContentItem.account(
-                    id: 'remote_$username',
-                    username: username,
-                    alias: alias,
-                    profileImageUrl: imageUrl,
-                    followers: 0,
-                  );
-                } else {
-                  final u = e?.toString() ?? '';
-                  return SearchContentItem.account(
-                    id: 'remote_$u',
-                    username: u,
-                    alias: u,
-                    profileImageUrl: '',
-                    followers: 0,
-                  );
-                }
-              }).toList();
-        } else {
-          remoteAccounts =
-              res.usernames
-                  .map(
-                    (u) => SearchContentItem.account(
-                      id: 'remote_$u',
-                      username: u,
-                      alias: u,
-                      profileImageUrl: '',
-                      followers: 0,
-                    ),
-                  )
-                  .toList();
+      final uri = '$baseUrl/api/posts/search';
+      final res = await _dio.get(
+        uri,
+        queryParameters: {'keyword': keyword, 'page': page, 'size': size},
+        options: Options(
+          headers: {'Authorization': 'Bearer $token'},
+          responseType: ResponseType.json,
+        ),
+      );
+
+      final List<SearchContentItem> posts = [];
+      if (res.statusCode == 200 && res.data is Map<String, dynamic>) {
+        final content = (res.data['content'] as List?) ?? [];
+        for (final e in content) {
+          if (e is Map<String, dynamic>) {
+            final id = e['id']?.toString() ?? '';
+            final title = e['title']?.toString() ?? '';
+            final author = e['author']?.toString() ?? '';
+            final imageUrl = e['thumbnailImageUrl']?.toString() ?? '';
+            final likes = (e['likeCount'] as num?)?.toInt() ?? 0;
+            final comments = (e['commentCount'] as num?)?.toInt() ?? 0;
+            final content = e['content']?.toString() ?? '';
+
+            // PostData의 parsedContent getter를 활용
+            final tempPostData = PostData.fromServer(e);
+            final parsedContent = tempPostData.parsedContent;
+
+            _postData[id] = e;
+            posts.add(
+              SearchContentItem.post(
+                id: id,
+                title: title,
+                author: author,
+                imageUrl: imageUrl,
+                likes: likes,
+                comments: comments,
+                content: content,
+                parsedContent: parsedContent,
+              ),
+            );
+          }
         }
       }
 
-      // 로컬 컨텐츠 필터링
-      final lower = q.toLowerCase();
-      final localFiltered =
-          _allContentItems.where((item) {
-            if (item.isAccount) {
-              return item.username?.toLowerCase().contains(lower) ?? false;
-            } else {
-              return item.title?.toLowerCase().contains(lower) ?? false;
-            }
-          }).toList();
-
-      // 원격 계정과 로컬 컨텐츠 합치기
-      _filteredItems = [...remoteAccounts, ...localFiltered];
-      _isLoading = false;
-      _error = null;
+      _blogResults = posts;
       notifyListeners();
-
-      debugPrint(
-        '[Search] found ${_filteredItems.length} items (${remoteAccounts.length} remote, ${localFiltered.length} local)',
-      );
     } catch (e) {
-      _isLoading = false;
-      _error = '검색 중 오류가 발생했습니다.';
-      notifyListeners();
-      debugPrint('[Search] error: $e');
+      debugPrint('[searchBlogsByTitleOnce] error: $e');
     }
   }
 
@@ -914,6 +959,8 @@ class SearchContentItem {
   final String? imageUrl;
   final int? likes;
   final int? comments;
+  final String? content;
+  final String? parsedContent;
 
   const SearchContentItem._({
     required this.id,
@@ -927,6 +974,8 @@ class SearchContentItem {
     this.imageUrl,
     this.likes,
     this.comments,
+    this.content,
+    this.parsedContent,
   });
 
   factory SearchContentItem.account({
@@ -953,6 +1002,8 @@ class SearchContentItem {
     required String imageUrl,
     required int likes,
     required int comments,
+    String? content,
+    String? parsedContent,
   }) {
     return SearchContentItem._(
       id: id,
@@ -962,6 +1013,8 @@ class SearchContentItem {
       imageUrl: imageUrl,
       likes: likes,
       comments: comments,
+      content: content,
+      parsedContent: parsedContent,
     );
   }
 }

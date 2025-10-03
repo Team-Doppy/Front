@@ -257,8 +257,7 @@ class BlogService {
     }
   }
 
-  /// 홈 화면용 추천 블로그 포스트 목록을 가져옵니다.
-  /// 블로그 ID를 순차적으로 가져와서 홈 추천을 구현
+  /// 홈 화면용 블로그 포스트 목록을 가져옵니다.
   Future<List<Map<String, dynamic>>> getHomePosts({
     int page = 0,
     int size = 10,
@@ -273,42 +272,44 @@ class BlogService {
         return _cachedPosts.take(size).toList();
       }
 
-      print(
-        '[BlogService] Fetching home posts by sequential IDs: page=$page, size=$size',
-      );
+      print('[BlogService] Fetching home posts: page=$page, size=$size');
 
-      final List<Map<String, dynamic>> posts = [];
-      final int startId = page * size + 1; // 1부터 시작
-      final int endId = startId + size - 1;
+      final token = await AuthService().getToken();
+      final uri = Uri.parse('$_baseUrl/api/posts/home?page=$page&size=$size');
 
-      // 블로그 ID를 순차적으로 가져오기
-      for (int id = startId; id <= endId; id++) {
-        try {
-          final post = await getPostDetail(id.toString());
-          posts.add(post);
-        } catch (e) {
-          print('[BlogService] Failed to fetch post $id: $e');
-          // 해당 ID의 포스트가 없으면 건너뛰기
-          continue;
+      final response = await http
+          .get(
+            uri,
+            headers: {
+              'Authorization': 'Bearer $token',
+              'Content-Type': 'application/json',
+            },
+          )
+          .timeout(const Duration(seconds: 10));
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        final posts = List<Map<String, dynamic>>.from(data['content'] ?? []);
+        print('[BlogService] Successfully fetched ${posts.length} home posts');
+
+        // 첫 페이지면 캐시 업데이트
+        if (page == 0) {
+          _cachedPosts = posts;
+          _lastCacheTime = DateTime.now();
+          print('[BlogService] Cache updated with ${posts.length} posts');
         }
+
+        // 포스트가 없으면 fallback 데이터 반환
+        if (posts.isEmpty) {
+          print('[BlogService] No posts found, returning fallback data');
+          return _getFallbackPosts();
+        }
+
+        return posts;
+      } else {
+        print('[BlogService] Error ${response.statusCode}: ${response.body}');
+        throw Exception('Failed to fetch home posts: ${response.statusCode}');
       }
-
-      print('[BlogService] Successfully fetched ${posts.length} home posts');
-
-      // 첫 페이지면 캐시 업데이트
-      if (page == 0) {
-        _cachedPosts = posts;
-        _lastCacheTime = DateTime.now();
-        print('[BlogService] Cache updated with ${posts.length} posts');
-      }
-
-      // 포스트가 없으면 fallback 데이터 반환
-      if (posts.isEmpty) {
-        print('[BlogService] No posts found, returning fallback data');
-        return _getFallbackPosts();
-      }
-
-      return posts;
     } catch (e) {
       print('[BlogService] Exception: $e');
       // 서버 오류 시 임시 데이터 반환
@@ -514,82 +515,7 @@ class BlogService {
   }
 
   /// 서버 오류 시 사용할 임시 데이터
-  List<Map<String, dynamic>> _getFallbackPosts() {
-    return [
-      {
-        'id': '1',
-        'title': '모태솔로지만연애를해야할까///',
-        'content': '안녕하세여..오늘은 모태솔로지만연애는하고싶어후 기로돌아왓어요다들키스씬은보셧나요저는보다가…',
-        'author': '수최영',
-        'username': 'affection-jk',
-        'thumbnailImageId': '1',
-        'thumbnailImageUrl': 'assets/images/feed2.png',
-        'accessLevel': 'PUBLIC',
-        'createdAt': DateTime.now().toIso8601String(),
-        'likeCount': 123,
-        'commentCount': 45,
-        'viewCount': 256,
-      },
-      {
-        'id': '2',
-        'title': '새로운 시작',
-        'content': '오늘부터 새로운 마음으로 시작해보려고 합니다. 여러분의 응원 부탁드려요!',
-        'author': '김철수',
-        'username': 'kimcs123',
-        'thumbnailImageId': '2',
-        'thumbnailImageUrl': 'assets/images/feed3.png',
-        'accessLevel': 'PUBLIC',
-        'createdAt':
-            DateTime.now().subtract(const Duration(hours: 2)).toIso8601String(),
-        'likeCount': 67,
-        'commentCount': 23,
-        'viewCount': 134,
-      },
-      {
-        'id': '3',
-        'title': '여행 후기',
-        'content': '제주도 여행 다녀왔습니다! 정말 아름다운 풍경이었어요.',
-        'author': '이영희',
-        'username': 'leeyh456',
-        'thumbnailImageId': '3',
-        'thumbnailImageUrl': 'assets/images/feed4.png',
-        'accessLevel': 'PUBLIC',
-        'createdAt':
-            DateTime.now().subtract(const Duration(days: 1)).toIso8601String(),
-        'likeCount': 89,
-        'commentCount': 34,
-        'viewCount': 189,
-      },
-      {
-        'id': '4',
-        'title': '오늘 날씨가 너무 좋아서 산책했어요',
-        'content': '오늘 날씨가 정말 좋아서 산책을 다녀왔어요. 햇살이 따뜻하고 바람도 시원해서 정말 기분이 좋았어요.',
-        'author': '김여름',
-        'username': 'kimsummer',
-        'thumbnailImageId': '4',
-        'thumbnailImageUrl': 'assets/images/feed1.jpg',
-        'accessLevel': 'PUBLIC',
-        'createdAt':
-            DateTime.now().subtract(const Duration(hours: 4)).toIso8601String(),
-        'likeCount': 45,
-        'commentCount': 12,
-        'viewCount': 98,
-      },
-      {
-        'id': '5',
-        'title': '새로운 카페를 발견했어요!',
-        'content': '새로운 카페를 발견했어요! 분위기도 좋고 커피도 맛있어서 정말 만족스러웠어요.',
-        'author': '박카페',
-        'username': 'parkcafe',
-        'thumbnailImageId': '5',
-        'thumbnailImageUrl': 'assets/images/feed5.jpg',
-        'accessLevel': 'PUBLIC',
-        'createdAt':
-            DateTime.now().subtract(const Duration(hours: 6)).toIso8601String(),
-        'likeCount': 78,
-        'commentCount': 19,
-        'viewCount': 156,
-      },
-    ];
+  Future<List<Map<String, dynamic>>> _getFallbackPosts() {
+    return getMyPosts().then((value) => value);
   }
 }

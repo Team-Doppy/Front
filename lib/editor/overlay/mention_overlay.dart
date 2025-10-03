@@ -2,6 +2,8 @@ import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:doppy/theme/app_colors.dart';
+import 'package:doppy/data/services/mention_service.dart';
+import 'package:doppy/data/services/search_service.dart';
 
 class MentionOverlay extends StatefulWidget {
   final VoidCallback? onClose;
@@ -18,18 +20,9 @@ class _MentionOverlayState extends State<MentionOverlay> {
   final TextEditingController _controller = TextEditingController(text: '');
   final FocusNode _focusNode = FocusNode();
 
-  // 데모용 전체 사용자 목록 (실제 구현 시 API 연동)
-  final List<_UserChip> _allUsers = const [
-    _UserChip(username: 'alice', imageUrl: null),
-    _UserChip(username: 'bob', imageUrl: null),
-    _UserChip(username: 'carol', imageUrl: null),
-    _UserChip(username: 'dave', imageUrl: null),
-    _UserChip(username: 'erin', imageUrl: null),
-    _UserChip(username: 'frank', imageUrl: null),
-    _UserChip(username: 'grace', imageUrl: null),
-    _UserChip(username: 'henry', imageUrl: null),
-    _UserChip(username: 'irene', imageUrl: null),
-  ];
+  // 서비스 참조
+  late final MentionService _mentionService;
+  late final SearchService _searchService;
 
   List<_UserChip> _results = const [];
   final List<_UserChip> _selected = <_UserChip>[];
@@ -39,11 +32,41 @@ class _MentionOverlayState extends State<MentionOverlay> {
   @override
   void initState() {
     super.initState();
+
+    // 서비스 초기화
+    _mentionService = MentionService();
+    _searchService = SearchService();
+
+    // 언급 서비스 초기화 및 최근 언급 대상 로드
+    _initializeServices();
+
     // 키보드 자동 표시
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _focusNode.requestFocus();
     });
-    _results = _allUsers.take(6).toList();
+  }
+
+  Future<void> _initializeServices() async {
+    await _mentionService.initialize();
+    _loadRecentMentions();
+  }
+
+  void _loadRecentMentions() {
+    final recentUsers = _mentionService.mentionHistoryAsUsers;
+    _results =
+        recentUsers
+            .map(
+              (user) => _UserChip(
+                username: user.username,
+                imageUrl: user.profileImageUrl,
+                alias: user.alias,
+              ),
+            )
+            .toList();
+
+    if (mounted) {
+      setState(() {});
+    }
   }
 
   @override
@@ -178,8 +201,12 @@ class _MentionOverlayState extends State<MentionOverlay> {
               height: 140,
               child:
                   _loading
-                      ? const Center(
-                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ? ListView.separated(
+                        scrollDirection: Axis.horizontal,
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                        itemBuilder: (_, i) => _LoadingCircleUser(),
+                        separatorBuilder: (_, __) => const SizedBox(width: 8),
+                        itemCount: 6, // 로딩 중일 때 6개 표시
                       )
                       : ListView.separated(
                         scrollDirection: Axis.horizontal,
@@ -189,10 +216,16 @@ class _MentionOverlayState extends State<MentionOverlay> {
                           final bool selected = _selected.any(
                             (s) => s.username == item.username,
                           );
+                          final bool isRecentMention = _controller.text.isEmpty;
                           return _CircleUser(
                             user: item,
                             selected: selected,
+                            isRecentMention: isRecentMention,
                             onTap: () => _toggleSelect(item),
+                            onRemove:
+                                isRecentMention
+                                    ? () => _removeFromRecent(item)
+                                    : null,
                           );
                         },
                         separatorBuilder: (_, __) => const SizedBox(width: 8),
@@ -262,22 +295,50 @@ class _MentionOverlayState extends State<MentionOverlay> {
     setState(() => _loading = true);
     final now = DateTime.now();
     _lastQueryAt = now;
-    Future.delayed(const Duration(milliseconds: 220), () {
+
+    Future.delayed(const Duration(milliseconds: 220), () async {
       if (_lastQueryAt != now) return; // 최신 쿼리만 반영
+
       final String qq = q.trim().toLowerCase();
       List<_UserChip> next;
+
       if (qq.isEmpty) {
-        next = _allUsers.take(6).toList();
-      } else {
+        // 검색어가 비어있으면 최근 언급 대상 표시
         next =
-            _allUsers
-                .where((u) => u.username.toLowerCase().contains(qq))
+            _mentionService.mentionHistoryAsUsers
+                .map(
+                  (user) => _UserChip(
+                    username: user.username,
+                    imageUrl: user.profileImageUrl,
+                    alias: user.alias,
+                  ),
+                )
+                .toList();
+      } else {
+        // 실제 검색 수행
+        _searchService.onSearchChanged(qq);
+        await Future.delayed(const Duration(milliseconds: 300)); // 검색 완료 대기
+        final searchResults = _searchService.searchingAccounts;
+
+        // 검색 결과를 _UserChip 형태로 변환
+        next =
+            searchResults
+                .map(
+                  (item) => _UserChip(
+                    username: item.username ?? '',
+                    imageUrl: item.profileImageUrl ?? '',
+                    alias: item.alias ?? item.username ?? '',
+                  ),
+                )
                 .toList();
       }
-      setState(() {
-        _results = next;
-        _loading = false;
-      });
+
+      if (mounted) {
+        setState(() {
+          _results = next;
+          _loading = false;
+        });
+      }
     });
   }
 
@@ -294,6 +355,18 @@ class _MentionOverlayState extends State<MentionOverlay> {
 
   void _submit() {
     if (_selected.isEmpty) return;
+
+    // 선택된 사용자들을 언급 기록에 추가
+    for (final user in _selected) {
+      _mentionService.addToHistory(
+        MentionUser(
+          username: user.username,
+          alias: user.alias ?? user.username,
+          profileImageUrl: user.imageUrl ?? '',
+        ),
+      );
+    }
+
     widget.onSubmit?.call(_selected.map((e) => e.username).toList());
     for (final u in _selected) {
       widget.onSelect?.call(u.username);
@@ -307,11 +380,16 @@ class _MentionOverlayState extends State<MentionOverlay> {
     // 결과 중 일치하는 항목을 선택, 없으면 새 사용자명으로 추가
     final match = _results.firstWhere(
       (u) => u.username.toLowerCase() == q.toLowerCase(),
-      orElse: () => _UserChip(username: q, imageUrl: null),
+      orElse: () => _UserChip(username: q, imageUrl: null, alias: q),
     );
     _toggleSelect(match);
     _controller.clear();
     _onQueryChanged('');
+  }
+
+  void _removeFromRecent(_UserChip user) {
+    _mentionService.removeFromHistory(user.username);
+    _loadRecentMentions();
   }
 }
 
@@ -320,7 +398,8 @@ class _MentionOverlayState extends State<MentionOverlay> {
 class _UserChip {
   final String username;
   final String? imageUrl;
-  const _UserChip({required this.username, this.imageUrl});
+  final String? alias;
+  const _UserChip({required this.username, this.imageUrl, this.alias});
 }
 
 class _Glass extends StatelessWidget {
@@ -354,11 +433,15 @@ class _Glass extends StatelessWidget {
 class _CircleUser extends StatelessWidget {
   final _UserChip user;
   final bool selected;
+  final bool isRecentMention;
   final VoidCallback onTap;
+  final VoidCallback? onRemove;
   const _CircleUser({
     required this.user,
     required this.selected,
+    required this.isRecentMention,
     required this.onTap,
+    this.onRemove,
   });
 
   @override
@@ -368,24 +451,53 @@ class _CircleUser extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Container(
-            width: 70,
-            height: 70,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: AppColors.darkSurfaceVariant,
-              border: Border.all(
-                color: selected ? AppColors.primary : AppColors.darkBorder,
-                width: selected ? 2 : 1,
+          Stack(
+            children: [
+              Container(
+                width: 70,
+                height: 70,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: AppColors.darkSurfaceVariant,
+                  border: Border.all(
+                    color: selected ? AppColors.primary : AppColors.darkBorder,
+                    width: selected ? 2 : 1,
+                  ),
+                ),
+                child: const Icon(
+                  Icons.person,
+                  color: AppColors.darkTextSecondary,
+                ),
               ),
-            ),
-            child: const Icon(Icons.person, color: AppColors.darkTextSecondary),
+              // 최근 언급 대상일 때만 X 버튼 표시
+              if (isRecentMention && onRemove != null)
+                Positioned(
+                  top: 0,
+                  right: 0,
+                  child: GestureDetector(
+                    onTap: onRemove,
+                    child: Container(
+                      width: 20,
+                      height: 20,
+                      decoration: const BoxDecoration(
+                        color: Colors.red,
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(
+                        Icons.close,
+                        color: Colors.white,
+                        size: 12,
+                      ),
+                    ),
+                  ),
+                ),
+            ],
           ),
           const SizedBox(height: 8),
           SizedBox(
             width: 80,
             child: Text(
-              user.username,
+              user.alias ?? user.username,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               textAlign: TextAlign.center,
@@ -427,6 +539,74 @@ class _SelectedRowChip extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+class _LoadingCircleUser extends StatefulWidget {
+  const _LoadingCircleUser();
+
+  @override
+  State<_LoadingCircleUser> createState() => _LoadingCircleUserState();
+}
+
+class _LoadingCircleUserState extends State<_LoadingCircleUser>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+  late Animation<double> _animation;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      duration: const Duration(milliseconds: 1500),
+      vsync: this,
+    )..repeat();
+
+    _animation = Tween<double>(
+      begin: 0.3,
+      end: 0.7,
+    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeInOut));
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _animation,
+      builder: (context, child) {
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 70,
+              height: 70,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: AppColors.darkSurfaceVariant.withOpacity(
+                  _animation.value,
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Container(
+              width: 60,
+              height: 12,
+              decoration: BoxDecoration(
+                color: AppColors.darkSurfaceVariant.withOpacity(
+                  _animation.value,
+                ),
+                borderRadius: BorderRadius.circular(6),
+              ),
+            ),
+          ],
+        );
+      },
     );
   }
 }

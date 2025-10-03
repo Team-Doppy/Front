@@ -11,6 +11,7 @@ class PostList extends StatefulWidget {
   final VoidCallback? onLoadMore;
   final bool isLoadingMore;
   final Future<void> Function()? onRefresh;
+  final Function(int)? onPageChanged;
 
   const PostList({
     super.key,
@@ -19,6 +20,7 @@ class PostList extends StatefulWidget {
     this.onLoadMore,
     this.isLoadingMore = false,
     this.onRefresh,
+    this.onPageChanged,
   });
 
   @override
@@ -28,8 +30,6 @@ class PostList extends StatefulWidget {
 class _PostListState extends State<PostList> {
   late PageController _pageController;
   int _currentIndex = 0;
-  bool _isScrolling = false;
-  double _page = 0.0;
   late List<PostData> _items;
   final Set<String> _likingInFlight = <String>{};
   final LikeService _likeService = LikeService();
@@ -38,18 +38,8 @@ class _PostListState extends State<PostList> {
   void initState() {
     super.initState();
     // 전체 화면 사용 (인스타그램 릴스 스타일)
-    _pageController = PageController(viewportFraction: 0.88);
+    _pageController = PageController(viewportFraction: 0.85);
     _items = List<PostData>.from(widget.posts);
-    _pageController.addListener(() {
-      if (_pageController.hasClients) {
-        final current = _pageController.page ?? _currentIndex.toDouble();
-        if ((current - _page).abs() > 0.0001) {
-          setState(() {
-            _page = current;
-          });
-        }
-      }
-    });
 
     // LikeService 변경사항 감지
     _likeService.addListener(_onLikeServiceChanged);
@@ -88,16 +78,19 @@ class _PostListState extends State<PostList> {
   void didUpdateWidget(PostList oldWidget) {
     super.didUpdateWidget(oldWidget);
 
-    // 새로운 게시물이 추가되었을 때 좋아요 상태 확인
-    if (widget.posts.length > oldWidget.posts.length) {
-      final newPosts = widget.posts.skip(oldWidget.posts.length).toList();
-      _loadLikeStatusForNewPosts(newPosts);
-    }
-
-    // 게시물 목록이 완전히 바뀌었을 때
+    // 게시물 목록이 변경되었을 때
     if (widget.posts != oldWidget.posts) {
-      _items = List<PostData>.from(widget.posts);
-      _loadLikeStatusForAllPosts();
+      // 새로운 포스트가 추가된 경우 (기존보다 길이가 길어짐)
+      if (widget.posts.length > _items.length) {
+        // 기존 _items에 새로운 포스트들만 추가
+        final newPosts = widget.posts.skip(_items.length).toList();
+        _items.addAll(newPosts);
+        _loadLikeStatusForNewPosts(newPosts);
+      } else {
+        // 완전히 새로운 목록인 경우 (길이가 같거나 짧아짐)
+        _items = List<PostData>.from(widget.posts);
+        _loadLikeStatusForAllPosts();
+      }
     }
   }
 
@@ -112,103 +105,62 @@ class _PostListState extends State<PostList> {
 
   @override
   Widget build(BuildContext context) {
-    Widget pageView = NotificationListener<ScrollNotification>(
-      onNotification: (notification) {
-        if (notification is ScrollUpdateNotification) {
-          // 페이지 정지 직전(정확히 맞물리기 직전)으로 가까워지면 미리 밝기 복원
-          final metrics = notification.metrics;
-          final viewport = metrics.viewportDimension;
-          if (viewport > 0) {
-            final page = metrics.pixels / viewport;
-            final nearest = page.round();
-            final distance = (nearest - page).abs();
-            // 임계값: 0.12 페이지 이내로 접근하면 정지 취급
-            if (distance < 0.12) {
-              if (_isScrolling || _currentIndex != nearest) {
-                setState(() {
-                  _isScrolling = false;
-                  // 범위 보호
-                  final maxIndex = widget.posts.length - 1;
-                  _currentIndex = nearest.clamp(0, maxIndex);
-                });
-              }
-            } else {
-              if (!_isScrolling) {
-                setState(() {
-                  _isScrolling = true;
-                });
-              }
-            }
-          }
+    Widget pageView = PageView.builder(
+      scrollDirection: Axis.horizontal,
+      controller: _pageController,
+      pageSnapping: true,
+      physics: const ClampingScrollPhysics(),
+      clipBehavior: Clip.none,
+      padEnds: true,
+      onPageChanged: (index) {
+        setState(() {
+          _currentIndex = index;
+        });
+
+        // 페이지 변경 콜백 호출
+        if (widget.onPageChanged != null) {
+          widget.onPageChanged!(index);
         }
-        if (notification is ScrollStartNotification) {
-          if (!_isScrolling) {
-            setState(() {
-              _isScrolling = true;
-            });
-          }
-        } else if (notification is ScrollEndNotification) {
-          if (_isScrolling) {
-            setState(() {
-              _isScrolling = false;
-            });
-          }
+
+        // 무한 스크롤: 마지막 페이지 근처에서 더 로드
+        if (widget.onLoadMore != null &&
+            index >= widget.posts.length - 2 &&
+            !widget.isLoadingMore) {
+          widget.onLoadMore!();
         }
-        return false;
       },
-      child: PageView.builder(
-        scrollDirection: Axis.horizontal,
-        controller: _pageController,
-        pageSnapping: true,
+      itemCount: _items.length + (widget.isLoadingMore ? 1 : 0),
+      itemBuilder: (context, index) {
+        if (index >= _items.length) {
+          // 로딩 인디케이터
+          return Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const CircularProgressIndicator(color: Colors.white),
+                const SizedBox(height: 16),
+                Text(
+                  '더 많은 포스트를 불러오는 중...',
+                  style: TextStyle(color: Colors.white70),
+                ),
+              ],
+            ),
+          );
+        }
 
-        clipBehavior: Clip.none,
-        padEnds: true,
-        onPageChanged: (index) {
-          setState(() {
-            _currentIndex = index;
-          });
+        // 안전한 범위 체크
+        if (index >= _items.length) {
+          return Container(
+            color: Colors.black,
+            child: const Center(
+              child: Text('로딩 중...', style: TextStyle(color: Colors.white70)),
+            ),
+          );
+        }
 
-          // 무한 스크롤: 마지막 페이지 근처에서 더 로드
-          if (widget.onLoadMore != null &&
-              index >= widget.posts.length - 2 &&
-              !widget.isLoadingMore) {
-            widget.onLoadMore!();
-          }
-        },
-        itemCount: widget.posts.length + (widget.isLoadingMore ? 1 : 0),
-        itemBuilder: (context, index) {
-          if (index >= widget.posts.length) {
-            // 로딩 인디케이터
-            return Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const CircularProgressIndicator(color: Colors.white),
-                  const SizedBox(height: 16),
-                  Text(
-                    '더 많은 포스트를 불러오는 중...',
-                    style: TextStyle(color: Colors.white70),
-                  ),
-                ],
-              ),
-            );
-          }
-
-          final post = _items[index];
-          return _buildPostItem(context, post, index);
-        },
-      ),
-    );
-
-    // 헤더(작가 프로필/이름) + 본문(PageView)를 컬럼으로 분리하여 겹침 제거
-    final double topInset = MediaQuery.of(context).padding.top;
-
-    final Widget header = Padding(
-      padding: EdgeInsets.fromLTRB(24, topInset, 20, 0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [_buildStickyAuthor(context)],
-      ),
+        final post = _items[index];
+        return _buildPostItem(context, post, index);
+      },
     );
 
     // 새로고침 기능이 있으면 RefreshIndicator로 감싸기
@@ -222,29 +174,24 @@ class _PostListState extends State<PostList> {
             )
             : pageView;
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Expanded(flex: 4, child: contentWithRefresh),
-        Expanded(flex: 1, child: header),
-      ],
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 120, top: 10),
+      child: Stack(
+        children: [
+          contentWithRefresh,
+          Positioned(
+            left: 20,
+            right: 20,
+            bottom: 20,
+            child: _buildStickyAuthor(context),
+          ),
+        ],
+      ),
     );
   }
 
   Widget _buildPostItem(BuildContext context, PostData post, int index) {
-    // 스크롤 진행도 기반 전환 효과 설정 (세로 스크롤 유지)
-    final bool hasClients = _pageController.hasClients;
-    final double pageNow = hasClients ? _page : _currentIndex.toDouble();
-    final double delta = pageNow - index; // 현재 페이지로부터의 거리 (0이면 중앙)
-    final double ad = delta.abs();
-
-    // 심플 모드: 공존 연출 제거. 오직 축소/페이드/블러만 거리 비례로 적용
-    // proximity: 0(멀리) ~ 1(정확히 중앙)
-    final double proximity = (1.0 - ad).clamp(0.0, 1.0);
-    // 중앙 1.0, 가장자리도 살짝 보이도록 최소 0.9 유지
-    double scale = 0.90 + 0.10 * proximity;
-
-    // 블러 제거, 스케일/페이드만 유지
+    // 스케일은 AnimatedBuilder 안에서 PageController.page 기반으로 계산합니다
 
     final content = GestureDetector(
       onTap: () {
@@ -317,54 +264,70 @@ class _PostListState extends State<PostList> {
           }
         }
       },
-      child: Transform.scale(
-        scale: scale,
-        child: Center(
-          child: AspectRatio(
-            aspectRatio: 9 / 12,
-            child: PostCard(
-              containerWidth: widget.containerWidth,
-              thumbnailImageUrl: post.thumbnailImageUrl,
-              heroTag: 'post-hero-${post.id}-$index',
-              title: post.title,
-              author: post.author,
-              authorProfileImageUrl: post.authorProfileImageUrl,
-              content: post.parsedContent,
-              isVisible: _currentIndex == index,
-              postId: post.id.toString(),
-              isLiked: _likeService.isPostLiked(post.id.toString()),
-              likeCount: _likeService.getPostLikeCount(post.id.toString()),
-              onLikePressed: () async {
-                final id = post.id.toString();
-                if (id.isEmpty) {
-                  print('[PostList] 유효하지 않은 포스트 ID: $id');
-                  return;
-                }
+      child: AnimatedBuilder(
+        animation: _pageController,
+        builder: (context, child) {
+          final double pageNow =
+              _pageController.hasClients
+                  ? (_pageController.page ?? _currentIndex.toDouble())
+                  : _currentIndex.toDouble();
+          final double ad = (pageNow - index).abs().clamp(0.0, 1.0);
+          final double t = 1.0 - ad;
+          // 커브로 더 부드럽게, 변화폭 크게 (0.85 ~ 1.0)
+          final double eased = Curves.easeOutCubic.transform(t);
+          final double scale = 0.85 + 0.15 * eased;
+          return Transform.scale(scale: scale, child: child);
+        },
+        child: Stack(
+          children: [
+            Center(
+              child: AspectRatio(
+                aspectRatio: 9 / 12,
+                child: PostCard(
+                  containerWidth: widget.containerWidth,
+                  thumbnailImageUrl: post.thumbnailImageUrl,
+                  heroTag: 'post-hero-${post.id}-$index',
+                  title: post.title,
+                  author: post.author,
+                  authorProfileImageUrl: post.authorProfileImageUrl,
+                  content: post.parsedContent,
+                  isVisible: _currentIndex == index,
+                  postId: post.id.toString(),
+                  isLiked: _likeService.isPostLiked(post.id.toString()),
+                  likeCount: _likeService.getPostLikeCount(post.id.toString()),
+                  onLikePressed: () async {
+                    final id = post.id.toString();
+                    if (id.isEmpty) {
+                      print('[PostList] 유효하지 않은 포스트 ID: $id');
+                      return;
+                    }
 
-                if (_likingInFlight.contains(id)) return;
-                setState(() => _likingInFlight.add(id));
+                    if (_likingInFlight.contains(id)) return;
+                    setState(() => _likingInFlight.add(id));
 
-                try {
-                  await _likeService.togglePostLike(id);
-                  // setState() 제거 - LikeService의 notifyListeners()가 자동으로 UI 업데이트
-                } catch (e) {
-                  if (mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text('좋아요 처리 중 오류가 발생했습니다'),
-                        behavior: SnackBarBehavior.floating,
-                        duration: const Duration(milliseconds: 900),
-                      ),
-                    );
-                  }
-                } finally {
-                  if (mounted) {
-                    setState(() => _likingInFlight.remove(id));
-                  }
-                }
-              },
+                    try {
+                      await _likeService.togglePostLike(id);
+                      // setState() 제거 - LikeService의 notifyListeners()가 자동으로 UI 업데이트
+                    } catch (e) {
+                      if (mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text('좋아요 처리 중 오류가 발생했습니다'),
+                            behavior: SnackBarBehavior.floating,
+                            duration: const Duration(milliseconds: 900),
+                          ),
+                        );
+                      }
+                    } finally {
+                      if (mounted) {
+                        setState(() => _likingInFlight.remove(id));
+                      }
+                    }
+                  },
+                ),
+              ),
             ),
-          ),
+          ],
         ),
       ),
     );
@@ -378,18 +341,23 @@ class _PostListState extends State<PostList> {
     final safeIndex = _currentIndex.clamp(0, widget.posts.length - 1);
     final post = widget.posts[safeIndex];
 
+    // 디버그 로그 추가
+    print(
+      '_buildStickyAuthor: _currentIndex=$_currentIndex, safeIndex=$safeIndex, post.title=${post.title}',
+    );
+
     return Padding(
       padding: const EdgeInsets.only(right: 20, left: 5),
       child: Column(
         key: ValueKey('author-${post.id}-$safeIndex'),
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           Text(
             post.title,
-            textAlign: TextAlign.left,
+            textAlign: TextAlign.center,
             style: TextStyle(
               color: Theme.of(context).colorScheme.onSurface,
-              fontSize: 22,
+              fontSize: 32,
               fontWeight: FontWeight.bold,
               letterSpacing: -0.2,
             ),
@@ -399,11 +367,11 @@ class _PostListState extends State<PostList> {
           const SizedBox(height: 4),
           Text(
             post.parsedContent,
-            textAlign: TextAlign.left,
+            textAlign: TextAlign.center,
             style: TextStyle(
               color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
-              fontSize: 13,
-              fontWeight: FontWeight.w700,
+              fontSize: 14,
+              fontWeight: FontWeight.w300,
               letterSpacing: -0.2,
             ),
             maxLines: 2,

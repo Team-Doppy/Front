@@ -5,7 +5,6 @@ import 'package:doppy/editor/service/sticker_service.dart';
 import 'package:doppy/pages/screens/home_screen.dart';
 import 'package:doppy/pages/components/custom_bottom_navigation_bar.dart';
 import 'package:doppy/pages/onboarding/splash.dart';
-import 'package:doppy/pages/screens/manage_group_screen.dart';
 import 'package:doppy/pages/screens/manage_neighbor_screen.dart';
 import 'package:doppy/pages/screens/search_screen.dart';
 import 'package:doppy/pages/screens/user_profile_screen.dart';
@@ -139,12 +138,13 @@ class _RootShellState extends State<RootShell> {
     final stack = IndexedStack(index: _index, children: _pages);
     return Scaffold(
       backgroundColor: Theme.of(context).colorScheme.background,
-
-      // 모든 탭에서 동일하게 SafeArea를 적용해 전환 시 패딩 점프(깜빡임) 제거
-      body: SafeArea(child: stack),
-      bottomNavigationBar: CustomBottomNavigationBar(
-        currentIndex: _index,
-        onTap: _onTap,
+      body: Stack(
+        children: [
+          // 모든 탭에서 동일하게 SafeArea를 적용해 전환 시 패딩 점프(깜빡임) 제거
+          stack,
+          // 플로팅 바텀 내비게이션바
+          CustomBottomNavigationBar(currentIndex: _index, onTap: _onTap),
+        ],
       ),
     );
   }

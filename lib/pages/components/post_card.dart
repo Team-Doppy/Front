@@ -1,6 +1,8 @@
 import 'package:doppy/pages/components/shimmer_box.dart';
+import 'package:doppy/pages/components/common_profile_avatar.dart';
 import 'package:flutter/material.dart';
 import 'package:doppy/data/services/like_service.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 
 // ignore: must_be_immutable
 class PostCard extends StatefulWidget {
@@ -65,41 +67,31 @@ class _PostCardState extends State<PostCard> {
     if (widget.thumbnailImageUrl.isNotEmpty) {
       return Container(
         decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(8),
+          borderRadius: BorderRadius.circular(12),
           border: Border.all(
             color: Theme.of(context).colorScheme.surfaceVariant,
             width: 1.5,
           ),
         ),
         child: ClipRRect(
-          borderRadius: BorderRadius.circular(3), // 보더 두께만큼 작게
+          borderRadius: BorderRadius.circular(12), // 보더 두께만큼 작게
           child: Image.network(
             widget.thumbnailImageUrl,
             fit: BoxFit.cover,
-            loadingBuilder: (context, child, loadingProgress) {
-              if (loadingProgress == null) return child;
-              return ShimmerBox(
-                width: double.infinity,
-                height: double.infinity,
-              );
-            },
-            errorBuilder: (context, error, stackTrace) {
-              return Container(
-                color: Theme.of(context).colorScheme.surfaceVariant,
-                child: Center(
-                  child: Icon(
-                    Icons.error,
-                    color: Theme.of(
-                      context,
-                    ).colorScheme.onSurface.withOpacity(0.54),
-                    size: 40,
+            key: ValueKey('bg-${widget.thumbnailImageUrl}'),
+            errorBuilder:
+                (context, error, stackTrace) => Container(
+                  color: Theme.of(context).colorScheme.surfaceVariant,
+                  child: Center(
+                    child: Icon(
+                      Icons.error,
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.onSurface.withOpacity(0.54),
+                      size: 40,
+                    ),
                   ),
                 ),
-              );
-            },
-
-            // 고화질을 위한 최적화
-            filterQuality: FilterQuality.high,
           ),
         ),
       );
@@ -107,7 +99,7 @@ class _PostCardState extends State<PostCard> {
       // 로컬 에셋
       return Container(
         decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(8),
+          borderRadius: BorderRadius.circular(12),
           border: Border.all(
             color: Theme.of(context).colorScheme.surfaceVariant,
             width: 1,
@@ -204,32 +196,17 @@ class _PostCardState extends State<PostCard> {
   }
 
   Widget _buildBottomAuthorRow(BuildContext context) {
-    final hasAvatar = widget.authorProfileImageUrl?.isNotEmpty ?? false;
     return Row(
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
-        Container(
-          width: 50,
-          height: 50,
-          decoration: BoxDecoration(shape: BoxShape.circle),
-          padding: const EdgeInsets.all(2),
-          child: ClipOval(
-            child:
-                hasAvatar
-                    ? Image.network(
-                      widget.authorProfileImageUrl!,
-                      fit: BoxFit.cover,
-                      width: 55,
-                      height: 55,
-                      cacheWidth: 200,
-                      cacheHeight: 200,
-                      filterQuality: FilterQuality.low,
-                    )
-                    : Container(
-                      color: Colors.white,
-                      child: const Icon(Icons.person, color: Colors.black45),
-                    ),
-          ),
+        CommonProfileAvatar(
+          imageUrl: widget.authorProfileImageUrl,
+          username: widget.author,
+          size: 50.0,
+          borderWidth: 1,
+          borderColor: Theme.of(
+            context,
+          ).colorScheme.surfaceVariant.withOpacity(0.5),
         ),
         const SizedBox(width: 10),
         Expanded(

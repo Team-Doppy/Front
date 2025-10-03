@@ -488,90 +488,112 @@ class CommentService extends ChangeNotifier {
     }
   }
 
-  /// 댓글에 반응 추가/제거 (API 호출)
+  /// 댓글에 반응 추가/제거 (API 호출) - 사용자당 하나의 이모지만
   Future<void> toggleReaction(String commentId, String emoji) async {
     try {
       final token = await AuthService().getToken();
+      if (token == null) return;
 
       // 현재 반응 상태 확인
       final commentIndex = _comments.indexWhere((c) => c.id == commentId);
       if (commentIndex == -1) return;
 
       final comment = _comments[commentIndex];
-      final hasReaction = comment.myEmotions.containsKey(emoji);
+      final hasThisReaction = comment.myEmotions.containsKey(emoji);
+      final hasAnyReaction = comment.myEmotions.isNotEmpty;
 
-      Uri uri;
-      if (hasReaction) {
-        // 반응 제거
-        uri = Uri.parse(
-          '$_baseUrl/api/comments/$commentId/emotions?emoji=${Uri.encodeComponent(emoji)}',
-        );
+      // 기존 반응이 있고 다른 이모지인 경우, 기존 반응 제거 후 새 반응 추가
+      if (hasAnyReaction && !hasThisReaction) {
+        // 기존 반응 제거
+        final existingEmoji = comment.myEmotions.keys.first;
+        await _removeReactionFromServer(commentId, existingEmoji, token);
+
+        // 새 반응 추가
+        await _addReactionToServer(commentId, emoji, token);
+      } else if (hasThisReaction) {
+        // 같은 이모지인 경우 제거
+        await _removeReactionFromServer(commentId, emoji, token);
       } else {
-        // 반응 추가
-        uri = Uri.parse(
-          '$_baseUrl/api/comments/$commentId/emotions?emoji=${Uri.encodeComponent(emoji)}',
-        );
+        // 반응이 없는 경우 새 반응 추가
+        await _addReactionToServer(commentId, emoji, token);
       }
 
-      print('[CommentService] 감정 이모지 ${hasReaction ? '제거' : '추가'} 요청: $uri');
-
-      final response =
-          hasReaction
-              ? await http
-                  .delete(
-                    uri,
-                    headers: {
-                      'Authorization': 'Bearer $token',
-                      'Content-Type': 'application/json',
-                    },
-                  )
-                  .timeout(const Duration(seconds: 5))
-              : await http
-                  .post(
-                    uri,
-                    headers: {
-                      'Authorization': 'Bearer $token',
-                      'Content-Type': 'application/json',
-                    },
-                  )
-                  .timeout(const Duration(seconds: 5));
-
-      print(
-        '[CommentService] 감정 이모지 응답: ${response.statusCode} - ${response.body}',
-      );
-
-      if (response.statusCode == 200) {
-        // API 성공 시 로컬 상태 업데이트
-        _updateLocalReaction(commentId, emoji);
-        print('[CommentService] 반응 토글 성공');
-      } else {
-        print('[CommentService] 반응 토글 실패: ${response.statusCode}');
-        // 실패해도 로컬에서만 토글
-        _updateLocalReaction(commentId, emoji);
-      }
+      // 로컬 상태 업데이트
+      _updateLocalReactionSingle(commentId, emoji);
+      print('[CommentService] 반응 토글 성공');
     } catch (e) {
       print('[CommentService] 반응 토글 오류: $e');
       // 오류 발생 시 로컬에서만 토글
-      _updateLocalReaction(commentId, emoji);
+      _updateLocalReactionSingle(commentId, emoji);
     }
   }
 
-  /// 로컬 반응 상태 업데이트
-  void _updateLocalReaction(String commentId, String emoji) {
+  /// 서버에 반응 추가
+  Future<void> _addReactionToServer(
+    String commentId,
+    String emoji,
+    String token,
+  ) async {
+    final uri = Uri.parse(
+      '$_baseUrl/api/comments/$commentId/emotions?emoji=${Uri.encodeComponent(emoji)}',
+    );
+
+    final response = await http
+        .post(
+          uri,
+          headers: {
+            'Authorization': 'Bearer $token',
+            'Content-Type': 'application/json',
+          },
+        )
+        .timeout(const Duration(seconds: 5));
+
+    print(
+      '[CommentService] 반응 추가 응답: ${response.statusCode} - ${response.body}',
+    );
+  }
+
+  /// 서버에서 반응 제거
+  Future<void> _removeReactionFromServer(
+    String commentId,
+    String emoji,
+    String token,
+  ) async {
+    final uri = Uri.parse(
+      '$_baseUrl/api/comments/$commentId/emotions?emoji=${Uri.encodeComponent(emoji)}',
+    );
+
+    final response = await http
+        .delete(
+          uri,
+          headers: {
+            'Authorization': 'Bearer $token',
+            'Content-Type': 'application/json',
+          },
+        )
+        .timeout(const Duration(seconds: 5));
+
+    print(
+      '[CommentService] 반응 제거 응답: ${response.statusCode} - ${response.body}',
+    );
+  }
+
+  /// 로컬 반응 상태 업데이트 (사용자당 하나의 이모지만)
+  void _updateLocalReactionSingle(String commentId, String emoji) {
     final commentIndex = _comments.indexWhere((c) => c.id == commentId);
     if (commentIndex == -1) return;
 
     final comment = _comments[commentIndex];
-    final newReactions = Map<String, String>.from(comment.myEmotions);
+    var newReactions = <String, String>{};
 
-    if (newReactions.containsKey(emoji)) {
-      final count = int.tryParse(newReactions[emoji] ?? '0') ?? 0;
-      if (count <= 1) {
-        newReactions.remove(emoji);
-      } else {
-        newReactions[emoji] = (count - 1).toString();
-      }
+    // 기존 반응이 있는지 확인
+    final hasThisReaction = comment.myEmotions.containsKey(emoji);
+
+    if (hasThisReaction) {
+      // 같은 이모지인 경우 제거 (빈 맵으로 설정)
+      newReactions = {};
     } else {
+      // 다른 이모지이거나 반응이 없는 경우 새 이모지로 교체
       newReactions[emoji] = '1';
     }
 

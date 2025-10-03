@@ -1,23 +1,18 @@
-import 'package:doppy/pages/components/shimmer_box.dart';
+import 'package:doppy/pages/screens/manage_group_screen.dart';
 import 'package:doppy/pages/user/setting_screen.dart';
-import 'package:doppy/providers/group_provider.dart';
 import 'package:doppy/utils/route_observer.dart';
 import 'package:flutter/material.dart';
-import 'dart:io';
 import 'package:provider/provider.dart';
-import 'package:doppy/data/services/blog_service.dart';
 import 'package:doppy/pages/screens/post_reader_screen.dart';
-import 'package:doppy/editor/postwrite_screen.dart';
 import 'package:doppy/data/services/upload_service.dart';
 import 'package:doppy/providers/user_provider.dart';
 import 'package:doppy/providers/friend_provider.dart';
 import 'package:doppy/providers/profile_feed_provider.dart';
 import 'package:doppy/data/models/user_model.dart';
-import 'package:doppy/theme/app_text_styles.dart';
-import 'package:doppy/editor/image/profile_image_bottom_sheet.dart';
 import 'package:doppy/pages/screens/manage_neighbor_screen.dart';
 import 'package:cached_network_image/cached_network_image.dart';
-import 'dart:ui' as ui;
+import 'package:doppy/data/models/post_data.dart';
+import 'package:doppy/pages/components/common_profile_avatar.dart';
 
 class UserProfileScreen extends StatefulWidget {
   final User? otherUser; // 다른 사용자 프로필을 볼 때 username 전달
@@ -30,19 +25,30 @@ class UserProfileScreen extends StatefulWidget {
 
 class _UserProfileScreenState extends State<UserProfileScreen>
     with SingleTickerProviderStateMixin, RouteAware {
-  // 피드 보기 모드 상태 (true: 카드형, false: 리스트형)
-  bool isCardView = true;
-  // 패널 위치/측정
-  final GlobalKey _headerKey = GlobalKey();
-  double _panelTop = 0.0; // 현재 패널 top(px)
-  double _headerHeight = 0.0; // 헤더(프로필+버튼) 전체 높이(px)
-  late final AnimationController _panelAnimCtrl;
-  Animation<double>? _panelAnim;
-  bool _headerReady = false; // 헤더 측정 완료
+  // 위치 관련 상수
+  static const double _baseHeight = 100.0; // 기본 높이 (topPadding + 이 값)
+  static const double _snap1Offset = 300.0; // 1차 스냅 오프셋
+  static const double _snap2Ratio = 0.2; // 2차 스냅 비율 (화면 높이의 50%)
+
+  // 스크롤 컨트롤러 및 상태
+  late ScrollController _scrollController;
+  double _scrollY = 0.0;
+  double _lastScrollY = 0.0;
+  bool _didAutoSnap = false;
+  bool _isAutoAnimating = false;
+
+  // 성능 최적화를 위한 캐시된 값들
+  double? _cachedTopPadding;
+  double? _cachedSnap1;
+  double? _cachedSnap2;
 
   // ✅ 프로필 구분 상태는 그대로 유지
   late final bool _isOwnProfile;
-  // String? _lastRequestedFor; // 제거: 빌드 트리거 삭제로 불필요
+
+  // 피드 상태 추적
+  bool _hasFeeds = false;
+
+  // 배경 이미지 상태
 
   // 업로드 진행 상태
   UploadTask? _profileUploadTask;
@@ -53,27 +59,27 @@ class _UserProfileScreenState extends State<UserProfileScreen>
   void initState() {
     super.initState();
     _isOwnProfile = (widget.otherUser == null);
-    _panelAnimCtrl = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 280),
-    );
+    _scrollController = ScrollController()..addListener(_onScroll);
+
+    // 캐시된 값들 초기화
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _cacheMediaQueryValues();
+    });
+
+    // 배경 이미지 상태 즉시 확인
+    _checkBackgroundImage();
 
     // ✅ [구조 개선] Provider를 통해 필요한 데이터를 한번에 요청합니다.
     // 이 코드 하나로 모든 데이터 로딩이 시작됩니다.
     WidgetsBinding.instance.addPostFrameCallback((_) async {
-      //final userProvider = context.read<UserProvider>();
       if (_isOwnProfile) {
         // 내 프로필에 필요한 데이터 로딩
-        //userProvider.fetchMyProfile();
       } else {
         // 다른 사용자 프로필: 서버에서 상세 정보 & 친구 상태 병렬 로딩
-        // userProvider.fetchUserProfile(widget.username!);
         context.read<FriendProvider>().checkFriendStatus(
           widget.otherUser!.username,
         );
       }
-      // 헤더 측정 이후 초기 패널 위치 설정
-      _scheduleMeasureHeader();
       // 프로필 피드 초기 로드
       try {
         final bool isOther = !_isOwnProfile;
@@ -81,13 +87,45 @@ class _UserProfileScreenState extends State<UserProfileScreen>
           username: isOther ? widget.otherUser!.username : null,
           force: isOther, // 타인: 항상 새로 로드, 내 계정: 캐시 사용
         );
+
+        // 피드 상태 업데이트
+        if (mounted) {
+          setState(() {
+            _hasFeeds = context.read<ProfileFeedProvider>().posts.isNotEmpty;
+          });
+        }
       } catch (_) {}
     });
+  }
+
+  void _cacheMediaQueryValues() {
+    if (mounted) {
+      _cachedTopPadding = MediaQuery.of(context).padding.top;
+      _cachedSnap1 = _cachedTopPadding! + _snap1Offset;
+      _cachedSnap2 = MediaQuery.of(context).size.height * _snap2Ratio;
+    }
+  }
+
+  void _checkBackgroundImage() {
+    final userProvider = context.read<UserProvider>();
+    String imageUrl = '';
+
+    if (_isOwnProfile) {
+      final me = userProvider.currentUser;
+      imageUrl = me?.profileImageUrl ?? '';
+    } else {
+      final other = widget.otherUser;
+      imageUrl = other?.profileImageUrl ?? '';
+    }
   }
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+
+    // MediaQuery 값들이 변경되었을 때 캐시 업데이트
+    _cacheMediaQueryValues();
+
     // RouteObserver 구독 (중복 방지)
     final modal = ModalRoute.of(context);
     if (modal is PageRoute<dynamic>) {
@@ -102,7 +140,8 @@ class _UserProfileScreenState extends State<UserProfileScreen>
 
   @override
   void dispose() {
-    _panelAnimCtrl.dispose();
+    _scrollController.removeListener(_onScroll);
+    _scrollController.dispose();
     if (_profileUploadTask != null && _profileTaskListener != null) {
       _profileUploadTask!.removeListener(_profileTaskListener!);
     }
@@ -110,1183 +149,885 @@ class _UserProfileScreenState extends State<UserProfileScreen>
     super.dispose();
   }
 
-  Widget _buildEmptyFeed(double containerWidth, bool isOther) {
-    final theme = Theme.of(context);
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 24.0),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: [
-            Text(
-              isOther ? '아직 게시물이 없습니다' : '아직 작성한 게시물이 없습니다',
-              style: AppTextStyles.headlineLarge.copyWith(
-                fontSize: 18,
-                color: theme.colorScheme.onSurface,
-                fontWeight: FontWeight.w600,
-              ),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 6),
-            Text(
-              isOther ? '이 사용자가 게시물을 올리면 여기에 표시됩니다.' : '지금 첫 게시물을 작성해 보세요!',
-              style: AppTextStyles.bodySmall.copyWith(
-                color: theme.colorScheme.onSurface.withOpacity(0.7),
-              ),
-              textAlign: TextAlign.center,
-            ),
-            if (!isOther) ...[
-              const SizedBox(height: 16),
-              ElevatedButton.icon(
-                onPressed: () {
-                  Navigator.of(context).push(
-                    MaterialPageRoute(
-                      builder:
-                          (_) => PostwriteScreen(
-                            screenWidth: MediaQuery.of(context).size.width,
-                          ),
-                    ),
-                  );
-                },
-                icon: const Icon(Icons.add),
-                label: const Text('새 게시물 작성'),
-                style: ElevatedButton.styleFrom(
-                  elevation: 0,
-                  backgroundColor: theme.colorScheme.primary,
-                ),
-              ),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
+  void _onScroll() {
+    final double currentOffset = _scrollController.offset;
+    final double delta = currentOffset - _lastScrollY;
 
-  void _animatePanelTo(double target) {
-    final double begin = _panelTop;
-    if ((begin - target).abs() < 0.5) return;
-    _panelAnim = Tween<double>(begin: begin, end: target).animate(
-      CurvedAnimation(parent: _panelAnimCtrl, curve: Curves.easeOutCubic),
-    )..addListener(() {
-      if (!mounted) return;
-      setState(() {
-        _panelTop = _panelAnim!.value;
-      });
-    });
-    _panelAnimCtrl
-      ..reset()
-      ..forward();
-  }
+    // 캐시된 값들 사용 (성능 최적화)
+    if (_cachedSnap1 == null || _cachedSnap2 == null) return;
 
-  Widget _fallbackAvatar(ThemeData theme) => Container(
-    color: theme.colorScheme.surfaceVariant,
-    child: const Icon(Icons.person, color: Colors.white, size: 60),
-  );
+    final double snap0 = 0.0; // 기본 상태 (맨 위)
+    final double snap1 = _cachedSnap1!; // 1차 스냅 (SliverAppBar와 연동)
+    final double snap2 = _cachedSnap2!; // 2차 스냅 (절반 피드모드)
 
-  Widget _avatarWithUploadIndicator({
-    required double size,
-    required String? imageUrl,
-    required bool uploading,
-  }) {
-    final theme = Theme.of(context);
-    const double borderThickness = 3.0;
-    return Container(
-      width: size + borderThickness * 2,
-      height: size + borderThickness * 2,
-      alignment: Alignment.center,
-      child: Stack(
-        alignment: Alignment.center,
-        children: [
-          // 항상 동일 두께의 투명 보더로 레이아웃 고정
-          Container(
-            width: size + borderThickness * 2,
-            height: size + borderThickness * 2,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              border: Border.all(
-                color: Theme.of(
-                  context,
-                ).colorScheme.onBackground.withOpacity(0.1),
-                width: borderThickness,
-              ),
-            ),
-          ),
-          Container(
-            width: size,
-            height: size,
-            decoration: ShapeDecoration(
-              color: theme.colorScheme.surfaceVariant,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(300),
-              ),
-            ),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(size / 2),
-              child:
-                  (imageUrl?.isNotEmpty ?? false)
-                      ? CachedNetworkImage(
-                        imageUrl: imageUrl!,
-                        fit: BoxFit.cover,
-                        placeholder:
-                            (context, url) =>
-                                ShimmerBox(width: size, height: size),
-                        errorWidget:
-                            (context, url, error) => _fallbackAvatar(theme),
-                        // 캐시 설정으로 깜빡임 방지
-                        memCacheWidth: (size * 2).round(),
-                        maxWidthDiskCache: (size * 2).round(),
+    // 하향 스크롤 감지 → snap1까지 자동 이동 (기본 상태에서만)
+    if (delta > 0.5 &&
+        !_didAutoSnap &&
+        !_isAutoAnimating &&
+        currentOffset > 5 &&
+        currentOffset < 80) {
+      // 기본 상태에서만 (5~80px 사이)
+      _isAutoAnimating = true;
+      _scrollController
+          .animateTo(
+            snap1,
+            duration: const Duration(milliseconds: 400),
+            curve: Curves.easeOutCubic,
+          )
+          .whenComplete(() {
+            if (mounted) {
+              setState(() {
+                _didAutoSnap = true;
+                _isAutoAnimating = false;
+              });
+            } else {
+              _didAutoSnap = true;
+              _isAutoAnimating = false;
+            }
+          });
+    }
 
-                        // 페이드 인 애니메이션 제거로 깜빡임 방지
-                        fadeInDuration: Duration.zero,
-                        fadeOutDuration: Duration.zero,
-                        // 이미지 키로 캐시 안정성 확보
-                        cacheKey: 'profile_${imageUrl}',
-                      )
-                      : _fallbackAvatar(theme),
-            ),
-          ),
-          if (uploading)
-            SizedBox(
-              width: size + borderThickness * 2,
-              height: size + borderThickness * 2,
-              child: CircularProgressIndicator(
-                strokeWidth: borderThickness,
-                valueColor: AlwaysStoppedAnimation<Color>(
-                  theme.colorScheme.onSurface,
-                ),
-              ),
-            ),
-        ],
-      ),
-    );
-  }
-
-  void _startProfileUpload(File file) {
-    final upload = context.read<UploadService>();
-    final task = upload.enqueueFile(file, kind: UploadKind.profile);
-    _profileUploadTask = task;
-    _profileTaskListener = () async {
-      if (!mounted) return;
-      setState(() {});
-      if (task.state == UploadState.success) {
-        try {
-          final imageUrl = task.url ?? '';
-          if (imageUrl.isNotEmpty) {
-            await context.read<UserProvider>().updateProfileImage(
-              imageUrl: imageUrl,
-            );
-          } else {
-            await context.read<UserProvider>().fetchMyProfile();
-          }
-        } catch (_) {}
-        if (_profileTaskListener != null) {
-          task.removeListener(_profileTaskListener!);
-          _profileTaskListener = null;
-        }
-        _profileUploadTask = null;
-        if (mounted) setState(() {});
-      }
-      if (task.state == UploadState.failed ||
-          task.state == UploadState.cancelled) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('프로필 업로드 실패'),
-              backgroundColor: Colors.red,
-            ),
-          );
-        }
-        if (_profileTaskListener != null) {
-          task.removeListener(_profileTaskListener!);
-          _profileTaskListener = null;
-        }
-        _profileUploadTask = null;
-        if (mounted) setState(() {});
-      }
-    };
-    task.addListener(_profileTaskListener!);
-    setState(() {});
-  }
-
-  void _scheduleMeasureHeader() {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      final ctx = _headerKey.currentContext;
-      if (ctx != null) {
-        final size = ctx.size;
-        if (size != null) {
-          final double h = size.height;
-          if ((_headerHeight - h).abs() > 0.5) {
-            setState(() {
-              _headerHeight = h;
-              if (_panelTop == 0.0) {
-                // 초기 진입 시 핸들이 헤더(이웃요청/관리 버튼) 하단에 위치하도록 설정
-                _panelTop = _headerHeight;
+    // 상향 스크롤 감지 → snap0(기본) 또는 snap2(절반 피드)로 자동 이동
+    if (delta < -0.5 && !_didAutoSnap && !_isAutoAnimating) {
+      // 1차 스냅 근처에서 위로 스크롤 → 기본 상태로
+      if (currentOffset > snap1 - 50 && currentOffset < snap1 + 50) {
+        _isAutoAnimating = true;
+        _scrollController
+            .animateTo(
+              snap0,
+              duration: const Duration(milliseconds: 150),
+              curve: Curves.easeOutCubic,
+            )
+            .whenComplete(() {
+              if (mounted) {
+                setState(() {
+                  _didAutoSnap = true;
+                  _isAutoAnimating = false;
+                });
+              } else {
+                _didAutoSnap = true;
+                _isAutoAnimating = false;
               }
-              _headerReady = true;
             });
-          } else if (!_headerReady && h > 0) {
-            setState(() => _headerReady = true);
-          }
-        }
       }
-    });
+      // 1차 스냅과 2차 스냅 사이에서 위로 스크롤 → 2차 스냅으로
+      else if (currentOffset > snap1 + 50 && currentOffset < snap2 - 50) {
+        _isAutoAnimating = true;
+        _scrollController
+            .animateTo(
+              snap2,
+              duration: const Duration(milliseconds: 400),
+              curve: Curves.easeOutCubic,
+            )
+            .whenComplete(() {
+              if (mounted) {
+                setState(() {
+                  _didAutoSnap = true;
+                  _isAutoAnimating = false;
+                });
+              } else {
+                _didAutoSnap = true;
+                _isAutoAnimating = false;
+              }
+            });
+      }
+    }
+
+    // 맨 위로 복귀하면 스냅을 다시 허용
+    if (currentOffset < 10.0 && _didAutoSnap) {
+      _didAutoSnap = false;
+    }
+
+    // setState 최적화: 스크롤 값이 실제로 변경되었을 때만 호출
+    if ((_scrollY - currentOffset).abs() > 0.5) {
+      setState(() {
+        _scrollY = currentOffset;
+      });
+    }
+    _lastScrollY = currentOffset;
   }
 
   @override
   Widget build(BuildContext context) {
-    // Provider 상태
     final userProvider = context.watch<UserProvider>();
-    final friendProvider = context.watch<FriendProvider>();
 
     final bool isOther = !_isOwnProfile; // true: 타인 프로필, false: 내 프로필
     final User? me = userProvider.currentUser;
     final String? myIntro = userProvider.selfIntroduction;
-    final int? myFriendCount = userProvider.friendCount;
     final User? other = widget.otherUser;
 
-    final screenWidth = MediaQuery.of(context).size.width;
-    final screenHeight = MediaQuery.of(context).size.height;
+    final double topPadding =
+        _cachedTopPadding ?? MediaQuery.of(context).padding.top;
 
-    // 모바일 기준으로 최대 너비 제한 (오버플로우 방지)
-    final maxWidth = screenWidth > 500 ? 500.0 : screenWidth;
-    final containerWidth = maxWidth - 8.0; // 오버플로우 방지를 위해 8px 여백 추가
-    final containerHeight = screenHeight;
-    // 빌드 타임 재호출 제거: initState/didPopNext에서만 로드 트리거
+    // 표시할 이미지 URL과 사용자명 결정
+    String _displayImageUrl = '';
+    String _displayUsername = '';
+    String? _displayAlias;
 
-    // 헤더 높이를 아직 모르면 측정 예약
-    if (_headerHeight <= 0) _scheduleMeasureHeader();
-
-    // 패널 높이를 동적으로 계산: 패널 top부터 하단 네비게이션 바 바로 위까지
-    final double bottomNavHeight = containerHeight * 0.01;
-    final double bottomMargin = -5.0; // 하단 네비게이션 바와의 적절한 여백
-    final double dynamicPanelHeight =
-        containerHeight - _panelTop - bottomNavHeight - bottomMargin;
-
-    return Scaffold(
-      backgroundColor: Theme.of(context).colorScheme.background,
-
-      appBar: AppBar(
-        toolbarHeight: 26,
-        backgroundColor: Theme.of(context).colorScheme.background,
-
-        title: Row(
-          children: [
-            Text(
-              isOther ? '@${other?.username}' : '@${me?.username}',
-              style: AppTextStyles.headlineLarge.copyWith(
-                fontSize: 20,
-                fontWeight: FontWeight.w700,
-                color: Theme.of(context).colorScheme.onBackground,
-              ),
-            ),
-          ],
-        ),
-        centerTitle: false,
-        leading:
-            isOther
-                ? Padding(
-                  padding: const EdgeInsets.only(top: 4.0),
-                  child: GestureDetector(
-                    onTap: () => Navigator.of(context).pop(),
-                    child: Icon(
-                      Icons.arrow_back_ios_new_rounded,
-                      color: Theme.of(context).colorScheme.onBackground,
-                      size: 18,
-                    ),
-                  ),
-                )
-                : null,
-
-        actions:
-            !isOther
-                ? [
-                  Padding(
-                    padding: const EdgeInsets.only(right: 10.0),
-                    child: GestureDetector(
-                      child: Icon(
-                        Icons.menu,
-                        color: Theme.of(context).colorScheme.onBackground,
-                        size: 20,
-                      ),
-                      onTap:
-                          () => Navigator.of(context).push(
-                            MaterialPageRoute(builder: (_) => SettingScreen()),
-                          ),
-                    ),
-                  ),
-                ]
-                : [],
-      ),
-
-      body: SafeArea(
-        top: true,
-        child: Center(
-          child: Container(
-            width: containerWidth,
-            height: containerHeight,
-
-            clipBehavior: Clip.antiAlias,
-            decoration: BoxDecoration(
-              color: Theme.of(context).colorScheme.background,
-            ),
-            child: Stack(
-              children: [
-                SingleChildScrollView(
-                  physics: const ClampingScrollPhysics(),
-                  child:
-                      isOther
-                          ? _buildHeaderSectionOther(
-                            containerWidth,
-                            other,
-                            friendProvider,
-                          )
-                          : _buildHeaderSectionMine(
-                            containerWidth,
-                            me,
-                            myIntro,
-                            myFriendCount,
-                          ),
-                ),
-                _headerReady
-                    ? _buildFeedPanel(
-                      containerWidth,
-                      _panelTop,
-                      dynamicPanelHeight,
-                      isOther: isOther,
-                    )
-                    : const SizedBox.shrink(),
-              ],
-            ),
-          ),
-        ),
-      ),
-      // 하단 네비게이션은 RootShell에서 고정 제공
-    );
-  }
-
-  Widget _buildHeaderSectionOther(
-    double containerWidth,
-    User? other,
-    FriendProvider friendProvider,
-  ) {
-    final theme = Theme.of(context);
-    if (other == null) return const SizedBox.shrink();
-    return Container(
-      key: _headerKey,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const SizedBox(height: 16),
-          Container(
-            width: containerWidth,
-            color: theme.scaffoldBackgroundColor,
-            padding: const EdgeInsets.symmetric(horizontal: 10),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                GestureDetector(
-                  onTap: () {
-                    if (other.profileImageUrl?.isNotEmpty == true) {
-                      _showProfileImageOverlay(
-                        context,
-                        other.profileImageUrl!,
-                        other.username,
-                        other.alias,
-                      );
-                    }
-                  },
-                  child: Padding(
-                    padding: const EdgeInsets.only(top: 8.0),
-                    child: _avatarWithUploadIndicator(
-                      size: 100,
-                      imageUrl: other.profileImageUrl,
-                      uploading: false,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisAlignment: MainAxisAlignment.end,
-                    children: [
-                      const SizedBox(height: 20),
-                      Text(
-                        other.alias ?? '',
-                        style: AppTextStyles.headlineLarge.copyWith(
-                          fontSize: 25,
-                          fontWeight: FontWeight.w700,
-                          color: theme.colorScheme.onBackground,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        '이웃 ${other.friendCount ?? 0}명',
-                        style: AppTextStyles.bodyLarge.copyWith(
-                          color: theme.colorScheme.onSurface,
-                        ),
-                      ),
-                      Text(
-                        other.selfIntroduction ?? '자기소개가 없습니다.',
-                        style: AppTextStyles.bodySmall.copyWith(
-                          color: theme.colorScheme.onSurface.withOpacity(0.7),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  '함께 도피하는 친구 13명',
-                  style: AppTextStyles.bodyLarge.copyWith(
-                    color: theme.colorScheme.onSurface,
-                  ),
-                ),
-                const SizedBox(height: 6),
-                Container(
-                  decoration: BoxDecoration(
-                    color: theme.colorScheme.surfaceVariant.withOpacity(0.7),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: Row(
-                    children: [
-                      friendProvider.friendStatus == FriendRequestStatus.none
-                          ? Expanded(
-                            child: _buildFilledActionButton(
-                              label: '이웃 요청하기',
-                              onTap: () async {
-                                final ok = await context
-                                    .read<FriendProvider>()
-                                    .sendFriendRequest(other.username);
-                                if (!mounted) return;
-                                if (!ok) {
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    SnackBar(
-                                      content: const Text('이웃 요청을 보낼 수 없습니다'),
-                                      backgroundColor: Colors.red,
-                                      shape: RoundedRectangleBorder(
-                                        borderRadius: BorderRadius.circular(10),
-                                      ),
-                                    ),
-                                  );
-                                } else {
-                                  // 상태 재조회로 버튼 상태 갱신
-                                  await context
-                                      .read<FriendProvider>()
-                                      .checkFriendStatus(other.username);
-                                }
-                              },
-                              isEnabled: !friendProvider.isLoadingStatus,
-                            ),
-                          )
-                          : Expanded(
-                            child: _buildFilledActionButton(
-                              label:
-                                  friendProvider.friendStatus ==
-                                          FriendRequestStatus.accepted
-                                      ? '이웃 해제'
-                                      : '요청 취소',
-                              isEnabled: false,
-                              onTap: () async {
-                                bool ok = false;
-                                if (friendProvider.friendStatus ==
-                                    FriendRequestStatus.accepted) {
-                                  ok = await context
-                                      .read<FriendProvider>()
-                                      .deleteFriend(other.username);
-                                } else {
-                                  ok = await context
-                                      .read<FriendProvider>()
-                                      .cancelSentRequest(other.username);
-                                }
-                                if (!mounted) return;
-                                if (!ok) {
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    SnackBar(
-                                      content: Text(
-                                        friendProvider.friendStatus ==
-                                                FriendRequestStatus.accepted
-                                            ? '이웃 해제 중 잠시 오류가 발생했어요'
-                                            : '요청 취소 중 잠시 오류가 발생했어요',
-                                        style: const TextStyle(
-                                          color: Colors.white,
-                                        ),
-                                      ),
-                                      backgroundColor: Colors.red,
-                                      shape: RoundedRectangleBorder(
-                                        borderRadius: BorderRadius.circular(10),
-                                      ),
-                                    ),
-                                  );
-                                } else {
-                                  await context
-                                      .read<FriendProvider>()
-                                      .checkFriendStatus(other.username);
-                                  // 이웃 해제 시 그룹 관련 캐시 영향 가능 → 그룹 캐시 무효화 후 재조회
-                                  if (friendProvider.friendStatus ==
-                                      FriendRequestStatus.accepted) {
-                                    await context
-                                        .read<GroupProvider>()
-                                        .fetchMyGroups(forceRefresh: true);
-                                  }
-                                }
-                              },
-                            ),
-                          ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildHeaderSectionMine(
-    double containerWidth,
-    User? me,
-    String? selfIntroduction,
-    int? friendCount,
-  ) {
-    final theme = Theme.of(context);
-    return Container(
-      key: _headerKey,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const SizedBox(height: 16),
-          Container(
-            width: containerWidth,
-            color: theme.scaffoldBackgroundColor,
-            padding: const EdgeInsets.symmetric(horizontal: 10),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                GestureDetector(
-                  onTap: () async {
-                    await showModalBottomSheet(
-                      context: context,
-                      backgroundColor: Colors.transparent,
-                      barrierColor: Colors.black54,
-                      isScrollControlled: true,
-                      builder:
-                          (_) => ProfileImageBottomSheet(
-                            onClearProfileImage: () async {
-                              await context
-                                  .read<UserProvider>()
-                                  .updateProfileImage(imageUrl: '');
-                            },
-                            onImagesSelected: (files) async {
-                              if (files.isEmpty) return;
-                              _startProfileUpload(files.first);
-                            },
-                          ),
-                    );
-                  },
-                  child: Padding(
-                    padding: const EdgeInsets.only(top: 8.0),
-                    child: Hero(
-                      tag: 'user-${me?.username ?? 'me'}',
-                      child: _avatarWithUploadIndicator(
-                        size: 100,
-                        imageUrl: me?.profileImageUrl,
-                        uploading:
-                            _profileUploadTask?.state == UploadState.uploading,
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisAlignment: MainAxisAlignment.end,
-                    children: [
-                      const SizedBox(height: 20),
-                      Text(
-                        me?.alias ?? '',
-                        style: AppTextStyles.headlineLarge.copyWith(
-                          fontSize: 25,
-                          fontWeight: FontWeight.w700,
-                          color: theme.colorScheme.onBackground,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        '이웃 ${friendCount ?? 0}명',
-                        style: AppTextStyles.bodyLarge.copyWith(
-                          color: theme.colorScheme.onSurface,
-                        ),
-                      ),
-                      Text(
-                        selfIntroduction ?? '자기소개가 없습니다.',
-                        style: AppTextStyles.bodySmall.copyWith(
-                          color: theme.colorScheme.onSurface.withOpacity(0.7),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 16),
-          SizedBox(height: 15),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 0),
-            child: Container(
-              decoration: BoxDecoration(
-                color: theme.colorScheme.surfaceVariant,
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: _buildFilledActionButton(
-                      label: '내 이웃',
-                      onTap: () {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => const ManageNeighborScreen(),
-                          ),
-                        ).then((_) {
-                          context.read<ProfileFeedProvider>().loadInitial(
-                            username: me?.username,
-                            force: true,
-                          );
-                        });
-                      },
-                      isEnabled: false,
-                    ),
-                  ),
-                  Container(
-                    width: 1,
-                    height: 20,
-                    color: theme.colorScheme.onSurface.withOpacity(0.2),
-                  ),
-
-                  Expanded(
-                    child: _buildFilledActionButton(
-                      label: '내 그룹',
-                      onTap: () {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder:
-                                (_) => ManageNeighborScreen(initialTabIndex: 1),
-                          ),
-                        );
-                      },
-                      isEnabled: false,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildFilledActionButton({
-    required String label,
-    required VoidCallback onTap,
-    required bool isEnabled,
-
-    bool loading = false,
-  }) {
-    final theme = Theme.of(context);
-    return SizedBox(
-      height: 40,
-      child: ElevatedButton.icon(
-        label: Text(
-          label,
-          style: AppTextStyles.bodyLarge.copyWith(
-            color: isEnabled ? Colors.white : theme.colorScheme.onSurface,
-            fontWeight: FontWeight.w700,
-          ),
-        ),
-        style: ElevatedButton.styleFrom(
-          backgroundColor:
-              isEnabled
-                  ? theme.colorScheme.primary
-                  : theme.colorScheme.surfaceVariant,
-          elevation: 0,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(10),
-          ),
-          padding: const EdgeInsets.symmetric(horizontal: 14),
-        ),
-        onPressed: !loading ? onTap : null,
-      ),
-    );
-  }
-
-  Widget _buildFeedPanel(
-    double containerWidth,
-    double panelTop,
-    double dynamicPanelHeight, {
-    required bool isOther,
-  }) {
-    return Positioned(
-      left: 0,
-      top: panelTop,
-      child: Container(
-        width: containerWidth,
-        height: dynamicPanelHeight,
-        decoration: ShapeDecoration(
-          color: Theme.of(context).colorScheme.background,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.only(
-              topLeft: Radius.circular(30),
-              topRight: Radius.circular(30),
-            ),
-          ),
-        ),
-        child: Column(
-          children: [
-            SizedBox(height: 10),
-            // 상단 핸들/토글 영역에서만 드래그 제스처 처리
-            GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onVerticalDragStart: (_) {
-                if (_panelAnimCtrl.isAnimating) {
-                  _panelAnimCtrl.stop();
-                }
-              },
-              onVerticalDragUpdate: (details) {
-                final double next = (_panelTop + details.delta.dy).clamp(
-                  0.0,
-                  _headerHeight,
-                );
-                if (next != _panelTop) {
-                  setState(() => _panelTop = next);
-                }
-              },
-              onVerticalDragEnd: (details) {
-                final double velocity =
-                    details.primaryVelocity ?? 0.0; // +down, -up
-                const double snapThreshold = 0.5;
-                const double flingVelocity = 600.0; // px/s
-
-                double target;
-                if (velocity < -flingVelocity) {
-                  target = 0.0;
-                } else if (velocity > flingVelocity) {
-                  target = _headerHeight;
-                } else {
-                  final double ratio = (_panelTop /
-                          (_headerHeight == 0 ? 1 : _headerHeight))
-                      .clamp(0.0, 1.0);
-                  target = (ratio < snapThreshold) ? 0.0 : _headerHeight;
-                }
-
-                _animatePanelTo(target);
-              },
-              child: Column(
-                children: [
-                  // 핸들 바
-                  Container(
-                    width: 40,
-                    height: 4,
-                    decoration: BoxDecoration(
-                      color: Theme.of(context).colorScheme.outlineVariant,
-                      borderRadius: BorderRadius.circular(2),
-                    ),
-                  ),
-                  SizedBox(height: 16),
-
-                  // shape1/2 아이콘 행
-                ],
-              ),
-            ),
-            // 피드 컨텐츠 (Provider 기반) — 제스처 영향에서 분리
-            Expanded(
-              child: Consumer<ProfileFeedProvider>(
-                builder: (context, feed, _) {
-                  if (feed.isLoading && feed.posts.isEmpty) {
-                    return const Center(
-                      child: SizedBox(
-                        width: 24,
-                        height: 24,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      ),
-                    );
-                  }
-                  final posts = feed.posts;
-                  if (posts.isEmpty) {
-                    return _buildEmptyFeed(containerWidth, isOther);
-                  }
-                  return NotificationListener<ScrollNotification>(
-                    onNotification: (sn) {
-                      if (sn.metrics.pixels >=
-                              sn.metrics.maxScrollExtent - 300 &&
-                          feed.hasMore &&
-                          !feed.isLoadingMore) {
-                        context.read<ProfileFeedProvider>().loadMore();
-                      }
-                      return false;
-                    },
-                    child: _buildFeedImagesFromProvider(containerWidth, posts),
-                  );
-                },
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // legacy (sample) grid renderer - replaced by provider-backed version
-  // kept temporarily for reference; not used
-
-  Widget _buildFeedImagesFromProvider(
-    double containerWidth,
-    List<Map<String, dynamic>> posts,
-  ) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 8.0),
-      child: GridView.builder(
-        padding: const EdgeInsets.only(bottom: 200),
-        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-          crossAxisCount: 3,
-          childAspectRatio: 9 / 12,
-          crossAxisSpacing: 2,
-          mainAxisSpacing: 2,
-        ),
-        itemCount: posts.length,
-        shrinkWrap: false,
-        physics: const BouncingScrollPhysics(),
-        itemBuilder: (context, index) {
-          final post = posts[index];
-          final String postId = (post['id'] ?? '').toString();
-          final String username = (post['username'] ?? '').toString();
-          final meUser = context.read<UserProvider>().currentUser;
-          final bool isMine = meUser != null && meUser.username == username;
-          final String heroTag =
-              !isMine
-                  ? (postId.isNotEmpty ? 'post_$postId' : 'post_idx_$index')
-                  : '';
-          final thumb = (post['thumbnailImageUrl'] ?? '').toString();
-          return Material(
-            color: Colors.transparent,
-            child: InkWell(
-              borderRadius: BorderRadius.circular(0),
-              splashColor: Colors.grey.withOpacity(0.6),
-              highlightColor: Colors.grey.withOpacity(0.3),
-              onTap: () async {
-                // 상세 데이터 필요 시 서버에서 재조회
-                Map<String, dynamic> exported = post;
-                try {
-                  if ((post['content'] == null ||
-                          post['content'].toString().isEmpty) &&
-                      postId.isNotEmpty) {
-                    exported = await BlogService().getPostDetail(postId);
-                  }
-                } catch (_) {}
-
-                if (!mounted) return;
-                if (isMine) {
-                  Navigator.of(context).push(
-                    MaterialPageRoute(
-                      builder:
-                          (_) => PostwriteScreen(
-                            screenWidth: MediaQuery.of(context).size.width,
-                          ),
-                    ),
-                  );
-                } else {
-                  Navigator.of(context).push(
-                    MaterialPageRoute(
-                      builder:
-                          (_) => PostReaderScreen(
-                            exported: exported,
-                            heroTag: heroTag.isNotEmpty ? heroTag : null,
-                          ),
-                    ),
-                  );
-                }
-              },
-              child: Container(
-                decoration: ShapeDecoration(
-                  color: Theme.of(context).colorScheme.surfaceVariant,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(2),
-                  ),
-                ),
-                child: Builder(
-                  builder: (_) {
-                    final border = BorderRadius.circular(2);
-                    Widget body = ClipRRect(
-                      borderRadius: border,
-                      child: _buildThumb(thumb, index),
-                    );
-                    if (heroTag.isNotEmpty) {
-                      // Hero는 리더 화면의 heroTag와 동일한 태그 사용
-                      body = Hero(
-                        tag: heroTag,
-                        transitionOnUserGestures: true,
-                        flightShuttleBuilder: (
-                          context,
-                          animation,
-                          direction,
-                          fromContext,
-                          toContext,
-                        ) {
-                          return ClipRRect(
-                            borderRadius: border,
-                            child: _buildThumb(thumb, index),
-                          );
-                        },
-                        child: body,
-                      );
-                    }
-                    return body;
-                  },
-                ),
-              ),
-            ),
-          );
-        },
-      ),
-    );
-  }
-
-  Widget _buildThumb(String pathOrUrl, int index) {
-    final isNetwork = pathOrUrl.startsWith('http');
-    if (isNetwork) {
-      return CachedNetworkImage(
-        imageUrl: pathOrUrl,
-        fit: BoxFit.cover,
-        placeholder:
-            (context, url) =>
-                ShimmerBox(width: double.infinity, height: double.infinity),
-        errorWidget: (context, url, error) => _thumbFallback(index),
-        // 썸네일용 캐시 설정
-        memCacheWidth: 600,
-        maxWidthDiskCache: 600,
-
-        // 페이드 애니메이션 제거로 깜빡임 방지
-        fadeInDuration: Duration.zero,
-        fadeOutDuration: Duration.zero,
-        // 썸네일 캐시 키 설정
-        cacheKey: 'thumb_${pathOrUrl}',
-      );
-    } else if (pathOrUrl.isNotEmpty) {
-      return Image.asset(
-        pathOrUrl,
-        fit: BoxFit.cover,
-        errorBuilder: (_, __, ___) => _thumbFallback(index),
-      );
+    if (isOther && other != null) {
+      _displayImageUrl = other.profileImageUrl ?? '';
+      _displayUsername = other.username;
+      _displayAlias = other.alias;
+    } else if (!isOther && me != null) {
+      _displayImageUrl = me.profileImageUrl ?? '';
+      _displayUsername = me.username;
+      _displayAlias = me.alias;
     }
-    return _thumbFallback(index);
-  }
 
-  Widget _thumbFallback(int index) {
-    return Container(
-      color:
-          index % 2 == 0
-              ? Theme.of(context).colorScheme.secondary
-              : Theme.of(context).colorScheme.primary,
-      child: const Center(
-        child: Icon(Icons.image, color: Colors.white, size: 40),
-      ),
-    );
-  }
-
-  void _showProfileImageOverlay(
-    BuildContext context,
-    String imageUrl,
-    String username,
-    String? alias,
-  ) {
-    showGeneralDialog(
-      context: context,
-      barrierDismissible: true,
-      barrierLabel: '프로필 이미지',
-      barrierColor: const Color.fromARGB(182, 144, 144, 144),
-      transitionDuration: const Duration(milliseconds: 300),
-      pageBuilder: (context, animation, secondaryAnimation) {
-        return _ProfileImageOverlay(
-          imageUrl: imageUrl,
-          username: username,
-          alias: alias,
-        );
-      },
-      transitionBuilder: (context, animation, secondaryAnimation, child) {
-        return FadeTransition(
-          opacity: animation,
-          child: ScaleTransition(
-            scale: Tween<double>(begin: 0.8, end: 1.0).animate(
-              CurvedAnimation(parent: animation, curve: Curves.easeOutCubic),
-            ),
-            child: child,
-          ),
-        );
-      },
-    );
-  }
-}
-
-class _ProfileImageOverlay extends StatefulWidget {
-  final String imageUrl;
-  final String username;
-  final String? alias;
-
-  const _ProfileImageOverlay({
-    required this.imageUrl,
-    required this.username,
-    this.alias,
-  });
-
-  @override
-  State<_ProfileImageOverlay> createState() => _ProfileImageOverlayState();
-}
-
-class _ProfileImageOverlayState extends State<_ProfileImageOverlay> {
-  @override
-  Widget build(BuildContext context) {
     return Material(
       color: Colors.transparent,
       child: Stack(
         children: [
-          // 배경 탭으로 닫기 (블러 효과 포함)
+          // 배경 (테마에 맞는 단일 색상)
           Positioned.fill(
-            child: BackdropFilter(
-              filter: ui.ImageFilter.blur(sigmaX: 8, sigmaY: 8),
-              child: GestureDetector(
-                onTap: () => Navigator.of(context).pop(),
+            child: Container(color: Theme.of(context).colorScheme.background),
+          ),
+
+          // 스크롤 가능한 컨텐츠 (Sliver)
+          Positioned.fill(
+            child: CustomScrollView(
+              controller: _scrollController,
+              slivers: [
+                SliverAppBar(
+                  expandedHeight: topPadding + _baseHeight,
+                  toolbarHeight: topPadding + 0,
+                  backgroundColor: Colors.transparent,
+                  elevation: 0,
+                  leading:
+                      isOther
+                          ? IconButton(
+                            icon: Icon(
+                              Icons.arrow_back_ios_new,
+                              color: Theme.of(context).colorScheme.onSurface,
+                              size: 20,
+                            ),
+                            onPressed: () => Navigator.of(context).pop(),
+                          )
+                          : SizedBox(),
+
+                  flexibleSpace: FlexibleSpaceBar(
+                    background: Container(color: Colors.transparent),
+                  ),
+
+                  actions: [
+                    if (_isOwnProfile) ...[
+                      // 내 이웃 버튼
+                      IconButton(
+                        icon: Icon(
+                          Icons.people,
+                          color: Theme.of(context).colorScheme.onBackground,
+                          size: 26,
+                        ),
+                        onPressed: () {
+                          Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) => ManageGroupScreen(),
+                            ),
+                          );
+                        },
+                      ),
+                      // 설정 버튼
+                      IconButton(
+                        icon: Icon(
+                          Icons.settings,
+                          color: Theme.of(context).colorScheme.onSurface,
+                        ),
+                        onPressed: () {
+                          Navigator.of(context).push(
+                            MaterialPageRoute(builder: (_) => SettingScreen()),
+                          );
+                        },
+                      ),
+                    ],
+                  ],
+                ),
+                SliverToBoxAdapter(
+                  child: Builder(
+                    builder: (context) {
+                      final double snap1 =
+                          _cachedSnap1 ??
+                          MediaQuery.of(context).padding.top + _snap1Offset;
+
+                      // 아바타 opacity: 1차 스냅 전까지는 1.0, 1차 스냅에 도달하면 0.0
+                      final double avatarOpacity =
+                          _scrollY < snap1
+                              ? 1.0 - (_scrollY / snap1).clamp(0.0, 1.0)
+                              : 0.0;
+
+                      // 텍스트들의 페이드아웃: 1차 스냅 이후부터 시작
+                      final double fadeProgress =
+                          _scrollY > snap1
+                              ? ((_scrollY - snap1) / 200.0).clamp(0.0, 1.0)
+                              : 0.0;
+                      final double nameOpacity = (1.0 - fadeProgress * 1.1)
+                          .clamp(0.0, 1.0);
+                      final double descOpacity = (1.0 - fadeProgress * 1.2)
+                          .clamp(0.0, 1.0);
+
+                      return Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 20,
+                          vertical: 20,
+                        ),
+                        child:
+                            _hasFeeds
+                                ? Column(
+                                  crossAxisAlignment: CrossAxisAlignment.center,
+                                  children: [
+                                    const SizedBox(height: 50),
+                                    // 원형 아바타 (텍스트 위에 위치)
+                                    Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.center,
+                                      children: [
+                                        // 아바타 (1차 스냅에서 완전히 페이드아웃)
+                                        Opacity(
+                                          opacity: avatarOpacity,
+                                          child: CommonProfileAvatar(
+                                            imageUrl: _displayImageUrl,
+                                            username: _displayUsername,
+                                            size: 150,
+                                            borderWidth: 2,
+                                            borderColor:
+                                                Theme.of(context).brightness ==
+                                                        Brightness.dark
+                                                    ? Colors.grey.shade300
+                                                    : Colors.grey.shade600,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 16),
+                                        // 사용자 이름 (1차 스냅 이후 페이드아웃)
+                                        Opacity(
+                                          opacity: nameOpacity,
+                                          child: Text(
+                                            _displayAlias ?? _displayUsername,
+                                            style: TextStyle(
+                                              color:
+                                                  Theme.of(
+                                                    context,
+                                                  ).colorScheme.onSurface,
+                                              fontSize: 36,
+                                              fontWeight: FontWeight.bold,
+                                              height: 1.1,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                    const SizedBox(height: 2),
+                                    Opacity(
+                                      opacity: descOpacity,
+                                      child: Text(
+                                        isOther
+                                            ? (other
+                                                        ?.selfIntroduction
+                                                        ?.isNotEmpty ==
+                                                    true
+                                                ? other!.selfIntroduction!
+                                                : _displayUsername)
+                                            : (myIntro?.isNotEmpty == true
+                                                ? myIntro!
+                                                : '행복은 사소한 이 순간부터 시작된다고 믿어요, \n모두 행복하길 바랍니다.'),
+                                        style: TextStyle(
+                                          color:
+                                              Theme.of(context).brightness ==
+                                                      Brightness.dark
+                                                  ? Theme.of(context)
+                                                      .colorScheme
+                                                      .onSurfaceVariant
+                                                      .withOpacity(0.8)
+                                                  : Colors.black,
+                                          fontSize: 14,
+                                          height: 1.3,
+                                        ),
+                                        maxLines: 2,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
+                                    // 다른 사용자 프로필일 때만 친구 추가 버튼 표시
+                                    if (isOther) ...[
+                                      const SizedBox(height: 20),
+                                      Opacity(
+                                        opacity: descOpacity,
+                                        child: Consumer<FriendProvider>(
+                                          builder: (
+                                            context,
+                                            friendProvider,
+                                            _,
+                                          ) {
+                                            // 친구 상태에 따른 버튼 텍스트와 액션 결정
+                                            String buttonText;
+                                            VoidCallback buttonAction;
+
+                                            switch (friendProvider
+                                                .friendStatus) {
+                                              case FriendRequestStatus.none:
+                                                buttonText = '이웃 추가';
+                                                buttonAction = () async {
+                                                  try {
+                                                    await friendProvider
+                                                        .sendFriendRequest(
+                                                          widget
+                                                              .otherUser!
+                                                              .username,
+                                                        );
+                                                    if (mounted) {
+                                                      ScaffoldMessenger.of(
+                                                        context,
+                                                      ).showSnackBar(
+                                                        SnackBar(
+                                                          content: Text(
+                                                            '이웃 요청을 보냈습니다',
+                                                          ),
+                                                        ),
+                                                      );
+                                                    }
+                                                  } catch (e) {
+                                                    if (mounted) {
+                                                      ScaffoldMessenger.of(
+                                                        context,
+                                                      ).showSnackBar(
+                                                        SnackBar(
+                                                          content: Text(
+                                                            '오류: $e',
+                                                          ),
+                                                        ),
+                                                      );
+                                                    }
+                                                  }
+                                                };
+                                                break;
+                                              case FriendRequestStatus
+                                                  .requested:
+                                                buttonText = '요청 취소';
+                                                buttonAction = () async {
+                                                  try {
+                                                    await friendProvider
+                                                        .deleteFriend(
+                                                          widget
+                                                              .otherUser!
+                                                              .username,
+                                                        );
+                                                    if (mounted) {
+                                                      ScaffoldMessenger.of(
+                                                        context,
+                                                      ).showSnackBar(
+                                                        const SnackBar(
+                                                          content: Text(
+                                                            '이웃 요청을 취소했습니다',
+                                                          ),
+                                                        ),
+                                                      );
+                                                    }
+                                                  } catch (e) {
+                                                    if (mounted) {
+                                                      ScaffoldMessenger.of(
+                                                        context,
+                                                      ).showSnackBar(
+                                                        SnackBar(
+                                                          content: Text(
+                                                            '오류: $e',
+                                                          ),
+                                                        ),
+                                                      );
+                                                    }
+                                                  }
+                                                };
+                                                break;
+                                              case FriendRequestStatus.accepted:
+                                                buttonText = '친구 취소';
+                                                buttonAction = () async {
+                                                  try {
+                                                    await friendProvider
+                                                        .deleteFriend(
+                                                          widget
+                                                              .otherUser!
+                                                              .username,
+                                                        );
+                                                    if (mounted) {
+                                                      ScaffoldMessenger.of(
+                                                        context,
+                                                      ).showSnackBar(
+                                                        const SnackBar(
+                                                          content: Text(
+                                                            '친구를 삭제했습니다',
+                                                          ),
+                                                        ),
+                                                      );
+                                                    }
+                                                  } catch (e) {
+                                                    if (mounted) {
+                                                      ScaffoldMessenger.of(
+                                                        context,
+                                                      ).showSnackBar(
+                                                        SnackBar(
+                                                          content: Text(
+                                                            '오류: $e',
+                                                          ),
+                                                        ),
+                                                      );
+                                                    }
+                                                  }
+                                                };
+                                                break;
+                                              default:
+                                                buttonText = '이웃 추가';
+                                                buttonAction = () {};
+                                            }
+
+                                            return _buildGlassyButton(
+                                              text: buttonText,
+                                              onTap: buttonAction,
+                                              isLoading:
+                                                  friendProvider.isLoading,
+                                            );
+                                          },
+                                        ),
+                                      ),
+                                    ],
+                                  ],
+                                )
+                                : SizedBox(
+                                  height:
+                                      MediaQuery.of(context).size.height * 0.6,
+                                  child: Column(
+                                    mainAxisAlignment: MainAxisAlignment.end,
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          // 아바타 (1차 스냅에서 완전히 페이드아웃)
+                                          Opacity(
+                                            opacity: avatarOpacity,
+                                            child: CommonProfileAvatar(
+                                              imageUrl: _displayImageUrl,
+                                              username: _displayUsername,
+                                              size: 80,
+                                            ),
+                                          ),
+                                          const SizedBox(height: 16),
+                                          // 사용자 이름 (1차 스냅 이후 페이드아웃)
+                                          Opacity(
+                                            opacity: nameOpacity,
+                                            child: Text(
+                                              _displayAlias ?? _displayUsername,
+                                              style: TextStyle(
+                                                color:
+                                                    Theme.of(
+                                                      context,
+                                                    ).colorScheme.onSurface,
+                                                fontSize: 36,
+                                                fontWeight: FontWeight.bold,
+                                                height: 1.1,
+                                              ),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                      const SizedBox(height: 2),
+                                      Opacity(
+                                        opacity: descOpacity,
+                                        child: Text(
+                                          isOther
+                                              ? (other
+                                                          ?.selfIntroduction
+                                                          ?.isNotEmpty ==
+                                                      true
+                                                  ? other!.selfIntroduction!
+                                                  : _displayUsername)
+                                              : (myIntro?.isNotEmpty == true
+                                                  ? myIntro!
+                                                  : '행복은 사소한 이 순간부터 시작된다고 믿어요, \n모두 행복하길 바랍니다.'),
+                                          style: TextStyle(
+                                            color:
+                                                Theme.of(
+                                                  context,
+                                                ).colorScheme.onSurface,
+                                            fontSize: 14,
+                                            height: 1.3,
+                                          ),
+                                          maxLines: 2,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      ),
+                                      // 다른 사용자 프로필일 때만 친구 추가 버튼 표시
+                                      if (isOther) ...[
+                                        const SizedBox(height: 20),
+                                        Opacity(
+                                          opacity: descOpacity,
+                                          child: Consumer<FriendProvider>(
+                                            builder: (
+                                              context,
+                                              friendProvider,
+                                              _,
+                                            ) {
+                                              // 친구 상태에 따른 버튼 텍스트와 액션 결정
+                                              String buttonText;
+                                              VoidCallback buttonAction;
+
+                                              switch (friendProvider
+                                                  .friendStatus) {
+                                                case FriendRequestStatus.none:
+                                                  buttonText = '이웃 추가';
+                                                  buttonAction = () async {
+                                                    try {
+                                                      await friendProvider
+                                                          .sendFriendRequest(
+                                                            widget
+                                                                .otherUser!
+                                                                .username,
+                                                          );
+                                                      if (mounted) {
+                                                        ScaffoldMessenger.of(
+                                                          context,
+                                                        ).showSnackBar(
+                                                          const SnackBar(
+                                                            content: Text(
+                                                              '이웃 요청을 보냈습니다',
+                                                            ),
+                                                          ),
+                                                        );
+                                                      }
+                                                    } catch (e) {
+                                                      if (mounted) {
+                                                        ScaffoldMessenger.of(
+                                                          context,
+                                                        ).showSnackBar(
+                                                          SnackBar(
+                                                            content: Text(
+                                                              '오류: $e',
+                                                            ),
+                                                          ),
+                                                        );
+                                                      }
+                                                    }
+                                                  };
+                                                  break;
+                                                case FriendRequestStatus
+                                                    .requested:
+                                                  buttonText = '요청 취소';
+                                                  buttonAction = () async {
+                                                    try {
+                                                      await friendProvider
+                                                          .deleteFriend(
+                                                            widget
+                                                                .otherUser!
+                                                                .username,
+                                                          );
+                                                      if (mounted) {
+                                                        ScaffoldMessenger.of(
+                                                          context,
+                                                        ).showSnackBar(
+                                                          const SnackBar(
+                                                            content: Text(
+                                                              '이웃 요청을 취소했습니다',
+                                                            ),
+                                                          ),
+                                                        );
+                                                      }
+                                                    } catch (e) {
+                                                      if (mounted) {
+                                                        ScaffoldMessenger.of(
+                                                          context,
+                                                        ).showSnackBar(
+                                                          SnackBar(
+                                                            content: Text(
+                                                              '오류: $e',
+                                                            ),
+                                                          ),
+                                                        );
+                                                      }
+                                                    }
+                                                  };
+                                                  break;
+                                                case FriendRequestStatus
+                                                    .accepted:
+                                                  buttonText = '친구 취소';
+                                                  buttonAction = () async {
+                                                    try {
+                                                      await friendProvider
+                                                          .deleteFriend(
+                                                            widget
+                                                                .otherUser!
+                                                                .username,
+                                                          );
+                                                      if (mounted) {
+                                                        ScaffoldMessenger.of(
+                                                          context,
+                                                        ).showSnackBar(
+                                                          const SnackBar(
+                                                            content: Text(
+                                                              '친구를 삭제했습니다',
+                                                            ),
+                                                          ),
+                                                        );
+                                                      }
+                                                    } catch (e) {
+                                                      if (mounted) {
+                                                        ScaffoldMessenger.of(
+                                                          context,
+                                                        ).showSnackBar(
+                                                          SnackBar(
+                                                            content: Text(
+                                                              '오류: $e',
+                                                            ),
+                                                          ),
+                                                        );
+                                                      }
+                                                    }
+                                                  };
+                                                  break;
+                                                default:
+                                                  buttonText = '이웃 추가';
+                                                  buttonAction = () {};
+                                              }
+
+                                              return _buildGlassyButton(
+                                                text: buttonText,
+                                                onTap: buttonAction,
+                                                isLoading:
+                                                    friendProvider.isLoading,
+                                              );
+                                            },
+                                          ),
+                                        ),
+                                      ],
+                                      const SizedBox(height: 100), // 하단 여백
+                                    ],
+                                  ),
+                                ),
+                      );
+                    },
+                  ),
+                ),
+                _buildFeedContent(),
+                const SliverToBoxAdapter(child: SizedBox(height: 20)),
+              ],
+            ),
+          ),
+
+          // 바텀바 영역 그라데이션 오버레이
+          if (_hasFeeds)
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              height: 100,
+              child: IgnorePointer(
+                ignoring: true,
                 child: Container(
-                  width: double.infinity,
-                  height: double.infinity,
-                  color: const Color.fromARGB(182, 144, 144, 144),
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [
+                        Colors.transparent,
+                        Theme.of(
+                          context,
+                        ).colorScheme.background.withOpacity(0.1),
+                        Theme.of(
+                          context,
+                        ).colorScheme.background.withOpacity(0.4),
+                        Theme.of(
+                          context,
+                        ).colorScheme.background.withOpacity(0.7),
+                      ],
+                      stops: const [0.0, 0.3, 0.7, 1.0],
+                    ),
+                  ),
                 ),
               ),
             ),
-          ),
-          // 이미지 뷰어
-          Positioned.fill(
-            child: Listener(
-              onPointerMove: (details) {
-                // 왼쪽으로 스와이프 (음수 delta.dx)
-                if (details.delta.dx < 30) {
-                  Navigator.of(context).pop();
-                }
-                // 아래로 스와이프 (양수 delta.dy)
-                if (details.delta.dy > 30) {
-                  Navigator.of(context).pop();
-                }
-              },
-              child: InteractiveViewer(
-                minScale: 0.5,
-                maxScale: 3.0,
-                child: CachedNetworkImage(
-                  imageUrl: widget.imageUrl,
-                  fit: BoxFit.cover,
-                  placeholder:
-                      (context, url) => const Center(
-                        child: CircularProgressIndicator(
-                          valueColor: AlwaysStoppedAnimation<Color>(
-                            Colors.white,
-                          ),
-                        ),
-                      ),
-                  errorWidget:
-                      (context, url, error) => const Center(
-                        child: Icon(
-                          Icons.person,
-                          color: Colors.white,
-                          size: 100,
-                        ),
-                      ),
-                  // 고해상도 이미지 캐시 설정
-                  memCacheWidth: 800,
+        ],
+      ),
+    );
+  }
 
-                  maxWidthDiskCache: 800,
+  Widget _buildGlassyButton({
+    required String text,
+    required VoidCallback onTap,
+    bool isLoading = false,
+  }) {
+    return GestureDetector(
+      onTap: isLoading ? null : onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 24),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: Colors.white.withOpacity(0.2), width: 1),
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [
+              Colors.white.withOpacity(0.1),
+              Colors.white.withOpacity(0.05),
+            ],
+          ),
+        ),
+        child: Center(
+          child:
+              isLoading
+                  ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                    ),
+                  )
+                  : Text(
+                    text,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+        ),
+      ),
+    );
+  }
 
-                  fadeInDuration: Duration.zero,
-                  fadeOutDuration: Duration.zero,
-                  cacheKey: 'profile_overlay_${widget.imageUrl}',
+  Widget _buildFeedContent() {
+    return Consumer<ProfileFeedProvider>(
+      builder: (context, feedProvider, _) {
+        if (feedProvider.isLoading && feedProvider.posts.isEmpty) {
+          return const SliverToBoxAdapter(
+            child: Center(
+              child: Padding(
+                padding: EdgeInsets.all(20),
+                child: CircularProgressIndicator(
+                  valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
                 ),
               ),
             ),
-          ),
-          // 상단 닫기 버튼
-          Positioned(
-            top: MediaQuery.of(context).padding.top + 10,
-            right: 20,
-            child: GestureDetector(
-              onTap: () => Navigator.of(context).pop(),
-              child: Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: Colors.black.withOpacity(0.1),
-                  shape: BoxShape.circle,
-                ),
-                child: const Icon(Icons.close, color: Colors.white, size: 20),
-              ),
-            ),
-          ),
-          // 하단 사용자 정보
-          Positioned(
-            bottom: 0,
-            left: 0,
-            right: 0,
-            child: Container(
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                  colors: [Colors.transparent, Colors.black.withOpacity(0.8)],
-                ),
-              ),
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 30),
-              child: SafeArea(
+          );
+        }
+
+        if (feedProvider.posts.isEmpty) {
+          return SliverToBoxAdapter(
+            child: Center(
+              child: Padding(
+                padding: const EdgeInsets.all(40),
                 child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
                   children: [
                     Text(
-                      widget.alias ??
-                          widget.username, // alias가 있으면 사용, 없으면 username
-                      style: const TextStyle(
-                        color: Colors.white70,
-                        fontSize: 16,
-                        fontWeight: FontWeight.w400,
+                      '첫 번째 게시물을 작성해보세요!',
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.7),
+                        fontSize: 14,
                       ),
                     ),
-                    // Username
-                    Text(
-                      '@${widget.username}',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 30,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-
-                    // Alias (사용자 이름)
                   ],
                 ),
               ),
             ),
+          );
+        }
+
+        return SliverGrid(
+          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: 3,
+            childAspectRatio: 9 / 12,
+            crossAxisSpacing: 2,
+            mainAxisSpacing: 2,
           ),
-        ],
+          delegate: SliverChildBuilderDelegate((context, index) {
+            if (index >= feedProvider.posts.length) {
+              return null;
+            }
+
+            try {
+              final postData = PostData.fromServer(feedProvider.posts[index]);
+              return _buildPostCard(postData, index);
+            } catch (e) {
+              return Container(
+                color: Colors.grey.withOpacity(0.3),
+                child: const Center(
+                  child: Icon(Icons.error, color: Colors.white),
+                ),
+              );
+            }
+          }, childCount: feedProvider.posts.length),
+        );
+      },
+    );
+  }
+
+  Widget _buildPostCard(PostData post, int index) {
+    final String heroTag = 'profile_post_${post.id}_$index';
+
+    return Hero(
+      tag: heroTag,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: () {
+            Navigator.of(context).push(
+              PageRouteBuilder(
+                pageBuilder:
+                    (context, animation, secondaryAnimation) =>
+                        PostReaderScreen(
+                          exported: {
+                            'id': post.id,
+                            'title': post.title,
+                            'content': post.content,
+                            'author': post.author,
+                            'authorProfileImageUrl': post.authorProfileImageUrl,
+                            'thumbnailImageUrl': post.thumbnailImageUrl,
+                            'createdAt': post.createdAt,
+                            'updatedAt': post.updatedAt,
+                            'accessLevel': post.accessLevel.name,
+                            'viewCount': post.viewCount,
+                            'likeCount': post.likeCount,
+                            'isLiked': post.isLiked,
+                          },
+                          heroTag: heroTag,
+                        ),
+                transitionsBuilder: (
+                  context,
+                  animation,
+                  secondaryAnimation,
+                  child,
+                ) {
+                  return FadeTransition(opacity: animation, child: child);
+                },
+                transitionDuration: const Duration(milliseconds: 300),
+              ),
+            );
+          },
+          child: Container(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(2),
+              color: Colors.grey.withOpacity(0.3),
+            ),
+            child:
+                post.thumbnailImageUrl.isNotEmpty
+                    ? CachedNetworkImage(
+                      imageUrl: post.thumbnailImageUrl,
+                      fit: BoxFit.cover,
+                      memCacheWidth: 300,
+                      maxWidthDiskCache: 300,
+                      fadeInDuration: Duration.zero,
+                      fadeOutDuration: Duration.zero,
+                      placeholder:
+                          (context, url) =>
+                              Container(color: Colors.grey.withOpacity(0.3)),
+                      errorWidget:
+                          (context, url, error) => Container(
+                            color: Colors.grey.withOpacity(0.3),
+                            child: const Icon(Icons.error, color: Colors.white),
+                          ),
+                    )
+                    : Container(
+                      color: Colors.grey.withOpacity(0.3),
+                      child: const Icon(Icons.image, color: Colors.white),
+                    ),
+          ),
+        ),
       ),
     );
   }
