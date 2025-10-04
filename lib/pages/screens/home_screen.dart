@@ -4,7 +4,6 @@ import 'package:doppy/pages/components/post_list.dart';
 import 'package:doppy/data/models/post_data.dart';
 import 'package:doppy/data/services/blog_service.dart';
 import 'package:flutter/material.dart';
-import 'package:cached_network_image/cached_network_image.dart';
 import 'dart:ui' as ui;
 
 class HomeScreen extends StatefulWidget {
@@ -173,13 +172,6 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildContent(double screenWidth) {
-    print('error: $_error');
-    print('isLoading: $_isLoading');
-    print('isLoadingMore: $_isLoadingMore');
-    print('hasMoreData: $_hasMoreData');
-    print('posts: ${_posts.length}');
-    print('currentPage: $_currentPage');
-
     if (_error != null) {
       return _buildError();
     } else if (_isLoading) {

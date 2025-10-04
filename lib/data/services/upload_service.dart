@@ -208,12 +208,17 @@ class UploadService with ChangeNotifier {
           json.decode(body) as Map<String, dynamic>;
       String? imageId = (decoded['imageId'] ?? decoded['id'])?.toString();
       String? accessUrl =
-          decoded['accessUrl']?.toString() ?? decoded['url']?.toString();
+          decoded['accessUrl']?.toString() ??
+          decoded['url']?.toString() ??
+          decoded['profileImageUrl']?.toString();
       if ((imageId == null || accessUrl == null) &&
           decoded['data'] is Map<String, dynamic>) {
         final data = decoded['data'] as Map<String, dynamic>;
         imageId ??= (data['imageId'] ?? data['id'])?.toString();
-        accessUrl ??= data['accessUrl']?.toString() ?? data['url']?.toString();
+        accessUrl ??=
+            data['accessUrl']?.toString() ??
+            data['url']?.toString() ??
+            data['profileImageUrl']?.toString();
       }
       if ((accessUrl == null || accessUrl.isEmpty) &&
           imageId != null &&

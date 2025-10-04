@@ -14,7 +14,8 @@ class EmptyPostListState extends State<EmptyPostList> {
   @override
   void initState() {
     super.initState();
-    _pageController = PageController(viewportFraction: 0.88);
+    // PostList와 동일한 viewportFraction 사용
+    _pageController = PageController(viewportFraction: 0.82);
     _pageController.addListener(() {
       if (_pageController.hasClients) {
         final current = _pageController.page ?? _currentIndex.toDouble();
@@ -39,6 +40,7 @@ class EmptyPostListState extends State<EmptyPostList> {
       scrollDirection: Axis.horizontal,
       controller: _pageController,
       pageSnapping: true,
+      physics: const ClampingScrollPhysics(),
       clipBehavior: Clip.none,
       padEnds: true,
       onPageChanged: (index) {
@@ -52,44 +54,49 @@ class EmptyPostListState extends State<EmptyPostList> {
       },
     );
 
-    // 헤더(작가 프로필/이름) + 본문(PageView)를 컬럼으로 분리
-    final double topInset = MediaQuery.of(context).padding.top;
-
-    final Widget header = Padding(
-      padding: EdgeInsets.fromLTRB(24, topInset, 20, 0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [_buildEmptyAuthor(context)],
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 120, top: 10),
+      child: Stack(
+        children: [
+          pageView,
+          Positioned(
+            left: 10,
+            right: 20,
+            bottom: 20,
+            child: _buildEmptyAuthor(context),
+          ),
+        ],
       ),
-    );
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Expanded(flex: 4, child: pageView),
-        Expanded(flex: 1, child: header),
-      ],
     );
   }
 
   Widget _buildEmptyCard(BuildContext context, int index) {
-    // 스크롤 진행도 기반 전환 효과 설정
-    final bool hasClients = _pageController.hasClients;
-    final double pageNow = hasClients ? _page : _currentIndex.toDouble();
-    final double delta = pageNow - index;
-    final double ad = delta.abs();
-    final double proximity = (1.0 - ad).clamp(0.0, 1.0);
-    double scale = 0.90 + 0.10 * proximity;
-
-    return Transform.scale(
-      scale: scale,
-      child: Center(
-        child: AspectRatio(
-          aspectRatio: 9 / 12,
-          child: _buildEmptyPostCard(context, index),
-        ),
+    // PostList와 동일한 스케일 애니메이션
+    final content = AnimatedBuilder(
+      animation: _pageController,
+      builder: (context, child) {
+        final double pageNow =
+            _pageController.hasClients
+                ? (_pageController.page ?? _currentIndex.toDouble())
+                : _currentIndex.toDouble();
+        final double ad = (pageNow - index).abs().clamp(0.0, 1.0);
+        final double t = 1.0 - ad;
+        final double eased = Curves.easeOutCubic.transform(t);
+        final double scale = 0.9 + 0.1 * eased;
+        return Transform.scale(scale: scale, child: child);
+      },
+      child: Stack(
+        children: [
+          Center(
+            child: AspectRatio(
+              aspectRatio: 9 / 12,
+              child: _buildEmptyPostCard(context, index),
+            ),
+          ),
+        ],
       ),
     );
+    return content;
   }
 
   Widget _buildEmptyPostCard(BuildContext context, int index) {
@@ -250,28 +257,43 @@ class EmptyPostListState extends State<EmptyPostList> {
   }
 
   Widget _buildEmptyAuthor(BuildContext context) {
+    final List<Map<String, dynamic>> cardData = [
+      {'title': '오늘 친구들의 활동이 없네요', 'subtitle': '내 일상을 올려볼까요?'},
+      {'title': '친구를 추가해볼까요?', 'subtitle': '새로운 사람들과 연결해보세요'},
+    ];
+
+    final data = cardData[_currentIndex];
+
     return Padding(
       padding: const EdgeInsets.only(right: 20, left: 5),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        key: ValueKey('empty-author-$_currentIndex'),
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          // 제목
           Text(
-            '빈 피드',
+            data['title'] as String,
+            textAlign: TextAlign.center,
             style: TextStyle(
               color: Theme.of(context).colorScheme.onSurface,
-              fontSize: 22,
-              fontWeight: FontWeight.w600,
+              fontSize: 32,
+              fontWeight: FontWeight.bold,
+              letterSpacing: -0.2,
             ),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
           ),
           const SizedBox(height: 4),
-          // 내용
           Text(
-            '새로운 콘텐츠를 만들어보세요',
+            data['subtitle'] as String,
+            textAlign: TextAlign.center,
             style: TextStyle(
               color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
-              fontSize: 13,
+              fontSize: 14,
+              fontWeight: FontWeight.w300,
+              letterSpacing: -0.2,
             ),
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
           ),
         ],
       ),

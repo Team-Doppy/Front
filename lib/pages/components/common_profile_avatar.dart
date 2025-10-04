@@ -59,7 +59,7 @@ class CommonProfileAvatar extends StatelessWidget {
   Widget _buildPlaceholder(BuildContext context, bool isDarkMode) {
     // 사용자명의 첫 글자를 가져와서 표시
     final String firstLetter =
-        username.isNotEmpty ? username[0].toUpperCase() : '?';
+        username.isNotEmpty ? username[0].toUpperCase() : '';
 
     return Container(
       width: size,

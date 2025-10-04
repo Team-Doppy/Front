@@ -36,7 +36,7 @@ class CustomBottomNavigationBar extends StatelessWidget {
           child: Container(
             height: 56,
             decoration: BoxDecoration(
-              color: Theme.of(context).colorScheme.background.withOpacity(1),
+              color: Theme.of(context).colorScheme.background.withOpacity(0.6),
             ),
             child: Padding(
               padding: const EdgeInsets.only(bottom: 0, top: 0),

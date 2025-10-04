@@ -53,10 +53,6 @@ class PostData {
       content = contentData?.toString() ?? '';
     }
 
-    print('[PostData] content: ${data['thumbnailImageUrl']}');
-    print('[PostData] id: ${data['id']}');
-    print('[PostData] 전체 데이터: $data');
-
     return PostData(
       id: data['id']?.toString() ?? '',
       thumbnailImageUrl: data['thumbnailImageUrl'] ?? 'assets/images/feed2.png',

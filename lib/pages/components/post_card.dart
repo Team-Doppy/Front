@@ -1,7 +1,6 @@
-import 'package:doppy/pages/components/shimmer_box.dart';
-import 'package:doppy/pages/components/common_profile_avatar.dart';
 import 'package:flutter/material.dart';
 import 'package:doppy/data/services/like_service.dart';
+import 'package:doppy/pages/components/shimmer_box.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 
 // ignore: must_be_immutable
@@ -75,11 +74,19 @@ class _PostCardState extends State<PostCard> {
         ),
         child: ClipRRect(
           borderRadius: BorderRadius.circular(12), // 보더 두께만큼 작게
-          child: Image.network(
-            widget.thumbnailImageUrl,
+          child: CachedNetworkImage(
+            imageUrl: widget.thumbnailImageUrl,
             fit: BoxFit.cover,
             key: ValueKey('bg-${widget.thumbnailImageUrl}'),
-            errorBuilder:
+            fadeInDuration: const Duration(milliseconds: 300),
+            fadeOutDuration: const Duration(milliseconds: 100),
+            placeholder:
+                (context, url) => ShimmerBox(
+                  width: double.infinity,
+                  height: double.infinity,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+            errorWidget:
                 (context, error, stackTrace) => Container(
                   color: Theme.of(context).colorScheme.surfaceVariant,
                   child: Center(
@@ -129,13 +136,17 @@ class _PostCardState extends State<PostCard> {
         ),
         // 우상단 하트 아이콘
         Positioned(
-          right: 8,
-          bottom: 15,
+          right: 12,
+          bottom: 10,
           child: GestureDetector(
             onTap: widget.onLikePressed,
             behavior: HitTestBehavior.opaque,
             child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+              decoration: BoxDecoration(
+                color: Colors.black.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(20),
+              ),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -147,86 +158,11 @@ class _PostCardState extends State<PostCard> {
                         _likeService.isPostLiked(widget.postId)
                             ? Colors.redAccent
                             : Colors.white,
-                    size: 24,
-                  ),
-                  const SizedBox(width: 6),
-                  Text(
-                    '${_likeService.getPostLikeCount(widget.postId)}',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                    ),
+                    size: 20,
                   ),
                 ],
               ),
             ),
-          ),
-        ),
-        /*
-        // 하단 그라데이션 오버레이
-        Positioned.fill(
-          child: Container(
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(8),
-              gradient: LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                colors: [
-                  Colors.transparent,
-                  Colors.transparent,
-                  Colors.black.withOpacity(0.2),
-                  Colors.black.withOpacity(0.2),
-                ],
-                stops: const [0.0, 0.5, 0.9, 0.98],
-              ),
-            ),
-          ),
-        ),*/
-
-        // 텍스트/프로필 오버레이 - 하단에 위치
-        Positioned(
-          left: 10,
-          right: 20,
-          bottom: 10,
-          child: _buildBottomAuthorRow(context),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildBottomAuthorRow(BuildContext context) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.center,
-      children: [
-        CommonProfileAvatar(
-          imageUrl: widget.authorProfileImageUrl,
-          username: widget.author,
-          size: 50.0,
-          borderWidth: 1,
-          borderColor: Theme.of(
-            context,
-          ).colorScheme.surfaceVariant.withOpacity(0.5),
-        ),
-        const SizedBox(width: 10),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const SizedBox(height: 4),
-              Text(
-                widget.author,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: Colors.white.withOpacity(0.98),
-                  fontSize: 15,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: -0.2,
-                ),
-              ),
-            ],
           ),
         ),
       ],

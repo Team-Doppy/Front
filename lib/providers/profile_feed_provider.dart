@@ -85,10 +85,18 @@ class ProfileFeedProvider extends ChangeNotifier {
 
   /// 즉시 화면에서 기존 목록을 비우고 강제 재로딩
   Future<void> hardRefresh({String? username}) async {
+    // 기존 사용자 정보도 초기화
+    _username = null;
+
+    // 피드 즉시 초기화
     _posts.clear();
     _page = 0;
     _hasMore = true;
+
+    // UI 즉시 업데이트 (이전 피드가 보이지 않도록)
     notifyListeners();
+
+    // 새 데이터 로드
     await loadInitial(username: username, force: true);
   }
 
@@ -117,5 +125,27 @@ class ProfileFeedProvider extends ChangeNotifier {
       _loadingMore = false;
       notifyListeners();
     }
+  }
+
+  /// 로그아웃 시 모든 피드 데이터 초기화
+  void logout() {
+    _posts.clear();
+    _loading = false;
+    _loadingMore = false;
+    _hasMore = true;
+    _page = 0;
+    _username = null;
+    _inFlightUsers.clear();
+    notifyListeners();
+    print('[ProfileFeedProvider] 로그아웃 - 피드 데이터 초기화 완료');
+  }
+
+  /// 화면을 나갈 때 UI 상의 목록만 즉시 정리 (캐시/메타 정보 유지)
+  void clearInMemory() {
+    _posts.clear();
+    _loading = false;
+    _loadingMore = false;
+    notifyListeners();
+    // _username, _hasMore, _page 등은 유지하여 다음 진입 시 빠르게 재요청 가능
   }
 }

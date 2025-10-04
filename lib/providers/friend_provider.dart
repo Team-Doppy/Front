@@ -252,4 +252,21 @@ class FriendProvider with ChangeNotifier {
     _searchError = null;
     notifyListeners();
   }
+
+  /// 로그아웃 시 모든 친구 데이터 초기화
+  void logout() {
+    _acceptedFriends.clear();
+    _receivedRequests.clear();
+    _sentRequests.clear();
+    _isLoading = false;
+    _errorMessage = null;
+    _lastFetchTime = null;
+    _searchedUsers.clear();
+    _isSearching = false;
+    _searchError = null;
+    _friendStatus = FriendRequestStatus.none;
+    _isLoadingStatus = false;
+    notifyListeners();
+    print('[FriendProvider] 로그아웃 - 친구 데이터 초기화 완료');
+  }
 }

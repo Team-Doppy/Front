@@ -101,13 +101,14 @@ class RootShell extends StatefulWidget {
 
 class _RootShellState extends State<RootShell> {
   late int _index;
+  bool _isFirstLoad = true; // 첫 로드 여부 추적
 
-  // 각 탭의 페이지 유지용
-  final _pages = const [
-    HomeScreen(),
-    SearchScreen(),
-    SizedBox.shrink(), // 작성은 라우트로 별도 push
-    UserProfileScreen(),
+  // 계정별로 재생성되도록 페이지 빌더 사용
+  List<Widget> _buildPages(String? username) => [
+    HomeScreen(key: ValueKey('home_$username')),
+    SearchScreen(key: ValueKey('search_$username')),
+    const SizedBox.shrink(), // 작성은 라우트로 별도 push
+    UserProfileScreen(key: ValueKey('profile_$username')),
   ];
 
   @override
@@ -116,32 +117,58 @@ class _RootShellState extends State<RootShell> {
     _index = widget.initialIndex;
   }
 
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // 첫 로드 후 애니메이션 활성화
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_isFirstLoad) {
+        setState(() {
+          _isFirstLoad = false;
+        });
+      }
+    });
+  }
+
   void _onTap(int i) {
     if (i == 2) {
       final screenWidth = MediaQuery.of(context).size.width;
       Navigator.of(context).pushNamed('/post-write', arguments: screenWidth);
       return;
     }
+    final wasIndex = _index;
     setState(() => _index = i);
-    // 프로필 탭 선택 시 항상 피드 새로 로드
-    if (i == 3) {
-      // 기본 내 프로필(다른 사용자 없음)
+    // 프로필 탭 전환 시: 첫 진입이거나 명시적 새로고침 상황에서만 강제 로드
+    if (i == 3 && wasIndex != 3) {
       context.read<ProfileFeedProvider>().loadInitial(
         username: null,
-        force: true,
+        force: false,
       );
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final stack = IndexedStack(index: _index, children: _pages);
+    final auth = context.watch<AuthProvider>();
+    final pages = _buildPages(auth.username);
+
     return Scaffold(
       backgroundColor: Theme.of(context).colorScheme.background,
       body: Stack(
         children: [
-          // 모든 탭에서 동일하게 SafeArea를 적용해 전환 시 패딩 점프(깜빡임) 제거
-          stack,
+          AnimatedSwitcher(
+            duration: const Duration(milliseconds: 250),
+            switchInCurve: Curves.easeOut,
+            switchOutCurve: Curves.easeIn,
+            transitionBuilder: (child, animation) {
+              // SlideTransition 제거하고 FadeTransition만 사용하여 버벅임 방지
+              return FadeTransition(opacity: animation, child: child);
+            },
+            child: KeyedSubtree(
+              key: ValueKey('page_${auth.username}_$_index'),
+              child: pages[_index],
+            ),
+          ),
           // 플로팅 바텀 내비게이션바
           CustomBottomNavigationBar(currentIndex: _index, onTap: _onTap),
         ],

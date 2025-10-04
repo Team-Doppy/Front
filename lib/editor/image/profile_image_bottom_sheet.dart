@@ -40,11 +40,19 @@ class ProfileImageBottomSheet extends StatelessWidget {
             ),
             const SizedBox(height: 12),
             ListTile(
-              leading: Icon(
-                Icons.photo_album,
-                color: theme.colorScheme.onSurface,
+              title: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Text(
+                  '갤러리에서 선택',
+                  style: TextStyle(
+                    fontSize: 17,
+                    fontWeight: FontWeight.w600,
+                    color: Theme.of(
+                      context,
+                    ).colorScheme.onSurface.withOpacity(0.8),
+                  ),
+                ),
               ),
-              title: const Text('갤러리에서 선택'),
               onTap: () async {
                 // 현재 시트 닫고 갤러리 시트 오픈
                 Navigator.pop(context);
@@ -69,16 +77,24 @@ class ProfileImageBottomSheet extends StatelessWidget {
               },
             ),
             ListTile(
-              leading: Icon(Icons.person, color: theme.colorScheme.onSurface),
-              title: const Text('기본 이미지로 변경'),
+              title: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Text(
+                  '기본 이미지로 변경',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                    color: Theme.of(
+                      context,
+                    ).colorScheme.onSurface.withOpacity(0.8),
+                  ),
+                ),
+              ),
               onTap: () async {
                 try {
                   await onClearProfileImage();
                   if (context.mounted) {
                     Navigator.pop(context);
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('기본 이미지로 변경되었습니다.')),
-                    );
                   }
                 } catch (e) {
                   if (context.mounted) {

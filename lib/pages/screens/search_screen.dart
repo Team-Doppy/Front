@@ -207,16 +207,29 @@ class _SearchScreenState extends State<SearchScreen> {
                 onNavigateToProfile: (username) {
                   Navigator.push(
                     context,
-                    MaterialPageRoute(
-                      builder:
-                          (context) => UserProfileScreen(
-                            otherUser: User(
-                              id: 0,
-                              username: username,
-                              alias: item.alias,
-                              profileImageUrl: item.profileImageUrl,
-                            ),
-                          ),
+                    PageRouteBuilder(
+                      pageBuilder:
+                          (context, animation, secondaryAnimation) =>
+                              UserProfileScreen(
+                                otherUser: User(
+                                  id: 0,
+                                  username: username,
+                                  alias: item.alias,
+                                  profileImageUrl: item.profileImageUrl,
+                                ),
+                              ),
+                      transitionsBuilder: (
+                        context,
+                        animation,
+                        secondaryAnimation,
+                        child,
+                      ) {
+                        return FadeTransition(opacity: animation, child: child);
+                      },
+                      transitionDuration: const Duration(milliseconds: 100),
+                      reverseTransitionDuration: const Duration(
+                        milliseconds: 100,
+                      ),
                     ),
                   ).whenComplete(() {
                     if (mounted) setState(() => _freezeDuringPush = false);
@@ -245,16 +258,29 @@ class _SearchScreenState extends State<SearchScreen> {
               onTapAccount: (item) {
                 Navigator.push(
                   context,
-                  MaterialPageRoute(
-                    builder:
-                        (context) => UserProfileScreen(
-                          otherUser: User(
-                            id: 0,
-                            username: item.username ?? '',
-                            alias: item.alias,
-                            profileImageUrl: item.profileImageUrl,
-                          ),
-                        ),
+                  PageRouteBuilder(
+                    pageBuilder:
+                        (context, animation, secondaryAnimation) =>
+                            UserProfileScreen(
+                              otherUser: User(
+                                id: 0,
+                                username: item.username ?? '',
+                                alias: item.alias,
+                                profileImageUrl: item.profileImageUrl,
+                              ),
+                            ),
+                    transitionsBuilder: (
+                      context,
+                      animation,
+                      secondaryAnimation,
+                      child,
+                    ) {
+                      return FadeTransition(opacity: animation, child: child);
+                    },
+                    transitionDuration: const Duration(milliseconds: 100),
+                    reverseTransitionDuration: const Duration(
+                      milliseconds: 100,
+                    ),
                   ),
                 );
               },
@@ -279,23 +305,37 @@ class _SearchScreenState extends State<SearchScreen> {
             onTapAccount: (item) {
               Navigator.push(
                 context,
-                MaterialPageRoute(
-                  builder:
-                      (context) => UserProfileScreen(
-                        otherUser: User(
-                          id: 0,
-                          username: item.username ?? '',
-                          alias: item.alias,
-                          profileImageUrl: item.profileImageUrl,
-                        ),
-                      ),
+                PageRouteBuilder(
+                  pageBuilder:
+                      (context, animation, secondaryAnimation) =>
+                          UserProfileScreen(
+                            otherUser: User(
+                              id: 0,
+                              username: item.username ?? '',
+                              alias: item.alias,
+                              profileImageUrl: item.profileImageUrl,
+                            ),
+                          ),
+                  transitionsBuilder: (
+                    context,
+                    animation,
+                    secondaryAnimation,
+                    child,
+                  ) {
+                    return FadeTransition(opacity: animation, child: child);
+                  },
+                  transitionDuration: const Duration(milliseconds: 100),
+                  reverseTransitionDuration: const Duration(milliseconds: 100),
                 ),
               ).whenComplete(() {
                 if (mounted) setState(() => _freezeDuringPush = false);
               });
             },
             onTapHistory: (_) {},
-            onRemoveHistory: (_) {},
+            onRemoveHistory: (username) {
+              // SearchService를 통해 검색 기록에서 제거
+              context.read<SearchService>().removeFromSearchHistory(username);
+            },
             enableHero: false,
           );
         }
@@ -709,7 +749,7 @@ class _RecommendHomeState extends State<_RecommendHome> {
 
   void _onScroll() {
     if (_scrollController.position.pixels >=
-        _scrollController.position.maxScrollExtent - 200) {
+        _scrollController.position.maxScrollExtent - 50) {
       final searchService = context.read<SearchService>();
       searchService.loadRecommendations();
     }
@@ -800,6 +840,11 @@ class _StaggeredGrid extends StatelessWidget {
       builder: (context, searchService, _) {
         return RefreshIndicator(
           onRefresh: () => searchService.refreshRecommendations(),
+          displacement: 50, // 새로고침 인디케이터 위치를 더 아래로
+          edgeOffset: 10, // 가장자리에서의 오프셋 증가
+          color: Theme.of(
+            context,
+          ).colorScheme.onSurface.withOpacity(0.9), // 새로고침 아이콘 색상
           child: ListView.builder(
             controller: controller,
             itemCount: items.length,
@@ -836,36 +881,43 @@ class _GridCardPlaceholder extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ClipRRect(
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          const ShimmerBox(
-            width: double.infinity,
-            height: double.infinity,
-            borderRadius: BorderRadius.zero,
-          ),
-          Positioned(
-            left: 8,
-            right: 8,
-            bottom: 8,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                ShimmerBox(
-                  width: 120,
-                  height: 16,
-                  borderRadius: BorderRadius.circular(4),
-                ),
-                const SizedBox(height: 4),
-                ShimmerBox(
-                  width: 80,
-                  height: 14,
-                  borderRadius: BorderRadius.circular(4),
-                ),
-              ],
+      child: SizedBox(
+        height: 200, // 고정 높이 설정
+        child: Stack(
+          children: [
+            // 배경 shimmer
+            Positioned.fill(
+              child: ShimmerBox(
+                width: double.infinity,
+                height: double.infinity,
+                borderRadius: BorderRadius.zero,
+              ),
             ),
-          ),
-        ],
+            // 텍스트 shimmer들
+            Positioned(
+              left: 8,
+              right: 8,
+              bottom: 8,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  ShimmerBox(
+                    width: 120,
+                    height: 16,
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  const SizedBox(height: 4),
+                  ShimmerBox(
+                    width: 80,
+                    height: 14,
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -927,9 +979,13 @@ class _BlogCard extends StatelessWidget {
                                       // 프로필로 이동
                                       Navigator.push(
                                         context,
-                                        MaterialPageRoute(
-                                          builder:
-                                              (context) => UserProfileScreen(
+                                        PageRouteBuilder(
+                                          pageBuilder:
+                                              (
+                                                context,
+                                                animation,
+                                                secondaryAnimation,
+                                              ) => UserProfileScreen(
                                                 otherUser: User(
                                                   id: 0,
                                                   username: item.author ?? '',
@@ -938,6 +994,22 @@ class _BlogCard extends StatelessWidget {
                                                       item.profileImageUrl,
                                                 ),
                                               ),
+                                          transitionsBuilder: (
+                                            context,
+                                            animation,
+                                            secondaryAnimation,
+                                            child,
+                                          ) {
+                                            return FadeTransition(
+                                              opacity: animation,
+                                              child: child,
+                                            );
+                                          },
+                                          transitionDuration: const Duration(
+                                            milliseconds: 200,
+                                          ),
+                                          reverseTransitionDuration:
+                                              const Duration(milliseconds: 150),
                                         ),
                                       );
                                     },

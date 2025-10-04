@@ -175,7 +175,7 @@ class _PostListState extends State<PostList> {
             : pageView;
 
     return Padding(
-      padding: const EdgeInsets.only(bottom: 120, top: 10),
+      padding: const EdgeInsets.only(bottom: 120, top: 20),
       child: Stack(
         children: [
           contentWithRefresh,
@@ -197,8 +197,8 @@ class _PostListState extends State<PostList> {
       onTap: () {
         Navigator.of(context).push(
           PageRouteBuilder(
-            transitionDuration: const Duration(milliseconds: 400),
-            reverseTransitionDuration: const Duration(milliseconds: 500),
+            transitionDuration: const Duration(milliseconds: 340),
+            reverseTransitionDuration: const Duration(milliseconds: 100),
             opaque: false,
             pageBuilder:
                 (_, __, ___) => PostReaderScreen(
@@ -364,7 +364,8 @@ class _PostListState extends State<PostList> {
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
           ),
-          const SizedBox(height: 4),
+          const SizedBox(height: 2),
+
           Text(
             post.parsedContent,
             textAlign: TextAlign.center,

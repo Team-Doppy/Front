@@ -63,6 +63,7 @@ class GroupProvider with ChangeNotifier {
           _groupMembersFetchedAt[g.id] = DateTime.now();
         }
       }
+      await Future.delayed(const Duration(milliseconds: 500));
     } catch (e) {
       print("그룹 목록 조회 에러: $e");
     } finally {
@@ -160,5 +161,16 @@ class GroupProvider with ChangeNotifier {
       print('멤버 제거 에러: $e');
       return false;
     }
+  }
+
+  /// 로그아웃 시 모든 그룹 데이터 초기화
+  void logout() {
+    _myGroups.clear();
+    _isLoading = false;
+    _lastFetchedAt = null;
+    _groupMembers.clear();
+    _groupMembersFetchedAt.clear();
+    notifyListeners();
+    print('[GroupProvider] 로그아웃 - 그룹 데이터 초기화 완료');
   }
 }

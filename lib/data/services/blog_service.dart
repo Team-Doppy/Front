@@ -45,6 +45,13 @@ class BlogService {
     _myPostsCachedAt = null;
   }
 
+  /// 로그아웃 시 모든 캐시 초기화
+  static void clearAllCache() {
+    _invalidateCache();
+    _invalidateMyPostsCache();
+    print('[BlogService] 로그아웃 - 모든 캐시 초기화 완료');
+  }
+
   /// 블로그 포스트를 서버에 업로드합니다.
   ///
   /// [postData] - 포스트 데이터 (제목, 내용, 썸네일 URL, 태그 등)
@@ -440,12 +447,23 @@ class BlogService {
         );
         print('[BlogService] Successfully fetched ${posts.length} user posts');
         return posts;
+      } else if (response.statusCode == 404) {
+        // 사용자 포스트가 없거나 API 엔드포인트가 존재하지 않는 경우
+        print(
+          '[BlogService] User posts not found (404) for username: $username',
+        );
+        return []; // 빈 리스트 반환
       } else {
         print('[BlogService] Error ${response.statusCode}: ${response.body}');
         throw Exception('Failed to fetch user posts: ${response.statusCode}');
       }
     } catch (e) {
       print('[BlogService] Exception: $e');
+      // 404 에러인 경우 빈 리스트 반환 (서버 문제 대응)
+      if (e.toString().contains('404')) {
+        print('[BlogService] Returning empty list due to 404 error');
+        return [];
+      }
       throw Exception('Failed to fetch user posts: $e');
     }
   }

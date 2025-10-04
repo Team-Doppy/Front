@@ -1,11 +1,9 @@
 import 'package:flutter/material.dart';
 import '../data/models/user_model.dart';
 import '../data/services/user_service.dart';
-import '../data/services/auth_service.dart'; // AuthService for user info
 
 class UserProvider with ChangeNotifier {
   final UserService _userService = UserService();
-  final AuthService _authService = AuthService(); // UserInfo 조회를 위해 추가
 
   // 내 프로필 정보
   User? _currentUser;
@@ -56,36 +54,6 @@ class UserProvider with ChangeNotifier {
     }
   }
 
-  /// 다른 사용자 프로필 정보 로드
-  Future<void> fetchUserProfile(String username) async {
-    _isLoading = true;
-    // 캐시 유효하면 먼저 반영 (UI 즉시 표시)
-    final cached = _userCache[username];
-    final cachedAt = _userCacheTime[username];
-    if (cached != null &&
-        cachedAt != null &&
-        DateTime.now().difference(cachedAt) < userCacheTtl) {
-      _viewedUser = cached;
-    }
-    notifyListeners();
-    try {
-      final results = await Future.wait([
-        _authService.getUserInfo(username),
-        _userService.getOtherUserSelfIntroduction(username),
-      ]);
-      final user = results[0] as User?;
-      _viewedUser = user;
-      _viewedUserSelfIntroduction = results[1] as String?;
-      if (user != null) {
-        _userCache[username] = user;
-        _userCacheTime[username] = DateTime.now();
-      }
-    } finally {
-      _isLoading = false;
-      notifyListeners();
-    }
-  }
-
   /// 프로필 이미지 업데이트(서버 반영 후 로컬 상태 갱신)
   Future<bool> updateProfileImage({
     required String imageUrl,
@@ -124,5 +92,60 @@ class UserProvider with ChangeNotifier {
       debugPrint('[UserProvider] updateProfileImage failed: $e');
       return false;
     }
+  }
+
+  /// 프로필 이미지 삭제 (기본 이미지로 되돌리기)
+  Future<bool> deleteProfileImage() async {
+    try {
+      // 서버에 삭제 요청
+      await _userService.deleteProfileImage();
+
+      // 로컬 상태 업데이트 (빈 문자열로 설정)
+      if (_currentUser != null) {
+        final u = _currentUser!;
+        _currentUser = User(
+          id: u.id,
+          username: u.username,
+          role: u.role,
+          alias: u.alias,
+          profileImageUrl: '',
+          selfIntroduction: u.selfIntroduction,
+          friendCount: u.friendCount,
+        );
+      }
+      if (_viewedUser != null &&
+          _currentUser != null &&
+          _viewedUser!.username == _currentUser!.username) {
+        final v = _viewedUser!;
+        _viewedUser = User(
+          id: v.id,
+          username: v.username,
+          role: v.role,
+          alias: v.alias,
+          profileImageUrl: '',
+          selfIntroduction: v.selfIntroduction,
+          friendCount: v.friendCount,
+        );
+      }
+      notifyListeners();
+      return true;
+    } catch (e) {
+      debugPrint('[UserProvider] deleteProfileImage failed: $e');
+      return false;
+    }
+  }
+
+  /// 로그아웃 시 모든 사용자 데이터 초기화
+  void logout() {
+    _currentUser = null;
+    _friendCount = null;
+    _selfIntroduction = null;
+    _viewedUser = null;
+    _viewedUserSelfIntroduction = null;
+    _isLoading = false;
+    _userCache.clear();
+    _userCacheTime.clear();
+    notifyListeners();
+    print('[UserProvider] 로그아웃 - 사용자 데이터 초기화 완료');
   }
 }

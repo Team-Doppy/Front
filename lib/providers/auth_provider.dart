@@ -1,5 +1,11 @@
+import 'package:doppy/data/models/login_response_model.dart';
 import 'package:flutter/material.dart';
-import '../../data/services/auth_service.dart'; //상대 경로 에러 발생
+import '../../data/services/auth_service.dart';
+import '../../data/services/blog_service.dart';
+import 'user_provider.dart';
+import 'friend_provider.dart';
+import 'profile_feed_provider.dart';
+import 'group_provider.dart';
 
 class AuthProvider extends ChangeNotifier {
   static final AuthProvider _instance = AuthProvider._internal();
@@ -15,22 +21,44 @@ class AuthProvider extends ChangeNotifier {
   bool get isLoggedIn => _isLoggedIn;
 
   Future<void> logout() async {
+    // 1. AuthService에서 토큰 삭제
     await _authService.logout();
+
+    // 2. AuthProvider 상태 초기화
     _token = null;
     _username = null;
     _isLoggedIn = false;
-    print('로그아웃 성공');
+
+    // 3. 모든 Provider 초기화
+    UserProvider().logout();
+    FriendProvider().logout();
+    ProfileFeedProvider().logout();
+    GroupProvider().logout();
+
+    // 4. 모든 서비스 캐시 초기화
+    BlogService.clearAllCache();
+
+    // 5. UI 업데이트
+    notifyListeners();
+
+    print('[AuthProvider] 로그아웃 완료 - 모든 데이터 초기화됨');
   }
 
-  Future<bool> login(String username, String password) async {
-    final result = await _authService.login(username, password);
+  Future<bool> login(
+    String username,
+    String password, {
+    bool setAsCurrent = true,
+  }) async {
+    final result = await _authService.login(
+      username,
+      password,
+      setAsCurrent: setAsCurrent,
+    );
     if (result != null) {
       _isLoggedIn = true;
       _token = result.token;
       _username = result.username;
       print('로그인 성공 : token: $_token, username: $_username');
-
-      notifyListeners();
     }
     return result != null;
   }
@@ -67,5 +95,18 @@ class AuthProvider extends ChangeNotifier {
       notifyListeners();
     }
     return isValid;
+  }
+
+  /// 인증 상태 업데이트 (계정 전환/연동 시 사용)
+  void updateAuthState({
+    required bool isLoggedIn,
+    required String token,
+    required String username,
+  }) {
+    _isLoggedIn = isLoggedIn;
+    _token = token;
+    _username = username;
+    notifyListeners();
+    print('[-] [AuthProvider] 인증 상태 업데이트: $username');
   }
 }

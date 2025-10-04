@@ -62,4 +62,12 @@ class UserService extends ApiServiceBase {
     }
     throw Exception('프로필 정보 조회 실패: ${response.statusCode}');
   }
+
+  /// 프로필 이미지 삭제 (기본 이미지로 되돌리기)
+  Future<void> deleteProfileImage() async {
+    final response = await delete('/api/profile/image');
+    if (response.statusCode != 200) {
+      throw Exception('프로필 이미지 삭제 실패: ${response.statusCode}');
+    }
+  }
 }
