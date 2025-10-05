@@ -42,6 +42,11 @@ class _PostListState extends State<PostList> {
   double _pullExtentPx = 0.0; // 커스텀 게이지 표현용 당김 픽셀
   static const double _refreshTrigger = 140.0; // 트리거 거리(둔감)
   bool _passedTrigger = false; // 임계치 통과 여부 (릴리즈 시점 확인용)
+  // 스와이프 방향 판정 및 데드존 처리용
+  double _accumDx = 0.0;
+  double _accumDy = 0.0;
+  bool? _isVerticalDrag; // null: 미정, true: 수직, false: 수평
+  static const double _deadZonePx = 100.0; // 100px 이전에는 게이지 표시/증가 억제
 
   @override
   void initState() {
@@ -182,7 +187,7 @@ class _PostListState extends State<PostList> {
     slivers.add(
       SliverToBoxAdapter(
         child: SizedBox(
-          height: MediaQuery.of(context).size.height * 0.48,
+          height: MediaQuery.of(context).size.height * 0.5,
           child: pageView,
         ),
       ),
@@ -205,14 +210,8 @@ class _PostListState extends State<PostList> {
         (widget.onRefresh != null)
             ? NotificationListener<ScrollNotification>(
               onNotification: (n) {
-                if (n is OverscrollNotification &&
-                    n.metrics.pixels <= n.metrics.minScrollExtent) {
-                  // 방향 혼동 방지: 절대값으로 누적하되, 포인터 이동에서 방향 필터링
-                  final double delta = n.overscroll.abs() * 0.4; // 더 둔감
-                  _pullExtentPx = (_pullExtentPx + delta).clamp(0.0, 160.0);
-                  _passedTrigger = _pullExtentPx >= _refreshTrigger;
-                  setState(() {});
-                } else if (n is ScrollEndNotification ||
+                // 스크롤 종료/유휴 시 임계 미만이면 리셋
+                if (n is ScrollEndNotification ||
                     n is UserScrollNotification &&
                         (n).direction == ScrollDirection.idle) {
                   if (_pullExtentPx < _refreshTrigger && !_isPointerDown) {
@@ -229,7 +228,12 @@ class _PostListState extends State<PostList> {
 
     return SafeArea(
       child: Listener(
-        onPointerDown: (_) => _isPointerDown = true,
+        onPointerDown: (_) {
+          _isPointerDown = true;
+          _accumDx = 0.0;
+          _accumDy = 0.0;
+          _isVerticalDrag = null;
+        },
         onPointerMove: (e) {
           if (widget.onRefresh == null) return;
           if (!_scrollController.hasClients) return;
@@ -237,22 +241,28 @@ class _PostListState extends State<PostList> {
               _scrollController.position.pixels <=
               _scrollController.position.minScrollExtent + 0.5;
           if (!atTop) return;
-          // 손가락을 아래로 움직일 때만 누적 (dy > 0)
-          if (e.delta.dy > 0) {
-            final double delta = e.delta.dy * 0.1; // 민감도
-            _pullExtentPx = (_pullExtentPx + delta).clamp(0.0, 160.0);
-            _passedTrigger = _pullExtentPx >= _refreshTrigger;
-            setState(() {});
+          // 방향 판정: 수직으로 확정될 때만 게이지 누적
+          _accumDx += e.delta.dx.abs();
+          _accumDy += e.delta.dy.abs();
+          if (_isVerticalDrag == null) {
+            if (_accumDy > _accumDx * 1.5 && _accumDy > 4.0) {
+              _isVerticalDrag = true;
+            } else if (_accumDx > _accumDy * 1.3 && _accumDx > 4.0) {
+              _isVerticalDrag = false;
+            }
           }
-
-          if (e.delta.dy < 0) {
-            // 위로 올리면 게이지가 감소하도록 음수 값을 더해 감소 처리
-            _pullExtentPx = (_pullExtentPx + e.delta.dy * 0.9).clamp(
-              0.0,
-              160.0,
-            );
-            _passedTrigger = _pullExtentPx >= _refreshTrigger;
-            setState(() {});
+          if (_isVerticalDrag == true) {
+            double delta = 0.0;
+            if (e.delta.dy > 0) {
+              delta = e.delta.dy * 0.6; // 더 둔감한 증가
+            } else if (e.delta.dy < 0) {
+              delta = e.delta.dy * 0.9; // 감소는 빠르게
+            }
+            if (delta != 0.0) {
+              _pullExtentPx = (_pullExtentPx + delta).clamp(0.0, 160.0);
+              _passedTrigger = _pullExtentPx >= _refreshTrigger;
+              setState(() {});
+            }
           }
         },
         onPointerUp: (_) async {
@@ -286,7 +296,7 @@ class _PostListState extends State<PostList> {
         child: Stack(
           children: [
             content,
-            if (widget.onRefresh != null && _pullExtentPx > 0.0)
+            if (widget.onRefresh != null && (_pullExtentPx - _deadZonePx) > 0.0)
               Positioned(
                 top: 0,
                 left: 0,
@@ -295,10 +305,9 @@ class _PostListState extends State<PostList> {
                 child: IgnorePointer(
                   child: Center(
                     child: _RefreshGauge(
-                      progress: (_pullExtentPx / _refreshTrigger).clamp(
-                        0.0,
-                        1.0,
-                      ),
+                      progress: (((_pullExtentPx - _deadZonePx) /
+                              (_refreshTrigger - _deadZonePx))
+                          .clamp(0.0, 1.0)),
                     ),
                   ),
                 ),
@@ -487,9 +496,10 @@ class _PostListState extends State<PostList> {
     final post = widget.posts[safeIndex];
 
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.center,
+        mainAxisAlignment: MainAxisAlignment.start,
         children: [
           // 제목
           Text(
