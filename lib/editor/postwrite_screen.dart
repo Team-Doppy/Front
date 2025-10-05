@@ -315,8 +315,8 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
 
   void _cleanupAndExit() {
     try {
-      // 1) 키보드/포커스 정리
-      FocusScope.of(context).unfocus();
+      // 1) 포커스 정리 (SuperEditor가 자체적으로 처리하도록 위임)
+      // FocusScope.of(context).unfocus(); // 제거: SuperEditor가 자체적으로 포커스 관리
 
       // 2) 이미지 서비스 상태 초기화
       final img = ImageService();
@@ -424,7 +424,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
         resizeToAvoidBottomInset: true,
         appBar: AppBar(
           backgroundColor: Theme.of(context).appBarTheme.backgroundColor,
-          toolbarHeight: 40,
+          toolbarHeight: 60,
           scrolledUnderElevation: 0,
           leading: GestureDetector(
             onTap: () async {
@@ -474,8 +474,8 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
             if (!widget.isEditMode)
               TextButton(
                 onPressed: () {
-                  //키보드 내리기
-                  FocusScope.of(context).unfocus();
+                  //키보드 내리기 (SuperEditor의 포커스 관리 활용)
+                  _editorFocusNode.unfocus();
 
                   final json = PostExporter.exportToJsonString(
                     editorService: editorService,
@@ -531,64 +531,63 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                           Expanded(
                             child: Theme(
                               data: AppTheme.lightTheme,
-                              child: Focus(
+                              child: SuperEditor(
+                                gestureMode:
+                                    Platform.isIOS
+                                        ? DocumentGestureMode.iOS
+                                        : DocumentGestureMode.android,
+                                editor: editor,
                                 focusNode: _editorFocusNode,
-                                child: SuperEditor(
-                                  gestureMode:
-                                      Platform.isIOS
-                                          ? DocumentGestureMode.iOS
-                                          : DocumentGestureMode.android,
-                                  editor: editor,
-                                  stylesheet: buildCustomStylesheet(context),
-                                  documentLayoutKey: _documentLayoutKey,
-                                  scrollController: scrollController,
+                                stylesheet: buildCustomStylesheet(context),
+                                documentLayoutKey: _documentLayoutKey,
+                                scrollController: scrollController,
 
-                                  selectionStyle: SelectionStyles(
-                                    selectionColor: AppColors.primary
-                                        .withOpacity(0.3),
-                                    highlightEmptyTextBlocks: false,
+                                selectionStyle: SelectionStyles(
+                                  selectionColor: AppColors.primary.withOpacity(
+                                    0.3,
+                                  ),
+                                  highlightEmptyTextBlocks: false,
+                                ),
+
+                                componentBuilders: [
+                                  // 타이틀 문단 전용 빌더(드래그 없음)
+                                  TitleParagraphComponentBuilder(
+                                    editorService: editorService,
+                                  ),
+                                  // 커스텀 이미지 컴포넌트들
+                                  SingleImageComponentBuilder(
+                                    dragService: dragService,
+                                  ),
+                                  RowImageComponentBuilder(
+                                    dragService: dragService,
+                                  ),
+                                  CustomParagraphComponentBuilder(
+                                    dragService: dragService,
+                                    editorService: editorService,
+                                  ),
+                                  // 커스텀 위치 노드 컴포넌트
+                                  LocationComponentBuilder(
+                                    dragService: dragService,
+                                  ),
+                                  // 커스텀 언급 노드 컴포넌트
+                                  MentionComponentBuilder(
+                                    dragService: dragService,
+                                  ),
+                                  // 구분선 전용 컴포넌트
+                                  DividerComponentBuilder(
+                                    dragService: dragService,
                                   ),
 
-                                  componentBuilders: [
-                                    // 타이틀 문단 전용 빌더(드래그 없음)
-                                    TitleParagraphComponentBuilder(
-                                      editorService: editorService,
-                                    ),
-                                    // 커스텀 이미지 컴포넌트들
-                                    SingleImageComponentBuilder(
-                                      dragService: dragService,
-                                    ),
-                                    RowImageComponentBuilder(
-                                      dragService: dragService,
-                                    ),
-                                    CustomParagraphComponentBuilder(
-                                      dragService: dragService,
-                                      editorService: editorService,
-                                    ),
-                                    // 커스텀 위치 노드 컴포넌트
-                                    LocationComponentBuilder(
-                                      dragService: dragService,
-                                    ),
-                                    // 커스텀 언급 노드 컴포넌트
-                                    MentionComponentBuilder(
-                                      dragService: dragService,
-                                    ),
-                                    // 구분선 전용 컴포넌트
-                                    DividerComponentBuilder(
-                                      dragService: dragService,
-                                    ),
-
-                                    LinkComponentBuilder(
-                                      dragService: dragService,
-                                    ),
-                                    // 기본 컴포넌트들 (Paragraph 제외)
-                                    ...defaultComponentBuilders.where(
-                                      (builder) =>
-                                          builder.runtimeType.toString() !=
-                                          'ParagraphComponentBuilder',
-                                    ),
-                                  ],
-                                ),
+                                  LinkComponentBuilder(
+                                    dragService: dragService,
+                                  ),
+                                  // 기본 컴포넌트들 (Paragraph 제외)
+                                  ...defaultComponentBuilders.where(
+                                    (builder) =>
+                                        builder.runtimeType.toString() !=
+                                        'ParagraphComponentBuilder',
+                                  ),
+                                ],
                               ),
                             ),
                           ),
@@ -775,8 +774,8 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
       isKeyboardVisible: _isKeyboardVisible,
 
       onDismissKeyboard: () {
-        // 키보드 내리기
-        FocusScope.of(context).unfocus();
+        // 키보드 내리기 (SuperEditor의 포커스 관리 활용)
+        _editorFocusNode.unfocus();
       },
     );
   }
@@ -834,8 +833,8 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
       ImageService().clearHighlightedSelection();
       composer.clearSelection();
 
-      // 2단계: 포커스 해제
-      FocusScope.of(context).unfocus();
+      // 2단계: 포커스 해제 (SuperEditor가 자체적으로 처리)
+      // FocusScope.of(context).unfocus(); // 제거: 불필요한 포커스 간섭 방지
 
       // 3단계: 다음 프레임에서 이미지 삭제 실행
       WidgetsBinding.instance.addPostFrameCallback((_) {

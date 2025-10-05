@@ -11,29 +11,12 @@ class BlogService {
 
   static final String _baseUrl = ApiServiceBase.baseUrl;
 
-  // 포스트 캐시
-  static List<Map<String, dynamic>> _cachedPosts = [];
-  static DateTime? _lastCacheTime;
-  static const Duration _cacheExpiry = Duration(hours: 12);
-
   // 내 포스트 캐시 (page/size 별)
   static final Map<String, List<Map<String, dynamic>>> _myPostsCache = {};
   static DateTime? _myPostsCachedAt;
   static const Duration _myPostsExpiry = Duration(minutes: 30);
 
-  /// 캐시가 유효한지 확인
-  static bool _isCacheValid() {
-    if (_lastCacheTime == null || _cachedPosts.isEmpty) {
-      return false;
-    }
-    return DateTime.now().difference(_lastCacheTime!) < _cacheExpiry;
-  }
-
-  /// 캐시 무효화
-  static void _invalidateCache() {
-    _cachedPosts.clear();
-    _lastCacheTime = null;
-  }
+  // 홈 캐시 제거됨
 
   static bool _isMyPostsCacheValid() {
     if (_myPostsCachedAt == null || _myPostsCache.isEmpty) return false;
@@ -47,7 +30,6 @@ class BlogService {
 
   /// 로그아웃 시 모든 캐시 초기화
   static void clearAllCache() {
-    _invalidateCache();
     _invalidateMyPostsCache();
     print('[BlogService] 로그아웃 - 모든 캐시 초기화 완료');
   }
@@ -118,8 +100,6 @@ class BlogService {
       print('[UploadPost] success ${response.statusCode} body=$responseBody');
       final decoded = json.decode(responseBody) as Map<String, dynamic>;
 
-      // 새 포스트 업로드 시 캐시 무효화
-      _invalidateCache();
       _invalidateMyPostsCache();
 
       return decoded;
@@ -271,14 +251,6 @@ class BlogService {
     bool forceRefresh = false,
   }) async {
     try {
-      // 캐시 확인 (첫 페이지만 캐시 사용)
-      if (page == 0 && !forceRefresh && _isCacheValid()) {
-        print(
-          '[BlogService] Using cached posts (${_cachedPosts.length} posts)',
-        );
-        return _cachedPosts.take(size).toList();
-      }
-
       print('[BlogService] Fetching home posts: page=$page, size=$size');
 
       final token = await AuthService().getToken();
@@ -299,17 +271,10 @@ class BlogService {
         final posts = List<Map<String, dynamic>>.from(data['content'] ?? []);
         print('[BlogService] Successfully fetched ${posts.length} home posts');
 
-        // 첫 페이지면 캐시 업데이트
-        if (page == 0) {
-          _cachedPosts = posts;
-          _lastCacheTime = DateTime.now();
-          print('[BlogService] Cache updated with ${posts.length} posts');
-        }
-
         // 포스트가 없으면 fallback 데이터 반환
         if (posts.isEmpty) {
           print('[BlogService] No posts found, returning fallback data');
-          return _getFallbackPosts();
+          return await _getFallbackPosts();
         }
 
         return posts;

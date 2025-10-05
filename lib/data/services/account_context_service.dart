@@ -9,6 +9,7 @@ import '../../providers/friend_provider.dart';
 import '../../providers/profile_feed_provider.dart';
 import '../../providers/group_provider.dart';
 import 'blog_service.dart';
+import '../../main.dart';
 
 class AccountContextService {
   /// 현재 선택된 계정(context 포함)을 애플리케이션 전역 컨텍스트에 적용하고,
@@ -20,6 +21,14 @@ class AccountContextService {
     required String refreshToken,
     bool clearCaches = true,
   }) async {
+    // context가 유효한지 먼저 확인
+    if (!context.mounted) {
+      print(
+        '[AccountContextService] Context is not mounted, skipping account apply',
+      );
+      return false;
+    }
+
     try {
       // 1) 현재 계정 설정 및 토큰 저장
       await AccountManagerService.setCurrentAccount(username);
@@ -104,5 +113,76 @@ class AccountContextService {
       token: current.token,
       refreshToken: current.refreshToken,
     );
+  }
+
+  /// Context 없이 계정 전환 (Global NavigatorKey 사용)
+  static Future<bool> applyAccountGlobal({
+    required String username,
+    required String token,
+    required String refreshToken,
+    bool clearCaches = true,
+  }) async {
+    try {
+      // 1) 현재 계정 설정 및 토큰 저장
+      await AccountManagerService.setCurrentAccount(username);
+
+      final authService = AuthService();
+      await authService.saveToken(token);
+      await authService.saveRefreshToken(refreshToken);
+      await authService.saveUsername(username);
+
+      // 2) 토큰 검증 및 갱신 시도
+      print('[AccountContextService] 토큰 검증 및 갱신 시도...');
+      final tokenValid = await authService.validateAndRefreshToken();
+
+      if (!tokenValid) {
+        print('[AccountContextService] 토큰 갱신 실패, 계정 전환 중단');
+        // 해당 계정을 저장된 계정 목록에서 제거 (리프레시 토큰도 만료된 경우)
+        await AccountManagerService.removeAccount(username);
+        return false;
+      }
+
+      // 3) Global context를 통해 Provider 상태 갱신
+      final globalContext = navigatorKey.currentContext;
+      if (globalContext == null || !globalContext.mounted) {
+        print('[AccountContextService] Global context is not available');
+        return false;
+      }
+
+      final authProvider = globalContext.read<AuthProvider>();
+      authProvider.updateAuthState(
+        isLoggedIn: true,
+        token: token,
+        username: username,
+      );
+
+      // 4) 필요시 캐시/상태 초기화
+      final userProvider = globalContext.read<UserProvider>();
+      final friendProvider = globalContext.read<FriendProvider>();
+      final profileFeedProvider = globalContext.read<ProfileFeedProvider>();
+      final groupProvider = globalContext.read<GroupProvider>();
+
+      if (clearCaches) {
+        userProvider.logout();
+        friendProvider.logout();
+        profileFeedProvider.logout();
+        groupProvider.logout();
+        BlogService.clearAllCache();
+      }
+
+      // 5) 병렬로 데이터 로드
+      await Future.wait([
+        userProvider.fetchMyProfile(),
+        friendProvider.fetchAllFriendData(),
+        profileFeedProvider.hardRefresh(username: username),
+        groupProvider.fetchMyGroups(),
+      ]);
+
+      print('[AccountContextService] 계정 전환 성공: $username');
+      return true;
+    } catch (e) {
+      print('[AccountContextService] 계정 전환 실패: $e');
+      return false;
+    }
   }
 }

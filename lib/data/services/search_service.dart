@@ -961,6 +961,7 @@ class SearchContentItem {
   final int? comments;
   final String? content;
   final String? parsedContent;
+  final String? createdAt;
 
   const SearchContentItem._({
     required this.id,
@@ -976,6 +977,7 @@ class SearchContentItem {
     this.comments,
     this.content,
     this.parsedContent,
+    this.createdAt,
   });
 
   factory SearchContentItem.account({

@@ -1,10 +1,8 @@
-// lib/pages/post/search_screen.dart
-import 'dart:ui';
 import 'package:doppy/data/models/user_model.dart';
+import 'package:doppy/pages/components/past_card2.dart';
 import 'package:doppy/pages/components/shimmer_box.dart';
 import 'package:doppy/pages/components/common_profile_avatar.dart';
 import 'package:doppy/pages/screens/user_profile_screen.dart';
-import 'package:doppy/pages/screens/post_reader_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../../theme/app_text_styles.dart';
@@ -105,6 +103,7 @@ class _SearchScreenState extends State<SearchScreen> {
               SafeArea(
                 child: Column(
                   children: [
+                    SizedBox(height: 5),
                     _SearchTopBar(
                       controller: _searchController,
                       focusNode: _searchFocusNode,
@@ -617,21 +616,15 @@ class _SearchTopBar extends StatelessWidget {
                   ),
                   enabledBorder: OutlineInputBorder(
                     borderRadius: BorderRadius.all(Radius.circular(12)),
-                    borderSide: BorderSide(
-                      color: Theme.of(context).colorScheme.secondary,
-                    ),
+                    borderSide: BorderSide.none,
                   ),
                   focusedBorder: OutlineInputBorder(
                     borderRadius: BorderRadius.all(Radius.circular(12)),
-                    borderSide: BorderSide(
-                      color: Theme.of(context).colorScheme.secondary,
-                    ),
+                    borderSide: BorderSide.none,
                   ),
                   disabledBorder: OutlineInputBorder(
                     borderRadius: BorderRadius.all(Radius.circular(12)),
-                    borderSide: BorderSide(
-                      color: Theme.of(context).colorScheme.secondary,
-                    ),
+                    borderSide: BorderSide.none,
                   ),
                 ),
               ),
@@ -850,7 +843,7 @@ class _StaggeredGrid extends StatelessWidget {
             itemCount: items.length,
             padding: const EdgeInsets.symmetric(vertical: 12),
             itemBuilder: (context, index) {
-              return _BlogCard(item: items[index], index: index);
+              return BlogCard(item: items[index], index: index);
             },
           ),
         );
@@ -919,208 +912,6 @@ class _GridCardPlaceholder extends StatelessWidget {
           ],
         ),
       ),
-    );
-  }
-}
-
-class _BlogCard extends StatelessWidget {
-  final SearchContentItem item;
-  final int index;
-
-  const _BlogCard({required this.item, required this.index});
-
-  @override
-  Widget build(BuildContext context) {
-    return Consumer<SearchService>(
-      builder: (context, searchService, _) {
-        return GestureDetector(
-          onTap: () {
-            searchService.addToRecentlyViewed(item.id);
-            final postData = searchService.getPostData(item.id);
-            if (postData != null) {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder:
-                      (context) => PostReaderScreen(
-                        exported: postData,
-                        heroTag: 'search_blog_${item.id}_$index',
-                      ),
-                ),
-              );
-            }
-          },
-          child: Container(
-            margin: const EdgeInsets.symmetric(vertical: 12),
-            child: Padding(
-              padding: const EdgeInsets.only(),
-              child: SizedBox(
-                height: 570,
-                child: ClipRRect(
-                  child: Stack(
-                    children: [
-                      // 콘텐츠
-                      Padding(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 16,
-                          vertical: 16,
-                        ),
-                        child: Column(
-                          children: [
-                            // 왼쪽: 텍스트 영역
-                            Expanded(
-                              flex: 2,
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  // 상단: 작성자 프로필
-                                  GestureDetector(
-                                    onTap: () {
-                                      // 프로필로 이동
-                                      Navigator.push(
-                                        context,
-                                        PageRouteBuilder(
-                                          pageBuilder:
-                                              (
-                                                context,
-                                                animation,
-                                                secondaryAnimation,
-                                              ) => UserProfileScreen(
-                                                otherUser: User(
-                                                  id: 0,
-                                                  username: item.author ?? '',
-                                                  alias: item.author,
-                                                  profileImageUrl:
-                                                      item.profileImageUrl,
-                                                ),
-                                              ),
-                                          transitionsBuilder: (
-                                            context,
-                                            animation,
-                                            secondaryAnimation,
-                                            child,
-                                          ) {
-                                            return FadeTransition(
-                                              opacity: animation,
-                                              child: child,
-                                            );
-                                          },
-                                          transitionDuration: const Duration(
-                                            milliseconds: 200,
-                                          ),
-                                          reverseTransitionDuration:
-                                              const Duration(milliseconds: 150),
-                                        ),
-                                      );
-                                    },
-                                    child: Row(
-                                      children: [
-                                        // 프로필 아바타
-                                        CommonProfileAvatar(
-                                          imageUrl: item.profileImageUrl,
-                                          username: item.author ?? '',
-                                          size: 36,
-                                        ),
-                                        const SizedBox(width: 8),
-                                        // 작성자 이름
-                                        Text(
-                                          item.author ?? '작성자',
-                                          style: TextStyle(
-                                            fontSize: 14,
-                                            fontWeight: FontWeight.w600,
-                                            color:
-                                                Theme.of(
-                                                  context,
-                                                ).colorScheme.onSurface,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                  const SizedBox(height: 12),
-
-                                  // 제목
-                                  Padding(
-                                    padding: const EdgeInsets.only(left: 4.0),
-                                    child: Text(
-                                      item.title ?? '',
-                                      style: TextStyle(
-                                        fontSize: 24,
-                                        fontWeight: FontWeight.w800,
-                                        color:
-                                            Theme.of(
-                                              context,
-                                            ).colorScheme.onSurface,
-                                        height: 1.3,
-                                      ),
-                                      maxLines: 2,
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                  ),
-
-                                  const SizedBox(height: 8),
-
-                                  // 내용 (미리보기)
-                                  if (item.parsedContent != null &&
-                                      item.parsedContent!.isNotEmpty)
-                                    Padding(
-                                      padding: const EdgeInsets.only(left: 4.0),
-                                      child: Text(
-                                        item.parsedContent ?? '',
-                                        style: TextStyle(
-                                          fontSize: 14,
-                                          fontWeight: FontWeight.w300,
-                                          color: Theme.of(context)
-                                              .colorScheme
-                                              .onSurface
-                                              .withOpacity(0.8),
-                                          height: 1.6,
-                                        ),
-                                        maxLines: 5,
-                                        overflow: TextOverflow.ellipsis,
-                                      ),
-                                    ),
-                                  const SizedBox(height: 22),
-
-                                  Expanded(
-                                    child: Padding(
-                                      padding: const EdgeInsets.only(left: 4.0),
-                                      child: ClipRRect(
-                                        borderRadius: BorderRadius.circular(8),
-                                        child: Image.network(
-                                          fit: BoxFit.cover,
-                                          item.imageUrl ?? '',
-                                          errorBuilder: (
-                                            context,
-                                            error,
-                                            stackTrace,
-                                          ) {
-                                            return ShimmerBox(
-                                              width: double.infinity,
-                                              height: double.infinity,
-                                              borderRadius:
-                                                  BorderRadius.circular(8),
-                                            );
-                                          },
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                  const SizedBox(height: 8),
-                                ],
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          ),
-        );
-      },
     );
   }
 }

@@ -1,9 +1,11 @@
 // import 'dart:math';
 import 'package:doppy/pages/components/post_card.dart';
+import 'package:doppy/pages/components/shimmer_box.dart';
 import 'package:doppy/pages/screens/post_reader_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:doppy/data/models/post_data.dart';
 import 'package:doppy/data/services/like_service.dart';
+import 'package:flutter/rendering.dart';
 
 class PostList extends StatefulWidget {
   final double containerWidth;
@@ -12,6 +14,7 @@ class PostList extends StatefulWidget {
   final bool isLoadingMore;
   final Future<void> Function()? onRefresh;
   final Function(int)? onPageChanged;
+  final bool showCardShimmer;
 
   const PostList({
     super.key,
@@ -21,6 +24,7 @@ class PostList extends StatefulWidget {
     this.isLoadingMore = false,
     this.onRefresh,
     this.onPageChanged,
+    this.showCardShimmer = false,
   });
 
   @override
@@ -29,16 +33,21 @@ class PostList extends StatefulWidget {
 
 class _PostListState extends State<PostList> {
   late PageController _pageController;
+  final ScrollController _scrollController = ScrollController();
   int _currentIndex = 0;
   late List<PostData> _items;
   final Set<String> _likingInFlight = <String>{};
   final LikeService _likeService = LikeService();
+  bool _isPointerDown = false; // 당김 중 손가락 눌림 상태 추적
+  double _pullExtentPx = 0.0; // 커스텀 게이지 표현용 당김 픽셀
+  static const double _refreshTrigger = 140.0; // 트리거 거리(둔감)
+  bool _passedTrigger = false; // 임계치 통과 여부 (릴리즈 시점 확인용)
 
   @override
   void initState() {
     super.initState();
     // 전체 화면 사용 (인스타그램 릴스 스타일)
-    _pageController = PageController(viewportFraction: 0.85);
+    _pageController = PageController(viewportFraction: 0.65);
     _items = List<PostData>.from(widget.posts);
 
     // LikeService 변경사항 감지
@@ -97,6 +106,7 @@ class _PostListState extends State<PostList> {
   @override
   void dispose() {
     _likeService.removeListener(_onLikeServiceChanged);
+    _scrollController.dispose();
     _pageController.dispose();
     super.dispose();
   }
@@ -105,6 +115,8 @@ class _PostListState extends State<PostList> {
 
   @override
   Widget build(BuildContext context) {
+    // 커스텀 게이지 위젯 내부 정의
+
     Widget pageView = PageView.builder(
       scrollDirection: Axis.horizontal,
       controller: _pageController,
@@ -163,29 +175,136 @@ class _PostListState extends State<PostList> {
       },
     );
 
-    // 새로고침 기능이 있으면 RefreshIndicator로 감싸기
-    Widget contentWithRefresh =
-        widget.onRefresh != null
-            ? RefreshIndicator(
-              onRefresh: widget.onRefresh!,
-              color: Colors.white,
-              backgroundColor: Colors.black54,
-              child: pageView,
-            )
-            : pageView;
+    // 전체 화면 어디서든 아래로 당겨 새로고침 가능하도록 (커스텀 게이지 + 취소 지원)
+    final List<Widget> slivers = [];
+    // CupertinoSliverRefreshControl 제거: 바운싱 없이도 새로고침을 지원하기 위해 Material RefreshIndicator 사용
 
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 120, top: 20),
-      child: Stack(
-        children: [
-          contentWithRefresh,
-          Positioned(
-            left: 20,
-            right: 20,
-            bottom: 20,
-            child: _buildStickyAuthor(context),
-          ),
-        ],
+    slivers.add(
+      SliverToBoxAdapter(
+        child: SizedBox(
+          height: MediaQuery.of(context).size.height * 0.48,
+          child: pageView,
+        ),
+      ),
+    );
+
+    slivers.add(
+      SliverFillRemaining(
+        hasScrollBody: false,
+        child: _buildStickyAuthor(context),
+      ),
+    );
+
+    final scrollable = CustomScrollView(
+      controller: _scrollController,
+      physics: const AlwaysScrollableScrollPhysics(),
+      slivers: slivers,
+    );
+
+    Widget content =
+        (widget.onRefresh != null)
+            ? NotificationListener<ScrollNotification>(
+              onNotification: (n) {
+                if (n is OverscrollNotification &&
+                    n.metrics.pixels <= n.metrics.minScrollExtent) {
+                  // 방향 혼동 방지: 절대값으로 누적하되, 포인터 이동에서 방향 필터링
+                  final double delta = n.overscroll.abs() * 0.4; // 더 둔감
+                  _pullExtentPx = (_pullExtentPx + delta).clamp(0.0, 160.0);
+                  _passedTrigger = _pullExtentPx >= _refreshTrigger;
+                  setState(() {});
+                } else if (n is ScrollEndNotification ||
+                    n is UserScrollNotification &&
+                        (n).direction == ScrollDirection.idle) {
+                  if (_pullExtentPx < _refreshTrigger && !_isPointerDown) {
+                    _pullExtentPx = 0.0;
+                    _passedTrigger = false;
+                    setState(() {});
+                  }
+                }
+                return false;
+              },
+              child: scrollable,
+            )
+            : scrollable;
+
+    return SafeArea(
+      child: Listener(
+        onPointerDown: (_) => _isPointerDown = true,
+        onPointerMove: (e) {
+          if (widget.onRefresh == null) return;
+          if (!_scrollController.hasClients) return;
+          final atTop =
+              _scrollController.position.pixels <=
+              _scrollController.position.minScrollExtent + 0.5;
+          if (!atTop) return;
+          // 손가락을 아래로 움직일 때만 누적 (dy > 0)
+          if (e.delta.dy > 0) {
+            final double delta = e.delta.dy * 0.1; // 민감도
+            _pullExtentPx = (_pullExtentPx + delta).clamp(0.0, 160.0);
+            _passedTrigger = _pullExtentPx >= _refreshTrigger;
+            setState(() {});
+          }
+
+          if (e.delta.dy < 0) {
+            // 위로 올리면 게이지가 감소하도록 음수 값을 더해 감소 처리
+            _pullExtentPx = (_pullExtentPx + e.delta.dy * 0.9).clamp(
+              0.0,
+              160.0,
+            );
+            _passedTrigger = _pullExtentPx >= _refreshTrigger;
+            setState(() {});
+          }
+        },
+        onPointerUp: (_) async {
+          _isPointerDown = false;
+          if (widget.onRefresh != null && _passedTrigger) {
+            setState(() {});
+            try {
+              await widget.onRefresh!();
+            } finally {
+              _pullExtentPx = 0.0;
+              _passedTrigger = false;
+              if (mounted) setState(() {});
+            }
+          } else {
+            if (_pullExtentPx > 0.0) {
+              _pullExtentPx = 0.0;
+              _passedTrigger = false;
+              if (mounted) setState(() {});
+              // 제자리로 스크롤 복귀 애니메이션
+              if (_scrollController.hasClients) {
+                _scrollController.animateTo(
+                  _scrollController.position.minScrollExtent,
+                  duration: const Duration(milliseconds: 220),
+                  curve: Curves.easeOutCubic,
+                );
+              }
+            }
+          }
+        },
+        onPointerCancel: (_) => _isPointerDown = false,
+        child: Stack(
+          children: [
+            content,
+            if (widget.onRefresh != null && _pullExtentPx > 0.0)
+              Positioned(
+                top: 0,
+                left: 0,
+                right: 0,
+                height: 72,
+                child: IgnorePointer(
+                  child: Center(
+                    child: _RefreshGauge(
+                      progress: (_pullExtentPx / _refreshTrigger).clamp(
+                        0.0,
+                        1.0,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
       ),
     );
   }
@@ -282,49 +401,54 @@ class _PostListState extends State<PostList> {
           children: [
             Center(
               child: AspectRatio(
-                aspectRatio: 9 / 12,
-                child: PostCard(
-                  containerWidth: widget.containerWidth,
-                  thumbnailImageUrl: post.thumbnailImageUrl,
-                  heroTag: 'post-hero-${post.id}-$index',
-                  title: post.title,
-                  author: post.author,
-                  authorProfileImageUrl: post.authorProfileImageUrl,
-                  content: post.parsedContent,
-                  isVisible: _currentIndex == index,
-                  postId: post.id.toString(),
-                  isLiked: _likeService.isPostLiked(post.id.toString()),
-                  likeCount: _likeService.getPostLikeCount(post.id.toString()),
-                  onLikePressed: () async {
-                    final id = post.id.toString();
-                    if (id.isEmpty) {
-                      print('[PostList] 유효하지 않은 포스트 ID: $id');
-                      return;
-                    }
-
-                    if (_likingInFlight.contains(id)) return;
-                    setState(() => _likingInFlight.add(id));
-
-                    try {
-                      await _likeService.togglePostLike(id);
-                      // setState() 제거 - LikeService의 notifyListeners()가 자동으로 UI 업데이트
-                    } catch (e) {
-                      if (mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text('좋아요 처리 중 오류가 발생했습니다'),
-                            behavior: SnackBarBehavior.floating,
-                            duration: const Duration(milliseconds: 900),
+                aspectRatio: 4 / 5,
+                child:
+                    widget.showCardShimmer
+                        ? _buildImageAreaShimmer()
+                        : PostCard(
+                          containerWidth: widget.containerWidth,
+                          thumbnailImageUrl: post.thumbnailImageUrl,
+                          heroTag: 'post-hero-${post.id}-$index',
+                          title: post.title,
+                          author: post.author,
+                          authorProfileImageUrl: post.authorProfileImageUrl,
+                          content: post.parsedContent,
+                          isVisible: _currentIndex == index,
+                          postId: post.id.toString(),
+                          isLiked: _likeService.isPostLiked(post.id.toString()),
+                          likeCount: _likeService.getPostLikeCount(
+                            post.id.toString(),
                           ),
-                        );
-                      }
-                    } finally {
-                      if (mounted) {
-                        setState(() => _likingInFlight.remove(id));
-                      }
-                    }
-                  },
-                ),
+                          onLikePressed: () async {
+                            final id = post.id.toString();
+                            if (id.isEmpty) {
+                              print('[PostList] 유효하지 않은 포스트 ID: $id');
+                              return;
+                            }
+
+                            if (_likingInFlight.contains(id)) return;
+                            setState(() => _likingInFlight.add(id));
+
+                            try {
+                              await _likeService.togglePostLike(id);
+                              // setState() 제거 - LikeService의 notifyListeners()가 자동으로 UI 업데이트
+                            } catch (e) {
+                              if (mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text('좋아요 처리 중 오류가 발생했습니다'),
+                                    behavior: SnackBarBehavior.floating,
+                                    duration: const Duration(milliseconds: 900),
+                                  ),
+                                );
+                              }
+                            } finally {
+                              if (mounted) {
+                                setState(() => _likingInFlight.remove(id));
+                              }
+                            }
+                          },
+                        ),
               ),
             ),
           ],
@@ -334,6 +458,27 @@ class _PostListState extends State<PostList> {
     return content;
   }
 
+  Widget _buildImageAreaShimmer() {
+    // PostCard의 이미지 영역과 동일 크기로 보이도록, 이미지 자체만 쉬머 느낌으로
+    return Container(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: Theme.of(context).colorScheme.surfaceVariant,
+          width: 1.5,
+        ),
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(12),
+        child: ShimmerBox(
+          width: double.infinity,
+          height: double.infinity,
+          borderRadius: BorderRadius.circular(12),
+        ),
+      ),
+    );
+  }
+
   Widget _buildStickyAuthor(BuildContext context) {
     if (widget.posts.isEmpty) {
       return const SizedBox.shrink();
@@ -341,45 +486,110 @@ class _PostListState extends State<PostList> {
     final safeIndex = _currentIndex.clamp(0, widget.posts.length - 1);
     final post = widget.posts[safeIndex];
 
-    // 디버그 로그 추가
-    print(
-      '_buildStickyAuthor: _currentIndex=$_currentIndex, safeIndex=$safeIndex, post.title=${post.title}',
-    );
-
     return Padding(
-      padding: const EdgeInsets.only(right: 20, left: 5),
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
       child: Column(
-        key: ValueKey('author-${post.id}-$safeIndex'),
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
+          // 제목
           Text(
             post.title,
             textAlign: TextAlign.center,
             style: TextStyle(
               color: Theme.of(context).colorScheme.onSurface,
-              fontSize: 32,
+              fontSize: 38,
               fontWeight: FontWeight.bold,
               letterSpacing: -0.2,
             ),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
           ),
-          const SizedBox(height: 2),
+          const SizedBox(height: 12),
 
-          Text(
-            post.parsedContent,
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
-              fontSize: 14,
-              fontWeight: FontWeight.w300,
-              letterSpacing: -0.2,
+          // 내용 (남은 공간 모두 사용)
+          Expanded(
+            child: Text(
+              post.parsedContent,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
+                fontSize: 14,
+                fontWeight: FontWeight.w300,
+                height: 1.8,
+                letterSpacing: -0.1,
+              ),
+              maxLines: 6,
+              overflow: TextOverflow.ellipsis,
             ),
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
           ),
         ],
       ),
     );
+  }
+}
+
+class _RefreshGauge extends StatelessWidget {
+  final double progress; // 0.0 ~ 1.0
+  const _RefreshGauge({required this.progress});
+
+  @override
+  Widget build(BuildContext context) {
+    final double size = 26;
+    final Color track = Colors.white.withOpacity(0.18);
+    final Color fill = Colors.white.withOpacity(0.9);
+    return SizedBox(
+      width: size,
+      height: size,
+      child: CustomPaint(
+        painter: _GaugePainter(progress: progress, track: track, fill: fill),
+      ),
+    );
+  }
+}
+
+class _GaugePainter extends CustomPainter {
+  final double progress;
+  final Color track;
+  final Color fill;
+
+  _GaugePainter({
+    required this.progress,
+    required this.track,
+    required this.fill,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = Offset(size.width / 2, size.height / 2);
+    final radius = size.width / 2;
+    final stroke =
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 2.8
+          ..strokeCap = StrokeCap.round
+          ..color = track;
+
+    // 배경 트랙
+    canvas.drawCircle(center, radius, stroke);
+
+    // 진행 아크
+    final progressPaint =
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 2.8
+          ..strokeCap = StrokeCap.round
+          ..color = fill;
+
+    final rect = Rect.fromCircle(center: center, radius: radius);
+    final startAngle = -3.1415926 / 2; // 12시 방향
+    final sweep = 2 * 3.1415926 * progress;
+    canvas.drawArc(rect, startAngle, sweep, false, progressPaint);
+  }
+
+  @override
+  bool shouldRepaint(covariant _GaugePainter oldDelegate) {
+    return oldDelegate.progress != progress ||
+        oldDelegate.track != track ||
+        oldDelegate.fill != fill;
   }
 }

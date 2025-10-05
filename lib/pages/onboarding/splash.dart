@@ -1,3 +1,4 @@
+import 'package:doppy/main.dart';
 import 'package:doppy/providers/auth_provider.dart';
 import 'package:doppy/providers/user_provider.dart';
 import 'package:doppy/data/services/blog_service.dart';
@@ -219,7 +220,16 @@ class _SplashScreenState extends State<SplashScreen>
 
     // 토큰 검증 결과에 따라 네비게이션
     if (_isTokenValidated) {
-      Navigator.of(context).pushReplacementNamed('/home');
+      Navigator.of(context).pushReplacement(
+        PageRouteBuilder(
+          pageBuilder:
+              (_, __, ___) =>
+                  RootShell(initialIndex: 0, preloadedPosts: _preloadedPosts),
+          transitionDuration: const Duration(milliseconds: 250),
+          transitionsBuilder:
+              (_, a, __, child) => FadeTransition(opacity: a, child: child),
+        ),
+      );
     } else {
       Navigator.of(context).pushReplacementNamed('/login');
     }

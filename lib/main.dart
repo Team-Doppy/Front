@@ -2,7 +2,9 @@ import 'package:doppy/data/services/upload_service.dart';
 import 'package:doppy/editor/postwrite_screen.dart';
 import 'package:doppy/editor/service/image_service.dart';
 import 'package:doppy/editor/service/sticker_service.dart';
+import 'package:doppy/data/services/feed_service.dart';
 import 'package:doppy/pages/screens/home_screen.dart';
+import 'package:doppy/data/models/post_data.dart';
 import 'package:doppy/pages/components/custom_bottom_navigation_bar.dart';
 import 'package:doppy/pages/onboarding/splash.dart';
 import 'package:doppy/pages/screens/manage_neighbor_screen.dart';
@@ -22,6 +24,9 @@ import 'package:provider/provider.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'theme/theme.dart';
 import 'utils/route_observer.dart';
+
+// Global NavigatorKey for accessing context from anywhere
+final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -46,6 +51,8 @@ Future<void> main() async {
         ChangeNotifierProvider(create: (_) => UserProvider()),
         ChangeNotifierProvider(create: (_) => ProfileFeedProvider()),
         ChangeNotifierProvider(create: (_) => GroupProvider()),
+        ChangeNotifierProvider(create: (_) => CategoryOverlayProvider()),
+        ChangeNotifierProvider(create: (_) => PostDragDropService()),
         ChangeNotifierProvider(create: (_) => SearchService()),
         ChangeNotifierProvider(create: (_) => ImageService()),
         ChangeNotifierProvider(create: (_) => StickerService()),
@@ -66,6 +73,7 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     final screenWidth = MediaQuery.of(context).size.width;
     return MaterialApp(
+      navigatorKey: navigatorKey,
       title: 'Doppy',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.lightTheme,
@@ -93,7 +101,8 @@ class MyApp extends StatelessWidget {
 
 class RootShell extends StatefulWidget {
   final int initialIndex; // 0:홈,1:검색,2:작성,3:프로필
-  const RootShell({super.key, this.initialIndex = 0});
+  final List<PostData>? preloadedPosts; // 스플래시 선로딩 데이터 전달용
+  const RootShell({super.key, this.initialIndex = 0, this.preloadedPosts});
 
   @override
   State<RootShell> createState() => _RootShellState();
@@ -105,7 +114,10 @@ class _RootShellState extends State<RootShell> {
 
   // 계정별로 재생성되도록 페이지 빌더 사용
   List<Widget> _buildPages(String? username) => [
-    HomeScreen(key: ValueKey('home_$username')),
+    HomeScreen(
+      key: ValueKey('home_$username'),
+      preloadedPosts: widget.preloadedPosts,
+    ),
     SearchScreen(key: ValueKey('search_$username')),
     const SizedBox.shrink(), // 작성은 라우트로 별도 push
     UserProfileScreen(key: ValueKey('profile_$username')),
@@ -154,25 +166,24 @@ class _RootShellState extends State<RootShell> {
 
     return Scaffold(
       backgroundColor: Theme.of(context).colorScheme.background,
-      body: Stack(
-        children: [
-          AnimatedSwitcher(
-            duration: const Duration(milliseconds: 250),
-            switchInCurve: Curves.easeOut,
-            switchOutCurve: Curves.easeIn,
-            transitionBuilder: (child, animation) {
-              // SlideTransition 제거하고 FadeTransition만 사용하여 버벅임 방지
-              return FadeTransition(opacity: animation, child: child);
-            },
-            child: KeyedSubtree(
-              key: ValueKey('page_${auth.username}_$_index'),
-              child: pages[_index],
-            ),
-          ),
-          // 플로팅 바텀 내비게이션바
-          CustomBottomNavigationBar(currentIndex: _index, onTap: _onTap),
-        ],
+      body: AnimatedSwitcher(
+        duration: const Duration(milliseconds: 250),
+        switchInCurve: Curves.easeOut,
+        switchOutCurve: Curves.easeIn,
+        transitionBuilder: (child, animation) {
+          // SlideTransition 제거하고 FadeTransition만 사용하여 버벅임 방지
+          return FadeTransition(opacity: animation, child: child);
+        },
+        child: KeyedSubtree(
+          key: ValueKey('page_${auth.username}_$_index'),
+          child: pages[_index],
+        ),
       ),
+      bottomNavigationBar: CustomBottomNavigationBar(
+        currentIndex: _index,
+        onTap: _onTap,
+      ),
+      // 플로팅 바텀 내비게이션바
     );
   }
 }

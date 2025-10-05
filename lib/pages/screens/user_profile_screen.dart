@@ -1,26 +1,24 @@
-import 'package:doppy/pages/components/shimmer_box.dart';
+import 'package:doppy/pages/components/comps_for_profile/account_drop_down.dart';
+import 'package:doppy/pages/components/comps_for_profile/category_drop_down.dart';
+import 'package:doppy/pages/components/comps_for_profile/feed.dart';
+import 'package:doppy/data/services/feed_service.dart';
 import 'package:doppy/pages/screens/manage_group_screen.dart';
 import 'package:doppy/pages/user/setting_screen.dart';
-import 'package:doppy/pages/user/join_screen.dart';
+
 import 'package:doppy/utils/route_observer.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:doppy/pages/screens/post_reader_screen.dart';
 import 'package:doppy/data/services/upload_service.dart';
 import 'package:doppy/providers/user_provider.dart';
 import 'package:doppy/providers/friend_provider.dart';
 import 'package:doppy/providers/profile_feed_provider.dart';
 import 'package:doppy/data/models/user_model.dart';
-import 'package:doppy/data/services/account_manager_service.dart';
-import 'dart:io';
-import 'dart:ui';
 
-import 'package:cached_network_image/cached_network_image.dart';
-import 'package:doppy/data/models/post_data.dart';
-import 'package:doppy/pages/components/common_profile_avatar.dart';
 import 'package:doppy/pages/components/comps_for_profile/profile_avatar.dart';
 import 'package:doppy/pages/components/comps_for_profile/user_profile_controller.dart';
 import 'package:doppy/editor/image/profile_image_bottom_sheet.dart';
+import 'dart:io';
+import 'dart:ui';
 
 class UserProfileScreen extends StatefulWidget {
   final User? otherUser; // 다른 사용자 프로필을 볼 때 username 전달
@@ -49,12 +47,7 @@ class _UserProfileScreenState extends State<UserProfileScreen>
   double? _cachedTopPadding;
   double? _cachedSnap1;
   double? _cachedSnap2;
-
-  // ✅ 프로필 구분 상태는 그대로 유지
   late final bool _isOwnProfile;
-
-  // 피드 상태 추적
-  bool _hasFeeds = false;
 
   // 배경 이미지 상태
 
@@ -66,13 +59,49 @@ class _UserProfileScreenState extends State<UserProfileScreen>
   // 프로필 사진 변경 상태
   bool _isUploadingProfileImage = false;
   late UserProfileController _controller;
+  static final AccountDropDown _accountDropDown = AccountDropDown();
+  static final CategoryDropDown _categoryDropDown = CategoryDropDown();
+  static final Feed _feed = Feed();
+  final GlobalKey _categoryButtonKey = GlobalKey();
 
   @override
   void initState() {
     super.initState();
     _isOwnProfile = (widget.otherUser == null);
     _scrollController = ScrollController()..addListener(_onScroll);
+    // 드래그 서비스에 세로 스크롤러 연결 (오토 스크롤)
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      try {
+        context.read<PostDragDropService>().setVerticalController(
+          _scrollController,
+        );
+      } catch (_) {}
+    });
     _controller = UserProfileController(context);
+
+    // 계정 변경 콜백 설정
+    _accountDropDown.setOnAccountChanged(() {
+      if (mounted) {
+        setState(() {});
+        print('[-] [UserProfileScreen] Account changed, UI refreshed');
+      } else {
+        print(
+          '[-] [UserProfileScreen] Widget not mounted, skipping UI refresh',
+        );
+      }
+    });
+
+    // 카테고리 변경 콜백 설정
+    _categoryDropDown.setOnCategoryChanged(() {
+      if (mounted) {
+        setState(() {});
+        print('[-] [UserProfileScreen] Category changed, UI refreshed');
+      } else {
+        print(
+          '[-] [UserProfileScreen] Widget not mounted, skipping category refresh',
+        );
+      }
+    });
 
     // 캐시된 값들 초기화
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -95,13 +124,6 @@ class _UserProfileScreenState extends State<UserProfileScreen>
           username: isOther ? widget.otherUser!.username : null,
           force: isOther, // 타인: 항상 새로 로드, 내 계정: 캐시 사용
         );
-
-        // 피드 상태 업데이트
-        if (mounted) {
-          setState(() {
-            _hasFeeds = context.read<ProfileFeedProvider>().posts.isNotEmpty;
-          });
-        }
       } catch (_) {}
     });
   }
@@ -135,6 +157,10 @@ class _UserProfileScreenState extends State<UserProfileScreen>
 
   @override
   void dispose() {
+    // 콜백 정리
+    _accountDropDown.setOnAccountChanged(null);
+    _categoryDropDown.setOnCategoryChanged(null);
+
     // 화면 종료 시, 피드 메모리 정리 (캐시는 유지)
     if (mounted) {
       try {
@@ -156,6 +182,8 @@ class _UserProfileScreenState extends State<UserProfileScreen>
 
     // 캐시된 값들 사용 (성능 최적화)
     if (_cachedSnap1 == null || _cachedSnap2 == null) return;
+
+    // 드래그 중에는 스냅 제한 없음 - 자유롭게 스크롤 허용
 
     final double snap0 = 0.0; // 기본 상태 (맨 위)
     final double snap1 = _cachedSnap1!; // 1차 스냅 (SliverAppBar와 연동)
@@ -293,7 +321,7 @@ class _UserProfileScreenState extends State<UserProfileScreen>
               slivers: [
                 SliverAppBar(
                   expandedHeight: topPadding + _baseHeight,
-                  toolbarHeight: topPadding + 0,
+                  toolbarHeight: 60,
                   backgroundColor: Colors.transparent,
                   automaticallyImplyLeading: false,
                   elevation: 0,
@@ -334,7 +362,10 @@ class _UserProfileScreenState extends State<UserProfileScreen>
                                 context,
                               ).colorScheme.onSurface.withOpacity(0.8),
                             ),
-                            onTap: () => _showAccountDropdown(context),
+                            onTap:
+                                () => _accountDropDown.showAccountDropdown(
+                                  context,
+                                ),
                           ),
                         ),
                     ],
@@ -342,21 +373,15 @@ class _UserProfileScreenState extends State<UserProfileScreen>
 
                   actions: [
                     if (_isOwnProfile) ...[
-                      // 내 이웃 버튼
                       IconButton(
                         icon: Icon(
-                          Icons.people,
+                          Icons.edit,
                           color: Theme.of(
                             context,
                           ).colorScheme.onSurface.withOpacity(0.5),
-                          size: 26,
                         ),
                         onPressed: () {
-                          Navigator.of(context).push(
-                            MaterialPageRoute(
-                              builder: (_) => ManageGroupScreen(),
-                            ),
-                          );
+                          showProfileInfoEditBottomSheet();
                         },
                       ),
                       // 설정 버튼
@@ -399,199 +424,338 @@ class _UserProfileScreenState extends State<UserProfileScreen>
                       final double descOpacity = (1.0 - fadeProgress * 1.2)
                           .clamp(0.0, 1.0);
 
-                      return Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 20,
-                          vertical: 20,
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.center,
-                          children: [
-                            const SizedBox(height: 50),
-                            // 원형 아바타 (텍스트 위에 위치)
-                            Column(
-                              crossAxisAlignment: CrossAxisAlignment.center,
-                              children: [
-                                // 아바타 (1차 스냅에서 완전히 페이드아웃)
-                                Opacity(
-                                  opacity: avatarOpacity,
-                                  child: ProfileAvatar(
-                                    imageUrl: _displayImageUrl,
-                                    username: _displayUsername,
-                                    size: 150,
-                                    borderWidth: 2,
-                                    borderColor:
-                                        Theme.of(context).brightness ==
-                                                Brightness.dark
-                                            ? Colors.grey.shade300
-                                            : Colors.grey.shade600,
-                                    isUploading: _isUploadingProfileImage,
-                                    onTap:
-                                        _isOwnProfile &&
-                                                !_isUploadingProfileImage
-                                            ? _changeProfileImage
-                                            : null,
-                                  ),
-                                ),
-                                const SizedBox(height: 16),
-                                // 사용자 이름 (1차 스냅 이후 페이드아웃)
-                                Opacity(
-                                  opacity: nameOpacity,
-                                  child: Text(
-                                    _displayAlias ?? _displayUsername,
-                                    style: TextStyle(
-                                      color:
-                                          Theme.of(
-                                            context,
-                                          ).colorScheme.onSurface,
-                                      fontSize: 36,
-                                      fontWeight: FontWeight.bold,
-                                      height: 1.1,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 2),
-                            Opacity(
-                              opacity: descOpacity,
-                              child: Text(
-                                isOther
-                                    ? (other?.selfIntroduction?.isNotEmpty ==
-                                            true
-                                        ? other!.selfIntroduction!
-                                        : _displayUsername)
-                                    : (myIntro?.isNotEmpty == true
-                                        ? myIntro!
-                                        : ''),
-                                style: TextStyle(
-                                  color:
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.center,
+                        children: [
+                          const SizedBox(height: 50),
+                          // 원형 아바타 (텍스트 위에 위치)
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.center,
+                            children: [
+                              // 아바타 (1차 스냅에서 완전히 페이드아웃)
+                              Opacity(
+                                opacity: avatarOpacity,
+                                child: ProfileAvatar(
+                                  imageUrl: _displayImageUrl,
+                                  username: _displayUsername,
+                                  size: 150,
+                                  borderWidth: 2,
+                                  borderColor:
                                       Theme.of(context).brightness ==
                                               Brightness.dark
-                                          ? Theme.of(context)
-                                              .colorScheme
-                                              .onSurfaceVariant
-                                              .withOpacity(0.8)
-                                          : Colors.black,
-                                  fontSize: 14,
-                                  height: 1.3,
+                                          ? Colors.grey.shade300
+                                          : Colors.grey.shade600,
+                                  isUploading: _isUploadingProfileImage,
+                                  onTap:
+                                      _isOwnProfile && !_isUploadingProfileImage
+                                          ? _changeProfileImage
+                                          : null,
                                 ),
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
                               ),
-                            ),
-                            // 다른 사용자 프로필일 때만 친구 추가 버튼 표시
-                            if (isOther) ...[
-                              const SizedBox(height: 20),
+                              const SizedBox(height: 30),
+                              // 사용자 이름 (1차 스냅 이후 페이드아웃)
                               Opacity(
-                                opacity: descOpacity,
-                                child: Consumer<FriendProvider>(
-                                  builder: (context, friendProvider, _) {
-                                    // 친구 상태에 따른 버튼 텍스트와 액션 결정
-                                    String buttonText;
-                                    VoidCallback buttonAction;
-
-                                    switch (friendProvider.friendStatus) {
-                                      case FriendRequestStatus.none:
-                                        buttonText = '이웃 추가';
-                                        buttonAction = () async {
-                                          try {
-                                            await friendProvider
-                                                .sendFriendRequest(
-                                                  widget.otherUser!.username,
-                                                );
-                                          } catch (e) {}
-                                        };
-                                        break;
-                                      case FriendRequestStatus.requested:
-                                        buttonText = '요청 취소';
-                                        buttonAction = () async {
-                                          try {
-                                            await friendProvider.deleteFriend(
-                                              widget.otherUser!.username,
-                                            );
-                                          } catch (e) {}
-                                        };
-                                        break;
-                                      case FriendRequestStatus.accepted:
-                                        buttonText = '친구 취소';
-                                        buttonAction = () async {
-                                          try {
-                                            await friendProvider.deleteFriend(
-                                              widget.otherUser!.username,
-                                            );
-                                          } catch (e) {
-                                            if (mounted) {
-                                              ScaffoldMessenger.of(
-                                                context,
-                                              ).showSnackBar(
-                                                SnackBar(
-                                                  content: Text('오류: $e'),
-                                                ),
-                                              );
-                                            }
-                                          }
-                                        };
-                                        break;
-                                      default:
-                                        buttonText = '이웃 추가';
-                                        buttonAction = () {};
-                                    }
-
-                                    return _buildGlassyButton(
-                                      text: buttonText,
-                                      onTap: buttonAction,
-                                      isLoading: friendProvider.isLoading,
-                                    );
-                                  },
+                                opacity: nameOpacity,
+                                child: Text(
+                                  _displayAlias ?? _displayUsername,
+                                  style: TextStyle(
+                                    color:
+                                        Theme.of(context).colorScheme.onSurface,
+                                    fontSize: 36,
+                                    fontWeight: FontWeight.bold,
+                                    height: 1.1,
+                                  ),
                                 ),
                               ),
                             ],
+                          ),
+                          const SizedBox(height: 4),
+                          Opacity(
+                            opacity: descOpacity,
+                            child: Text(
+                              isOther
+                                  ? (other?.selfIntroduction?.isNotEmpty == true
+                                      ? other!.selfIntroduction!
+                                      : _displayUsername)
+                                  : (myIntro?.isNotEmpty == true
+                                      ? myIntro!
+                                      : ''),
+                              style: TextStyle(
+                                color:
+                                    Theme.of(context).brightness ==
+                                            Brightness.dark
+                                        ? Theme.of(context)
+                                            .colorScheme
+                                            .onSurfaceVariant
+                                            .withOpacity(0.8)
+                                        : Colors.black,
+                                fontSize: 14,
+                                height: 1.3,
+                              ),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+
+                          // 다른 사용자 프로필일 때만 친구 추가 버튼 표시
+                          if (isOther) ...[
+                            _buildOtherProfileButton(descOpacity),
                           ],
-                        ),
+                          if (_isOwnProfile) ...[_buildMyProfileButton()],
+                        ],
                       );
                     },
                   ),
                 ),
-                _buildFeedContent(),
+                // Feed 모드 전환 스위처 (카드뷰 / 이미지 전용)
+                _buildFeedModeSwitcher(),
+                _feed.buildFeedContent(),
                 const SliverToBoxAdapter(child: SizedBox(height: 60)),
               ],
             ),
           ),
+        ],
+      ),
+    );
+  }
 
-          // 바텀바 영역 그라데이션 오버레이
-          if (_hasFeeds)
-            Positioned(
-              left: 0,
-              right: 0,
-              bottom: 0,
-              height: 100,
-              child: IgnorePointer(
-                ignoring: true,
-                child: Container(
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
-                      colors: [
-                        Colors.transparent,
-                        Theme.of(
-                          context,
-                        ).colorScheme.background.withOpacity(0.1),
-                        Theme.of(
-                          context,
-                        ).colorScheme.background.withOpacity(0.4),
-                        Theme.of(
-                          context,
-                        ).colorScheme.background.withOpacity(0.7),
-                      ],
-                      stops: const [0.0, 0.3, 0.7, 1.0],
-                    ),
-                  ),
+  SliverToBoxAdapter _buildFeedModeSwitcher() {
+    return SliverToBoxAdapter(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+        child: ValueListenableBuilder<FeedDisplayMode>(
+          valueListenable: FeedDisplayModeManager(),
+          builder: (context, displayMode, _) {
+            return Row(
+              mainAxisAlignment: MainAxisAlignment.start,
+              children: [
+                _buildCategoryButton(Icons.grid_view_rounded),
+                Spacer(),
+                // 그리드 아이콘 → 이미지 전용 모드
+                _buildModeButton(
+                  FeedDisplayMode.imageOnly,
+                  Icons.grid_view_rounded,
+                ),
+                const SizedBox(width: 8),
+                // 리스트 아이콘 → 카드(텍스트 포함) 모드
+                _buildModeButton(FeedDisplayMode.card, Icons.view_list_rounded),
+              ],
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCategoryButton(IconData icon) {
+    return GestureDetector(
+      onTap: () {
+        _categoryDropDown.showCategoryDropdown(context, _categoryButtonKey);
+      },
+      child: Container(
+        key: _categoryButtonKey,
+        padding: const EdgeInsets.all(10),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(12),
+          gradient: LinearGradient(
+            colors: [
+              Theme.of(context).colorScheme.onSurface.withOpacity(0.05),
+              Theme.of(context).colorScheme.onSurface.withOpacity(0.05),
+            ],
+          ),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              SizedBox(width: 4),
+              Text(
+                '카테고리',
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w300,
+                  color: Theme.of(
+                    context,
+                  ).colorScheme.onSurface.withOpacity(0.5),
                 ),
               ),
+              SizedBox(width: 12),
+              Icon(
+                Icons.keyboard_arrow_down,
+                size: 20,
+                color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildModeButton(FeedDisplayMode mode, IconData icon) {
+    final displayModeManager = FeedDisplayModeManager();
+    final bool selected = displayModeManager.value == mode;
+    final theme = Theme.of(context);
+    return InkWell(
+      onTap: () {
+        if (mode == FeedDisplayMode.card) {
+          displayModeManager.switchToCard();
+        } else {
+          displayModeManager.switchToImageOnly();
+        }
+      },
+      borderRadius: BorderRadius.circular(10),
+      child: Container(
+        padding: const EdgeInsets.all(8),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(10),
+          color:
+              selected
+                  ? theme.colorScheme.onSurface.withOpacity(0.2)
+                  : theme.colorScheme.surfaceVariant.withOpacity(0.2),
+        ),
+        child: Icon(
+          icon,
+          size: 20,
+          color:
+              selected
+                  ? theme.colorScheme.onSurface
+                  : theme.colorScheme.onSurface.withOpacity(0.2),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMyProfileButton() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 20),
+      child: Row(
+        children: [
+          Expanded(
+            child: _buildGlassyButton(
+              text: '내 친구들',
+              onTap: () {
+                Navigator.of(
+                  context,
+                ).push(MaterialPageRoute(builder: (_) => ManageGroupScreen()));
+              },
             ),
+          ),
+          SizedBox(width: 4),
+          Expanded(child: _buildGlassyButton(text: '프로필 공유', onTap: () {})),
         ],
+      ),
+    );
+  }
+
+  Widget _buildOtherProfileButton(double descOpacity) {
+    return Opacity(
+      opacity: descOpacity,
+      child: Consumer<FriendProvider>(
+        builder: (context, friendProvider, _) {
+          // 친구 상태에 따른 버튼 텍스트와 액션 결정
+          String buttonText;
+          VoidCallback buttonAction;
+
+          switch (friendProvider.friendStatus) {
+            case FriendRequestStatus.none:
+              buttonText = '이웃 추가';
+              buttonAction = () async {
+                try {
+                  await friendProvider.sendFriendRequest(
+                    widget.otherUser!.username,
+                  );
+                } catch (e) {}
+              };
+              break;
+            case FriendRequestStatus.requested:
+              buttonText = '요청 취소';
+              buttonAction = () async {
+                try {
+                  await friendProvider.deleteFriend(widget.otherUser!.username);
+                } catch (e) {}
+              };
+              break;
+            case FriendRequestStatus.accepted:
+              buttonText = '친구 취소';
+              buttonAction = () async {
+                try {
+                  await friendProvider.deleteFriend(widget.otherUser!.username);
+                } catch (e) {
+                  if (mounted) {
+                    ScaffoldMessenger.of(
+                      context,
+                    ).showSnackBar(SnackBar(content: Text('오류: $e')));
+                  }
+                }
+              };
+              break;
+            default:
+              buttonText = '이웃 추가';
+              buttonAction = () {};
+          }
+
+          return Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
+            child: _buildFilledButton(
+              text: buttonText,
+              onTap: buttonAction,
+              isLoading: friendProvider.isLoading,
+              isFilled: friendProvider.friendStatus == FriendRequestStatus.none,
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildFilledButton({
+    required String text,
+    required VoidCallback onTap,
+    bool isLoading = false,
+    bool isFilled = false,
+  }) {
+    return GestureDetector(
+      onTap: isLoading ? null : onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 24),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color:
+                isFilled
+                    ? Theme.of(context).colorScheme.primary.withOpacity(0.2)
+                    : Theme.of(context).colorScheme.onSurface.withOpacity(0.2),
+            width: 0.5,
+          ),
+          color:
+              isFilled
+                  ? Theme.of(context).colorScheme.primary.withOpacity(1)
+                  : Theme.of(context).colorScheme.onSurface.withOpacity(0.05),
+        ),
+        child: Center(
+          child:
+              isLoading
+                  ? SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      valueColor: AlwaysStoppedAnimation<Color>(
+                        Theme.of(context).colorScheme.onSurface,
+                      ),
+                    ),
+                  )
+                  : Text(
+                    text,
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.onSurface,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+        ),
       ),
     );
   }
@@ -606,32 +770,37 @@ class _UserProfileScreenState extends State<UserProfileScreen>
       child: Container(
         padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 24),
         decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: Colors.white.withOpacity(0.2), width: 1),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: Theme.of(context).colorScheme.onSurface.withOpacity(0.2),
+            width: 0.5,
+          ),
           gradient: LinearGradient(
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
             colors: [
-              Colors.white.withOpacity(0.1),
-              Colors.white.withOpacity(0.05),
+              Theme.of(context).colorScheme.onSurface.withOpacity(0.05),
+              Theme.of(context).colorScheme.onSurface.withOpacity(0.05),
             ],
           ),
         ),
         child: Center(
           child:
               isLoading
-                  ? const SizedBox(
+                  ? SizedBox(
                     width: 16,
                     height: 16,
                     child: CircularProgressIndicator(
                       strokeWidth: 2,
-                      valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                      valueColor: AlwaysStoppedAnimation<Color>(
+                        Theme.of(context).colorScheme.onSurface,
+                      ),
                     ),
                   )
                   : Text(
                     text,
-                    style: const TextStyle(
-                      color: Colors.white,
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.onSurface,
                       fontSize: 16,
                       fontWeight: FontWeight.w600,
                     ),
@@ -641,458 +810,6 @@ class _UserProfileScreenState extends State<UserProfileScreen>
     );
   }
 
-  Widget _buildFeedContent() {
-    return Consumer<ProfileFeedProvider>(
-      builder: (context, feedProvider, _) {
-        // 초기 진입(포스트 없음) 로딩 시에는 반짝임 방지를 위해 Shimmer 미표시
-        if (feedProvider.isLoading && feedProvider.posts.isEmpty) {
-          return const SliverToBoxAdapter(child: SizedBox.shrink());
-        }
-
-        // 피드가 없을 때는 아무 것도 렌더링하지 않음 (잔상 방지)
-        if (feedProvider.posts.isEmpty) {
-          return SliverToBoxAdapter(
-            child: Center(
-              child: Column(
-                children: [
-                  Text(
-                    "\"아직은 아무 글도 없어요\"",
-                    style: TextStyle(
-                      fontSize: 18,
-                      color: Theme.of(
-                        context,
-                      ).colorScheme.onSurface.withOpacity(0.6),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          );
-        }
-
-        // 실제 피드 그리드
-        return SliverGrid(
-          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: 3,
-            childAspectRatio: 9 / 12,
-            crossAxisSpacing: 2,
-            mainAxisSpacing: 2,
-          ),
-          delegate: SliverChildBuilderDelegate((context, index) {
-            if (index >= feedProvider.posts.length) {
-              return null;
-            }
-
-            try {
-              final postData = PostData.fromServer(feedProvider.posts[index]);
-              return _buildPostCard(postData, index);
-            } catch (e) {
-              return Container(
-                color: Colors.grey.withOpacity(0.3),
-                child: const Center(
-                  child: Icon(Icons.error, color: Colors.white),
-                ),
-              );
-            }
-          }, childCount: feedProvider.posts.length),
-        );
-      },
-    );
-  }
-
-  Widget _buildPostCard(PostData post, int index) {
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: () {
-          Navigator.of(context).push(
-            PageRouteBuilder(
-              pageBuilder:
-                  (context, animation, secondaryAnimation) => PostReaderScreen(
-                    exported: {
-                      'id': post.id,
-                      'title': post.title,
-                      'content': post.content,
-                      'author': post.author,
-                      'authorProfileImageUrl': post.authorProfileImageUrl,
-                      'thumbnailImageUrl': post.thumbnailImageUrl,
-                      'createdAt': post.createdAt,
-                      'updatedAt': post.updatedAt,
-                      'accessLevel': post.accessLevel.name,
-                      'viewCount': post.viewCount,
-                      'likeCount': post.likeCount,
-                      'isLiked': post.isLiked,
-                    },
-                    heroTag: null, // Hero 애니메이션 비활성화
-                  ),
-              transitionsBuilder: (
-                context,
-                animation,
-                secondaryAnimation,
-                child,
-              ) {
-                return FadeTransition(opacity: animation, child: child);
-              },
-              transitionDuration: const Duration(milliseconds: 200),
-            ),
-          );
-        },
-        child: Container(
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(2),
-            color: Colors.grey.withOpacity(0.3),
-          ),
-          child:
-              post.thumbnailImageUrl.isNotEmpty
-                  ? CachedNetworkImage(
-                    imageUrl: post.thumbnailImageUrl,
-                    fit: BoxFit.cover,
-                    memCacheWidth: 300,
-                    maxWidthDiskCache: 300,
-                    fadeInDuration: const Duration(milliseconds: 300),
-                    fadeOutDuration: const Duration(milliseconds: 100),
-                    placeholder:
-                        (context, url) => ShimmerBox(
-                          width: double.infinity,
-                          height: double.infinity,
-                          borderRadius: BorderRadius.circular(2),
-                        ),
-                    errorWidget:
-                        (context, url, error) => Container(
-                          color: Colors.grey.withOpacity(0.3),
-                          child: const Icon(Icons.error, color: Colors.white),
-                        ),
-                  )
-                  : Container(
-                    color: Colors.grey.withOpacity(0.3),
-                    child: const Icon(Icons.image, color: Colors.white),
-                  ),
-        ),
-      ),
-    );
-  }
-
-  /// 계정 드롭다운 표시
-  void _showAccountDropdown(BuildContext context) async {
-    // 현재 사용자 정보 가져오기
-    final userProvider = context.read<UserProvider>();
-    final currentUser = userProvider.currentUser;
-    final displayImageUrl = currentUser?.profileImageUrl ?? '';
-    final displayUsername = currentUser?.username ?? '';
-    final displayAlias = currentUser?.alias;
-
-    // 연결된 계정 목록 가져오기
-    final linkedAccounts = await AccountManagerService.getAllAccounts();
-    final currentAccount = await AccountManagerService.getCurrentAccount();
-
-    AccountManagerService.debugPrintAllAccounts();
-
-    showDialog(
-      context: context,
-      barrierDismissible: true,
-      builder: (BuildContext context) {
-        return Stack(
-          children: [
-            // 배경 터치로 닫기
-            Positioned.fill(
-              child: GestureDetector(
-                onTap: () => Navigator.of(context).pop(),
-                child: Container(color: Colors.transparent),
-              ),
-            ),
-            // 드롭다운 컨텐츠
-            Positioned(
-              top: MediaQuery.of(context).padding.top + kToolbarHeight + 0,
-              left: 20,
-              child: Material(
-                color: Colors.transparent,
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(16),
-                  child: BackdropFilter(
-                    filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-                    child: Container(
-                      width: 280,
-                      decoration: BoxDecoration(
-                        color: Colors.white.withOpacity(0.15),
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          // 현재 계정 (헤더)
-                          Row(
-                            children: [
-                              Expanded(
-                                child: _buildDropdownItem(
-                                  icon: CommonProfileAvatar(
-                                    imageUrl: displayImageUrl,
-                                    username: displayUsername,
-                                    size: 50,
-                                    borderColor: Colors.white.withOpacity(0.2),
-                                  ),
-                                  title: displayUsername,
-                                  subtitle: displayAlias ?? displayUsername,
-                                  backgroundColor: Colors.white.withOpacity(
-                                    0.1,
-                                  ),
-                                  onTap: () {},
-                                ),
-                              ),
-                            ],
-                          ),
-
-                          // 구분선
-                          Container(
-                            height: 1,
-                            margin: EdgeInsets.symmetric(horizontal: 16),
-                            color: Colors.white.withOpacity(0.1),
-                          ),
-
-                          // 연결된 계정 목록 (슬라이드 삭제 가능)
-                          ...linkedAccounts
-                              .where(
-                                (account) =>
-                                    account.username !=
-                                    currentAccount?.username,
-                              )
-                              .map(
-                                (account) => Dismissible(
-                                  key: Key(account.username),
-                                  direction: DismissDirection.endToStart,
-                                  background: Container(
-                                    alignment: Alignment.centerRight,
-                                    padding: EdgeInsets.only(right: 20),
-                                    decoration: BoxDecoration(
-                                      color: Colors.red.withOpacity(0.1),
-                                    ),
-                                    child: Text(
-                                      '삭제',
-                                      style: TextStyle(
-                                        color: Colors.red,
-                                        fontSize: 15,
-                                        fontWeight: FontWeight.w600,
-                                      ),
-                                    ),
-                                  ),
-                                  confirmDismiss: (direction) async {
-                                    return await _showDeleteConfirmDialog(
-                                      context,
-                                      account,
-                                    );
-                                  },
-                                  onDismissed: (direction) async {
-                                    await _removeAccount(account);
-                                  },
-                                  child: _buildDropdownItem(
-                                    icon: CommonProfileAvatar(
-                                      imageUrl: account.profileImageUrl,
-                                      username: account.username,
-                                      size: 50,
-                                    ),
-                                    title: account.username,
-                                    subtitle: account.alias,
-                                    onTap: () async {
-                                      Navigator.of(context).pop();
-                                      await _switchToAccount(account);
-                                    },
-                                  ),
-                                ),
-                              )
-                              .toList(),
-
-                          // 계정 관리 버튼
-                          _buildDropdownItem(
-                            icon: CommonProfileAvatar(
-                              imageUrl: null,
-                              username: "+",
-                              size: 50,
-                            ),
-                            title: '계정 추가',
-                            subtitle: '새 계정 생성 또는 기존 계정 연동',
-                            onTap: () {
-                              Navigator.of(context).pop();
-                              _showAccountManagementOverlay(context);
-                            },
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  /// 드롭다운 아이템 빌드
-  Widget _buildDropdownItem({
-    required Widget icon,
-    required String title,
-    required String subtitle,
-    Color? backgroundColor,
-    required VoidCallback onTap,
-  }) {
-    return Material(
-      color: backgroundColor ?? Colors.transparent,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(12),
-        child: Container(
-          padding: const EdgeInsets.all(16),
-          child: Row(
-            children: [
-              icon,
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      title,
-                      style: TextStyle(
-                        fontWeight: FontWeight.w600,
-                        fontSize: 14,
-                        color: Theme.of(context).colorScheme.onSurface,
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      subtitle,
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: Theme.of(
-                          context,
-                        ).colorScheme.onSurface.withOpacity(0.6),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              Icon(
-                Icons.chevron_right_rounded,
-                size: 20,
-                color: Theme.of(context).colorScheme.onSurface.withOpacity(0.4),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  /// 계정 삭제 확인 다이얼로그
-  Future<bool?> _showDeleteConfirmDialog(
-    BuildContext context,
-    AccountInfo account,
-  ) async {
-    return showDialog<bool>(
-      context: context,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          backgroundColor: Theme.of(context).colorScheme.surface,
-          title: Text(
-            '계정 삭제',
-            style: TextStyle(
-              color: Theme.of(context).colorScheme.onSurface,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          content: Text(
-            '${account.alias} (${account.username}) 계정을 삭제하시겠습니까?\n\n이 작업은 되돌릴 수 없습니다.',
-            style: TextStyle(color: Theme.of(context).colorScheme.onSurface),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(false),
-              child: Text(
-                '취소',
-                style: TextStyle(
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                ),
-              ),
-            ),
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(true),
-              style: TextButton.styleFrom(foregroundColor: Colors.red),
-              child: Text(
-                '삭제',
-                style: TextStyle(
-                  color: Colors.red,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  /// 계정 삭제
-  Future<void> _removeAccount(AccountInfo account) async {
-    try {
-      print('[-] [UserProfileScreen] 계정 삭제 시작: ${account.username}');
-
-      final result = await _controller.removeAccount(account);
-      if (result.isCurrentRemoved) {
-        if (result.remainingAccounts.isNotEmpty) {
-          await _switchToAccount(result.remainingAccounts.first);
-        } else {
-          Navigator.pushNamedAndRemoveUntil(
-            context,
-            '/login',
-            (route) => false,
-          );
-        }
-      }
-
-      // 화면 새로고침
-      setState(() {});
-
-      print('[-] [UserProfileScreen] 계정 삭제 완료: ${account.username}');
-    } catch (e) {
-      print('[-] [UserProfileScreen] _removeAccount error: $e');
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('계정 삭제에 실패했습니다: $e'),
-          backgroundColor: Colors.red,
-        ),
-      );
-    }
-  }
-
-  /// 계정 전환
-  Future<void> _switchToAccount(AccountInfo accountInfo) async {
-    try {
-      print('[-] [UserProfileScreen] 계정 전환 시작: ${accountInfo.username}');
-
-      final success = await _controller.switchToAccount(accountInfo);
-
-      if (!success) {
-        return;
-      }
-
-      if (mounted) {
-        setState(() {});
-      }
-
-      print('[-] [UserProfileScreen] 계정 전환 완료: ${accountInfo.username}');
-    } catch (e) {
-      print('[-] [UserProfileScreen] _switchToAccount error: $e');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('계정 전환에 실패했습니다: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-    }
-  }
-
   /// 프로필 사진 변경 바텀시트 표시
   void _changeProfileImage() {
     if (_isUploadingProfileImage) return;
@@ -1100,11 +817,53 @@ class _UserProfileScreenState extends State<UserProfileScreen>
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
+
       builder: (BuildContext context) {
         return ProfileImageBottomSheet(
           singleSelect: true,
           onClearProfileImage: _clearProfileImage,
           onImagesSelected: (files) => _handleImageSelected(files.first),
+        );
+      },
+    );
+  }
+
+  void showProfileInfoEditBottomSheet() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (BuildContext context) {
+        return SizedBox(
+          height: MediaQuery.of(context).size.height * 0.9,
+          child: Container(
+            width: MediaQuery.of(context).size.width,
+            decoration: BoxDecoration(
+              color: Theme.of(context).colorScheme.surface,
+              borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+            ),
+            child: ProfileInfoEditBottomSheet(
+              user: widget.otherUser,
+              nameController: TextEditingController(
+                text: widget.otherUser?.alias ?? '',
+              ),
+              descriptionController: TextEditingController(
+                text: widget.otherUser?.selfIntroduction ?? '',
+              ),
+              onClearProfileImage: _clearProfileImage,
+              onImagesSelected: (files) => _handleImageSelected(files.first),
+              onSave: ({
+                required String alias,
+                required String description,
+              }) async {
+                // TODO: 실제 API 호출로 사용자 정보 업데이트
+                print('저장: alias=$alias, description=$description');
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('프로필 정보가 저장되었습니다')),
+                );
+              },
+            ),
+          ),
         );
       },
     );
@@ -1218,36 +977,6 @@ class _UserProfileScreenState extends State<UserProfileScreen>
       }
     };
     task.addListener(_profileTaskListener!);
-  }
-
-  /// 계정 관리 바텀시트 표시
-  void _showAccountManagementOverlay(BuildContext context) {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (BuildContext context) {
-        // 디버그: 드롭다운 열릴 때 계정 상태 덤프
-        AccountManagerService.debugPrintAllAccounts();
-        return Container(
-          height: MediaQuery.of(context).size.height * 0.9,
-          decoration: BoxDecoration(
-            color: Theme.of(context).colorScheme.surface,
-            borderRadius: const BorderRadius.only(
-              topLeft: Radius.circular(20),
-              topRight: Radius.circular(20),
-            ),
-          ),
-          child: ClipRRect(
-            borderRadius: const BorderRadius.only(
-              topLeft: Radius.circular(20),
-              topRight: Radius.circular(20),
-            ),
-            child: JoinScreen(isRedirectMode: true),
-          ),
-        );
-      },
-    );
   }
 }
 

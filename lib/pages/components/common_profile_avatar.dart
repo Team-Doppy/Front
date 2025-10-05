@@ -22,8 +22,7 @@ class CommonProfileAvatar extends StatelessWidget {
   Widget build(BuildContext context) {
     final bool isDarkMode = Theme.of(context).brightness == Brightness.dark;
     final double effectiveBorderWidth = borderWidth ?? 2.0;
-    final Color effectiveBorderColor =
-        borderColor ?? Theme.of(context).colorScheme.surfaceVariant;
+    final Color effectiveBorderColor = borderColor ?? Colors.grey.shade700;
 
     return Container(
       width: size,
