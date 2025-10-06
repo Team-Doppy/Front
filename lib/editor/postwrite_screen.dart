@@ -97,11 +97,17 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
       ],
     );
     composer = MutableDocumentComposer();
+
+    // FocusNode 초기화
+    _editorFocusNode = FocusNode(debugLabel: 'editor_focus');
+
+    // 키보드 상태 감지
+    _editorFocusNode.addListener(_onFocusChange);
+
     editor = createDefaultDocumentEditor(
       document: document,
       composer: composer,
     );
-    _editorFocusNode = FocusNode(debugLabel: 'editor_focus');
 
     editorService = EditorService(editor: editor, document: document);
     editorService.setDocumentLayoutKey(_documentLayoutKey);
@@ -156,6 +162,12 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
   /// 키보드 높이 가져오기
   double get keyboardHeight => MediaQuery.of(context).viewInsets.bottom;
 
+  void _onFocusChange() {
+    setState(() {
+      _isKeyboardVisible = _editorFocusNode.hasFocus;
+    });
+  }
+
   @override
   void dispose() {
     // 이미지 선택 상태 초기화 (조용히)
@@ -164,6 +176,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
 
     editorService.dispose();
     dragService.removeListener(_onDragChange);
+    _editorFocusNode.removeListener(_onFocusChange);
     try {
       composer.selectionNotifier.removeListener(_updateImageSelectionHighlight);
     } catch (_) {}
@@ -422,90 +435,6 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
       },
       child: Scaffold(
         resizeToAvoidBottomInset: true,
-        appBar: AppBar(
-          backgroundColor: Theme.of(context).appBarTheme.backgroundColor,
-          toolbarHeight: 60,
-          scrolledUnderElevation: 0,
-          leading: GestureDetector(
-            onTap: () async {
-              final needPrompt = editorService.shouldPromptSaveOnExit();
-              if (needPrompt) {
-                final decision = await Navigator.of(context).push<ExitDecision>(
-                  PageRouteBuilder(
-                    opaque: false,
-                    barrierDismissible: true,
-                    pageBuilder: (_, __, ___) => const SaveDraftOverlay(),
-                  ),
-                );
-                if (decision == ExitDecision.saveDraft) {
-                  await _manualSaveDraft();
-                  Navigator.of(context).pop();
-                } else if (decision == ExitDecision.discard) {
-                  await Future.delayed(const Duration(milliseconds: 180));
-                  _cleanupAndExit();
-                }
-              } else {
-                _cleanupAndExit();
-              }
-            },
-            child: Icon(
-              Icons.arrow_back_ios_new_rounded,
-              color: Theme.of(context).colorScheme.onSurface,
-              size: 20,
-            ),
-          ),
-          actions: [
-            // 임시저장 목록 버튼
-            if (!widget.isEditMode)
-              TextButton(
-                onPressed: _showDraftList,
-                child: Text(
-                  '불러오기',
-                  style: TextStyle(
-                    fontWeight: FontWeight.w600,
-
-                    color: Theme.of(
-                      context,
-                    ).colorScheme.onSurface.withOpacity(0.5),
-                  ),
-                ),
-              ),
-
-            if (!widget.isEditMode)
-              TextButton(
-                onPressed: () {
-                  //키보드 내리기 (SuperEditor의 포커스 관리 활용)
-                  _editorFocusNode.unfocus();
-
-                  final json = PostExporter.exportToJsonString(
-                    editorService: editorService,
-                    stickerService: context.read<StickerService>(),
-                    viewportSize: MediaQuery.of(context).size,
-                    pretty: true,
-                  );
-                  ImageService().selectImage(null);
-                  // ignore: avoid_print
-                  print('===== POST JSON =====\n$json');
-                  Navigator.of(context).push(
-                    PageRouteBuilder(
-                      opaque: false,
-                      barrierDismissible: true,
-                      pageBuilder:
-                          (_, __, ___) => PostExportScreen(exported: json),
-                    ),
-                  );
-                },
-                child: Text(
-                  '다음',
-                  style: TextStyle(
-                    color: Theme.of(context).colorScheme.onSurface,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-            SizedBox(width: 10),
-          ],
-        ),
         body: Stack(
           children: [
             AnimatedScale(
@@ -521,9 +450,10 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                             ? 0.6
                             : 1.0, // 드래그 중일 때 투명도 조정
                     child: Padding(
-                      padding: const EdgeInsets.only(
-                        bottom: 10.0,
-                      ), // 하단 여유 공간 추가
+                      padding: EdgeInsets.only(
+                        top: 0, // SafeArea만
+                        bottom: 0,
+                      ),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
@@ -689,6 +619,133 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
             Positioned.fill(
               child: StickerCanvas(scrollController: scrollController),
             ),
+            // 커스텀 투명 앱바
+            Positioned(
+              top: 0,
+              left: 0,
+
+              child: SafeArea(
+                child: Container(
+                  height: 50,
+                  decoration: BoxDecoration(),
+                  child: Row(
+                    children: [
+                      // 뒤로가기 버튼
+                      GestureDetector(
+                        onTap: () async {
+                          final needPrompt =
+                              editorService.shouldPromptSaveOnExit();
+                          if (needPrompt) {
+                            final decision = await Navigator.of(
+                              context,
+                            ).push<ExitDecision>(
+                              PageRouteBuilder(
+                                opaque: false,
+                                barrierDismissible: true,
+                                pageBuilder:
+                                    (_, __, ___) => const SaveDraftOverlay(),
+                              ),
+                            );
+                            if (decision == ExitDecision.saveDraft) {
+                              await _manualSaveDraft();
+                              Navigator.of(context).pop();
+                            } else if (decision == ExitDecision.discard) {
+                              await Future.delayed(
+                                const Duration(milliseconds: 180),
+                              );
+                              _cleanupAndExit();
+                            }
+                          } else {
+                            _cleanupAndExit();
+                          }
+                        },
+                        child: Container(
+                          padding: const EdgeInsets.all(12),
+                          child: Icon(
+                            Icons.arrow_back_ios_new_rounded,
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.onSurface.withOpacity(0.5),
+                            size: 18,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            Positioned(
+              top: 0,
+              right: 0,
+
+              child: SafeArea(
+                child: Container(
+                  height: 50,
+                  decoration: BoxDecoration(),
+                  child: Row(
+                    children: [
+                      if (!widget.isEditMode && !_isKeyboardVisible)
+                        TextButton(
+                          onPressed: () {
+                            //키보드 내리기 (SuperEditor의 포커스 관리 활용)
+                            _editorFocusNode.unfocus();
+
+                            final json = PostExporter.exportToJsonString(
+                              editorService: editorService,
+                              stickerService: context.read<StickerService>(),
+                              viewportSize: MediaQuery.of(context).size,
+                              pretty: true,
+                            );
+                            ImageService().selectImage(null);
+                            // ignore: avoid_print
+                            print('===== POST JSON =====\n$json');
+                            Navigator.of(context).push(
+                              PageRouteBuilder(
+                                opaque: false,
+                                barrierDismissible: true,
+                                pageBuilder:
+                                    (_, __, ___) =>
+                                        PostExportScreen(exported: json),
+                              ),
+                            );
+                          },
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 4,
+                            ),
+                            child: Text(
+                              '다음',
+                              style: TextStyle(
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.onSurface.withOpacity(0.5),
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            Positioned(
+              top: 0,
+              right: 0,
+
+              child: Container(
+                height: 20,
+                width: 20,
+                decoration: BoxDecoration(color: Colors.red),
+                child: Row(children: [
+                      
+                    ],
+                
+                ),
+              ),
+            ),
           ],
         ),
         bottomNavigationBar: AnimatedPadding(
@@ -772,11 +829,13 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
       editorService: editorService,
       scrollController: scrollController,
       isKeyboardVisible: _isKeyboardVisible,
+      isEditMode: widget.isEditMode,
 
       onDismissKeyboard: () {
         // 키보드 내리기 (SuperEditor의 포커스 관리 활용)
         _editorFocusNode.unfocus();
       },
+      onShowDraftList: _showDraftList,
     );
   }
 

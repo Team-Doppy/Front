@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:doppy/data/models/user_model.dart';
+import 'package:doppy/pages/components/common_profile_avatar.dart';
 import 'package:flutter/material.dart';
 import 'gallery_bottom_sheet.dart';
 
@@ -148,7 +149,29 @@ class ProfileInfoEditBottomSheet extends StatefulWidget {
 class _ProfileInfoEditBottomSheetState
     extends State<ProfileInfoEditBottomSheet> {
   bool _saving = false;
-  bool _showImageActions = false;
+
+  late String _initialName;
+  late String _initialDescription;
+
+  @override
+  void initState() {
+    super.initState();
+    _initialName = widget.nameController.text;
+    _initialDescription = widget.descriptionController.text;
+  }
+
+  bool get _hasChanges {
+    final currentName = widget.nameController.text.trim();
+    final currentDescription = widget.descriptionController.text.trim();
+
+    // 별명이 비어있으면 변경사항이 있어도 저장 불가
+    if (currentName.isEmpty) {
+      return false;
+    }
+
+    return currentName != _initialName.trim() ||
+        currentDescription != _initialDescription.trim();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -168,247 +191,287 @@ class _ProfileInfoEditBottomSheetState
             color: theme.colorScheme.surface,
             borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
           ),
-          child: SingleChildScrollView(
-            child: ConstrainedBox(
-              constraints: BoxConstraints(minHeight: sheetHeight - 32),
-              child: IntrinsicHeight(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Center(
-                      child: Container(
-                        width: 36,
-                        height: 4,
-                        decoration: BoxDecoration(
-                          color: theme.colorScheme.onSurface.withOpacity(0.2),
-                          borderRadius: BorderRadius.circular(2),
-                        ),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(minHeight: sheetHeight - 32),
+            child: IntrinsicHeight(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Center(
+                    child: Container(
+                      width: 36,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: theme.colorScheme.onSurface.withOpacity(0.2),
+                        borderRadius: BorderRadius.circular(2),
                       ),
                     ),
-                    const SizedBox(height: 16),
-                    // 원형 프로필 + 액션 버튼
-                    Center(
-                      child: SizedBox(
-                        width: 120,
-                        height: 120,
-                        child: Stack(
-                          alignment: Alignment.center,
-                          children: [
-                            GestureDetector(
-                              onTap:
-                                  () => setState(
-                                    () =>
-                                        _showImageActions = !_showImageActions,
+                  ),
+                  const SizedBox(height: 30),
+                  // 원형 프로필 + 액션 버튼
+                  Center(
+                    child: Stack(
+                      alignment: Alignment.center,
+                      children: [
+                        GestureDetector(
+                          onTap: () {
+                            Navigator.pop(context);
+                            showModalBottomSheet(
+                              context: context,
+                              builder:
+                                  (context) => ProfileImageBottomSheet(
+                                    onClearProfileImage: () async {
+                                      await widget.onClearProfileImage!();
+                                    },
+                                    onImagesSelected: (files) {
+                                      widget.onImagesSelected!(files);
+                                    },
                                   ),
-                              child: CircleAvatar(
-                                radius: 60,
-                                backgroundColor: theme.colorScheme.onSurface
-                                    .withOpacity(0.08),
-                                backgroundImage:
-                                    (widget.user?.profileImageUrl != null &&
-                                            widget
-                                                .user!
-                                                .profileImageUrl!
-                                                .isNotEmpty)
-                                        ? NetworkImage(
-                                          widget.user!.profileImageUrl!,
-                                        )
-                                        : null,
-                                child:
-                                    (widget.user?.profileImageUrl == null ||
-                                            widget
-                                                .user!
-                                                .profileImageUrl!
-                                                .isEmpty)
-                                        ? Icon(
-                                          Icons.person,
-                                          size: 48,
-                                          color: theme.colorScheme.onSurface
-                                              .withOpacity(0.6),
-                                        )
-                                        : null,
-                              ),
-                            ),
-                            // 기본 이미지로 변경
-                            if (widget.onClearProfileImage != null)
-                              Positioned(
-                                bottom: 8,
-                                left: 8,
-                                child: AnimatedOpacity(
-                                  opacity: _showImageActions ? 1 : 0,
-                                  duration: const Duration(milliseconds: 150),
-                                  child: FloatingActionButton.small(
-                                    heroTag: 'fab_reset_profile',
-                                    backgroundColor: theme.colorScheme.surface,
-                                    foregroundColor:
-                                        theme.colorScheme.onSurface,
-                                    onPressed:
-                                        _saving
-                                            ? null
-                                            : () async {
-                                              try {
-                                                await widget
-                                                    .onClearProfileImage!();
-                                                if (context.mounted) {
-                                                  Navigator.pop(context);
-                                                }
-                                              } catch (e) {
-                                                if (context.mounted) {
-                                                  ScaffoldMessenger.of(
-                                                    context,
-                                                  ).showSnackBar(
-                                                    SnackBar(
-                                                      content: Text(
-                                                        '변경 실패: $e',
-                                                      ),
-                                                      backgroundColor:
-                                                          theme
-                                                              .colorScheme
-                                                              .error,
-                                                    ),
-                                                  );
-                                                }
-                                              }
-                                            },
-                                    child: const Icon(
-                                      Icons.restart_alt_rounded,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            // 갤러리에서 선택
-                            if (widget.onImagesSelected != null)
-                              Positioned(
-                                bottom: 8,
-                                right: 8,
-                                child: AnimatedOpacity(
-                                  opacity: _showImageActions ? 1 : 0,
-                                  duration: const Duration(milliseconds: 150),
-                                  child: FloatingActionButton.small(
-                                    heroTag: 'fab_pick_profile',
-                                    backgroundColor: theme.colorScheme.surface,
-                                    foregroundColor:
-                                        theme.colorScheme.onSurface,
-                                    onPressed:
-                                        _saving
-                                            ? null
-                                            : () async {
-                                              if (!context.mounted) return;
-                                              Navigator.pop(context);
-                                              await showModalBottomSheet(
-                                                context: context,
-                                                backgroundColor:
-                                                    theme.colorScheme.surface,
-                                                barrierColor: Colors.black54,
-                                                isScrollControlled: true,
-                                                shape:
-                                                    const RoundedRectangleBorder(
-                                                      borderRadius:
-                                                          BorderRadius.vertical(
-                                                            top:
-                                                                Radius.circular(
-                                                                  16,
-                                                                ),
-                                                          ),
-                                                    ),
-                                                builder:
-                                                    (_) => GalleryBottomSheet(
-                                                      singleSelect: true,
-                                                      onImagesSelected: (
-                                                        files,
-                                                      ) {
-                                                        widget
-                                                            .onImagesSelected!(
-                                                          files,
-                                                        );
-                                                      },
-                                                    ),
-                                              );
-                                            },
-                                    child: const Icon(
-                                      Icons.photo_library_outlined,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                          ],
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 18),
-                    // 별명 텍스트필드
-                    TextField(
-                      controller: widget.nameController,
-                      textAlign: TextAlign.center,
-                      decoration: InputDecoration(
-                        labelText: '별명',
-                        alignLabelWithHint: true,
-                        hintText: '새로운 별명을 입력하세요',
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    // 소개글 텍스트필드
-                    SizedBox(
-                      height: keyboardHeight > 0 ? 120 : 200,
-                      child: TextField(
-                        controller: widget.descriptionController,
-                        textAlign: TextAlign.center,
-                        maxLines: null,
-                        expands: true,
-                        decoration: InputDecoration(
-                          labelText: '소개글',
-                          alignLabelWithHint: true,
-                          hintText: '자신을 소개해보세요',
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(10),
+                            );
+                          },
+                          child: CommonProfileAvatar(
+                            imageUrl: widget.user?.profileImageUrl ?? '',
+                            username: widget.user?.username ?? '',
+                            size: 150,
+                            borderWidth: 2,
+                            borderColor: theme.colorScheme.onSurface,
                           ),
                         ),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    // 저장 버튼
-                    if (widget.onSave != null)
-                      SizedBox(
-                        width: double.infinity,
-                        child: ElevatedButton(
-                          onPressed:
-                              _saving
-                                  ? null
-                                  : () async {
-                                    setState(() => _saving = true);
-                                    try {
-                                      await widget.onSave!(
-                                        alias:
-                                            widget.nameController.text.trim(),
-                                        description:
-                                            widget.descriptionController.text
-                                                .trim(),
-                                      );
-                                      if (context.mounted)
-                                        Navigator.pop(context);
-                                    } finally {
-                                      if (mounted)
-                                        setState(() => _saving = false);
-                                    }
-                                  },
-                          style: ElevatedButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(vertical: 12),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(10),
+                        Positioned(
+                          bottom: 0,
+                          right: 4,
+                          child: Container(
+                            width: 32,
+                            height: 32,
+                            decoration: BoxDecoration(
+                              color: theme.colorScheme.onSurface,
+                              borderRadius: BorderRadius.circular(16),
+                            ),
+                            child: Icon(
+                              Icons.photo_camera,
+                              color: theme.colorScheme.surface,
+                              size: 24,
                             ),
                           ),
-                          child: Text(_saving ? '저장 중...' : '저장'),
                         ),
+                      ],
+                    ),
+                  ),
+
+                  const SizedBox(height: 18),
+                  Text(
+                    '별명',
+                    style: TextStyle(
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.onSurface.withOpacity(0.8),
+                      fontSize: 13,
+                      fontWeight: FontWeight.w400,
+                    ),
+                  ),
+                  // 별명 텍스트필드
+                  TextField(
+                    controller: widget.nameController,
+                    textAlign: TextAlign.center,
+                    onChanged: (value) => setState(() {}),
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.onSurface,
+                      fontSize: 18,
+                      fontWeight: FontWeight.w400,
+                    ),
+                    decoration: InputDecoration(
+                      hintText: '별명을 입력하세요 (필수)',
+                      hintStyle: TextStyle(color: Colors.grey[600]),
+                      filled: true,
+                      fillColor: Theme.of(context).colorScheme.surfaceVariant,
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 8,
                       ),
-                    // 키보드가 올라올 때 하단 여백 추가
-                    SizedBox(height: keyboardHeight > 0 ? 20 : 0),
-                  ],
-                ),
+                      border: OutlineInputBorder(
+                        borderSide: BorderSide.none,
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderSide: BorderSide.none,
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderSide: BorderSide.none,
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      errorBorder: OutlineInputBorder(
+                        borderSide: BorderSide(
+                          color: Theme.of(context).colorScheme.error,
+                          width: 1,
+                        ),
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      focusedErrorBorder: OutlineInputBorder(
+                        borderSide: BorderSide(
+                          color: Theme.of(context).colorScheme.error,
+                          width: 2,
+                        ),
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      errorText:
+                          widget.nameController.text.trim().isEmpty
+                              ? '별명은 필수입니다'
+                              : null,
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    '소개글',
+                    style: TextStyle(
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.onSurface.withOpacity(0.8),
+                      fontSize: 13,
+                      fontWeight: FontWeight.w400,
+                    ),
+                  ),
+                  // 소개글 텍스트필드
+                  TextField(
+                    controller: widget.descriptionController,
+                    textAlign: TextAlign.center,
+                    maxLines: null,
+                    onChanged: (value) => setState(() {}),
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.onSurface,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w400,
+                    ),
+                    decoration: InputDecoration(
+                      hintText: '새로운 소개글을 입력하세요',
+                      hintStyle: TextStyle(color: Colors.grey[600]),
+                      filled: true,
+                      fillColor: Theme.of(context).colorScheme.surfaceVariant,
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 12,
+                      ),
+                      border: OutlineInputBorder(
+                        borderSide: BorderSide.none,
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderSide: BorderSide.none,
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderSide: BorderSide.none,
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                    ),
+                  ),
+                  const Spacer(),
+                  // 저장 버튼 (별명이 있고 변경사항이 있을 때만)
+                  if (widget.onSave != null &&
+                      _hasChanges &&
+                      widget.nameController.text.trim().isNotEmpty)
+                    _buildActionButton(
+                      context: context,
+                      icon: Icons.save,
+                      label: '저장하기',
+                      onTap: () async {
+                        final hasChanges = _hasChanges;
+                        if (!hasChanges) return;
+
+                        setState(() => _saving = true);
+
+                        try {
+                          await widget.onSave!(
+                            alias: widget.nameController.text.trim(),
+                            description:
+                                widget.descriptionController.text.trim(),
+                          );
+
+                          // 저장 완료 후 잠시 대기
+                          await Future.delayed(
+                            const Duration(milliseconds: 500),
+                          );
+
+                          if (context.mounted) Navigator.pop(context);
+                        } catch (e) {
+                          // 에러 처리
+                          if (context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text(
+                                  '저장 중 오류가 발생했습니다.',
+                                  style: TextStyle(
+                                    color:
+                                        Theme.of(context).colorScheme.onError,
+                                  ),
+                                ),
+                                backgroundColor:
+                                    Theme.of(context).colorScheme.error,
+                              ),
+                            );
+                          }
+                        } finally {
+                          if (mounted) setState(() => _saving = false);
+                        }
+                      },
+                    ),
+                  // 키보드가 올라올 때 하단 여백 추가
+                  SizedBox(height: keyboardHeight > 0 ? 20 : 0),
+                ],
               ),
             ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildActionButton({
+    required BuildContext context,
+    required IconData icon,
+    required String label,
+    required VoidCallback onTap,
+  }) {
+    final theme = Theme.of(context);
+    final hasChanges = _hasChanges;
+
+    return Container(
+      height: 48,
+      decoration: BoxDecoration(
+        color:
+            hasChanges
+                ? theme.colorScheme.onSurface
+                : theme.colorScheme.surface,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(12),
+          onTap: _saving ? null : onTap,
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              if (_saving) ...[
+                SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: Theme.of(context).colorScheme.surface,
+                  ),
+                ),
+                const SizedBox(width: 8),
+              ],
+              Text(
+                _saving ? '' : label,
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  color: Theme.of(context).colorScheme.surface,
+                ),
+              ),
+            ],
           ),
         ),
       ),

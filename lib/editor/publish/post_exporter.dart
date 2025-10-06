@@ -263,7 +263,6 @@ class PostExporter {
 
     //초안 뽑기
     return {
-      'version': '1.0',
       'title':
           titleText.isNotEmpty
               ? titleText
@@ -420,7 +419,7 @@ class PostExporter {
   }
 
   /// 기본 내보내기 결과(base)에 공개 범위/썸네일/최종 제목/요약/생성시각 등을 덧붙여
-  /// 최종 게시 페이로드를 구성한다. 기존 키는 최대한 보존한다.
+  /// 최종 게시 페이로드를 구성한다. 서버 API 스펙에 맞춰 필수 필드들을 검증한다.
   static Map<String, dynamic> composeFinalPayload({
     required String thumbnailImageUrl,
     required Map<String, dynamic> base,
@@ -429,95 +428,67 @@ class PostExporter {
     bool? publicOnly = false,
     List<int>? selectedGroupIds = const [],
   }) {
-    final Map<String, dynamic> visibility = () {
-      if (privateOnly == true) {
-        return <String, dynamic>{'type': 'private', 'groupIds': <int>[]};
-      }
-      if (publicOnly == true) {
-        return <String, dynamic>{'type': 'public', 'groupIds': <int>[]};
-      }
-      return <String, dynamic>{'type': 'groups', 'groupIds': selectedGroupIds};
-    }();
-    final Map<String, dynamic> additions = <String, dynamic>{
-      'visibility': visibility,
-      'createdAt': (createdAt ?? DateTime.now()).toIso8601String(),
-    };
+    // 1. 필수 필드 검증
+    final String title = base['title']?.toString() ?? '';
+    if (title.trim().isEmpty) {
+      throw StateError('title is required for all access levels');
+    }
 
-    // 스티커 압축을 항상 적용
+    final dynamic content = base['content'];
+    if (content == null) {
+      throw StateError('content is required for all access levels');
+    }
+
+    // 2. 공개 범위에 따른 필수 필드 설정
+    String accessLevel;
+    List<int> sharedGroupIds;
+
+    if (privateOnly == true) {
+      accessLevel = 'PRIVATE';
+      sharedGroupIds = [];
+    } else if (publicOnly == true) {
+      accessLevel = 'PUBLIC';
+      sharedGroupIds = [];
+    } else {
+      accessLevel = 'GROUPS';
+      sharedGroupIds = selectedGroupIds ?? [];
+
+      // GROUPS 선택시 최소 1개 이상의 그룹 ID 필요
+      if (sharedGroupIds.isEmpty) {
+        throw StateError(
+          'GROUPS access level requires at least one group ID in sharedGroupIds',
+        );
+      }
+    }
+
+    // 3. 기존 base를 복사하고 공개 범위 필드만 추가
     final Map<String, dynamic> result = <String, dynamic>{...base};
-    final dynamic stickers = base['stickers'];
-    if (stickers is List) {
-      result['stickers'] = _compressStickers(stickers);
+
+    // 4. 공개 범위 필수 필드 추가
+    result['accessLevel'] = accessLevel;
+
+    // 5. 그룹 공유시 필수 필드
+    if (accessLevel == 'GROUPS' && sharedGroupIds.isNotEmpty) {
+      result['sharedGroupIds'] = sharedGroupIds;
     }
 
-    // 썸네일 주입 및 검증 (키 통일: thumbnailImageUrl)
-    if ((result['thumbnailImageUrl'] ?? '').toString().isEmpty &&
-        (thumbnailImageUrl).isNotEmpty) {
-      result['thumbnailImageUrl'] = thumbnailImageUrl;
+    // 6. 썸네일 필수 필드 검증 및 추가
+    if (thumbnailImageUrl.trim().isEmpty) {
+      throw StateError('thumbnailImageUrl is required for all access levels');
     }
-    if ((result['thumbnailImageUrl'] ?? '').toString().isEmpty) {
-      throw StateError('thumbnailImageUrl is required');
-    }
+    result['thumbnailImageUrl'] = thumbnailImageUrl;
 
     print('==============================================');
-    print(result);
-
-    return <String, dynamic>{...result, ...additions};
-  }
-
-  /// 스티커 배열 경량화: bytes → base64, anchor 최소 필드만 유지, 불필요 필드 제거
-  static List<Map<String, dynamic>> _compressStickers(List<dynamic> stickers) {
-    final List<Map<String, dynamic>> out = <Map<String, dynamic>>[];
-    for (final s in stickers) {
-      if (s is! Map) continue;
-      final Map m = s;
-      final Map<String, dynamic> compact = <String, dynamic>{
-        if (m['type'] != null) 'type': m['type'],
-        if (m['zIndex'] != null) 'zIndex': m['zIndex'],
-        if (m['opacity'] != null) 'opacity': m['opacity'],
-        if (m['rotation'] != null) 'rotation': m['rotation'],
-        if (m['scale'] != null) 'scale': m['scale'],
-      };
-
-      // content 처리
-      final dynamic content = m['content'];
-      if (content is Map) {
-        if (content['bytes'] != null) {
-          final dynamic b = content['bytes'];
-          Uint8List bytes;
-          if (b is Uint8List) {
-            bytes = b;
-          } else if (b is List<int>) {
-            bytes = Uint8List.fromList(b);
-          } else {
-            bytes = Uint8List(0);
-          }
-          compact['content'] = <String, dynamic>{'b64': base64Encode(bytes)};
-        } else if (content['url'] != null) {
-          compact['content'] = <String, dynamic>{'url': content['url']};
-        } else if (content['text'] != null) {
-          compact['content'] = <String, dynamic>{
-            'text': content['text'],
-            if (content['style'] != null) 'style': content['style'],
-          };
-        }
-      } else if (content is String) {
-        compact['content'] = content; // emoji 등
-      }
-
-      // anchor 최소화
-      final dynamic anchor = m['anchor'];
-      if (anchor is Map) {
-        compact['anchor'] = <String, dynamic>{
-          if (anchor['nodeId'] != null) 'nodeId': anchor['nodeId'],
-          if (anchor['relX'] != null) 'relX': anchor['relX'],
-          if (anchor['relY'] != null) 'relY': anchor['relY'],
-        };
-      }
-
-      out.add(compact);
+    print('Final API Payload (Server Spec Compliant):');
+    print('Title: $title');
+    print('AccessLevel: $accessLevel');
+    if (accessLevel == 'GROUPS') {
+      print('SharedGroupIds: $sharedGroupIds');
     }
-    return out;
+    print('Thumbnail: ${result['thumbnailImageUrl'] ?? 'none'}');
+    print(JsonExport.encode(result, pretty: true));
+
+    return result;
   }
 }
 

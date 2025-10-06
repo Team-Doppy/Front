@@ -140,10 +140,8 @@ class _HomeScreenState extends State<HomeScreen> {
                     begin: Alignment.topCenter,
                     end: Alignment.bottomCenter,
                     colors: [
-                      Theme.of(context).colorScheme.background.withOpacity(0.7),
-                      Theme.of(
-                        context,
-                      ).colorScheme.background.withOpacity(0.75),
+                      Theme.of(context).colorScheme.background.withOpacity(0.8),
+                      Theme.of(context).colorScheme.background.withOpacity(0.8),
                       Theme.of(context).colorScheme.background.withOpacity(0.8),
                     ],
                     stops: const [0.0, 0.7, 1.0],
@@ -168,19 +166,19 @@ class _HomeScreenState extends State<HomeScreen> {
           backgroundColor: Colors.transparent,
           extendBodyBehindAppBar: true,
           appBar: AppBar(
-            toolbarHeight: 80,
+            toolbarHeight: 50,
             backgroundColor: Colors.transparent,
-            title: Padding(
-              padding: const EdgeInsets.only(top: 20),
-              child: Text(
-                ' doppy',
-                style: TextStyle(
-                  fontWeight: FontWeight.w700,
-                  fontSize: 34,
-                  color: Theme.of(context).colorScheme.primary,
-                ),
+            elevation: 0,
+            scrolledUnderElevation: 0,
+            title: Text(
+              ' doppy',
+              style: TextStyle(
+                fontWeight: FontWeight.w700,
+                fontSize: 30,
+                color: Theme.of(context).colorScheme.primary,
               ),
             ),
+
             centerTitle: false,
           ),
           body: _buildContent(screenWidth),

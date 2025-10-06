@@ -468,7 +468,17 @@ class _LocationComponentState extends State<_LocationComponent>
     final currentNodeIndex = _getCurrentNodeIndex();
     if (currentNodeIndex == -1) return false;
 
-    // 정책: 경계는 상단 컴포넌트만 그린다. 하단 라인은 항상 비활성화하여 이중표시 방지
+    // 마지막 노드인지 확인
+    final documentLength =
+        widget.dragService?.editorService.document.length ?? 0;
+    final isLastNode = currentNodeIndex == documentLength - 1;
+
+    if (isLastNode) {
+      // 마지막 노드일 때는 문서 끝에 삽입하는 경우만 표시
+      return dropIndex == documentLength;
+    }
+
+    // 일반적인 경우는 이중 표시 방지를 위해 하단 라인 비활성화
     return false;
   }
 

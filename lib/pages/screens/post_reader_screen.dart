@@ -187,7 +187,7 @@ class _PostReaderScreenState extends State<PostReaderScreen>
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    _imageH = MediaQuery.of(context).size.height * 0.80;
+    _imageH = MediaQuery.of(context).size.height * 0.60;
     _headerFadeEnd = _imageH * 0.60; // 페이드 완료 지점
   }
 

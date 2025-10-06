@@ -31,6 +31,13 @@ class _DraftListOverlayState extends State<DraftListOverlay>
   late final Animation<double> _scale;
   late final Animation<double> _slideY;
 
+  // 아래로 스와이프 관련 변수들
+  double _verticalDragStartY = 0.0;
+  double _verticalDragCurrentY = 0.0;
+  bool _isDragging = false;
+  bool _isScrolling = false;
+  double _scrollOffset = 0.0;
+
   @override
   void initState() {
     super.initState();
@@ -56,15 +63,31 @@ class _DraftListOverlayState extends State<DraftListOverlay>
     _ctrl.forward();
   }
 
+  void _closeWithAnimation() {
+    Navigator.of(context).pop();
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.transparent,
       appBar: AppBar(
-        backgroundColor: const ui.Color.fromARGB(182, 144, 144, 144),
+        backgroundColor: const ui.Color.fromARGB(234, 54, 54, 54),
         elevation: 0,
-        title: const Text('임시저장 목록', style: TextStyle(color: Colors.white)),
-        iconTheme: const IconThemeData(color: Colors.white),
+        leading: IconButton(
+          onPressed: () => _closeWithAnimation(),
+          icon: Icon(
+            Icons.close,
+            color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
+          ),
+        ),
+        title: Text(
+          '임시저장 목록',
+          style: TextStyle(
+            color: Theme.of(context).colorScheme.onSurface.withOpacity(0.8),
+            fontSize: 18,
+          ),
+        ),
         scrolledUnderElevation: 0,
       ),
       body: Stack(
@@ -72,11 +95,50 @@ class _DraftListOverlayState extends State<DraftListOverlay>
           // 배경 블러 + 반투명
           Positioned.fill(
             child: GestureDetector(
-              onTap: () => Navigator.of(context).pop(),
+              onTap: () => _closeWithAnimation(),
+              onPanStart: (details) {
+                _verticalDragStartY = details.globalPosition.dy;
+                _isDragging = true;
+                _isScrolling = false;
+              },
+              onPanUpdate: (details) {
+                if (_isDragging && !_isScrolling) {
+                  _verticalDragCurrentY = details.globalPosition.dy;
+                  final deltaY = _verticalDragCurrentY - _verticalDragStartY;
+
+                  // 아래로 드래그할 때만 반응 (스크롤이 아닌 경우)
+                  if (deltaY > 50) {
+                    // 50px 이상 드래그해야 시작
+                    setState(() {
+                      // 드래그 거리에 따라 bouncing 효과
+                      final progress = ((deltaY - 50) / 300).clamp(0.0, 1.0);
+                      final bounceEffect =
+                          1.0 - (progress * 0.4); // 최대 40%까지 줄어듦
+                      _ctrl.value = bounceEffect;
+                    });
+                  }
+                }
+              },
+              onPanEnd: (details) {
+                if (_isDragging && !_isScrolling) {
+                  final deltaY = _verticalDragCurrentY - _verticalDragStartY;
+                  final velocity = details.velocity.pixelsPerSecond.dy;
+
+                  // 아래로 충분히 드래그했거나 빠른 속도로 아래로 스와이프했을 때 닫기
+                  if (deltaY > 200 || velocity > 800) {
+                    _closeWithAnimation();
+                  } else {
+                    // 원래 위치로 복원
+                    _ctrl.forward();
+                  }
+
+                  _isDragging = false;
+                }
+              },
               child: BackdropFilter(
                 filter: ui.ImageFilter.blur(sigmaX: 10, sigmaY: 10),
                 child: Container(
-                  color: const ui.Color.fromARGB(182, 144, 144, 144),
+                  color: const ui.Color.fromARGB(234, 54, 54, 54),
                 ),
               ),
             ),
@@ -99,15 +161,75 @@ class _DraftListOverlayState extends State<DraftListOverlay>
                   ),
                 );
               },
-              child: Container(
-                decoration: BoxDecoration(
-                  color: Colors.transparent,
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(16),
-                  child:
-                      _drafts.isEmpty ? _buildEmptyState() : _buildDraftList(),
+              child: NotificationListener<ScrollNotification>(
+                onNotification: (notification) {
+                  // 스크롤 중일 때는 드래그 감지 비활성화
+                  if (notification is ScrollStartNotification) {
+                    _isScrolling = true;
+                  } else if (notification is ScrollEndNotification) {
+                    _isScrolling = false;
+                  }
+                  return false;
+                },
+                child: GestureDetector(
+                  onPanStart: (details) {
+                    if (!_isScrolling) {
+                      _verticalDragStartY = details.globalPosition.dy;
+                      _isDragging = true;
+                    }
+                  },
+                  onPanUpdate: (details) {
+                    if (_isDragging && !_isScrolling) {
+                      _verticalDragCurrentY = details.globalPosition.dy;
+                      final deltaY =
+                          _verticalDragCurrentY - _verticalDragStartY;
+
+                      // 아래로 드래그할 때만 반응 (스크롤이 아닌 경우)
+                      if (deltaY > 300) {
+                        // 300px 이상 드래그해야 시작
+                        setState(() {
+                          // 드래그 거리에 따라 bouncing 효과
+                          final progress = ((deltaY - 300) / 300).clamp(
+                            0.0,
+                            1.0,
+                          );
+                          final bounceEffect =
+                              1.0 - (progress * 0.4); // 최대 40%까지 줄어듦
+                          _ctrl.value = bounceEffect;
+                        });
+                      }
+                    }
+                  },
+                  onPanEnd: (details) {
+                    if (_isDragging && !_isScrolling) {
+                      final deltaY =
+                          _verticalDragCurrentY - _verticalDragStartY;
+                      final velocity = details.velocity.pixelsPerSecond.dy;
+
+                      // 아래로 충분히 드래그했거나 빠른 속도로 아래로 스와이프했을 때 닫기
+                      if (deltaY > 200 || velocity > 800) {
+                        _closeWithAnimation();
+                      } else {
+                        // 원래 위치로 복원
+                        _ctrl.forward();
+                      }
+
+                      _isDragging = false;
+                    }
+                  },
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: Colors.transparent,
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(16),
+                      child:
+                          _drafts.isEmpty
+                              ? _buildEmptyState()
+                              : _buildDraftList(),
+                    ),
+                  ),
                 ),
               ),
             ),

@@ -29,13 +29,14 @@ Stylesheet buildCustomStylesheet(BuildContext context) {
           if (isTitle && doc.getNodeIndexById(docNode.id) == 0) {
             return {
               Styles.textStyle: TextStyle(
-                fontSize: 30,
-                fontWeight: FontWeight.bold,
+                fontSize: 28,
+                fontWeight: FontWeight.w900,
                 color: titleColor,
+                height: 0,
               ),
               Styles.padding: const CascadingPadding.only(
-                top: 10,
-                bottom: 20,
+                top: 100,
+                bottom: 10,
                 left: 0,
                 right: 0,
               ),
@@ -44,8 +45,11 @@ Stylesheet buildCustomStylesheet(BuildContext context) {
           return {
             Styles.textStyle: TextStyle(fontSize: 16, color: bodyColor),
 
-            Styles.padding: const CascadingPadding.all(
-              EditorConfig.textPadding,
+            Styles.padding: const CascadingPadding.only(
+              top: 2.5,
+              bottom: 2.5,
+              left: 0,
+              right: 0,
             ),
           };
         }

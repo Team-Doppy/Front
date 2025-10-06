@@ -1,7 +1,10 @@
 import 'dart:convert';
+import 'dart:ui' as ui;
 import 'package:doppy/data/services/upload_service.dart';
 import 'package:doppy/editor/service/image_service.dart';
+import 'package:doppy/pages/components/common_profile_avatar.dart';
 import 'package:doppy/pages/screens/post_reader_screen.dart';
+import 'package:doppy/providers/user_provider.dart';
 import 'package:flutter/foundation.dart';
 import 'package:doppy/theme/app_colors.dart';
 import 'package:flutter/material.dart';
@@ -34,8 +37,8 @@ class _PostExportScreenState extends State<PostExportScreen>
   String get _nsKey => widget.sessionKey ?? 'default';
   // 더미 데이터
   String _exportedThumbnailImageUrl = '';
-  String _title = '오늘 하루도 힘내자고 화이팅!';
-  String _excerpt = '여기에 본문 요약이 들어갑니다. 간단한 설명을 추가해 주세요.';
+  String _title = '';
+  String _excerpt = '';
 
   Map<String, dynamic> _exportedBase = <String, dynamic>{};
 
@@ -49,17 +52,19 @@ class _PostExportScreenState extends State<PostExportScreen>
   bool _isUploadingThumb = false;
   String? _thumbnailImageId;
 
+  bool isGrouping = false;
+
   late final AnimationController _controller = AnimationController(
     vsync: this,
     duration: const Duration(milliseconds: 220),
   );
   late final AnimationController _intro = AnimationController(
     vsync: this,
-    duration: const Duration(milliseconds: 520),
+    duration: const Duration(milliseconds: 800),
   );
   late final Animation<double> _introCurve = CurvedAnimation(
     parent: _intro,
-    curve: Curves.easeOutCubic,
+    curve: Curves.elasticOut,
   );
 
   @override
@@ -85,23 +90,19 @@ class _PostExportScreenState extends State<PostExportScreen>
         ) ??
         '';
 
-    // 본문 요약
+    // 본문 전체 내용
     String collected = _collectText(exported);
     collected =
         collected
             .replaceAll(RegExp('\\s+'), ' ')
             .replaceAll('\u200B', '')
             .trim();
+    // 제목이 포함되어 있으면 제목 부분 제거
     String preview = collected;
     if (_title.isNotEmpty && preview.startsWith(_title)) {
       preview = preview.substring(_title.length).trim();
     }
     if (preview.isEmpty) preview = _excerpt;
-    const int maxLen = 140;
-    if (preview.length > maxLen) {
-      preview = preview.substring(0, maxLen).trimRight();
-      if (!preview.endsWith('…')) preview = '$preview…';
-    }
     _excerpt = preview;
     setState(() {});
   }
@@ -141,9 +142,13 @@ class _PostExportScreenState extends State<PostExportScreen>
     final buffer = StringBuffer();
     void walk(dynamic n) {
       if (n is Map) {
+        // 제목 노드는 건너뛰기
+        if (n['isTitle'] == true) {
+          return;
+        }
+
         n.forEach((key, value) {
           final k = key.toString().toLowerCase();
-          if (k == 'title') return; // 제목 제외
           if (value is String) {
             if (k.contains('text') ||
                 k.contains('content') ||
@@ -177,14 +182,68 @@ class _PostExportScreenState extends State<PostExportScreen>
     }
   }
 
+  // 등록 가능 여부 확인 (서버 API 스펙 준수)
+  bool _canPublish() {
+    // 1. 기본 상태 확인
+    if (_isUploading || _isUploadingThumb) {
+      return false;
+    }
+
+    // 2. 필수 필드 확인 (모든 공개 범위에서 필수)
+    if (_title.trim().isEmpty) {
+      return false;
+    }
+    if (_excerpt.trim().isEmpty) {
+      return false;
+    }
+    if (_exportedThumbnailImageUrl.trim().isEmpty) {
+      return false;
+    }
+
+    // 3. 그룹 공유시 그룹 선택 확인
+    if (!_audienceSelectAll &&
+        !_audiencePrivateOnly &&
+        _selectedAudienceGroupIds.isEmpty) {
+      return false;
+    }
+
+    return true;
+  }
+
+  // 등록 불가능할 때 표시할 에러 메시지 (서버 API 스펙 준수)
+  String _getPublishErrorMessage() {
+    if (_isUploadingThumb) {
+      return '이미지 업로드 중입니다.';
+    }
+    if (_title.trim().isEmpty) {
+      return '제목을 입력해주세요.';
+    }
+    if (_excerpt.trim().isEmpty) {
+      return '본문 내용을 입력해주세요.';
+    }
+    if (_exportedThumbnailImageUrl.trim().isEmpty) {
+      return '썸네일 이미지를 먼저 선택하세요.';
+    }
+    if (!_audienceSelectAll &&
+        !_audiencePrivateOnly &&
+        _selectedAudienceGroupIds.isEmpty) {
+      return '그룹 공유를 선택했을 경우 최소 1개 이상의 그룹을 선택해주세요.';
+    }
+    return '등록할 수 없습니다.';
+  }
+
   void _openVisibilitySheet() async {
-    final result = await showModalBottomSheet(
+    final isDark = Theme.of(context).colorScheme.brightness == Brightness.dark;
+    setState(() {
+      isGrouping = true;
+    });
+    await showModalBottomSheet(
       context: context,
       backgroundColor: Theme.of(context).colorScheme.surface,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
-      barrierColor: Colors.black54,
+      barrierColor: isDark ? null : Colors.black.withOpacity(0.2),
       builder: (_) {
         return ChangeNotifierProvider.value(
           value: context.read<GroupProvider>(),
@@ -192,48 +251,77 @@ class _PostExportScreenState extends State<PostExportScreen>
             initialSelectedIds: _selectedAudienceGroupIds,
             initialSelectAll: _audienceSelectAll,
             initialPrivateOnly: _audiencePrivateOnly,
+            title: _title,
+            excerpt: _excerpt,
+            thumbnailImageUrl: _exportedThumbnailImageUrl,
+            onSelectionChanged: (
+              selectAll,
+              privateOnly,
+              selectedGroupIds,
+              selectedNames,
+            ) {
+              // 실시간으로 상태 업데이트
+              String label;
+              if (selectAll) {
+                label = '전체 공개';
+              } else if (privateOnly) {
+                label = '나만 보기';
+              } else {
+                if (selectedNames.length > 3) {
+                  final int extra = selectedNames.length - 3;
+                  label =
+                      '${selectedNames[0]}, ${selectedNames[1]}, ${selectedNames[2]} +$extra';
+                } else {
+                  label = selectedNames.join(', ');
+                }
+              }
+              setState(() {
+                _audienceButtonText = label;
+                _audienceSelectAll = selectAll;
+                _audiencePrivateOnly = privateOnly;
+                _selectedAudienceGroupIds
+                  ..clear()
+                  ..addAll(selectedGroupIds);
+              });
+            },
           ),
         );
       },
       isScrollControlled: true,
       constraints: BoxConstraints(
-        maxHeight: MediaQuery.of(context).size.height * 0.9,
+        maxHeight: MediaQuery.of(context).size.height * 0.65,
       ),
     );
-    if (!mounted) return;
-    if (result is Map) {
-      final bool selectAll = result['selectAll'] == true;
-      final bool privateOnly = result['privateOnly'] == true;
-      final List<dynamic> names =
-          (result['selectedNames'] as List?) ?? const [];
-      final List<dynamic> ids = (result['selectedIds'] as List?) ?? const [];
-      String label;
-      if (selectAll) {
-        label = '전체 공개';
-      } else if (privateOnly) {
-        label = '나만 보기';
-      } else {
-        if (names.length > 3) {
-          final int extra = names.length - 3;
-          label = '${names[0]}, ${names[1]}, ${names[2]} +$extra';
-        } else {
-          label = names.join(', ');
-        }
-      }
-      setState(() {
-        _audienceButtonText = label;
-        _audienceSelectAll = selectAll;
-        _audiencePrivateOnly = privateOnly;
-        _selectedAudienceGroupIds
-          ..clear()
-          ..addAll(ids.whereType<int>());
-      });
-    }
+    setState(() {
+      isGrouping = false;
+    });
   }
 
   Future<void> _publish() async {
     try {
-      // 썸네일 필수 검증 (이중 방어)
+      // 1. 제목 검증 (모든 공개 범위에서 필수)
+      if (_title.trim().isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('제목을 입력해주세요.'),
+            backgroundColor: Colors.red,
+          ),
+        );
+        return;
+      }
+
+      // 2. 컨텐츠 검증 (모든 공개 범위에서 필수)
+      if (_excerpt.trim().isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('본문 내용을 입력해주세요.'),
+            backgroundColor: Colors.red,
+          ),
+        );
+        return;
+      }
+
+      // 3. 썸네일 검증 (모든 공개 범위에서 필수)
       if (_exportedThumbnailImageUrl.trim().isEmpty) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -244,47 +332,71 @@ class _PostExportScreenState extends State<PostExportScreen>
         return;
       }
 
-      // 업로드 시작 - 로딩 상태 표시
+      // 4. 그룹 공유시 그룹 선택 검증
+      if (!_audienceSelectAll &&
+          !_audiencePrivateOnly &&
+          _selectedAudienceGroupIds.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('그룹 공유를 선택했을 경우 최소 1개 이상의 그룹을 선택해주세요.'),
+            backgroundColor: Colors.red,
+          ),
+        );
+        return;
+      }
+
+      // 모든 검증 통과 후 업로드 시작
       setState(() {
         _isUploading = true;
       });
 
       final Map<String, dynamic> payload = await _buildFinalJson();
-      // 썸네일 정보 포함 (키 통일)
-      payload['thumbnailImageUrl'] = _exportedThumbnailImageUrl;
-      if (_thumbnailImageId != null) {
-        payload['thumbnailImageId'] = _thumbnailImageId;
-      }
+
+      // 최종 검증된 데이터 로깅
       final String json = const JsonEncoder.withIndent('  ').convert(payload);
-      debugPrint('===== FINAL POST JSON =====');
+      debugPrint('===== FINAL POST JSON (API SPEC COMPLIANT) =====');
+      debugPrint('제목: $_title');
+      debugPrint('컨텐츠: $_excerpt');
+      debugPrint('썸네일: $_exportedThumbnailImageUrl');
+      debugPrint(
+        '공개 범위: ${_audienceSelectAll ? "PUBLIC" : (_audiencePrivateOnly ? "PRIVATE" : "GROUPS")}',
+      );
+      if (!_audienceSelectAll && !_audiencePrivateOnly) {
+        debugPrint('선택된 그룹: $_selectedAudienceGroupIds');
+      }
       printLarge(json);
 
       if (!mounted) return;
 
       // BlogService를 통한 서버 업로드
+
       final blogService = BlogService();
       final uploadResult = await blogService.uploadPost(
         postData: payload,
-        thumbnailImageId: payload['thumbnailImageId']?.toString(),
+        thumbnailImageId: _thumbnailImageId?.toString(),
       );
 
       debugPrint('===== UPLOAD RESULT =====');
       debugPrint('Upload successful: ${uploadResult}');
 
       if (!mounted) return;
-
-      // 성공 메시지 표시
+      Navigator.of(context).pop();
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('블로그가 성공적으로 발행되었습니다!'),
-          backgroundColor: Colors.green,
+        SnackBar(
+          content: Text('성공적으로 등록되었어요'),
+          backgroundColor: Theme.of(context).colorScheme.onSurface,
+          action: SnackBarAction(
+            label: '확인',
+            textColor: Theme.of(context).colorScheme.onSurface,
+            onPressed: () => Navigator.of(context).pop(),
+          ),
         ),
       );
 
       // 업로드 성공 시 바로 글보기 화면으로 이동
-      Navigator.of(context).push(
+      Navigator.of(context).pushReplacement(
         PageRouteBuilder(
-          transitionDuration: const Duration(milliseconds: 420),
+          transitionDuration: const Duration(milliseconds: 1000),
           pageBuilder:
               (_, __, ___) => PostReaderScreen(
                 exported: uploadResult, // 서버 응답 데이터 직접 사용
@@ -382,9 +494,71 @@ class _PostExportScreenState extends State<PostExportScreen>
     );
   }
 
+  Widget _buildDynamicBackground() {
+    final isDark = Theme.of(context).colorScheme.brightness == Brightness.dark;
+    return Positioned.fill(
+      child: Stack(
+        children: [
+          // 썸네일 이미지 또는 단색 배경
+          Positioned.fill(
+            child:
+                _exportedThumbnailImageUrl.isNotEmpty
+                    ? Image.network(
+                      _exportedThumbnailImageUrl,
+                      fit: BoxFit.cover,
+                      errorBuilder:
+                          (context, error, stackTrace) =>
+                              Container(color: AppColors.darkSurface),
+                    )
+                    : Container(color: AppColors.darkSurface),
+          ),
+          // 블러 오버레이 (썸네일이 있을 때만)
+          if (_exportedThumbnailImageUrl.isNotEmpty)
+            Positioned.fill(
+              child: BackdropFilter(
+                filter: ui.ImageFilter.blur(sigmaX: 15, sigmaY: 15),
+                child: Container(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [
+                        isDark
+                            ? Theme.of(
+                              context,
+                            ).colorScheme.background.withOpacity(0.8)
+                            : Theme.of(
+                              context,
+                            ).colorScheme.background.withOpacity(0.6),
+                        isDark
+                            ? Theme.of(
+                              context,
+                            ).colorScheme.background.withOpacity(0.8)
+                            : Theme.of(
+                              context,
+                            ).colorScheme.background.withOpacity(0.6),
+                        isDark
+                            ? Theme.of(
+                              context,
+                            ).colorScheme.background.withOpacity(0.8)
+                            : Theme.of(
+                              context,
+                            ).colorScheme.background.withOpacity(0.6),
+                      ],
+                      stops: const [0.0, 0.7, 1.0],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    final cardRadius = 15.0; // PostCard와 동일한 라운드
+    final cardRadius = 12.0; // PostCard와 동일한 라운드
 
     return WillPopScope(
       onWillPop: () async {
@@ -392,225 +566,269 @@ class _PostExportScreenState extends State<PostExportScreen>
           'thumbnailImageUrl': _exportedThumbnailImageUrl,
           'thumbnailImageId': _thumbnailImageId,
         });
-        return false;
+        return true;
       },
-      child: Scaffold(
-        backgroundColor: Theme.of(context).colorScheme.surface,
-        appBar: AppBar(
-          backgroundColor: Theme.of(context).colorScheme.surface,
-          elevation: 0,
-          title: Text(
-            '',
-            style: TextStyle(color: Theme.of(context).colorScheme.onSurface),
-          ),
-          iconTheme: IconThemeData(
-            color: Theme.of(context).colorScheme.onSurface,
-          ),
-          actions: [
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20.0),
-              child: TextButton(
-                onPressed: () {
-                  final bool canPublish =
-                      !_isUploading &&
-                      !_isUploadingThumb &&
-                      _exportedThumbnailImageUrl.isNotEmpty;
-                  if (canPublish) {
-                    _publish();
-                  } else {
-                    String msg =
-                        _isUploadingThumb
-                            ? '이미지 업로드 중입니다.'
-                            : '썸네일 이미지를 먼저 선택하세요.';
-                    ScaffoldMessenger.of(
-                      context,
-                    ).showSnackBar(SnackBar(content: Text(msg)));
-                  }
-                },
-                child:
-                    _isUploading
-                        ? Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            SizedBox(
-                              width: 16,
-                              height: 16,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                valueColor: AlwaysStoppedAnimation<Color>(
-                                  Theme.of(context).colorScheme.onSurface,
-                                ),
-                              ),
-                            ),
-                          ],
-                        )
-                        : Builder(
-                          builder: (context) {
-                            final bool canPublish =
-                                !_isUploading &&
-                                !_isUploadingThumb &&
-                                _exportedThumbnailImageUrl.isNotEmpty;
-                            return Text(
-                              '등록',
-                              style: TextStyle(
-                                color: Theme.of(context).colorScheme.onSurface
-                                    .withValues(alpha: canPublish ? 1.0 : 0.4),
-                                fontWeight: FontWeight.w600,
-                                fontSize: 18,
-                              ),
-                            );
-                          },
+      child: Stack(
+        children: [
+          _buildDynamicBackground(),
+          Scaffold(
+            backgroundColor: Colors.transparent,
+            extendBodyBehindAppBar: true,
+            appBar:
+                isGrouping
+                    ? null
+                    : AppBar(
+                      toolbarHeight: 50,
+                      backgroundColor: Colors.transparent,
+                      elevation: 0,
+                      scrolledUnderElevation: 0,
+                      leading: IconButton(
+                        onPressed: () {
+                          Navigator.of(context).pop();
+                        },
+                        icon: Icon(
+                          Icons.arrow_back_ios_new_outlined,
+                          size: 18,
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.onSurface.withOpacity(0.6),
                         ),
-              ),
-            ),
-          ],
-        ),
-        body: Stack(
-          children: [
-            SafeArea(
-              child: Column(
-                children: [
-                  Spacer(),
+                      ),
 
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 22.0),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          '미리보기',
-                          style: TextStyle(
-                            color: Theme.of(
-                              context,
-                            ).colorScheme.onSurface.withValues(alpha: 0.6),
-                            fontSize: 16,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                        AspectRatio(
-                          aspectRatio: 9 / 15, // PostCard와 동일한 4:5 비율
-                          child: GestureDetector(
-                            onTap: _openGalleryPicker,
-                            onLongPress: _toggleEditMode,
-                            child: AnimatedBuilder(
-                              animation: _introCurve,
-                              builder: (context, _) {
-                                final double scale =
-                                    0.9 + 0.1 * _introCurve.value;
-                                final double translateY =
-                                    (1 - _introCurve.value) * 10;
-                                return Transform.translate(
-                                  offset: Offset(0, translateY),
-                                  child: Transform.scale(
-                                    scale: scale,
-                                    child: Container(
-                                      decoration: BoxDecoration(
-                                        borderRadius: BorderRadius.circular(
-                                          cardRadius,
-                                        ),
-                                        boxShadow: [
-                                          BoxShadow(
-                                            color: Colors.black.withOpacity(
-                                              0.2,
-                                            ),
-                                            blurRadius: 8,
-                                            offset: const Offset(0, 4),
-                                          ),
-                                        ],
-                                      ),
-                                      child: ClipRRect(
-                                        borderRadius: BorderRadius.circular(
-                                          cardRadius,
-                                        ),
-                                        child: Stack(
-                                          children: [
-                                            // 배경 이미지
-                                            Positioned.fill(
-                                              child:
-                                                  _isUploadingThumb
-                                                      ? const _ShimmerPlaceholder()
-                                                      : (_exportedThumbnailImageUrl
-                                                              .isEmpty
-                                                          ? const _EmptyImagePlaceholder()
-                                                          : Image.network(
-                                                            _exportedThumbnailImageUrl,
-                                                            fit: BoxFit.cover,
-                                                            errorBuilder:
-                                                                (c, e, s) =>
-                                                                    const _EmptyImagePlaceholder(),
-                                                          )),
-                                            ),
-                                            // 하단 그라데이션 오버레이 (PostCard와 동일)
-                                            Positioned.fill(
-                                              child: Container(
-                                                decoration: BoxDecoration(
-                                                  gradient: LinearGradient(
-                                                    begin: Alignment.topCenter,
-                                                    end: Alignment.bottomCenter,
-                                                    colors: [
-                                                      Colors.transparent,
-                                                      Colors.transparent,
-                                                      Colors.black.withOpacity(
-                                                        0.2,
-                                                      ),
-                                                      Colors.black.withOpacity(
-                                                        0.35,
-                                                      ),
-                                                    ],
-                                                    stops: const [
-                                                      0.0,
-                                                      0.4,
-                                                      0.7,
-                                                      1.0,
-                                                    ],
-                                                  ),
+                      centerTitle: false,
+                      actions: [
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 10.0),
+                          child: TextButton(
+                            onPressed: () {
+                              final bool canPublish = _canPublish();
+                              if (canPublish) {
+                                _publish();
+                              } else {
+                                String msg = _getPublishErrorMessage();
+                                ScaffoldMessenger.of(
+                                  context,
+                                ).showSnackBar(SnackBar(content: Text(msg)));
+                              }
+                            },
+                            child:
+                                _isUploading
+                                    ? Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        SizedBox(
+                                          width: 16,
+                                          height: 16,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                            valueColor:
+                                                AlwaysStoppedAnimation<Color>(
+                                                  Theme.of(
+                                                    context,
+                                                  ).colorScheme.primary,
                                                 ),
-                                              ),
-                                            ),
-                                            // 상단 작성자 정보 (PostCard 스타일)
-                                            Positioned(
-                                              left: 12,
-                                              right: 12,
-                                              top: 12,
-                                              child:
-                                                  _buildOverlayAuthorPreview(),
-                                            ),
-                                            // 하단 제목 텍스트 (PostCard 스타일)
-                                            Positioned(
-                                              left: 16,
-                                              right: 16,
-                                              bottom: 16,
-                                              child: _buildOverlayTextPreview(),
-                                            ),
-                                          ],
+                                          ),
                                         ),
-                                      ),
+                                      ],
+                                    )
+                                    : Builder(
+                                      builder: (context) {
+                                        final bool canPublish = _canPublish();
+                                        return Text(
+                                          '등록',
+                                          style: TextStyle(
+                                            color: Theme.of(
+                                              context,
+                                            ).colorScheme.onSurface.withValues(
+                                              alpha: canPublish ? 1.0 : 0.4,
+                                            ),
+                                            fontWeight: FontWeight.w600,
+                                            fontSize: 16,
+                                          ),
+                                        );
+                                      },
                                     ),
-                                  ),
-                                );
-                              },
-                            ),
                           ),
                         ),
                       ],
                     ),
-                  ),
-                  Spacer(flex: 5),
+            body: SafeArea(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  if (!isGrouping) const Spacer(flex: 2),
+                  // PostList와 동일한 카드 디자인
+                  if (!isGrouping)
+                    Stack(
+                      children: [
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 50.0),
+                          child: Center(
+                            child: AspectRatio(
+                              aspectRatio: 4 / 5, // PostList와 동일한 4:5 비율
+                              child: GestureDetector(
+                                onTap: _openGalleryPicker,
+                                onLongPress: _toggleEditMode,
+                                child: AnimatedBuilder(
+                                  animation: _introCurve,
+                                  builder: (context, _) {
+                                    final double scale =
+                                        0.85 +
+                                        0.15 *
+                                            _introCurve
+                                                .value; // PostList와 동일한 스케일
+                                    final double translateY =
+                                        (1 - _introCurve.value) * 10;
+                                    return Transform.translate(
+                                      offset: Offset(0, translateY),
+                                      child: Transform.scale(
+                                        scale: scale,
+                                        child: Container(
+                                          decoration: BoxDecoration(
+                                            borderRadius: BorderRadius.circular(
+                                              cardRadius,
+                                            ),
+                                            border: Border.all(
+                                              color:
+                                                  Theme.of(
+                                                    context,
+                                                  ).colorScheme.surfaceVariant,
+                                              width: 1.5,
+                                            ),
+                                          ),
+                                          child: ClipRRect(
+                                            borderRadius: BorderRadius.circular(
+                                              cardRadius,
+                                            ),
+                                            child: Stack(
+                                              children: [
+                                                // 배경 이미지 (PostCard와 동일)
+                                                Positioned.fill(
+                                                  child:
+                                                      _isUploadingThumb
+                                                          ? const _ShimmerPlaceholder()
+                                                          : (_exportedThumbnailImageUrl
+                                                                  .isEmpty
+                                                              ? const _EmptyImagePlaceholder()
+                                                              : Image.network(
+                                                                _exportedThumbnailImageUrl,
+                                                                fit:
+                                                                    BoxFit
+                                                                        .cover,
+                                                                errorBuilder:
+                                                                    (c, e, s) =>
+                                                                        const _EmptyImagePlaceholder(),
+                                                              )),
+                                                ),
+                                                // 좌하단 작성자 정보 (PostCard와 동일)
+                                                Positioned(
+                                                  left: 6,
+                                                  bottom: 6,
+                                                  child: _buildAuthorInfo(),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    );
+                                  },
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                        if (_exportedThumbnailImageUrl.isEmpty)
+                          Positioned(
+                            right: 40,
+                            bottom: 0,
+                            child: Container(
+                              padding: const EdgeInsets.all(8),
+                              decoration: BoxDecoration(
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.onSurface.withOpacity(1),
+                                borderRadius: BorderRadius.circular(16),
+                              ),
+                              child: Icon(
+                                Icons.camera_alt,
+                                size: 18,
+                                color: Theme.of(context).colorScheme.surface,
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
 
+                  // 하단 텍스트 영역 (PostList의 StickyAuthor와 동일)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 20,
+                      vertical: 30,
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      mainAxisAlignment: MainAxisAlignment.start,
+                      children: [
+                        // 제목
+                        Text(
+                          _title,
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.onSurface.withOpacity(0.9),
+                            fontSize: 35,
+                            fontWeight: FontWeight.bold,
+                            letterSpacing: -0.2,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        const SizedBox(height: 8),
+                        // 내용
+                        Text(
+                          _excerpt,
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.onSurface.withOpacity(0.7),
+                            fontSize: 14,
+                            fontWeight: FontWeight.w300,
+                            height: 1.8,
+                            letterSpacing: -0.1,
+                          ),
+                          maxLines: 5,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        const SizedBox(height: 10),
+                      ],
+                    ),
+                  ),
+                  const Spacer(),
+
+                  // 공개 설정 버튼
                   Padding(
                     padding: const EdgeInsets.symmetric(
                       horizontal: 22.0,
-                      vertical: 10.0,
+                      vertical: 0.0,
                     ),
                     child: ElevatedButton(
                       onPressed: _openVisibilitySheet,
                       style: ElevatedButton.styleFrom(
                         minimumSize: const Size(double.infinity, 50),
-
+                        backgroundColor: Theme.of(context).colorScheme.surface,
                         foregroundColor:
                             Theme.of(context).colorScheme.onSurface,
                         shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(10),
+                          borderRadius: BorderRadius.circular(16),
+                          side: BorderSide(
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.onSurface.withOpacity(0.1),
+                            width: 1,
+                          ),
                         ),
                       ),
                       child: Row(
@@ -623,80 +841,73 @@ class _PostExportScreenState extends State<PostExportScreen>
                             ),
                           ),
                           Spacer(),
-                          Icon(Icons.arrow_drop_up_outlined, size: 20),
+                          Icon(
+                            Icons.arrow_drop_up_outlined,
+                            size: 20,
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.onSurface.withOpacity(0.6),
+                          ),
                         ],
                       ),
                     ),
                   ),
+                  const SizedBox(height: 10),
                 ],
               ),
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
 
-  // PostCard와 동일한 상단 작성자 오버레이 (미리보기용)
-  Widget _buildOverlayAuthorPreview() {
-    return Row(
-      children: [
-        Container(
-          width: 50,
-          height: 50,
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(300),
-            border: Border.all(color: Colors.white.withOpacity(0.3), width: 2),
-          ),
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(300),
-            child: Image.network(
-              "https://thumbnews.nateimg.co.kr/view610///news.nateimg.co.kr/orgImg/pt/2025/06/12/202506122116776778_684ac5398c368.jpg",
-              fit: BoxFit.cover,
-              width: 50,
-              height: 50,
-            ),
-          ),
-        ),
-        const SizedBox(width: 12),
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: const [
-            Text(
-              'affection-jk',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 16,
-                fontFamily: 'Pretendard Variable',
-                fontWeight: FontWeight.w600,
-                shadows: [
-                  Shadow(
-                    color: Colors.black,
-                    blurRadius: 2,
-                    offset: Offset(0, 1),
+  // PostCard와 동일한 좌하단 작성자 정보
+  Widget _buildAuthorInfo() {
+    return Consumer<UserProvider>(
+      builder: (context, userProvider, child) {
+        final currentUser = userProvider.currentUser;
+        final username =
+            currentUser?.username ?? currentUser?.alias ?? 'Unknown';
+        final profileImageUrl = currentUser?.profileImageUrl ?? '';
+
+        return ClipRRect(
+          borderRadius: BorderRadius.circular(35),
+          child: BackdropFilter(
+            filter: ui.ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+            child: Container(
+              padding: const EdgeInsets.only(right: 6),
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.surface.withOpacity(0.15),
+                borderRadius: BorderRadius.circular(35),
+              ),
+              child: Row(
+                children: [
+                  CommonProfileAvatar(
+                    imageUrl: profileImageUrl,
+                    username: username,
+                    size: 35,
+                    borderWidth: 1,
+                    borderColor: Theme.of(
+                      context,
+                    ).colorScheme.surface.withOpacity(0.2),
                   ),
+                  const SizedBox(width: 8),
+                  Text(
+                    username,
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.onSurface,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w300,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
                 ],
               ),
             ),
-          ],
-        ),
-      ],
-    );
-  }
-
-  // PostCard와 동일한 하단 제목 텍스트 (미리보기용)
-  Widget _buildOverlayTextPreview() {
-    return Text(
-      _title,
-      maxLines: 2,
-      overflow: TextOverflow.ellipsis,
-      style: const TextStyle(
-        color: Colors.white,
-        fontSize: 36,
-        fontFamily: 'Pretendard Variable',
-        fontWeight: FontWeight.bold,
-      ),
+          ),
+        );
+      },
     );
   }
 }
@@ -705,11 +916,25 @@ class _AudiencePicker extends StatefulWidget {
   final Set<int> initialSelectedIds;
   final bool initialSelectAll;
   final bool initialPrivateOnly;
+  final String title;
+  final String excerpt;
+  final String thumbnailImageUrl;
+  final Function(
+    bool selectAll,
+    bool privateOnly,
+    Set<int> selectedGroupIds,
+    List<String> selectedNames,
+  )
+  onSelectionChanged;
 
   const _AudiencePicker({
     this.initialSelectedIds = const {},
     this.initialSelectAll = true,
     this.initialPrivateOnly = false,
+    required this.title,
+    required this.excerpt,
+    required this.thumbnailImageUrl,
+    required this.onSelectionChanged,
   });
 
   @override
@@ -721,21 +946,12 @@ class _AudiencePickerState extends State<_AudiencePicker> {
   late bool _selectAll; // 전체공개 토글
   late bool _privateOnly; // 나만보기
 
-  // 초기 상태 저장(변경 감지용)
-  late final Set<int> _initialSelectedIds;
-  late final bool _initialSelectAll;
-  late final bool _initialPrivateOnly;
-
   @override
   void initState() {
     super.initState();
     _selectedGroupIds = Set<int>.from(widget.initialSelectedIds);
     _selectAll = widget.initialSelectAll;
     _privateOnly = widget.initialPrivateOnly;
-
-    _initialSelectedIds = Set<int>.from(widget.initialSelectedIds);
-    _initialSelectAll = widget.initialSelectAll;
-    _initialPrivateOnly = widget.initialPrivateOnly;
 
     // 바텀시트 진입 시 실제 그룹 목록 로드
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -751,225 +967,383 @@ class _AudiencePickerState extends State<_AudiencePicker> {
   Widget build(BuildContext context) {
     final groupProv = context.watch<GroupProvider>();
     final List<Group> groups = groupProv.myGroups;
-    return SizedBox(
-      height: MediaQuery.of(context).size.height,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const SizedBox(height: 8),
-          Center(
-            child: Container(
-              width: 44,
-              height: 5,
-              decoration: BoxDecoration(
-                color: Theme.of(
-                  context,
-                ).colorScheme.onSurface.withOpacity(0.24),
-                borderRadius: BorderRadius.circular(3),
+    return Container(
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.background,
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 15),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const SizedBox(height: 12),
+            Center(
+              child: Container(
+                width: 44,
+                height: 5,
+                decoration: BoxDecoration(
+                  color: Theme.of(
+                    context,
+                  ).colorScheme.onSurface.withOpacity(0.24),
+                  borderRadius: BorderRadius.circular(3),
+                ),
               ),
             ),
-          ),
-          const SizedBox(height: 20),
-
-          Expanded(
-            child: Builder(
-              builder: (context) {
-                final list = _displayGroups(groups, groupProv.isLoading);
-                final total = list.length + 2; // + 전체공개, 나만보기
-                return ListView.builder(
-                  itemCount: total,
-                  itemBuilder: (context, i) {
-                    // 0: 전체공개
-                    if (i == 0) {
-                      final bool checked = _selectAll;
-                      return ListTile(
-                        leading: CircleAvatar(
-                          radius: 30,
-                          backgroundColor:
-                              Theme.of(context).colorScheme.surfaceVariant,
-                          child: Icon(
-                            Icons.public,
-                            color: Theme.of(context).colorScheme.onSurface,
-                          ),
-                        ),
-                        title: Text(
-                          '전체 공개',
-                          style: TextStyle(
-                            color: Theme.of(context).colorScheme.onSurface,
-                          ),
-                        ),
-                        subtitle: Text(
-                          '모든 사용자에게 공개',
-                          style: TextStyle(
-                            color: Theme.of(
-                              context,
-                            ).colorScheme.onSurface.withOpacity(0.7),
-                          ),
-                        ),
-                        trailing: Icon(
-                          checked
-                              ? Icons.check_circle
-                              : Icons.radio_button_unchecked,
-                          color:
-                              checked
-                                  ? Theme.of(context).colorScheme.primary
-                                  : Theme.of(
-                                    context,
-                                  ).colorScheme.onSurface.withOpacity(0.24),
-                        ),
-                        onTap: () {
-                          setState(() {
-                            _selectAll = true;
-                            _privateOnly = false;
-                            _selectedGroupIds.clear();
-                          });
-                        },
-                      );
-                    }
-                    // 1: 나만보기
-                    if (i == 1) {
-                      final bool checked = _privateOnly;
-                      return ListTile(
-                        leading: CircleAvatar(
-                          radius: 30,
-                          backgroundColor:
-                              Theme.of(context).colorScheme.surfaceVariant,
-                          child: Icon(
-                            Icons.lock,
-                            color: Theme.of(context).colorScheme.onSurface,
-                          ),
-                        ),
-                        title: Text(
-                          '나만 보기',
-                          style: TextStyle(
-                            color: Theme.of(context).colorScheme.onSurface,
-                          ),
-                        ),
-                        subtitle: Text(
-                          '본인만 볼 수 있음',
-                          style: TextStyle(
-                            color: Theme.of(
-                              context,
-                            ).colorScheme.onSurface.withOpacity(0.7),
-                          ),
-                        ),
-                        trailing: Icon(
-                          checked
-                              ? Icons.check_circle
-                              : Icons.radio_button_unchecked,
-                          color:
-                              checked
-                                  ? Theme.of(context).colorScheme.primary
-                                  : Theme.of(
-                                    context,
-                                  ).colorScheme.onSurface.withOpacity(0.24),
-                        ),
-                        onTap: () {
-                          setState(() {
-                            _privateOnly = true;
-                            _selectAll = false;
-                            _selectedGroupIds.clear();
-                          });
-                        },
-                      );
-                    }
-
-                    // 나머지: 그룹들
-                    final g = list[i - 2];
-                    final checked = _selectedGroupIds.contains(g.id);
-                    return ListTile(
-                      leading: CircleAvatar(
-                        radius: 30,
-                        backgroundColor:
-                            Theme.of(context).colorScheme.surfaceVariant,
-                        child: Text(g.name.substring(0, 1)),
-                      ),
-                      title: Text(
-                        g.name,
-                        style: TextStyle(
-                          color: Theme.of(context).colorScheme.onSurface,
-                        ),
-                      ),
-                      subtitle: Text(
-                        g.description,
-                        style: TextStyle(
-                          color: Theme.of(
-                            context,
-                          ).colorScheme.onSurface.withOpacity(0.7),
-                        ),
-                      ),
-                      trailing: Icon(
-                        checked
-                            ? Icons.check_circle
-                            : Icons.radio_button_unchecked,
-                        color:
-                            checked
-                                ? Theme.of(context).colorScheme.primary
-                                : Theme.of(
-                                  context,
-                                ).colorScheme.onSurface.withOpacity(0.24),
-                      ),
-                      onTap: () {
-                        setState(() {
-                          _selectAll = false;
-                          _privateOnly = false;
-                          if (checked) {
-                            _selectedGroupIds.remove(g.id);
-                          } else {
-                            _selectedGroupIds.add(g.id);
-                          }
-                        });
-                      },
-                    );
-                  },
-                );
-              },
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: SizedBox(
-              width: double.infinity,
-              height: 48,
-              child: ElevatedButton.icon(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor:
-                      _hasChanges() ? Colors.white : Colors.white12,
-                  foregroundColor:
-                      _hasChanges() ? Colors.black : Colors.white38,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
+            const SizedBox(height: 15),
+            Padding(
+              padding: const EdgeInsets.only(left: 8, right: 8),
+              child: Row(
+                children: [
+                  Text(
+                    '공개 범위 선택',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.onSurface.withOpacity(0.6),
+                    ),
                   ),
-                ),
-                icon: const Icon(Icons.check),
-                label: const Text(
-                  '적용하기',
-                  style: TextStyle(fontWeight: FontWeight.bold),
-                ),
-                onPressed: () {
-                  final selected = _selectedGroupIds;
-                  final all = _selectAll;
-                  final onlyMe = _privateOnly;
-                  final current = _displayGroups(
-                    context.read<GroupProvider>().myGroups,
-                    false,
+                  Spacer(),
+                  GestureDetector(
+                    onTap: () {
+                      Navigator.pop(context);
+                    },
+                    child: Icon(
+                      Icons.close_outlined,
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.onSurface.withOpacity(0.5),
+                      size: 20,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+            Expanded(
+              child: Builder(
+                builder: (context) {
+                  final list = _displayGroups(groups, groupProv.isLoading);
+
+                  return ListView.builder(
+                    itemCount:
+                        list.length + 1, // +1 for the audience options row
+                    itemBuilder: (context, i) {
+                      // 첫 번째 아이템: 전체공개-나만보기 로우
+                      if (i == 0) {
+                        return Container(
+                          margin: const EdgeInsets.only(bottom: 8, top: 8),
+                          child: Row(
+                            children: [
+                              // 전체공개
+                              Expanded(
+                                child: Container(
+                                  margin: const EdgeInsets.only(right: 3),
+                                  decoration: BoxDecoration(
+                                    color:
+                                        _selectAll
+                                            ? Theme.of(
+                                              context,
+                                            ).colorScheme.onSurface
+                                            : Theme.of(context)
+                                                .colorScheme
+                                                .surface
+                                                .withOpacity(1),
+                                    borderRadius: BorderRadius.circular(16),
+                                  ),
+                                  child: Material(
+                                    color: Colors.transparent,
+                                    child: InkWell(
+                                      borderRadius: BorderRadius.circular(16),
+                                      onTap: () {
+                                        setState(() {
+                                          _selectAll = true;
+                                          _privateOnly = false;
+                                          _selectedGroupIds.clear();
+                                        });
+                                        _notifySelectionChanged();
+                                      },
+                                      child: Padding(
+                                        padding: const EdgeInsets.all(16),
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            Row(
+                                              children: [
+                                                Expanded(
+                                                  child: Text(
+                                                    '전체 공개',
+                                                    style: TextStyle(
+                                                      fontSize: 16,
+                                                      fontWeight:
+                                                          FontWeight.w600,
+                                                      color:
+                                                          _selectAll
+                                                              ? Theme.of(
+                                                                    context,
+                                                                  )
+                                                                  .colorScheme
+                                                                  .surface
+                                                              : Theme.of(
+                                                                    context,
+                                                                  )
+                                                                  .colorScheme
+                                                                  .onSurface,
+                                                    ),
+                                                  ),
+                                                ),
+                                                if (_selectAll)
+                                                  Icon(
+                                                    Icons.check,
+                                                    color:
+                                                        Theme.of(
+                                                          context,
+                                                        ).colorScheme.surface,
+                                                    size: 20,
+                                                  ),
+                                              ],
+                                            ),
+                                            const SizedBox(height: 4),
+                                            Text(
+                                              '모든 사용자에게 공개',
+                                              style: TextStyle(
+                                                fontSize: 13,
+                                                color:
+                                                    _selectAll
+                                                        ? Theme.of(context)
+                                                            .colorScheme
+                                                            .surface
+                                                            .withOpacity(0.8)
+                                                        : Theme.of(context)
+                                                            .colorScheme
+                                                            .onSurface
+                                                            .withOpacity(0.7),
+                                                height: 1.2,
+                                              ),
+                                              maxLines: 2,
+                                              overflow: TextOverflow.ellipsis,
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              // 나만보기
+                              Expanded(
+                                child: Container(
+                                  margin: const EdgeInsets.only(left: 3),
+                                  decoration: BoxDecoration(
+                                    color:
+                                        _privateOnly
+                                            ? Theme.of(
+                                              context,
+                                            ).colorScheme.onSurface
+                                            : Theme.of(context)
+                                                .colorScheme
+                                                .surface
+                                                .withOpacity(1),
+                                    borderRadius: BorderRadius.circular(16),
+                                  ),
+                                  child: Material(
+                                    color: Colors.transparent,
+                                    child: InkWell(
+                                      borderRadius: BorderRadius.circular(16),
+                                      onTap: () {
+                                        setState(() {
+                                          _privateOnly = true;
+                                          _selectAll = false;
+                                          _selectedGroupIds.clear();
+                                        });
+                                        _notifySelectionChanged();
+                                      },
+                                      child: Padding(
+                                        padding: const EdgeInsets.all(16),
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            Row(
+                                              children: [
+                                                Expanded(
+                                                  child: Text(
+                                                    '나만 보기',
+                                                    style: TextStyle(
+                                                      fontSize: 16,
+                                                      fontWeight:
+                                                          FontWeight.w600,
+                                                      color:
+                                                          _privateOnly
+                                                              ? Theme.of(
+                                                                    context,
+                                                                  )
+                                                                  .colorScheme
+                                                                  .surface
+                                                              : Theme.of(
+                                                                    context,
+                                                                  )
+                                                                  .colorScheme
+                                                                  .onSurface,
+                                                    ),
+                                                  ),
+                                                ),
+                                                if (_privateOnly)
+                                                  Icon(
+                                                    Icons.check,
+                                                    color:
+                                                        Theme.of(
+                                                          context,
+                                                        ).colorScheme.surface,
+                                                    size: 20,
+                                                  ),
+                                              ],
+                                            ),
+                                            const SizedBox(height: 4),
+                                            Text(
+                                              '본인만 볼 수 있음',
+                                              style: TextStyle(
+                                                fontSize: 13,
+                                                color:
+                                                    _privateOnly
+                                                        ? Theme.of(context)
+                                                            .colorScheme
+                                                            .surface
+                                                            .withOpacity(0.8)
+                                                        : Theme.of(context)
+                                                            .colorScheme
+                                                            .onSurface
+                                                            .withOpacity(0.7),
+                                                height: 1.2,
+                                              ),
+                                              maxLines: 2,
+                                              overflow: TextOverflow.ellipsis,
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                      }
+
+                      // 그룹 아이템들 (i-1로 인덱스 조정)
+                      final g = list[i - 1];
+                      final checked = _selectedGroupIds.contains(g.id);
+                      return Container(
+                        margin: const EdgeInsets.only(bottom: 8),
+                        decoration: BoxDecoration(
+                          color:
+                              checked
+                                  ? Theme.of(context).colorScheme.onSurface
+                                  : Theme.of(
+                                    context,
+                                  ).colorScheme.background.withOpacity(1),
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        child: Material(
+                          color: Colors.transparent,
+                          child: InkWell(
+                            borderRadius: BorderRadius.circular(16),
+                            onTap: () {
+                              setState(() {
+                                if (checked) {
+                                  _selectedGroupIds.remove(g.id);
+                                } else {
+                                  // 그룹 선택 시 다른 옵션들 취소
+                                  _selectAll = false;
+                                  _privateOnly = false;
+                                  _selectedGroupIds.add(g.id);
+                                }
+                              });
+                              _notifySelectionChanged();
+                            },
+                            child: Padding(
+                              padding: const EdgeInsets.all(16),
+                              child: Row(
+                                children: [
+                                  // 그룹 정보
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          g.name,
+                                          style: TextStyle(
+                                            fontSize: 16,
+                                            fontWeight: FontWeight.w600,
+                                            color:
+                                                checked
+                                                    ? Theme.of(
+                                                      context,
+                                                    ).colorScheme.surface
+                                                    : Theme.of(
+                                                      context,
+                                                    ).colorScheme.onSurface,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 4),
+                                        Text(
+                                          g.description,
+                                          style: TextStyle(
+                                            fontSize: 14,
+                                            color:
+                                                checked
+                                                    ? Theme.of(context)
+                                                        .colorScheme
+                                                        .surface
+                                                        .withOpacity(0.8)
+                                                    : Theme.of(context)
+                                                        .colorScheme
+                                                        .onSurface
+                                                        .withOpacity(0.7),
+                                            height: 1.3,
+                                          ),
+                                          maxLines: 2,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  // 선택 아이콘
+                                  checked
+                                      ? Icon(
+                                        Icons.check,
+                                        color:
+                                            Theme.of(
+                                              context,
+                                            ).colorScheme.surface,
+                                        size: 20,
+                                      )
+                                      : Icon(
+                                        Icons.circle_outlined,
+                                        color: Theme.of(context)
+                                            .colorScheme
+                                            .onSurface
+                                            .withOpacity(0.4),
+                                        size: 20,
+                                      ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      );
+                    },
                   );
-                  final names =
-                      current
-                          .where((g) => selected.contains(g.id))
-                          .map((g) => g.name)
-                          .toList();
-                  Navigator.of(context).maybePop({
-                    'selectAll': all,
-                    'privateOnly': onlyMe,
-                    'selectedIds': selected.toList(),
-                    'selectedNames': names,
-                  });
                 },
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -978,14 +1352,23 @@ class _AudiencePickerState extends State<_AudiencePicker> {
     return List<Group>.from(original);
   }
 
-  bool _hasChanges() {
-    if (_selectAll != _initialSelectAll) return true;
-    if (_privateOnly != _initialPrivateOnly) return true;
-    if (_selectedGroupIds.length != _initialSelectedIds.length) return true;
-    for (final id in _selectedGroupIds) {
-      if (!_initialSelectedIds.contains(id)) return true;
-    }
-    return false;
+  void _notifySelectionChanged() {
+    final current = _displayGroups(
+      context.read<GroupProvider>().myGroups,
+      false,
+    );
+    final selectedNames =
+        current
+            .where((g) => _selectedGroupIds.contains(g.id))
+            .map((g) => g.name)
+            .toList();
+
+    widget.onSelectionChanged(
+      _selectAll,
+      _privateOnly,
+      _selectedGroupIds,
+      selectedNames,
+    );
   }
 }
 
@@ -1089,12 +1472,13 @@ class _EmptyImagePlaceholder extends StatelessWidget {
       child: Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
-          children: const [
-            Icon(Icons.image_outlined, color: Colors.white54, size: 32),
-            SizedBox(height: 6),
+          children: [
             Text(
-              '클릭해서 이미지를 선택해주세요.',
-              style: TextStyle(color: Colors.white54, fontSize: 12),
+              '썸네일을 선택해주세요',
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.onSurface,
+                fontSize: 15,
+              ),
             ),
           ],
         ),

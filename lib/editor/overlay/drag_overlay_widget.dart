@@ -59,7 +59,7 @@ class DragOverlayWidget extends StatelessWidget {
         preview = _buildLocationPreview(node as LocationNode);
         break;
       case 'paragraph':
-        preview = _buildParagraphPreview(node as dynamic); // 타입 캐스팅 제거
+        preview = _buildParagraphPreview(node as dynamic, context); // 타입 캐스팅 제거
         break;
       case 'link':
         preview = _buildLinkPreview(node as LinkNode);
@@ -223,16 +223,19 @@ class DragOverlayWidget extends StatelessWidget {
     );
   }
 
-  Widget _buildParagraphPreview(dynamic node) {
+  Widget _buildParagraphPreview(dynamic node, BuildContext context) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: Theme.of(context).colorScheme.surface.withOpacity(0.5),
         borderRadius: BorderRadius.circular(8),
       ),
       child: Text(
         node.text.text,
-        style: const TextStyle(fontSize: 14, color: Colors.black87),
+        style: TextStyle(
+          fontSize: 14,
+          color: Theme.of(context).colorScheme.onSurface,
+        ),
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
       ),

@@ -367,6 +367,27 @@ class _LinkComponentState extends State<_LinkComponent> with DocumentComponent {
     return di == current;
   }
 
+  bool _shouldShowBottomDropLine() {
+    final svc = widget.dragService;
+    if (svc == null) return false;
+    final di = svc.dropIndex;
+    if (di == null) return false;
+    final current = _getCurrentNodeIndex();
+    if (current == -1) return false;
+
+    // 마지막 노드인지 확인
+    final documentLength = svc.editorService.document.length;
+    final isLastNode = current == documentLength - 1;
+
+    if (isLastNode) {
+      // 마지막 노드일 때는 문서 끝에 삽입하는 경우만 표시
+      return di == documentLength;
+    }
+
+    // 일반적인 경우는 이중 표시 방지를 위해 하단 라인 비활성화
+    return false;
+  }
+
   int _getCurrentNodeIndex() {
     final svc = widget.dragService;
     if (svc == null) return -1;

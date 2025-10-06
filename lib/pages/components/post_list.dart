@@ -1,4 +1,6 @@
 // import 'dart:math';
+import 'dart:async';
+import 'package:doppy/pages/components/common_profile_avatar.dart';
 import 'package:doppy/pages/components/post_card.dart';
 import 'package:doppy/pages/components/shimmer_box.dart';
 import 'package:doppy/pages/screens/post_reader_screen.dart';
@@ -40,13 +42,25 @@ class _PostListState extends State<PostList> {
   final LikeService _likeService = LikeService();
   bool _isPointerDown = false; // 당김 중 손가락 눌림 상태 추적
   double _pullExtentPx = 0.0; // 커스텀 게이지 표현용 당김 픽셀
-  static const double _refreshTrigger = 140.0; // 트리거 거리(둔감)
+  static const double _refreshTrigger = 200.0; // 트리거 거리(더 둔감하게)
   bool _passedTrigger = false; // 임계치 통과 여부 (릴리즈 시점 확인용)
   // 스와이프 방향 판정 및 데드존 처리용
   double _accumDx = 0.0;
   double _accumDy = 0.0;
   bool? _isVerticalDrag; // null: 미정, true: 수직, false: 수평
-  static const double _deadZonePx = 100.0; // 100px 이전에는 게이지 표시/증가 억제
+  static const double _deadZonePx = 150.0; // 150px 이전에는 게이지 표시/증가 억제
+
+  // 제스처 감지용 변수들
+  double _gestureStartY = 0.0;
+  double _gestureAccumY = 0.0;
+  bool _isGestureActive = false;
+
+  // 연속 스크롤용 변수들
+  bool _isContinuousScroll = false;
+  Timer? _continuousScrollTimer;
+  Timer? _continuousScrollDelayTimer;
+  double _pointerX = 0.0; // 손의 X 위치 추적
+  double _screenCenter = 0.0; // 화면 중앙 위치
 
   @override
   void initState() {
@@ -54,6 +68,13 @@ class _PostListState extends State<PostList> {
     // 전체 화면 사용 (인스타그램 릴스 스타일)
     _pageController = PageController(viewportFraction: 0.65);
     _items = List<PostData>.from(widget.posts);
+
+    // 화면 중앙 위치 설정 (didChangeDependencies에서 업데이트됨)
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _screenCenter = MediaQuery.of(context).size.width / 2;
+      }
+    });
 
     // LikeService 변경사항 감지
     _likeService.addListener(_onLikeServiceChanged);
@@ -113,10 +134,60 @@ class _PostListState extends State<PostList> {
     _likeService.removeListener(_onLikeServiceChanged);
     _scrollController.dispose();
     _pageController.dispose();
+    _continuousScrollTimer?.cancel();
+    _continuousScrollDelayTimer?.cancel();
     super.dispose();
   }
 
-  // debug helpers 제거 (미사용)
+  // 연속 스크롤 메서드
+  void _startContinuousScroll(bool isNext) {
+    // 이미 연속 스크롤이 진행 중이면 중단
+    if (_isContinuousScroll) return;
+
+    // 지연 타이머 취소
+    _continuousScrollDelayTimer?.cancel();
+
+    // 300ms 후에 연속 스크롤 시작 사용자가 손을 300ms 동안 유지했을 때 연속 스크롤을 시작
+    _continuousScrollDelayTimer = Timer(const Duration(milliseconds: 100), () {
+      _continuousScrollTimer?.cancel();
+      _isContinuousScroll = true;
+
+      //200ms마다 페이지를 이동 (100ms 애니메이션으로)
+      _continuousScrollTimer = Timer.periodic(
+        const Duration(milliseconds: 200),
+        (timer) {
+          if (!_isContinuousScroll) {
+            timer.cancel();
+            return;
+          }
+
+          // 현재 페이지 인덱스를 PageController에서 직접 가져옴
+          final currentPage = _pageController.page?.round() ?? _currentIndex;
+
+          if (isNext && currentPage < widget.posts.length - 1) {
+            _pageController.nextPage(
+              duration: const Duration(milliseconds: 180),
+              curve: Curves.easeInOut,
+            );
+          } else if (!isNext && currentPage > 0) {
+            _pageController.previousPage(
+              duration: const Duration(milliseconds: 180),
+              curve: Curves.easeInOut,
+            );
+          } else {
+            timer.cancel();
+            _isContinuousScroll = false;
+          }
+        },
+      );
+    });
+  }
+
+  void _stopContinuousScroll() {
+    _continuousScrollTimer?.cancel();
+    _continuousScrollDelayTimer?.cancel();
+    _isContinuousScroll = false;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -235,31 +306,65 @@ class _PostListState extends State<PostList> {
           _isVerticalDrag = null;
         },
         onPointerMove: (e) {
+          // 연속 스크롤 중이면 방향 변경 무시
+          if (_isContinuousScroll) {
+            return;
+          }
+
+          // 방향 판정: 누적 방식으로 안정적인 감지
+          _accumDx += e.delta.dx.abs();
+          _accumDy += e.delta.dy.abs();
+
+          // 가로 스크롤 우선 감지 (페이지 이동)
+          if (_accumDx > _accumDy * 1.2 && _accumDx > 15.0) {
+            if (e.delta.dx > 0 && _currentIndex > 0) {
+              // 오른쪽으로 스크롤 - 이전 페이지
+              _pageController.previousPage(
+                duration: const Duration(milliseconds: 300),
+                curve: Curves.easeInOut,
+              );
+              // 연속 스크롤 시작 (이전 페이지)
+              _startContinuousScroll(false);
+            } else if (e.delta.dx < 0 &&
+                _currentIndex < widget.posts.length - 1) {
+              // 왼쪽으로 스크롤 - 다음 페이지
+              _pageController.nextPage(
+                duration: const Duration(milliseconds: 300),
+                curve: Curves.easeInOut,
+              );
+              // 연속 스크롤 시작 (다음 페이지)
+              _startContinuousScroll(true);
+            }
+            return; // 가로 스크롤 감지 시 세로 스크롤 처리 완전 중단
+          } else {
+            // 가로 스크롤이 아닐 때 연속 스크롤 중단
+            _stopContinuousScroll();
+          }
+
+          // 세로 스크롤 감지 (새로고침) - 가로 스크롤이 아닐 때만
           if (widget.onRefresh == null) return;
           if (!_scrollController.hasClients) return;
           final atTop =
               _scrollController.position.pixels <=
               _scrollController.position.minScrollExtent + 0.5;
           if (!atTop) return;
-          // 방향 판정: 수직으로 확정될 때만 게이지 누적
-          _accumDx += e.delta.dx.abs();
-          _accumDy += e.delta.dy.abs();
+
           if (_isVerticalDrag == null) {
-            if (_accumDy > _accumDx * 1.5 && _accumDy > 4.0) {
+            if (_accumDy > _accumDx * 2.0 && _accumDy > 10.0) {
               _isVerticalDrag = true;
-            } else if (_accumDx > _accumDy * 1.3 && _accumDx > 4.0) {
+            } else if (_accumDx > _accumDy * 1.2 && _accumDx > 15.0) {
               _isVerticalDrag = false;
             }
           }
           if (_isVerticalDrag == true) {
             double delta = 0.0;
             if (e.delta.dy > 0) {
-              delta = e.delta.dy * 0.6; // 더 둔감한 증가
+              delta = e.delta.dy * 0.4; // 둔감한 증가
             } else if (e.delta.dy < 0) {
-              delta = e.delta.dy * 0.9; // 감소는 빠르게
+              delta = e.delta.dy * 0.6; // 감소는 빠르게
             }
             if (delta != 0.0) {
-              _pullExtentPx = (_pullExtentPx + delta).clamp(0.0, 160.0);
+              _pullExtentPx = (_pullExtentPx + delta).clamp(0.0, 200.0);
               _passedTrigger = _pullExtentPx >= _refreshTrigger;
               setState(() {});
             }
@@ -267,6 +372,7 @@ class _PostListState extends State<PostList> {
         },
         onPointerUp: (_) async {
           _isPointerDown = false;
+          _stopContinuousScroll(); // 연속 스크롤 중단
           if (widget.onRefresh != null && _passedTrigger) {
             setState(() {});
             try {
@@ -364,6 +470,7 @@ class _PostListState extends State<PostList> {
       },
 
       onDoubleTap: () async {
+        /*
         final id = post.id.toString();
         if (id.isEmpty) {
           print('[PostList] 유효하지 않은 포스트 ID: $id');
@@ -390,7 +497,7 @@ class _PostListState extends State<PostList> {
           if (mounted) {
             setState(() => _likingInFlight.remove(id));
           }
-        }
+        }*/
       },
       child: AnimatedBuilder(
         animation: _pageController,
@@ -495,44 +602,87 @@ class _PostListState extends State<PostList> {
     final safeIndex = _currentIndex.clamp(0, widget.posts.length - 1);
     final post = widget.posts[safeIndex];
 
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.center,
-        mainAxisAlignment: MainAxisAlignment.start,
-        children: [
-          // 제목
-          Text(
-            post.title,
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              color: Theme.of(context).colorScheme.onSurface,
-              fontSize: 38,
-              fontWeight: FontWeight.bold,
-              letterSpacing: -0.2,
-            ),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
-          const SizedBox(height: 12),
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onPanStart: (details) {
+        _gestureStartY = details.globalPosition.dy;
+        _gestureAccumY = 0.0;
+        _isGestureActive = true;
+      },
+      onPanUpdate: (details) {
+        if (!_isGestureActive) return;
 
-          // 내용 (남은 공간 모두 사용)
-          Expanded(
-            child: Text(
-              post.parsedContent,
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
-                fontSize: 14,
-                fontWeight: FontWeight.w300,
-                height: 1.8,
-                letterSpacing: -0.1,
+        _gestureAccumY += details.delta.dy;
+
+        // 누적된 수직 움직임이 50px 이상일 때 페이지 이동
+        if (_gestureAccumY.abs() > 50) {
+          if (_gestureAccumY > 0 && _currentIndex > 0) {
+            // 아래로 스크롤 - 이전 페이지
+            _pageController.previousPage(
+              duration: const Duration(milliseconds: 200),
+              curve: Curves.easeInOut,
+            );
+            _isGestureActive = false; // 제스처 비활성화
+          } else if (_gestureAccumY < 0 &&
+              _currentIndex < widget.posts.length - 1) {
+            // 위로 스크롤 - 다음 페이지
+            _pageController.nextPage(
+              duration: const Duration(milliseconds: 200),
+              curve: Curves.easeInOut,
+            );
+            _isGestureActive = false; // 제스처 비활성화
+          }
+        }
+      },
+      onPanEnd: (details) {
+        _isGestureActive = false;
+        _gestureAccumY = 0.0;
+      },
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          mainAxisAlignment: MainAxisAlignment.start,
+          children: [
+            // 제목
+            IgnorePointer(
+              child: Text(
+                post.title,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: Theme.of(context).colorScheme.onSurface,
+                  fontSize: 38,
+                  fontWeight: FontWeight.bold,
+                  letterSpacing: -0.2,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
               ),
-              maxLines: 6,
-              overflow: TextOverflow.ellipsis,
             ),
-          ),
-        ],
+
+            // 내용 (남은 공간 모두 사용)
+            Expanded(
+              child: IgnorePointer(
+                child: Text(
+                  post.parsedContent,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: Theme.of(
+                      context,
+                    ).colorScheme.onSurface.withOpacity(0.7),
+                    fontSize: 14,
+                    fontWeight: FontWeight.w300,
+                    height: 1.8,
+                    letterSpacing: -0.1,
+                  ),
+                  maxLines: 5,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ),
+            const SizedBox(height: 30),
+          ],
+        ),
       ),
     );
   }

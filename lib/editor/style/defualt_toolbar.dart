@@ -7,6 +7,7 @@ import 'package:super_editor/super_editor.dart';
 import 'package:doppy/editor/image/gallery_bottom_sheet.dart';
 import 'package:doppy/editor/overlay/link_overlay.dart';
 import 'package:doppy/editor/overlay/location_overlay.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 
 import 'package:doppy/editor/service/editor_service.dart';
 import 'package:doppy/editor/overlay/mention_overlay.dart';
@@ -615,6 +616,8 @@ class DefaultToolbar extends StatefulWidget {
   final ScrollController? scrollController;
   final bool isKeyboardVisible;
   final VoidCallback? onDismissKeyboard;
+  final VoidCallback? onShowDraftList;
+  final bool isEditMode;
 
   const DefaultToolbar({
     super.key,
@@ -624,6 +627,8 @@ class DefaultToolbar extends StatefulWidget {
     this.scrollController,
     this.isKeyboardVisible = false,
     this.onDismissKeyboard,
+    this.onShowDraftList,
+    this.isEditMode = false,
   });
 
   @override
@@ -701,10 +706,11 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
     print(
       'DEBUG: DefaultToolbar build - isKeyboardVisible: ${widget.isKeyboardVisible}',
     );
-    final Color surface = Theme.of(context).colorScheme.surface;
     final Color surfaceVariant = Theme.of(context).colorScheme.surfaceVariant;
+
     final Color onSurface = Theme.of(context).colorScheme.onSurface;
-    final Color borderColor = onSurface.withOpacity(0.15);
+
+    final Color background = Theme.of(context).colorScheme.background;
 
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -716,8 +722,12 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
             width: width,
             padding: const EdgeInsets.symmetric(horizontal: 8),
             decoration: BoxDecoration(
-              color: surfaceVariant,
-              border: Border(bottom: BorderSide(color: borderColor)),
+              color: background,
+              borderRadius: BorderRadius.only(
+                topLeft: Radius.circular(8),
+                topRight: Radius.circular(8),
+              ),
+              border: Border(top: BorderSide(color: surfaceVariant)),
             ),
             child: _buildTopExpandedRowContent(),
           ),
@@ -728,7 +738,7 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
           width: width,
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 8),
-            decoration: BoxDecoration(color: surface),
+            decoration: BoxDecoration(color: background),
             child: Row(
               children: [
                 SizedBox(width: 10),
@@ -849,9 +859,6 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
 
                 // 키보드가 올라와 있을 때만 키보드 내리기 버튼 표시 (오른쪽 끝)
                 if (widget.isKeyboardVisible) ...[
-                  const SizedBox(width: 10),
-                  _buildDivider(),
-                  const SizedBox(width: 10),
                   _buildMainIcon(
                     icon: Icons.keyboard_arrow_down,
                     isActive: false,
@@ -860,15 +867,14 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
                     },
                   ),
                 ],
-                if (!widget.isKeyboardVisible) ...[
+                if (!widget.isKeyboardVisible && !widget.isEditMode) ...[
                   const SizedBox(width: 10),
-                  _buildDivider(),
-                  const SizedBox(width: 10),
-                  _buildMainIcon(
-                    icon: Icons.keyboard_arrow_up,
+                  _buildMainSvgIcon(
+                    svgPath: 'assets/icons/download.svg',
                     isActive: false,
                     onTap: () {
-                      FocusScope.of(context).requestFocus();
+                      // 불러오기 기능 호출
+                      widget.onShowDraftList?.call();
                     },
                   ),
                 ],
@@ -889,7 +895,7 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
   }) {
     final Color onSurface = Theme.of(context).colorScheme.onSurface;
     final Color color =
-        isActive ? (activeColor ?? onSurface) : onSurface.withOpacity(0.6);
+        isActive ? (activeColor ?? onSurface) : onSurface.withOpacity(0.5);
     return Material(
       color: Colors.transparent,
       child: InkWell(
@@ -899,7 +905,36 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
           width: 36,
           height: 50,
           alignment: Alignment.center,
-          child: Icon(icon, size: 24, color: color),
+          child: Icon(icon, size: isActive ? 26 : 22, color: color),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMainSvgIcon({
+    required String svgPath,
+    required bool isActive,
+    required VoidCallback onTap,
+    Color? activeColor,
+  }) {
+    final Color onSurface = Theme.of(context).colorScheme.onSurface;
+    final Color color =
+        isActive ? (activeColor ?? onSurface) : onSurface.withOpacity(0.5);
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(8),
+        child: Container(
+          width: 36,
+          height: 40,
+          alignment: Alignment.center,
+          child: SvgPicture.asset(
+            svgPath,
+            width: 20,
+            height: 20,
+            colorFilter: ColorFilter.mode(color, BlendMode.srcIn),
+          ),
         ),
       ),
     );
@@ -925,7 +960,7 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
           child: Icon(
             icon,
             size: 20,
-            color: isActive ? onSurface : onSurface.withOpacity(0.6),
+            color: isActive ? onSurface : onSurface.withOpacity(0.4),
           ),
         ),
       ),

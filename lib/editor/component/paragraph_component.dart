@@ -92,16 +92,26 @@ class _ParagraphWithDropLines extends StatelessWidget {
         final currentIndex = dragService.getNodeIndex(nodeId);
         final dropIndex = dragService.dropIndex;
         final isSelf = dragService.draggingNodeId == nodeId;
+        final documentLength = editorService.document.length;
+        final isLastNode = currentIndex == documentLength - 1;
+
         bool showTop =
             dropIndex != null &&
             !isSelf &&
             currentIndex != -1 &&
             dropIndex == currentIndex;
 
+        bool showBottom = false;
+        if (isLastNode && dropIndex != null && !isSelf && currentIndex != -1) {
+          // 마지막 노드일 때만 아래쪽 라인 표시 (문서 끝에 삽입)
+          showBottom = dropIndex == documentLength;
+        }
+        // 일반적인 경우는 이중 표시 방지를 위해 하단 라인 비활성화
+
         // 방어: 위 노드가 이미지면 상단 라인 비표시(이미지가 하단 라인을 그리도록 위임)
         if (showTop) {
           try {
-            final doc = editorService.editor.document;
+            final doc = editorService.document;
             if (currentIndex - 1 >= 0) {
               final prev = doc.getNodeAt(currentIndex - 1);
               if (prev is ImageNode || prev is ImageRowNode) {
@@ -126,8 +136,13 @@ class _ParagraphWithDropLines extends StatelessWidget {
                 right: 0,
                 child: Container(height: 3, color: AppColors.primary),
               ),
-
-            // 하단 라인 비활성화(이중 라인 방지)
+            if (showBottom)
+              Positioned(
+                bottom: 0,
+                left: 0,
+                right: 0,
+                child: Container(height: 3, color: AppColors.primary),
+              ),
           ],
         );
       },

@@ -202,7 +202,10 @@ class _SingleImageComponentState extends State<SingleImageComponent>
                     top: 0,
                     left: 0,
                     right: 0,
-                    child: Container(height: 3, color: AppColors.primary),
+                    child: Padding(
+                      padding: const EdgeInsets.only(bottom: 2),
+                      child: Container(height: 5, color: AppColors.primary),
+                    ),
                   ),
 
                 if (_shouldShowLeftVerticalLine())
@@ -210,21 +213,30 @@ class _SingleImageComponentState extends State<SingleImageComponent>
                     top: marginTop,
                     bottom: marginBottom,
                     left: 0,
-                    child: Container(width: 3, color: AppColors.primary),
+                    child: Padding(
+                      padding: const EdgeInsets.only(right: 2),
+                      child: Container(width: 5, color: AppColors.primary),
+                    ),
                   ),
                 if (_shouldShowRightVerticalLine())
                   Positioned(
                     top: marginTop,
                     bottom: marginBottom,
                     right: 0,
-                    child: Container(width: 3, color: AppColors.primary),
+                    child: Padding(
+                      padding: const EdgeInsets.only(left: 2),
+                      child: Container(width: 5, color: AppColors.primary),
+                    ),
                   ),
                 if (_shouldShowBottomDropLine())
                   Positioned(
                     bottom: 0,
                     left: 0,
                     right: 0,
-                    child: Container(height: 3, color: AppColors.primary),
+                    child: Padding(
+                      padding: const EdgeInsets.only(top: 2),
+                      child: Container(height: 5, color: AppColors.primary),
+                    ),
                   ),
               ],
             );
@@ -356,8 +368,20 @@ class _SingleImageComponentState extends State<SingleImageComponent>
     if (dropIndex == null) return false;
     final currentNodeIndex = _getCurrentNodeIndex();
     if (currentNodeIndex == -1) return false;
-    // 이 노드의 아래에 삽입하는 경우 (다음 인덱스)
-    return dropIndex == currentNodeIndex + 1;
+
+    // 마지막 노드인지 확인
+    final documentLength =
+        widget.dragService?.editorService.document.length ?? 0;
+    final isLastNode = currentNodeIndex == documentLength - 1;
+
+    if (isLastNode) {
+      // 마지막 노드일 때는 문서 끝에 삽입하는 경우
+      return dropIndex == documentLength;
+    } else {
+      // 일반적인 경우: 이 노드의 아래에 삽입하는 경우 (다음 인덱스)
+      // 하지만 다음 노드가 있으면 이중 표시 방지를 위해 false 반환
+      return dropIndex == currentNodeIndex + 1;
+    }
   }
 
   bool _shouldShowLeftVerticalLine() {

@@ -34,6 +34,45 @@ class UserProvider with ChangeNotifier {
     notifyListeners();
   }
 
+  /// 현재 사용자 정보 업데이트
+  void updateCurrentUser(User updatedUser) {
+    _currentUser = updatedUser;
+    notifyListeners();
+  }
+
+  /// 프로필 정보 업데이트 (API 호출 + 로컬 상태 업데이트)
+  Future<bool> updateProfileInfo({
+    required String alias,
+    required String selfIntroduction,
+  }) async {
+    try {
+      // API 호출
+      await _userService.updateProfileInfo(
+        alias: alias,
+        selfIntroduction: selfIntroduction,
+      );
+
+      // 로컬 상태 업데이트
+      if (_currentUser != null) {
+        final updatedUser = _currentUser!.copyWith(
+          alias: alias,
+          selfIntroduction: selfIntroduction,
+        );
+        _currentUser = updatedUser;
+
+        // 별도 selfIntroduction 필드도 업데이트
+        _selfIntroduction = selfIntroduction;
+
+        notifyListeners();
+      }
+
+      return true;
+    } catch (e) {
+      debugPrint('[UserProvider] updateProfileInfo failed: $e');
+      return false;
+    }
+  }
+
   /// 내 프로필 정보 로드 (단일 엔드포인트 게이트)
   Future<void> fetchMyProfile() async {
     _isLoading = true;

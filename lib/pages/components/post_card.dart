@@ -1,7 +1,14 @@
+import 'dart:ui' as ui;
+
+import 'package:doppy/data/models/user_model.dart';
+import 'package:doppy/pages/components/common_profile_avatar.dart';
+import 'package:doppy/pages/screens/user_profile_screen.dart';
+import 'package:doppy/providers/user_provider.dart';
 import 'package:flutter/material.dart';
 import 'package:doppy/data/services/like_service.dart';
 import 'package:doppy/pages/components/shimmer_box.dart';
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:provider/provider.dart';
 
 // ignore: must_be_immutable
 class PostCard extends StatefulWidget {
@@ -135,6 +142,7 @@ class _PostCardState extends State<PostCard> {
                   : Hero(tag: widget.heroTag!, child: _buildImage()),
         ),
         // 우상단 하트 아이콘
+        /*
         Positioned(
           right: 12,
           bottom: 10,
@@ -161,6 +169,73 @@ class _PostCardState extends State<PostCard> {
                     size: 20,
                   ),
                 ],
+              ),
+            ),
+          ),
+        ),*/
+        Positioned(
+          left: 6,
+          bottom: 6,
+          child: GestureDetector(
+            onTap: () {
+              final isMyPost =
+                  widget.author ==
+                  context.read<UserProvider>().currentUser?.username;
+
+              if (isMyPost) {
+                return;
+              }
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder:
+                      (context) => UserProfileScreen(
+                        otherUser:
+                            isMyPost
+                                ? null
+                                : User(
+                                  id: 0,
+                                  username: widget.author,
+                                  alias: widget.author,
+                                  profileImageUrl: widget.authorProfileImageUrl,
+                                ),
+                      ),
+                ),
+              );
+            },
+            behavior: HitTestBehavior.opaque,
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(35),
+              child: BackdropFilter(
+                filter: ui.ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+                child: Container(
+                  padding: const EdgeInsets.only(right: 6),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withOpacity(0.15),
+                    borderRadius: BorderRadius.circular(35),
+                  ),
+                  child: Row(
+                    children: [
+                      CommonProfileAvatar(
+                        imageUrl: widget.authorProfileImageUrl ?? "",
+                        username: widget.author,
+                        size: 35,
+                        borderWidth: 1,
+                        borderColor: Colors.black.withOpacity(0.2),
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        widget.author,
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.onSurface,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                    ],
+                  ),
+                ),
               ),
             ),
           ),

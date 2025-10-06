@@ -364,6 +364,11 @@ class DragService extends ChangeNotifier {
 
     final localPosition = renderBox.globalToLocal(globalPosition);
 
+    // 문서 끝 부분 감지를 위한 추가 처리
+    final documentLength = editorService.document.length;
+    final isNearDocumentEnd =
+        localPosition.dy > renderBox.size.height - 50; // 문서 끝에서 50px 이내
+
     // SuperEditor의 정확한 위치 계산 (로컬 좌표 사용)
     DocumentPosition? position;
     try {
@@ -377,12 +382,15 @@ class DragService extends ChangeNotifier {
 
     if (position == null) return null;
 
-    final node = editorService.editor.document.getNodeById(position.nodeId);
+    final node = editorService.document.getNodeById(position.nodeId);
     if (node == null) return null;
 
     // 노드 인덱스 찾기
-    final nodeIndex = editorService.editor.document.getNodeIndexById(node.id);
+    final nodeIndex = editorService.document.getNodeIndexById(node.id);
     if (nodeIndex == -1) return null;
+
+    // 마지막 노드인지 확인
+    final isLastNode = nodeIndex == documentLength - 1;
 
     // 타겟 노드 정보 업데이트
     final targetNodeType = editorService.getNodeType(node.id);
@@ -422,11 +430,29 @@ class DragService extends ChangeNotifier {
     }
 
     // 드롭 인덱스 계산
-    final draggingNodeIndex = editorService.editor.document.getNodeIndexById(
+    final draggingNodeIndex = editorService.document.getNodeIndexById(
       draggingNodeId!,
     );
     int? finalCandidate = nodeIndex;
-    if (draggingNodeId != null) {
+
+    // 마지막 노드 처리
+    if (isLastNode) {
+      // 마지막 노드인 경우, 노드의 중간을 기준으로 위/아래 판단
+      final Rect? targetRect = documentLayout.getRectForPosition(position);
+      if (targetRect != null) {
+        final nodeCenter = targetRect.center.dy;
+        if (localPosition.dy > nodeCenter) {
+          // 마지막 노드 아래쪽에 드롭 - 문서 끝에 삽입
+          finalCandidate = documentLength;
+        } else {
+          // 마지막 노드 위쪽에 드롭 - 마지막 노드 앞에 삽입
+          finalCandidate = nodeIndex;
+        }
+      } else {
+        // targetRect를 가져올 수 없는 경우, 기본적으로 마지막 노드 앞에 삽입
+        finalCandidate = nodeIndex;
+      }
+    } else if (draggingNodeId != null) {
       if (draggingNodeIndex != -1) {
         final bool isSplitDrag = hasSplitImageInfo; // 이미지 행에서 개별 이미지 분리 드래그 중인지
 
@@ -459,7 +485,7 @@ class DragService extends ChangeNotifier {
     // 타이틀 고정: 타이틀(isTitle=true) 위로는 드롭 불가 → 항상 타이틀 바로 아래로 보정
     try {
       if (dragMode == DragType.reorder && finalCandidate != null) {
-        final doc = editorService.editor.document;
+        final doc = editorService.document;
         int titleIndex = -1;
 
         final n = doc.getNodeAt(0);
@@ -493,6 +519,6 @@ class DragService extends ChangeNotifier {
 
   /// 노드 ID로 현재 노드의 인덱스 찾기
   int getNodeIndex(String nodeId) {
-    return editorService.editor.document.getNodeIndexById(nodeId);
+    return editorService.document.getNodeIndexById(nodeId);
   }
 }

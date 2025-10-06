@@ -289,7 +289,6 @@ class _UserProfileScreenState extends State<UserProfileScreen>
 
     final bool isOther = !_isOwnProfile; // true: 타인 프로필, false: 내 프로필
     final User? me = userProvider.currentUser;
-    final String? myIntro = userProvider.selfIntroduction;
     final User? other = widget.otherUser;
 
     final double topPadding =
@@ -381,7 +380,9 @@ class _UserProfileScreenState extends State<UserProfileScreen>
                           ).colorScheme.onSurface.withOpacity(0.5),
                         ),
                         onPressed: () {
-                          showProfileInfoEditBottomSheet();
+                          me != null
+                              ? showProfileInfoEditBottomSheet(me)
+                              : null;
                         },
                       ),
                       // 설정 버튼
@@ -477,8 +478,8 @@ class _UserProfileScreenState extends State<UserProfileScreen>
                                   ? (other?.selfIntroduction?.isNotEmpty == true
                                       ? other!.selfIntroduction!
                                       : _displayUsername)
-                                  : (myIntro?.isNotEmpty == true
-                                      ? myIntro!
+                                  : (me?.selfIntroduction?.isNotEmpty == true
+                                      ? me!.selfIntroduction!
                                       : ''),
                               style: TextStyle(
                                 color:
@@ -828,14 +829,14 @@ class _UserProfileScreenState extends State<UserProfileScreen>
     );
   }
 
-  void showProfileInfoEditBottomSheet() {
+  void showProfileInfoEditBottomSheet(User me) {
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
       isScrollControlled: true,
       builder: (BuildContext context) {
         return SizedBox(
-          height: MediaQuery.of(context).size.height * 0.9,
+          height: MediaQuery.of(context).size.height * 0.73,
           child: Container(
             width: MediaQuery.of(context).size.width,
             decoration: BoxDecoration(
@@ -843,12 +844,10 @@ class _UserProfileScreenState extends State<UserProfileScreen>
               borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
             ),
             child: ProfileInfoEditBottomSheet(
-              user: widget.otherUser,
-              nameController: TextEditingController(
-                text: widget.otherUser?.alias ?? '',
-              ),
+              user: me,
+              nameController: TextEditingController(text: me.alias ?? ''),
               descriptionController: TextEditingController(
-                text: widget.otherUser?.selfIntroduction ?? '',
+                text: me.selfIntroduction ?? '',
               ),
               onClearProfileImage: _clearProfileImage,
               onImagesSelected: (files) => _handleImageSelected(files.first),
@@ -856,11 +855,29 @@ class _UserProfileScreenState extends State<UserProfileScreen>
                 required String alias,
                 required String description,
               }) async {
-                // TODO: 실제 API 호출로 사용자 정보 업데이트
-                print('저장: alias=$alias, description=$description');
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('프로필 정보가 저장되었습니다')),
+                // UserProvider를 통해 API 호출 및 상태 업데이트
+                final userProvider = context.read<UserProvider>();
+
+                final success = await userProvider.updateProfileInfo(
+                  alias: alias,
+                  selfIntroduction: description,
                 );
+
+                if (!success && mounted) {
+                  // 실패 메시지 표시
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(
+                        '프로필 저장에 실패했습니다',
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.onError,
+                        ),
+                      ),
+                      backgroundColor: Theme.of(context).colorScheme.error,
+                      duration: Duration(seconds: 2),
+                    ),
+                  );
+                }
               },
             ),
           ),

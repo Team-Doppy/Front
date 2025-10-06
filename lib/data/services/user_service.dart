@@ -45,6 +45,20 @@ class UserService extends ApiServiceBase {
     throw Exception('타인 자기소개 조회 실패');
   }
 
+  /// 프로필 정보 업데이트 (/api/profile/info)
+  Future<void> updateProfileInfo({
+    required String alias,
+    required String selfIntroduction,
+  }) async {
+    final response = await put(
+      '/api/profile/info',
+      body: {'alias': alias, 'selfIntroduction': selfIntroduction},
+    );
+    if (response.statusCode != 200) {
+      throw Exception('프로필 정보 업데이트 실패');
+    }
+  }
+
   /// 프로필 정보 조회 (/api/profile/info)
   Future<User> getMyProfile() async {
     final response = await get('/api/profile/info');

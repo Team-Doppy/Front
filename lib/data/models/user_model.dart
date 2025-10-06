@@ -29,4 +29,24 @@ class User {
       friendCount: (json['friendCount'] as num?)?.toInt(),
     );
   }
+
+  User copyWith({
+    int? id,
+    String? username,
+    String? role,
+    String? alias,
+    String? profileImageUrl,
+    String? selfIntroduction,
+    int? friendCount,
+  }) {
+    return User(
+      id: id ?? this.id,
+      username: username ?? this.username,
+      role: role ?? this.role,
+      alias: alias ?? this.alias,
+      profileImageUrl: profileImageUrl ?? this.profileImageUrl,
+      selfIntroduction: selfIntroduction ?? this.selfIntroduction,
+      friendCount: friendCount ?? this.friendCount,
+    );
+  }
 }

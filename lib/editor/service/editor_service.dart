@@ -218,6 +218,15 @@ class EditorService extends ChangeNotifier {
     // 같은 위치면 이동하지 않음
     if (currentIndex == targetIndex) return;
 
+    // 문서 끝에 삽입하는 경우 처리
+    if (targetIndex >= document.length) {
+      // 노드 삭제 후 문서 끝에 삽입
+      document.deleteNode(nodeId);
+      document.insertNodeAt(document.length, node);
+      notifyListeners();
+      return;
+    }
+
     // 노드 삭제 후 새 위치에 삽입
     document.deleteNode(nodeId);
 

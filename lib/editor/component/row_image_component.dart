@@ -576,8 +576,19 @@ class _ImageRowComponentState extends State<ImageRowComponent>
     // 현재 노드의 인덱스 찾기
     final currentNodeIndex = _getCurrentNodeIndex();
     if (currentNodeIndex == -1) return false;
-    // 이 노드의 아래에 삽입하는 경우 (다음 인덱스)
-    return dropIndex == currentNodeIndex + 1;
+
+    // 마지막 노드인지 확인
+    final documentLength =
+        widget.dragService?.editorService.document.length ?? 0;
+    final isLastNode = currentNodeIndex == documentLength - 1;
+
+    if (isLastNode) {
+      // 마지막 노드일 때는 문서 끝에 삽입하는 경우
+      return dropIndex == documentLength;
+    } else {
+      // 일반적인 경우: 이 노드의 아래에 삽입하는 경우 (다음 인덱스)
+      return dropIndex == currentNodeIndex + 1;
+    }
   }
 
   bool _shouldShowLeftVerticalLine() {

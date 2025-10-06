@@ -31,18 +31,17 @@ class _ImageEditingToolbarState extends State<ImageEditingToolbar> {
         padding: const EdgeInsets.symmetric(horizontal: 8),
         decoration: BoxDecoration(color: AppColors.darkSurface),
         child: Row(
+          mainAxisAlignment: MainAxisAlignment.end,
           children: [
-            SizedBox(width: 10),
-            // 보정 버튼
-            _buildMainIcon(
-              icon: Icons.tune,
-              isActive: false,
-              onTap: widget.onAdjust,
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                '이미지 선택됨',
+                style: TextStyle(
+                  color: AppColors.darkTextPrimary.withOpacity(0.7),
+                ),
+              ),
             ),
-
-            const SizedBox(width: 10),
-            _buildDivider(),
-            const SizedBox(width: 10),
 
             // 자르기 버튼
             _buildMainIcon(
@@ -61,6 +60,7 @@ class _ImageEditingToolbarState extends State<ImageEditingToolbar> {
               isActive: false,
               onTap: widget.onDelete,
             ),
+            const SizedBox(width: 10),
           ],
         ),
       ),
@@ -89,7 +89,7 @@ class _ImageEditingToolbarState extends State<ImageEditingToolbar> {
                   ? AppColors.error.withOpacity(0.8)
                   : isActive
                   ? Colors.white
-                  : AppColors.darkTextSecondary.withOpacity(0.6),
+                  : AppColors.darkTextSecondary,
         ),
       ),
     );
