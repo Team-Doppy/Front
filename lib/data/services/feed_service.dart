@@ -12,7 +12,9 @@ class FeedDisplayModeManager extends ValueNotifier<FeedDisplayMode> {
 
   factory FeedDisplayModeManager() => _instance;
 
-  FeedDisplayModeManager._internal() : super(FeedDisplayMode.card);
+  FeedDisplayModeManager._internal() : super(FeedDisplayMode.card) {
+    print('[FeedDisplayModeManager] 기본 모드: ${value}');
+  }
 
   void switchToCard() => value = FeedDisplayMode.card;
   void switchToImageOnly() => value = FeedDisplayMode.imageOnly;

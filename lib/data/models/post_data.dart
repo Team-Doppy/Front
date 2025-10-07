@@ -6,6 +6,7 @@ class PostData {
   final String id;
   final String thumbnailImageUrl;
   final String title;
+  final String summary;
   final String author;
   final String authorProfileImageUrl;
   final String content;
@@ -20,6 +21,7 @@ class PostData {
     required this.id,
     required this.thumbnailImageUrl,
     required this.title,
+    required this.summary,
     required this.author,
     required this.authorProfileImageUrl,
     required this.content,
@@ -60,6 +62,7 @@ class PostData {
       author: data['author'] ?? data['username'] ?? '',
       authorProfileImageUrl: data['authorProfileImageUrl'] ?? '',
       content: content,
+      summary: data['summary'] ?? '',
       accessLevel: accessLevel,
       createdAt: data['createdAt'] ?? DateTime.now().toIso8601String(),
       updatedAt:
@@ -83,6 +86,7 @@ class PostData {
     return {
       'id': id,
       'title': title,
+      'summary': summary,
       'author': author,
       'authorProfileImageUrl': authorProfileImageUrl,
       'content': content,
@@ -99,6 +103,8 @@ class PostData {
   /// content JSON을 파싱해서 실제 텍스트 내용만 추출
   String get parsedContent {
     try {
+      if (summary.isNotEmpty) return summary;
+
       if (content.isEmpty) return '';
 
       // content가 JSON 문자열인지 확인

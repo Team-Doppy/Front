@@ -1,6 +1,5 @@
 // import 'dart:math';
 import 'dart:async';
-import 'package:doppy/pages/components/common_profile_avatar.dart';
 import 'package:doppy/pages/components/post_card.dart';
 import 'package:doppy/pages/components/shimmer_box.dart';
 import 'package:doppy/pages/screens/post_reader_screen.dart';

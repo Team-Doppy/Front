@@ -13,6 +13,7 @@ import 'package:doppy/pages/screens/user_profile_screen.dart';
 
 import 'package:doppy/pages/user/login_screen.dart';
 import 'package:doppy/providers/auth_provider.dart';
+import 'package:doppy/providers/category_provider.dart';
 import 'package:doppy/providers/friend_provider.dart';
 import 'package:doppy/providers/group_provider.dart';
 import 'package:doppy/providers/theme_provider.dart';
@@ -57,6 +58,7 @@ Future<void> main() async {
         ChangeNotifierProvider(create: (_) => ImageService()),
         ChangeNotifierProvider(create: (_) => StickerService()),
         ChangeNotifierProvider(create: (_) => UploadService()),
+        ChangeNotifierProvider(create: (_) => CategoryProvider()),
       ],
       child: MyApp(
         hasSeenOnboarding: hasSeenOnboarding,
