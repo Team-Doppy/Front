@@ -16,6 +16,7 @@ class ReorderableGridList extends StatefulWidget {
     this.aspectRatio = 4 / 5,
     this.readOnly = false,
     this.onAccept,
+    this.scrollController,
   });
 
   final String sectionTitle;
@@ -26,6 +27,7 @@ class ReorderableGridList extends StatefulWidget {
   final double spacing;
   final double aspectRatio;
   final bool readOnly;
+  final ScrollController? scrollController;
 
   // 드랍 수신 시 부모에 알림 (동일 섹션 재정렬/외부에서 삽입 포함)
   final PostAcceptCallback? onAccept;
@@ -101,6 +103,36 @@ class _ReorderableGridListState extends State<ReorderableGridList> {
                 );
                 dragSvc.setDropTarget(widget.sectionTitle);
                 dragSvc.setReorderTargetIndex(idx);
+
+                // 화면 절대 좌표 기준으로 자동 스크롤 처리
+                if (widget.scrollController != null &&
+                    widget.scrollController!.hasClients) {
+                  const edge = 80.0;
+                  const speed = 6.0;
+                  final pos = widget.scrollController!.position;
+
+                  // 화면 전체 높이 기준으로 절대 좌표 계산
+                  final screenHeight = MediaQuery.of(context).size.height;
+                  final globalY = details.offset.dy;
+
+                  if (globalY < edge) {
+                    // 화면 상단 가장자리: 위로 스크롤
+                    final next = (pos.pixels - speed).clamp(
+                      0.0,
+                      pos.maxScrollExtent,
+                    );
+                    if (next != pos.pixels)
+                      widget.scrollController!.jumpTo(next);
+                  } else if (globalY > screenHeight - edge) {
+                    // 화면 하단 가장자리: 아래로 스크롤
+                    final next = (pos.pixels + speed).clamp(
+                      0.0,
+                      pos.maxScrollExtent,
+                    );
+                    if (next != pos.pixels)
+                      widget.scrollController!.jumpTo(next);
+                  }
+                }
               } catch (_) {}
             },
             onLeave: (_) {

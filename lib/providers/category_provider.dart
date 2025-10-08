@@ -22,6 +22,14 @@ class CategoryProvider extends ChangeNotifier {
   final List<CategoryModel> _categories = <CategoryModel>[];
   final Map<String, String> _postIdToCategoryId = <String, String>{};
 
+  // 다른글(미분류) 가상 카테고리 ID
+  static const String _unassignedCategoryId = '__unassigned__';
+  static String get unassignedCategoryId => _unassignedCategoryId;
+
+  // 다른글 섹션의 위치(사용자 카테고리 리스트 내 삽입 인덱스). -1이면 맨 뒤
+  int _unassignedIndex = -1;
+  int get unassignedIndex => _unassignedIndex;
+
   // 선택 상태 관리
   BaseFilter _selectedBase = BaseFilter.all;
   String? _selectedCategoryId; // 사용자가 만든 카테고리 선택 시
@@ -34,6 +42,39 @@ class CategoryProvider extends ChangeNotifier {
   }
 
   List<CategoryModel> get categories => List.unmodifiable(_categories);
+
+  // 다른글을 포함한 모든 섹션 (순서 변경용)
+  List<CategoryModel> get allSections {
+    final result = <CategoryModel>[];
+
+    // 사용자 카테고리들 추가
+    result.addAll(_categories);
+
+    // 미분류 포스트가 있으면 다른글 섹션 추가
+    final unassignedPostIds = <String>[];
+    for (final entry in _postIdToCategoryId.entries) {
+      if (entry.value == _unassignedCategoryId) {
+        unassignedPostIds.add(entry.key);
+      }
+    }
+
+    if (unassignedPostIds.isNotEmpty) {
+      final insertAt =
+          _unassignedIndex == -1
+              ? result.length
+              : _clampIndex(_unassignedIndex, 0, result.length);
+      result.insert(
+        insertAt,
+        CategoryModel(
+          id: _unassignedCategoryId,
+          name: '다른 글',
+          postIds: unassignedPostIds,
+        ),
+      );
+    }
+
+    return result;
+  }
 
   BaseFilter get selectedBase => _selectedBase;
   String? get selectedCategoryId => _selectedCategoryId;
@@ -152,7 +193,20 @@ class CategoryProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  String? categoryIdOf(String postId) => _postIdToCategoryId[postId];
+  String? categoryIdOf(String postId) {
+    final categoryId = _postIdToCategoryId[postId];
+    // null이면 미분류로 간주
+    return categoryId ?? _unassignedCategoryId;
+  }
+
+  // 미분류 포스트들을 다른글 카테고리로 자동 할당
+  void ensureUnassignedCategory(List<String> allPostIds) {
+    for (final postId in allPostIds) {
+      if (!_postIdToCategoryId.containsKey(postId)) {
+        _postIdToCategoryId[postId] = _unassignedCategoryId;
+      }
+    }
+  }
 
   // 카테고리 순서 변경 (로컬)
   void reorderCategories(List<String> orderedIds) {
@@ -169,6 +223,29 @@ class CategoryProvider extends ChangeNotifier {
     _categories
       ..clear()
       ..addAll(next);
+    notifyListeners();
+  }
+
+  // 모든 섹션(다른글 포함) 순서 변경
+  void reorderAllSections(List<String> orderedIds) {
+    if (_isReadOnly) return;
+
+    // orderedIds 안에서 다른글의 위치와 사용자 카테고리 순서를 반영
+    final int unassignedPos = orderedIds.indexOf(_unassignedCategoryId);
+    final List<String> userCategoryIds =
+        orderedIds.where((id) => id != _unassignedCategoryId).toList();
+
+    if (userCategoryIds.isNotEmpty) {
+      reorderCategories(userCategoryIds);
+    }
+
+    // 다른글 삽입 인덱스 저장 (-1이면 맨 뒤)
+    if (unassignedPos >= 0) {
+      _unassignedIndex = _clampIndex(unassignedPos, 0, _categories.length);
+    } else {
+      _unassignedIndex = -1;
+    }
+
     notifyListeners();
   }
 

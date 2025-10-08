@@ -39,6 +39,10 @@ class _UserProfileScreenState extends State<UserProfileScreen>
   late ScrollController _scrollController;
   late final bool _isOwnProfile;
 
+  // Bird's-eye view를 위한 상태
+  final GlobalKey _contentKey = GlobalKey();
+  double _contentHeight = 0.0;
+
   // 배경 이미지 상태
 
   // 업로드 진행 상태
@@ -179,172 +183,190 @@ class _UserProfileScreenState extends State<UserProfileScreen>
           children: [
             // 스크롤 가능한 컨텐츠 (Sliver)
             Positioned.fill(
-              child: CustomScrollView(
-                controller: _scrollController,
-                slivers: [
-                  SliverAppBar(
-                    expandedHeight: topPadding + _baseHeight,
-                    toolbarHeight: 60,
-                    backgroundColor: Colors.transparent,
-                    automaticallyImplyLeading: false,
-                    elevation: 0,
-                    title: Row(
-                      children: [
-                        if (isOther)
-                          GestureDetector(
-                            child: Icon(
-                              Icons.arrow_back_ios_new,
-                              size: 20,
-                              color: Theme.of(
-                                context,
-                              ).colorScheme.onSurface.withOpacity(0.8),
-                            ),
-                            onTap: () => Navigator.of(context).pop(),
-                          ),
-                        Padding(
-                          padding: EdgeInsets.only(
-                            left: isOther ? 20.0 : 5.0,
-                            bottom: 3.0,
-                          ),
-                          child: Text(
-                            _displayUsername,
-                            style: TextStyle(
-                              fontWeight: FontWeight.bold,
-                              fontSize: 24,
-                            ),
-                          ),
-                        ),
-                        if (!isOther)
-                          Padding(
-                            padding: const EdgeInsets.only(left: 8.0),
-                            child: GestureDetector(
-                              child: Icon(
-                                Icons.keyboard_arrow_down,
-                                size: 24,
-                                color: Theme.of(
-                                  context,
-                                ).colorScheme.onSurface.withOpacity(0.8),
-                              ),
-                              onTap:
-                                  () => _accountDropDown.showAccountDropdown(
-                                    context,
+              child: ValueListenableBuilder<bool>(
+                valueListenable: _feed.isDraggingCategory,
+                builder: (context, isDraggingCategory, _) {
+                  return AnimatedScale(
+                    scale: isDraggingCategory ? 0.88 : 1.0,
+                    duration: const Duration(milliseconds: 300),
+                    curve: Curves.easeInOut,
+                    alignment: Alignment.bottomCenter,
+                    child: CustomScrollView(
+                      controller: _scrollController,
+                      slivers: [
+                        SliverAppBar(
+                          expandedHeight: topPadding + _baseHeight,
+                          toolbarHeight: 60,
+                          backgroundColor: Colors.transparent,
+                          automaticallyImplyLeading: false,
+                          elevation: 0,
+                          title: Row(
+                            children: [
+                              if (isOther)
+                                GestureDetector(
+                                  child: Icon(
+                                    Icons.arrow_back_ios_new,
+                                    size: 20,
+                                    color: Theme.of(
+                                      context,
+                                    ).colorScheme.onSurface.withOpacity(0.8),
                                   ),
-                            ),
+                                  onTap: () => Navigator.of(context).pop(),
+                                ),
+                              Padding(
+                                padding: EdgeInsets.only(
+                                  left: isOther ? 20.0 : 5.0,
+                                  bottom: 3.0,
+                                ),
+                                child: Text(
+                                  _displayUsername,
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 24,
+                                  ),
+                                ),
+                              ),
+                              if (!isOther)
+                                Padding(
+                                  padding: const EdgeInsets.only(left: 8.0),
+                                  child: GestureDetector(
+                                    child: Icon(
+                                      Icons.keyboard_arrow_down,
+                                      size: 24,
+                                      color: Theme.of(
+                                        context,
+                                      ).colorScheme.onSurface.withOpacity(0.8),
+                                    ),
+                                    onTap:
+                                        () => _accountDropDown
+                                            .showAccountDropdown(context),
+                                  ),
+                                ),
+                            ],
                           ),
-                      ],
-                    ),
 
-                    actions: [
-                      if (_isOwnProfile) ...[
-                        IconButton(
-                          icon: Icon(
-                            Icons.edit,
-                            color: Theme.of(
-                              context,
-                            ).colorScheme.onSurface.withOpacity(0.5),
-                          ),
-                          onPressed: () {
-                            me != null
-                                ? showProfileInfoEditBottomSheet(me)
-                                : null;
-                          },
-                        ),
-                        // 설정 버튼
-                        IconButton(
-                          icon: Icon(
-                            Icons.settings,
-                            color: Theme.of(
-                              context,
-                            ).colorScheme.onSurface.withOpacity(0.5),
-                          ),
-                          onPressed: () {
-                            Navigator.of(context).push(
-                              MaterialPageRoute(
-                                builder: (_) => SettingScreen(),
+                          actions: [
+                            if (_isOwnProfile) ...[
+                              IconButton(
+                                icon: Icon(
+                                  Icons.edit,
+                                  color: Theme.of(
+                                    context,
+                                  ).colorScheme.onSurface.withOpacity(0.5),
+                                ),
+                                onPressed: () {
+                                  me != null
+                                      ? showProfileInfoEditBottomSheet(me)
+                                      : null;
+                                },
                               ),
-                            );
-                          },
-                        ),
-                      ],
-                    ],
-                  ),
-                  SliverToBoxAdapter(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.center,
-                      children: [
-                        const SizedBox(height: 50),
-                        // 원형 아바타 (텍스트 위에 위치)
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.center,
-                          children: [
-                            // 아바타 (1차 스냅에서 완전히 페이드아웃)
-                            Opacity(
-                              opacity: 1,
-                              child: ProfileAvatar(
-                                imageUrl: _displayImageUrl,
-                                username: _displayUsername,
-                                size: 150,
-                                borderWidth: 2,
-                                borderColor:
-                                    Theme.of(context).brightness ==
-                                            Brightness.dark
-                                        ? Colors.grey.shade300
-                                        : Colors.grey.shade600,
-                                isUploading: _isUploadingProfileImage,
-                                onTap:
-                                    _isOwnProfile && !_isUploadingProfileImage
-                                        ? _changeProfileImage
-                                        : null,
+                              // 설정 버튼
+                              IconButton(
+                                icon: Icon(
+                                  Icons.settings,
+                                  color: Theme.of(
+                                    context,
+                                  ).colorScheme.onSurface.withOpacity(0.5),
+                                ),
+                                onPressed: () {
+                                  Navigator.of(context).push(
+                                    MaterialPageRoute(
+                                      builder: (_) => SettingScreen(),
+                                    ),
+                                  );
+                                },
                               ),
-                            ),
-                            const SizedBox(height: 30),
-                            // 사용자 이름 (1차 스냅 이후 페이드아웃)
-                            Text(
-                              _displayAlias ?? _displayUsername,
-                              style: TextStyle(
-                                color: Theme.of(context).colorScheme.onSurface,
-                                fontSize: 36,
-                                fontWeight: FontWeight.bold,
-                                height: 1.1,
-                              ),
-                            ),
+                            ],
                           ],
                         ),
-                        const SizedBox(height: 4),
-                        Text(
-                          isOther
-                              ? (other?.selfIntroduction?.isNotEmpty == true
-                                  ? other!.selfIntroduction!
-                                  : _displayUsername)
-                              : (me?.selfIntroduction?.isNotEmpty == true
-                                  ? me!.selfIntroduction!
-                                  : ''),
-                          style: TextStyle(
-                            color:
-                                Theme.of(context).brightness == Brightness.dark
-                                    ? Theme.of(context)
-                                        .colorScheme
-                                        .onSurfaceVariant
-                                        .withOpacity(0.8)
-                                    : Colors.black,
-                            fontSize: 14,
-                            height: 1.3,
-                          ),
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                        ),
+                        SliverToBoxAdapter(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.center,
+                            children: [
+                              const SizedBox(height: 50),
+                              // 원형 아바타 (텍스트 위에 위치)
+                              Column(
+                                crossAxisAlignment: CrossAxisAlignment.center,
+                                children: [
+                                  // 아바타 (1차 스냅에서 완전히 페이드아웃)
+                                  Opacity(
+                                    opacity: 1,
+                                    child: ProfileAvatar(
+                                      imageUrl: _displayImageUrl,
+                                      username: _displayUsername,
+                                      size: 150,
+                                      borderWidth: 2,
+                                      borderColor:
+                                          Theme.of(context).brightness ==
+                                                  Brightness.dark
+                                              ? Colors.grey.shade300
+                                              : Colors.grey.shade600,
+                                      isUploading: _isUploadingProfileImage,
+                                      onTap:
+                                          _isOwnProfile &&
+                                                  !_isUploadingProfileImage
+                                              ? _changeProfileImage
+                                              : null,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 30),
+                                  // 사용자 이름 (1차 스냅 이후 페이드아웃)
+                                  Text(
+                                    _displayAlias ?? _displayUsername,
+                                    style: TextStyle(
+                                      color:
+                                          Theme.of(
+                                            context,
+                                          ).colorScheme.onSurface,
+                                      fontSize: 36,
+                                      fontWeight: FontWeight.bold,
+                                      height: 1.1,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                isOther
+                                    ? (other?.selfIntroduction?.isNotEmpty ==
+                                            true
+                                        ? other!.selfIntroduction!
+                                        : _displayUsername)
+                                    : (me?.selfIntroduction?.isNotEmpty == true
+                                        ? me!.selfIntroduction!
+                                        : ''),
+                                style: TextStyle(
+                                  color:
+                                      Theme.of(context).brightness ==
+                                              Brightness.dark
+                                          ? Theme.of(context)
+                                              .colorScheme
+                                              .onSurfaceVariant
+                                              .withOpacity(0.8)
+                                          : Colors.black,
+                                  fontSize: 14,
+                                  height: 1.3,
+                                ),
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                              ),
 
-                        // 다른 사용자 프로필일 때만 친구 추가 버튼 표시
-                        if (isOther) ...[_buildOtherProfileButton()],
-                        if (_isOwnProfile) ...[_buildMyProfileButton()],
+                              // 다른 사용자 프로필일 때만 친구 추가 버튼 표시
+                              if (isOther) ...[_buildOtherProfileButton()],
+                              if (_isOwnProfile) ...[_buildMyProfileButton()],
+                            ],
+                          ),
+                        ),
+                        // Feed 모드 전환 스위처 (카드뷰 / 이미지 전용)
+                        _buildFeedModeSwitcher(),
+                        _feed.buildFeedContent(
+                          scrollController: _scrollController,
+                        ),
+                        const SliverToBoxAdapter(child: SizedBox(height: 60)),
                       ],
                     ),
-                  ),
-                  // Feed 모드 전환 스위처 (카드뷰 / 이미지 전용)
-                  _buildFeedModeSwitcher(),
-                  _feed.buildFeedContent(),
-                  const SliverToBoxAdapter(child: SizedBox(height: 60)),
-                ],
+                  );
+                },
               ),
             ),
             Positioned(
