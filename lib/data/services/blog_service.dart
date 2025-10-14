@@ -34,6 +34,386 @@ class BlogService {
     print('[BlogService] 로그아웃 - 모든 캐시 초기화 완료');
   }
 
+  /// 토큰 만료 시 자동 갱신 및 재시도 헬퍼
+  Future<http.Response> _requestWithTokenRefresh(
+    Future<http.Response> Function(String token) requestFn,
+  ) async {
+    final token = await AuthService().getToken();
+    var response = await requestFn(token ?? '');
+
+    // 401 또는 500 (JWT 만료) 에러 시 토큰 갱신 후 재시도
+    if (response.statusCode == 401 ||
+        (response.statusCode == 500 &&
+            response.body.contains('ExpiredJwtException'))) {
+      print('[BlogService] Token expired, refreshing...');
+
+      final refreshed = await AuthService().refreshToken();
+      if (!refreshed) {
+        throw Exception('토큰 갱신에 실패했습니다. 다시 로그인해주세요.');
+      }
+
+      final newToken = await AuthService().getToken();
+      print('[BlogService] Retrying with new token...');
+
+      response = await requestFn(newToken ?? '');
+    }
+
+    return response;
+  }
+
+  /// 새로운 프로필 피드 API 호출
+  Future<Map<String, dynamic>> getProfileFeed(String username) async {
+    final uri = Uri.parse('$_baseUrl/api/profile/$username/feed');
+    final token = await AuthService().getToken();
+
+    print('[BlogService] 프로필 피드 요청: $username');
+
+    try {
+      final response = await http.get(
+        uri,
+        headers: {
+          'Content-Type': 'application/json',
+          if (token != null) 'Authorization': 'Bearer $token',
+        },
+      );
+
+      print('[BlogService] 프로필 피드 응답 상태: ${response.statusCode}');
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        print('[BlogService] 프로필 피드 응답 전체: $data');
+        print(
+          '[BlogService] 프로필 피드 로드 성공: ${data['data']?['categories']?.length ?? 0}개 카테고리',
+        );
+        return data;
+      } else if (response.statusCode == 404) {
+        throw Exception('사용자를 찾을 수 없습니다.');
+      } else if (response.statusCode == 401) {
+        throw Exception('인증이 필요합니다.');
+      } else {
+        throw Exception('서버 오류가 발생했습니다. (${response.statusCode})');
+      }
+    } catch (e) {
+      print('[BlogService] 프로필 피드 로드 실패: $e');
+      rethrow;
+    }
+  }
+
+  /// 프로필 스키마 조회 (카테고리/매핑 전용)
+  Future<Map<String, dynamic>> getProfileSchema(String username) async {
+    final uri = Uri.parse('$_baseUrl/api/profile/feed/schema/$username');
+    final token = await AuthService().getToken();
+
+    print('[BlogService] 프로필 스키마 요청: $username');
+
+    try {
+      final response = await http.get(
+        uri,
+        headers: {
+          'Content-Type': 'application/json',
+          if (token != null) 'Authorization': 'Bearer $token',
+        },
+      );
+
+      print('[BlogService] 프로필 스키마 응답 상태: ${response.statusCode}');
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body) as Map<String, dynamic>;
+        return data;
+      } else if (response.statusCode == 404) {
+        throw Exception('사용자를 찾을 수 없습니다.');
+      } else if (response.statusCode == 401) {
+        throw Exception('인증이 필요합니다.');
+      } else {
+        throw Exception('서버 오류가 발생했습니다. (${response.statusCode})');
+      }
+    } catch (e) {
+      print('[BlogService] 프로필 스키마 로드 실패: $e');
+      rethrow;
+    }
+  }
+
+  /// 프로필 포스트 페이지 조회 (페이지네이션)
+  Future<Map<String, dynamic>> getProfilePosts(
+    String username, {
+    int page = 0,
+    int size = 20,
+  }) async {
+    final uri = Uri.parse(
+      '$_baseUrl/api/profile/feed/posts/$username?page=$page&size=$size',
+    );
+    final token = await AuthService().getToken();
+
+    print('[BlogService] 프로필 포스트 요청: $username page=$page size=$size');
+
+    try {
+      final response = await http.get(
+        uri,
+        headers: {
+          'Content-Type': 'application/json',
+          if (token != null) 'Authorization': 'Bearer $token',
+        },
+      );
+
+      print('[BlogService] 프로필 포스트 응답 상태: ${response.statusCode}');
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body) as Map<String, dynamic>;
+        return data;
+      } else if (response.statusCode == 404) {
+        throw Exception('사용자를 찾을 수 없습니다.');
+      } else if (response.statusCode == 401) {
+        throw Exception('인증이 필요합니다.');
+      } else {
+        throw Exception('서버 오류가 발생했습니다. (${response.statusCode})');
+      }
+    } catch (e) {
+      print('[BlogService] 프로필 포스트 로드 실패: $e');
+      rethrow;
+    }
+  }
+
+  /// 사용자의 카테고리 목록 조회
+  Future<List<Map<String, dynamic>>> getUserCategories(String username) async {
+    final uri = Uri.parse('$_baseUrl/api/categories/user/$username');
+
+    print('[BlogService] 카테고리 목록 조회 요청: $username');
+
+    try {
+      final response = await _requestWithTokenRefresh(
+        (token) => http.get(
+          uri,
+          headers: {
+            'Content-Type': 'application/json',
+            if (token.isNotEmpty) 'Authorization': 'Bearer $token',
+          },
+        ),
+      );
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        print('[BlogService] 카테고리 목록 조회 성공: ${data.length}개');
+        return List<Map<String, dynamic>>.from(data);
+      } else if (response.statusCode == 401) {
+        throw Exception('인증이 필요합니다.');
+      } else if (response.statusCode == 404) {
+        throw Exception('사용자를 찾을 수 없습니다.');
+      } else {
+        throw Exception('서버 오류가 발생했습니다. (${response.statusCode})');
+      }
+    } catch (e) {
+      print('[BlogService] 카테고리 목록 조회 실패: $e');
+      rethrow;
+    }
+  }
+
+  /// 카테고리 생성
+  Future<Map<String, dynamic>> createCategory({
+    required String name,
+    required bool isPrivate,
+    required String description,
+  }) async {
+    final uri = Uri.parse('$_baseUrl/api/categories');
+
+    print('[BlogService] 카테고리 생성 요청: $name');
+
+    try {
+      final response = await _requestWithTokenRefresh(
+        (token) => http.post(
+          uri,
+          headers: {
+            'Content-Type': 'application/json',
+            if (token.isNotEmpty) 'Authorization': 'Bearer $token',
+          },
+          body: json.encode({
+            'name': name,
+            'is_private': isPrivate,
+            'description': description,
+          }),
+        ),
+      );
+
+      if (response.statusCode == 201 || response.statusCode == 200) {
+        final data = json.decode(response.body);
+        print('[BlogService] 카테고리 생성 성공: ${data['data']?['name']}');
+        return data;
+      } else if (response.statusCode == 400) {
+        final data = json.decode(response.body);
+        throw Exception(data['message'] ?? '잘못된 요청입니다.');
+      } else if (response.statusCode == 401) {
+        throw Exception('인증이 필요합니다.');
+      } else {
+        throw Exception('서버 오류가 발생했습니다. (${response.statusCode})');
+      }
+    } catch (e) {
+      print('[BlogService] 카테고리 생성 실패: $e');
+      rethrow;
+    }
+  }
+
+  /// 카테고리 삭제
+  Future<void> deleteCategory(int categoryId) async {
+    final uri = Uri.parse('$_baseUrl/api/categories/$categoryId');
+
+    print('[BlogService] 카테고리 삭제 요청: $categoryId');
+
+    try {
+      final response = await _requestWithTokenRefresh(
+        (token) => http.delete(
+          uri,
+          headers: {
+            'Content-Type': 'application/json',
+            if (token.isNotEmpty) 'Authorization': 'Bearer $token',
+          },
+        ),
+      );
+
+      if (response.statusCode == 200) {
+        print('[BlogService] 카테고리 삭제 성공: $categoryId');
+      } else if (response.statusCode == 400) {
+        final data = json.decode(response.body);
+        throw Exception(data['message'] ?? '카테고리를 삭제할 수 없습니다.');
+      } else if (response.statusCode == 401) {
+        throw Exception('인증이 필요합니다.');
+      } else if (response.statusCode == 404) {
+        throw Exception('카테고리를 찾을 수 없습니다.');
+      } else {
+        throw Exception('서버 오류가 발생했습니다. (${response.statusCode})');
+      }
+    } catch (e) {
+      print('[BlogService] 카테고리 삭제 실패: $e');
+      rethrow;
+    }
+  }
+
+  /// 카테고리 순서 변경
+  Future<void> reorderCategories(List<int> orderedIds) async {
+    final uri = Uri.parse('$_baseUrl/api/categories/reorder');
+
+    print('[BlogService] 카테고리 순서 변경 요청: $orderedIds');
+
+    try {
+      final response = await _requestWithTokenRefresh(
+        (token) => http.put(
+          uri,
+          headers: {
+            'Content-Type': 'application/json',
+            if (token.isNotEmpty) 'Authorization': 'Bearer $token',
+          },
+          body: json.encode({'orderedIds': orderedIds}),
+        ),
+      );
+
+      if (response.statusCode == 200 || response.statusCode == 204) {
+        print('[BlogService] 카테고리 순서 변경 성공');
+        try {
+          if (response.body.isNotEmpty) {
+            print('[BlogService] 서버 응답 본문: ' + response.body);
+          }
+        } catch (_) {}
+      } else if (response.statusCode == 400) {
+        final data = json.decode(response.body);
+        throw Exception(data['message'] ?? '잘못된 요청입니다.');
+      } else if (response.statusCode == 401) {
+        throw Exception('인증이 필요합니다.');
+      } else {
+        try {
+          if (response.body.isNotEmpty) {
+            print('[BlogService] 실패 응답 본문: ' + response.body);
+          }
+        } catch (_) {}
+        throw Exception('서버 오류가 발생했습니다. (${response.statusCode})');
+      }
+    } catch (e) {
+      print('[BlogService] 카테고리 순서 변경 실패: $e');
+      rethrow;
+    }
+  }
+
+  /// 포스트를 다른 카테고리로 이동 (명세 반영)
+  Future<void> movePostToCategory({
+    required int postId,
+    required int targetCategoryId,
+    int? targetPosition,
+  }) async {
+    final uri = Uri.parse('$_baseUrl/api/categories/posts/$postId/move');
+
+    print(
+      '[BlogService] 포스트 이동 요청: $postId -> $targetCategoryId (pos=$targetPosition)',
+    );
+
+    try {
+      final response = await _requestWithTokenRefresh(
+        (token) => http.put(
+          uri,
+          headers: {
+            'Content-Type': 'application/json',
+            if (token.isNotEmpty) 'Authorization': 'Bearer $token',
+          },
+          body: json.encode({
+            'targetCategoryId': targetCategoryId,
+            if (targetPosition != null) 'targetPosition': targetPosition,
+          }),
+        ),
+      );
+
+      if (response.statusCode == 200 || response.statusCode == 204) {
+        print('[BlogService] 포스트 이동 성공: $postId -> $targetCategoryId');
+      } else if (response.statusCode == 400) {
+        final data = json.decode(response.body);
+        throw Exception(data['message'] ?? '잘못된 요청입니다.');
+      } else if (response.statusCode == 401) {
+        throw Exception('인증이 필요합니다.');
+      } else if (response.statusCode == 404) {
+        throw Exception('포스트 또는 카테고리를 찾을 수 없습니다.');
+      } else {
+        throw Exception('서버 오류가 발생했습니다. (${response.statusCode})');
+      }
+    } catch (e) {
+      print('[BlogService] 포스트 이동 실패: $e');
+      rethrow;
+    }
+  }
+
+  /// 카테고리 내 포스트 순서 변경
+  Future<void> reorderPostsInCategory({
+    required int categoryId,
+    required List<int> orderedIds,
+  }) async {
+    final uri = Uri.parse('$_baseUrl/api/categories/$categoryId/posts/reorder');
+
+    print('[BlogService] 포스트 순서 변경 요청: 카테고리 $categoryId');
+
+    try {
+      final response = await _requestWithTokenRefresh(
+        (token) => http.put(
+          uri,
+          headers: {
+            'Content-Type': 'application/json',
+            if (token.isNotEmpty) 'Authorization': 'Bearer $token',
+          },
+          body: json.encode({'orderedIds': orderedIds}),
+        ),
+      );
+
+      if (response.statusCode == 200 || response.statusCode == 204) {
+        print('[BlogService] 포스트 순서 변경 성공: 카테고리 $categoryId');
+      } else if (response.statusCode == 400) {
+        final data = json.decode(response.body);
+        throw Exception(data['message'] ?? '잘못된 요청입니다.');
+      } else if (response.statusCode == 401) {
+        throw Exception('인증이 필요합니다.');
+      } else if (response.statusCode == 404) {
+        throw Exception('카테고리를 찾을 수 없습니다.');
+      } else {
+        throw Exception('서버 오류가 발생했습니다. (${response.statusCode})');
+      }
+    } catch (e) {
+      print('[BlogService] 포스트 순서 변경 실패: $e');
+      rethrow;
+    }
+  }
+
   /// 블로그 포스트를 서버에 업로드합니다.
   ///
   /// [postData] - 포스트 데이터 (제목, 내용, 썸네일 URL, 태그 등)
@@ -45,7 +425,6 @@ class BlogService {
     String? thumbnailImageId,
   }) async {
     final uri = Uri.parse('$_baseUrl/api/posts');
-    final token = await AuthService().getToken();
 
     print(
       '[UploadPost] uploading post with thumbnailImageId: $thumbnailImageId',
@@ -83,16 +462,18 @@ class BlogService {
 
     print('[UploadPost] request body: ${json.encode(requestBody)}');
 
-    final response = await http
-        .post(
-          uri,
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': 'Bearer $token',
-          },
-          body: json.encode(requestBody),
-        )
-        .timeout(const Duration(seconds: 30));
+    final response = await _requestWithTokenRefresh(
+      (token) => http
+          .post(
+            uri,
+            headers: {
+              'Content-Type': 'application/json',
+              if (token.isNotEmpty) 'Authorization': 'Bearer $token',
+            },
+            body: json.encode(requestBody),
+          )
+          .timeout(const Duration(seconds: 30)),
+    );
 
     final responseBody = response.body;
 
@@ -122,7 +503,6 @@ class BlogService {
     String? thumbnailImageId,
   }) async {
     final uri = Uri.parse('$_baseUrl/api/posts/$postId');
-    final token = await AuthService().getToken();
 
     print(
       '[UpdatePost] updating post $postId with thumbnailImageId: $thumbnailImageId',
@@ -159,16 +539,18 @@ class BlogService {
 
     print('[UpdatePost] request body: ${json.encode(requestBody)}');
 
-    final response = await http
-        .put(
-          uri,
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': 'Bearer $token',
-          },
-          body: json.encode(requestBody),
-        )
-        .timeout(const Duration(seconds: 30));
+    final response = await _requestWithTokenRefresh(
+      (token) => http
+          .put(
+            uri,
+            headers: {
+              'Content-Type': 'application/json',
+              if (token.isNotEmpty) 'Authorization': 'Bearer $token',
+            },
+            body: json.encode(requestBody),
+          )
+          .timeout(const Duration(seconds: 30)),
+    );
 
     final responseBody = response.body;
 
@@ -286,6 +668,64 @@ class BlogService {
       print('[BlogService] Exception: $e');
       // 서버 오류 시 임시 데이터 반환
       return _getFallbackPosts();
+    }
+  }
+
+  /// 친구(팔로우한 사용자)의 게시물을 가져옵니다. (실제로는 getHomePosts 사용)
+  Future<List<Map<String, dynamic>>> getFriendsPosts({
+    int page = 0,
+    int size = 10,
+  }) async {
+    // 친구 게시물은 home 엔드포인트 사용
+    return getHomePosts(page: page, size: size);
+  }
+
+  /// 추천 게시물을 가져옵니다.
+  Future<List<Map<String, dynamic>>> getRecommendedPosts({
+    int page = 0,
+    int size = 10,
+  }) async {
+    try {
+      print('[BlogService] Fetching recommended posts: page=$page, size=$size');
+
+      final token = await AuthService().getToken();
+      final uri = Uri.parse(
+        '$_baseUrl/api/posts/recommendation?page=$page&size=$size',
+      );
+
+      final response = await http
+          .get(
+            uri,
+            headers: {
+              'Authorization': 'Bearer $token',
+              'Content-Type': 'application/json',
+            },
+          )
+          .timeout(const Duration(seconds: 10));
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        final posts = List<Map<String, dynamic>>.from(data['content'] ?? []);
+        print(
+          '[BlogService] Successfully fetched ${posts.length} recommended posts',
+        );
+
+        // 포스트가 없으면 home으로 fallback
+        if (posts.isEmpty) {
+          print('[BlogService] No recommended posts, falling back to home');
+          return getHomePosts(page: page, size: size);
+        }
+
+        return posts;
+      } else {
+        print('[BlogService] Error ${response.statusCode}: ${response.body}');
+        // 추천 게시물이 없으면 home으로 fallback
+        return getHomePosts(page: page, size: size);
+      }
+    } catch (e) {
+      print('[BlogService] Exception: $e');
+      // 오류 시 home으로 fallback
+      return getHomePosts(page: page, size: size);
     }
   }
 

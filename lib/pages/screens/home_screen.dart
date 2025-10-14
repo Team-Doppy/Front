@@ -1,11 +1,14 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:doppy/pages/components/empty_post_list.dart';
-// import 'package:doppy/pages/components/loading_post_list.dart';
 import 'package:doppy/pages/components/post_list.dart';
+import 'package:doppy/pages/components/feed_filter_dropdown.dart';
 import 'package:doppy/data/models/post_data.dart';
 import 'package:doppy/data/services/blog_service.dart';
 import 'package:doppy/pages/components/shimmer_box.dart';
+import 'package:doppy/pages/screens/search_screen_overlay.dart';
+import 'package:doppy/providers/search_result_provider.dart';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import 'dart:ui' as ui;
 
 class HomeScreen extends StatefulWidget {
@@ -14,10 +17,10 @@ class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key, this.preloadedPosts});
 
   @override
-  State<HomeScreen> createState() => _HomeScreenState();
+  State<HomeScreen> createState() => HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class HomeScreenState extends State<HomeScreen> {
   final BlogService _blogService = BlogService();
   List<PostData> _posts = [];
   bool _isLoading = true;
@@ -27,6 +30,14 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _hasMoreData = true;
   int _currentPostIndex = 0; // 현재 보이는 포스트 인덱스
   bool _isCardShimmering = false; // 새로고침 시 카드 영역만 쉬머 표시
+
+  // 검색 오버레이 상태
+  bool _isSearchOverlayVisible = false;
+  bool _isShowingSearchResults = false; // 검색 결과 표시 중인지
+  String _searchQuery = ''; // 현재 검색어
+
+  // 피드 필터 상태
+  bool _isShowingFriendsOnly = false; // 친구만 보기 여부
 
   @override
   void initState() {
@@ -40,9 +51,46 @@ class _HomeScreenState extends State<HomeScreen> {
     }
 
     print('[HomeScreen] initState: ${widget.preloadedPosts?.length}');
+
+    // 다음 프레임에서 검색 결과 확인
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final searchResultProvider = context.read<SearchResultProvider>();
+      if (searchResultProvider.hasSearchResults) {
+        setState(() {
+          _posts = searchResultProvider.searchResults;
+          _searchQuery = searchResultProvider.searchQuery;
+          _isShowingSearchResults = true;
+          _isLoading = false;
+          _hasMoreData = false;
+        });
+      }
+
+      // Provider의 오버레이 상태 변화를 감지
+      searchResultProvider.addListener(() {
+        if (!searchResultProvider.isSearchOverlayVisible &&
+            _isSearchOverlayVisible) {
+          // 다른 탭으로 이동 시 오버레이 닫기
+          setState(() {
+            _isSearchOverlayVisible = false;
+          });
+        }
+      });
+    });
+  }
+
+  // 검색 오버레이 열기
+  void openSearchOverlay() {
+    print('[HomeScreen.openSearchOverlay] 호출됨');
+    context.read<SearchResultProvider>().setSearchOverlayVisible(true);
+    setState(() {
+      _isSearchOverlayVisible = true;
+    });
   }
 
   Future<void> _loadPosts({bool refresh = false}) async {
+    // 검색 결과 표시 중에는 로드하지 않음
+    if (_isShowingSearchResults && !refresh) return;
+
     try {
       setState(() {
         if (refresh) {
@@ -50,18 +98,21 @@ class _HomeScreenState extends State<HomeScreen> {
           _hasMoreData = true;
           // 배경 블러 유지 위해 기존 포스트 유지
           _isCardShimmering = _posts.isNotEmpty;
+          _isShowingSearchResults = false; // 새로고침 시 검색 결과 모드 해제
         }
         // 초기 진입 시에만 전체 로딩; 새로고침은 카드 쉬머만
         _isLoading = !refresh && _posts.isEmpty;
         _error = null;
       });
 
-      // 새로고침 시에는 항상 서버에서 가져옵니다 (forceRefresh=true)
-      final serverData = await _blogService.getHomePosts(
-        page: _currentPage,
-        size: 10,
-        forceRefresh: refresh, // 새로고침 시에만 강제 갱신
-      );
+      // 필터에 따라 다른 엔드포인트 호출
+      final serverData =
+          _isShowingFriendsOnly
+              ? await _blogService.getFriendsPosts(page: _currentPage, size: 10)
+              : await _blogService.getRecommendedPosts(
+                page: _currentPage,
+                size: 10,
+              );
       final posts =
           serverData.map((data) => PostData.fromServer(data)).toList();
 
@@ -92,7 +143,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _loadMorePosts() async {
-    if (_isLoadingMore || !_hasMoreData) return;
+    if (_isLoadingMore || !_hasMoreData || _isShowingSearchResults) return;
 
     setState(() {
       _isLoadingMore = true;
@@ -140,9 +191,15 @@ class _HomeScreenState extends State<HomeScreen> {
                     begin: Alignment.topCenter,
                     end: Alignment.bottomCenter,
                     colors: [
-                      Theme.of(context).colorScheme.background.withOpacity(0.8),
-                      Theme.of(context).colorScheme.background.withOpacity(0.8),
-                      Theme.of(context).colorScheme.background.withOpacity(0.8),
+                      Theme.of(
+                        context,
+                      ).colorScheme.background.withOpacity(0.85),
+                      Theme.of(
+                        context,
+                      ).colorScheme.background.withOpacity(0.85),
+                      Theme.of(
+                        context,
+                      ).colorScheme.background.withOpacity(0.85),
                     ],
                     stops: const [0.0, 0.7, 1.0],
                   ),
@@ -166,24 +223,145 @@ class _HomeScreenState extends State<HomeScreen> {
           backgroundColor: Colors.transparent,
           extendBodyBehindAppBar: true,
           appBar: AppBar(
-            toolbarHeight: 50,
+            toolbarHeight: 40,
             backgroundColor: Colors.transparent,
             elevation: 0,
             scrolledUnderElevation: 0,
             title: Text(
-              ' doppy',
+              'Doppy',
               style: TextStyle(
-                fontWeight: FontWeight.w700,
-                fontSize: 30,
+                fontSize: 20,
+                fontWeight: FontWeight.w600,
                 color: Theme.of(context).colorScheme.primary,
               ),
             ),
-
             centerTitle: false,
+
+            actions: [
+              // 검색 중이면 검색어 칩 + 아이콘, 아니면 검색 아이콘만
+              if (_isShowingSearchResults && _searchQuery.isNotEmpty)
+                GestureDetector(
+                  onTap: () {
+                    setState(() {
+                      _isSearchOverlayVisible = true;
+                    });
+                  },
+                  child: Container(
+                    margin: const EdgeInsets.only(right: 8),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(16),
+                      child: BackdropFilter(
+                        filter: ui.ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 6,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.surface.withOpacity(0.2),
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.primary.withOpacity(0.3),
+                              width: 1,
+                            ),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                Icons.search,
+                                size: 18,
+                                color: Theme.of(context).colorScheme.primary,
+                              ),
+                              const SizedBox(width: 6),
+                              Text(
+                                _searchQuery,
+                                style: TextStyle(
+                                  color:
+                                      Theme.of(context).colorScheme.onSurface,
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                              const SizedBox(width: 6),
+                              GestureDetector(
+                                onTap: () {
+                                  // Provider 클리어
+                                  context
+                                      .read<SearchResultProvider>()
+                                      .clearSearchResults();
+
+                                  setState(() {
+                                    _isShowingSearchResults = false;
+                                    _searchQuery = '';
+                                    _currentPostIndex = 0;
+                                  });
+                                  // 홈 포스트 다시 로드
+                                  _loadPosts(refresh: true);
+                                },
+                                child: Icon(
+                                  Icons.close,
+                                  size: 18,
+                                  color: Theme.of(
+                                    context,
+                                  ).colorScheme.onSurface.withOpacity(0.7),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                )
+              else ...[
+                // 피드 필터 드롭다운
+                IconButton(
+                  onPressed: () {
+                    FeedFilterDropdown.show(
+                      context,
+                      isShowingFriendsOnly: _isShowingFriendsOnly,
+                      onFilterChanged: (showFriendsOnly) {
+                        setState(() {
+                          _isShowingFriendsOnly = showFriendsOnly;
+                        });
+                        // TODO: 친구 게시물만 로드하는 로직 추가
+                        _loadPosts(refresh: true);
+                      },
+                    );
+                  },
+                  icon: Icon(Icons.keyboard_arrow_down_rounded),
+                ),
+              ],
+            ],
           ),
           body: _buildContent(screenWidth),
-          // 하단 네비게이션은 RootShell에서 고정 제공
         ),
+
+        // 검색 오버레이
+        if (_isSearchOverlayVisible)
+          SearchScreenOverlay(
+            onSearchComplete: (results, query) {
+              setState(() {
+                _posts = results;
+                _isShowingSearchResults = true;
+                _searchQuery = query; // 검색어 저장
+                _currentPostIndex = 0; // 첫 번째 포스트로 리셋
+              });
+            },
+            onClose: () {
+              context.read<SearchResultProvider>().setSearchOverlayVisible(
+                false,
+              );
+              setState(() {
+                _isSearchOverlayVisible = false;
+              });
+            },
+          ),
       ],
     );
   }
@@ -194,7 +372,8 @@ class _HomeScreenState extends State<HomeScreen> {
       return PostList(
         containerWidth: screenWidth,
         posts: _posts,
-        onLoadMore: _hasMoreData ? _loadMorePosts : null,
+        onLoadMore:
+            (_hasMoreData && !_isShowingSearchResults) ? _loadMorePosts : null,
         isLoadingMore: _isLoadingMore,
         onRefresh: () => _loadPosts(refresh: true),
         showCardShimmer: _isCardShimmering,
@@ -227,7 +406,10 @@ class _HomeScreenState extends State<HomeScreen> {
             : PostList(
               containerWidth: screenWidth,
               posts: _posts,
-              onLoadMore: _hasMoreData ? _loadMorePosts : null,
+              onLoadMore:
+                  (_hasMoreData && !_isShowingSearchResults)
+                      ? _loadMorePosts
+                      : null,
               isLoadingMore: _isLoadingMore,
               onRefresh: () => _loadPosts(refresh: true),
               showCardShimmer: _isCardShimmering,

@@ -9,10 +9,14 @@ class CustomBottomNavigationBar extends StatelessWidget {
   /// 인덱스가 탭될 때 호출되는 콜백 (작성 버튼 등 화면 전환 외 동작용)
   final ValueChanged<int> onTap;
 
+  /// 검색 중인지 여부 (검색 중일 때 검색 아이콘을 primary 색상으로 표시)
+  final bool isSearching;
+
   const CustomBottomNavigationBar({
     Key? key,
     required this.currentIndex,
     required this.onTap,
+    this.isSearching = false,
   }) : super(key: key);
 
   @override
@@ -58,11 +62,18 @@ class CustomBottomNavigationBar extends StatelessWidget {
                         width: iconSize,
                         height: iconSize,
                         color:
-                            index == currentIndex
-                                ? Theme.of(context).colorScheme.primary
-                                : Theme.of(
-                                  context,
-                                ).colorScheme.onSurface.withOpacity(0.7),
+                            // 검색 중일 때: 검색 아이콘만 primary, 나머지는 기본 색상
+                            isSearching
+                                ? (index == 1
+                                    ? Theme.of(context).colorScheme.primary
+                                    : Theme.of(
+                                      context,
+                                    ).colorScheme.onSurface.withOpacity(0.7))
+                                : (index == currentIndex
+                                    ? Theme.of(context).colorScheme.primary
+                                    : Theme.of(
+                                      context,
+                                    ).colorScheme.onSurface.withOpacity(0.7)),
                       ),
                     ),
                   ),

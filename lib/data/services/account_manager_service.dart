@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'account_linking_service.dart';
 
 /// 계정 정보 모델
 class AccountInfo {
@@ -36,6 +37,15 @@ class AccountInfo {
       refreshToken: json['refreshToken'] ?? '',
     );
   }
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    return other is AccountInfo && other.username == username;
+  }
+
+  @override
+  int get hashCode => username.hashCode;
 }
 
 /// 계정 관리 서비스
@@ -60,7 +70,10 @@ class AccountManagerService {
   }
 
   /// 계정 추가 (중복 시 업데이트)
-  static Future<bool> addAccount(AccountInfo accountInfo) async {
+  static Future<bool> addAccount(
+    AccountInfo accountInfo, {
+    bool syncToServer = true,
+  }) async {
     try {
       final accounts = await getAllAccounts();
 
@@ -90,6 +103,15 @@ class AccountManagerService {
 
       await prefs.setStringList(_accountsKey, accountsJson);
 
+      // 서버 동기화
+      if (syncToServer) {
+        if (existingIndex == -1) {
+          await AccountLinkingService().notifyAccountAdded(accountInfo);
+        } else {
+          await AccountLinkingService().notifyAccountUpdated(accountInfo);
+        }
+      }
+
       return true;
     } catch (e) {
       print('[-] [AccountManagerService] addAccount error: $e');
@@ -98,7 +120,10 @@ class AccountManagerService {
   }
 
   /// 계정 제거
-  static Future<bool> removeAccount(String username) async {
+  static Future<bool> removeAccount(
+    String username, {
+    bool syncToServer = true,
+  }) async {
     try {
       final accounts = await getAllAccounts();
       accounts.removeWhere((account) => account.username == username);
@@ -113,6 +138,11 @@ class AccountManagerService {
       final currentAccount = await getCurrentAccount();
       if (currentAccount?.username == username) {
         await clearCurrentAccount();
+      }
+
+      // 서버 동기화
+      if (syncToServer) {
+        await AccountLinkingService().notifyAccountRemoved(username);
       }
 
       print('[-] [AccountManagerService] removeAccount success: $username');
@@ -138,7 +168,10 @@ class AccountManagerService {
   }
 
   /// 현재 활성 계정 설정
-  static Future<bool> setCurrentAccount(String username) async {
+  static Future<bool> setCurrentAccount(
+    String username, {
+    bool syncToServer = true,
+  }) async {
     try {
       final account = await getAccount(username);
       if (account == null) {
@@ -150,6 +183,11 @@ class AccountManagerService {
 
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString(_currentAccountKey, jsonEncode(account.toJson()));
+
+      // 서버 동기화
+      if (syncToServer) {
+        await AccountLinkingService().notifyCurrentAccountChanged(username);
+      }
 
       print('[-] [AccountManagerService] setCurrentAccount success: $username');
       return true;
@@ -332,6 +370,50 @@ class AccountManagerService {
       print('===== [/AccountManagerService][DEBUG] =====');
     } catch (e) {
       print('[-] [AccountManagerService] debugPrintAllAccounts error: $e');
+    }
+  }
+
+  /// 서버와 계정 정보 동기화 (Full Sync)
+  static Future<bool> syncWithServer() async {
+    try {
+      print('[AccountManagerService] Starting server sync...');
+      return await AccountLinkingService().fullAccountSync();
+    } catch (e) {
+      print('[AccountManagerService] Server sync error: $e');
+      return false;
+    }
+  }
+
+  /// 서버에서 계정 정보 가져오기
+  static Future<bool> syncFromServer() async {
+    try {
+      print('[AccountManagerService] Syncing from server...');
+      return await AccountLinkingService().syncAccountsFromServer();
+    } catch (e) {
+      print('[AccountManagerService] Sync from server error: $e');
+      return false;
+    }
+  }
+
+  /// 로컬 계정 정보를 서버로 전송
+  static Future<bool> syncToServer() async {
+    try {
+      print('[AccountManagerService] Syncing to server...');
+      return await AccountLinkingService().syncAccountsToServer();
+    } catch (e) {
+      print('[AccountManagerService] Sync to server error: $e');
+      return false;
+    }
+  }
+
+  /// 서버 동기화 상태 확인
+  static Future<bool> checkSyncStatus() async {
+    try {
+      print('[AccountManagerService] Checking sync status...');
+      return await AccountLinkingService().checkAccountSyncStatus();
+    } catch (e) {
+      print('[AccountManagerService] Check sync status error: $e');
+      return false;
     }
   }
 }

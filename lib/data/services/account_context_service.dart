@@ -31,7 +31,10 @@ class AccountContextService {
 
     try {
       // 1) 현재 계정 설정 및 토큰 저장
-      await AccountManagerService.setCurrentAccount(username);
+      await AccountManagerService.setCurrentAccount(
+        username,
+        syncToServer: true,
+      );
 
       final authService = AuthService();
       await authService.saveToken(token);
@@ -44,14 +47,22 @@ class AccountContextService {
 
       if (!tokenValid) {
         print('[AccountContextService] 토큰 갱신 실패, 계정 전환 중단');
-        // 해당 계정을 저장된 계정 목록에서 제거 (리프레시 토큰도 만료된 경우)
-        await AccountManagerService.removeAccount(username);
 
-        // 로그인 화면으로 이동
+        // 토큰이 만료된 계정은 제거하지 않고, 사용자에게 알림
         if (context.mounted) {
-          Navigator.of(
-            context,
-          ).pushNamedAndRemoveUntil('/login', (route) => false);
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('$username 계정의 토큰이 만료되었습니다. 다시 로그인해주세요.'),
+              backgroundColor: Colors.orange,
+              action: SnackBarAction(
+                label: '재로그인',
+                textColor: Colors.white,
+                onPressed: () {
+                  Navigator.of(context).pushNamed('/login');
+                },
+              ),
+            ),
+          );
         }
         return false;
       }
@@ -124,7 +135,10 @@ class AccountContextService {
   }) async {
     try {
       // 1) 현재 계정 설정 및 토큰 저장
-      await AccountManagerService.setCurrentAccount(username);
+      await AccountManagerService.setCurrentAccount(
+        username,
+        syncToServer: true,
+      );
 
       final authService = AuthService();
       await authService.saveToken(token);
@@ -137,8 +151,7 @@ class AccountContextService {
 
       if (!tokenValid) {
         print('[AccountContextService] 토큰 갱신 실패, 계정 전환 중단');
-        // 해당 계정을 저장된 계정 목록에서 제거 (리프레시 토큰도 만료된 경우)
-        await AccountManagerService.removeAccount(username);
+        // 토큰이 만료된 계정은 제거하지 않고, false 반환
         return false;
       }
 

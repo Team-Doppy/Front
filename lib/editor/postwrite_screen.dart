@@ -66,6 +66,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
   late final EditorService editorService;
   late final DragService dragService;
   late final DraftService draftService;
+  late final TextStylingService textStylingService;
 
   OverlayEntry? overlayEntry;
   GlobalKey overlayKey = GlobalKey();
@@ -111,6 +112,9 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
 
     editorService = EditorService(editor: editor, document: document);
     editorService.setDocumentLayoutKey(_documentLayoutKey);
+    textStylingService = TextStylingService(editor: editor, composer: composer);
+    // 전역 스타일링 서비스 설정 (렌더링용)
+    setGlobalTextStylingService(textStylingService);
     // ImageService는 build 메서드에서 설정
     dragService = DragService(
       editorService: editorService,
@@ -149,7 +153,6 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
           ),
           SelectionReason.userInteraction,
         );
-        _editorFocusNode.requestFocus();
       }
       // 최초 진입 스냅샷 마크(현재 상태를 저장 기준으로 간주)
       editorService.markSavedSnapshot();
@@ -174,6 +177,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     ImageService().clearHighlightedSelectionSilently();
     ImageService().clearSelectionSilently();
 
+    textStylingService.dispose();
     editorService.dispose();
     dragService.removeListener(_onDragChange);
     _editorFocusNode.removeListener(_onFocusChange);
@@ -438,8 +442,9 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
         body: Stack(
           children: [
             AnimatedScale(
+              alignment: Alignment.center,
               duration: const Duration(milliseconds: 100),
-              scale: dragService.draggingNodeId != null ? 0.9 : 1.0,
+              scale: dragService.draggingNodeId != null ? 0.95 : 1.0,
               child: Stack(
                 children: [
                   AnimatedOpacity(
@@ -551,6 +556,12 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                             }
                           },
                           onLongPressStart: (details) {
+                            // 🚫 키보드가 올라와 있으면 드래그 불가
+                            if (_isKeyboardVisible) {
+                              print('키보드가 올라와 있어 드래그가 비활성화되었습니다');
+                              return;
+                            }
+
                             final node = editorService.findNodeAtPosition(
                               details.globalPosition,
                             );
@@ -597,12 +608,18 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                             }
                           },
                           onLongPressMoveUpdate: (details) {
+                            // 🚫 키보드가 올라와 있으면 드래그 업데이트 불가
+                            if (_isKeyboardVisible) return;
+
                             dragService.updateDrag(
                               details.globalPosition,
                               context,
                             );
                           },
                           onLongPressEnd: (details) {
+                            // 🚫 키보드가 올라와 있으면 드래그 종료 처리 불가
+                            if (_isKeyboardVisible) return;
+
                             dragService.endDrag();
                           },
                           behavior: HitTestBehavior.translucent,
@@ -610,8 +627,9 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                       )
                       : SizedBox.shrink(),
 
-                  // 드래그 오버레이 (개선된 Stack 방식)
-                  if (dragService.draggingNodeId != null) _buildDragOverlay(),
+                  // 드래그 오버레이 (키보드가 내려가 있을 때만 표시)
+                  if (dragService.draggingNodeId != null && !_isKeyboardVisible)
+                    _buildDragOverlay(),
                 ],
               ),
             ),
@@ -712,7 +730,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                           },
                           child: Container(
                             padding: const EdgeInsets.symmetric(
-                              horizontal: 12,
+                              horizontal: 10,
                               vertical: 4,
                             ),
                             child: Text(
@@ -720,7 +738,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                               style: TextStyle(
                                 color: Theme.of(
                                   context,
-                                ).colorScheme.onSurface.withOpacity(0.5),
+                                ).colorScheme.onSurface.withOpacity(1),
                                 fontWeight: FontWeight.w600,
                               ),
                             ),
@@ -733,16 +751,22 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
             ),
             Positioned(
               top: 0,
+              left: 0,
               right: 0,
-
-              child: Container(
-                height: 20,
-                width: 20,
-                decoration: BoxDecoration(color: Colors.red),
-                child: Row(children: [
-                      
-                    ],
-                
+              child: ImageFiltered(
+                imageFilter: ui.ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+                child: Container(
+                  height: MediaQuery.of(context).padding.top,
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [
+                        Colors.black.withOpacity(0.4),
+                        Colors.black.withOpacity(0.4),
+                        Colors.black.withOpacity(0.4),
+                      ],
+                      stops: [1, 1, 1],
+                    ),
+                  ),
                 ),
               ),
             ),
@@ -825,7 +849,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
 
   Widget _buildDefaultToolbar() {
     return DefaultToolbar(
-      stylingService: TextStylingService(editor: editor, composer: composer),
+      stylingService: textStylingService,
       editorService: editorService,
       scrollController: scrollController,
       isKeyboardVisible: _isKeyboardVisible,
@@ -834,6 +858,10 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
       onDismissKeyboard: () {
         // 키보드 내리기 (SuperEditor의 포커스 관리 활용)
         _editorFocusNode.unfocus();
+      },
+      onRequestFocus: () {
+        // 에디터 포커스 복원
+        _editorFocusNode.requestFocus();
       },
       onShowDraftList: _showDraftList,
     );

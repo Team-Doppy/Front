@@ -18,6 +18,7 @@ class AccountDropDown {
 
   /// 계정 드롭다운 표시
   void showAccountDropdown(BuildContext context) async {
+    print('[-] [AccountDropDown] showAccountDropdown');
     // 현재 사용자 정보 가져오기
     final userProvider = context.read<UserProvider>();
     final currentUser = userProvider.currentUser;
@@ -28,6 +29,12 @@ class AccountDropDown {
     // 연결된 계정 목록 가져오기
     final linkedAccounts = await AccountManagerService.getAllAccounts();
     final currentAccount = await AccountManagerService.getCurrentAccount();
+
+    print('[AccountDropDown] 현재 계정: ${currentAccount?.username}');
+    print('[AccountDropDown] 전체 연동 계정 수: ${linkedAccounts.length}');
+    for (final account in linkedAccounts) {
+      print('[AccountDropDown] 연동 계정: ${account.username}');
+    }
 
     AccountManagerService.debugPrintAllAccounts();
 
@@ -93,13 +100,25 @@ class AccountDropDown {
                             color: Colors.white.withOpacity(0.1),
                           ),
 
-                          // 연결된 계정 목록 (슬라이드 삭제 가능)
+                          // 연결된 계정 목록 (현재 계정 제외, 중복 제거, 슬라이드 삭제 가능)
                           ...linkedAccounts
-                              .where(
-                                (account) =>
-                                    account.username !=
-                                    currentAccount?.username,
-                              )
+                              .fold<Map<String, AccountInfo>>({}, (
+                                map,
+                                account,
+                              ) {
+                                // username으로 중복 제거
+                                map[account.username] = account;
+                                return map;
+                              })
+                              .values
+                              .where((account) {
+                                final isNotCurrent =
+                                    account.username != displayUsername;
+                                print(
+                                  '[AccountDropDown] 계정 ${account.username}: 현재 계정 아님 = $isNotCurrent',
+                                );
+                                return isNotCurrent;
+                              })
                               .map(
                                 (account) => Dismissible(
                                   key: Key(account.username),
@@ -145,6 +164,8 @@ class AccountDropDown {
                                 ),
                               )
                               .toList(),
+
+                          // 계정이 없을 때 메시지
 
                           // 계정 관리 버튼
                           _buildDropdownItem(
@@ -326,6 +347,21 @@ class AccountDropDown {
       );
 
       if (!success) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('${accountInfo.username} 다시 로그인 하세요.'),
+              backgroundColor: Colors.red,
+              action: SnackBarAction(
+                label: '재로그인',
+                textColor: Colors.white,
+                onPressed: () {
+                  Navigator.of(context).pushNamed('/login');
+                },
+              ),
+            ),
+          );
+        }
         return;
       }
 

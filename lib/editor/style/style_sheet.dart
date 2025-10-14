@@ -1,10 +1,19 @@
 import 'package:doppy/editor/component/row_image_component.dart';
 import 'package:doppy/editor/config.dart';
+import 'package:doppy/editor/style/defualt_toolbar.dart'; // HighlightAttribution import
 import 'package:doppy/providers/theme_provider.dart';
 import 'package:doppy/theme/app_colors.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:super_editor/super_editor.dart';
+
+// 전역 폰트 접근용
+TextStylingService? _globalTextStylingService;
+
+void setGlobalTextStylingService(TextStylingService? service) {
+  _globalTextStylingService = service;
+}
 
 /// 커스텀 스타일시트 (테마에 따라 텍스트/타이틀 색을 적용)
 Stylesheet buildCustomStylesheet(BuildContext context) {
@@ -36,7 +45,7 @@ Stylesheet buildCustomStylesheet(BuildContext context) {
               ),
               Styles.padding: const CascadingPadding.only(
                 top: 100,
-                bottom: 10,
+                bottom: 20,
                 left: 0,
                 right: 0,
               ),
@@ -79,6 +88,8 @@ Stylesheet buildCustomStylesheet(BuildContext context) {
       bool isItalic = false;
       bool hasUnderline = false;
       bool hasStrikethrough = false;
+      Color? highlightColor;
+      String? fontFamily;
 
       for (final attribution in attributions) {
         if (attribution == boldAttribution) {
@@ -89,10 +100,14 @@ Stylesheet buildCustomStylesheet(BuildContext context) {
           hasUnderline = true;
         } else if (attribution == strikethroughAttribution) {
           hasStrikethrough = true;
+        } else if (attribution is HighlightAttribution) {
+          highlightColor = attribution.color;
         } else if (attribution is ColorAttribution) {
           style = style.copyWith(color: attribution.color);
         } else if (attribution is FontSizeAttribution) {
           style = style.copyWith(fontSize: attribution.fontSize);
+        } else if (attribution is FontFamilyAttribution) {
+          fontFamily = attribution.fontFamily;
         }
       }
 
@@ -100,7 +115,30 @@ Stylesheet buildCustomStylesheet(BuildContext context) {
         fontWeight: isBold ? FontWeight.bold : FontWeight.normal,
         fontStyle: isItalic ? FontStyle.italic : FontStyle.normal,
         decoration: _buildTextDecoration(hasUnderline, hasStrikethrough),
+        // 🎨 형광펜 배경색 적용 (연한 색상으로 자연스러운 효과)
+        backgroundColor: highlightColor?.withOpacity(0.4), // 투명도 조정으로 더 자연스럽게
       );
+
+      // 🎨 폰트 패밀리 적용 (Google Fonts 로더 통해 동적 로드)
+      // Attribution이 없으면 전역 폰트 사용
+      if (fontFamily == null || fontFamily.isEmpty) {
+        fontFamily = _globalTextStylingService?.globalFontFamily;
+        if (fontFamily != null) {
+          print('[FontDebug] 전역 폰트 사용: $fontFamily');
+        }
+      }
+
+      if (fontFamily != null && fontFamily.isNotEmpty) {
+        print('[FontDebug] inlineTextStyler 폰트 감지: $fontFamily');
+        try {
+          style = GoogleFonts.getFont(fontFamily, textStyle: style);
+          print('[FontDebug] GoogleFonts.getFont 성공: $fontFamily');
+        } catch (e) {
+          print('[FontDebug] GoogleFonts.getFont 실패: $fontFamily (오류: $e)');
+          // 폰트명이 GoogleFonts에 없을 경우 fallback으로 family만 지정
+          style = style.copyWith(fontFamily: fontFamily);
+        }
+      }
       // 본문/타이틀 기본 색을 테마에 맞춰 적용 (인라인 컬러 지정이 없는 경우)
       if (style.color == null) {
         style = style.copyWith(color: bodyColor);

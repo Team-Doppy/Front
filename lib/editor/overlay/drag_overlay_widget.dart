@@ -24,8 +24,8 @@ class DragOverlayWidget extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Positioned(
-      left: position.dx - 50, // 오버레이 너비의 절반만큼 왼쪽으로 이동
-      top: position.dy - 120, // 오버레이 높이의 절반만큼 위로 이동
+      left: position.dx - 80, // 오버레이 너비의 절반만큼 왼쪽으로 이동
+      top: position.dy, // 오버레이 높이의 절반만큼 위로 이동
       child: Material(
         elevation: 8,
         borderRadius: BorderRadius.circular(8),

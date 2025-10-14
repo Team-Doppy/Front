@@ -3,9 +3,9 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:doppy/providers/profile_feed_provider.dart';
 import 'package:provider/provider.dart';
-import 'package:doppy/providers/category_provider.dart';
 import 'package:doppy/pages/components/comps_for_profile/category_create_dialog.dart';
 import 'package:doppy/data/services/feed_service.dart';
+import 'package:doppy/data/services/blog_service.dart';
 
 // 카테고리 필터 관리
 class CategoryFilterManager extends ValueNotifier<String?> {
@@ -37,7 +37,7 @@ class CategoryDropDown {
   void showCategoryDropdown(
     BuildContext context,
     GlobalKey buttonKey,
-    CategoryProvider? categoryProvider,
+    ProfileFeedProvider feedProvider,
   ) async {
     // 버튼 위치 계산
     final RenderBox? renderBox =
@@ -60,7 +60,7 @@ class CategoryDropDown {
             ),
             // 드롭다운 컨텐츠 - 버튼 아래에 정확히 위치
             Positioned(
-              top: (buttonPosition?.dy ?? 100) - 110,
+              top: (buttonPosition?.dy ?? 100) - 80,
               left: buttonPosition?.dx ?? 20 - 15,
               child: Material(
                 color: Colors.transparent,
@@ -100,10 +100,7 @@ class CategoryDropDown {
                         ),
                         child: Scrollbar(
                           child: SingleChildScrollView(
-                            child: _buildCategoryContent(
-                              context,
-                              categoryProvider,
-                            ),
+                            child: _buildCategoryContent(context, feedProvider),
                           ),
                         ),
                       ),
@@ -121,82 +118,79 @@ class CategoryDropDown {
   /// 카테고리 드롭다운 내용 빌드
   Widget _buildCategoryContent(
     BuildContext context,
-    CategoryProvider? categoryProvider,
+    ProfileFeedProvider feedProvider,
   ) {
     final feedProvider = context.read<ProfileFeedProvider>();
-    final posts = feedProvider.posts;
-    final cat = context.read<CategoryProvider>();
+    final categories = feedProvider.categories;
+    final postsByCategory = feedProvider.postsByCategory;
+    final userInfo = feedProvider.userInfo;
+    final isOwnProfile = userInfo?['isOwnProfile'] == true;
 
     print(
-      '[CategoryDropDown] _buildCategoryContent - cat instance: ${cat.hashCode}, selectedBase: ${cat.selectedBase}',
+      '[CategoryDropDown] _buildCategoryContent - isOwnProfile: $isOwnProfile, categories: ${categories.length}개',
+    );
+
+    // 전체 포스트 수 계산
+    final totalPosts = postsByCategory.values.fold<int>(
+      0,
+      (sum, posts) => sum + posts.length,
     );
 
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        _buildCreateCategoryButton(context, categoryProvider),
+        // 카테고리 생성 버튼은 본인 프로필일 때만 표시
+        if (isOwnProfile) _buildCreateCategoryButton(context, feedProvider),
 
-        // 기본 탭 4개
+        // 전체 탭
         _buildCategoryItem(
           title: '전체',
-          count: posts.length,
-          isSelected:
-              cat.selectedCategoryId == null &&
-              (cat.selectedBase == BaseFilter.all),
+          count: totalPosts,
+          isSelected: feedProvider.selectedCategoryId == null,
           context: context,
           onTap: () {
-            cat.selectBase(BaseFilter.all);
+            feedProvider.selectCategory(null);
             Navigator.of(context).pop();
             _onCategoryChanged?.call();
           },
         ),
-        _buildCategoryItem(
-          title: '나만보기',
-          count: posts.length, // 실제 카운트는 서버 필터링 후 반영 가능
-          isSelected:
-              cat.selectedCategoryId == null &&
-              (cat.selectedBase == BaseFilter.private),
-          context: context,
-          onTap: () {
-            print('[CategoryDropDown] 나만보기 탭 선택됨 (instance: ${cat.hashCode})');
-            cat.selectBase(BaseFilter.private);
-            print(
-              '[CategoryDropDown] selectBase 호출 완료, 현재: ${cat.selectedBase}',
-            );
-            Navigator.of(context).pop();
-            _onCategoryChanged?.call();
-          },
-        ),
-        _buildCategoryItem(
-          title: '그룹공유',
-          count: posts.length,
-          isSelected:
-              cat.selectedCategoryId == null &&
-              (cat.selectedBase == BaseFilter.groups),
-          context: context,
-          onTap: () {
-            print('[CategoryDropDown] 그룹공유 탭 선택됨');
-            cat.selectBase(BaseFilter.groups);
-            print(
-              '[CategoryDropDown] selectBase 호출 완료, 현재: ${cat.selectedBase}',
-            );
-            Navigator.of(context).pop();
-            _onCategoryChanged?.call();
-          },
-        ),
-        _buildCategoryItem(
-          title: '전체공개',
-          count: posts.length,
-          isSelected:
-              cat.selectedCategoryId == null &&
-              (cat.selectedBase == BaseFilter.public),
-          context: context,
-          onTap: () {
-            cat.selectBase(BaseFilter.public);
-            Navigator.of(context).pop();
-            _onCategoryChanged?.call();
-          },
-        ),
+
+        // 시스템 카테고리들은 본인 프로필일 때만 표시
+        if (isOwnProfile) ...[
+          _buildCategoryItem(
+            title: '나만보기',
+            count: _getSystemCategoryCount(postsByCategory, '나만보기'),
+            isSelected: feedProvider.selectedCategoryId == '-2',
+            context: context,
+            onTap: () {
+              feedProvider.selectCategory('-2');
+              Navigator.of(context).pop();
+              _onCategoryChanged?.call();
+            },
+          ),
+          _buildCategoryItem(
+            title: '그룹공유',
+            count: _getSystemCategoryCount(postsByCategory, '그룹공유'),
+            isSelected: feedProvider.selectedCategoryId == '-3',
+            context: context,
+            onTap: () {
+              feedProvider.selectCategory('-3');
+              Navigator.of(context).pop();
+              _onCategoryChanged?.call();
+            },
+          ),
+          _buildCategoryItem(
+            title: '전체공개',
+            count: _getSystemCategoryCount(postsByCategory, '전체공개'),
+            isSelected: feedProvider.selectedCategoryId == '-1',
+            context: context,
+            onTap: () {
+              feedProvider.selectCategory('-1');
+              Navigator.of(context).pop();
+              _onCategoryChanged?.call();
+            },
+          ),
+        ],
 
         Container(
           height: 1,
@@ -205,52 +199,52 @@ class CategoryDropDown {
         ),
 
         // 사용자가 만든 카테고리
-        ...(cat.categories).map(
-          (c) => Dismissible(
-            key: ValueKey('cat-${c.id}'),
-            direction:
-                (cat.isReadOnly)
-                    ? DismissDirection.none
-                    : DismissDirection.endToStart,
-            background: Container(
-              alignment: Alignment.centerRight,
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              color: Colors.red.withOpacity(0.6),
-              child: const Icon(Icons.delete, color: Colors.white),
+        ...categories
+            .where((c) => !(c['isSystem'] == true))
+            .map(
+              (c) => Dismissible(
+                key: ValueKey('cat-${c['id']}'),
+                direction:
+                    isOwnProfile
+                        ? DismissDirection.endToStart
+                        : DismissDirection.none,
+                background: Container(
+                  alignment: Alignment.centerRight,
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  color: Colors.red.withOpacity(0.6),
+                  child: const Icon(Icons.delete, color: Colors.white),
+                ),
+                confirmDismiss: (_) async => isOwnProfile,
+                onDismissed: (_) {
+                  _deleteCategory(context, feedProvider, c['id']);
+                },
+                child: _buildCategoryItem(
+                  title: c['name'],
+                  count: c['postCount'] ?? 0,
+                  isSelected:
+                      feedProvider.selectedCategoryId == c['id'].toString(),
+                  context: context,
+                  onTap: () {
+                    feedProvider.selectCategory(c['id'].toString());
+                    Navigator.of(context).pop();
+                    _onCategoryChanged?.call();
+                  },
+                ),
+              ),
             ),
-            confirmDismiss: (_) async => !(cat.isReadOnly),
-            onDismissed: (_) {
-              cat.removeCategory(c.id);
-              _onCategoryChanged?.call();
-            },
-            child: _buildCategoryItem(
-              title: c.name,
-              count: 0,
-              isSelected: cat.selectedCategoryId == c.id,
-              context: context,
-              onTap: () {
-                cat.selectCategory(c.id);
-                Navigator.of(context).pop();
-                _onCategoryChanged?.call();
-              },
-            ),
-          ),
-        ),
       ],
     );
   }
 
   Widget _buildCreateCategoryButton(
     BuildContext context,
-    CategoryProvider? categoryProvider,
+    ProfileFeedProvider feedProvider,
   ) {
-    final cat = context.read<CategoryProvider>();
-    final isReadOnly = cat.isReadOnly;
     final feedModeManager = FeedDisplayModeManager();
     final isImageOnlyMode = feedModeManager.isImageOnly;
 
-    // 읽기 전용이거나 카드 모드면 숨김
-    if (isReadOnly || !isImageOnlyMode) return const SizedBox.shrink();
+    // 이미지 전용 모드가 아니면 숨김
+    if (!isImageOnlyMode) return const SizedBox.shrink();
     return Material(
       color: Colors.transparent,
       child: InkWell(
@@ -262,11 +256,7 @@ class CategoryDropDown {
           );
           print('[CategoryDropDown] 다이얼로그 결과: $name');
           if (name != null && name.trim().isNotEmpty) {
-            print(
-              '[CategoryDropDown] Provider 찾음: ${cat.categories.length}개 카테고리 (instance: ${cat.hashCode})',
-            );
-            cat.createCategory(name.trim());
-            print('[CategoryDropDown] 카테고리 생성 완료: ${cat.categories.length}개');
+            await _createCategory(context, feedProvider, name.trim());
             _onCategoryChanged?.call();
           }
         },
@@ -352,5 +342,140 @@ class CategoryDropDown {
         ),
       ),
     );
+  }
+
+  /// 시스템 카테고리별 포스트 수 계산
+  int _getSystemCategoryCount(
+    Map<String, List<Map<String, dynamic>>> postsByCategory,
+    String categoryName,
+  ) {
+    // 시스템 카테고리 ID 매핑
+    final systemCategoryIds = {'전체공개': '-1', '나만보기': '-2', '그룹공유': '-3'};
+
+    final categoryId = systemCategoryIds[categoryName];
+    if (categoryId != null) {
+      return postsByCategory[categoryId]?.length ?? 0;
+    }
+    return 0;
+  }
+
+  /// 카테고리 생성 (서버 API 호출)
+  Future<void> _createCategory(
+    BuildContext context,
+    ProfileFeedProvider feedProvider,
+    String name,
+  ) async {
+    try {
+      print('[CategoryDropDown] 카테고리 생성 시작: $name');
+
+      // 0) 입력값 검증: 공백/중복/예약어(system_doppy_uncategorized) 금지
+      final trimmed = name.trim();
+      final lower = trimmed.toLowerCase();
+      if (trimmed.isEmpty) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(const SnackBar(content: Text('카테고리 이름을 입력해 주세요')));
+        }
+        return;
+      }
+      const reserved = {'system_doppy_uncategorized'};
+      if (reserved.contains(lower)) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(const SnackBar(content: Text('해당 이름은 사용할 수 없습니다')));
+        }
+        return;
+      }
+      final existingNames =
+          feedProvider.categories
+              .map((c) => (c['name']?.toString() ?? '').trim().toLowerCase())
+              .toSet();
+      if (existingNames.contains(lower)) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(const SnackBar(content: Text('이미 존재하는 카테고리입니다')));
+        }
+        return;
+      }
+
+      // 서버에 카테고리 생성 요청 (한 번만)
+      final blogService = BlogService();
+      final created = await blogService.createCategory(
+        name: trimmed,
+        isPrivate: false,
+        description: '$trimmed 카테고리',
+      );
+      print('[CategoryDropDown] 카테고리 생성 성공');
+      final newId = (created['data']?['id'] as int?) ?? -1;
+      await feedProvider.refresh();
+      if (newId != -1) {
+        final ids = feedProvider.categories
+            .map<int>((c) => (c['id'] as int))
+            .toList(growable: true);
+        // 0(미분류)이 섞여 있다면 항상 맨 뒤로 보장
+        final hasZero = ids.contains(0);
+        final withoutZero = ids.where((id) => id != 0).toList(growable: true);
+        // 새 카테고리를 맨 앞에
+        withoutZero.remove(newId);
+        final ordered = <int>[newId, ...withoutZero];
+        if (hasZero) ordered.add(0);
+
+        // 로컬 낙관적 반영 + 서버 저장
+        feedProvider.reorderCategoriesLocally(ordered);
+        try {
+          await BlogService().reorderCategories(ordered);
+        } catch (_) {
+          // 실패해도 UI는 유지, 다음 동기화 때 정합성 복구
+        }
+      }
+      _onCategoryChanged?.call();
+
+      // 성공 메시지 (위젯 생명주기 안전 처리)
+      if (context.mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('카테고리 "$trimmed"이 생성되었습니다')));
+      }
+    } catch (e) {
+      print('[CategoryDropDown] 카테고리 생성 에러: $e');
+      if (context.mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('카테고리 생성 중 오류가 발생했습니다')));
+      }
+    }
+  }
+
+  /// 카테고리 삭제 (서버 API 호출)
+  Future<void> _deleteCategory(
+    BuildContext context,
+    ProfileFeedProvider feedProvider,
+    int categoryId,
+  ) async {
+    try {
+      print('[CategoryDropDown] 카테고리 삭제 시작: $categoryId');
+
+      // 서버에 카테고리 삭제 요청
+      final blogService = BlogService();
+      await blogService.deleteCategory(categoryId);
+
+      print('[CategoryDropDown] 카테고리 삭제 성공');
+      // 전체 피드 데이터 강제 재로딩 (카테고리/포스트 등 전부)
+      await feedProvider.hardRefresh();
+      _onCategoryChanged?.call();
+
+      // 성공 메시지
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('카테고리가 삭제되었습니다')));
+    } catch (e) {
+      print('[CategoryDropDown] 카테고리 삭제 에러: $e');
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('카테고리 삭제 중 오류가 발생했습니다')));
+    }
   }
 }

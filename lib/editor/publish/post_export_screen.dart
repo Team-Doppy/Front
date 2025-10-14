@@ -14,6 +14,7 @@ import 'package:doppy/providers/group_provider.dart';
 import 'package:doppy/data/models/group_model.dart';
 import 'package:doppy/editor/publish/post_exporter.dart';
 import 'package:doppy/data/services/blog_service.dart';
+import 'package:doppy/utils/error_handler.dart';
 
 void printLarge(String text, {int chunkSize = 800}) {
   final int len = text.length;
@@ -35,24 +36,40 @@ class PostExportScreen extends StatefulWidget {
 class _PostExportScreenState extends State<PostExportScreen>
     with SingleTickerProviderStateMixin {
   String get _nsKey => widget.sessionKey ?? 'default';
+
+  // 3단계 진행 상태
+  int _currentStep = 0;
+  static const int _totalSteps = 3;
+
   // 더미 데이터
   String _exportedThumbnailImageUrl = '';
   String _title = '';
   String _excerpt = '';
+  late final TextEditingController _titleController = TextEditingController();
+  final FocusNode _titleFocusNode = FocusNode();
+  late final TextEditingController _excerptController = TextEditingController();
+  final FocusNode _excerptFocusNode = FocusNode();
 
   Map<String, dynamic> _exportedBase = <String, dynamic>{};
 
   bool _editMode = false;
 
+  // Step 2: 공개 범위 선택
   String _audienceButtonText = '전체 공개';
   final Set<int> _selectedAudienceGroupIds = {};
   bool _audienceSelectAll = true;
   bool _audiencePrivateOnly = false;
+
+  // Step 3: 카테고리 선택
+  int? _selectedCategoryId;
+  String _selectedCategoryName = '미분류';
+  bool _isCreatingCategory = false;
+  final TextEditingController _newCategoryController = TextEditingController();
+  List<Map<String, dynamic>>? _cachedCategories; // 캐시된 카테고리 목록
+
   bool _isUploading = false;
   bool _isUploadingThumb = false;
   String? _thumbnailImageId;
-
-  bool isGrouping = false;
 
   late final AnimationController _controller = AnimationController(
     vsync: this,
@@ -73,6 +90,32 @@ class _PostExportScreenState extends State<PostExportScreen>
     _hydrateFromExported(jsonDecode(widget.exported));
     _intro.forward();
     _loadPersistedThumbnail();
+    _titleFocusNode.addListener(_onEditFocusChange);
+    _excerptFocusNode.addListener(_onEditFocusChange);
+  }
+
+  @override
+  void dispose() {
+    try {
+      _titleFocusNode.removeListener(_onEditFocusChange);
+      _excerptFocusNode.removeListener(_onEditFocusChange);
+      _titleController.dispose();
+      _titleFocusNode.dispose();
+      _excerptController.dispose();
+      _excerptFocusNode.dispose();
+    } catch (_) {}
+    super.dispose();
+  }
+
+  void _onEditFocusChange() {
+    // Step 1에서만 편집 모드 활성화
+    if (_currentStep != 0) return;
+
+    final bool nowEditing =
+        _titleFocusNode.hasFocus || _excerptFocusNode.hasFocus;
+    if (_editMode != nowEditing) {
+      setState(() => _editMode = nowEditing);
+    }
   }
 
   void _hydrateFromExported(Map<String, dynamic> exported) {
@@ -81,6 +124,7 @@ class _PostExportScreenState extends State<PostExportScreen>
     final String? exportedTitle = _readString(exported, keys: const ['title']);
     if (exportedTitle != null && exportedTitle.trim().isNotEmpty) {
       _title = exportedTitle.trim();
+      _titleController.text = _title;
     }
 
     _exportedThumbnailImageUrl =
@@ -104,6 +148,7 @@ class _PostExportScreenState extends State<PostExportScreen>
     }
     if (preview.isEmpty) preview = _excerpt;
     _excerpt = preview;
+    _excerptController.text = _excerpt;
     setState(() {});
   }
 
@@ -232,103 +277,23 @@ class _PostExportScreenState extends State<PostExportScreen>
     return '등록할 수 없습니다.';
   }
 
-  void _openVisibilitySheet() async {
-    final isDark = Theme.of(context).colorScheme.brightness == Brightness.dark;
-    setState(() {
-      isGrouping = true;
-    });
-    await showModalBottomSheet(
-      context: context,
-      backgroundColor: Theme.of(context).colorScheme.surface,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
-      barrierColor: isDark ? null : Colors.black.withOpacity(0.2),
-      builder: (_) {
-        return ChangeNotifierProvider.value(
-          value: context.read<GroupProvider>(),
-          child: _AudiencePicker(
-            initialSelectedIds: _selectedAudienceGroupIds,
-            initialSelectAll: _audienceSelectAll,
-            initialPrivateOnly: _audiencePrivateOnly,
-            title: _title,
-            excerpt: _excerpt,
-            thumbnailImageUrl: _exportedThumbnailImageUrl,
-            onSelectionChanged: (
-              selectAll,
-              privateOnly,
-              selectedGroupIds,
-              selectedNames,
-            ) {
-              // 실시간으로 상태 업데이트
-              String label;
-              if (selectAll) {
-                label = '전체 공개';
-              } else if (privateOnly) {
-                label = '나만 보기';
-              } else {
-                if (selectedNames.length > 3) {
-                  final int extra = selectedNames.length - 3;
-                  label =
-                      '${selectedNames[0]}, ${selectedNames[1]}, ${selectedNames[2]} +$extra';
-                } else {
-                  label = selectedNames.join(', ');
-                }
-              }
-              setState(() {
-                _audienceButtonText = label;
-                _audienceSelectAll = selectAll;
-                _audiencePrivateOnly = privateOnly;
-                _selectedAudienceGroupIds
-                  ..clear()
-                  ..addAll(selectedGroupIds);
-              });
-            },
-          ),
-        );
-      },
-      isScrollControlled: true,
-      constraints: BoxConstraints(
-        maxHeight: MediaQuery.of(context).size.height * 0.65,
-      ),
-    );
-    setState(() {
-      isGrouping = false;
-    });
-  }
-
   Future<void> _publish() async {
     try {
       // 1. 제목 검증 (모든 공개 범위에서 필수)
       if (_title.trim().isEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('제목을 입력해주세요.'),
-            backgroundColor: Colors.red,
-          ),
-        );
+        ErrorHandler.showError(context, '제목을 입력해주세요.');
         return;
       }
 
       // 2. 컨텐츠 검증 (모든 공개 범위에서 필수)
       if (_excerpt.trim().isEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('본문 내용을 입력해주세요.'),
-            backgroundColor: Colors.red,
-          ),
-        );
+        ErrorHandler.showError(context, '본문 내용을 입력해주세요.');
         return;
       }
 
       // 3. 썸네일 검증 (모든 공개 범위에서 필수)
       if (_exportedThumbnailImageUrl.trim().isEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('썸네일 이미지를 먼저 선택하세요.'),
-            backgroundColor: Colors.red,
-          ),
-        );
+        ErrorHandler.showError(context, '썸네일 이미지를 먼저 선택하세요.');
         return;
       }
 
@@ -336,12 +301,7 @@ class _PostExportScreenState extends State<PostExportScreen>
       if (!_audienceSelectAll &&
           !_audiencePrivateOnly &&
           _selectedAudienceGroupIds.isEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('그룹 공유를 선택했을 경우 최소 1개 이상의 그룹을 선택해주세요.'),
-            backgroundColor: Colors.red,
-          ),
-        );
+        ErrorHandler.showError(context, '그룹 공유를 선택했을 경우 최소 1개 이상의 그룹을 선택해주세요.');
         return;
       }
 
@@ -381,17 +341,7 @@ class _PostExportScreenState extends State<PostExportScreen>
 
       if (!mounted) return;
       Navigator.of(context).pop();
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('성공적으로 등록되었어요'),
-          backgroundColor: Theme.of(context).colorScheme.onSurface,
-          action: SnackBarAction(
-            label: '확인',
-            textColor: Theme.of(context).colorScheme.onSurface,
-            onPressed: () => Navigator.of(context).pop(),
-          ),
-        ),
-      );
+      ErrorHandler.showSuccess(context, '성공적으로 등록되었어요');
 
       // 업로드 성공 시 바로 글보기 화면으로 이동
       Navigator.of(context).pushReplacement(
@@ -412,17 +362,7 @@ class _PostExportScreenState extends State<PostExportScreen>
       if (!mounted) return;
 
       // 에러 메시지 표시
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('발행 중 오류가 발생했습니다: ${e.toString()}'),
-          backgroundColor: Colors.red,
-          action: SnackBarAction(
-            label: '다시 시도',
-            textColor: Colors.white,
-            onPressed: () => _publish(),
-          ),
-        ),
-      );
+      ErrorHandler.handleError(context, e, customMessage: '업로드 중 오류가 발생했어요');
     } finally {
       if (mounted) {
         setState(() {
@@ -470,20 +410,13 @@ class _PostExportScreenState extends State<PostExportScreen>
                     await _persistThumbnail();
                   } else {
                     if (mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('이미지 업로드에 실패했습니다.'),
-                          backgroundColor: Colors.red,
-                        ),
-                      );
+                      ErrorHandler.showError(context, '이미지 업로드에 실패했습니다.');
                     }
                   }
                 }
               } catch (e) {
                 if (mounted) {
-                  ScaffoldMessenger.of(
-                    context,
-                  ).showSnackBar(SnackBar(content: Text('업로드 오류: $e')));
+                  ErrorHandler.handleError(context, e, customMessage: '업로드 오류');
                 }
               } finally {
                 if (mounted) setState(() => _isUploadingThumb = false);
@@ -556,12 +489,59 @@ class _PostExportScreenState extends State<PostExportScreen>
     );
   }
 
+  void _nextStep() {
+    if (_currentStep < _totalSteps - 1) {
+      FocusScope.of(context).unfocus();
+      setState(() {
+        _currentStep++;
+        _editMode = false;
+      });
+
+      // Step 3 진입 시 카테고리 로드
+      if (_currentStep == 2 && _cachedCategories == null) {
+        _loadCategoriesOnce();
+      }
+    }
+  }
+
+  void _previousStep() {
+    if (_currentStep > 0) {
+      FocusScope.of(context).unfocus();
+      setState(() {
+        _currentStep--;
+        _editMode = false;
+      });
+    }
+  }
+
+  bool _canProceedToNextStep() {
+    switch (_currentStep) {
+      case 0: // Step 1: 썸네일 & 글 편집
+        return _exportedThumbnailImageUrl.isNotEmpty &&
+            _title.trim().isNotEmpty &&
+            _excerpt.trim().isNotEmpty;
+      case 1: // Step 2: 공개 범위
+        // 전체공개, 나만보기, 또는 그룹 중 하나는 선택되어야 함
+        return _audienceSelectAll ||
+            _audiencePrivateOnly ||
+            _selectedAudienceGroupIds.isNotEmpty;
+      case 2: // Step 3: 카테고리
+        return true; // 항상 진행 가능
+      default:
+        return false;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final cardRadius = 12.0; // PostCard와 동일한 라운드
 
     return WillPopScope(
       onWillPop: () async {
+        if (_currentStep > 0) {
+          _previousStep();
+          return false;
+        }
         Navigator.of(context).pop({
           'thumbnailImageUrl': _exportedThumbnailImageUrl,
           'thumbnailImageId': _thumbnailImageId,
@@ -574,170 +554,247 @@ class _PostExportScreenState extends State<PostExportScreen>
           Scaffold(
             backgroundColor: Colors.transparent,
             extendBodyBehindAppBar: true,
-            appBar:
-                isGrouping
-                    ? null
-                    : AppBar(
-                      toolbarHeight: 50,
-                      backgroundColor: Colors.transparent,
-                      elevation: 0,
-                      scrolledUnderElevation: 0,
-                      leading: IconButton(
-                        onPressed: () {
-                          Navigator.of(context).pop();
-                        },
-                        icon: Icon(
-                          Icons.arrow_back_ios_new_outlined,
-                          size: 18,
-                          color: Theme.of(
-                            context,
-                          ).colorScheme.onSurface.withOpacity(0.6),
+            appBar: _editMode ? _buildFocusAppBar() : _buildNormalAppBar(),
+            body: SafeArea(
+              child: IndexedStack(
+                index: _currentStep,
+                children: [
+                  _buildStep1ThumbnailAndEdit(cardRadius),
+                  _buildStep2AudienceSelection(),
+                  _buildStep3CategorySelection(),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // 포커스 상태의 간단한 앱바 (완료 버튼만)
+  PreferredSizeWidget _buildFocusAppBar() {
+    return AppBar(
+      toolbarHeight: 50,
+      backgroundColor: Colors.transparent,
+      elevation: 0,
+      scrolledUnderElevation: 0,
+      automaticallyImplyLeading: false,
+      centerTitle: true,
+
+      actions: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 10.0),
+          child: TextButton(
+            onPressed: () {
+              setState(() {
+                _title = _titleController.text.trim();
+                _excerpt = _excerptController.text.trim();
+                _editMode = false;
+              });
+              FocusScope.of(context).unfocus();
+            },
+            child: const Text(
+              '수정완료',
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  // 일반 상태의 앱바 (진행바와 다음/업로드 버튼)
+  PreferredSizeWidget _buildNormalAppBar() {
+    return AppBar(
+      toolbarHeight: 50,
+      backgroundColor: Colors.transparent,
+      elevation: 0,
+      scrolledUnderElevation: 0,
+      automaticallyImplyLeading: false,
+      leading: GestureDetector(
+        onTap: () {
+          if (_currentStep > 0) {
+            _previousStep();
+          } else {
+            Navigator.of(context).pop();
+          }
+        },
+        child: Padding(
+          padding: const EdgeInsets.only(left: 20, top: 16),
+          child: Text(
+            '이전',
+            style: TextStyle(
+              color: Colors.white.withOpacity(0.9),
+
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ),
+      ),
+
+      actions: [
+        if (_currentStep < _totalSteps - 1)
+          TextButton(
+            onPressed: _canProceedToNextStep() ? _nextStep : null,
+            child: Text(
+              '다음',
+              style: TextStyle(
+                color:
+                    _canProceedToNextStep()
+                        ? Theme.of(context).colorScheme.onSurface.withOpacity(1)
+                        : Theme.of(
+                          context,
+                        ).colorScheme.onSurface.withOpacity(0.3),
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          )
+        else
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 10.0),
+            child: TextButton(
+              onPressed: () {
+                final bool canPublish = _canPublish();
+                if (canPublish) {
+                  _publish();
+                } else {
+                  String msg = _getPublishErrorMessage();
+                  ErrorHandler.showError(context, msg);
+                }
+              },
+              child:
+                  _isUploading
+                      ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          valueColor: AlwaysStoppedAnimation<Color>(
+                            Colors.white,
+                          ),
+                        ),
+                      )
+                      : const Text(
+                        '업로드',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w600,
                         ),
                       ),
+            ),
+          ),
+      ],
+      bottom: PreferredSize(
+        preferredSize: const Size.fromHeight(4),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          child: LinearProgressIndicator(
+            value: (_currentStep + 1) / _totalSteps,
+            backgroundColor: Colors.white.withOpacity(0.2),
+            valueColor: const AlwaysStoppedAnimation<Color>(Colors.white),
+          ),
+        ),
+      ),
+    );
+  }
 
-                      centerTitle: false,
-                      actions: [
-                        Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 10.0),
-                          child: TextButton(
-                            onPressed: () {
-                              final bool canPublish = _canPublish();
-                              if (canPublish) {
-                                _publish();
-                              } else {
-                                String msg = _getPublishErrorMessage();
-                                ScaffoldMessenger.of(
-                                  context,
-                                ).showSnackBar(SnackBar(content: Text(msg)));
-                              }
-                            },
-                            child:
-                                _isUploading
-                                    ? Row(
-                                      mainAxisSize: MainAxisSize.min,
+  // Step 1: 썸네일 & 글 편집
+  Widget _buildStep1ThumbnailAndEdit(double cardRadius) {
+    return AnimatedPadding(
+      duration: const Duration(milliseconds: 160),
+      curve: Curves.easeOut,
+      padding: EdgeInsets.only(bottom: 0),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const Spacer(flex: 2),
+          // PostList와 동일한 카드 디자인
+          // 키보드 열리거나 그룹 바텀시트가 열리면 썸네일 카드 임시 숨김 → 오버플로우 방지
+          AnimatedCrossFade(
+            duration: const Duration(milliseconds: 100),
+            crossFadeState:
+                (MediaQuery.of(context).viewInsets.bottom > 0)
+                    ? CrossFadeState.showSecond
+                    : CrossFadeState.showFirst,
+            firstChild: Stack(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 50.0),
+                  child: Center(
+                    child: AspectRatio(
+                      aspectRatio: 4 / 5, // PostList와 동일한 4:5 비율
+                      child: GestureDetector(
+                        onTap: _openGalleryPicker,
+                        onLongPress: _toggleEditMode,
+                        child: AnimatedBuilder(
+                          animation: _introCurve,
+                          builder: (context, _) {
+                            final double scale =
+                                0.85 +
+                                0.15 * _introCurve.value; // PostList와 동일한 스케일
+                            final double translateY =
+                                (1 - _introCurve.value) * 10;
+                            return Transform.translate(
+                              offset: Offset(0, translateY),
+                              child: Transform.scale(
+                                scale: scale,
+                                child: Container(
+                                  decoration: BoxDecoration(
+                                    borderRadius: BorderRadius.circular(
+                                      cardRadius,
+                                    ),
+                                    border: Border.all(
+                                      color:
+                                          Theme.of(
+                                            context,
+                                          ).colorScheme.surfaceVariant,
+                                      width: 1.5,
+                                    ),
+                                  ),
+                                  child: ClipRRect(
+                                    borderRadius: BorderRadius.circular(
+                                      cardRadius,
+                                    ),
+                                    child: Stack(
                                       children: [
-                                        SizedBox(
-                                          width: 16,
-                                          height: 16,
-                                          child: CircularProgressIndicator(
-                                            strokeWidth: 2,
-                                            valueColor:
-                                                AlwaysStoppedAnimation<Color>(
-                                                  Theme.of(
-                                                    context,
-                                                  ).colorScheme.primary,
-                                                ),
-                                          ),
+                                        // 배경 이미지 (PostCard와 동일)
+                                        Positioned.fill(
+                                          child:
+                                              _isUploadingThumb
+                                                  ? const _ShimmerPlaceholder()
+                                                  : (_exportedThumbnailImageUrl
+                                                          .isEmpty
+                                                      ? const _EmptyImagePlaceholder()
+                                                      : Image.network(
+                                                        _exportedThumbnailImageUrl,
+                                                        fit: BoxFit.cover,
+                                                        errorBuilder:
+                                                            (c, e, s) =>
+                                                                const _EmptyImagePlaceholder(),
+                                                      )),
+                                        ),
+                                        // 좌하단 작성자 정보 (PostCard와 동일)
+                                        Positioned(
+                                          left: 6,
+                                          bottom: 6,
+                                          child: _buildAuthorInfo(),
                                         ),
                                       ],
-                                    )
-                                    : Builder(
-                                      builder: (context) {
-                                        final bool canPublish = _canPublish();
-                                        return Text(
-                                          '등록',
-                                          style: TextStyle(
-                                            color: Theme.of(
-                                              context,
-                                            ).colorScheme.onSurface.withValues(
-                                              alpha: canPublish ? 1.0 : 0.4,
-                                            ),
-                                            fontWeight: FontWeight.w600,
-                                            fontSize: 16,
-                                          ),
-                                        );
-                                      },
                                     ),
-                          ),
-                        ),
-                      ],
-                    ),
-            body: SafeArea(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  if (!isGrouping) const Spacer(flex: 2),
-                  // PostList와 동일한 카드 디자인
-                  if (!isGrouping)
-                    Stack(
-                      children: [
-                        Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 50.0),
-                          child: Center(
-                            child: AspectRatio(
-                              aspectRatio: 4 / 5, // PostList와 동일한 4:5 비율
-                              child: GestureDetector(
-                                onTap: _openGalleryPicker,
-                                onLongPress: _toggleEditMode,
-                                child: AnimatedBuilder(
-                                  animation: _introCurve,
-                                  builder: (context, _) {
-                                    final double scale =
-                                        0.85 +
-                                        0.15 *
-                                            _introCurve
-                                                .value; // PostList와 동일한 스케일
-                                    final double translateY =
-                                        (1 - _introCurve.value) * 10;
-                                    return Transform.translate(
-                                      offset: Offset(0, translateY),
-                                      child: Transform.scale(
-                                        scale: scale,
-                                        child: Container(
-                                          decoration: BoxDecoration(
-                                            borderRadius: BorderRadius.circular(
-                                              cardRadius,
-                                            ),
-                                            border: Border.all(
-                                              color:
-                                                  Theme.of(
-                                                    context,
-                                                  ).colorScheme.surfaceVariant,
-                                              width: 1.5,
-                                            ),
-                                          ),
-                                          child: ClipRRect(
-                                            borderRadius: BorderRadius.circular(
-                                              cardRadius,
-                                            ),
-                                            child: Stack(
-                                              children: [
-                                                // 배경 이미지 (PostCard와 동일)
-                                                Positioned.fill(
-                                                  child:
-                                                      _isUploadingThumb
-                                                          ? const _ShimmerPlaceholder()
-                                                          : (_exportedThumbnailImageUrl
-                                                                  .isEmpty
-                                                              ? const _EmptyImagePlaceholder()
-                                                              : Image.network(
-                                                                _exportedThumbnailImageUrl,
-                                                                fit:
-                                                                    BoxFit
-                                                                        .cover,
-                                                                errorBuilder:
-                                                                    (c, e, s) =>
-                                                                        const _EmptyImagePlaceholder(),
-                                                              )),
-                                                ),
-                                                // 좌하단 작성자 정보 (PostCard와 동일)
-                                                Positioned(
-                                                  left: 6,
-                                                  bottom: 6,
-                                                  child: _buildAuthorInfo(),
-                                                ),
-                                              ],
-                                            ),
-                                          ),
-                                        ),
-                                      ),
-                                    );
-                                  },
+                                  ),
                                 ),
                               ),
-                            ),
-                          ),
+                            );
+                          },
                         ),
+                      ),
+                    ),
+                  ),
+                ),
+                /*
                         if (_exportedThumbnailImageUrl.isEmpty)
                           Positioned(
                             right: 40,
@@ -756,108 +813,616 @@ class _PostExportScreenState extends State<PostExportScreen>
                                 color: Theme.of(context).colorScheme.surface,
                               ),
                             ),
-                          ),
-                      ],
-                    ),
+                          ),*/
+              ],
+            ),
+            secondChild: const SizedBox(height: 8),
+          ),
 
-                  // 하단 텍스트 영역 (PostList의 StickyAuthor와 동일)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 20,
-                      vertical: 30,
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.center,
-                      mainAxisAlignment: MainAxisAlignment.start,
-                      children: [
-                        // 제목
-                        Text(
-                          _title,
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            color: Theme.of(
-                              context,
-                            ).colorScheme.onSurface.withOpacity(0.9),
-                            fontSize: 35,
-                            fontWeight: FontWeight.bold,
-                            letterSpacing: -0.2,
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        const SizedBox(height: 8),
-                        // 내용
-                        Text(
-                          _excerpt,
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            color: Theme.of(
-                              context,
-                            ).colorScheme.onSurface.withOpacity(0.7),
-                            fontSize: 14,
-                            fontWeight: FontWeight.w300,
-                            height: 1.8,
-                            letterSpacing: -0.1,
-                          ),
-                          maxLines: 5,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        const SizedBox(height: 10),
-                      ],
+          // 하단 텍스트 영역 (PostList의 StickyAuthor와 동일)
+          Padding(
+            padding: const EdgeInsets.symmetric(
+              horizontal: 20,
+              // 바텀시트가 열려있으면 텍스트 영역을 약간 위로 올려 겹침 최소화
+              vertical: 30,
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              mainAxisAlignment: MainAxisAlignment.start,
+              children: [
+                // 제목 (탭 시 인라인 편집) - 바텀시트 중 편집 차단
+                GestureDetector(
+                  onTap: () {
+                    setState(() => _editMode = true);
+                    FocusScope.of(context).requestFocus(_titleFocusNode);
+                  },
+                  child: AbsorbPointer(
+                    absorbing: false,
+                    child: TextField(
+                      controller: _titleController,
+                      focusNode: _titleFocusNode,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.onSurface.withOpacity(0.9),
+                        fontSize: 35,
+                        fontWeight: FontWeight.bold,
+                        letterSpacing: -0.2,
+                      ),
+                      maxLines: 1,
+                      decoration: const InputDecoration(
+                        border: InputBorder.none,
+                        isCollapsed: true,
+                        contentPadding: EdgeInsets.zero,
+                      ),
+                      onChanged: (v) => _title = v,
                     ),
                   ),
-                  const Spacer(),
-
-                  // 공개 설정 버튼
-                  Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 22.0,
-                      vertical: 0.0,
-                    ),
-                    child: ElevatedButton(
-                      onPressed: _openVisibilitySheet,
-                      style: ElevatedButton.styleFrom(
-                        minimumSize: const Size(double.infinity, 50),
-                        backgroundColor: Theme.of(context).colorScheme.surface,
-                        foregroundColor:
-                            Theme.of(context).colorScheme.onSurface,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(16),
-                          side: BorderSide(
-                            color: Theme.of(
-                              context,
-                            ).colorScheme.onSurface.withOpacity(0.1),
-                            width: 1,
-                          ),
-                        ),
+                ),
+                const SizedBox(height: 8),
+                // 내용 (탭 시 인라인 편집 가능) - 바텀시트 중 편집 차단
+                GestureDetector(
+                  onTap: () {
+                    setState(() => _editMode = true);
+                    FocusScope.of(context).requestFocus(_excerptFocusNode);
+                  },
+                  child: AbsorbPointer(
+                    absorbing: false,
+                    child: TextField(
+                      controller: _excerptController,
+                      focusNode: _excerptFocusNode,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.onSurface.withOpacity(0.7),
+                        fontSize: 14,
+                        fontWeight: FontWeight.w300,
+                        height: 1.8,
+                        letterSpacing: -0.1,
                       ),
-                      child: Row(
-                        children: [
-                          Text(
-                            _audienceButtonText,
-                            style: TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.w300,
-                            ),
-                          ),
-                          Spacer(),
-                          Icon(
-                            Icons.arrow_drop_up_outlined,
-                            size: 20,
-                            color: Theme.of(
-                              context,
-                            ).colorScheme.onSurface.withOpacity(0.6),
-                          ),
-                        ],
+                      maxLines: 5,
+                      minLines: 5,
+                      keyboardType: TextInputType.multiline,
+                      decoration: const InputDecoration(
+                        border: InputBorder.none,
+                        isCollapsed: true,
+                        contentPadding: EdgeInsets.zero,
                       ),
+                      scrollPhysics: NeverScrollableScrollPhysics(),
+                      onChanged: (v) => _excerpt = v,
                     ),
                   ),
-                  const SizedBox(height: 10),
-                ],
-              ),
+                ),
+                const SizedBox(height: 10),
+              ],
             ),
           ),
+          const Spacer(),
+          const SizedBox(height: 10),
         ],
+      ),
+    );
+  }
+
+  // Step 2: 공개 범위 선택
+  Widget _buildStep2AudienceSelection() {
+    return Consumer<GroupProvider>(
+      builder: (context, groupProvider, child) {
+        // 그룹 목록 로드
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (groupProvider.myGroups.isEmpty && !groupProvider.isLoading) {
+            groupProvider.fetchMyGroups();
+          }
+        });
+
+        return Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 10),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const SizedBox(height: 36),
+              Text(
+                '누구에게 공개할까요?',
+                style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 22,
+                  color: Colors.white,
+                ),
+              ),
+              const SizedBox(height: 20),
+
+              // 전체공개/나만보기 선택 영역
+              Container(
+                margin: const EdgeInsets.only(bottom: 8),
+                child: Column(
+                  children: [
+                    // 전체공개
+                    Container(
+                      width: double.infinity,
+                      margin: const EdgeInsets.only(bottom: 12),
+                      decoration: BoxDecoration(
+                        color:
+                            _audienceSelectAll
+                                ? Colors.white.withOpacity(0.4)
+                                : Colors.white.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      child: Material(
+                        color: Colors.transparent,
+                        child: InkWell(
+                          borderRadius: BorderRadius.circular(16),
+                          onTap: () {
+                            setState(() {
+                              _audienceSelectAll = true;
+                              _audiencePrivateOnly = false;
+                              _selectedAudienceGroupIds.clear();
+                              _audienceButtonText = '전체 공개';
+                            });
+                          },
+                          child: Padding(
+                            padding: const EdgeInsets.all(16),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: Text(
+                                        '전체 공개',
+                                        style: TextStyle(
+                                          fontSize: 16,
+                                          fontWeight: FontWeight.w600,
+                                          color: Colors.white,
+                                        ),
+                                      ),
+                                    ),
+                                    if (_audienceSelectAll)
+                                      Icon(
+                                        Icons.check,
+                                        color: Colors.white,
+                                        size: 20,
+                                      ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                    // 나만보기
+                    Container(
+                      width: double.infinity,
+                      decoration: BoxDecoration(
+                        color:
+                            _audiencePrivateOnly
+                                ? Colors.white.withOpacity(0.4)
+                                : Colors.white.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      child: Material(
+                        color: Colors.transparent,
+                        child: InkWell(
+                          borderRadius: BorderRadius.circular(16),
+                          onTap: () {
+                            setState(() {
+                              _audiencePrivateOnly = true;
+                              _audienceSelectAll = false;
+                              _selectedAudienceGroupIds.clear();
+                              _audienceButtonText = '나만 보기';
+                            });
+                          },
+                          child: Padding(
+                            padding: const EdgeInsets.all(16),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: Text(
+                                        '나만 보기',
+                                        style: TextStyle(
+                                          fontSize: 16,
+                                          fontWeight: FontWeight.w600,
+                                          color: Colors.white,
+                                        ),
+                                      ),
+                                    ),
+                                    if (_audiencePrivateOnly)
+                                      Icon(
+                                        Icons.check,
+                                        color: Colors.white,
+                                        size: 20,
+                                      ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+              // 그룹 공유 헤더
+              Padding(
+                padding: const EdgeInsets.only(top: 16, bottom: 8),
+                child: Text(
+                  '그룹 선택',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.white.withOpacity(0.6),
+                  ),
+                ),
+              ),
+
+              // 그룹 리스트 (항상 표시)
+              Expanded(
+                child:
+                    groupProvider.isLoading
+                        ? Center(
+                          child: CircularProgressIndicator(
+                            valueColor: AlwaysStoppedAnimation<Color>(
+                              Colors.white,
+                            ),
+                          ),
+                        )
+                        : ListView.builder(
+                          itemCount: groupProvider.myGroups.length,
+                          itemBuilder: (context, index) {
+                            final group = groupProvider.myGroups[index];
+                            final isSelected = _selectedAudienceGroupIds
+                                .contains(group.id);
+
+                            return Container(
+                              margin: const EdgeInsets.only(bottom: 8),
+                              decoration: BoxDecoration(
+                                color:
+                                    isSelected
+                                        ? Colors.white.withOpacity(0.4)
+                                        : Colors.white.withOpacity(0.1),
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: Material(
+                                color: Colors.transparent,
+                                child: InkWell(
+                                  borderRadius: BorderRadius.circular(12),
+                                  onTap: () {
+                                    setState(() {
+                                      if (isSelected) {
+                                        _selectedAudienceGroupIds.remove(
+                                          group.id,
+                                        );
+                                      } else {
+                                        _selectedAudienceGroupIds.add(group.id);
+                                      }
+
+                                      // 그룹 선택 시 전체공개/나만보기 해제
+                                      if (_selectedAudienceGroupIds
+                                          .isNotEmpty) {
+                                        _audienceSelectAll = false;
+                                        _audiencePrivateOnly = false;
+                                      }
+
+                                      // 선택된 그룹이 있으면 버튼 텍스트 업데이트
+                                      if (_selectedAudienceGroupIds
+                                          .isNotEmpty) {
+                                        final selectedNames =
+                                            groupProvider.myGroups
+                                                .where(
+                                                  (g) =>
+                                                      _selectedAudienceGroupIds
+                                                          .contains(g.id),
+                                                )
+                                                .map((g) => g.name)
+                                                .toList();
+
+                                        if (selectedNames.length > 3) {
+                                          final extra =
+                                              selectedNames.length - 3;
+                                          _audienceButtonText =
+                                              '${selectedNames.take(3).join(', ')} 외 $extra개';
+                                        } else {
+                                          _audienceButtonText = selectedNames
+                                              .join(', ');
+                                        }
+                                      } else {
+                                        _audienceButtonText = '그룹 공유';
+                                      }
+                                    });
+                                  },
+                                  child: Padding(
+                                    padding: const EdgeInsets.all(16),
+                                    child: Row(
+                                      children: [
+                                        Expanded(
+                                          child: Text(
+                                            group.name,
+                                            style: const TextStyle(
+                                              color: Colors.white,
+                                              fontSize: 16,
+                                              fontWeight: FontWeight.w600,
+                                            ),
+                                          ),
+                                        ),
+                                        if (isSelected)
+                                          const Icon(
+                                            Icons.check,
+                                            color: Colors.white,
+                                            size: 22,
+                                          ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  // Step 3: 카테고리 선택
+  Widget _buildStep3CategorySelection() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const SizedBox(height: 36),
+          Text(
+            '어느 카테고리에 저장할까요?',
+            style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+              fontWeight: FontWeight.bold,
+              fontSize: 22,
+              color: Colors.white,
+            ),
+          ),
+
+          const SizedBox(height: 20),
+          Expanded(
+            child:
+                _cachedCategories == null
+                    ? const Center(
+                      child: CircularProgressIndicator(
+                        valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                      ),
+                    )
+                    : ListView(
+                      children: [
+                        // 새 카테고리 만들기 버튼
+                        _buildCreateCategoryButton(),
+                        const SizedBox(height: 12),
+                        // 실제 카테고리 목록
+                        ..._cachedCategories!.map((category) {
+                          final id = category['id'] as int?;
+                          var name = category['name'] as String? ?? '이름 없음';
+
+                          if (name == 'system_doppy_uncategorized') {
+                            name = '지정 안 함';
+                          }
+
+                          return _buildCategoryOption(
+                            title: name,
+                            isSelected: _selectedCategoryId == id,
+                            onTap: () {
+                              setState(() {
+                                _selectedCategoryId = id;
+                                _selectedCategoryName = name;
+                              });
+                            },
+                          );
+                        }).toList(),
+                      ],
+                    ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _loadCategoriesOnce() async {
+    if (_cachedCategories != null) return; // 이미 로드됨
+
+    try {
+      final currentUser =
+          Provider.of<UserProvider>(context, listen: false).currentUser;
+      final username = currentUser?.username ?? '';
+
+      if (username.isEmpty) {
+        throw Exception('사용자 정보를 찾을 수 없습니다.');
+      }
+
+      final categories = await BlogService().getUserCategories(username);
+      setState(() {
+        _cachedCategories = categories;
+      });
+    } catch (e) {
+      print('[PostExportScreen] 카테고리 로드 실패: $e');
+      // 에러 발생 시 빈 리스트로 설정하여 재시도 방지
+      setState(() {
+        _cachedCategories = [];
+      });
+    }
+  }
+
+  Widget _buildCreateCategoryButton() {
+    if (_isCreatingCategory) {
+      // 인라인 텍스트 필드 표시
+      return Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Colors.grey.withOpacity(0.15),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Column(
+          children: [
+            TextField(
+              cursorColor: Theme.of(context).colorScheme.onSurface,
+              controller: _newCategoryController,
+              autofocus: true,
+              style: const TextStyle(color: Colors.white, fontSize: 16),
+              decoration: InputDecoration(
+                hintText: '카테고리 이름 입력',
+                hintStyle: TextStyle(
+                  color: Colors.white.withOpacity(0.5),
+                  fontSize: 16,
+                ),
+                border: InputBorder.none,
+                contentPadding: EdgeInsets.zero,
+              ),
+            ),
+            const SizedBox(height: 12),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                TextButton(
+                  onPressed: () {
+                    setState(() {
+                      _isCreatingCategory = false;
+                      _newCategoryController.clear();
+                    });
+                  },
+                  child: Text(
+                    '취소',
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.7),
+                      fontSize: 14,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                ElevatedButton(
+                  onPressed: _createNewCategory,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.white.withOpacity(0.9),
+                    foregroundColor: Colors.black,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 20,
+                      vertical: 10,
+                    ),
+                  ),
+                  child: const Text('추가', style: TextStyle(fontSize: 14)),
+                ),
+              ],
+            ),
+          ],
+        ),
+      );
+    }
+
+    // 새 카테고리 만들기 버튼
+    return GestureDetector(
+      onTap: () {
+        setState(() {
+          _isCreatingCategory = true;
+        });
+      },
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Colors.white.withOpacity(0.1),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Row(
+          children: [
+            Expanded(
+              child: Text(
+                '새 카테고리 만들기',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _createNewCategory() async {
+    final name = _newCategoryController.text.trim();
+    if (name.isEmpty) {
+      ErrorHandler.showError(context, '카테고리 이름을 입력하세요.');
+      return;
+    }
+
+    try {
+      await BlogService().createCategory(
+        name: name,
+        isPrivate: false,
+        description: '',
+      );
+
+      if (mounted) {
+        // 캐시 무효화하여 다음 로드 시 새로고침
+        _cachedCategories = null;
+
+        setState(() {
+          _isCreatingCategory = false;
+          _newCategoryController.clear();
+        });
+
+        // 카테고리 목록 즉시 새로고침
+        await _loadCategoriesOnce();
+
+        ErrorHandler.showSuccess(context, '카테고리 "$name"이(가) 생성되었습니다.');
+      }
+    } catch (e) {
+      if (mounted) {
+        ErrorHandler.handleError(context, e, customMessage: '카테고리 생성 실패');
+      }
+    }
+  }
+
+  Widget _buildCategoryOption({
+    required String title,
+    required bool isSelected,
+    required VoidCallback onTap,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 12),
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color:
+              isSelected
+                  ? Colors.white.withOpacity(0.4)
+                  : Colors.white.withOpacity(0.1),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Row(
+          children: [
+            Expanded(
+              child: Text(
+                title,
+                style: TextStyle(
+                  color: Theme.of(
+                    context,
+                  ).colorScheme.onSurface.withOpacity(0.8),
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+            if (isSelected)
+              const Icon(Icons.check, color: Colors.white, size: 22),
+          ],
+        ),
       ),
     );
   }
@@ -1035,7 +1600,7 @@ class _AudiencePickerState extends State<_AudiencePicker> {
                       if (i == 0) {
                         return Container(
                           margin: const EdgeInsets.only(bottom: 8, top: 8),
-                          child: Row(
+                          child: Column(
                             children: [
                               // 전체공개
                               Expanded(
@@ -1239,15 +1804,7 @@ class _AudiencePickerState extends State<_AudiencePicker> {
                       final checked = _selectedGroupIds.contains(g.id);
                       return Container(
                         margin: const EdgeInsets.only(bottom: 8),
-                        decoration: BoxDecoration(
-                          color:
-                              checked
-                                  ? Theme.of(context).colorScheme.onSurface
-                                  : Theme.of(
-                                    context,
-                                  ).colorScheme.background.withOpacity(1),
-                          borderRadius: BorderRadius.circular(16),
-                        ),
+
                         child: Material(
                           color: Colors.transparent,
                           child: InkWell(
@@ -1468,13 +2025,13 @@ class _EmptyImagePlaceholder extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      color: AppColors.darkSurface,
+      color: Theme.of(context).colorScheme.background,
       child: Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(
-              '썸네일을 선택해주세요',
+              '눌러서 썸네일을 선택해주세요',
               style: TextStyle(
                 color: Theme.of(context).colorScheme.onSurface,
                 fontSize: 15,

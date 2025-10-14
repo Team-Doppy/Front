@@ -24,6 +24,7 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
     with TickerProviderStateMixin {
   late final ScrollController _scrollController;
   late final AnimationController _selectionAnimationController;
+  late final AnimationController _loadingAnimationController;
 
   // 선택된 그룹 상태 (기본값: 전체 친구)
   Group? _selectedGroup;
@@ -45,6 +46,12 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
       vsync: this,
     );
 
+    // 로딩 애니메이션 컨트롤러 초기화
+    _loadingAnimationController = AnimationController(
+      duration: const Duration(milliseconds: 2000),
+      vsync: this,
+    )..repeat(); // 무한 반복
+
     // 첫 빌드 후 캐시 우선 로드
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
@@ -56,6 +63,10 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
 
   @override
   void dispose() {
+    // ⚠️ 중요: 무한 반복 중인 애니메이션을 먼저 중지해야 Ticker 누수 방지
+    _loadingAnimationController.stop();
+    _loadingAnimationController.dispose();
+
     _scrollController.dispose();
     _selectionAnimationController.dispose();
     _searchController.dispose();
@@ -72,20 +83,16 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
         builder: (context, groupProv, child) {
           return groupProv.isLoading
               ? Center(
-                child: TweenAnimationBuilder<double>(
-                  duration: const Duration(milliseconds: 400),
-                  tween: Tween(begin: 0.0, end: 1.0),
-                  curve: Curves.easeInOut,
-                  builder: (context, opacity, child) {
-                    return Opacity(
-                      opacity: opacity,
-                      child: Text(
-                        'doppy',
-                        style: TextStyle(
-                          fontSize: 24,
-                          fontWeight: FontWeight.w700,
-                          color: Theme.of(context).colorScheme.primary,
-                        ),
+                child: AnimatedBuilder(
+                  animation: _loadingAnimationController,
+                  builder: (context, child) {
+                    return Text(
+                      'doppy',
+                      style: TextStyle(
+                        fontSize: 32,
+                        fontWeight: FontWeight.w800,
+                        color: Colors.white,
+                        letterSpacing: 1.2,
                       ),
                     );
                   },

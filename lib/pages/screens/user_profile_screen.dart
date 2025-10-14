@@ -19,7 +19,6 @@ import 'package:doppy/pages/components/comps_for_profile/user_profile_controller
 import 'package:doppy/editor/image/profile_image_bottom_sheet.dart';
 import 'dart:io';
 import 'dart:ui';
-import 'package:doppy/providers/category_provider.dart';
 
 class UserProfileScreen extends StatefulWidget {
   final User? otherUser; // 다른 사용자 프로필을 볼 때 username 전달
@@ -57,7 +56,7 @@ class _UserProfileScreenState extends State<UserProfileScreen>
   static final CategoryDropDown _categoryDropDown = CategoryDropDown();
   static final Feed _feed = Feed();
   final GlobalKey _categoryButtonKey = GlobalKey();
-  late final CategoryProvider _categoryProvider;
+  static bool _prefetchedFriendsOnce = false; // 첫 진입 1회만 프리캐싱
 
   @override
   void initState() {
@@ -73,7 +72,25 @@ class _UserProfileScreenState extends State<UserProfileScreen>
       } catch (_) {}
     });
     _controller = UserProfileController(context);
-    _categoryProvider = CategoryProvider(readOnly: !_isOwnProfile);
+    // 전역 ProfileFeedProvider 사용
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      try {
+        final feed = context.read<ProfileFeedProvider>();
+        feed.setReadOnly(!_isOwnProfile);
+      } catch (_) {}
+    });
+
+    // 타인 프로필일 때 개인적인 카테고리가 선택되어 있으면 "전체"로 변경
+    if (!_isOwnProfile) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        try {
+          final feed = context.read<ProfileFeedProvider>();
+          if (feed.selectedBase != BaseFilter.all) {
+            feed.selectBase(BaseFilter.all);
+          }
+        } catch (_) {}
+      });
+    }
 
     // 계정 변경 콜백 설정
     _accountDropDown.setOnAccountChanged(() {
@@ -90,7 +107,7 @@ class _UserProfileScreenState extends State<UserProfileScreen>
     // 카테고리 변경 콜백 설정
     _categoryDropDown.setOnCategoryChanged(() {
       print('[-] [UserProfileScreen] Category changed callback called');
-      // setState 제거: CategoryProvider.notifyListeners()가 Consumer2를 통해 재빌드 트리거
+      // setState 제거: ProfileFeedProvider.notifyListeners()가 Consumer를 통해 재빌드 트리거
     });
 
     // ✅ [구조 개선] Provider를 통해 필요한 데이터를 한번에 요청합니다.
@@ -175,220 +192,207 @@ class _UserProfileScreenState extends State<UserProfileScreen>
       _displayAlias = me.alias;
     }
 
-    return ChangeNotifierProvider<CategoryProvider>.value(
-      value: _categoryProvider,
-      child: Material(
-        color: Theme.of(context).colorScheme.background,
-        child: Stack(
-          children: [
-            // 스크롤 가능한 컨텐츠 (Sliver)
-            Positioned.fill(
-              child: ValueListenableBuilder<bool>(
-                valueListenable: _feed.isDraggingCategory,
-                builder: (context, isDraggingCategory, _) {
-                  return AnimatedScale(
-                    scale: isDraggingCategory ? 0.88 : 1.0,
-                    duration: const Duration(milliseconds: 300),
-                    curve: Curves.easeInOut,
-                    alignment: Alignment.bottomCenter,
-                    child: CustomScrollView(
-                      controller: _scrollController,
-                      slivers: [
-                        SliverAppBar(
-                          expandedHeight: topPadding + _baseHeight,
-                          toolbarHeight: 60,
-                          backgroundColor: Colors.transparent,
-                          automaticallyImplyLeading: false,
-                          elevation: 0,
-                          title: Row(
-                            children: [
-                              if (isOther)
-                                GestureDetector(
+    return Material(
+      color: Theme.of(context).colorScheme.background,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          // 스크롤 가능한 컨텐츠 (Sliver)
+          Positioned.fill(
+            child: ValueListenableBuilder<bool>(
+              valueListenable: _feed.isDraggingCategory,
+              builder: (context, isDraggingCategory, _) {
+                return Transform.scale(
+                  scale: isDraggingCategory ? 0.7 : 1.0,
+                  alignment: Alignment.center,
+                  child: CustomScrollView(
+                    clipBehavior: Clip.none,
+                    controller: _scrollController,
+                    slivers: [
+                      SliverAppBar(
+                        expandedHeight: topPadding + _baseHeight,
+                        toolbarHeight: 60,
+                        backgroundColor: Colors.transparent,
+                        automaticallyImplyLeading: false,
+                        elevation: 0,
+                        title: Row(
+                          children: [
+                            if (isOther)
+                              GestureDetector(
+                                child: Icon(
+                                  Icons.arrow_back_ios_new,
+                                  size: 20,
+                                  color: Theme.of(
+                                    context,
+                                  ).colorScheme.onSurface.withOpacity(0.8),
+                                ),
+                                onTap: () => Navigator.of(context).pop(),
+                              ),
+                            Padding(
+                              padding: EdgeInsets.only(
+                                left: isOther ? 20.0 : 5.0,
+                                bottom: 3.0,
+                              ),
+                              child: Text(
+                                _displayUsername,
+                                style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 24,
+                                ),
+                              ),
+                            ),
+                            if (!isOther)
+                              Padding(
+                                padding: const EdgeInsets.only(left: 8.0),
+                                child: GestureDetector(
                                   child: Icon(
-                                    Icons.arrow_back_ios_new,
-                                    size: 20,
+                                    Icons.keyboard_arrow_down,
+                                    size: 24,
                                     color: Theme.of(
                                       context,
                                     ).colorScheme.onSurface.withOpacity(0.8),
                                   ),
-                                  onTap: () => Navigator.of(context).pop(),
-                                ),
-                              Padding(
-                                padding: EdgeInsets.only(
-                                  left: isOther ? 20.0 : 5.0,
-                                  bottom: 3.0,
-                                ),
-                                child: Text(
-                                  _displayUsername,
-                                  style: TextStyle(
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 24,
-                                  ),
+                                  onTap: () {
+                                    print(
+                                      '[-] [UserProfileScreen] Account dropdown button tapped',
+                                    );
+                                    _accountDropDown.showAccountDropdown(
+                                      context,
+                                    );
+                                  },
                                 ),
                               ),
-                              if (!isOther)
-                                Padding(
-                                  padding: const EdgeInsets.only(left: 8.0),
-                                  child: GestureDetector(
-                                    child: Icon(
-                                      Icons.keyboard_arrow_down,
-                                      size: 24,
-                                      color: Theme.of(
-                                        context,
-                                      ).colorScheme.onSurface.withOpacity(0.8),
-                                    ),
-                                    onTap:
-                                        () => _accountDropDown
-                                            .showAccountDropdown(context),
-                                  ),
-                                ),
-                            ],
-                          ),
-
-                          actions: [
-                            if (_isOwnProfile) ...[
-                              IconButton(
-                                icon: Icon(
-                                  Icons.edit,
-                                  color: Theme.of(
-                                    context,
-                                  ).colorScheme.onSurface.withOpacity(0.5),
-                                ),
-                                onPressed: () {
-                                  me != null
-                                      ? showProfileInfoEditBottomSheet(me)
-                                      : null;
-                                },
-                              ),
-                              // 설정 버튼
-                              IconButton(
-                                icon: Icon(
-                                  Icons.settings,
-                                  color: Theme.of(
-                                    context,
-                                  ).colorScheme.onSurface.withOpacity(0.5),
-                                ),
-                                onPressed: () {
-                                  Navigator.of(context).push(
-                                    MaterialPageRoute(
-                                      builder: (_) => SettingScreen(),
-                                    ),
-                                  );
-                                },
-                              ),
-                            ],
                           ],
                         ),
-                        SliverToBoxAdapter(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.center,
-                            children: [
-                              const SizedBox(height: 50),
-                              // 원형 아바타 (텍스트 위에 위치)
-                              Column(
-                                crossAxisAlignment: CrossAxisAlignment.center,
-                                children: [
-                                  // 아바타 (1차 스냅에서 완전히 페이드아웃)
-                                  Opacity(
-                                    opacity: 1,
-                                    child: ProfileAvatar(
-                                      imageUrl: _displayImageUrl,
-                                      username: _displayUsername,
-                                      size: 150,
-                                      borderWidth: 2,
-                                      borderColor:
-                                          Theme.of(context).brightness ==
-                                                  Brightness.dark
-                                              ? Colors.grey.shade300
-                                              : Colors.grey.shade600,
-                                      isUploading: _isUploadingProfileImage,
-                                      onTap:
-                                          _isOwnProfile &&
-                                                  !_isUploadingProfileImage
-                                              ? _changeProfileImage
-                                              : null,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 30),
-                                  // 사용자 이름 (1차 스냅 이후 페이드아웃)
-                                  Text(
-                                    _displayAlias ?? _displayUsername,
-                                    style: TextStyle(
-                                      color:
-                                          Theme.of(
-                                            context,
-                                          ).colorScheme.onSurface,
-                                      fontSize: 36,
-                                      fontWeight: FontWeight.bold,
-                                      height: 1.1,
-                                    ),
-                                  ),
-                                ],
+
+                        actions: [
+                          if (_isOwnProfile) ...[
+                            IconButton(
+                              icon: Icon(
+                                Icons.edit,
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.onSurface.withOpacity(0.5),
                               ),
-                              const SizedBox(height: 4),
-                              Text(
-                                isOther
-                                    ? (other?.selfIntroduction?.isNotEmpty ==
-                                            true
-                                        ? other!.selfIntroduction!
-                                        : _displayUsername)
-                                    : (me?.selfIntroduction?.isNotEmpty == true
-                                        ? me!.selfIntroduction!
-                                        : ''),
-                                style: TextStyle(
-                                  color:
+                              onPressed: () {
+                                me != null
+                                    ? showProfileInfoEditBottomSheet(me)
+                                    : null;
+                              },
+                            ),
+                            // 설정 버튼
+                            IconButton(
+                              icon: Icon(
+                                Icons.settings,
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.onSurface.withOpacity(0.5),
+                              ),
+                              onPressed: () {
+                                Navigator.of(context).push(
+                                  MaterialPageRoute(
+                                    builder: (_) => SettingScreen(),
+                                  ),
+                                );
+                              },
+                            ),
+                          ],
+                        ],
+                      ),
+                      SliverToBoxAdapter(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.center,
+                          children: [
+                            const SizedBox(height: 50),
+                            // 원형 아바타 (텍스트 위에 위치)
+                            Column(
+                              crossAxisAlignment: CrossAxisAlignment.center,
+                              children: [
+                                ProfileAvatar(
+                                  imageUrl: _displayImageUrl,
+                                  username: _displayUsername,
+                                  size: 150,
+                                  borderWidth: 2,
+                                  borderColor:
                                       Theme.of(context).brightness ==
                                               Brightness.dark
-                                          ? Theme.of(context)
-                                              .colorScheme
-                                              .onSurfaceVariant
-                                              .withOpacity(0.8)
-                                          : Colors.black,
-                                  fontSize: 14,
-                                  height: 1.3,
+                                          ? Colors.grey.shade300
+                                          : Colors.grey.shade600,
+                                  isUploading: _isUploadingProfileImage,
+                                  onTap:
+                                      _isOwnProfile && !_isUploadingProfileImage
+                                          ? _changeProfileImage
+                                          : null,
                                 ),
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
+                                const SizedBox(height: 30),
+                                // 사용자 이름 (1차 스냅 이후 페이드아웃)
+                                Text(
+                                  _displayAlias ?? _displayUsername,
+                                  style: TextStyle(
+                                    color:
+                                        Theme.of(context).colorScheme.onSurface,
+                                    fontSize: 36,
+                                    fontWeight: FontWeight.bold,
+                                    height: 1.1,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              isOther
+                                  ? (other?.selfIntroduction?.isNotEmpty == true
+                                      ? other!.selfIntroduction!
+                                      : _displayUsername)
+                                  : (me?.selfIntroduction?.isNotEmpty == true
+                                      ? me!.selfIntroduction!
+                                      : ''),
+                              style: TextStyle(
+                                color:
+                                    Theme.of(context).brightness ==
+                                            Brightness.dark
+                                        ? Theme.of(context)
+                                            .colorScheme
+                                            .onSurfaceVariant
+                                            .withOpacity(0.8)
+                                        : Colors.black,
+                                fontSize: 14,
+                                height: 1.3,
                               ),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
 
-                              // 다른 사용자 프로필일 때만 친구 추가 버튼 표시
-                              if (isOther) ...[_buildOtherProfileButton()],
-                              if (_isOwnProfile) ...[_buildMyProfileButton()],
-                            ],
-                          ),
+                            // 다른 사용자 프로필일 때만 친구 추가 버튼 표시
+                            if (isOther) ...[_buildOtherProfileButton()],
+                            if (_isOwnProfile) ...[_buildMyProfileButton()],
+                          ],
                         ),
-                        // Feed 모드 전환 스위처 (카드뷰 / 이미지 전용)
-                        _buildFeedModeSwitcher(),
-                        _feed.buildFeedContent(
-                          scrollController: _scrollController,
-                        ),
-                        const SliverToBoxAdapter(child: SizedBox(height: 60)),
-                      ],
-                    ),
-                  );
-                },
-              ),
+                      ),
+                      // Feed 모드 전환 스위처 (카드뷰 / 이미지 전용)
+                      _buildFeedModeSwitcher(),
+                      _feed.buildFeedContent(
+                        scrollController: _scrollController,
+                      ),
+                      const SliverToBoxAdapter(child: SizedBox(height: 60)),
+                    ],
+                  ),
+                );
+              },
             ),
-            Positioned(
-              top: 0,
-              left: 0,
-              right: 0,
+          ),
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            child: SizedBox(
               child: Container(
                 height: MediaQuery.of(context).padding.top,
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: [
-                      Colors.transparent,
-                      Colors.black.withOpacity(0.8),
-                      Colors.black,
-                    ],
-                    stops: [0, 0.5, 1],
-                  ),
-                ),
+                decoration: BoxDecoration(),
               ),
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
@@ -427,7 +431,7 @@ class _UserProfileScreenState extends State<UserProfileScreen>
         _categoryDropDown.showCategoryDropdown(
           context,
           _categoryButtonKey,
-          _categoryProvider,
+          context.read<ProfileFeedProvider>(),
         );
       },
       child: Container(
@@ -439,7 +443,7 @@ class _UserProfileScreenState extends State<UserProfileScreen>
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               Text(
-                context.watch<CategoryProvider>().selectedLabel,
+                context.watch<ProfileFeedProvider>().selectedLabel,
                 style: TextStyle(
                   fontSize: 16,
                   fontWeight: FontWeight.w300,
@@ -503,11 +507,7 @@ class _UserProfileScreenState extends State<UserProfileScreen>
           Expanded(
             child: _buildGlassyButton(
               text: '내 친구들',
-              onTap: () {
-                Navigator.of(
-                  context,
-                ).push(MaterialPageRoute(builder: (_) => ManageGroupScreen()));
-              },
+              onTap: () => _navigateToManageGroup(),
             ),
           ),
           SizedBox(width: 4),
@@ -515,6 +515,59 @@ class _UserProfileScreenState extends State<UserProfileScreen>
         ],
       ),
     );
+  }
+
+  /// 친구 관리 화면으로 이동 (이미지 프리캐싱 포함)
+  Future<void> _navigateToManageGroup() async {
+    final friendProvider = context.read<FriendProvider>();
+
+    // 모든 친구의 프로필 이미지 수집
+    final List<String> imageUrls = [];
+
+    // 수락된 친구들의 이미지
+    for (final friend in friendProvider.acceptedFriends) {
+      if (friend.profileImageUrl != null &&
+          friend.profileImageUrl!.isNotEmpty) {
+        imageUrls.add(friend.profileImageUrl!);
+      }
+    }
+
+    // 받은 요청의 이미지
+    for (final friend in friendProvider.receivedRequests) {
+      if (friend.profileImageUrl != null &&
+          friend.profileImageUrl!.isNotEmpty) {
+        imageUrls.add(friend.profileImageUrl!);
+      }
+    }
+
+    // 보낸 요청의 이미지
+    for (final friend in friendProvider.sentRequests) {
+      if (friend.profileImageUrl != null &&
+          friend.profileImageUrl!.isNotEmpty) {
+        imageUrls.add(friend.profileImageUrl!);
+      }
+    }
+
+    // 화면 전환: 즉시 이동
+    if (mounted) {
+      Navigator.of(
+        context,
+      ).push(MaterialPageRoute(builder: (_) => ManageGroupScreen()));
+    }
+
+    // 이미지 프리캐싱: 백그라운드에서 1회만 수행(체감 지연 제거)
+    if (!_prefetchedFriendsOnce && imageUrls.isNotEmpty && mounted) {
+      _prefetchedFriendsOnce = true;
+      final List<Future<void>> precacheFutures = [];
+      for (final url in imageUrls) {
+        precacheFutures.add(
+          precacheImage(NetworkImage(url), context).catchError((_) {}),
+        );
+      }
+      Future.wait(precacheFutures)
+          .timeout(const Duration(seconds: 2), onTimeout: () => <void>[])
+          .catchError((_) => <void>[]);
+    }
   }
 
   Widget _buildOtherProfileButton() {
@@ -558,7 +611,7 @@ class _UserProfileScreenState extends State<UserProfileScreen>
             };
             break;
           default:
-            buttonText = '이웃 추가';
+            buttonText = '';
             buttonAction = () {};
         }
 

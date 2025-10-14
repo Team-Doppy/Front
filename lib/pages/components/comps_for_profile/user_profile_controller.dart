@@ -73,7 +73,10 @@ class UserProfileController {
   Future<RemoveAccountResult> removeAccount(AccountInfo account) async {
     final current = await AccountManagerService.getCurrentAccount();
     final isCurrent = current?.username == account.username;
-    await AccountManagerService.removeAccount(account.username);
+    await AccountManagerService.removeAccount(
+      account.username,
+      syncToServer: true,
+    );
     final remaining = await AccountManagerService.getAllAccounts();
     return RemoveAccountResult(
       isCurrentRemoved: isCurrent,

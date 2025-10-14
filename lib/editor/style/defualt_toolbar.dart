@@ -2,6 +2,8 @@ import 'dart:io';
 import 'dart:typed_data';
 import 'package:doppy/data/services/upload_service.dart';
 import 'package:doppy/editor/overlay/sticker_overlay.dart';
+import 'package:doppy/editor/overlay/font_overlay.dart';
+import 'package:doppy/editor/style/font_catalog.dart';
 import 'package:flutter/material.dart';
 import 'package:super_editor/super_editor.dart';
 import 'package:doppy/editor/image/gallery_bottom_sheet.dart';
@@ -14,13 +16,37 @@ import 'package:doppy/editor/overlay/mention_overlay.dart';
 import 'package:provider/provider.dart';
 import 'package:doppy/editor/service/sticker_service.dart';
 import 'package:doppy/editor/component/divider_component.dart';
+import 'dart:ui';
+
+/// 형광펜 효과 Attribution 정의
+class HighlightAttribution extends ColorAttribution {
+  const HighlightAttribution(Color color) : super(color);
+
+  @override
+  String get id => 'highlight';
+}
+
+/// 기본 형광펜 색상들 (연한 톤으로 수정)
+const Color highlightYellow = Color(0xFFFFF59D); // 더 연한 노란색
+const Color highlightGreen = Color(0xFFA5D6A7); // 더 연한 초록색
+const Color highlightBlue = Color(0xFF90CAF9); // 더 연한 파란색
+const Color highlightPink = Color(0xFFF8BBD9); // 더 연한 분홍색
+const Color highlightOrange = Color(0xFFFFCC80); // 더 연한 주황색
+const Color highlightPurple = Color(0xFFCE93D8); // 더 연한 보라색
 
 /// 텍스트 스타일링 관리자
 class TextStylingService {
   final Editor editor;
   final MutableDocumentComposer composer;
 
+  // 전역 폰트 (새로 입력되는 모든 텍스트에 적용)
+  String? globalFontFamily;
+
   TextStylingService({required this.editor, required this.composer});
+
+  void dispose() {
+    // 리스너 제거 (더 이상 사용하지 않음)
+  }
 
   /// 굵게 토글
   void toggleBold() {
@@ -72,6 +98,212 @@ class TextStylingService {
         attributions: {strikethroughAttribution},
       ),
     ]);
+  }
+
+  /// 형광펜 토글 (기본 노란색)
+  void toggleHighlight() {
+    final selection = composer.selection;
+    if (selection == null) return;
+
+    // 현재 형광펜 상태 확인
+    final hasHighlight = _hasHighlightInSelection();
+
+    if (hasHighlight) {
+      // 형광펜 제거
+      _removeHighlightAttributions();
+    } else {
+      // 형광펜 적용 (기본 노란색)
+      applyHighlight(highlightYellow);
+    }
+  }
+
+  /// 특정 색상으로 형광펜 적용
+  void applyHighlight(Color color, {DocumentSelection? selectionOverride}) {
+    final selection = selectionOverride ?? composer.selection;
+    if (selection == null) return;
+
+    // 🔧 선택 영역의 모든 노드에 대해 형광펜 적용
+    final requests = <EditRequest>[];
+
+    // 선택 영역이 여러 노드에 걸쳐 있는 경우 처리
+    final startNode = editor.document.getNodeById(selection.base.nodeId);
+    final endNode = editor.document.getNodeById(selection.extent.nodeId);
+
+    if (startNode is TextNode && endNode is TextNode) {
+      // 단일 노드 내에서 선택된 경우
+      if (startNode.id == endNode.id) {
+        final highlightAttribution = HighlightAttribution(color);
+        requests.add(
+          AddTextAttributionsRequest(
+            documentRange: selection,
+            attributions: {highlightAttribution},
+          ),
+        );
+      } else {
+        // 여러 노드에 걸친 선택의 경우 - 각 노드별로 처리
+
+        // 첫 번째 노드 (시작부터 끝까지)
+        requests.add(
+          AddTextAttributionsRequest(
+            documentRange: DocumentSelection(
+              base: selection.base,
+              extent: DocumentPosition(
+                nodeId: startNode.id,
+                nodePosition: TextNodePosition(
+                  offset: startNode.text.text.length,
+                ),
+              ),
+            ),
+            attributions: {HighlightAttribution(color)},
+          ),
+        );
+
+        // 중간 노드들 (전체)
+        final startIndex = editor.document.getNodeIndexById(startNode.id);
+        final endIndex = editor.document.getNodeIndexById(endNode.id);
+
+        for (int i = startIndex + 1; i < endIndex; i++) {
+          final node = editor.document.getNodeAt(i);
+          if (node is TextNode) {
+            requests.add(
+              AddTextAttributionsRequest(
+                documentRange: DocumentSelection(
+                  base: DocumentPosition(
+                    nodeId: node.id,
+                    nodePosition: TextNodePosition(offset: 0),
+                  ),
+                  extent: DocumentPosition(
+                    nodeId: node.id,
+                    nodePosition: TextNodePosition(
+                      offset: node.text.text.length,
+                    ),
+                  ),
+                ),
+                attributions: {HighlightAttribution(color)},
+              ),
+            );
+          }
+        }
+
+        // 마지막 노드 (시작부터 끝까지)
+        requests.add(
+          AddTextAttributionsRequest(
+            documentRange: DocumentSelection(
+              base: DocumentPosition(
+                nodeId: endNode.id,
+                nodePosition: TextNodePosition(offset: 0),
+              ),
+              extent: selection.extent,
+            ),
+            attributions: {HighlightAttribution(color)},
+          ),
+        );
+      }
+    }
+
+    // 기존 형광펜 제거 후 새 형광펜 적용
+    if (requests.isNotEmpty) {
+      // 먼저 기존 형광펜 제거
+      _removeHighlightAttributions();
+
+      // 새 형광펜 적용
+      editor.execute(requests);
+    }
+  }
+
+  /// 선택 영역에 형광펜이 있는지 확인
+  bool _hasHighlightInSelection({DocumentSelection? selectionOverride}) {
+    final selection = selectionOverride ?? composer.selection;
+    if (selection == null) return false;
+
+    final existingAttributions = _getAttributionsInSelection(
+      selectionOverride: selection,
+    );
+    return existingAttributions.any((attr) => attr is HighlightAttribution);
+  }
+
+  /// 기존 형광펜 속성 제거
+  void _removeHighlightAttributions({DocumentSelection? selectionOverride}) {
+    final selection = selectionOverride ?? composer.selection;
+    if (selection == null) return;
+
+    // 🔧 선택 영역의 모든 노드에 대해 형광펜 제거
+    final requests = <EditRequest>[];
+
+    // 선택 영역이 여러 노드에 걸쳐 있는 경우 처리
+    final startNode = editor.document.getNodeById(selection.base.nodeId);
+    final endNode = editor.document.getNodeById(selection.extent.nodeId);
+
+    if (startNode is TextNode && endNode is TextNode) {
+      // 단일 노드 내에서 선택된 경우
+      if (startNode.id == endNode.id) {
+        final existingAttributions = _getAttributionsInSelection(
+          selectionOverride: selection,
+        );
+        final highlightAttributions =
+            existingAttributions
+                .where((attr) => attr is HighlightAttribution)
+                .toSet();
+
+        if (highlightAttributions.isNotEmpty) {
+          requests.add(
+            RemoveTextAttributionsRequest(
+              documentRange: selection,
+              attributions: highlightAttributions,
+            ),
+          );
+        }
+      } else {
+        // 여러 노드에 걸친 선택의 경우 - 각 노드별로 처리
+        final startIndex = editor.document.getNodeIndexById(startNode.id);
+        final endIndex = editor.document.getNodeIndexById(endNode.id);
+
+        // 모든 관련 노드에서 형광펜 제거
+        for (int i = startIndex; i <= endIndex; i++) {
+          final node = editor.document.getNodeAt(i);
+          if (node is TextNode) {
+            final nodeRange = DocumentSelection(
+              base: DocumentPosition(
+                nodeId: node.id,
+                nodePosition: TextNodePosition(offset: 0),
+              ),
+              extent: DocumentPosition(
+                nodeId: node.id,
+                nodePosition: TextNodePosition(offset: node.text.text.length),
+              ),
+            );
+
+            // 해당 노드의 모든 형광펜 속성 찾기
+            final nodeAttributions = <Attribution>{};
+
+            // 노드 전체를 순회하며 형광펜 속성 찾기
+            for (int i = 0; i < node.text.text.length; i++) {
+              final attributions = node.text.getAllAttributionsAt(i);
+              for (final attr in attributions) {
+                if (attr is HighlightAttribution) {
+                  nodeAttributions.add(attr);
+                }
+              }
+            }
+
+            final highlightAttributions = nodeAttributions.toSet();
+
+            if (highlightAttributions.isNotEmpty) {
+              requests.add(
+                RemoveTextAttributionsRequest(
+                  documentRange: nodeRange,
+                  attributions: highlightAttributions,
+                ),
+              );
+            }
+          }
+        }
+      }
+    }
+
+    if (requests.isNotEmpty) {
+      editor.execute(requests);
+    }
   }
 
   /// 텍스트 색상 적용
@@ -149,8 +381,10 @@ class TextStylingService {
   }
 
   /// 선택 영역의 모든 속성 가져오기
-  Set<Attribution> _getAttributionsInSelection() {
-    final selection = composer.selection;
+  Set<Attribution> _getAttributionsInSelection({
+    DocumentSelection? selectionOverride,
+  }) {
+    final selection = selectionOverride ?? composer.selection;
     if (selection == null) return {};
 
     final startNode = editor.document.getNodeById(selection.base.nodeId);
@@ -181,6 +415,7 @@ class TextStylingService {
         'italic': false,
         'underline': false,
         'strikethrough': false,
+        'highlight': false,
       };
     }
 
@@ -192,6 +427,7 @@ class TextStylingService {
         'italic': false,
         'underline': false,
         'strikethrough': false,
+        'highlight': false,
       };
     }
 
@@ -203,6 +439,7 @@ class TextStylingService {
       'italic': attributions.contains(italicsAttribution),
       'underline': attributions.contains(underlineAttribution),
       'strikethrough': attributions.contains(strikethroughAttribution),
+      'highlight': attributions.any((attr) => attr is HighlightAttribution),
     };
   }
 
@@ -265,17 +502,95 @@ class TextStylingService {
     final selection = composer.selection;
     if (selection == null) return;
 
-    editor.execute([
-      RemoveTextAttributionsRequest(
-        documentRange: selection,
-        attributions: {
-          boldAttribution,
-          italicsAttribution,
-          underlineAttribution,
-          strikethroughAttribution,
-        },
-      ),
-    ]);
+    // 기존 속성들을 모두 수집하여 제거
+    final existingAttributions = _getAttributionsInSelection();
+    final allAttributions =
+        existingAttributions
+            .where(
+              (attr) =>
+                  attr == boldAttribution ||
+                  attr == italicsAttribution ||
+                  attr == underlineAttribution ||
+                  attr == strikethroughAttribution ||
+                  attr is HighlightAttribution ||
+                  attr is ColorAttribution ||
+                  attr is FontSizeAttribution ||
+                  attr is FontFamilyAttribution,
+            )
+            .toSet();
+
+    if (allAttributions.isNotEmpty) {
+      editor.execute([
+        RemoveTextAttributionsRequest(
+          documentRange: selection,
+          attributions: allAttributions,
+        ),
+      ]);
+    }
+  }
+
+  /// 폰트 적용: 선택 영역이 있으면 그 범위에만, 없으면 현재 커서 위치에 zero-width 삽입+삭제로 활성화
+  void applyFont(FontItem fontItem) {
+    final selection = composer.selection;
+
+    // 🔧 폰트 패밀리명 결정: Google Fonts는 displayName을 그대로 사용 (GoogleFonts.getFont()용)
+    String targetFamily;
+    if (fontItem.googleFont != null) {
+      // Google Fonts: displayName을 사용 (예: "Yeon Sung", "Cute Font")
+      targetFamily = fontItem.displayName;
+      print('[FontDebug] Google Font 감지: $targetFamily');
+    } else if (fontItem.localFontFamily != null) {
+      // 로컬 폰트
+      targetFamily = fontItem.localFontFamily!;
+      print('[FontDebug] 로컬 폰트 감지: $targetFamily');
+    } else {
+      // 기본 폰트 (null)
+      targetFamily = '';
+      print('[FontDebug] 기본 폰트 사용');
+    }
+
+    if (selection != null && !selection.isCollapsed) {
+      // ✅ 선택 영역이 있으면: 선택된 텍스트에만 즉시 적용
+      print('[FontDebug] 선택 영역에 폰트 적용: $targetFamily');
+
+      // 기존 폰트 제거
+      final existingAttributions = _getAttributionsInSelection();
+      final fontAttributions =
+          existingAttributions.whereType<FontFamilyAttribution>().toSet();
+      if (fontAttributions.isNotEmpty) {
+        editor.execute([
+          RemoveTextAttributionsRequest(
+            documentRange: selection,
+            attributions: fontAttributions,
+          ),
+        ]);
+      }
+
+      // 새 폰트 적용
+      if (targetFamily.isNotEmpty) {
+        editor.execute([
+          AddTextAttributionsRequest(
+            documentRange: selection,
+            attributions: {FontFamilyAttribution(targetFamily)},
+          ),
+        ]);
+      }
+    } else {
+      // ✅ 선택 영역이 없으면: 전역 폰트 설정
+      print('[FontDebug] 전역 폰트 설정: $targetFamily');
+      globalFontFamily = targetFamily.isNotEmpty ? targetFamily : null;
+
+      // 전역 폰트만 설정 (composer.preferences는 SuperEditor가 자동으로 관리)
+    }
+  }
+
+  /// 현재 커서 위치에 있는 폰트 정보 가져오기
+  FontFamilyAttribution? getCurrentFont() {
+    final selection = composer.selection;
+    if (selection == null) return null;
+
+    final attributions = _getAttributionsInSelection();
+    return attributions.whereType<FontFamilyAttribution>().firstOrNull;
   }
 
   /// 구분선 삽입: 전용 DividerNode를 커서 위치에 삽입
@@ -322,6 +637,7 @@ class TextStylingService {
     ]);
   }
 }
+// (font overlay moved to editor/overlay/font_overlay.dart)
 
 // 상단 확장 행 콘텐츠 (DefaultToolbar 내부 전용)
 extension _TopExpandedRow on _DefaultToolbarState {
@@ -339,6 +655,14 @@ extension _TopExpandedRow on _DefaultToolbarState {
             if (_textPanel == TextPanel.size) ...[_buildFontSizeRow()],
             if (_textPanel == TextPanel.none) ...[_buildColorCollapsedButton()],
             if (_textPanel == TextPanel.color) ...[_buildColorPaletteRow()],
+
+            // 폰트 선택 버튼 (오버레이)
+            _buildToggleIcon(
+              icon: Icons.font_download_outlined,
+              isActive: false,
+              onTap: _openFontPickerOverlay,
+            ),
+            const SizedBox(width: 6),
 
             // 간단 토글들
             _buildToggleIcon(
@@ -376,6 +700,9 @@ extension _TopExpandedRow on _DefaultToolbarState {
                 _updateStyles();
               },
             ),
+            const SizedBox(width: 6),
+            // 🎨 형광펜 버튼 추가
+            _buildHighlightToggleIcon(),
 
             // 오른쪽 끝으로 밀기
           ],
@@ -616,6 +943,7 @@ class DefaultToolbar extends StatefulWidget {
   final ScrollController? scrollController;
   final bool isKeyboardVisible;
   final VoidCallback? onDismissKeyboard;
+  final VoidCallback? onRequestFocus;
   final VoidCallback? onShowDraftList;
   final bool isEditMode;
 
@@ -627,6 +955,7 @@ class DefaultToolbar extends StatefulWidget {
     this.scrollController,
     this.isKeyboardVisible = false,
     this.onDismissKeyboard,
+    this.onRequestFocus,
     this.onShowDraftList,
     this.isEditMode = false,
   });
@@ -698,6 +1027,51 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
         }
       }
     } catch (_) {}
+  }
+
+  // 폰트 선택 오버레이 열기 (블러 배경)
+  void _openFontPickerOverlay() {
+    // 🔧 선택 영역을 저장 (포커스 해제 전에)
+    final savedSelection = widget.stylingService.composer.selection;
+    print('[FontDebug] 저장된 selection: $savedSelection');
+
+    FocusScope.of(context).unfocus();
+    Navigator.of(context)
+        .push(
+          PageRouteBuilder(
+            opaque: false,
+            barrierDismissible: true,
+            pageBuilder:
+                (ctx, __, ___) => FontOverlay(
+                  onSelect: (fontItem) {
+                    // 🔧 저장된 selection 복원
+                    if (savedSelection != null) {
+                      widget.stylingService.editor.execute([
+                        ChangeSelectionRequest(
+                          savedSelection,
+                          SelectionChangeType.placeCaret,
+                          SelectionReason.userInteraction,
+                        ),
+                      ]);
+                      print('[FontDebug] selection 복원됨: $savedSelection');
+                    }
+
+                    // 폰트 적용
+                    widget.stylingService.applyFont(fontItem);
+                    print(
+                      '[FontOverlay] 폰트 적용됨: ${fontItem.displayName} (${fontItem.identifier})',
+                    );
+                  },
+                  onClose: () => Navigator.of(ctx).maybePop(),
+                ),
+          ),
+        )
+        .then((_) {
+          // 🔧 오버레이 닫힌 후 에디터 포커스 복원
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            widget.onRequestFocus?.call();
+          });
+        });
   }
 
   @override
@@ -1329,4 +1703,183 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
   // Widget _buildAlignmentButton(...) {}
 
   // Widget _buildFontSizeButton(...) {}
+
+  // 🎨 형광펜 토글 버튼 (색상 팔레트 포함)
+  Widget _buildHighlightToggleIcon() {
+    final isActive = _currentStyles['highlight'] ?? false;
+    final Color surfaceVariant = Theme.of(context).colorScheme.surfaceVariant;
+    final Color onSurface = Theme.of(context).colorScheme.onSurface;
+
+    return Material(
+      color: isActive ? surfaceVariant : Colors.transparent,
+      borderRadius: BorderRadius.circular(8),
+      child: InkWell(
+        // 탭 시 바로 팔레트 표시 (롱프레스 불필요)
+        onTap: _showHighlightColorPalette,
+        onLongPress: () {
+          // 롱프레스 시 색상 팔레트 표시
+          _showHighlightColorPalette();
+        },
+        borderRadius: BorderRadius.circular(8),
+        child: Container(
+          height: 36,
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.highlight,
+                size: 20,
+                color: isActive ? onSurface : onSurface.withOpacity(0.6),
+              ),
+              if (isActive) ...[
+                const SizedBox(width: 4),
+                Container(
+                  width: 12,
+                  height: 12,
+                  decoration: BoxDecoration(
+                    color: _getCurrentHighlightColor(),
+                    borderRadius: BorderRadius.circular(2),
+                    border: Border.all(
+                      color: onSurface.withOpacity(0.3),
+                      width: 0.5,
+                    ),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // 현재 형광펜 색상 가져오기
+  Color _getCurrentHighlightColor() {
+    final selection = widget.stylingService.composer.selection;
+    if (selection == null) return highlightYellow;
+
+    final node = widget.stylingService.editor.document.getNodeById(
+      selection.base.nodeId,
+    );
+    if (node is! TextNode) return highlightYellow;
+
+    final position = selection.base.nodePosition as TextNodePosition;
+    final attributions = node.text.getAllAttributionsAt(position.offset);
+
+    for (final attribution in attributions) {
+      if (attribution is HighlightAttribution) {
+        return attribution.color;
+      }
+    }
+
+    return highlightYellow; // 기본값
+  }
+
+  // 형광펜 색상 팔레트 표시
+  void _showHighlightColorPalette() {
+    // 선택 스냅샷 저장: 모달이 떠도 동일 범위에 적용하기 위함
+    final selectionSnapshot = widget.stylingService.composer.selection;
+    final List<Color> highlightColors = [
+      highlightYellow,
+      highlightGreen,
+      highlightBlue,
+      highlightPink,
+      highlightOrange,
+      highlightPurple,
+    ];
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder:
+          (context) => Container(
+            padding: const EdgeInsets.only(
+              top: 20,
+              left: 20,
+              right: 20,
+              bottom: 30,
+            ),
+            decoration: BoxDecoration(
+              color: Theme.of(context).colorScheme.surface,
+              borderRadius: const BorderRadius.vertical(
+                top: Radius.circular(20),
+              ),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                  children: [
+                    ...highlightColors.map((color) {
+                      return GestureDetector(
+                        onTap: () {
+                          // 🔧 선택 스냅샷 범위에서 기존 형광펜 제거 후 새 색상 적용
+                          widget.stylingService._removeHighlightAttributions(
+                            selectionOverride: selectionSnapshot,
+                          );
+                          widget.stylingService.applyHighlight(
+                            color,
+                            selectionOverride: selectionSnapshot,
+                          );
+                          _updateStyles();
+                          Navigator.pop(context);
+                        },
+                        child: Container(
+                          width: 40,
+                          height: 40,
+                          decoration: BoxDecoration(
+                            color: color,
+                            borderRadius: BorderRadius.circular(20),
+                            border: Border.all(
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.onSurface.withOpacity(0.2),
+                              width: 2,
+                            ),
+                          ),
+                        ),
+                      );
+                    }),
+                    // 마지막에 제거 아이템(원형) 추가
+                    GestureDetector(
+                      onTap: () {
+                        widget.stylingService._removeHighlightAttributions(
+                          selectionOverride: selectionSnapshot,
+                        );
+                        _updateStyles();
+                        Navigator.pop(context);
+                      },
+                      child: Container(
+                        width: 40,
+                        height: 40,
+                        decoration: BoxDecoration(
+                          color: Colors.transparent,
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.onSurface.withOpacity(0.2),
+                            width: 2,
+                          ),
+                        ),
+                        child: Center(
+                          child: Icon(
+                            Icons.close,
+                            size: 20,
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.onSurface.withOpacity(0.7),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+    );
+  }
 }

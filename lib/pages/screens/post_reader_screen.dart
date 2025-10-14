@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:super_editor/super_editor.dart';
 import 'package:doppy/editor/style/style_sheet.dart';
+import 'package:doppy/editor/style/defualt_toolbar.dart'; // HighlightAttribution import
 import 'package:doppy/editor/component/row_image_component.dart'
     show ImageRowNode, RowImageComponentBuilder;
 import 'package:doppy/editor/postwrite_screen.dart';
@@ -1431,6 +1432,16 @@ class _PostReaderScreenState extends State<PostReaderScreen>
       final colorHex = ann['color'] as String?;
       if (colorHex != null && colorHex.isNotEmpty) {
         atts.add(ColorAttribution(_parseHexColor(colorHex)));
+      }
+      // 🎨 형광펜 속성 디코딩
+      final highlightHex = ann['highlight'] as String?;
+      if (highlightHex != null && highlightHex.isNotEmpty) {
+        atts.add(HighlightAttribution(_parseHexColor(highlightHex)));
+      }
+      // 🎨 폰트 패밀리 속성 디코딩
+      final fontFamily = ann['fontFamily'] as String?;
+      if (fontFamily != null && fontFamily.isNotEmpty) {
+        atts.add(FontFamilyAttribution(fontFamily));
       }
       for (final a in atts) {
         attributed.addAttribution(a, SpanRange(start, end - 1));

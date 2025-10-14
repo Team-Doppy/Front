@@ -8,18 +8,18 @@ import 'package:doppy/data/models/post_data.dart';
 import 'package:doppy/pages/components/custom_bottom_navigation_bar.dart';
 import 'package:doppy/pages/onboarding/splash.dart';
 import 'package:doppy/pages/screens/manage_neighbor_screen.dart';
-import 'package:doppy/pages/screens/search_screen.dart';
 import 'package:doppy/pages/screens/user_profile_screen.dart';
 
 import 'package:doppy/pages/user/login_screen.dart';
 import 'package:doppy/providers/auth_provider.dart';
-import 'package:doppy/providers/category_provider.dart';
 import 'package:doppy/providers/friend_provider.dart';
 import 'package:doppy/providers/group_provider.dart';
 import 'package:doppy/providers/theme_provider.dart';
 import 'package:doppy/providers/user_provider.dart';
 import 'package:doppy/providers/profile_feed_provider.dart';
+import 'package:doppy/providers/search_result_provider.dart';
 import 'package:doppy/data/services/search_service.dart';
+import 'package:doppy/data/services/account_manager_service.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -55,16 +55,35 @@ Future<void> main() async {
         ChangeNotifierProvider(create: (_) => CategoryOverlayProvider()),
         ChangeNotifierProvider(create: (_) => PostDragDropService()),
         ChangeNotifierProvider(create: (_) => SearchService()),
+        ChangeNotifierProvider(create: (_) => SearchResultProvider()),
         ChangeNotifierProvider(create: (_) => ImageService()),
         ChangeNotifierProvider(create: (_) => StickerService()),
         ChangeNotifierProvider(create: (_) => UploadService()),
-        ChangeNotifierProvider(create: (_) => CategoryProvider()),
       ],
       child: MyApp(
         hasSeenOnboarding: hasSeenOnboarding,
       ), // MyApp 위젯을 child로 감싸줍니다.
     ),
   );
+
+  // 4. 앱 시작 시 계정 동기화 수행 (백그라운드에서)
+  WidgetsBinding.instance.addPostFrameCallback((_) async {
+    try {
+      print('[Main] Starting account sync on app launch...');
+
+      // 먼저 서버에서 계정 정보를 가져와서 로컬과 동기화
+      final syncSuccess = await AccountManagerService.syncWithServer();
+
+      if (syncSuccess) {
+        print('[Main] Account sync completed successfully');
+      } else {
+        print('[Main] Account sync failed, but app continues');
+      }
+    } catch (e) {
+      print('[Main] Account sync error: $e');
+      // 동기화 실패해도 앱은 계속 실행
+    }
+  });
 }
 
 class MyApp extends StatelessWidget {
@@ -113,14 +132,13 @@ class RootShell extends StatefulWidget {
 class _RootShellState extends State<RootShell> {
   late int _index;
   bool _isFirstLoad = true; // 첫 로드 여부 추적
+  final GlobalKey<HomeScreenState> _homeScreenKey =
+      GlobalKey<HomeScreenState>();
 
   // 계정별로 재생성되도록 페이지 빌더 사용
   List<Widget> _buildPages(String? username) => [
-    HomeScreen(
-      key: ValueKey('home_$username'),
-      preloadedPosts: widget.preloadedPosts,
-    ),
-    SearchScreen(key: ValueKey('search_$username')),
+    HomeScreen(key: _homeScreenKey, preloadedPosts: widget.preloadedPosts),
+    SizedBox.shrink(),
     const SizedBox.shrink(), // 작성은 라우트로 별도 push
     UserProfileScreen(key: ValueKey('profile_$username')),
   ];
@@ -145,6 +163,26 @@ class _RootShellState extends State<RootShell> {
   }
 
   void _onTap(int i) {
+    final searchResultProvider = context.read<SearchResultProvider>();
+
+    // 검색 오버레이가 열려있을 때 홈 버튼을 누르면 오버레이만 닫기
+    if (i == 0 && searchResultProvider.isSearchOverlayVisible) {
+      searchResultProvider.setSearchOverlayVisible(false);
+      return;
+    }
+
+    // 검색 버튼 클릭 시: 홈으로 이동하고 SearchOverlay 열기
+    if (i == 1) {
+      print('[RootShell] 검색 버튼 클릭됨');
+      setState(() => _index = 0); // 홈 탭으로 이동
+      // 다음 프레임에서 SearchOverlay 열기
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        print('[RootShell] SearchOverlay 열기 시도');
+        _homeScreenKey.currentState?.openSearchOverlay();
+      });
+      return;
+    }
+
     if (i == 2) {
       final screenWidth = MediaQuery.of(context).size.width;
       Navigator.of(context).pushNamed('/post-write', arguments: screenWidth);
@@ -152,6 +190,12 @@ class _RootShellState extends State<RootShell> {
     }
     final wasIndex = _index;
     setState(() => _index = i);
+
+    // 다른 탭으로 이동 시 검색 오버레이 상태 해제
+    if (i != 0) {
+      searchResultProvider.setSearchOverlayVisible(false);
+    }
+
     // 프로필 탭 전환 시: 첫 진입이거나 명시적 새로고침 상황에서만 강제 로드
     if (i == 3 && wasIndex != 3) {
       context.read<ProfileFeedProvider>().loadInitial(
@@ -181,9 +225,13 @@ class _RootShellState extends State<RootShell> {
           child: pages[_index],
         ),
       ),
-      bottomNavigationBar: CustomBottomNavigationBar(
-        currentIndex: _index,
-        onTap: _onTap,
+      bottomNavigationBar: Consumer<SearchResultProvider>(
+        builder:
+            (context, searchResultProvider, _) => CustomBottomNavigationBar(
+              currentIndex: _index,
+              onTap: _onTap,
+              isSearching: searchResultProvider.isSearchActive,
+            ),
       ),
       // 플로팅 바텀 내비게이션바
     );

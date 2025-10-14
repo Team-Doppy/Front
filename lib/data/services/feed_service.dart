@@ -1,7 +1,10 @@
+import 'package:doppy/data/services/blog_service.dart';
+import 'dart:async';
 import 'package:doppy/pages/components/comps_for_profile/category_fullscreen_overlay.dart';
 import 'package:doppy/data/models/post_data.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:doppy/providers/profile_feed_provider.dart';
 
 enum FeedDisplayMode { card, imageOnly }
@@ -12,15 +15,52 @@ class FeedDisplayModeManager extends ValueNotifier<FeedDisplayMode> {
 
   factory FeedDisplayModeManager() => _instance;
 
-  FeedDisplayModeManager._internal() : super(FeedDisplayMode.card) {
-    print('[FeedDisplayModeManager] 기본 모드: ${value}');
+  FeedDisplayModeManager._internal() : super(FeedDisplayMode.imageOnly) {
+    // 기본: 이미지 전용. SharedPreferences에서 복원
+    _restoreFromPrefs();
   }
 
-  void switchToCard() => value = FeedDisplayMode.card;
-  void switchToImageOnly() => value = FeedDisplayMode.imageOnly;
+  static const _prefsKey = 'feed_display_mode';
+
+  void switchToCard() {
+    value = FeedDisplayMode.card;
+    _saveToPrefs();
+  }
+
+  void switchToImageOnly() {
+    value = FeedDisplayMode.imageOnly;
+    _saveToPrefs();
+  }
 
   bool get isCard => value == FeedDisplayMode.card;
   bool get isImageOnly => value == FeedDisplayMode.imageOnly;
+
+  Future<void> _saveToPrefs() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(
+        _prefsKey,
+        value == FeedDisplayMode.card ? 'card' : 'imageOnly',
+      );
+    } catch (_) {}
+  }
+
+  Future<void> _restoreFromPrefs() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final v = prefs.getString(_prefsKey);
+      if (v == 'card') {
+        super.value = FeedDisplayMode.card;
+      } else if (v == 'imageOnly') {
+        super.value = FeedDisplayMode.imageOnly;
+      } else {
+        super.value = FeedDisplayMode.imageOnly; // 기본값
+      }
+      // ignore: avoid_print
+      print('[FeedDisplayModeManager] 복원 모드: ${super.value}');
+      notifyListeners();
+    } catch (_) {}
+  }
 }
 
 class CategoryOverlayProvider extends ChangeNotifier {
@@ -68,6 +108,19 @@ class PostDragDropService extends ChangeNotifier {
   ScrollController? _verticalController;
   final Map<String, ScrollController> _horizontalControllers =
       <String, ScrollController>{};
+  Timer? _autoScrollTimer;
+  // 가장자리 호버 딜레이(자동 스크롤 시작 전 대기)
+  DateTime? _edgeEnteredAt;
+  static const Duration _edgeDwell = Duration(milliseconds: 500);
+
+  // 자동 스크롤 동작 중 여부 (그리드 내 재배치 감지 일시 중지를 위해 노출)
+  bool get isAutoScrolling => _autoScrollTimer != null;
+
+  // 엣지 진입 순간부터 해제될 때까지 리오더 감지를 억제하는 래치
+  bool _reorderSuppressed = false;
+  bool get suppressReorder => _reorderSuppressed;
+
+  // 드래그 위치 업데이트 스로틀링 제거(부자연스러운 끊김 방지)
 
   // Getters
   bool get isDragging => _isDragging;
@@ -100,6 +153,7 @@ class PostDragDropService extends ChangeNotifier {
   void updateDragPosition(Offset globalPosition) {
     _dragPosition = globalPosition;
     _maybeAutoScrollVertical();
+    _ensureAutoScroll();
     notifyListeners();
   }
 
@@ -117,6 +171,7 @@ class PostDragDropService extends ChangeNotifier {
   void endDrag() {
     // 오버레이 제거
     _removeOverlay();
+    _stopAutoScroll();
 
     if (_draggedPost != null && _targetCategory != null) {
       // 실제 이동 처리는 DragTarget.onAccept에서 컨텍스트로 처리
@@ -166,15 +221,26 @@ class PostDragDropService extends ChangeNotifier {
       final view = WidgetsBinding.instance.platformDispatcher.views.first;
       final screenHeight = view.physicalSize.height / view.devicePixelRatio;
       const edge = 80.0; // 상/하단 오토 스크롤 트리거 영역
-      const speed = 14.0; // 한 번에 이동 픽셀
+      // 가장자리에 가까울수록 속도를 높이고, 멀수록 낮추는 스무싱
+      // 기본(포스트) 느리게, 엣지 억제 중에는 약간 빠르게
+      final bool boost = _reorderSuppressed;
+      final double minSpeed = boost ? 12.0 : 8.0;
+      final double maxSpeed = boost ? 26.0 : 18.0;
 
       if (_dragPosition.dy < edge) {
+        final ratio = (1.0 - (_dragPosition.dy / edge)).clamp(0.0, 1.0);
+        final speed = minSpeed + (maxSpeed - minSpeed) * ratio;
         final next = (sc.offset - speed).clamp(
           0.0,
           sc.position.maxScrollExtent,
         );
         if (next != sc.offset) sc.jumpTo(next);
       } else if (_dragPosition.dy > screenHeight - edge) {
+        final ratio = (1.0 - ((screenHeight - _dragPosition.dy) / edge)).clamp(
+          0.0,
+          1.0,
+        );
+        final speed = minSpeed + (maxSpeed - minSpeed) * ratio;
         final next = (sc.offset + speed).clamp(
           0.0,
           sc.position.maxScrollExtent,
@@ -182,6 +248,76 @@ class PostDragDropService extends ChangeNotifier {
         if (next != sc.offset) sc.jumpTo(next);
       }
     } catch (_) {}
+  }
+
+  void _ensureAutoScroll() {
+    // 가장자리 영역에 머무른 뒤(0.5s) 자동 스크롤 시작 → 재배치와의 충돌 최소화
+    if (!_isDragging || _verticalController == null) {
+      _edgeEnteredAt = null;
+      _stopAutoScroll();
+      return;
+    }
+
+    try {
+      final view = WidgetsBinding.instance.platformDispatcher.views.first;
+      final screenHeight = view.physicalSize.height / view.devicePixelRatio;
+      const edge = 80.0;
+      final inEdge =
+          _dragPosition.dy < edge || _dragPosition.dy > screenHeight - edge;
+
+      if (inEdge) {
+        // 엣지에 진입하면 즉시 리오더 억제 래치 활성화
+        if (!_reorderSuppressed) {
+          _reorderSuppressed = true;
+          notifyListeners();
+        }
+        final now = DateTime.now();
+        _edgeEnteredAt ??= now;
+        final dwellEnough = now.difference(_edgeEnteredAt!) >= _edgeDwell;
+        if (dwellEnough) {
+          // dwell 시간이 만족된 경우에만 주기 스크롤 시작
+          _autoScrollTimer ??= Timer.periodic(
+            const Duration(milliseconds: 16),
+            (_) {
+              // 주기적으로 전역 스크롤 수행
+              _maybeAutoScrollVertical();
+              // 가장자리 유지 여부를 주기적으로 재평가하여 끊김 없이 계속/해제
+              try {
+                final view =
+                    WidgetsBinding.instance.platformDispatcher.views.first;
+                final screenHeight =
+                    view.physicalSize.height / view.devicePixelRatio;
+                const edge = 80.0;
+                final stillInEdge =
+                    _dragPosition.dy < edge ||
+                    _dragPosition.dy > screenHeight - edge;
+                if (!stillInEdge) {
+                  _edgeEnteredAt = null;
+                  _stopAutoScroll();
+                  if (_reorderSuppressed) {
+                    _reorderSuppressed = false;
+                    notifyListeners();
+                  }
+                }
+              } catch (_) {}
+            },
+          );
+        }
+      } else {
+        // 가장자리에서 벗어나면 타이머/상태 초기화
+        _edgeEnteredAt = null;
+        _stopAutoScroll();
+        if (_reorderSuppressed) {
+          _reorderSuppressed = false;
+          notifyListeners();
+        }
+      }
+    } catch (_) {}
+  }
+
+  void _stopAutoScroll() {
+    _autoScrollTimer?.cancel();
+    _autoScrollTimer = null;
   }
 
   // 오버레이 제거
@@ -198,47 +334,70 @@ class PostDragDropService extends ChangeNotifier {
     );
   }
 
-  // 포스트 카테고리 이동 (실제 구현 필요)
-  void movePostToCategory(PostData post, String newCategory) {
-    // TODO: 실제 API 호출로 포스트 카테고리 변경
+  // 포스트 카테고리 이동 (새로운 API 연동)
+  Future<void> movePostToCategory(
+    PostData post,
+    int targetCategoryId, {
+    int? targetPosition,
+  }) async {
     print('🚀 [PostDragDropService] 포스트 카테고리 이동 시작');
     print('   - 포스트 ID: ${post.id}');
     print('   - 포스트 제목: ${post.title}');
-    print('   - 현재 카테고리: ${post.accessLevel}');
-    print('   - 새로운 카테고리: $newCategory');
+    print('   - 타겟 카테고리 ID: $targetCategoryId');
+    print('   - 타겟 위치: $targetPosition');
 
-    // 실제로는 여기서 API 호출을 해야 합니다
-    // await apiService.updatePostCategory(post.id, newCategory);
+    try {
+      // 새로운 API 호출
+      await BlogService().movePostToCategory(
+        postId: int.parse(post.id),
+        targetCategoryId: targetCategoryId,
+        targetPosition: targetPosition,
+      );
 
-    // 성공 메시지
-    print('✅ [PostDragDropService] 포스트 카테고리 이동 완료');
+      print('✅ [PostDragDropService] 포스트 카테고리 이동 완료');
+    } catch (e) {
+      print('❌ [PostDragDropService] 포스트 카테고리 이동 실패: $e');
+      rethrow;
+    }
   }
 
-  // 컨텍스트를 인자로 받아 로컬 피드를 즉시 반영
-  void movePostToCategoryWithContext(
+  // 컨텍스트를 인자로 받아 로컬 피드를 즉시 반영 (새로운 API 구조)
+  Future<void> movePostToCategoryWithContext(
     BuildContext context,
     PostData post,
-    String newCategory,
-  ) {
-    movePostToCategory(post, newCategory);
+    int targetCategoryId, {
+    int? targetPosition,
+  }) async {
     try {
-      AccessLevel level = AccessLevel.public;
-      if (newCategory.contains('나만'))
-        level = AccessLevel.private;
-      else if (newCategory.contains('그룹'))
-        level = AccessLevel.groups;
-      context.read<ProfileFeedProvider>().updatePostAccessLevelById(
+      // 단일 엔드포인트로 위임: 서버가 미분류(0) 포함해 모두 처리
+      await movePostToCategory(
+        post,
+        targetCategoryId,
+        targetPosition: targetPosition,
+      );
+
+      // 서버 호출 성공 후 로컬 업데이트 (전체 새로고침 없음)
+      context.read<ProfileFeedProvider>().movePostLocally(
         post.id,
-        level,
+        targetCategoryId,
+        targetPosition,
       );
     } catch (e) {
-      print('⚠️ [PostDragDropService] 로컬 피드 반영 실패: $e');
+      print('⚠️ [PostDragDropService] 서버 이동 실패: $e');
+      // 사용자에게 알림 (크래시 방지)
+      try {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('이동 실패: 서버 오류가 발생했습니다')));
+      } catch (_) {}
+      // 실패 시 예외 전파하지 않음 (UI 크래시 방지)
     }
   }
 
   @override
   void dispose() {
     _removeOverlay();
+    _stopAutoScroll();
     for (final ctrl in _horizontalControllers.values) {
       ctrl.dispose();
     }

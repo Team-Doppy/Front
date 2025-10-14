@@ -1,5 +1,5 @@
 import 'package:doppy/pages/components/shimmer_box.dart';
-import 'package:doppy/providers/category_provider.dart';
+import 'package:doppy/providers/profile_feed_provider.dart';
 import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:doppy/data/models/post_data.dart';
@@ -31,7 +31,7 @@ class CardModeList extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final catProvider = context.read<CategoryProvider>();
+    final catProvider = context.read<ProfileFeedProvider>();
     bool isAllTab =
         catProvider.selectedCategoryId == null &&
         catProvider.selectedBase == BaseFilter.all;
@@ -68,10 +68,25 @@ class CardModeList extends StatelessWidget {
                           ),
                         ),
                         Spacer(),
-                        Icon(
-                          Icons.keyboard_arrow_right,
-                          size: 20,
-                          color: theme.colorScheme.onSurface.withOpacity(0.7),
+                        Row(
+                          children: [
+                            Text(
+                              '+${sectionMeta.posts.length}',
+                              style: TextStyle(
+                                fontSize: 15,
+                                color: theme.colorScheme.onSurface.withOpacity(
+                                  0.7,
+                                ),
+                              ),
+                            ),
+                            Icon(
+                              Icons.keyboard_arrow_right,
+                              size: 20,
+                              color: theme.colorScheme.onSurface.withOpacity(
+                                0.7,
+                              ),
+                            ),
+                          ],
                         ),
                       ],
                     ),
@@ -93,10 +108,24 @@ class CardModeList extends StatelessWidget {
                       if (isSimpleVersion)
                         GestureDetector(
                           onTap: () {},
-                          child: Icon(
-                            Icons.keyboard_arrow_right,
-                            size: 20,
-                            color: theme.colorScheme.onSurface.withOpacity(0.7),
+                          child: Row(
+                            children: [
+                              Text(
+                                '+${sectionMeta.posts.length}',
+                                style: TextStyle(
+                                  fontSize: 15,
+                                  color: theme.colorScheme.onSurface
+                                      .withOpacity(0.7),
+                                ),
+                              ),
+                              Icon(
+                                Icons.keyboard_arrow_right,
+                                size: 20,
+                                color: theme.colorScheme.onSurface.withOpacity(
+                                  0.7,
+                                ),
+                              ),
+                            ],
                           ),
                         ),
                     ],
@@ -119,10 +148,25 @@ class CardModeList extends StatelessWidget {
                     if (isSimpleVersion)
                       GestureDetector(
                         onTap: () {},
-                        child: Icon(
-                          Icons.keyboard_arrow_right,
-                          size: 20,
-                          color: theme.colorScheme.onSurface.withOpacity(0.7),
+                        child: Row(
+                          children: [
+                            Text(
+                              '+${sectionMeta.posts.length}',
+                              style: TextStyle(
+                                fontSize: 15,
+                                color: theme.colorScheme.onSurface.withOpacity(
+                                  0.7,
+                                ),
+                              ),
+                            ),
+                            Icon(
+                              Icons.keyboard_arrow_right,
+                              size: 20,
+                              color: theme.colorScheme.onSurface.withOpacity(
+                                0.7,
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                   ],

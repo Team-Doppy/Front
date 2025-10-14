@@ -91,48 +91,29 @@ class _ReorderableGridListState extends State<ReorderableGridList> {
                     _gridKey.currentContext?.findRenderObject() as RenderBox?;
                 if (box == null) return;
                 final local = box.globalToLocal(details.offset);
-                final double x = local.dx.clamp(0.0, constraints.maxWidth);
-                final double y = local.dy.clamp(0.0, double.infinity);
-                final int col = (x / (cellWidth + widget.spacing))
-                    .floor()
-                    .clamp(0, widget.crossAxisCount - 1);
-                final int row = (y / (cellHeight + widget.spacing)).floor();
-                final int idx = (row * widget.crossAxisCount + col).clamp(
-                  0,
-                  _items.length,
-                );
+                // 전역 자동 스크롤 트리거는 서비스가 담당하므로, 글로벌 포인터 위치만 꾸준히 업데이트
                 dragSvc.setDropTarget(widget.sectionTitle);
-                dragSvc.setReorderTargetIndex(idx);
+                dragSvc.updateDragPosition(details.offset);
 
-                // 화면 절대 좌표 기준으로 자동 스크롤 처리
-                if (widget.scrollController != null &&
-                    widget.scrollController!.hasClients) {
-                  const edge = 80.0;
-                  const speed = 6.0;
-                  final pos = widget.scrollController!.position;
-
-                  // 화면 전체 높이 기준으로 절대 좌표 계산
-                  final screenHeight = MediaQuery.of(context).size.height;
-                  final globalY = details.offset.dy;
-
-                  if (globalY < edge) {
-                    // 화면 상단 가장자리: 위로 스크롤
-                    final next = (pos.pixels - speed).clamp(
-                      0.0,
-                      pos.maxScrollExtent,
-                    );
-                    if (next != pos.pixels)
-                      widget.scrollController!.jumpTo(next);
-                  } else if (globalY > screenHeight - edge) {
-                    // 화면 하단 가장자리: 아래로 스크롤
-                    final next = (pos.pixels + speed).clamp(
-                      0.0,
-                      pos.maxScrollExtent,
-                    );
-                    if (next != pos.pixels)
-                      widget.scrollController!.jumpTo(next);
-                  }
+                // 자동 스크롤 억제 래치가 켜져 있으면 그리드 내 재배치 인식 중단
+                if (dragSvc.suppressReorder) {
+                  dragSvc.setReorderTargetIndex(null);
+                } else {
+                  // 그리드 셀 인덱스 계산 및 타겟 인덱스 갱신
+                  final double x = local.dx.clamp(0.0, constraints.maxWidth);
+                  final double y = local.dy.clamp(0.0, double.infinity);
+                  final int col = (x / (cellWidth + widget.spacing))
+                      .floor()
+                      .clamp(0, widget.crossAxisCount - 1);
+                  final int row = (y / (cellHeight + widget.spacing)).floor();
+                  final int idx = (row * widget.crossAxisCount + col).clamp(
+                    0,
+                    _items.length,
+                  );
+                  dragSvc.setReorderTargetIndex(idx);
                 }
+
+                // 세로 자동 스크롤은 전역 DragDropService가 관리 → 중복 방지 위해 여기서는 수행하지 않음
               } catch (_) {}
             },
             onLeave: (_) {
@@ -164,6 +145,8 @@ class _ReorderableGridListState extends State<ReorderableGridList> {
               widget.onAccept?.call(data, targetIndex);
 
               dragSvc.setReorderTargetIndex(null);
+              // 드롭 완료: 드래그 상태 해제하여 마스킹 제거
+              dragSvc.endDrag();
             },
             builder: (context, candidate, rejected) {
               return Consumer<PostDragDropService>(
@@ -187,20 +170,8 @@ class _ReorderableGridListState extends State<ReorderableGridList> {
                     }
                   }
 
-                  // 드래그가 다른 섹션을 타겟할 때, 이 섹션에서 드래그된 카드를 임시로 제외해
-                  // 자연스럽게 좌측으로 밀리도록 처리
+                  // 항상 원본 셀을 유지한다 (다른 섹션을 타겟해도 소스 섹션에서 사라지지 않음)
                   List<PostData> effectiveItems = _items;
-                  if (svc.isDragging &&
-                      svc.draggedPost != null &&
-                      svc.targetCategory != null &&
-                      svc.targetCategory != widget.sectionTitle) {
-                    final draggedId = svc.draggedPost!.id;
-                    if (_items.any((p) => p.id == draggedId)) {
-                      effectiveItems = _items
-                          .where((p) => p.id != draggedId)
-                          .toList(growable: false);
-                    }
-                  }
 
                   // Grid처럼 보이는 ListView (행 단위 생성)
                   final totalCount =
@@ -250,16 +221,41 @@ class _ReorderableGridListState extends State<ReorderableGridList> {
                           );
                         } else {
                           final post = effectiveItems[dataIndex];
+                          final shouldDim =
+                              (svc.isDragging &&
+                                  svc.draggedPost?.id == post.id);
+
                           children.add(
                             RepaintBoundary(
                               child: SizedBox(
                                 key: ValueKey('cell-${post.id}'),
                                 width: cellWidth,
                                 height: cellHeight,
-                                child: widget.itemBuilder(
-                                  context,
-                                  post,
-                                  dataIndex,
+                                child: Stack(
+                                  children: [
+                                    Positioned.fill(
+                                      child: widget.itemBuilder(
+                                        context,
+                                        post,
+                                        dataIndex,
+                                      ),
+                                    ),
+                                    if (shouldDim)
+                                      Positioned.fill(
+                                        child: IgnorePointer(
+                                          child: ClipRRect(
+                                            borderRadius: BorderRadius.circular(
+                                              12,
+                                            ),
+                                            child: Container(
+                                              color: Colors.black.withOpacity(
+                                                0.6,
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                  ],
                                 ),
                               ),
                             ),

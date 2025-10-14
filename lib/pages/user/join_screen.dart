@@ -1043,12 +1043,15 @@ class _JoinScreenState extends State<JoinScreen> {
     });
 
     try {
-      // 이미 존재하는 계정인지 확인 (입력한 ID 기준 선제 차단)
+      // 서버에서 현재 연동된 계정 목록을 먼저 동기화
+      await AccountManagerService.syncFromServer();
+
+      // 로컬에서 중복 체크 (서버 동기화 후)
       final existingLinkedAccount = await AccountManagerService.getAccount(
         _idController.text,
       );
       if (existingLinkedAccount != null) {
-        // 이미 연동된 계정
+        // 이미 연동된 계정 - 해당 계정으로 전환 시도
         setState(() {
           _isCheckingDuplicate = false;
         });
@@ -1057,12 +1060,29 @@ class _JoinScreenState extends State<JoinScreen> {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
               content: Text(
-                '이미 연동되어 있어요',
+                '이미 연동된 계정입니다. 해당 계정으로 전환하시겠습니까?',
                 style: TextStyle(
                   color: Theme.of(context).colorScheme.onSurface,
                 ),
               ),
-              backgroundColor: Theme.of(context).colorScheme.surface,
+              backgroundColor: Colors.blue,
+              action: SnackBarAction(
+                label: '전환',
+                textColor: Colors.white,
+                onPressed: () async {
+                  // 해당 계정으로 전환
+                  await AccountManagerService.setCurrentAccount(
+                    existingLinkedAccount.username,
+                    syncToServer: true,
+                  );
+                  await AccountContextService.applyCurrentAccount(context);
+
+                  // 홈으로 이동
+                  Navigator.of(
+                    context,
+                  ).pushNamedAndRemoveUntil('/home', (route) => false);
+                },
+              ),
             ),
           );
         }
@@ -1090,6 +1110,7 @@ class _JoinScreenState extends State<JoinScreen> {
               token: prevToken,
               refreshToken: prevRefresh,
             ),
+            syncToServer: true,
           );
         }
       } catch (_) {}
@@ -1152,13 +1173,16 @@ class _JoinScreenState extends State<JoinScreen> {
         refreshToken: loginResponse.refreshToken,
       );
 
-      await AccountManagerService.addAccount(accountInfo);
+      await AccountManagerService.addAccount(accountInfo, syncToServer: true);
 
       // 4) 진행 화면으로 전환 후, 현재 계정으로 설정 + 컨텍스트 적용
       if (mounted) {
         _nextStep();
       }
-      await AccountManagerService.setCurrentAccount(loginResponse.username);
+      await AccountManagerService.setCurrentAccount(
+        loginResponse.username,
+        syncToServer: true,
+      );
       await AccountContextService.applyCurrentAccount(context);
 
       if (mounted) {

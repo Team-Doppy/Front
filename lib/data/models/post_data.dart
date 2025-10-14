@@ -57,7 +57,10 @@ class PostData {
 
     return PostData(
       id: data['id']?.toString() ?? '',
-      thumbnailImageUrl: data['thumbnailImageUrl'] ?? 'assets/images/feed2.png',
+      thumbnailImageUrl:
+          data['thumbnailUrl'] ??
+          data['thumbnailImageUrl'] ??
+          'assets/images/feed2.png',
       title: data['title'] ?? '',
       author: data['author'] ?? data['username'] ?? '',
       authorProfileImageUrl: data['authorProfileImageUrl'] ?? '',

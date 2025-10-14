@@ -9,6 +9,7 @@ import 'package:doppy/data/services/like_service.dart';
 import 'package:doppy/pages/components/shimmer_box.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:provider/provider.dart';
+import 'package:doppy/pages/components/fullscreen_image_viewer.dart';
 
 // ignore: must_be_immutable
 class PostCard extends StatefulWidget {
@@ -81,31 +82,47 @@ class _PostCardState extends State<PostCard> {
         ),
         child: ClipRRect(
           borderRadius: BorderRadius.circular(12), // 보더 두께만큼 작게
-          child: CachedNetworkImage(
-            imageUrl: widget.thumbnailImageUrl,
-            fit: BoxFit.cover,
-            key: ValueKey('bg-${widget.thumbnailImageUrl}'),
-            fadeInDuration: const Duration(milliseconds: 300),
-            fadeOutDuration: const Duration(milliseconds: 100),
-            placeholder:
-                (context, url) => ShimmerBox(
-                  width: double.infinity,
-                  height: double.infinity,
-                  borderRadius: BorderRadius.circular(12),
+          child: GestureDetector(
+            onLongPress: () {
+              // 이미지 전체화면 보기
+              Navigator.of(context).push(
+                PageRouteBuilder(
+                  opaque: false,
+                  pageBuilder:
+                      (context, animation, secondaryAnimation) =>
+                          FullscreenImageViewer(
+                            imageUrl: widget.thumbnailImageUrl,
+                            heroTag: widget.heroTag,
+                          ),
                 ),
-            errorWidget:
-                (context, error, stackTrace) => Container(
-                  color: Theme.of(context).colorScheme.surfaceVariant,
-                  child: Center(
-                    child: Icon(
-                      Icons.error,
-                      color: Theme.of(
-                        context,
-                      ).colorScheme.onSurface.withOpacity(0.54),
-                      size: 40,
+              );
+            },
+            child: CachedNetworkImage(
+              imageUrl: widget.thumbnailImageUrl,
+              fit: BoxFit.cover,
+              key: ValueKey('bg-${widget.thumbnailImageUrl}'),
+              fadeInDuration: const Duration(milliseconds: 300),
+              fadeOutDuration: const Duration(milliseconds: 100),
+              placeholder:
+                  (context, url) => ShimmerBox(
+                    width: double.infinity,
+                    height: double.infinity,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+              errorWidget:
+                  (context, error, stackTrace) => Container(
+                    color: Theme.of(context).colorScheme.surfaceVariant,
+                    child: Center(
+                      child: Icon(
+                        Icons.error,
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.onSurface.withOpacity(0.54),
+                        size: 40,
+                      ),
                     ),
                   ),
-                ),
+            ),
           ),
         ),
       );
