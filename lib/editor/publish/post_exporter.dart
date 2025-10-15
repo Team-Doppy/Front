@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:doppy/editor/service/editor_service.dart';
 import 'package:doppy/editor/service/sticker_service.dart';
 import 'package:super_editor/super_editor.dart';
+import 'package:doppy/editor/style/defualt_toolbar.dart';
 import 'package:doppy/editor/component/link_component.dart';
 import 'package:doppy/editor/component/location_component.dart';
 import 'dart:convert';
@@ -151,19 +152,6 @@ class PostExporter {
         continue;
       }
 
-      if (node is LocationNode) {
-        nodes.add({
-          'id': node.id,
-          'type': 'location',
-          'lat': node.lat,
-          'lng': node.lng,
-          'title': node.title,
-          'address': node.address,
-          'description': node.description,
-        });
-        continue;
-      }
-
       if (node is MentionNode) {
         nodes.add({
           'id': node.id,
@@ -210,6 +198,12 @@ class PostExporter {
           break;
         case StickerType.emoji:
           base['content'] = s.content.toString();
+          break;
+        case StickerType.drawing:
+          // 벡터 그리기 데이터를 그대로 저장
+          if (s.content is Map) {
+            base['content'] = (s.content as Map).cast<String, dynamic>();
+          }
           break;
         case StickerType.image:
           if (s.content is Uint8List) {
@@ -313,6 +307,7 @@ class PostExporter {
     bool strike = false;
     double? fontSize;
     ui.Color? color;
+    ui.Color? highlight;
 
     for (final a in atts) {
       if (a == boldAttribution) {
@@ -323,7 +318,11 @@ class PostExporter {
         underline = true;
       } else if (a == strikethroughAttribution) {
         strike = true;
+      } else if (a is HighlightAttribution) {
+        // 형광펜 색상
+        highlight = a.color;
       } else if (a is ColorAttribution) {
+        // 텍스트 색상 (형광펜이 아닌 경우)
         color = a.color;
       } else if (a is FontSizeAttribution) {
         fontSize = a.fontSize;
@@ -337,7 +336,9 @@ class PostExporter {
       if (strike) 'strikethrough': true,
       if (fontSize != null) 'font_size': fontSize,
       if (color != null) 'color': _hexColor(color),
+      if (highlight != null) 'highlight': _hexColor(highlight),
     };
+
     return map;
   }
 
@@ -413,6 +414,8 @@ class PostExporter {
         return 'text';
       case StickerType.emoji:
         return 'emoji';
+      case StickerType.drawing:
+        return 'drawing';
       case StickerType.image:
         return 'image';
     }

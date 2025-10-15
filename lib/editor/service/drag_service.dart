@@ -10,10 +10,10 @@ enum DragType { none, reorder, imageRowMerge }
 
 class DragService extends ChangeNotifier {
   final EditorService editorService;
-  ImageService? _imageService;
+  NodeComponentService? _imageService;
   ScrollController? scrollController;
 
-  ImageService? get imageService => _imageService;
+  NodeComponentService? get imageService => _imageService;
 
   String? draggingNodeId;
   NodeType? draggingNodeType;
@@ -35,11 +35,11 @@ class DragService extends ChangeNotifier {
 
   DragService({
     required this.editorService,
-    ImageService? imageService,
+    NodeComponentService? imageService,
     this.scrollController,
   }) : _imageService = imageService;
 
-  void setImageService(ImageService imageService) {
+  void setImageService(NodeComponentService imageService) {
     _imageService = imageService;
   }
 

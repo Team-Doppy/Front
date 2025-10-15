@@ -1,4 +1,3 @@
-import 'package:doppy/pages/components/comps_for_profile/account_drop_down.dart';
 import 'package:doppy/pages/components/comps_for_profile/category_drop_down.dart';
 import 'package:doppy/pages/components/comps_for_profile/feed.dart';
 import 'package:doppy/data/services/feed_service.dart';
@@ -52,7 +51,6 @@ class _UserProfileScreenState extends State<UserProfileScreen>
   // 프로필 사진 변경 상태
   bool _isUploadingProfileImage = false;
   late UserProfileController _controller;
-  static final AccountDropDown _accountDropDown = AccountDropDown();
   static final CategoryDropDown _categoryDropDown = CategoryDropDown();
   static final Feed _feed = Feed();
   final GlobalKey _categoryButtonKey = GlobalKey();
@@ -91,18 +89,6 @@ class _UserProfileScreenState extends State<UserProfileScreen>
         } catch (_) {}
       });
     }
-
-    // 계정 변경 콜백 설정
-    _accountDropDown.setOnAccountChanged(() {
-      if (mounted) {
-        setState(() {});
-        print('[-] [UserProfileScreen] Account changed, UI refreshed');
-      } else {
-        print(
-          '[-] [UserProfileScreen] Widget not mounted, skipping UI refresh',
-        );
-      }
-    });
 
     // 카테고리 변경 콜백 설정
     _categoryDropDown.setOnCategoryChanged(() {
@@ -148,8 +134,6 @@ class _UserProfileScreenState extends State<UserProfileScreen>
 
   @override
   void dispose() {
-    // 콜백 정리
-    _accountDropDown.setOnAccountChanged(null);
     _categoryDropDown.setOnCategoryChanged(null);
 
     // 화면 종료 시, 피드 메모리 정리 (캐시는 유지)
@@ -241,27 +225,6 @@ class _UserProfileScreenState extends State<UserProfileScreen>
                                 ),
                               ),
                             ),
-                            if (!isOther)
-                              Padding(
-                                padding: const EdgeInsets.only(left: 8.0),
-                                child: GestureDetector(
-                                  child: Icon(
-                                    Icons.keyboard_arrow_down,
-                                    size: 24,
-                                    color: Theme.of(
-                                      context,
-                                    ).colorScheme.onSurface.withOpacity(0.8),
-                                  ),
-                                  onTap: () {
-                                    print(
-                                      '[-] [UserProfileScreen] Account dropdown button tapped',
-                                    );
-                                    _accountDropDown.showAccountDropdown(
-                                      context,
-                                    );
-                                  },
-                                ),
-                              ),
                           ],
                         ),
 
@@ -381,14 +344,22 @@ class _UserProfileScreenState extends State<UserProfileScreen>
               },
             ),
           ),
+
           Positioned(
             top: 0,
             left: 0,
             right: 0,
-            child: SizedBox(
-              child: Container(
-                height: MediaQuery.of(context).padding.top,
-                decoration: BoxDecoration(),
+            height: MediaQuery.of(context).padding.top - 10,
+            child: ClipRRect(
+              child: BackdropFilter(
+                filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: Theme.of(
+                      context,
+                    ).colorScheme.background.withOpacity(1),
+                  ),
+                ),
               ),
             ),
           ),

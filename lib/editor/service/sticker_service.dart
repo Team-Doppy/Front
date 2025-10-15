@@ -3,7 +3,7 @@ import 'dart:typed_data';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 
-enum StickerType { image, text, emoji }
+enum StickerType { image, text, emoji, drawing }
 
 class Sticker {
   // 공통 속성: 컨텐츠, 위치, 스케일, 회전, 투명도, zIndex, 잠금
@@ -59,6 +59,9 @@ class StickerService extends ChangeNotifier {
   static const double maxScale = 3.0;
   final List<Sticker> _stickers = <Sticker>[];
   String? _selectedId;
+
+  // 변화 감지를 위한 초기 상태 저장
+  List<Sticker> _initialStickers = <Sticker>[];
 
   // 드래그 오버레이 상태
   String? _draggingId;
@@ -137,7 +140,20 @@ class StickerService extends ChangeNotifier {
         type: StickerType.image,
         content: bytes,
         position: at,
-        scale: 1.2,
+        scale: 1,
+      ),
+    );
+  }
+
+  /// 그리기 스티커 추가 (벡터 경로 기반)
+  void addDrawingSticker(List<Map<String, dynamic>> strokes, Offset at) {
+    addSticker(
+      Sticker(
+        id: 'stk_${DateTime.now().millisecondsSinceEpoch}',
+        type: StickerType.drawing,
+        content: {'strokes': strokes},
+        position: at,
+        scale: 1.0, // 벡터는 원본 크기 그대로
       ),
     );
   }
@@ -249,6 +265,54 @@ class StickerService extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// 초기 상태 저장 (임시저장 불러오기 후 호출)
+  void saveInitialState() {
+    _initialStickers = List<Sticker>.from(_stickers);
+  }
+
+  /// 변화 감지
+  bool get hasChanges {
+    if (_initialStickers.length != _stickers.length) {
+      return true;
+    }
+
+    // 각 스티커의 위치, 스케일, 회전, 투명도 비교
+    for (int i = 0; i < _stickers.length; i++) {
+      final current = _stickers[i];
+      final initial = _initialStickers.firstWhere(
+        (s) => s.id == current.id,
+        orElse: () => current, // ID가 없으면 변화로 간주
+      );
+
+      if (initial.id != current.id) return true;
+
+      // 위치 변화 (1픽셀 이상)
+      if ((current.position - initial.position).distance > 1.0) {
+        return true;
+      }
+
+      // 스케일 변화 (0.01 이상)
+      if ((current.scale - initial.scale).abs() > 0.01) {
+        return true;
+      }
+
+      // 회전 변화 (0.01 이상)
+      if ((current.rotation - initial.rotation).abs() > 0.01) {
+        return true;
+      }
+
+      // 투명도 변화 (0.01 이상)
+      if ((current.opacity - initial.opacity).abs() > 0.01) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  /// 변화 상태 강제 설정
+  void markAsChanged() {}
+
   /// 임시저장 데이터에서 스티커 복원
   void addStickerFromData(Map<String, dynamic> stickerData) {
     try {
@@ -260,11 +324,20 @@ class StickerService extends ChangeNotifier {
 
       // 위치 복원
       final positionData = stickerData['anchor'];
+      final fallbackData = stickerData['positionFallback'];
       Offset position = const Offset(100, 100); // 기본값
-      if (positionData is Map) {
-        final relX = positionData['relX']?.toDouble() ?? 0.0;
-        final relY = positionData['relY']?.toDouble() ?? 0.0;
-        position = Offset(relX, relY);
+
+      if (fallbackData is Map) {
+        // positionFallback 기반 위치 (문서 절대 좌표): 초안/수정 화면에서는 이것을 우선 사용
+        final x = (fallbackData['xPx'] as num?)?.toDouble() ?? 100.0;
+        final y = (fallbackData['yPx'] as num?)?.toDouble() ?? 100.0;
+        position = Offset(x, y);
+        // debug
+        // print('DEBUG: 스티커 위치 복원 (fallback) - x: $x, y: $y');
+      } else if (positionData is Map) {
+        // anchor는 비율값(relX/relY)만 있으므로 여기서 절대좌표로 정확히 환산할 수 없음
+        // 잘못된 위로 치우침을 방지하기 위해 anchor만 있는 경우 기본값 유지
+        // 필요 시, 레이아웃이 준비된 컨텍스트에서 별도 해석 로직으로 보완 가능
       }
 
       // 기타 속성들
@@ -286,6 +359,14 @@ class StickerService extends ChangeNotifier {
           break;
         case StickerType.emoji:
           content = stickerData['content']?.toString() ?? '😀';
+          break;
+        case StickerType.drawing:
+          final contentData = stickerData['content'];
+          if (contentData is Map && contentData['strokes'] != null) {
+            content = contentData; // {strokes: [...]} 형태 그대로 저장
+          } else {
+            return; // 그리기 데이터가 없으면 스킵
+          }
           break;
         case StickerType.image:
           final contentData = stickerData['content'];
@@ -325,6 +406,8 @@ class StickerService extends ChangeNotifier {
         return StickerType.emoji;
       case 'image':
         return StickerType.image;
+      case 'drawing':
+        return StickerType.drawing;
       default:
         return StickerType.text;
     }

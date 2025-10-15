@@ -47,6 +47,7 @@ class DragOverlayWidget extends StatelessWidget {
     if (node == null) return const SizedBox.shrink();
 
     Widget preview;
+    print('node: $node');
     print('nodeType: $nodeType');
     switch (nodeType) {
       case 'image':
@@ -55,9 +56,7 @@ class DragOverlayWidget extends StatelessWidget {
       case 'imageRow':
         preview = _buildImageRowPreview(node as ImageRowNode);
         break;
-      case 'location':
-        preview = _buildLocationPreview(node as LocationNode);
-        break;
+
       case 'paragraph':
         preview = _buildParagraphPreview(node as dynamic, context); // 타입 캐스팅 제거
         break;
@@ -72,131 +71,58 @@ class DragOverlayWidget extends StatelessWidget {
   }
 
   Widget _buildLinkPreview(LinkNode node) {
-    return Container(
-      width: 100,
-      height: 100,
+    return Stack(
+      children: [
+        Container(
+          width: 100,
+          height: 100,
 
-      decoration: BoxDecoration(
-        color: const Color(0xFF1A1A1A),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Row(
-        children: [
-          if (node.thumbnailUrl.isNotEmpty)
-            ClipRRect(
-              borderRadius: const BorderRadius.only(
-                topLeft: Radius.circular(8),
-                bottomLeft: Radius.circular(8),
-              ),
-              child: Image.network(
-                node.thumbnailUrl,
-                width: 100,
-                height: 100,
-                fit: BoxFit.cover,
-                errorBuilder:
-                    (_, __, ___) => Container(
-                      width: 100,
-                      height: 100,
-                      color: const Color(0xFF2A2A2A),
-                      child: const Icon(Icons.link, color: Colors.white54),
-                    ),
-              ),
-            )
-          else
-            Container(
-              width: 100,
-              height: 100,
-              alignment: Alignment.center,
-              decoration: const BoxDecoration(
-                color: Color(0xFF2A2A2A),
-                borderRadius: BorderRadius.only(
-                  topLeft: Radius.circular(8),
-                  bottomLeft: Radius.circular(8),
-                ),
-              ),
-              child: const Icon(Icons.link, color: Colors.white54),
-            ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildLocationPreview(LocationNode node) {
-    return ConstrainedBox(
-      constraints: const BoxConstraints(maxWidth: 260, maxHeight: 180),
-      child: Container(
-        width: 240,
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: const Color(0xFF1A1A1A),
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: const Color(0xFF333333), width: 1),
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
+          decoration: BoxDecoration(
+            color: const Color(0xFF1A1A1A),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Row(
+            children: [
+              if (node.thumbnailUrl.isNotEmpty)
+                ClipRRect(
+                  borderRadius: const BorderRadius.only(
+                    topLeft: Radius.circular(8),
+                    bottomLeft: Radius.circular(8),
+                  ),
+                  child: Image.network(
+                    node.thumbnailUrl,
+                    width: 100,
+                    height: 100,
+                    fit: BoxFit.cover,
+                    errorBuilder:
+                        (_, __, ___) => Container(
+                          width: 100,
+                          height: 100,
+                          color: const Color(0xFF2A2A2A),
+                          child: const Icon(Icons.link, color: Colors.white54),
+                        ),
+                  ),
+                )
+              else
                 Container(
-                  padding: const EdgeInsets.all(6),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF4A90E2),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: const Icon(
-                    Icons.location_on,
-                    color: Colors.white,
-                    size: 16,
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    node.title.isNotEmpty ? node.title : '위치',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
+                  width: 100,
+                  height: 100,
+                  alignment: Alignment.center,
+                  decoration: const BoxDecoration(
+                    color: Color(0xFF2A2A2A),
+                    borderRadius: BorderRadius.only(
+                      topLeft: Radius.circular(8),
+                      bottomLeft: Radius.circular(8),
                     ),
                   ),
+                  child: const Icon(Icons.link, color: Colors.white54),
                 ),
-              ],
-            ),
-            if (node.address.isNotEmpty) ...[
-              const SizedBox(height: 8),
-              Row(
-                children: [
-                  const Icon(
-                    Icons.place_outlined,
-                    color: Color(0xFF888888),
-                    size: 14,
-                  ),
-                  const SizedBox(width: 6),
-                  Expanded(
-                    child: Text(
-                      node.address,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: Color(0xFFCCCCCC),
-                        fontSize: 12,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
             ],
-            const SizedBox(height: 6),
-            Text(
-              '${node.lat.toStringAsFixed(6)}, ${node.lng.toStringAsFixed(6)}',
-              style: const TextStyle(color: Color(0xFF888888), fontSize: 11),
-            ),
-          ],
+          ),
         ),
-      ),
+        if (node.thumbnailUrl.isNotEmpty)
+          Positioned(child: Icon(Icons.link, color: Colors.white54)),
+      ],
     );
   }
 

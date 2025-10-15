@@ -3,7 +3,6 @@ import 'dart:convert';
 import 'package:doppy/editor/component/app_image_node.dart';
 import 'package:doppy/editor/component/link_component.dart';
 import 'package:doppy/editor/component/mention_component.dart';
-import 'package:doppy/editor/component/location_component.dart';
 import 'package:doppy/editor/component/row_image_component.dart';
 import 'package:doppy/editor/postwrite_screen.dart';
 import 'package:flutter/material.dart';
@@ -139,7 +138,6 @@ class EditorService extends ChangeNotifier {
         return true;
       } else if (node is ImageRowNode ||
           node is LinkNode ||
-          node is LocationNode ||
           node is MentionNode) {
         return true;
       } else {
@@ -148,6 +146,11 @@ class EditorService extends ChangeNotifier {
       }
     }
     return false;
+  }
+
+  /// 제목과 본문이 모두 채워져 있는지 검증 (다음 버튼 활성화 조건)
+  bool canProceedToPublish() {
+    return hasNonEmptyTitle() && hasNonEmptyBody();
   }
 
   /// 문서 내용을 간단 스냅샷으로 직렬화하여 지문(fingerprint)을 생성
@@ -171,8 +174,6 @@ class EditorService extends ChangeNotifier {
         nodes.add({'t': 'row', 'urls': List<String>.from(node.imageUrls)});
       } else if (node is LinkNode) {
         nodes.add({'t': 'link', 'url': node.url, 'title': node.title});
-      } else if (node is LocationNode) {
-        nodes.add({'t': 'loc', 'lat': node.lat, 'lng': node.lng});
       } else if (node is MentionNode) {
         nodes.add({'t': 'mention', 'users': List<String>.from(node.usernames)});
       } else {
@@ -354,8 +355,6 @@ class EditorService extends ChangeNotifier {
         return NodeType.image;
       case ImageRowNode():
         return NodeType.imageRow;
-      case LocationNode():
-        return NodeType.location;
       default:
         return NodeType.unknown;
     }
@@ -827,24 +826,5 @@ class EditorService extends ChangeNotifier {
         }
       }
     } catch (_) {}
-  }
-
-  /// 위치 노드를 현재 커서 위치에 삽입합니다
-  void addLocationNode({
-    required double lat,
-    required double lng,
-    String title = '',
-    String address = '',
-    String description = '',
-  }) {
-    final node = LocationNode(
-      id: 'location_${DateTime.now().millisecondsSinceEpoch}',
-      lat: lat,
-      lng: lng,
-      title: title,
-      address: address,
-      description: description,
-    );
-    _insertComponentNodeAtNextLine(node);
   }
 }

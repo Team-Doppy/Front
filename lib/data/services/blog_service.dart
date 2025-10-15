@@ -64,17 +64,18 @@ class BlogService {
   /// 새로운 프로필 피드 API 호출
   Future<Map<String, dynamic>> getProfileFeed(String username) async {
     final uri = Uri.parse('$_baseUrl/api/profile/$username/feed');
-    final token = await AuthService().getToken();
 
     print('[BlogService] 프로필 피드 요청: $username');
 
     try {
-      final response = await http.get(
-        uri,
-        headers: {
-          'Content-Type': 'application/json',
-          if (token != null) 'Authorization': 'Bearer $token',
-        },
+      final response = await _requestWithTokenRefresh(
+        (token) => http.get(
+          uri,
+          headers: {
+            'Content-Type': 'application/json',
+            if (token.isNotEmpty) 'Authorization': 'Bearer $token',
+          },
+        ),
       );
 
       print('[BlogService] 프로필 피드 응답 상태: ${response.statusCode}');
@@ -102,17 +103,18 @@ class BlogService {
   /// 프로필 스키마 조회 (카테고리/매핑 전용)
   Future<Map<String, dynamic>> getProfileSchema(String username) async {
     final uri = Uri.parse('$_baseUrl/api/profile/feed/schema/$username');
-    final token = await AuthService().getToken();
 
     print('[BlogService] 프로필 스키마 요청: $username');
 
     try {
-      final response = await http.get(
-        uri,
-        headers: {
-          'Content-Type': 'application/json',
-          if (token != null) 'Authorization': 'Bearer $token',
-        },
+      final response = await _requestWithTokenRefresh(
+        (token) => http.get(
+          uri,
+          headers: {
+            'Content-Type': 'application/json',
+            if (token.isNotEmpty) 'Authorization': 'Bearer $token',
+          },
+        ),
       );
 
       print('[BlogService] 프로필 스키마 응답 상태: ${response.statusCode}');
@@ -142,17 +144,18 @@ class BlogService {
     final uri = Uri.parse(
       '$_baseUrl/api/profile/feed/posts/$username?page=$page&size=$size',
     );
-    final token = await AuthService().getToken();
 
     print('[BlogService] 프로필 포스트 요청: $username page=$page size=$size');
 
     try {
-      final response = await http.get(
-        uri,
-        headers: {
-          'Content-Type': 'application/json',
-          if (token != null) 'Authorization': 'Bearer $token',
-        },
+      final response = await _requestWithTokenRefresh(
+        (token) => http.get(
+          uri,
+          headers: {
+            'Content-Type': 'application/json',
+            if (token.isNotEmpty) 'Authorization': 'Bearer $token',
+          },
+        ),
       );
 
       print('[BlogService] 프로필 포스트 응답 상태: ${response.statusCode}');

@@ -55,8 +55,8 @@ Stylesheet buildCustomStylesheet(BuildContext context) {
             Styles.textStyle: TextStyle(fontSize: 16, color: bodyColor),
 
             Styles.padding: const CascadingPadding.only(
-              top: 2.5,
-              bottom: 2.5,
+              top: 0,
+              bottom: 0,
               left: 0,
               right: 0,
             ),

@@ -6,9 +6,9 @@ import 'package:doppy/editor/service/sticker_service.dart';
 import 'package:doppy/editor/publish/post_exporter.dart';
 import 'package:super_editor/super_editor.dart';
 import 'package:doppy/editor/component/link_component.dart';
-import 'package:doppy/editor/component/location_component.dart';
 import 'package:doppy/editor/component/mention_component.dart';
 import 'package:doppy/editor/component/row_image_component.dart';
+import 'package:doppy/editor/style/defualt_toolbar.dart';
 
 /// 임시저장 데이터 모델
 class DraftData {
@@ -332,18 +332,6 @@ class DraftService {
             ),
           );
           break;
-        case 'location':
-          rebuilt.add(
-            LocationNode(
-              id: id,
-              lat: (m['lat'] as num?)?.toDouble() ?? 0,
-              lng: (m['lng'] as num?)?.toDouble() ?? 0,
-              title: (m['title'] ?? '').toString(),
-              address: (m['address'] ?? '').toString(),
-              description: (m['description'] ?? '').toString(),
-            ),
-          );
-          break;
         case 'mention':
           rebuilt.add(
             MentionNode(
@@ -381,6 +369,14 @@ class DraftService {
       final colorHex = ann['color'] as String?;
       if (colorHex != null && colorHex.isNotEmpty) {
         atts.add(ColorAttribution(_parseHexColor(colorHex)));
+      }
+      // 🎨 형광펜 속성 디코딩
+      final highlightHex = ann['highlight'] as String?;
+      if (highlightHex != null && highlightHex.isNotEmpty) {
+        print('DEBUG: DraftService 형광펜 디코딩 - HEX: $highlightHex');
+        final highlightColor = _parseHexColor(highlightHex);
+        print('DEBUG: DraftService 형광펜 디코딩 - 색상: $highlightColor');
+        atts.add(HighlightAttribution(highlightColor));
       }
       for (final a in atts) {
         attributed.addAttribution(a, SpanRange(start, end - 1));

@@ -697,6 +697,12 @@ class Feed {
               _categoryDropTargetIndex.value = null;
             },
             onAccept: (draggedSec) {
+              // 읽기 전용이면 아무것도 하지 않음
+              print(
+                '[Feed] onAccept - isReadOnly: $isReadOnly, draggedSec: ${draggedSec.title}',
+              );
+              if (isReadOnly) return;
+
               // 카테고리 순서 재정렬 (다른글 포함)
               final catProvider = context.read<ProfileFeedProvider>();
               if (draggedSec.categoryId != null && sec.categoryId != null) {
@@ -981,6 +987,9 @@ class Feed {
                 _categoryDropTargetIndex.value = null;
               },
               onAccept: (draggedSec) async {
+                // 읽기 전용이면 아무것도 하지 않음
+                if (isReadOnly) return;
+
                 final catProvider = context.read<ProfileFeedProvider>();
                 if (draggedSec.categoryId != null && sec.categoryId != null) {
                   final List<String> prevOrder = List.from(
@@ -1840,6 +1849,9 @@ class Feed {
               _categoryDropTargetIndex.value = null;
             },
             onAccept: (draggedSec) async {
+              // 읽기 전용이면 아무것도 하지 않음
+              if (isReadOnly) return;
+
               final catProvider = context.read<ProfileFeedProvider>();
               if (draggedSec.categoryId != null) {
                 final List<String> prevOrder = List.from(
@@ -2016,6 +2028,9 @@ class Feed {
             _categoryDropTargetIndex.value = null;
           },
           onAccept: (draggedSec) async {
+            // 읽기 전용이면 아무것도 하지 않음
+            if (isReadOnly) return;
+
             final catProvider = context.read<ProfileFeedProvider>();
             if (draggedSec.categoryId != null) {
               final List<String> newOrder = List.from(

@@ -1,14 +1,15 @@
 import 'dart:convert';
 import 'dart:ui' as ui;
 import 'package:doppy/data/services/upload_service.dart';
+import 'package:doppy/editor/image/native_image_picker.dart';
 import 'package:doppy/editor/service/image_service.dart';
+import 'package:doppy/editor/service/sticker_service.dart';
 import 'package:doppy/pages/components/common_profile_avatar.dart';
 import 'package:doppy/pages/screens/post_reader_screen.dart';
 import 'package:doppy/providers/user_provider.dart';
 import 'package:flutter/foundation.dart';
 import 'package:doppy/theme/app_colors.dart';
 import 'package:flutter/material.dart';
-import 'package:doppy/editor/image/gallery_bottom_sheet.dart';
 import 'package:provider/provider.dart';
 import 'package:doppy/providers/group_provider.dart';
 import 'package:doppy/data/models/group_model.dart';
@@ -154,7 +155,7 @@ class _PostExportScreenState extends State<PostExportScreen>
 
   // ImageService의 휘발성 캐시에 저장/로드/삭제
   void _loadPersistedThumbnail() {
-    final svc = ImageService();
+    final svc = NodeComponentService();
     final url = svc.getTempThumbnailUrl(_nsKey) ?? '';
     final id = svc.getTempThumbnailId(_nsKey);
     if (mounted && _exportedThumbnailImageUrl.isEmpty && url.isNotEmpty) {
@@ -167,7 +168,7 @@ class _PostExportScreenState extends State<PostExportScreen>
 
   Future<void> _persistThumbnail() async {
     if (_exportedThumbnailImageUrl.isNotEmpty) {
-      ImageService().setTempThumbnail(
+      NodeComponentService().setTempThumbnail(
         _nsKey,
         url: _exportedThumbnailImageUrl,
         id: _thumbnailImageId,
@@ -340,6 +341,12 @@ class _PostExportScreenState extends State<PostExportScreen>
       debugPrint('Upload successful: ${uploadResult}');
 
       if (!mounted) return;
+
+      // 스티커 캔버스 청소
+      try {
+        context.read<StickerService>().removeAll();
+      } catch (_) {}
+
       Navigator.of(context).pop();
       ErrorHandler.showSuccess(context, '성공적으로 등록되었어요');
 
@@ -384,47 +391,39 @@ class _PostExportScreenState extends State<PostExportScreen>
   }
 
   void _openGalleryPicker() async {
-    await showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.transparent,
-      isScrollControlled: true,
-      builder:
-          (_) => GalleryBottomSheet(
-            onImagesSelected: (files) async {
-              if (files.isEmpty) return;
-              if (!mounted) return;
-              setState(() => _isUploadingThumb = true);
-              try {
-                final upload = context.read<UploadService>();
-                final tasks = await upload.uploadFilesViaServerBatches([
-                  files.first,
-                ], kind: UploadKind.editorImage);
-                if (tasks.isNotEmpty) {
-                  final t = tasks.first;
-                  if (t.state == UploadState.success &&
-                      (t.url ?? '').isNotEmpty) {
-                    setState(() {
-                      _exportedThumbnailImageUrl = t.url!;
-                      _thumbnailImageId = t.imageId ?? t.id;
-                    });
-                    await _persistThumbnail();
-                  } else {
-                    if (mounted) {
-                      ErrorHandler.showError(context, '이미지 업로드에 실패했습니다.');
-                    }
-                  }
-                }
-              } catch (e) {
-                if (mounted) {
-                  ErrorHandler.handleError(context, e, customMessage: '업로드 오류');
-                }
-              } finally {
-                if (mounted) setState(() => _isUploadingThumb = false);
-                // 이전 화면으로 돌아가지 않음. 바텀시트만 닫도록 유지.
-              }
-            },
-          ),
-    );
+    final picker = NativeImagePicker();
+    final file = await picker.pickSingleImage();
+
+    if (file != null) {
+      if (!mounted) return;
+      setState(() => _isUploadingThumb = true);
+      try {
+        final upload = context.read<UploadService>();
+        final tasks = await upload.uploadFilesViaServerBatches([
+          file,
+        ], kind: UploadKind.editorImage);
+        if (tasks.isNotEmpty) {
+          final t = tasks.first;
+          if (t.state == UploadState.success && (t.url ?? '').isNotEmpty) {
+            setState(() {
+              _exportedThumbnailImageUrl = t.url!;
+              _thumbnailImageId = t.imageId ?? t.id;
+            });
+            await _persistThumbnail();
+          } else {
+            if (mounted) {
+              ErrorHandler.showError(context, '이미지 업로드에 실패했습니다.');
+            }
+          }
+        }
+      } catch (e) {
+        if (mounted) {
+          ErrorHandler.handleError(context, e, customMessage: '업로드 오류');
+        }
+      } finally {
+        if (mounted) setState(() => _isUploadingThumb = false);
+      }
+    }
   }
 
   Widget _buildDynamicBackground() {
@@ -574,7 +573,7 @@ class _PostExportScreenState extends State<PostExportScreen>
   // 포커스 상태의 간단한 앱바 (완료 버튼만)
   PreferredSizeWidget _buildFocusAppBar() {
     return AppBar(
-      toolbarHeight: 50,
+      toolbarHeight: 53,
       backgroundColor: Colors.transparent,
       elevation: 0,
       scrolledUnderElevation: 0,

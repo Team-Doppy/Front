@@ -1,4 +1,3 @@
-import 'dart:io';
 import 'dart:typed_data';
 import 'package:doppy/data/services/upload_service.dart';
 import 'package:doppy/editor/overlay/sticker_overlay.dart';
@@ -6,9 +5,8 @@ import 'package:doppy/editor/overlay/font_overlay.dart';
 import 'package:doppy/editor/style/font_catalog.dart';
 import 'package:flutter/material.dart';
 import 'package:super_editor/super_editor.dart';
-import 'package:doppy/editor/image/gallery_bottom_sheet.dart';
+import 'package:doppy/editor/image/native_image_picker.dart';
 import 'package:doppy/editor/overlay/link_overlay.dart';
-import 'package:doppy/editor/overlay/location_overlay.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
 import 'package:doppy/editor/service/editor_service.dart';
@@ -714,8 +712,8 @@ extension _TopExpandedRow on _DefaultToolbarState {
           child: Row(
             children: [
               _stickerPanel == StickerPanel.none
-                  ? _buildChip(
-                    icon: Icons.copy_all,
+                  ? _buildSvgChip(
+                    svgPath: 'assets/icons/editor_sticker.svg',
                     label: '스티커',
                     onTap: () {
                       _toggleSticker(StickerPanel.sticker);
@@ -753,28 +751,18 @@ extension _TopExpandedRow on _DefaultToolbarState {
                   onTap: () => _selectStickerType(StickerKind.emoji),
                 ),
                 const SizedBox(width: 8),
-                _buildStickerOption(
-                  icon: Icons.brush,
-                  label: '그리기',
-                  onTap: () => _selectStickerType(StickerKind.draw),
-                ),
-                const SizedBox(width: 8),
                 _buildDivider(),
                 const SizedBox(width: 12),
               ],
 
-              _buildChip(
-                icon: Icons.horizontal_rule,
-                label: '구분선',
-                onTap: () {
-                  widget.stylingService.insertDivider();
-                  // 추가 후 상단 두번째 툴바 닫기
-                  _toggle(ToolbarSection.none);
-                },
+              _buildSvgChip(
+                svgPath: 'assets/icons/editor_pen.svg',
+                label: '그리기',
+                onTap: () => _selectStickerType(StickerKind.draw),
               ),
 
-              _buildChip(
-                icon: Icons.link,
+              _buildSvgChip(
+                svgPath: 'assets/icons/link.svg',
                 label: '링크',
                 onTap: () {
                   Navigator.of(context).push(
@@ -828,33 +816,13 @@ extension _TopExpandedRow on _DefaultToolbarState {
                   );
                 },
               ),
-
               _buildChip(
-                icon: Icons.location_on_outlined,
-                label: '장소',
+                icon: Icons.horizontal_rule,
+                label: '구분선',
                 onTap: () {
-                  FocusScope.of(context).unfocus();
-                  Navigator.of(context).push(
-                    PageRouteBuilder(
-                      opaque: false,
-                      barrierDismissible: true,
-                      pageBuilder:
-                          (_, __, ___) => LocationOverlay(
-                            onSelect: (lat, lng, title, address) {
-                              widget.editorService.addLocationNode(
-                                lat: lat,
-                                lng: lng,
-                                title: title,
-                                address: address,
-                                description: '선택된 위치입니다.',
-                              );
-                              // 장소 추가 후 상단 두번째 툴바 자동 닫기
-                              _toggle(ToolbarSection.none);
-                              Navigator.of(context).maybePop();
-                            },
-                          ),
-                    ),
-                  );
+                  widget.stylingService.insertDivider();
+                  // 추가 후 상단 두번째 툴바 닫기
+                  _toggle(ToolbarSection.none);
                 },
               ),
             ],
@@ -985,17 +953,76 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
   // (reserved) 대표 아이콘 기준 정렬이 필요할 때 사용할 수 있는 앵커 키
   final GlobalKey _textIconKey = GlobalKey();
 
+  // 선택 상태 추적
+  bool _hasTextSelection = false;
+
   @override
   void initState() {
     super.initState();
     _updateStyles();
+
+    // 선택 상태 변화 감지
+    widget.stylingService.composer.selectionNotifier.addListener(
+      _onSelectionChanged,
+    );
+  }
+
+  @override
+  void dispose() {
+    widget.stylingService.composer.selectionNotifier.removeListener(
+      _onSelectionChanged,
+    );
+    super.dispose();
+  }
+
+  void _onSelectionChanged() {
+    final selection = widget.stylingService.composer.selection;
+    final hasSelection = selection != null && !selection.isCollapsed;
+
+    if (_hasTextSelection != hasSelection) {
+      setState(() {
+        _hasTextSelection = hasSelection;
+        if (hasSelection) {
+          // 텍스트가 선택되면 자동으로 텍스트 툴바 열기
+          _expanded = ToolbarSection.text;
+        } else {
+          // 선택이 해제되면 툴바 닫기
+          _expanded = ToolbarSection.none;
+        }
+      });
+    }
+
+    _updateStyles();
   }
 
   void _updateStyles() {
-    setState(() {
-      _currentStyles = widget.stylingService.getCurrentStyles();
-      _currentAlignment = widget.stylingService.getCurrentAlignment();
-    });
+    final newStyles = widget.stylingService.getCurrentStyles();
+    final newAlignment = widget.stylingService.getCurrentAlignment();
+
+    // 스타일이나 정렬이 실제로 변경된 경우에만 setState 호출
+    bool needsUpdate = false;
+
+    if (_currentAlignment != newAlignment) {
+      needsUpdate = true;
+    }
+
+    if (_currentStyles.length != newStyles.length) {
+      needsUpdate = true;
+    } else {
+      for (var key in _currentStyles.keys) {
+        if (_currentStyles[key] != newStyles[key]) {
+          needsUpdate = true;
+          break;
+        }
+      }
+    }
+
+    if (needsUpdate) {
+      setState(() {
+        _currentStyles = newStyles;
+        _currentAlignment = newAlignment;
+      });
+    }
   }
 
   void _toggle(ToolbarSection section) {
@@ -1005,6 +1032,13 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
     if (_expanded == ToolbarSection.text) {
       WidgetsBinding.instance.addPostFrameCallback((_) => _updateTopAnchor());
     }
+  }
+
+  // 수동으로 툴바 닫기 (텍스트 선택이 있을 때도 강제로 닫을 수 있도록)
+  void _forceCloseToolbar() {
+    setState(() {
+      _expanded = ToolbarSection.none;
+    });
   }
 
   void _toggleSticker(StickerPanel panel) {
@@ -1076,187 +1110,164 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
 
   @override
   Widget build(BuildContext context) {
-    final width = MediaQuery.of(context).size.width;
     print(
       'DEBUG: DefaultToolbar build - isKeyboardVisible: ${widget.isKeyboardVisible}',
     );
-    final Color surfaceVariant = Theme.of(context).colorScheme.surfaceVariant;
-
-    final Color onSurface = Theme.of(context).colorScheme.onSurface;
-
     final Color background = Theme.of(context).colorScheme.background;
 
-    return Column(
-      mainAxisSize: MainAxisSize.min,
+    return Container(
+      height: 38,
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      decoration: BoxDecoration(
+        color: background,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child:
+          _expanded != ToolbarSection.none
+              ? _buildExpandedToolbar()
+              : _buildMainToolbar(),
+    );
+  }
+
+  Widget _buildMainToolbar() {
+    // 키보드 상태에 따라 변하는 부분만 별도 위젯으로 분리
+    return Row(
       children: [
-        // 상단 확장 행 (선택된 섹션별 옵션)
-        if (_expanded != ToolbarSection.none) ...[
-          Container(
-            height: 38,
-            width: width,
-            padding: const EdgeInsets.symmetric(horizontal: 8),
-            decoration: BoxDecoration(
-              color: background,
-              borderRadius: BorderRadius.only(
-                topLeft: Radius.circular(8),
-                topRight: Radius.circular(8),
-              ),
-              border: Border(top: BorderSide(color: surfaceVariant)),
-            ),
-            child: _buildTopExpandedRowContent(),
-          ),
-        ],
-        // 기본 툴바
-        SizedBox(
-          height: 38,
-          width: width,
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8),
-            decoration: BoxDecoration(color: background),
-            child: Row(
-              children: [
-                SizedBox(width: 10),
-                // 카메라 섹션 (아이콘만, 옵션은 상단 행)
-                _buildMainIcon(
-                  icon: Icons.camera_alt_outlined,
-                  isActive: false,
-                  onTap: () {
-                    showModalBottomSheet(
-                      context: context,
-                      backgroundColor: Colors.transparent,
-                      isScrollControlled: true,
-                      builder:
-                          (sheetContext) => GalleryBottomSheet(
-                            onImagesSelected: (List<File> files) async {
-                              print('DEBUG: 갤러리에서 선택된 파일 수: ${files.length}');
-                              final upload = context.read<UploadService>();
+        SizedBox(width: 10),
+        // 카메라 섹션 (아이콘만, 옵션은 상단 행)
+        _buildMainSvgIcon(
+          svgPath: 'assets/icons/editor_gallery.svg',
+          isActive: false,
+          onTap: () async {
+            final picker = NativeImagePicker();
+            final files = await picker.pickMultipleImages(maxCount: 10);
 
-                              final placeholderIds = <String>[];
-                              for (final f in files) {
-                                placeholderIds.add(
-                                  widget.editorService.addImagePlaceholderNode(
-                                    f.path,
-                                  ),
-                                );
-                              }
+            if (files.isNotEmpty) {
+              print('DEBUG: 선택된 파일 수: ${files.length}');
+              final upload = context.read<UploadService>();
 
-                              final tasks = await upload
-                                  .uploadFilesViaServerBatches(
-                                    files,
-                                    kind: UploadKind.editorImage,
-                                  );
+              final placeholderIds = <String>[];
+              for (final f in files) {
+                placeholderIds.add(
+                  widget.editorService.addImagePlaceholderNode(f.path),
+                );
+              }
 
-                              final count =
-                                  tasks.length < placeholderIds.length
-                                      ? tasks.length
-                                      : placeholderIds.length;
-                              for (int i = 0; i < count; i++) {
-                                final t = tasks[i];
-                                final id = placeholderIds[i];
-                                if (t.state == UploadState.success &&
-                                    (t.url ?? '').isNotEmpty) {
-                                  await widget.editorService
-                                      .replacePlaceholderWithUrl(id, t.url!);
-                                } else {
-                                  widget.editorService
-                                      .deleteImagePlaceholderNode(id);
-                                }
-                              }
-                            },
-                          ),
-                    );
-                  },
-                ),
+              final tasks = await upload.uploadFilesViaServerBatches(
+                files,
+                kind: UploadKind.editorImage,
+              );
 
-                // 더 이상 하단에서 펼치지 않음
-                const SizedBox(width: 10),
-                _buildDivider(),
-                const SizedBox(width: 10),
-
-                // 텍스트 스타일 섹션 (아이콘만, 옵션은 상단 행)
-                _buildMainIcon(
-                  icon: Icons.text_format,
-                  isActive: _expanded == ToolbarSection.text,
-                  onTap: () => _toggle(ToolbarSection.text),
-                ),
-                // 더 이상 하단에서 펼치지 않음
-                const SizedBox(width: 10),
-                _buildDivider(),
-                const SizedBox(width: 10),
-
-                // 정렬 섹션 (아이콘만, 옵션은 상단 행)
-                _buildMainIcon(
-                  icon: _getAlignmentIcon(_currentAlignment),
-                  isActive: false,
-                  onTap: () {
-                    // 왼쪽 -> 가운데 -> 오른쪽 -> 왼쪽 순환
-                    TextAlign nextAlignment;
-                    switch (_currentAlignment) {
-                      case TextAlign.left:
-                        nextAlignment = TextAlign.center;
-                        break;
-                      case TextAlign.center:
-                        nextAlignment = TextAlign.right;
-                        break;
-                      case TextAlign.right:
-                      default:
-                        nextAlignment = TextAlign.left;
-                    }
-                    final offset = widget.scrollController?.offset;
-                    widget.stylingService.applyTextAlignment(nextAlignment);
-                    _updateStyles();
-                    if (offset != null) {
-                      WidgetsBinding.instance.addPostFrameCallback((_) {
-                        widget.scrollController?.jumpTo(offset);
-                      });
-                    }
-                  },
-                ),
-
-                const SizedBox(width: 10),
-                _buildDivider(),
-                const SizedBox(width: 10),
-
-                // 언급/태그 섹션 (아이콘만, 옵션은 상단 행)
-                // (언급은 + 메뉴로 이동)
-
-                // 추가(플러스) 섹션 - 상단 행에서 옵션 표시
-                _buildMainIcon(
-                  icon: Icons.add,
-                  isActive: _expanded == ToolbarSection.insert,
-                  onTap: () => _toggle(ToolbarSection.insert),
-                  activeColor: onSurface,
-                ),
-
-                // 오른쪽 끝으로 밀어내기 위한 공간
-                const Expanded(child: SizedBox()),
-
-                // 키보드가 올라와 있을 때만 키보드 내리기 버튼 표시 (오른쪽 끝)
-                if (widget.isKeyboardVisible) ...[
-                  _buildMainIcon(
-                    icon: Icons.keyboard_arrow_down,
-                    isActive: false,
-                    onTap: () {
-                      widget.onDismissKeyboard?.call();
-                    },
-                  ),
-                ],
-                if (!widget.isKeyboardVisible && !widget.isEditMode) ...[
-                  const SizedBox(width: 10),
-                  _buildMainSvgIcon(
-                    svgPath: 'assets/icons/download.svg',
-                    isActive: false,
-                    onTap: () {
-                      // 불러오기 기능 호출
-                      widget.onShowDraftList?.call();
-                    },
-                  ),
-                ],
-                // 더 이상 하단에서 펼치지 않음
-              ],
-            ),
-          ),
+              final count =
+                  tasks.length < placeholderIds.length
+                      ? tasks.length
+                      : placeholderIds.length;
+              for (int i = 0; i < count; i++) {
+                final t = tasks[i];
+                final id = placeholderIds[i];
+                if (t.state == UploadState.success &&
+                    (t.url ?? '').isNotEmpty) {
+                  await widget.editorService.replacePlaceholderWithUrl(
+                    id,
+                    t.url!,
+                  );
+                } else {
+                  widget.editorService.deleteImagePlaceholderNode(id);
+                }
+              }
+            }
+          },
         ),
+
+        // 더 이상 하단에서 펼치지 않음
+        const SizedBox(width: 10),
+        _buildDivider(),
+        const SizedBox(width: 10),
+
+        // 텍스트 스타일 섹션 (아이콘만, 옵션은 상단 행)
+        _buildMainSvgIcon(
+          svgPath: 'assets/icons/ic_text.svg',
+          isActive: _expanded == ToolbarSection.text,
+          onTap: () => _toggle(ToolbarSection.text),
+        ),
+        // 더 이상 하단에서 펼치지 않음
+        const SizedBox(width: 10),
+        _buildDivider(),
+        const SizedBox(width: 10),
+
+        // 정렬 섹션 (아이콘만, 옵션은 상단 행)
+        _buildMainIcon(
+          icon: _getAlignmentIcon(_currentAlignment),
+          isActive: false,
+          onTap: () {
+            // 왼쪽 -> 가운데 -> 오른쪽 -> 왼쪽 순환
+            TextAlign nextAlignment;
+            switch (_currentAlignment) {
+              case TextAlign.left:
+                nextAlignment = TextAlign.center;
+                break;
+              case TextAlign.center:
+                nextAlignment = TextAlign.right;
+                break;
+              case TextAlign.right:
+              default:
+                nextAlignment = TextAlign.left;
+            }
+            final offset = widget.scrollController?.offset;
+            widget.stylingService.applyTextAlignment(nextAlignment);
+            _updateStyles();
+            if (offset != null) {
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                widget.scrollController?.jumpTo(offset);
+              });
+            }
+          },
+        ),
+
+        const SizedBox(width: 10),
+        _buildDivider(),
+        const SizedBox(width: 10),
+
+        // 언급/태그 섹션 (아이콘만, 옵션은 상단 행)
+        // (언급은 + 메뉴로 이동)
+
+        // 추가(플러스) 섹션 - 상단 행에서 옵션 표시
+        _buildMainIcon(
+          icon: Icons.add,
+          isActive: _expanded == ToolbarSection.insert,
+          onTap: () => _toggle(ToolbarSection.insert),
+          activeColor: Theme.of(context).colorScheme.onSurface,
+        ),
+
+        // 오른쪽 끝으로 밀어내기 위한 공간
+        const Expanded(child: SizedBox()),
+
+        // 키보드 상태에 따라 변하는 부분만 별도 위젯으로 분리
+        _KeyboardDependentButtons(
+          isKeyboardVisible: widget.isKeyboardVisible,
+          isEditMode: widget.isEditMode,
+          onDismissKeyboard: widget.onDismissKeyboard,
+          onShowDraftList: widget.onShowDraftList,
+        ),
+        // 더 이상 하단에서 펼치지 않음
+      ],
+    );
+  }
+
+  Widget _buildExpandedToolbar() {
+    return Row(
+      children: [
+        // 닫기 버튼 (왼쪽 끝)
+        _buildMainIcon(
+          icon: Icons.close,
+          isActive: false,
+          onTap: _forceCloseToolbar,
+        ),
+        const SizedBox(width: 10),
+        _buildDivider(),
+        const SizedBox(width: 10),
+        // 확장된 내용
+        Expanded(child: _buildTopExpandedRowContent()),
       ],
     );
   }
@@ -1385,7 +1396,9 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
     required String label,
     VoidCallback? onTap,
   }) {
-    final Color onSurface = Theme.of(context).colorScheme.onSurface;
+    final Color onSurface = Theme.of(
+      context,
+    ).colorScheme.onSurface.withOpacity(0.7);
     return Material(
       color: Colors.transparent,
 
@@ -1398,6 +1411,38 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [Icon(icon, size: 20, color: onSurface)],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSvgChip({
+    required String svgPath,
+    required String label,
+    VoidCallback? onTap,
+  }) {
+    final Color onSurface = Theme.of(
+      context,
+    ).colorScheme.onSurface.withOpacity(0.7);
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+
+        child: Container(
+          height: 50,
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SvgPicture.asset(
+                svgPath,
+                width: 20,
+                height: 20,
+                colorFilter: ColorFilter.mode(onSurface, BlendMode.srcIn),
+              ),
+            ],
           ),
         ),
       ),
@@ -1634,8 +1679,10 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
   }
 
   // 스티커 종류 선택 메서드
-  void _selectStickerType(StickerKind kind) {
+  Future<void> _selectStickerType(StickerKind kind) async {
     _toggle(ToolbarSection.none); // 메뉴 닫기
+    FocusScope.of(context).unfocus();
+    await Future.delayed(const Duration(milliseconds: 200));
 
     // 선택된 종류에 따라 해당 오버레이로 이동
     Navigator.of(context).push(
@@ -1645,6 +1692,7 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
         pageBuilder:
             (_, __, ___) => StickerOverlay(
               initialKind: kind,
+              scrollController: widget.scrollController,
               onSubmit: ({
                 required String text,
                 String? emoji,
@@ -1652,15 +1700,41 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
                 Map<String, dynamic>? textStyle,
               }) {
                 final svc = context.read<StickerService>();
-                // 현재 화면 스크롤 위치를 고려한 초기 위치 (뷰포트 중앙 상단 근처)
-                final Size size = MediaQuery.of(context).size;
-                final scrollY = widget.scrollController?.offset ?? 0.0;
-                final Offset at = Offset(size.width * 0.5 - 60, scrollY + 200);
-                if (image != null) {
+
+                // 그리기의 경우 textStyle에 벡터 데이터가 포함되어 있음
+                if (textStyle != null && textStyle.containsKey('drawingData')) {
+                  final drawingData =
+                      textStyle['drawingData'] as Map<String, dynamic>;
+                  final strokes =
+                      (drawingData['strokes'] as List)
+                          .cast<Map<String, dynamic>>();
+                  final pos = drawingData['position'] as Map<String, dynamic>;
+                  // DrawingOverlay에서 이미 문서 좌표로 변환된 위치를 반환하므로 추가 보정 불필요
+                  final at = Offset(
+                    (pos['x'] as num).toDouble(),
+                    (pos['y'] as num).toDouble(),
+                  );
+                  svc.addDrawingSticker(strokes, at);
+                } else if (image != null) {
+                  // 일반 이미지 스티커 - 화면 정가운데
+                  final Size size = MediaQuery.of(context).size;
+                  final scrollY = widget.scrollController?.offset ?? 0.0;
+                  // 이미지는 좌상단이 기준점이지만, 위치는 그냥 중앙값 사용
+                  // (나중에 사용자가 드래그로 조정)
+                  final at = Offset(
+                    size.width / 2 - 100,
+                    scrollY + size.height / 2 - 200,
+                  );
                   svc.addImageSticker(image, at);
                 } else if ((emoji ?? '').isNotEmpty) {
+                  final Size size = MediaQuery.of(context).size;
+                  final scrollY = widget.scrollController?.offset ?? 0.0;
+                  final at = Offset(size.width * 0.5 - 60, scrollY + 200);
                   svc.addEmojiSticker(emoji!, at);
                 } else if (text.trim().isNotEmpty) {
+                  final Size size = MediaQuery.of(context).size;
+                  final scrollY = widget.scrollController?.offset ?? 0.0;
+                  final at = Offset(size.width * 0.5 - 60, scrollY + 200);
                   svc.addTextStickerWithStyle(text.trim(), textStyle, at);
                 }
                 // 스티커 추가 후 상단 두번째 툴바 자동 닫기
@@ -1880,6 +1954,108 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
               ],
             ),
           ),
+    );
+  }
+}
+
+/// 키보드 상태에 따라서만 변경되는 버튼들을 별도 위젯으로 분리
+/// 이렇게 하면 키보드 상태 변경 시 이 위젯만 리빌드됨
+class _KeyboardDependentButtons extends StatelessWidget {
+  final bool isKeyboardVisible;
+  final bool isEditMode;
+  final VoidCallback? onDismissKeyboard;
+  final VoidCallback? onShowDraftList;
+
+  const _KeyboardDependentButtons({
+    required this.isKeyboardVisible,
+    required this.isEditMode,
+    this.onDismissKeyboard,
+    this.onShowDraftList,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // 키보드가 올라와 있을 때만 키보드 내리기 버튼 표시
+        if (isKeyboardVisible)
+          _buildMainIcon(
+            context: context,
+            icon: Icons.keyboard_arrow_down,
+            isActive: false,
+            onTap: () {
+              onDismissKeyboard?.call();
+            },
+          ),
+        // 키보드가 내려가 있고 편집 모드가 아닐 때만 불러오기 버튼 표시
+        if (!isKeyboardVisible && !isEditMode) ...[
+          const SizedBox(width: 10),
+          _buildMainSvgIcon(
+            context: context,
+            svgPath: 'assets/icons/download.svg',
+            isActive: false,
+            onTap: () {
+              onShowDraftList?.call();
+            },
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildMainIcon({
+    required BuildContext context,
+    required IconData icon,
+    required bool isActive,
+    required VoidCallback onTap,
+    Color? activeColor,
+  }) {
+    final Color onSurface = Theme.of(context).colorScheme.onSurface;
+    final Color color =
+        isActive ? (activeColor ?? onSurface) : onSurface.withOpacity(0.5);
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(8),
+        child: Container(
+          width: 36,
+          height: 50,
+          alignment: Alignment.center,
+          child: Icon(icon, size: isActive ? 26 : 22, color: color),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMainSvgIcon({
+    required BuildContext context,
+    required String svgPath,
+    required bool isActive,
+    required VoidCallback onTap,
+    Color? activeColor,
+  }) {
+    final Color onSurface = Theme.of(context).colorScheme.onSurface;
+    final Color color =
+        isActive ? (activeColor ?? onSurface) : onSurface.withOpacity(0.5);
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(8),
+        child: Container(
+          width: 36,
+          height: 50,
+          alignment: Alignment.center,
+          child: SvgPicture.asset(
+            svgPath,
+            width: isActive ? 26 : 22,
+            height: isActive ? 26 : 22,
+            colorFilter: ColorFilter.mode(color, BlendMode.srcIn),
+          ),
+        ),
+      ),
     );
   }
 }

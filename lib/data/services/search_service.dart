@@ -176,15 +176,15 @@ class SearchService extends ChangeNotifier {
     debugPrint('│ Authorization: Bearer ${_maskToken(token)}');
     debugPrint('└────────────────────────────────');
 
-    final res = await _dio.get(
-      uri,
-      queryParameters: {'username': query},
-      cancelToken: cancelToken,
-      options: Options(
-        headers: {'Authorization': 'Bearer $token'},
-        responseType: ResponseType.json,
-      ),
-    );
+    final res = await _requestWithTokenRefresh(() async {
+      final options = await _authorizedOptions();
+      return await _dio.get(
+        uri,
+        queryParameters: {'username': query},
+        cancelToken: cancelToken,
+        options: options,
+      );
+    });
     sw.stop();
 
     final status = res.statusCode;
@@ -259,14 +259,10 @@ class SearchService extends ChangeNotifier {
     debugPrint('│ Authorization: Bearer ${_maskToken(token)}');
     debugPrint('└────────────────────────────────');
 
-    final res = await _dio.get(
-      uri,
-      cancelToken: cancelToken,
-      options: Options(
-        headers: {'Authorization': 'Bearer $token'},
-        responseType: ResponseType.json,
-      ),
-    );
+    final res = await _requestWithTokenRefresh(() async {
+      final options = await _authorizedOptions();
+      return await _dio.get(uri, cancelToken: cancelToken, options: options);
+    });
     sw.stop();
 
     final status = res.statusCode;
@@ -315,16 +311,14 @@ class SearchService extends ChangeNotifier {
     debugPrint('│ Authorization: Bearer ${_maskToken(token)}');
     debugPrint('└────────────────────────────────');
 
-    return _dio.post(
-      uri,
-      data: {'targetUsername': targetUsername},
-      options: Options(
-        headers: {
-          'Authorization': 'Bearer $token',
-          'Content-Type': 'application/json',
-        },
-      ),
-    );
+    return _requestWithTokenRefresh(() async {
+      final options = await _authorizedOptions(json: true);
+      return await _dio.post(
+        uri,
+        data: {'targetUsername': targetUsername},
+        options: options,
+      );
+    });
   }
 
   // ---- 친구 수락
@@ -346,10 +340,10 @@ class SearchService extends ChangeNotifier {
     debugPrint('│ Authorization: Bearer ${_maskToken(token)}');
     debugPrint('└────────────────────────────────');
 
-    return _dio.post(
-      uri,
-      options: Options(headers: {'Authorization': 'Bearer $token'}),
-    );
+    return _requestWithTokenRefresh(() async {
+      final options = await _authorizedOptions();
+      return await _dio.post(uri, options: options);
+    });
   }
 
   // ---- 친구 거절
@@ -371,10 +365,10 @@ class SearchService extends ChangeNotifier {
     debugPrint('│ Authorization: Bearer ${_maskToken(token)}');
     debugPrint('└────────────────────────────────');
 
-    return _dio.post(
-      uri,
-      options: Options(headers: {'Authorization': 'Bearer $token'}),
-    );
+    return _requestWithTokenRefresh(() async {
+      final options = await _authorizedOptions();
+      return await _dio.post(uri, options: options);
+    });
   }
 
   // ---- 친구 차단
@@ -396,10 +390,10 @@ class SearchService extends ChangeNotifier {
     debugPrint('│ Authorization: Bearer ${_maskToken(token)}');
     debugPrint('└────────────────────────────────');
 
-    return _dio.post(
-      uri,
-      options: Options(headers: {'Authorization': 'Bearer $token'}),
-    );
+    return _requestWithTokenRefresh(() async {
+      final options = await _authorizedOptions();
+      return await _dio.post(uri, options: options);
+    });
   }
 
   // ---- 친구 삭제
@@ -421,10 +415,10 @@ class SearchService extends ChangeNotifier {
     debugPrint('│ Authorization: Bearer ${_maskToken(token)}');
     debugPrint('└────────────────────────────────');
 
-    return _dio.delete(
-      uri,
-      options: Options(headers: {'Authorization': 'Bearer $token'}),
-    );
+    return _requestWithTokenRefresh(() async {
+      final options = await _authorizedOptions();
+      return await _dio.delete(uri, options: options);
+    });
   }
 
   Future<String?> _getAuthToken() async {
@@ -436,6 +430,51 @@ class SearchService extends ChangeNotifier {
     } catch (e) {
       debugPrint('[AuthService] getToken failed: $e');
       return null;
+    }
+  }
+
+  // 최신 토큰으로 Authorization 헤더 구성 (재시도 전 항상 최신 토큰 사용)
+  Future<Options> _authorizedOptions({bool json = false}) async {
+    final token = await _getAuthToken();
+    if (token == null || token.isEmpty) {
+      throw Exception('로그인이 필요합니다(토큰 없음).');
+    }
+    final headers = <String, String>{'Authorization': 'Bearer $token'};
+    if (json) headers['Content-Type'] = 'application/json';
+    return Options(headers: headers, responseType: ResponseType.json);
+  }
+
+  /// 토큰 갱신과 함께 요청을 재시도하는 헬퍼 메서드
+  Future<Response> _requestWithTokenRefresh(
+    Future<Response> Function() request,
+  ) async {
+    try {
+      // 첫 번째 시도
+      return await request();
+    } catch (e) {
+      // 401 또는 JWT 만료 관련 오류인지 확인
+      if (e is DioException) {
+        final statusCode = e.response?.statusCode;
+        if (statusCode == 401 ||
+            (e.response?.data?.toString().contains('ExpiredJwtException') ==
+                true) ||
+            (e.response?.data?.toString().contains('JWT expired') == true)) {
+          debugPrint('[SearchService] Token expired, attempting refresh...');
+
+          try {
+            // 토큰 갱신 시도
+            await _authService.refreshToken();
+            debugPrint('[SearchService] Token refreshed successfully');
+
+            // 갱신된 토큰으로 재시도
+            return await request();
+          } catch (refreshError) {
+            debugPrint('[SearchService] Token refresh failed: $refreshError');
+            rethrow;
+          }
+        }
+      }
+      rethrow;
     }
   }
 
@@ -490,13 +529,15 @@ class SearchService extends ChangeNotifier {
 
       final uri =
           '$baseUrl/api/posts/recommendation?page=$_currentPage&size=10';
-      final res = await _dio.get(
-        uri,
-        options: Options(
-          headers: {'Authorization': 'Bearer $token'},
-          responseType: ResponseType.json,
-        ),
-      );
+      final res = await _requestWithTokenRefresh(() async {
+        return await _dio.get(
+          uri,
+          options: Options(
+            headers: {'Authorization': 'Bearer $token'},
+            responseType: ResponseType.json,
+          ),
+        );
+      });
 
       if (res.statusCode == 200 && res.data != null) {
         final data = res.data;
@@ -684,14 +725,16 @@ class SearchService extends ChangeNotifier {
       }
 
       final uri = '$baseUrl/api/posts/search';
-      final res = await _dio.get(
-        uri,
-        queryParameters: {'keyword': keyword, 'page': page, 'size': size},
-        options: Options(
-          headers: {'Authorization': 'Bearer $token'},
-          responseType: ResponseType.json,
-        ),
-      );
+      final res = await _requestWithTokenRefresh(() async {
+        return await _dio.get(
+          uri,
+          queryParameters: {'keyword': keyword, 'page': page, 'size': size},
+          options: Options(
+            headers: {'Authorization': 'Bearer $token'},
+            responseType: ResponseType.json,
+          ),
+        );
+      });
 
       final List<SearchContentItem> posts = [];
       if (res.statusCode == 200 && res.data is Map<String, dynamic>) {

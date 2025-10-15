@@ -47,205 +47,137 @@ class _LinkOverlayState extends State<LinkOverlay> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.transparent,
+      appBar: AppBar(
+        backgroundColor: const Color.fromARGB(182, 96, 96, 96),
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        leading: IconButton(
+          onPressed: () => Navigator.of(context).pop(),
+          icon: Icon(Icons.close, color: Colors.white, size: 22),
+        ),
+        title: Container(
+          padding: const EdgeInsets.symmetric(vertical: 20),
+          child: TextField(
+            cursorColor: AppColors.darkTextPrimary,
+            controller: _url,
+            autofocus: true,
+            focusNode: FocusNode(),
+
+            style: TextStyle(color: AppColors.darkTextPrimary, fontSize: 18),
+            decoration: InputDecoration(
+              filled: true,
+              fillColor: Colors.white.withOpacity(0.1),
+              hintText: '링크 검색하기',
+              hintStyle: TextStyle(
+                color: Colors.white.withOpacity(0.6),
+                fontSize: 16,
+                fontWeight: FontWeight.w500,
+              ),
+              suffixIcon:
+                  _url.text.isNotEmpty
+                      ? TextButton(
+                        onPressed: () {
+                          _enqueueUrl(_url.text.trim());
+                        },
+                        child: Text(
+                          '추가',
+                          style: TextStyle(
+                            color: Colors.white.withOpacity(0.8),
+                            fontSize: 16,
+                          ),
+                        ),
+                      )
+                      : Icon(
+                        Icons.search,
+                        color: Colors.white.withOpacity(0.6),
+                        size: 22,
+                      ),
+              contentPadding: const EdgeInsets.symmetric(
+                vertical: 8,
+                horizontal: 16,
+              ),
+              isDense: true,
+              border: const OutlineInputBorder(
+                borderRadius: BorderRadius.all(Radius.circular(16)),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.all(Radius.circular(16)),
+                borderSide: BorderSide.none,
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.all(Radius.circular(16)),
+                borderSide: BorderSide.none,
+              ),
+              disabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.all(Radius.circular(16)),
+                borderSide: BorderSide.none,
+              ),
+            ),
+            onChanged: (value) {
+              _onUrlChanged(value);
+            },
+            onSubmitted: (value) {
+              _enqueueUrl(value.trim());
+            },
+          ),
+        ),
+      ),
       body: Stack(
         children: [
           // 배경 블러 + 반투명
           Positioned.fill(
             child: GestureDetector(
               child: BackdropFilter(
-                filter: ui.ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-                child: Container(
-                  color: const ui.Color.fromARGB(182, 144, 144, 144),
-                ),
+                filter: ui.ImageFilter.blur(sigmaX: 15, sigmaY: 15),
+                child: Container(color: const Color.fromARGB(182, 96, 96, 96)),
               ),
             ),
           ),
-
-          Positioned(
-            top: 70,
-            left: 16,
-            right: 16,
-            child: Center(
-              child: Text(
-                '링크 추가',
-                style: TextStyle(
-                  color: AppColors.darkTextPrimary.withOpacity(0.7),
-                  fontSize: 18,
-                ),
-              ),
-            ),
-          ),
-
-          // 상단 입력 영역 (인스타 느낌 상단 카드 느낌)
-          Positioned(
-            top: 50,
-            left: 0,
-            child: Align(
-              alignment: Alignment.topLeft,
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(12, 12, 16, 0),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 10,
-                  ),
-
-                  child: Row(
-                    children: [
-                      GestureDetector(
-                        onTap: () => Navigator.of(context).pop(),
-                        child: Icon(
-                          Icons.close,
-                          color: AppColors.darkTextPrimary.withOpacity(0.7),
+          Padding(
+            padding: const EdgeInsets.all(8.0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                SizedBox(height: 10, width: double.infinity),
+                _buildLivePreview(),
+                Expanded(child: _buildItemsList()),
+                if (_items.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        minimumSize: Size(double.infinity, 50),
+                        backgroundColor:
+                            _items.isEmpty ? null : AppColors.darkTextPrimary,
+                        foregroundColor:
+                            _items.isEmpty ? null : AppColors.darkBackground,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(20),
                         ),
                       ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          ),
-          // 상단 입력 영역 (인스타 느낌 상단 카드 느낌)
-          Positioned(
-            top: 100,
-            left: 0,
-            right: 0,
-            child: Align(
-              alignment: Alignment.topLeft,
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(16, 12, 8, 0),
-                child: Container(
-                  padding: const EdgeInsets.only(
-                    left: 2,
-                    right: 5,
-                    top: 2,
-                    bottom: 2,
-                  ),
-
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: TextField(
-                          controller: _url,
-                          focusNode: FocusNode(),
-                          autofocus: true,
-                          cursorColor: AppColors.darkTextPrimary,
-                          style: TextStyle(
-                            color: AppColors.darkTextPrimary,
-                            fontSize: 18,
-                          ),
-
-                          decoration: InputDecoration(
-                            isDense: true,
-                            filled: true,
-                            fillColor: AppColors.darkSurface.withOpacity(0.35),
-                            contentPadding: const EdgeInsets.symmetric(
-                              horizontal: 14,
-                              vertical: 6,
-                            ),
-                            border: OutlineInputBorder(
-                              borderSide: BorderSide.none,
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            hintText: 'URL 입력',
-                            hintStyle: TextStyle(
-                              color: AppColors.darkTextPrimary.withOpacity(0.5),
-                            ),
-                          ),
-                          onChanged: (value) {
-                            _onUrlChanged(value);
-                          },
-                          onSubmitted: (value) {
-                            _enqueueUrl(value.trim());
-                          },
-                        ),
+                      onPressed:
+                          _items.isEmpty
+                              ? null
+                              : () {
+                                {
+                                  for (final it in _items) {
+                                    widget.onSubmit(
+                                      url: it.url,
+                                      title: it.title,
+                                      description: it.description,
+                                      thumbnailUrl: it.thumbnailUrl,
+                                    );
+                                  }
+                                }
+                                Navigator.of(context).pop();
+                              },
+                      child: Text(
+                        _items.isEmpty ? '' : '추가하기 (${_items.length})',
+                        style: const TextStyle(fontWeight: FontWeight.w700),
                       ),
-                      const SizedBox(width: 6),
-
-                      InkWell(
-                        onTap: () => _enqueueUrl(_url.text.trim()),
-                        child: Container(
-                          padding: const EdgeInsets.all(8),
-                          decoration: BoxDecoration(
-                            color: AppColors.darkSurface.withOpacity(0.3),
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: const Icon(
-                            Icons.add,
-                            color: Colors.white,
-                            size: 22,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          ),
-          // 입력 아래로 프리뷰 + 목록이 자연스럽게 쌓이도록 컬럼 구성
-          Positioned(
-            top: 180,
-            left: 0,
-            right: 0,
-            bottom: 100,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  AnimatedSize(
-                    duration: const Duration(milliseconds: 200),
-                    curve: Curves.easeInOut,
-                    child: _buildLivePreview(),
-                  ),
-                  Expanded(child: _buildItemsList()),
-                ],
-              ),
-            ),
-          ),
-          // 하단 고정 추가 버튼
-          Positioned(
-            left: 0,
-            right: 0,
-            bottom: 28,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: SizedBox(
-                height: 46,
-                child: ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.darkTextPrimary,
-                    foregroundColor: AppColors.darkBackground,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14),
                     ),
                   ),
-                  onPressed:
-                      _items.isEmpty && _url.text.trim().isEmpty
-                          ? null
-                          : () {
-                            if (_items.isEmpty && _url.text.trim().isNotEmpty) {
-                              // 단일 즉시 추가
-                              widget.onSubmit(url: _url.text.trim());
-                            } else {
-                              for (final it in _items) {
-                                widget.onSubmit(
-                                  url: it.url,
-                                  title: it.title,
-                                  description: it.description,
-                                  thumbnailUrl: it.thumbnailUrl,
-                                );
-                              }
-                            }
-                            Navigator.of(context).pop();
-                          },
-                  child: Text(
-                    _items.isEmpty ? '추가하기' : '추가하기 (${_items.length})',
-                    style: const TextStyle(fontWeight: FontWeight.w700),
-                  ),
-                ),
-              ),
+              ],
             ),
           ),
         ],
@@ -263,19 +195,15 @@ class _LinkOverlayState extends State<LinkOverlay> {
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-      decoration: BoxDecoration(
-        color: const Color(0xFF1F1F1F),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.darkBorder),
-      ),
+
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // 상단 큰 썸네일
           ClipRRect(
-            borderRadius: BorderRadius.circular(8),
+            borderRadius: BorderRadius.circular(15),
             child: AspectRatio(
-              aspectRatio: 16 / 9,
+              aspectRatio: 4 / 3,
               child:
                   (_pThumb ?? '').isNotEmpty
                       ? Image.network(
@@ -298,43 +226,54 @@ class _LinkOverlayState extends State<LinkOverlay> {
             ),
           ),
           const SizedBox(height: 10),
-          // 제목
-          if ((_pTitle ?? '').isNotEmpty)
-            Text(
-              _pTitle!,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.w600,
-              ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // 제목
+                if ((_pTitle ?? '').isNotEmpty)
+                  Text(
+                    _pTitle!,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 16,
+                      color: Colors.white,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                const SizedBox(height: 6),
+                // 설명
+                if ((_pDesc ?? '').isNotEmpty)
+                  Text(
+                    _pDesc!,
+                    maxLines: 3,
+
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(color: Colors.white70, fontSize: 14),
+                  ),
+                if ((_pDesc ?? '').isNotEmpty) const SizedBox(height: 6),
+                Text(
+                  _url.text.trim(),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(color: Colors.white38, fontSize: 11),
+                ),
+                if (_fetching) const SizedBox(height: 8),
+                if (_fetching)
+                  const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Colors.white,
+                    ),
+                  ),
+              ],
             ),
-          const SizedBox(height: 6),
-          // 설명
-          if ((_pDesc ?? '').isNotEmpty)
-            Text(
-              _pDesc!,
-              maxLines: 3,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(color: Colors.white70, fontSize: 12),
-            ),
-          const SizedBox(height: 6),
-          Text(
-            _url.text.trim(),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(color: Colors.white38, fontSize: 11),
           ),
-          if (_fetching) const SizedBox(height: 8),
-          if (_fetching)
-            const SizedBox(
-              width: 16,
-              height: 16,
-              child: CircularProgressIndicator(
-                strokeWidth: 2,
-                color: Colors.white,
-              ),
-            ),
+          const SizedBox(height: 20),
         ],
       ),
     );
@@ -467,25 +406,19 @@ class _LinkOverlayState extends State<LinkOverlay> {
   Widget _buildItemsList() {
     if (_items.isEmpty) return const SizedBox.shrink();
     return ListView.separated(
-      padding: const EdgeInsets.only(top: 20),
       itemCount: _items.length,
-      separatorBuilder: (_, __) => const SizedBox(height: 5),
+      separatorBuilder: (_, __) => const SizedBox(height: 8),
       itemBuilder: (context, index) {
         final it = _items[index];
         return Container(
           height: 64,
-          decoration: BoxDecoration(
-            color: const Color(0xFF1C1C1C),
-            borderRadius: BorderRadius.circular(12),
-          ),
           padding: const EdgeInsets.symmetric(horizontal: 12),
           child: Row(
             children: [
               Container(
-                width: 48,
-                height: 48,
+                width: 60,
+                height: 60,
                 decoration: BoxDecoration(
-                  color: const Color(0xFF2A2A2A),
                   borderRadius: BorderRadius.circular(8),
                 ),
                 clipBehavior: Clip.antiAlias,
@@ -519,6 +452,17 @@ class _LinkOverlayState extends State<LinkOverlay> {
                     if (it.description.isNotEmpty)
                       Text(
                         it.description,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Colors.white70,
+                          fontSize: 12,
+                        ),
+                      ),
+
+                    if (it.url.isNotEmpty)
+                      Text(
+                        it.url,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(

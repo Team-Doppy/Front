@@ -87,7 +87,7 @@ class _CustomImageEditorScreenState extends State<CustomImageEditorScreen> {
 
   void _onDone() {
     // 편집 결과를 ImageService에 반영. 선택된 이미지가 존재하는 경우에만.
-    final imageService = context.read<ImageService>();
+    final imageService = context.read<NodeComponentService>();
     final selectedId = imageService.selectedImageId;
     if (selectedId != null) {
       imageService.applyEditedBytes(nodeId: selectedId, bytes: _currentImage);

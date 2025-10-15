@@ -8,6 +8,7 @@ import 'package:doppy/pages/components/shimmer_box.dart';
 import 'package:doppy/pages/screens/search_screen_overlay.dart';
 import 'package:doppy/providers/search_result_provider.dart';
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
 import 'dart:ui' as ui;
 
@@ -228,10 +229,10 @@ class HomeScreenState extends State<HomeScreen> {
             elevation: 0,
             scrolledUnderElevation: 0,
             title: Text(
-              'Doppy',
-              style: TextStyle(
-                fontSize: 20,
-                fontWeight: FontWeight.w600,
+              ' Doppy',
+              style: GoogleFonts.notoSansKr(
+                fontSize: 25,
+                fontWeight: FontWeight.bold,
                 color: Theme.of(context).colorScheme.primary,
               ),
             ),

@@ -2,7 +2,7 @@ import 'dart:io';
 import 'package:doppy/data/models/user_model.dart';
 import 'package:doppy/pages/components/common_profile_avatar.dart';
 import 'package:flutter/material.dart';
-import 'gallery_bottom_sheet.dart';
+import 'native_image_picker.dart';
 
 class ProfileImageBottomSheet extends StatelessWidget {
   final Future<void> Function() onClearProfileImage;
@@ -56,26 +56,21 @@ class ProfileImageBottomSheet extends StatelessWidget {
                 ),
               ),
               onTap: () async {
-                // 현재 시트 닫고 갤러리 시트 오픈
+                // 현재 시트 닫기
                 Navigator.pop(context);
-                await showModalBottomSheet(
-                  context: context,
-                  backgroundColor: theme.colorScheme.surface,
-                  barrierColor: Colors.black54,
-                  isScrollControlled: true,
-                  shape: const RoundedRectangleBorder(
-                    borderRadius: BorderRadius.vertical(
-                      top: Radius.circular(16),
-                    ),
-                  ),
-                  builder:
-                      (_) => GalleryBottomSheet(
-                        singleSelect: singleSelect,
-                        onImagesSelected: (files) {
-                          onImagesSelected(files);
-                        },
-                      ),
-                );
+
+                // 네이티브 이미지 선택기 사용
+                final picker = NativeImagePicker();
+                final files =
+                    singleSelect
+                        ? await picker.pickSingleImage().then(
+                          (f) => f != null ? [f] : <File>[],
+                        )
+                        : await picker.pickMultipleImages();
+
+                if (files.isNotEmpty) {
+                  onImagesSelected(files);
+                }
               },
             ),
             ListTile(

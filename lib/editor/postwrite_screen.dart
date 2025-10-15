@@ -7,17 +7,15 @@ import 'package:doppy/editor/component/single_image_component.dart';
 import 'package:doppy/editor/component/row_image_component.dart';
 import 'package:doppy/editor/component/title_component.dart';
 import 'package:doppy/editor/component/paragraph_component.dart';
-import 'package:doppy/editor/component/location_component.dart';
 import 'package:doppy/editor/component/mention_component.dart';
 import 'package:doppy/editor/component/divider_component.dart';
-import 'package:doppy/editor/image/custom_image_editor_screen.dart';
 import 'package:doppy/editor/overlay/drag_overlay_widget.dart';
 import 'package:doppy/editor/publish/post_export_screen.dart';
 import 'package:doppy/editor/service/drag_service.dart';
 import 'package:doppy/editor/service/editor_service.dart';
 import 'package:doppy/editor/service/image_service.dart';
 import 'package:doppy/editor/service/sticker_service.dart';
-import 'package:doppy/editor/style/image_toolbar.dart';
+// removed unused image editor imports after simplifying selected toolbar
 import 'package:doppy/editor/style/style_sheet.dart';
 import 'package:doppy/editor/style/defualt_toolbar.dart';
 import 'package:doppy/editor/sticker_canvas.dart';
@@ -78,6 +76,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
 
   // 임시저장 관련
   String? _currentDraftId;
+  // StickerCanvas는 화면 Stack 내에 부착 (기타 오버레이보다 아래)
 
   @override
   void initState() {
@@ -138,6 +137,10 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
 
     // 선택 범위가 바뀔 때 이미지 하이라이트 갱신
     composer.selectionNotifier.addListener(_updateImageSelectionHighlight);
+
+    // 문서 변경 시 다음 버튼 상태 업데이트
+    editorService.addListener(_onEditorServiceChange);
+
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _updateImageSelectionHighlight();
       // 초기 진입 시 제목 아래 문단(id: '2')로 커서 이동 및 포커스 요청
@@ -156,7 +159,16 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
       }
       // 최초 진입 스냅샷 마크(현재 상태를 저장 기준으로 간주)
       editorService.markSavedSnapshot();
+
+      // StickerCanvas는 화면 Stack에 직접 부착하므로 여기선 별도 처리 없음
     });
+  }
+
+  void _onEditorServiceChange() {
+    // 문서 변경 시 UI 업데이트 (다음 버튼 상태 반영)
+    if (mounted) {
+      setState(() {});
+    }
   }
 
   /// 키보드가 현재 표시되고 있는지 확인
@@ -174,10 +186,11 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
   @override
   void dispose() {
     // 이미지 선택 상태 초기화 (조용히)
-    ImageService().clearHighlightedSelectionSilently();
-    ImageService().clearSelectionSilently();
+    NodeComponentService().clearHighlightedSelectionSilently();
+    NodeComponentService().clearSelectionSilently();
 
     textStylingService.dispose();
+    editorService.removeListener(_onEditorServiceChange);
     editorService.dispose();
     dragService.removeListener(_onDragChange);
     _editorFocusNode.removeListener(_onFocusChange);
@@ -253,17 +266,6 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
           );
           break;
         case 'location':
-          rebuilt.add(
-            LocationNode(
-              id: id,
-              lat: (m['lat'] as num?)?.toDouble() ?? 0,
-              lng: (m['lng'] as num?)?.toDouble() ?? 0,
-              title: (m['title'] ?? '').toString(),
-              address: (m['address'] ?? '').toString(),
-              description: (m['description'] ?? '').toString(),
-            ),
-          );
-          break;
         case 'mention':
           rebuilt.add(
             MentionNode(
@@ -336,7 +338,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
       // FocusScope.of(context).unfocus(); // 제거: SuperEditor가 자체적으로 포커스 관리
 
       // 2) 이미지 서비스 상태 초기화
-      final img = ImageService();
+      final img = NodeComponentService();
       img.clearHighlightedSelection();
       img.selectImage(null);
 
@@ -376,14 +378,14 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     try {
       final sel = composer.selection;
       if (sel == null) {
-        ImageService().clearHighlightedSelection();
+        NodeComponentService().clearHighlightedSelection();
         return;
       }
 
       final baseIndex = document.getNodeIndexById(sel.base.nodeId);
       final extentIndex = document.getNodeIndexById(sel.extent.nodeId);
       if (baseIndex == -1 || extentIndex == -1) {
-        ImageService().clearHighlightedSelection();
+        NodeComponentService().clearHighlightedSelection();
         return;
       }
 
@@ -398,9 +400,9 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
         }
       }
 
-      ImageService().setHighlightedSelection(ids);
+      NodeComponentService().setHighlightedSelection(ids);
     } catch (_) {
-      ImageService().clearHighlightedSelection();
+      NodeComponentService().clearHighlightedSelection();
     }
   }
 
@@ -415,7 +417,9 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
       onWillPop: () async {
         // 나가기 전 저장 필요 여부 판단(서비스 로직)
         final needPrompt = editorService.shouldPromptSaveOnExit();
-        if (needPrompt) {
+        final stickerService = context.read<StickerService>();
+        final hasStickerChanges = stickerService.hasChanges;
+        if (needPrompt || hasStickerChanges) {
           final decision = await Navigator.of(context).push<ExitDecision>(
             PageRouteBuilder(
               opaque: false,
@@ -425,8 +429,8 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
           );
           if (decision == ExitDecision.saveDraft) {
             await _manualSaveDraft();
-            // 저장 후 종료
-            Navigator.of(context).pop();
+            // 저장 후 종료 (정리 포함)
+            _cleanupAndExit();
           } else if (decision == ExitDecision.discard) {
             await Future.delayed(const Duration(milliseconds: 180));
             _cleanupAndExit();
@@ -500,10 +504,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                                     dragService: dragService,
                                     editorService: editorService,
                                   ),
-                                  // 커스텀 위치 노드 컴포넌트
-                                  LocationComponentBuilder(
-                                    dragService: dragService,
-                                  ),
+
                                   // 커스텀 언급 노드 컴포넌트
                                   MentionComponentBuilder(
                                     dragService: dragService,
@@ -547,10 +548,15 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                                       .findNodeAtPosition(_lastTapPosition!)
                                       ?.id;
                               if (nodeId != null) {
-                                // 이미지 또는 이미지 행 클릭
+                                // 특수 노드 탭 선택: 이미지/이미지행/링크/멘션
                                 final node = document.getNodeById(nodeId);
-                                if (node is ImageNode || node is ImageRowNode) {
-                                  ImageService().selectImage(nodeId);
+                                if (node is ImageNode ||
+                                    node is ImageRowNode ||
+                                    node is LinkNode ||
+                                    node is MentionNode) {
+                                  NodeComponentService().selectNode(nodeId);
+                                } else {
+                                  NodeComponentService().selectNode(null);
                                 }
                               }
                             }
@@ -568,7 +574,8 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                             print('클릭한 노드: $node');
                             if (node != null) {
                               final nodeId = node.id;
-                              final imageService = context.read<ImageService>();
+                              final imageService =
+                                  context.read<NodeComponentService>();
 
                               if (node is ParagraphNode &&
                                   node.metadata['isTitle'] == true) {
@@ -633,10 +640,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                 ],
               ),
             ),
-            // 스티커 캔버스(문서 위 오버레이)
-            Positioned.fill(
-              child: StickerCanvas(scrollController: scrollController),
-            ),
+
             // 커스텀 투명 앱바
             Positioned(
               top: 0,
@@ -653,7 +657,9 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                         onTap: () async {
                           final needPrompt =
                               editorService.shouldPromptSaveOnExit();
-                          if (needPrompt) {
+                          final stickerService = context.read<StickerService>();
+                          final hasStickerChanges = stickerService.hasChanges;
+                          if (needPrompt || hasStickerChanges) {
                             final decision = await Navigator.of(
                               context,
                             ).push<ExitDecision>(
@@ -666,7 +672,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                             );
                             if (decision == ExitDecision.saveDraft) {
                               await _manualSaveDraft();
-                              Navigator.of(context).pop();
+                              _cleanupAndExit();
                             } else if (decision == ExitDecision.discard) {
                               await Future.delayed(
                                 const Duration(milliseconds: 180),
@@ -703,31 +709,40 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                   decoration: BoxDecoration(),
                   child: Row(
                     children: [
-                      if (!widget.isEditMode && !_isKeyboardVisible)
+                      if (!widget.isEditMode &&
+                          !_isKeyboardVisible &&
+                          editorService.canProceedToPublish())
                         TextButton(
-                          onPressed: () {
-                            //키보드 내리기 (SuperEditor의 포커스 관리 활용)
-                            _editorFocusNode.unfocus();
+                          onPressed:
+                              editorService.canProceedToPublish()
+                                  ? () {
+                                    //키보드 내리기 (SuperEditor의 포커스 관리 활용)
+                                    _editorFocusNode.unfocus();
 
-                            final json = PostExporter.exportToJsonString(
-                              editorService: editorService,
-                              stickerService: context.read<StickerService>(),
-                              viewportSize: MediaQuery.of(context).size,
-                              pretty: true,
-                            );
-                            ImageService().selectImage(null);
-                            // ignore: avoid_print
-                            print('===== POST JSON =====\n$json');
-                            Navigator.of(context).push(
-                              PageRouteBuilder(
-                                opaque: false,
-                                barrierDismissible: true,
-                                pageBuilder:
-                                    (_, __, ___) =>
-                                        PostExportScreen(exported: json),
-                              ),
-                            );
-                          },
+                                    final json =
+                                        PostExporter.exportToJsonString(
+                                          editorService: editorService,
+                                          stickerService:
+                                              context.read<StickerService>(),
+                                          viewportSize:
+                                              MediaQuery.of(context).size,
+                                          pretty: true,
+                                        );
+                                    NodeComponentService().selectNode(null);
+                                    // ignore: avoid_print
+                                    print('===== POST JSON =====\n$json');
+                                    Navigator.of(context).push(
+                                      PageRouteBuilder(
+                                        opaque: false,
+                                        barrierDismissible: true,
+                                        pageBuilder:
+                                            (_, __, ___) => PostExportScreen(
+                                              exported: json,
+                                            ),
+                                      ),
+                                    );
+                                  }
+                                  : null,
                           child: Container(
                             padding: const EdgeInsets.symmetric(
                               horizontal: 10,
@@ -749,22 +764,23 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                 ),
               ),
             ),
+            // 스티커 캔버스 (기본 화면 위, 기타 오버레이 아래)
+            Positioned.fill(
+              child: StickerCanvas(scrollController: scrollController),
+            ),
             Positioned(
               top: 0,
               left: 0,
               right: 0,
-              child: ImageFiltered(
-                imageFilter: ui.ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-                child: Container(
-                  height: MediaQuery.of(context).padding.top,
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      colors: [
-                        Colors.black.withOpacity(0.4),
-                        Colors.black.withOpacity(0.4),
-                        Colors.black.withOpacity(0.4),
-                      ],
-                      stops: [1, 1, 1],
+              height: MediaQuery.of(context).padding.top - 10,
+              child: ClipRRect(
+                child: BackdropFilter(
+                  filter: ui.ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.background.withOpacity(1),
                     ),
                   ),
                 ),
@@ -780,10 +796,10 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
           ),
           child: SafeArea(
             top: false,
-            child: Consumer<ImageService>(
+            child: Consumer<NodeComponentService>(
               builder: (context, imageService, child) {
-                return imageService.selectedImageId != null
-                    ? _buildImageToolbar()
+                return imageService.selectedNodeId != null
+                    ? _buildSelectedToolbar()
                     : _buildDefaultToolbar();
               },
             ),
@@ -835,10 +851,13 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
       nodeType = 'imageRow';
     } else if (node is ParagraphNode) {
       nodeType = 'paragraph';
-    } else if (node is LocationNode) {
-      nodeType = 'location';
+    } else if (node is LinkNode) {
+      nodeType = 'link';
+    } else if (node is MentionNode) {
+      nodeType = 'mention';
+    } else if (node is DividerNode) {
+      nodeType = 'divider';
     }
-
     return DragOverlayWidget(
       nodeId: nodeId,
       nodeType: nodeType,
@@ -867,48 +886,49 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     );
   }
 
-  Widget _buildImageToolbar() {
-    final selectedId = ImageService().selectedImageId;
+  Widget _buildSelectedToolbar() {
+    final selectedId = NodeComponentService().selectedNodeId;
     if (selectedId == null) return const SizedBox.shrink();
 
     final node = document.getNodeById(selectedId);
-    if (node is! ImageNode && node is! ImageRowNode) {
-      return const SizedBox.shrink();
-    }
+    // 링크/멘션/이미지 공통 삭제 전용 툴바
+    return Container(
+      height: 40,
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      color: Theme.of(context).colorScheme.background.withOpacity(0.1),
+      child: Row(
+        children: [
+          const SizedBox(width: 8),
+          /*
+          Text(
+            '선택됨: ${node.runtimeType}',
+            style: Theme.of(context).textTheme.bodyMedium,
+          ),
+         */
+          const Spacer(),
+          IconButton(
+            tooltip: '삭제',
+            onPressed: () {
+              // 이미지 계열은 안전 삭제 루틴 사용
+              if (node is ImageNode || node is ImageRowNode) {
+                _deleteImageSafely(selectedId);
+                return;
+              }
 
-    // 이미지 URL 가져오기
-    String imageUrl;
-    if (node is ImageNode) {
-      imageUrl = node.imageUrl;
-    } else if (node is ImageRowNode) {
-      // ImageRowNode의 경우 첫 번째 이미지 사용
-      imageUrl = node.imageUrls.isNotEmpty ? node.imageUrls.first : '';
-    } else {
-      return const SizedBox.shrink();
-    }
-
-    return ImageEditingToolbar(
-      onAdjust: () async {
-        try {
-          final bundle = NetworkAssetBundle(Uri.parse(imageUrl));
-          final bytes = await bundle
-              .load('')
-              .then((data) => data.buffer.asUint8List());
-          final editedBytes = await openImageEditorPlus(
-            context,
-            imageBytes: bytes,
-          );
-          if (editedBytes != null) {
-            print('이미지가 편집되었습니다');
-          }
-        } catch (e) {
-          if (!mounted) return;
-          SnackBarUtils.showError(context, '이미지 보정을 불러올 수 없습니다: $e');
-        }
-      },
-      onDelete: () {
-        _deleteImageSafely(selectedId);
-      },
+              // 링크/멘션 등 다른 특수 노드 삭제
+              try {
+                NodeComponentService().selectNode(null);
+                composer.clearSelection();
+                document.deleteNode(selectedId);
+                setState(() {});
+              } catch (e) {
+                SnackBarUtils.showError(context, '삭제할 수 없습니다');
+              }
+            },
+            icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
+          ),
+        ],
+      ),
     );
   }
 
@@ -916,8 +936,8 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
   void _deleteImageSafely(String imageId) {
     try {
       // 1단계: 모든 선택 상태를 먼저 초기화
-      ImageService().selectImage(null);
-      ImageService().clearHighlightedSelection();
+      NodeComponentService().selectNode(null);
+      NodeComponentService().clearHighlightedSelection();
       composer.clearSelection();
 
       // 2단계: 포커스 해제 (SuperEditor가 자체적으로 처리)
@@ -1031,6 +1051,9 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
       print('[PostwriteScreen] Manual save completed: $_currentDraftId');
       // 저장 스냅샷 마크
       editorService.markSavedSnapshot();
+
+      // 스티커 초기 상태 저장 (임시저장 후 변화 감지를 위해)
+      context.read<StickerService>().saveInitialState();
     } catch (e) {
       print('[PostwriteScreen] Manual save failed: $e');
       if (mounted) {
@@ -1110,8 +1133,8 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
       // 기존 선택/하이라이트를 먼저 정리하여 SuperEditor가
       // 사라진 노드에 대한 selection을 적용하지 않도록 방지
       try {
-        ImageService().clearHighlightedSelection();
-        ImageService().selectImage(null);
+        NodeComponentService().clearHighlightedSelection();
+        NodeComponentService().selectNode(null);
         composer.clearSelection();
       } catch (_) {}
 
@@ -1175,6 +1198,9 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
         }
         // 불러온 상태를 저장 스냅샷으로 간주
         editorService.markSavedSnapshot();
+
+        // 스티커 초기 상태 저장
+        context.read<StickerService>().saveInitialState();
       } else {
         if (mounted) {
           SnackBarUtils.showError(context, '임시저장을 불러올 수 없습니다');

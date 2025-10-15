@@ -2,6 +2,8 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:doppy/editor/component/row_image_component.dart';
+import 'package:doppy/editor/component/link_component.dart';
+import 'package:doppy/editor/component/mention_component.dart';
 import 'package:doppy/editor/service/drag_service.dart';
 import 'package:doppy/editor/service/image_service.dart';
 import 'package:doppy/theme/app_colors.dart';
@@ -143,12 +145,12 @@ class _SingleImageComponentState extends State<SingleImageComponent>
         // 실제 이미지 내용 + 좌/우 세로 라인 (머지 모드에서)
         LayoutBuilder(
           builder: (context, constraints) {
-            final editedBytes = context.watch<ImageService>().getEditedBytes(
-              widget.nodeId,
-            );
+            final editedBytes = context
+                .watch<NodeComponentService>()
+                .getEditedBytes(widget.nodeId);
             final image = _buildImage(editedBytes);
 
-            final imageService = context.watch<ImageService>();
+            final imageService = context.watch<NodeComponentService>();
             final isSelected = imageService.selectedImageId == widget.nodeId;
             // selection 핸들이 이미지 노드를 포함할 때만, 그리고 경계가 이미지인 경우 Downstream일 때만 하이라이트
 
@@ -358,8 +360,12 @@ class _SingleImageComponentState extends State<SingleImageComponent>
     if (dropIndex == null) return false;
     final currentNodeIndex = _getCurrentNodeIndex();
     if (currentNodeIndex == -1) return false;
-    // 이 노드의 위에 삽입하는 경우
-    return dropIndex == currentNodeIndex;
+
+    // 이 노드 위에 삽입하는 경우
+    if (dropIndex == currentNodeIndex) {
+      return _shouldShowInsertionLine(currentNodeIndex, true);
+    }
+    return false;
   }
 
   bool _shouldShowBottomDropLine() {
@@ -378,9 +384,65 @@ class _SingleImageComponentState extends State<SingleImageComponent>
       // 마지막 노드일 때는 문서 끝에 삽입하는 경우
       return dropIndex == documentLength;
     } else {
-      // 일반적인 경우: 이 노드의 아래에 삽입하는 경우 (다음 인덱스)
-      // 하지만 다음 노드가 있으면 이중 표시 방지를 위해 false 반환
-      return dropIndex == currentNodeIndex + 1;
+      // 다음 인덱스에 삽입하는 경우
+      if (dropIndex == currentNodeIndex + 1) {
+        return _shouldShowInsertionLine(currentNodeIndex, false);
+      }
+    }
+    return false;
+  }
+
+  /// 삽입 라인 표시 여부를 결정하는 공통 로직
+  bool _shouldShowInsertionLine(int currentNodeIndex, bool isTopLine) {
+    if (widget.dragService == null) return false;
+
+    final doc = widget.dragService!.editorService.document;
+    final documentLength = doc.length;
+
+    // 특수 노드 타입 체크
+    bool isSpecialNode(DocumentNode? node) {
+      if (node == null) return false;
+      return node is LinkNode ||
+          node is MentionNode ||
+          node is ImageNode ||
+          node is ImageRowNode;
+    }
+
+    // 텍스트 노드 타입 체크
+    bool isTextNode(DocumentNode? node) {
+      if (node == null) return false;
+      return node is ParagraphNode;
+    }
+
+    if (isTopLine) {
+      // 위쪽 라인 표시 로직
+      if (currentNodeIndex > 0) {
+        final prevNode = doc.getNodeAt(currentNodeIndex - 1);
+
+        // 케이스 1: 앞이 특수 노드인 경우 - 이 노드에서는 라인을 표시하지 않음
+        // (위쪽 특수 노드가 아래쪽 라인을 표시하므로)
+        if (isSpecialNode(prevNode)) {
+          return false;
+        }
+      }
+      return true;
+    } else {
+      // 아래쪽 라인 표시 로직
+      if (currentNodeIndex + 1 < documentLength) {
+        final nextNode = doc.getNodeAt(currentNodeIndex + 1);
+
+        // 케이스 1: 뒤가 특수 노드인 경우 - 이 노드에서는 라인을 표시함
+        // (특수-특수 사이에서는 위쪽 특수 노드가 아래쪽 라인을 표시)
+        if (isSpecialNode(nextNode)) {
+          return true;
+        }
+
+        // 케이스 2: 뒤가 텍스트 노드인 경우 - 이 노드에서는 라인을 표시함
+        if (isTextNode(nextNode)) {
+          return true;
+        }
+      }
+      return true;
     }
   }
 

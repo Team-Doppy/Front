@@ -153,7 +153,7 @@ class _PostListState extends State<PostList> {
 
       //200ms마다 페이지를 이동 (100ms 애니메이션으로)
       _continuousScrollTimer = Timer.periodic(
-        const Duration(milliseconds: 200),
+        const Duration(milliseconds: 300),
         (timer) {
           if (!_isContinuousScroll) {
             timer.cancel();
@@ -165,12 +165,12 @@ class _PostListState extends State<PostList> {
 
           if (isNext && currentPage < widget.posts.length - 1) {
             _pageController.nextPage(
-              duration: const Duration(milliseconds: 180),
+              duration: const Duration(milliseconds: 300),
               curve: Curves.easeInOut,
             );
           } else if (!isNext && currentPage > 0) {
             _pageController.previousPage(
-              duration: const Duration(milliseconds: 180),
+              duration: const Duration(milliseconds: 300),
               curve: Curves.easeInOut,
             );
           } else {

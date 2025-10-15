@@ -30,18 +30,20 @@ class CustomBottomNavigationBar extends StatelessWidget {
     ];
 
     return ClipRRect(
-      //borderRadius: BorderRadius.circular(30),
       child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+        filter: ImageFilter.blur(sigmaX: 15, sigmaY: 15),
         child: Container(
-          height: 70,
+          height: 72,
           decoration: BoxDecoration(
-            color: Theme.of(context).colorScheme.background.withOpacity(1),
+            color:
+                currentIndex == 3
+                    ? Theme.of(context).colorScheme.background
+                    : Colors.transparent,
           ),
           child: Padding(
             padding: const EdgeInsets.only(
               bottom: 20,
-              top: 10,
+              top: 5,
               right: 10,
               left: 10,
             ),

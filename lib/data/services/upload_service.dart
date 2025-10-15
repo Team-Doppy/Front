@@ -53,6 +53,8 @@ class UploadService with ChangeNotifier {
   int maxConcurrent = 3;
   bool _disposed = false;
 
+  final AuthService _authService = AuthService();
+
   List<UploadTask> get tasks => List.unmodifiable(_tasks);
 
   @override
@@ -178,98 +180,104 @@ class UploadService with ChangeNotifier {
   }
 
   Future<Map<String, dynamic>> _uploadProfileImage(UploadTask task) async {
-    final uri = Uri.parse('$_baseUrl/api/profile/image/upload');
-    final token = await AuthService().getToken();
-    print('[UploadService] token: $token');
-    final request = http.MultipartRequest('POST', uri)
-      ..headers['Authorization'] = 'Bearer $token';
+    return await _requestWithTokenRefresh(() async {
+      final uri = Uri.parse('$_baseUrl/api/profile/image/upload');
+      final token = await _authService.getToken();
+      print('[UploadService] token: $token');
+      final request = http.MultipartRequest('POST', uri)
+        ..headers['Authorization'] = 'Bearer $token';
 
-    final bytes = task.bytes ?? await task.file!.readAsBytes();
-    final mediaType = _createMediaType(task.fileName);
-    request.files.add(
-      http.MultipartFile.fromBytes(
-        'file',
-        bytes,
-        filename: task.fileName,
-        contentType: mediaType,
-      ),
-    );
+      final bytes = task.bytes ?? await task.file!.readAsBytes();
+      final mediaType = _createMediaType(task.fileName);
+      request.files.add(
+        http.MultipartFile.fromBytes(
+          'file',
+          bytes,
+          filename: task.fileName,
+          contentType: mediaType,
+        ),
+      );
 
-    print(
-      '[Upload] POST ${uri.toString()} size=${bytes.length} type=${mediaType.type}/${mediaType.subtype}',
-    );
-    final streamResp = await request.send().timeout(
-      const Duration(seconds: 30),
-    );
-    final body = await streamResp.stream.bytesToString();
-    if (streamResp.statusCode == 200) {
-      print('[Upload] 200 body=${body}');
-      final Map<String, dynamic> decoded =
-          json.decode(body) as Map<String, dynamic>;
-      String? imageId = (decoded['imageId'] ?? decoded['id'])?.toString();
-      String? accessUrl =
-          decoded['accessUrl']?.toString() ??
-          decoded['url']?.toString() ??
-          decoded['profileImageUrl']?.toString();
-      if ((imageId == null || accessUrl == null) &&
-          decoded['data'] is Map<String, dynamic>) {
-        final data = decoded['data'] as Map<String, dynamic>;
-        imageId ??= (data['imageId'] ?? data['id'])?.toString();
-        accessUrl ??=
-            data['accessUrl']?.toString() ??
-            data['url']?.toString() ??
-            data['profileImageUrl']?.toString();
-      }
-      if ((accessUrl == null || accessUrl.isEmpty) &&
-          imageId != null &&
-          imageId.isNotEmpty) {
-        try {
-          accessUrl = await _getAccessUrlByImageId(imageId);
-        } catch (e) {
-          print('[Upload] failed to fetch access url by imageId=$imageId: $e');
+      print(
+        '[Upload] POST ${uri.toString()} size=${bytes.length} type=${mediaType.type}/${mediaType.subtype}',
+      );
+      final streamResp = await request.send().timeout(
+        const Duration(seconds: 30),
+      );
+      final body = await streamResp.stream.bytesToString();
+      if (streamResp.statusCode == 200) {
+        print('[Upload] 200 body=${body}');
+        final Map<String, dynamic> decoded =
+            json.decode(body) as Map<String, dynamic>;
+        String? imageId = (decoded['imageId'] ?? decoded['id'])?.toString();
+        String? accessUrl =
+            decoded['accessUrl']?.toString() ??
+            decoded['url']?.toString() ??
+            decoded['profileImageUrl']?.toString();
+        if ((imageId == null || accessUrl == null) &&
+            decoded['data'] is Map<String, dynamic>) {
+          final data = decoded['data'] as Map<String, dynamic>;
+          imageId ??= (data['imageId'] ?? data['id'])?.toString();
+          accessUrl ??=
+              data['accessUrl']?.toString() ??
+              data['url']?.toString() ??
+              data['profileImageUrl']?.toString();
         }
+        if ((accessUrl == null || accessUrl.isEmpty) &&
+            imageId != null &&
+            imageId.isNotEmpty) {
+          try {
+            accessUrl = await _getAccessUrlByImageId(imageId);
+          } catch (e) {
+            print(
+              '[Upload] failed to fetch access url by imageId=$imageId: $e',
+            );
+          }
+        }
+        return {...decoded, 'imageId': imageId, 'accessUrl': accessUrl};
+      } else {
+        print('[Upload] http ${streamResp.statusCode} body=${body}');
+        throw HttpException('upload failed ${streamResp.statusCode}: $body');
       }
-      return {...decoded, 'imageId': imageId, 'accessUrl': accessUrl};
-    } else {
-      print('[Upload] http ${streamResp.statusCode} body=${body}');
-      throw HttpException('upload failed ${streamResp.statusCode}: $body');
-    }
+    });
   }
 
   Future<Map<String, dynamic>> _uploadSingle(UploadTask task) async {
-    final uri = Uri.parse('$_baseUrl/api/images/upload');
-    final token = await AuthService().getToken();
-    print('[UploadService] token: $token');
-    final request =
-        http.MultipartRequest('POST', uri)
-          ..fields['uid'] = 'user1234'
-          ..headers['Authorization'] = 'Bearer $token'; // 임시 토큰
+    return await _requestWithTokenRefresh(() async {
+      final uri = Uri.parse('$_baseUrl/api/images/upload');
+      final token = await _authService.getToken();
+      print('[UploadService] token: $token');
+      final request =
+          http.MultipartRequest('POST', uri)
+            ..fields['uid'] = 'user1234'
+            ..headers['Authorization'] = 'Bearer $token'; // 임시 토큰
 
-    final bytes = task.bytes ?? await task.file!.readAsBytes();
-    final mediaType = _createMediaType(task.fileName);
-    request.files.add(
-      http.MultipartFile.fromBytes(
-        'file',
-        bytes,
-        filename: task.fileName,
-        contentType: mediaType,
-      ),
-    );
+      final bytes = task.bytes ?? await task.file!.readAsBytes();
+      final mediaType = _createMediaType(task.fileName);
+      request.files.add(
+        http.MultipartFile.fromBytes(
+          'file',
+          bytes,
+          filename: task.fileName,
+          contentType: mediaType,
+        ),
+      );
 
-    print(
-      '[Upload] POST ${uri.toString()} size=${bytes.length} type=${mediaType.type}/${mediaType.subtype}',
-    );
-    final streamResp = await request.send().timeout(
-      const Duration(seconds: 30),
-    );
-    final body = await streamResp.stream.bytesToString();
-    if (streamResp.statusCode == 200) {
-      print('[Upload] 200 body=${body}');
-      return json.decode(body) as Map<String, dynamic>;
-    } else {
-      print('[Upload] http ${streamResp.statusCode} body=${body}');
-      throw HttpException('upload failed ${streamResp.statusCode}: $body');
-    }
+      print(
+        '[Upload] POST ${uri.toString()} size=${bytes.length} type=${mediaType.type}/${mediaType.subtype}',
+      );
+      final streamResp = await request.send().timeout(
+        const Duration(seconds: 30),
+      );
+      final body = await streamResp.stream.bytesToString();
+      if (streamResp.statusCode == 200) {
+        print('[Upload] 200 body=${body}');
+        return json.decode(body) as Map<String, dynamic>;
+      } else {
+        print('[Upload] http ${streamResp.statusCode} body=${body}');
+        throw HttpException('upload failed ${streamResp.statusCode}: $body');
+      }
+    });
   }
 
   MediaType _createMediaType(String fileName) {
@@ -364,52 +372,86 @@ class UploadService with ChangeNotifier {
   Future<List<Map<String, dynamic>>> _uploadMultiple(
     List<UploadTask> tasks,
   ) async {
-    final uri = Uri.parse('$_baseUrl/api/images/upload-multiple');
-    final token = await AuthService().getToken();
-    print('[UploadService] batch upload token: $token');
-    final request =
-        http.MultipartRequest('POST', uri)
-          ..fields['uid'] = 'user1234'
-          ..headers['Authorization'] = 'Bearer $token';
-    for (final t in tasks) {
-      final bytes = t.bytes ?? await t.file!.readAsBytes();
-      final mediaType = _createMediaType(t.fileName);
-      request.files.add(
-        http.MultipartFile.fromBytes(
-          'files',
-          bytes,
-          filename: t.fileName,
-          contentType: mediaType,
-        ),
-      );
-    }
-    print('[UploadBatch] POST ${uri.toString()} files=${tasks.length}');
-    final resp = await request.send().timeout(const Duration(seconds: 60));
-    final body = await resp.stream.bytesToString();
-    if (resp.statusCode == 200) {
-      print('[UploadBatch] 200 body=${body}');
-      final decoded = json.decode(body);
-      return List<Map<String, dynamic>>.from(decoded as List);
-    }
-    print('[UploadBatch] http ${resp.statusCode} body=${body}');
-    throw HttpException('batch upload failed ${resp.statusCode}: $body');
+    return await _requestWithTokenRefresh(() async {
+      final uri = Uri.parse('$_baseUrl/api/images/upload-multiple');
+      final token = await _authService.getToken();
+      print('[UploadService] batch upload token: $token');
+      final request =
+          http.MultipartRequest('POST', uri)
+            ..fields['uid'] = 'user1234'
+            ..headers['Authorization'] = 'Bearer $token';
+      for (final t in tasks) {
+        final bytes = t.bytes ?? await t.file!.readAsBytes();
+        final mediaType = _createMediaType(t.fileName);
+        request.files.add(
+          http.MultipartFile.fromBytes(
+            'files',
+            bytes,
+            filename: t.fileName,
+            contentType: mediaType,
+          ),
+        );
+      }
+      print('[UploadBatch] POST ${uri.toString()} files=${tasks.length}');
+      final resp = await request.send().timeout(const Duration(seconds: 60));
+      final body = await resp.stream.bytesToString();
+      if (resp.statusCode == 200) {
+        print('[UploadBatch] 200 body=${body}');
+        final decoded = json.decode(body);
+        return List<Map<String, dynamic>>.from(decoded as List);
+      }
+      print('[UploadBatch] http ${resp.statusCode} body=${body}');
+      throw HttpException('batch upload failed ${resp.statusCode}: $body');
+    });
   }
 
   Future<String?> _getAccessUrlByImageId(String imageId) async {
-    final uri = Uri.parse('$_baseUrl/api/images/$imageId/url');
-    final token = await AuthService().getToken();
-    final resp = await http
-        .get(uri, headers: {'Authorization': 'Bearer $token'})
-        .timeout(const Duration(seconds: 10));
-    if (resp.statusCode == 200) {
-      final decoded = json.decode(resp.body);
-      if (decoded is String) return decoded;
-      if (decoded is Map<String, dynamic>) {
-        return decoded['url']?.toString();
+    return await _requestWithTokenRefresh(() async {
+      final uri = Uri.parse('$_baseUrl/api/images/$imageId/url');
+      final token = await _authService.getToken();
+      final resp = await http
+          .get(uri, headers: {'Authorization': 'Bearer $token'})
+          .timeout(const Duration(seconds: 10));
+      if (resp.statusCode == 200) {
+        final decoded = json.decode(resp.body);
+        if (decoded is String) return decoded;
+        if (decoded is Map<String, dynamic>) {
+          return decoded['url']?.toString();
+        }
       }
+      throw HttpException(
+        'failed to get access url for imageId=$imageId (${resp.statusCode})',
+      );
+    });
+  }
+
+  Future<T> _requestWithTokenRefresh<T>(Future<T> Function() request) async {
+    try {
+      // 첫 번째 시도
+      return await request();
+    } catch (e) {
+      // 401 또는 JWT 만료 관련 오류인지 확인
+      if (e is HttpException) {
+        final errorMessage = e.toString();
+        if (errorMessage.contains('401') ||
+            errorMessage.contains('ExpiredJwtException') ||
+            errorMessage.contains('JWT expired')) {
+          debugPrint('[UploadService] Token expired, attempting refresh...');
+
+          try {
+            // 토큰 갱신 시도
+            await _authService.refreshToken();
+            debugPrint('[UploadService] Token refreshed successfully');
+
+            // 갱신된 토큰으로 재시도
+            return await request();
+          } catch (refreshError) {
+            debugPrint('[UploadService] Token refresh failed: $refreshError');
+            rethrow;
+          }
+        }
+      }
+      rethrow;
     }
-    throw HttpException(
-      'failed to get access url for imageId=$imageId (${resp.statusCode})',
-    );
   }
 }

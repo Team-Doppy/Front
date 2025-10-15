@@ -2,7 +2,7 @@ import 'dart:ui' as ui;
 import 'package:doppy/editor/overlay/drawing_overlay.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:doppy/editor/image/gallery_bottom_sheet.dart';
+import 'package:doppy/editor/image/native_image_picker.dart';
 import 'package:doppy/theme/app_colors.dart';
 
 enum StickerKind { text, emoji, image, draw }
@@ -15,6 +15,8 @@ class StickerOverlay extends StatefulWidget {
     this.initialText,
     this.initialEmoji,
     this.initialImage,
+    this.initialDrawingStrokes,
+    this.scrollController,
   });
 
   final void Function({
@@ -28,6 +30,8 @@ class StickerOverlay extends StatefulWidget {
   final String? initialText;
   final String? initialEmoji;
   final Uint8List? initialImage;
+  final List<Map<String, dynamic>>? initialDrawingStrokes;
+  final ScrollController? scrollController;
 
   @override
   State<StickerOverlay> createState() => _StickerOverlayState();
@@ -129,7 +133,22 @@ class _StickerOverlayState extends State<StickerOverlay> {
       },
       child:
           _kind == StickerKind.draw
-              ? _buildDrawEditor()
+              ? DrawingOverlay(
+                initialStrokes: widget.initialDrawingStrokes,
+
+                onSubmitDrawing: (strokes, position) {
+                  // 벡터 데이터를 전달
+                  widget.onSubmit(
+                    text: '',
+                    textStyle: {
+                      'drawingData': {
+                        'strokes': strokes,
+                        'position': {'x': position.dx, 'y': position.dy},
+                      },
+                    },
+                  );
+                },
+              )
               : Scaffold(
                 backgroundColor: Colors.transparent,
 
@@ -255,14 +274,6 @@ class _StickerOverlayState extends State<StickerOverlay> {
       case StickerKind.draw:
         return const SizedBox.shrink(); // 드로잉은 오버레이에서 처리
     }
-  }
-
-  Widget _buildDrawEditor() {
-    return DrawingOverlay(
-      onSubmitImage: (image) {
-        widget.onSubmit(text: '', image: image);
-      },
-    );
   }
 
   Widget _buildTextEditor() {
@@ -552,23 +563,18 @@ class _StickerOverlayState extends State<StickerOverlay> {
   Future<void> _pickImageFromGallery() async {
     try {
       if (!mounted) return;
-      await showModalBottomSheet(
-        context: context,
-        backgroundColor: Colors.transparent,
-        isScrollControlled: true,
-        builder:
-            (sheetContext) => GalleryBottomSheet(
-              onImagesSelected: (files) async {
-                if (files.isEmpty) return;
-                final bytes = await files.first.readAsBytes();
-                if (!mounted) return;
 
-                // 이미지 선택 시 바로 스티커로 추가하고 오버레이 닫기
-                widget.onSubmit(text: '', image: bytes);
-                Navigator.of(context).pop();
-              },
-            ),
-      );
+      final picker = NativeImagePicker();
+      final file = await picker.pickSingleImage();
+
+      if (file != null) {
+        final bytes = await file.readAsBytes();
+        if (!mounted) return;
+
+        // 이미지 선택 시 바로 스티커로 추가하고 오버레이 닫기
+        widget.onSubmit(text: '', image: bytes);
+        Navigator.of(context).pop();
+      }
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(

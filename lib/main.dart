@@ -7,7 +7,6 @@ import 'package:doppy/pages/screens/home_screen.dart';
 import 'package:doppy/data/models/post_data.dart';
 import 'package:doppy/pages/components/custom_bottom_navigation_bar.dart';
 import 'package:doppy/pages/onboarding/splash.dart';
-import 'package:doppy/pages/screens/manage_neighbor_screen.dart';
 import 'package:doppy/pages/screens/user_profile_screen.dart';
 
 import 'package:doppy/pages/user/login_screen.dart';
@@ -56,7 +55,7 @@ Future<void> main() async {
         ChangeNotifierProvider(create: (_) => PostDragDropService()),
         ChangeNotifierProvider(create: (_) => SearchService()),
         ChangeNotifierProvider(create: (_) => SearchResultProvider()),
-        ChangeNotifierProvider(create: (_) => ImageService()),
+        ChangeNotifierProvider(create: (_) => NodeComponentService()),
         ChangeNotifierProvider(create: (_) => StickerService()),
         ChangeNotifierProvider(create: (_) => UploadService()),
       ],
@@ -107,10 +106,6 @@ class MyApp extends StatelessWidget {
         '/login': (_) => const LoginScreen(),
         '/search': (_) => const RootShell(initialIndex: 1),
         '/profile': (context) => const RootShell(initialIndex: 3),
-        // 필요 시 확장
-        '/manage-group': (_) => const ManageNeighborScreen(initialTabIndex: 1),
-        '/manage-neighbor':
-            (_) => const ManageNeighborScreen(initialTabIndex: 0),
         '/post-write': (_) => PostwriteScreen(screenWidth: screenWidth),
       },
 
@@ -185,7 +180,15 @@ class _RootShellState extends State<RootShell> {
 
     if (i == 2) {
       final screenWidth = MediaQuery.of(context).size.width;
-      Navigator.of(context).pushNamed('/post-write', arguments: screenWidth);
+      Navigator.of(context).push(
+        PageRouteBuilder(
+          pageBuilder:
+              (context, animation, secondaryAnimation) =>
+                  PostwriteScreen(screenWidth: screenWidth),
+          transitionDuration: Duration.zero, // 애니메이션 제거
+          reverseTransitionDuration: Duration.zero, // 역방향 애니메이션도 제거
+        ),
+      );
       return;
     }
     final wasIndex = _index;
@@ -210,30 +213,30 @@ class _RootShellState extends State<RootShell> {
     final auth = context.watch<AuthProvider>();
     final pages = _buildPages(auth.username);
 
-    return Scaffold(
-      backgroundColor: Theme.of(context).colorScheme.background,
-      body: AnimatedSwitcher(
-        duration: const Duration(milliseconds: 250),
-        switchInCurve: Curves.easeOut,
-        switchOutCurve: Curves.easeIn,
-        transitionBuilder: (child, animation) {
-          // SlideTransition 제거하고 FadeTransition만 사용하여 버벅임 방지
-          return FadeTransition(opacity: animation, child: child);
-        },
-        child: KeyedSubtree(
-          key: ValueKey('page_${auth.username}_$_index'),
-          child: pages[_index],
-        ),
-      ),
-      bottomNavigationBar: Consumer<SearchResultProvider>(
-        builder:
-            (context, searchResultProvider, _) => CustomBottomNavigationBar(
-              currentIndex: _index,
-              onTap: _onTap,
-              isSearching: searchResultProvider.isSearchActive,
+    return Material(
+      child: Stack(
+        children: [
+          KeyedSubtree(
+            key: ValueKey('page_${auth.username}_$_index'),
+            child: pages[_index],
+          ),
+          // 플로팅 바텀 네비게이션 바
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 0,
+            child: Consumer<SearchResultProvider>(
+              builder:
+                  (context, searchResultProvider, _) =>
+                      CustomBottomNavigationBar(
+                        currentIndex: _index,
+                        onTap: _onTap,
+                        isSearching: searchResultProvider.isSearchActive,
+                      ),
             ),
+          ),
+        ],
       ),
-      // 플로팅 바텀 내비게이션바
     );
   }
 }

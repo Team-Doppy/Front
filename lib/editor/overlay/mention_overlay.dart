@@ -1,5 +1,6 @@
 import 'dart:ui';
 
+import 'package:doppy/pages/components/common_profile_avatar.dart';
 import 'package:flutter/material.dart';
 import 'package:doppy/theme/app_colors.dart';
 import 'package:doppy/data/services/mention_service.dart';
@@ -79,214 +80,190 @@ class _MentionOverlayState extends State<MentionOverlay> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.transparent,
-      body: SafeArea(
-        child: Stack(
-          children: [
-            // 배경 블러 + 반투명
-            Positioned.fill(
-              child: GestureDetector(
-                onTap: () => Navigator.of(context).pop(),
-                onVerticalDragEnd: (d) {
-                  if (d.primaryVelocity != null && d.primaryVelocity! > 400) {
-                    Navigator.of(context).pop();
-                  }
-                },
-                child: BackdropFilter(
-                  filter: ImageFilter.blur(sigmaX: 5, sigmaY: 5),
-                  child: Container(
-                    color: const Color.fromARGB(182, 144, 144, 144),
-                  ),
-                ),
-              ),
-            ),
-
-            // 상단 닫기(X) 버튼
-            Positioned(
-              top: 12,
-              left: 12,
-              child: GestureDetector(
-                onTap: () => Navigator.of(context).maybePop(),
-                child: SizedBox(
-                  width: 36,
-                  height: 36,
-                  child: const Icon(Icons.close, color: Colors.white, size: 20),
-                ),
-              ),
-            ),
-
-            // 상단 입력 영역 (링크 오버레이 유사)
-            Positioned(
-              top: 25,
-              left: 0,
-              right: 0,
-              child: Align(
-                alignment: Alignment.topLeft,
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(vertical: 20),
-                          child: TextField(
-                            controller: _controller,
-                            focusNode: _focusNode,
-                            autofocus: true,
-                            cursorColor: AppColors.darkTextPrimary,
-                            style: TextStyle(
-                              color: AppColors.darkTextPrimary,
-                              fontSize: 18,
-                            ),
-
-                            decoration: InputDecoration(
-                              prefixIcon: const Icon(
-                                Icons.alternate_email,
-                                color: AppColors.darkTextPrimary,
-                              ),
-                              isDense: true,
-                              filled: true,
-                              fillColor: AppColors.darkSurface.withOpacity(
-                                0.35,
-                              ),
-                              contentPadding: const EdgeInsets.symmetric(
-                                horizontal: 0,
-                                vertical: 0,
-                              ),
-                              border: OutlineInputBorder(
-                                borderSide: BorderSide.none,
-                                borderRadius: BorderRadius.circular(8),
-                              ),
-                              hintText: '사용자 검색',
-                              hintStyle: TextStyle(
-                                color: AppColors.darkTextPrimary.withOpacity(
-                                  0.5,
-                                ),
-                              ),
-                            ),
-                            onChanged: _onQueryChanged,
-                            onSubmitted: (_) => _submit(),
-                          ),
-                        ),
-                      ),
-
-                      const SizedBox(width: 6),
-
-                      InkWell(
-                        onTap: _addCurrent,
-                        child: Container(
-                          padding: const EdgeInsets.all(13),
-                          decoration: BoxDecoration(
-                            color: AppColors.darkSurface.withOpacity(0.3),
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: const Icon(
-                            Icons.add,
-                            color: Colors.white,
-                            size: 22,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-
-            // 중간: 실시간 검색 결과 (원형 미리보기, 가로 스크롤)
-            Positioned(
-              top: 120,
-              left: 0,
-              right: 0,
-              height: 140,
-              child:
-                  _loading
-                      ? ListView.separated(
-                        scrollDirection: Axis.horizontal,
-                        padding: const EdgeInsets.symmetric(horizontal: 12),
-                        itemBuilder: (_, i) => _LoadingCircleUser(),
-                        separatorBuilder: (_, __) => const SizedBox(width: 8),
-                        itemCount: 6, // 로딩 중일 때 6개 표시
-                      )
-                      : ListView.separated(
-                        scrollDirection: Axis.horizontal,
-                        padding: const EdgeInsets.symmetric(horizontal: 12),
-                        itemBuilder: (_, i) {
-                          final item = _results[i];
-                          final bool selected = _selected.any(
-                            (s) => s.username == item.username,
-                          );
-                          final bool isRecentMention = _controller.text.isEmpty;
-                          return _CircleUser(
-                            user: item,
-                            selected: selected,
-                            isRecentMention: isRecentMention,
-                            onTap: () => _toggleSelect(item),
-                            onRemove:
-                                isRecentMention
-                                    ? () => _removeFromRecent(item)
-                                    : null,
-                          );
-                        },
-                        separatorBuilder: (_, __) => const SizedBox(width: 8),
-                        itemCount: _results.length,
-                      ),
-            ),
-
-            // 하단: 선택 누적 + 언급하기 버튼
-            Positioned(
-              top: 260,
-              left: 0,
-              right: 0,
-              bottom: 70,
-              child: Column(
-                children: [
-                  if (_selected.isNotEmpty)
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 16),
-                      child: ListView.separated(
-                        shrinkWrap: true,
-                        itemBuilder:
-                            (_, i) => _SelectedRowChip(
-                              label: _selected[i].username,
-                              onRemove: () => _toggleSelect(_selected[i]),
-                            ),
-                        separatorBuilder: (_, __) => const SizedBox(height: 8),
-                        itemCount: _selected.length,
-                      ),
-                    ),
-                ],
-              ),
-            ),
-            Positioned(
-              bottom: 20,
-              left: 0,
-              right: 0,
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: SizedBox(
-                  width: double.infinity,
-                  height: 48,
-                  child: ElevatedButton(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.white,
-                      foregroundColor: Colors.black,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      elevation: 0,
-                    ),
-                    onPressed: _selected.isEmpty ? null : _submit,
-                    child: const Text(
-                      '언급하기',
-                      style: TextStyle(fontWeight: FontWeight.w700),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ],
+      appBar: AppBar(
+        backgroundColor: const Color.fromARGB(182, 96, 96, 96),
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        leading: IconButton(
+          onPressed: () => Navigator.of(context).pop(),
+          icon: Icon(Icons.close, color: Colors.white, size: 22),
         ),
+        title: Container(
+          padding: const EdgeInsets.symmetric(vertical: 20),
+          child: TextField(
+            cursorColor: AppColors.darkTextPrimary,
+            controller: _controller,
+            focusNode: _focusNode,
+            autofocus: true,
+
+            style: TextStyle(color: AppColors.darkTextPrimary, fontSize: 18),
+            decoration: InputDecoration(
+              filled: true,
+              fillColor: Colors.white.withOpacity(0.1),
+              hintText: '누구를 언급할까요?',
+              hintStyle: TextStyle(
+                color: Colors.white.withOpacity(0.6),
+                fontSize: 16,
+                fontWeight: FontWeight.w500,
+              ),
+              suffixIcon:
+                  _controller.text.isNotEmpty
+                      ? IconButton(
+                        tooltip: '검색',
+                        onPressed: () {
+                          FocusScope.of(context).unfocus();
+                        },
+                        icon: Icon(
+                          Icons.search,
+                          color: Colors.white.withOpacity(0.8),
+                          size: 22,
+                        ),
+                      )
+                      : Icon(
+                        Icons.search,
+                        color: Colors.white.withOpacity(0.6),
+                        size: 22,
+                      ),
+              contentPadding: const EdgeInsets.symmetric(
+                vertical: 8,
+                horizontal: 16,
+              ),
+              isDense: true,
+              border: const OutlineInputBorder(
+                borderRadius: BorderRadius.all(Radius.circular(16)),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.all(Radius.circular(16)),
+                borderSide: BorderSide.none,
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.all(Radius.circular(16)),
+                borderSide: BorderSide.none,
+              ),
+              disabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.all(Radius.circular(16)),
+                borderSide: BorderSide.none,
+              ),
+            ),
+            onChanged: _onQueryChanged,
+          ),
+        ),
+      ),
+
+      backgroundColor: Colors.transparent,
+      body: Stack(
+        children: [
+          // 배경 블러 + 반투명
+          Positioned.fill(
+            child: GestureDetector(
+              onTap: () => Navigator.of(context).pop(),
+              onVerticalDragEnd: (d) {
+                if (d.primaryVelocity != null && d.primaryVelocity! > 400) {
+                  Navigator.of(context).pop();
+                }
+              },
+              child: BackdropFilter(
+                filter: ImageFilter.blur(sigmaX: 5, sigmaY: 5),
+                child: Container(color: const Color.fromARGB(182, 96, 96, 96)),
+              ),
+            ),
+          ),
+          Column(
+            children: [
+              SizedBox(height: 20),
+              if (_loading || _results.isNotEmpty)
+                SizedBox(
+                  height: 156,
+                  child:
+                      _loading
+                          ? ListView.separated(
+                            scrollDirection: Axis.horizontal,
+                            padding: const EdgeInsets.symmetric(horizontal: 12),
+                            itemBuilder: (_, i) => _LoadingCircleUser(),
+                            separatorBuilder:
+                                (_, __) => const SizedBox(width: 8),
+                            itemCount: 6, // 로딩 중일 때 6개 표시
+                          )
+                          : ListView.separated(
+                            scrollDirection: Axis.horizontal,
+                            padding: const EdgeInsets.symmetric(horizontal: 12),
+                            itemBuilder: (_, i) {
+                              final item = _results[i];
+                              final bool selected = _selected.any(
+                                (s) => s.username == item.username,
+                              );
+                              final bool isRecentMention =
+                                  _controller.text.isEmpty;
+                              return _CircleUser(
+                                user: item,
+                                selected: selected,
+                                isRecentMention: isRecentMention,
+                                onTap: () => _toggleSelect(item),
+                                onRemove:
+                                    isRecentMention
+                                        ? () => _removeFromRecent(item)
+                                        : null,
+                              );
+                            },
+                            separatorBuilder:
+                                (_, __) => const SizedBox(width: 8),
+                            itemCount: _results.length,
+                          ),
+                ),
+              Expanded(
+                child: Container(
+                  child:
+                      _selected.isNotEmpty
+                          ? Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 16),
+                            child: ListView.separated(
+                              shrinkWrap: true,
+                              itemBuilder:
+                                  (_, i) => _SelectedRowChip(
+                                    label: _selected[i].username,
+                                    onRemove: () => _toggleSelect(_selected[i]),
+                                  ),
+                              separatorBuilder:
+                                  (_, __) => const SizedBox(height: 8),
+                              itemCount: _selected.length,
+                            ),
+                          )
+                          : Container(),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.all(16),
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor:
+                        _selected.isEmpty
+                            ? Colors.transparent
+                            : _selected.length == 1
+                            ? Theme.of(context).colorScheme.onSurface
+                            : AppColors.darkTextPrimary,
+                    foregroundColor:
+                        _selected.isEmpty
+                            ? Colors.transparent
+                            : _selected.length == 1
+                            ? Theme.of(context).colorScheme.surface
+                            : AppColors.darkBackground,
+                    elevation: 0,
+                    minimumSize: Size(double.infinity, 48),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                  ),
+                  onPressed: _submit,
+                  child: const Text(
+                    '언급하기',
+                    style: TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                ),
+              ),
+              SizedBox(height: 20),
+            ],
+          ),
+        ],
       ),
     );
   }
@@ -374,19 +351,6 @@ class _MentionOverlayState extends State<MentionOverlay> {
     Navigator.of(context).maybePop();
   }
 
-  void _addCurrent() {
-    final q = _controller.text.trim();
-    if (q.isEmpty) return;
-    // 결과 중 일치하는 항목을 선택, 없으면 새 사용자명으로 추가
-    final match = _results.firstWhere(
-      (u) => u.username.toLowerCase() == q.toLowerCase(),
-      orElse: () => _UserChip(username: q, imageUrl: null, alias: q),
-    );
-    _toggleSelect(match);
-    _controller.clear();
-    _onQueryChanged('');
-  }
-
   void _removeFromRecent(_UserChip user) {
     _mentionService.removeFromHistory(user.username);
     _loadRecentMentions();
@@ -415,11 +379,10 @@ class _Glass extends StatelessWidget {
       child: BackdropFilter(
         filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
         child: Container(
-          padding: padding ?? const EdgeInsets.all(12),
+          padding: padding ?? const EdgeInsets.all(20),
           decoration: BoxDecoration(
-            color: Colors.white.withOpacity(0.08),
+            color: Colors.white.withOpacity(0.1),
             borderRadius: BorderRadius.circular(borderRadius),
-            border: Border.all(color: Colors.white24),
           ),
           child: child,
         ),
@@ -454,19 +417,22 @@ class _CircleUser extends StatelessWidget {
           Stack(
             children: [
               Container(
-                width: 70,
-                height: 70,
+                width: 100,
+                height: 100,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
                   color: AppColors.darkSurfaceVariant,
                   border: Border.all(
                     color: selected ? AppColors.primary : AppColors.darkBorder,
-                    width: selected ? 2 : 1,
+                    width: selected ? 3.5 : 1,
                   ),
                 ),
-                child: const Icon(
-                  Icons.person,
-                  color: AppColors.darkTextSecondary,
+                child: CommonProfileAvatar(
+                  username: user.username,
+                  size: 100,
+                  borderWidth: 1,
+
+                  imageUrl: user.imageUrl,
                 ),
               ),
               // 최근 언급 대상일 때만 X 버튼 표시
@@ -476,16 +442,12 @@ class _CircleUser extends StatelessWidget {
                   right: 0,
                   child: GestureDetector(
                     onTap: onRemove,
-                    child: Container(
+                    child: SizedBox(
                       width: 20,
                       height: 20,
-                      decoration: const BoxDecoration(
-                        color: Colors.red,
-                        shape: BoxShape.circle,
-                      ),
-                      child: const Icon(
+                      child: Icon(
                         Icons.close,
-                        color: Colors.white,
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
                         size: 12,
                       ),
                     ),
@@ -518,11 +480,12 @@ class _SelectedRowChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return _Glass(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-      borderRadius: 10,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 18),
+      borderRadius: 20,
       child: Row(
         children: [
           const Icon(Icons.alternate_email, color: Colors.white70, size: 16),
+
           const SizedBox(width: 8),
           Expanded(
             child: Text(
@@ -530,6 +493,7 @@ class _SelectedRowChip extends StatelessWidget {
               style: const TextStyle(
                 color: Colors.white,
                 fontWeight: FontWeight.w600,
+                fontSize: 16,
               ),
             ),
           ),

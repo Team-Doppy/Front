@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:super_editor/super_editor.dart';
 import 'package:doppy/editor/service/drag_service.dart';
 import 'package:doppy/editor/service/editor_service.dart';
+import 'package:doppy/editor/component/link_component.dart';
+import 'package:doppy/editor/component/mention_component.dart';
 
 /// 패키지 기본 ParagraphComponent를 사용하고,
 /// 드래그 드롭 라인만 오버레이로 추가하는 경량 커스텀 빌더
@@ -114,7 +116,10 @@ class _ParagraphWithDropLines extends StatelessWidget {
             final doc = editorService.document;
             if (currentIndex - 1 >= 0) {
               final prev = doc.getNodeAt(currentIndex - 1);
-              if (prev is ImageNode || prev is ImageRowNode) {
+              if (prev is ImageNode ||
+                  prev is ImageRowNode ||
+                  prev is LinkNode ||
+                  prev is MentionNode) {
                 showTop = false;
               }
             }
@@ -128,20 +133,20 @@ class _ParagraphWithDropLines extends StatelessWidget {
 
         return Stack(
           children: [
-            Padding(padding: EdgeInsets.zero, child: content),
+            Container(margin: EdgeInsets.only(top: 4), child: content),
             if (showTop)
               Positioned(
                 top: 0,
                 left: 0,
                 right: 0,
-                child: Container(height: 3, color: AppColors.primary),
+                child: Container(height: 5, color: AppColors.primary),
               ),
             if (showBottom)
               Positioned(
                 bottom: 0,
                 left: 0,
                 right: 0,
-                child: Container(height: 3, color: AppColors.primary),
+                child: Container(height: 5, color: AppColors.primary),
               ),
           ],
         );

@@ -75,7 +75,7 @@ class _SaveDraftOverlayState extends State<SaveDraftOverlay>
                   child: BackdropFilter(
                     filter: ui.ImageFilter.blur(sigmaX: 12, sigmaY: 12),
                     child: Container(
-                      width: 320,
+                      width: 300,
                       padding: const EdgeInsets.fromLTRB(20, 18, 20, 16),
 
                       child: Column(
@@ -100,7 +100,7 @@ class _SaveDraftOverlayState extends State<SaveDraftOverlay>
                                 foregroundColor: Colors.black,
                                 elevation: 0,
                                 shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(10),
+                                  borderRadius: BorderRadius.circular(20),
                                 ),
                               ),
                               onPressed:
@@ -122,7 +122,7 @@ class _SaveDraftOverlayState extends State<SaveDraftOverlay>
                                 foregroundColor: AppColors.darkTextPrimary,
                                 side: const BorderSide(color: Colors.white24),
                                 shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(10),
+                                  borderRadius: BorderRadius.circular(20),
                                 ),
                               ),
                               onPressed:

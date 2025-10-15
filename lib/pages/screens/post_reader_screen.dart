@@ -415,7 +415,6 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                     SingleImageComponentBuilder(dragService: _dragService),
                     RowImageComponentBuilder(dragService: _dragService),
                     LinkComponentBuilder(),
-                    LocationComponentBuilder(dragService: _dragService),
                     MentionComponentBuilder(dragService: _dragService),
                     ...defaultComponentBuilders,
                   ],
@@ -1384,18 +1383,7 @@ class _PostReaderScreenState extends State<PostReaderScreen>
             ),
           );
           break;
-        case 'location':
-          rebuilt.add(
-            LocationNode(
-              id: id,
-              lat: (m['lat'] as num?)?.toDouble() ?? 0,
-              lng: (m['lng'] as num?)?.toDouble() ?? 0,
-              title: (m['title'] ?? '').toString(),
-              address: (m['address'] ?? '').toString(),
-              description: (m['description'] ?? '').toString(),
-            ),
-          );
-          break;
+
         case 'mention':
           rebuilt.add(
             MentionNode(
@@ -1436,7 +1424,10 @@ class _PostReaderScreenState extends State<PostReaderScreen>
       // 🎨 형광펜 속성 디코딩
       final highlightHex = ann['highlight'] as String?;
       if (highlightHex != null && highlightHex.isNotEmpty) {
-        atts.add(HighlightAttribution(_parseHexColor(highlightHex)));
+        print('DEBUG: 형광펜 디코딩 - HEX: $highlightHex');
+        final highlightColor = _parseHexColor(highlightHex);
+        print('DEBUG: 형광펜 디코딩 - 색상: $highlightColor');
+        atts.add(HighlightAttribution(highlightColor));
       }
       // 🎨 폰트 패밀리 속성 디코딩
       final fontFamily = ann['fontFamily'] as String?;
