@@ -173,7 +173,7 @@ class _MentionOverlayState extends State<MentionOverlay> {
               SizedBox(height: 20),
               if (_loading || _results.isNotEmpty)
                 SizedBox(
-                  height: 156,
+                  height: 140,
                   child:
                       _loading
                           ? ListView.separated(
@@ -232,7 +232,10 @@ class _MentionOverlayState extends State<MentionOverlay> {
                 ),
               ),
               Padding(
-                padding: const EdgeInsets.all(16),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 8,
+                ),
                 child: ElevatedButton(
                   style: ElevatedButton.styleFrom(
                     backgroundColor:
@@ -260,7 +263,6 @@ class _MentionOverlayState extends State<MentionOverlay> {
                   ),
                 ),
               ),
-              SizedBox(height: 20),
             ],
           ),
         ],

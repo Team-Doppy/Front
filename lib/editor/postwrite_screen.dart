@@ -1,6 +1,9 @@
 import 'dart:io';
 import 'dart:convert';
 import 'dart:ui' as ui;
+import 'dart:typed_data';
+import 'package:http/http.dart' as http;
+import 'package:path_provider/path_provider.dart';
 
 import 'package:doppy/editor/component/link_component.dart';
 import 'package:doppy/editor/component/single_image_component.dart';
@@ -29,6 +32,8 @@ import 'package:doppy/editor/overlay/save_draft_overlay.dart';
 import 'package:doppy/editor/overlay/draft_list_overlay.dart';
 import 'package:doppy/editor/publish/post_exporter.dart';
 import 'package:doppy/data/services/draft_service.dart';
+import 'package:doppy/data/services/upload_service.dart';
+import 'package:doppy/editor/image/custom_image_editor_screen.dart';
 import 'package:doppy/utils/snackbar_utils.dart';
 
 /// 글 공개 범위 옵션
@@ -160,8 +165,61 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
       // 최초 진입 스냅샷 마크(현재 상태를 저장 기준으로 간주)
       editorService.markSavedSnapshot();
 
+      // 스크롤 리스너 추가
+      scrollController.addListener(_onScrollChanged);
+
       // StickerCanvas는 화면 Stack에 직접 부착하므로 여기선 별도 처리 없음
     });
+  }
+
+  double _lastOffset = 0.0;
+  bool _isScrollingUp = false;
+  bool _showAppBar = true; // 초기에는 항상 표시
+
+  void _onScrollChanged() {
+    final currentOffset = scrollController.offset;
+    final delta = currentOffset - _lastOffset;
+
+    // 스크롤 가능 여부 확인
+    final canScroll =
+        scrollController.hasClients &&
+        scrollController.position.maxScrollExtent > 0;
+
+    if (!canScroll) {
+      // 스크롤이 불가능하면 앱바 항상 표시
+      if (!_showAppBar) {
+        setState(() {
+          _showAppBar = true;
+          _isScrollingUp = true;
+        });
+      }
+      return;
+    }
+
+    // 스크롤 임계값 설정 (너무 작은 변화는 무시)
+    const threshold = 5.0;
+
+    if (delta.abs() > threshold) {
+      if (delta < 0) {
+        // 위로 스크롤 (앱바 표시)
+        if (!_isScrollingUp) {
+          setState(() {
+            _isScrollingUp = true;
+            _showAppBar = true;
+          });
+        }
+      } else {
+        // 아래로 스크롤 (앱바 숨김)
+        if (_isScrollingUp) {
+          setState(() {
+            _isScrollingUp = false;
+            _showAppBar = false;
+          });
+        }
+      }
+    }
+
+    _lastOffset = currentOffset;
   }
 
   void _onEditorServiceChange() {
@@ -193,6 +251,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     editorService.removeListener(_onEditorServiceChange);
     editorService.dispose();
     dragService.removeListener(_onDragChange);
+    scrollController.removeListener(_onScrollChanged);
     _editorFocusNode.removeListener(_onFocusChange);
     try {
       composer.selectionNotifier.removeListener(_updateImageSelectionHighlight);
@@ -641,129 +700,132 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
               ),
             ),
 
-            // 커스텀 투명 앱바
-            Positioned(
-              top: 0,
+            // 커스텀 투명 앱바 (왼쪽 - 뒤로가기)
+            AnimatedPositioned(
+              duration: const Duration(milliseconds: 200),
+              curve: Curves.easeInOut,
+              top: _showAppBar ? -10 : -100,
               left: 0,
-
               child: SafeArea(
-                child: Container(
-                  height: 50,
-                  decoration: BoxDecoration(),
-                  child: Row(
-                    children: [
-                      // 뒤로가기 버튼
-                      GestureDetector(
-                        onTap: () async {
-                          final needPrompt =
-                              editorService.shouldPromptSaveOnExit();
-                          final stickerService = context.read<StickerService>();
-                          final hasStickerChanges = stickerService.hasChanges;
-                          if (needPrompt || hasStickerChanges) {
-                            final decision = await Navigator.of(
-                              context,
-                            ).push<ExitDecision>(
-                              PageRouteBuilder(
-                                opaque: false,
-                                barrierDismissible: true,
-                                pageBuilder:
-                                    (_, __, ___) => const SaveDraftOverlay(),
-                              ),
-                            );
-                            if (decision == ExitDecision.saveDraft) {
-                              await _manualSaveDraft();
-                              _cleanupAndExit();
-                            } else if (decision == ExitDecision.discard) {
-                              await Future.delayed(
-                                const Duration(milliseconds: 180),
-                              );
-                              _cleanupAndExit();
-                            }
-                          } else {
-                            _cleanupAndExit();
-                          }
-                        },
-                        child: Container(
-                          padding: const EdgeInsets.all(12),
-                          child: Icon(
-                            Icons.arrow_back_ios_new_rounded,
-                            color: Theme.of(
-                              context,
-                            ).colorScheme.onSurface.withOpacity(0.5),
-                            size: 18,
-                          ),
-                        ),
+                child: ClipRRect(
+                  child: BackdropFilter(
+                    filter: ui.ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.background.withOpacity(1),
+                        borderRadius: BorderRadius.circular(15),
                       ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-            Positioned(
-              top: 0,
-              right: 0,
-
-              child: SafeArea(
-                child: Container(
-                  height: 50,
-                  decoration: BoxDecoration(),
-                  child: Row(
-                    children: [
-                      if (!widget.isEditMode &&
-                          !_isKeyboardVisible &&
-                          editorService.canProceedToPublish())
-                        TextButton(
-                          onPressed:
-                              editorService.canProceedToPublish()
-                                  ? () {
-                                    //키보드 내리기 (SuperEditor의 포커스 관리 활용)
-                                    _editorFocusNode.unfocus();
-
-                                    final json =
-                                        PostExporter.exportToJsonString(
-                                          editorService: editorService,
-                                          stickerService:
-                                              context.read<StickerService>(),
-                                          viewportSize:
-                                              MediaQuery.of(context).size,
-                                          pretty: true,
-                                        );
-                                    NodeComponentService().selectNode(null);
-                                    // ignore: avoid_print
-                                    print('===== POST JSON =====\n$json');
-                                    Navigator.of(context).push(
-                                      PageRouteBuilder(
-                                        opaque: false,
-                                        barrierDismissible: true,
-                                        pageBuilder:
-                                            (_, __, ___) => PostExportScreen(
-                                              exported: json,
-                                            ),
-                                      ),
-                                    );
-                                  }
-                                  : null,
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 10,
-                              vertical: 4,
-                            ),
-                            child: Text(
-                              '다음',
-                              style: TextStyle(
+                      height: 45,
+                      width: MediaQuery.of(context).size.width,
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          // 뒤로가기 버튼
+                          GestureDetector(
+                            onTap: () async {
+                              final needPrompt =
+                                  editorService.shouldPromptSaveOnExit();
+                              final stickerService =
+                                  context.read<StickerService>();
+                              final hasStickerChanges =
+                                  stickerService.hasChanges;
+                              if (needPrompt || hasStickerChanges) {
+                                final decision = await Navigator.of(
+                                  context,
+                                ).push<ExitDecision>(
+                                  PageRouteBuilder(
+                                    opaque: false,
+                                    barrierDismissible: true,
+                                    pageBuilder:
+                                        (_, __, ___) =>
+                                            const SaveDraftOverlay(),
+                                  ),
+                                );
+                                if (decision == ExitDecision.saveDraft) {
+                                  await _manualSaveDraft();
+                                  _cleanupAndExit();
+                                } else if (decision == ExitDecision.discard) {
+                                  await Future.delayed(
+                                    const Duration(milliseconds: 180),
+                                  );
+                                  _cleanupAndExit();
+                                }
+                              } else {
+                                _cleanupAndExit();
+                              }
+                            },
+                            child: Container(
+                              padding: const EdgeInsets.all(12),
+                              child: Icon(
+                                Icons.arrow_back_ios_new_rounded,
                                 color: Theme.of(
                                   context,
-                                ).colorScheme.onSurface.withOpacity(1),
-                                fontWeight: FontWeight.w600,
+                                ).colorScheme.onSurface.withOpacity(0.8),
+                                size: 18,
                               ),
                             ),
                           ),
-                        ),
-                    ],
+
+                          if (editorService.canProceedToPublish())
+                            GestureDetector(
+                              onTap:
+                                  editorService.canProceedToPublish()
+                                      ? () {
+                                        _editorFocusNode.unfocus();
+
+                                        final json =
+                                            PostExporter.exportToJsonString(
+                                              editorService: editorService,
+                                              stickerService:
+                                                  context
+                                                      .read<StickerService>(),
+                                              viewportSize:
+                                                  MediaQuery.of(context).size,
+                                              pretty: true,
+                                            );
+                                        NodeComponentService().selectNode(null);
+
+                                        Navigator.of(context).push(
+                                          PageRouteBuilder(
+                                            opaque: false,
+                                            barrierDismissible: true,
+                                            pageBuilder:
+                                                (_, __, ___) =>
+                                                    PostExportScreen(
+                                                      exported: json,
+                                                    ),
+                                          ),
+                                        );
+                                      }
+                                      : null,
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 16,
+                                  vertical: 8,
+                                ),
+
+                                child: Text(
+                                  '다음',
+                                  style: TextStyle(
+                                    color: Theme.of(
+                                      context,
+                                    ).colorScheme.onSurface.withOpacity(0.9),
+                                    fontWeight: FontWeight.w600,
+                                    fontSize: 15,
+                                  ),
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
                   ),
                 ),
               ),
             ),
+
             // 스티커 캔버스 (기본 화면 위, 기타 오버레이 아래)
             Positioned.fill(
               child: StickerCanvas(scrollController: scrollController),
@@ -893,12 +955,20 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     final node = document.getNodeById(selectedId);
     // 링크/멘션/이미지 공통 삭제 전용 툴바
     return Container(
-      height: 40,
+      height: 38,
       padding: const EdgeInsets.symmetric(horizontal: 12),
-      color: Theme.of(context).colorScheme.background.withOpacity(0.1),
+
       child: Row(
         children: [
           const SizedBox(width: 8),
+          Text(
+            '선택됨',
+            style: TextStyle(
+              color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
+              fontSize: 14,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
           /*
           Text(
             '선택됨: ${node.runtimeType}',
@@ -906,6 +976,17 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
           ),
          */
           const Spacer(),
+          if (node is ImageNode)
+            IconButton(
+              tooltip: '수정',
+              onPressed: () => _editImage(selectedId, node),
+              icon: Icon(
+                Icons.crop,
+                size: 20,
+                color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
+              ),
+            ),
+
           IconButton(
             tooltip: '삭제',
             onPressed: () {
@@ -925,11 +1006,109 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                 SnackBarUtils.showError(context, '삭제할 수 없습니다');
               }
             },
-            icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
+            icon: Icon(
+              size: 20,
+              Icons.delete,
+              color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
+            ),
           ),
         ],
       ),
     );
+  }
+
+  /// 이미지 편집
+  Future<void> _editImage(String imageId, ImageNode node) async {
+    try {
+      final response = await http.get(Uri.parse(node.imageUrl));
+      if (response.statusCode != 200) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).hideCurrentSnackBar();
+          SnackBarUtils.showError(context, '이미지를 불러올 수 없습니다');
+        }
+        return;
+      }
+
+      final imageBytes = response.bodyBytes;
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+      }
+
+      // 3. 이미지 편집기 열기 (오버레이 스타일)
+      final editedBytes = await Navigator.push<Uint8List?>(
+        // ignore: use_build_context_synchronously
+        context,
+        PageRouteBuilder(
+          opaque: false,
+          barrierDismissible: true,
+          pageBuilder:
+              (context, _, __) =>
+                  CustomImageEditorScreen(imageBytes: imageBytes),
+        ),
+      );
+
+      if (editedBytes == null || !mounted) return;
+
+      final upload = context.read<UploadService>();
+
+      // 임시 파일로 변환
+      final tempDir = await getTemporaryDirectory();
+      final tempFile = File(
+        '${tempDir.path}/edited_${DateTime.now().millisecondsSinceEpoch}.jpg',
+      );
+      await tempFile.writeAsBytes(editedBytes);
+
+      final tasks = await upload.uploadFilesViaServerBatches([
+        tempFile,
+      ], kind: UploadKind.editorImage);
+
+      // 임시 파일 삭제
+      try {
+        await tempFile.delete();
+      } catch (_) {}
+
+      if (tasks.isEmpty || tasks.first.state != UploadState.success) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).hideCurrentSnackBar();
+          SnackBarUtils.showError(context, '이미지 업로드에 실패했습니다');
+        }
+        return;
+      }
+
+      final newUrl = tasks.first.url;
+      if (newUrl == null || newUrl.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).hideCurrentSnackBar();
+          SnackBarUtils.showError(context, '이미지 URL을 받을 수 없습니다');
+        }
+        return;
+      }
+
+      // 5. 문서에서 이미지 URL 교체
+      final nodeIndex = document.getNodeIndexById(imageId);
+      if (nodeIndex != -1) {
+        final newNode = ImageNode(
+          id: imageId,
+          imageUrl: newUrl,
+          altText: node.altText,
+        );
+
+        document.deleteNode(imageId);
+        document.insertNodeAt(nodeIndex, newNode);
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).hideCurrentSnackBar();
+          setState(() {});
+        }
+      }
+    } catch (e) {
+      print('이미지 편집 중 오류: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+        SnackBarUtils.showError(context, '이미지 편집 중 오류가 발생했습니다');
+      }
+    }
   }
 
   /// 안전한 이미지 삭제 메서드
@@ -1125,11 +1304,6 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
   /// 임시저장 불러오기
   Future<void> _loadDraft(String draftId) async {
     try {
-      // 로딩 표시
-      if (mounted) {
-        SnackBarUtils.showLoading(context, '임시저장을 불러오는 중');
-      }
-
       // 기존 선택/하이라이트를 먼저 정리하여 SuperEditor가
       // 사라진 노드에 대한 selection을 적용하지 않도록 방지
       try {

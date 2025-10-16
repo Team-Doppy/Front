@@ -229,52 +229,15 @@ class _LinkComponentState extends State<_LinkComponent> with DocumentComponent {
           Container(
             margin: EdgeInsets.only(top: marginTop, bottom: marginBottom),
             decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(10),
+              borderRadius: BorderRadius.circular(5),
               border: Border.all(
-                color: Theme.of(context).colorScheme.onSurface,
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
                 width: 2,
               ),
             ),
             child: Row(
               children: [
-                if (widget.thumbnailUrl.isNotEmpty)
-                  ClipRRect(
-                    borderRadius: const BorderRadius.only(
-                      topLeft: Radius.circular(10),
-                      bottomLeft: Radius.circular(10),
-                    ),
-                    child: Image.network(
-                      widget.thumbnailUrl,
-                      width: 120,
-                      height: 120,
-                      fit: BoxFit.cover,
-                      errorBuilder:
-                          (_, __, ___) => Container(
-                            width: 100,
-                            height: 100,
-                            color: Theme.of(context).colorScheme.onSurface,
-                            child: const Icon(
-                              Icons.link,
-                              color: Colors.white54,
-                            ),
-                          ),
-                    ),
-                  )
-                else
-                  Container(
-                    width: 100,
-                    height: 100,
-                    alignment: Alignment.center,
-                    decoration: const BoxDecoration(
-                      color: Color(0xFF2A2A2A),
-                      borderRadius: BorderRadius.only(
-                        topLeft: Radius.circular(12),
-                        bottomLeft: Radius.circular(12),
-                      ),
-                    ),
-                    child: const Icon(Icons.link, color: Colors.white54),
-                  ),
-                const SizedBox(width: 12),
+                SizedBox(width: 12),
                 Expanded(
                   child: Padding(
                     padding: const EdgeInsets.symmetric(vertical: 8),
@@ -283,7 +246,7 @@ class _LinkComponentState extends State<_LinkComponent> with DocumentComponent {
                       children: [
                         Text(
                           widget.title.isNotEmpty ? widget.title : widget.url,
-                          maxLines: 1,
+                          maxLines: 2,
                           overflow: TextOverflow.ellipsis,
                           style: const TextStyle(
                             color: Colors.white,
@@ -311,6 +274,43 @@ class _LinkComponentState extends State<_LinkComponent> with DocumentComponent {
                   ),
                 ),
                 const SizedBox(width: 10),
+                if (widget.thumbnailUrl.isNotEmpty)
+                  ClipRRect(
+                    borderRadius: BorderRadius.only(
+                      topRight: Radius.circular(5),
+                      bottomRight: Radius.circular(5),
+                    ),
+                    child: Image.network(
+                      widget.thumbnailUrl,
+                      width: 120,
+                      height: 120,
+                      fit: BoxFit.cover,
+                      errorBuilder:
+                          (_, __, ___) => Container(
+                            width: 100,
+                            height: 100,
+                            color: Theme.of(context).colorScheme.onSurface,
+                            child: const Icon(
+                              Icons.link,
+                              color: Colors.white54,
+                            ),
+                          ),
+                    ),
+                  )
+                else
+                  Container(
+                    width: 100,
+                    height: 100,
+                    alignment: Alignment.center,
+                    decoration: const BoxDecoration(
+                      color: Color(0xFF2A2A2A),
+                      borderRadius: BorderRadius.only(
+                        topRight: Radius.circular(5),
+                        bottomRight: Radius.circular(5),
+                      ),
+                    ),
+                    child: const Icon(Icons.link, color: Colors.white54),
+                  ),
               ],
             ),
           ),

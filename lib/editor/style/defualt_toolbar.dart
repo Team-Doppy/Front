@@ -711,49 +711,64 @@ extension _TopExpandedRow on _DefaultToolbarState {
           scrollDirection: Axis.horizontal,
           child: Row(
             children: [
-              _stickerPanel == StickerPanel.none
-                  ? _buildSvgChip(
-                    svgPath: 'assets/icons/editor_sticker.svg',
-                    label: '스티커',
-                    onTap: () {
-                      _toggleSticker(StickerPanel.sticker);
-                    },
-                  )
-                  : GestureDetector(
-                    onTap: () {
-                      _toggleSticker(StickerPanel.none);
-                    },
-                    child: Padding(
-                      padding: const EdgeInsets.only(left: 8.0),
-                      child: Icon(Icons.keyboard_arrow_left, size: 19),
+              _buildSvgChip(
+                svgPath: 'assets/icons/editor_sticker.svg',
+                label: '스티커',
+                onTap: () {
+                  Navigator.of(context).push(
+                    PageRouteBuilder(
+                      opaque: false,
+                      barrierDismissible: true,
+                      pageBuilder:
+                          (_, __, ___) => StickerOverlay(
+                            onSubmit: ({
+                              String? emoji,
+                              Uint8List? image,
+                              required String text,
+                              Map<String, dynamic>? textStyle,
+                            }) {
+                              final svc = context.read<StickerService>();
+                              if (image != null) {
+                                final Size size = MediaQuery.of(context).size;
+                                final scrollY =
+                                    widget.scrollController?.offset ?? 0.0;
+                                final at = Offset(
+                                  size.width / 2 - 100,
+                                  scrollY + size.height / 2 - 200,
+                                );
+                                svc.addImageSticker(image, at);
+                              } else if ((emoji ?? '').isNotEmpty) {
+                                final Size size = MediaQuery.of(context).size;
+                                final scrollY =
+                                    widget.scrollController?.offset ?? 0.0;
+                                final at = Offset(
+                                  size.width * 0.5 - 60,
+                                  scrollY + 200,
+                                );
+                                svc.addEmojiSticker(emoji!, at);
+                              } else if (text.trim().isNotEmpty) {
+                                final Size size = MediaQuery.of(context).size;
+                                final scrollY =
+                                    widget.scrollController?.offset ?? 0.0;
+                                final at = Offset(
+                                  size.width * 0.5 - 60,
+                                  scrollY + 200,
+                                );
+                                svc.addTextStickerWithStyle(
+                                  text.trim(),
+                                  textStyle,
+                                  at,
+                                );
+                              }
+                              // 스티커 추가 후 상단 두번째 툴바 자동 닫기
+                              _toggle(ToolbarSection.none);
+                            },
+                            initialKind: StickerKind.image,
+                          ),
                     ),
-                  ),
-
-              if (_stickerPanel == StickerPanel.sticker) ...[
-                const SizedBox(width: 12),
-                _buildDivider(),
-                const SizedBox(width: 8),
-                _buildStickerOption(
-                  icon: Icons.text_fields,
-                  label: '텍스트',
-                  onTap: () => _selectStickerType(StickerKind.text),
-                ),
-                const SizedBox(width: 8),
-                _buildStickerOption(
-                  icon: Icons.image,
-                  label: '이미지',
-                  onTap: () => _selectStickerType(StickerKind.image),
-                ),
-                const SizedBox(width: 8),
-                _buildStickerOption(
-                  icon: Icons.emoji_emotions,
-                  label: '이모지',
-                  onTap: () => _selectStickerType(StickerKind.emoji),
-                ),
-                const SizedBox(width: 8),
-                _buildDivider(),
-                const SizedBox(width: 12),
-              ],
+                  );
+                },
+              ),
 
               _buildSvgChip(
                 svgPath: 'assets/icons/editor_pen.svg',
@@ -948,7 +963,6 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
 
   TextAlign _currentAlignment = TextAlign.left;
   ToolbarSection _expanded = ToolbarSection.none;
-  StickerPanel _stickerPanel = StickerPanel.none;
   TextPanel _textPanel = TextPanel.none;
   // (reserved) 대표 아이콘 기준 정렬이 필요할 때 사용할 수 있는 앵커 키
   final GlobalKey _textIconKey = GlobalKey();
@@ -1039,16 +1053,6 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
     setState(() {
       _expanded = ToolbarSection.none;
     });
-  }
-
-  void _toggleSticker(StickerPanel panel) {
-    setState(() {
-      _stickerPanel = _stickerPanel == panel ? StickerPanel.none : panel;
-    });
-
-    if (_stickerPanel == StickerPanel.sticker) {
-      WidgetsBinding.instance.addPostFrameCallback((_) => _updateTopAnchor());
-    }
   }
 
   void _updateTopAnchor() {
@@ -1741,31 +1745,6 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
                 _toggle(ToolbarSection.none);
               },
             ),
-      ),
-    );
-  }
-
-  // 스티커 선택지 위젯
-  Widget _buildStickerOption({
-    required IconData icon,
-    required String label,
-    required VoidCallback onTap,
-  }) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              icon,
-              size: 16,
-              color: Theme.of(context).colorScheme.onSurface,
-            ),
-          ],
-        ),
       ),
     );
   }

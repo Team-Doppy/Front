@@ -20,7 +20,6 @@ import 'package:cached_network_image/cached_network_image.dart';
 
 // 읽기 전용에서는 에디터 전용 컴포넌트를 사용하지 않음
 import 'package:doppy/editor/component/link_component.dart';
-import 'package:doppy/editor/component/location_component.dart';
 import 'package:doppy/editor/component/mention_component.dart';
 import 'package:doppy/editor/service/editor_service.dart';
 import 'package:doppy/editor/service/drag_service.dart';
@@ -49,13 +48,16 @@ class _PostReaderScreenState extends State<PostReaderScreen>
 
   // 스크롤 애니메이션을 위한 변수들
   static const double _appBarHeight = 38.0; // AppBar 높이
-  double _scrollOffset = 0.0;
   // 상단 이미지
   double _imageH = 0.0; // 상단 이미지 높이(px)
   double _headerFadeEnd = 0.0; // 이미지가 완전 투명해지는 오프셋
   double _lastScrollOffset = 0.0;
   bool _didAutoSnapHeader = false;
   bool _isAutoAnimating = false;
+
+  // 앱바 표시/숨김을 위한 변수들
+  bool _isScrollingUp = false;
+  bool _showAppBar = true; // 초기에는 항상 표시
 
   // 댓글 진입 시 순차 등장 애니메이션
   late final AnimationController _commentsAnimCtrl;
@@ -243,9 +245,45 @@ class _PostReaderScreenState extends State<PostReaderScreen>
       _didAutoSnapHeader = false;
     }
 
-    setState(() {
-      _scrollOffset = nextOffset;
-    });
+    // 스크롤 가능 여부 확인
+    final canScroll =
+        _scrollCtrl.hasClients && _scrollCtrl.position.maxScrollExtent > 0;
+
+    if (!canScroll) {
+      // 스크롤이 불가능하면 앱바 항상 표시
+      if (!_showAppBar) {
+        setState(() {
+          _showAppBar = true;
+          _isScrollingUp = true;
+        });
+      }
+      _lastScrollOffset = nextOffset;
+      return;
+    }
+
+    // 스크롤 임계값 설정 (너무 작은 변화는 무시)
+    const threshold = 5.0;
+
+    if (delta.abs() > threshold) {
+      if (delta < 0) {
+        // 위로 스크롤 (앱바 표시)
+        if (!_isScrollingUp) {
+          setState(() {
+            _isScrollingUp = true;
+            _showAppBar = true;
+          });
+        }
+      } else {
+        // 아래로 스크롤 (앱바 숨김)
+        if (_isScrollingUp) {
+          setState(() {
+            _isScrollingUp = false;
+            _showAppBar = false;
+          });
+        }
+      }
+    }
+
     _lastScrollOffset = nextOffset;
 
     // 댓글 섹션이 화면 하단 근처에 들어오기 시작하면 순차 애니메이션 시작
@@ -273,9 +311,6 @@ class _PostReaderScreenState extends State<PostReaderScreen>
   Widget build(BuildContext context) {
     final stickers = (widget.exported['stickers'] as List?) ?? const [];
 
-    // AppBar가 나타나야 하는 시점 계산 (상단 이미지가 상당히 사라졌을 때)
-    final shouldShowAppBar = _scrollOffset >= _imageH - _appBarHeight + 0;
-    final appBarOpacity = shouldShowAppBar ? 1.0 : 0.0;
     final currentUser = context.read<UserProvider>().currentUser;
     final String postAuthor = (widget.exported['author'] ?? '').toString();
     final bool isMyPost =
@@ -1194,122 +1229,116 @@ class _PostReaderScreenState extends State<PostReaderScreen>
           AnimatedPositioned(
             duration: const Duration(milliseconds: 200),
             curve: Curves.easeInOut,
+            top: _showAppBar ? 0 : -60,
             left: 0,
             right: 0,
-            child: AnimatedOpacity(
-              duration: const Duration(milliseconds: 200),
-              opacity: appBarOpacity,
-              child: ClipRect(
-                child: BackdropFilter(
-                  filter: ui.ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-                  child: Container(
-                    height: _appBarHeight + MediaQuery.of(context).padding.top,
-                    decoration: BoxDecoration(
-                      color: Theme.of(
-                        context,
-                      ).colorScheme.surface.withOpacity(0.8),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.2),
-                          blurRadius: 4,
-                          offset: const Offset(0, 2),
-                        ),
-                      ],
-                    ),
-
-                    child: Padding(
-                      padding: EdgeInsets.only(
-                        top: MediaQuery.of(context).padding.top,
-
-                        bottom: 5.0,
+            child: ClipRect(
+              child: BackdropFilter(
+                filter: ui.ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+                child: Container(
+                  height: _appBarHeight + MediaQuery.of(context).padding.top,
+                  decoration: BoxDecoration(
+                    color: Theme.of(
+                      context,
+                    ).colorScheme.surface.withOpacity(0.8),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.2),
+                        blurRadius: 4,
+                        offset: const Offset(0, 2),
                       ),
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.center,
-                        children: [
-                          SizedBox(width: 12),
+                    ],
+                  ),
+
+                  child: Padding(
+                    padding: EdgeInsets.only(
+                      top: MediaQuery.of(context).padding.top,
+
+                      bottom: 5.0,
+                    ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        SizedBox(width: 12),
+                        GestureDetector(
+                          onTap: () => Navigator.of(context).pop(),
+                          child: Icon(
+                            Icons.arrow_back_ios_new_rounded,
+                            color: Theme.of(context).colorScheme.onSurface,
+                            size: 18,
+                          ),
+                        ),
+
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            widget.exported['title'] ?? '포스트',
+                            style: TextStyle(
+                              color: Theme.of(context).colorScheme.onSurface,
+                              fontSize: 16,
+                              fontWeight: FontWeight.w600,
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        if (isMyPost) ...[
                           GestureDetector(
-                            onTap: () => Navigator.of(context).pop(),
+                            onTap: () {
+                              print('widget.exported: ${widget.exported}');
+                              if (widget.exported['id'] != null) {
+                                Navigator.of(context).push(
+                                  MaterialPageRoute(
+                                    builder:
+                                        (_) => PostwriteScreen(
+                                          screenWidth:
+                                              MediaQuery.of(context).size.width,
+                                          isEditMode: true,
+                                          postId:
+                                              widget.exported['id']?.toString(),
+                                          initialExported: widget.exported,
+                                        ),
+                                  ),
+                                );
+                              }
+                            },
                             child: Icon(
-                              Icons.arrow_back_ios_new_rounded,
+                              Icons.edit_outlined,
                               color: Theme.of(context).colorScheme.onSurface,
                               size: 18,
                             ),
                           ),
-
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: Text(
-                              widget.exported['title'] ?? '포스트',
-                              style: TextStyle(
-                                color: Theme.of(context).colorScheme.onSurface,
-                                fontSize: 16,
-                                fontWeight: FontWeight.w600,
+                        ] else ...[
+                          GestureDetector(
+                            onTap: _showCommentBottomSheet,
+                            child: Container(
+                              margin: const EdgeInsets.only(right: 8),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 6,
                               ),
-                              overflow: TextOverflow.ellipsis,
+                              child: Container(
+                                margin: const EdgeInsets.only(bottom: 10),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Text(
+                                      '${_commentService.getAllComments().length}',
+                                      style: TextStyle(
+                                        color:
+                                            Theme.of(
+                                              context,
+                                            ).colorScheme.onSurface,
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
                             ),
                           ),
-                          if (isMyPost) ...[
-                            GestureDetector(
-                              onTap: () {
-                                print('widget.exported: ${widget.exported}');
-                                if (widget.exported['id'] != null) {
-                                  Navigator.of(context).push(
-                                    MaterialPageRoute(
-                                      builder:
-                                          (_) => PostwriteScreen(
-                                            screenWidth:
-                                                MediaQuery.of(
-                                                  context,
-                                                ).size.width,
-                                            isEditMode: true,
-                                            postId:
-                                                widget.exported['id']
-                                                    ?.toString(),
-                                            initialExported: widget.exported,
-                                          ),
-                                    ),
-                                  );
-                                }
-                              },
-                              child: Icon(
-                                Icons.edit_outlined,
-                                color: Theme.of(context).colorScheme.onSurface,
-                                size: 18,
-                              ),
-                            ),
-                          ] else ...[
-                            GestureDetector(
-                              onTap: _showCommentBottomSheet,
-                              child: Container(
-                                margin: const EdgeInsets.only(right: 8),
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 8,
-                                  vertical: 6,
-                                ),
-                                child: Container(
-                                  margin: const EdgeInsets.only(bottom: 10),
-                                  child: Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      Text(
-                                        '${_commentService.getAllComments().length}',
-                                        style: TextStyle(
-                                          color:
-                                              Theme.of(
-                                                context,
-                                              ).colorScheme.onSurface,
-                                          fontSize: 13,
-                                          fontWeight: FontWeight.w600,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ],
                         ],
-                      ),
+                      ],
                     ),
                   ),
                 ),

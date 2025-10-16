@@ -5,8 +5,13 @@ class DrawingOverlay extends StatefulWidget {
   final void Function(List<Map<String, dynamic>> strokes, Offset position)
   onSubmitDrawing;
   final List<Map<String, dynamic>>? initialStrokes;
+  final ScrollController? scrollController;
 
-  const DrawingOverlay({required this.onSubmitDrawing, this.initialStrokes});
+  const DrawingOverlay({
+    required this.onSubmitDrawing,
+    this.initialStrokes,
+    this.scrollController,
+  });
 
   @override
   State<DrawingOverlay> createState() => _DrawingOverlayState();
@@ -23,7 +28,6 @@ class _DrawingOverlayState extends State<DrawingOverlay>
 
   late AnimationController _animationController;
   late Animation<double> _fadeAnimation;
-  late Animation<Offset> _slideAnimation;
 
   @override
   void initState() {
@@ -37,13 +41,6 @@ class _DrawingOverlayState extends State<DrawingOverlay>
 
     _fadeAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
       CurvedAnimation(parent: _animationController, curve: Curves.easeOut),
-    );
-
-    _slideAnimation = Tween<Offset>(
-      begin: const Offset(0, -0.1),
-      end: Offset.zero,
-    ).animate(
-      CurvedAnimation(parent: _animationController, curve: Curves.easeOutCubic),
     );
 
     // 초기 스트로크 데이터가 있으면 로드
@@ -99,18 +96,44 @@ class _DrawingOverlayState extends State<DrawingOverlay>
               behavior: HitTestBehavior.opaque,
               onPanStart: (d) {
                 _redo.clear();
+
+                // 스크롤 오프셋 계산
+                final scrollY =
+                    widget.scrollController?.hasClients == true
+                        ? widget.scrollController!.offset
+                        : 0.0;
+
+                // 앱바 높이 (50px) 제거 후 스크롤 오프셋 추가
+                final adjustedPos = Offset(
+                  d.globalPosition.dx,
+                  d.globalPosition.dy - 50 + scrollY,
+                );
+
                 _strokes.add(
                   _Stroke(
                     color: _eraser ? Colors.black : _color,
                     width: _width,
                     erase: _eraser,
-                  )..points.add(d.globalPosition),
+                  )..points.add(adjustedPos),
                 );
                 setState(() {});
               },
               onPanUpdate: (d) {
                 if (_strokes.isEmpty) return;
-                _strokes.last.points.add(d.globalPosition);
+
+                // 스크롤 오프셋 계산
+                final scrollY =
+                    widget.scrollController?.hasClients == true
+                        ? widget.scrollController!.offset
+                        : 0.0;
+
+                // 앱바 높이 (50px) 제거 후 스크롤 오프셋 추가
+                final adjustedPos = Offset(
+                  d.globalPosition.dx,
+                  d.globalPosition.dy - 50 + scrollY,
+                );
+
+                _strokes.last.points.add(adjustedPos);
                 setState(() {});
               },
               child: RepaintBoundary(
@@ -120,6 +143,11 @@ class _DrawingOverlayState extends State<DrawingOverlay>
                     strokes: _strokes,
                     scale: 1.0,
                     pan: Offset.zero,
+                    scrollY:
+                        widget.scrollController?.hasClients == true
+                            ? widget.scrollController!.offset
+                            : 0.0,
+                    appBarHeight: 50,
                   ),
                   size: Size.infinite,
                 ),
@@ -435,7 +463,8 @@ class _DrawingOverlayState extends State<DrawingOverlay>
     }
 
     // 3) 경계의 좌상단 위치를 전달 (스티커가 이 위치에 배치됨)
-    final position = Offset(bounds.left, bounds.top);
+    // bounds는 문서 좌표이므로, 스티커 배치를 위해 앱바 높이를 다시 더해줌
+    final position = Offset(bounds.left, bounds.top + 50);
     widget.onSubmitDrawing(strokesData, position);
 
     if (mounted) Navigator.of(context).pop();
@@ -482,11 +511,21 @@ class _DrawingPainter extends CustomPainter {
   final List<_Stroke> strokes;
   final double scale;
   final Offset pan;
+  final double scrollY;
+  final double appBarHeight;
+
   _DrawingPainter({
     required this.strokes,
     required this.scale,
     required this.pan,
+    required this.scrollY,
+    required this.appBarHeight,
   });
+
+  /// 문서 좌표를 화면 좌표로 변환
+  Offset _toScreenCoord(Offset docPos) {
+    return Offset(docPos.dx, docPos.dy + appBarHeight - scrollY);
+  }
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -497,13 +536,16 @@ class _DrawingPainter extends CustomPainter {
     for (final s in strokes) {
       if (s.erase && s.points.isNotEmpty) {
         if (s.points.length > 1) {
-          erasePath.moveTo(s.points.first.dx, s.points.first.dy);
+          final firstScreen = _toScreenCoord(s.points.first);
+          erasePath.moveTo(firstScreen.dx, firstScreen.dy);
           for (int i = 1; i < s.points.length; i++) {
-            erasePath.lineTo(s.points[i].dx, s.points[i].dy);
+            final screenPos = _toScreenCoord(s.points[i]);
+            erasePath.lineTo(screenPos.dx, screenPos.dy);
           }
         } else {
+          final screenPos = _toScreenCoord(s.points.first);
           erasePath.addOval(
-            Rect.fromCircle(center: s.points.first, radius: s.width / 2),
+            Rect.fromCircle(center: screenPos, radius: s.width / 2),
           );
         }
       }
@@ -521,9 +563,11 @@ class _DrawingPainter extends CustomPainter {
               ..isAntiAlias = true;
 
         final path = Path();
-        path.moveTo(s.points.first.dx, s.points.first.dy);
+        final firstScreen = _toScreenCoord(s.points.first);
+        path.moveTo(firstScreen.dx, firstScreen.dy);
         for (int i = 1; i < s.points.length; i++) {
-          path.lineTo(s.points[i].dx, s.points[i].dy);
+          final screenPos = _toScreenCoord(s.points[i]);
+          path.lineTo(screenPos.dx, screenPos.dy);
         }
 
         // 지우개 영역이 있으면 차감
