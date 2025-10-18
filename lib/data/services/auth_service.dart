@@ -17,6 +17,19 @@ class AuthService {
   final String _usernameKey = 'username';
   final String _baseUrl = ApiServiceBase.baseUrl;
 
+  // 앱 시작 시 1회 로드되어 메모리에 보관되는 동기 접근용 사용자명
+  static String? _cachedUsername;
+
+  /// 로그인 성공 시 호출하여 username을 메모리에 캐시한다.
+  Future<void> initAfterLogin() async {
+    try {
+      _cachedUsername = await _storage.read(key: _usernameKey);
+    } catch (_) {}
+  }
+
+  /// 동기 접근 가능한 현재 사용자명(없으면 null)
+  String? get currentUsernameSync => _cachedUsername;
+
   /// 1. 사용자 등록
   Future<bool> register({
     required String username,
@@ -70,6 +83,7 @@ class AuthService {
         await _saveToken(loginResponse.token);
         await _saveRefreshToken(loginResponse.refreshToken);
         await _saveUsername(loginResponse.username);
+        await initAfterLogin();
 
         // 로컬 계정 기록도 업데이트 (로그인 시)
         if (setAsCurrent) {
@@ -116,8 +130,10 @@ class AuthService {
       await _storage.write(key: _tokenKey, value: token);
   Future<void> _saveRefreshToken(String refreshToken) async =>
       await _storage.write(key: _refreshTokenKey, value: refreshToken);
-  Future<void> _saveUsername(String username) async =>
-      await _storage.write(key: _usernameKey, value: username);
+  Future<void> _saveUsername(String username) async {
+    await _storage.write(key: _usernameKey, value: username);
+    _cachedUsername = username; // 메모리 캐시 동기화
+  }
 
   // Public methods for external access
   Future<void> saveToken(String token) async => await _saveToken(token);
@@ -134,6 +150,7 @@ class AuthService {
     await _storage.delete(key: _refreshTokenKey);
     await _storage.delete(key: _usernameKey);
     await AccountManagerService.clearCurrentAccount();
+    _cachedUsername = null; // 메모리 캐시 초기화
     print('[-] [AuthService] logout success');
   }
 

@@ -81,11 +81,23 @@ class DraftService {
     try {
       final prefs = await SharedPreferences.getInstance();
 
-      // PostExporter를 사용해서 에디터와 스티커 데이터를 JSON으로 변환
-      final exportedData = PostExporter.exportToMap(
+      // base 수집 후 composeFinalPayload로 최종 페이로드 구성하여 저장
+      final base = PostExporter.exportToMap(
         editorService: editorService,
         stickerService: stickerService,
       );
+      final String v = visibility.toLowerCase();
+      final bool privateOnly = v == 'private';
+      final bool publicOnly = v == 'public';
+      final Map<String, dynamic> finalPayload =
+          PostExporter.composeFinalPayload(
+            thumbnailImageUrl: thumbnailUrl,
+            base: Map<String, dynamic>.from(base),
+            privateOnly: privateOnly,
+            publicOnly: publicOnly,
+            selectedGroupIds: selectedGroupIds,
+            createdAt: DateTime.now(),
+          );
 
       final draftId = existingDraftId ?? _generateDraftId(title);
       final now = DateTime.now();
@@ -93,7 +105,7 @@ class DraftService {
       final draftData = DraftData(
         id: draftId,
         title: title,
-        content: json.encode(exportedData), // PostExporter 결과를 그대로 저장
+        content: json.encode(finalPayload), // 최종 페이로드 기준 저장
         thumbnailUrl: thumbnailUrl,
         visibility: visibility,
         selectedGroupIds: selectedGroupIds,
@@ -182,6 +194,10 @@ class DraftService {
           stickerService.addStickerFromData(stickerData);
         }
       }
+
+      // 썸네일/usedImageIds 복원 보조(필요 시 화면 상태 업데이트용 Hook 지점)
+      // exportedData['thumbnailImageUrl'] 는 draftData.thumbnailUrl와 동일/우선순위 선택 가능
+      // exportedData['usedImageIds'] 는 서버 전송 시 그대로 재사용 가능
 
       print('[DraftService] Draft loaded: $draftId');
       return true;

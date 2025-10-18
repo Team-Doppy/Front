@@ -1,6 +1,6 @@
 import 'package:doppy/data/services/upload_service.dart';
 import 'package:doppy/editor/postwrite_screen.dart';
-import 'package:doppy/editor/service/image_service.dart';
+import 'package:doppy/editor/service/node_component_service.dart';
 import 'package:doppy/editor/service/sticker_service.dart';
 import 'package:doppy/data/services/feed_service.dart';
 import 'package:doppy/pages/screens/home_screen.dart';
@@ -130,13 +130,21 @@ class _RootShellState extends State<RootShell> {
   final GlobalKey<HomeScreenState> _homeScreenKey =
       GlobalKey<HomeScreenState>();
 
-  // 계정별로 재생성되도록 페이지 빌더 사용
-  List<Widget> _buildPages(String? username) => [
-    HomeScreen(key: _homeScreenKey, preloadedPosts: widget.preloadedPosts),
-    SizedBox.shrink(),
-    const SizedBox.shrink(), // 작성은 라우트로 별도 push
-    UserProfileScreen(key: ValueKey('profile_$username')),
-  ];
+  // 탭별 페이지를 한 번 생성해 유지 (상태 보존)
+  List<Widget> _pages = const [];
+  String? _pagesForUsername;
+
+  // 계정별로 재생성되도록 페이지 빌더 사용 (캐시)
+  void _ensurePagesBuilt(String? username) {
+    if (_pagesForUsername == username && _pages.isNotEmpty) return;
+    _pagesForUsername = username;
+    _pages = [
+      HomeScreen(preloadedPosts: widget.preloadedPosts, key: _homeScreenKey),
+      const SizedBox.shrink(),
+      const SizedBox.shrink(), // 작성은 라우트로 별도 push
+      UserProfileScreen(key: ValueKey('profile_$username')),
+    ];
+  }
 
   @override
   void initState() {
@@ -194,6 +202,8 @@ class _RootShellState extends State<RootShell> {
     final wasIndex = _index;
     setState(() => _index = i);
 
+    // 홈 탭 복귀 시: 기존 상태(필터/목록/스크롤)를 유지하고 추가 서버 요청을 하지 않음
+
     // 다른 탭으로 이동 시 검색 오버레이 상태 해제
     if (i != 0) {
       searchResultProvider.setSearchOverlayVisible(false);
@@ -211,15 +221,13 @@ class _RootShellState extends State<RootShell> {
   @override
   Widget build(BuildContext context) {
     final auth = context.watch<AuthProvider>();
-    final pages = _buildPages(auth.username);
+    _ensurePagesBuilt(auth.username);
 
     return Material(
       child: Stack(
         children: [
-          KeyedSubtree(
-            key: ValueKey('page_${auth.username}_$_index'),
-            child: pages[_index],
-          ),
+          // 상태 보존을 위해 IndexedStack 사용
+          IndexedStack(index: _index, children: _pages),
           // 플로팅 바텀 네비게이션 바
           Positioned(
             left: 0,

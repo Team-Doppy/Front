@@ -1,69 +1,18 @@
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:doppy/common/widgets/image_error_placeholder.dart';
 import 'package:doppy/editor/component/row_image_component.dart';
 import 'package:doppy/editor/component/link_component.dart';
 import 'package:doppy/editor/component/mention_component.dart';
 import 'package:doppy/editor/service/drag_service.dart';
-import 'package:doppy/editor/service/image_service.dart';
+import 'package:doppy/editor/service/node_component_service.dart';
+import 'package:doppy/pages/components/shimmer_box.dart';
 import 'package:doppy/theme/app_colors.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'dart:math' as math;
 import 'package:super_editor/super_editor.dart';
-
-/// 깜빡이는 플레이스홀더 위젯
-class _ShimmerPlaceholder extends StatefulWidget {
-  const _ShimmerPlaceholder({Key? key}) : super(key: key);
-
-  @override
-  State<_ShimmerPlaceholder> createState() => _ShimmerPlaceholderState();
-}
-
-class _ShimmerPlaceholderState extends State<_ShimmerPlaceholder>
-    with SingleTickerProviderStateMixin {
-  late AnimationController _controller;
-  late Animation<double> _animation;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = AnimationController(
-      duration: const Duration(milliseconds: 1000),
-      vsync: this,
-    );
-    _animation = Tween<double>(
-      begin: 0.3,
-      end: 0.7,
-    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeInOut));
-    _controller.repeat(reverse: true);
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: _animation,
-      builder: (context, child) {
-        return Container(
-          padding: const EdgeInsets.all(8),
-          width: double.infinity,
-          height: 200, // 적절한 높이 설정
-          decoration: BoxDecoration(
-            color: Colors.grey.withOpacity(_animation.value),
-            borderRadius: BorderRadius.circular(2),
-            border: Border.all(color: AppColors.darkSurface, width: 2),
-          ),
-        );
-      },
-    );
-  }
-}
 
 class SingleImageComponentBuilder implements ComponentBuilder {
   const SingleImageComponentBuilder({this.dragService});
@@ -150,6 +99,22 @@ class _SingleImageComponentState extends State<SingleImageComponent>
                 .getEditedBytes(widget.nodeId);
             final image = _buildImage(editedBytes);
 
+            // 플레이스홀더/업로드 중 상태 판정: imageUrl 비었거나 로컬 경로이거나 metadata.isPlaceholder == true
+            // ignore: invalid_use_of_visible_for_testing_member
+            final doc = seState?.editContext.editor.document;
+            bool isUploading = false;
+            try {
+              final node = doc?.getNodeById(widget.nodeId);
+              if (node is ImageNode) {
+                final meta =
+                    (node as dynamic).metadata as Map<String, dynamic>?;
+                final isPh = meta != null && (meta['isPlaceholder'] == true);
+                final url = widget.imageUrl;
+                final isLocal = _isLocalPath(url) || url.isEmpty;
+                isUploading = isPh || isLocal;
+              }
+            } catch (_) {}
+
             final imageService = context.watch<NodeComponentService>();
             final isSelected = imageService.selectedImageId == widget.nodeId;
             // selection 핸들이 이미지 노드를 포함할 때만, 그리고 경계가 이미지인 경우 Downstream일 때만 하이라이트
@@ -175,6 +140,24 @@ class _SingleImageComponentState extends State<SingleImageComponent>
                   child: Stack(
                     children: [
                       image,
+                      if (isUploading)
+                        Positioned.fill(
+                          child: IgnorePointer(
+                            ignoring: false,
+                            child: Container(
+                              color: Colors.black.withOpacity(0.6),
+                              alignment: Alignment.center,
+                              child: SizedBox(
+                                width: 28,
+                                height: 28,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: Colors.white.withOpacity(1),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
                       if (isSelectionHighlighted)
                         Positioned.fill(
                           child: IgnorePointer(
@@ -199,7 +182,7 @@ class _SingleImageComponentState extends State<SingleImageComponent>
                     ],
                   ),
                 ),
-                if (_shouldShowTopDropLine())
+                if (!isUploading && _shouldShowTopDropLine())
                   Positioned(
                     top: 0,
                     left: 0,
@@ -210,7 +193,7 @@ class _SingleImageComponentState extends State<SingleImageComponent>
                     ),
                   ),
 
-                if (_shouldShowLeftVerticalLine())
+                if (!isUploading && _shouldShowLeftVerticalLine())
                   Positioned(
                     top: marginTop,
                     bottom: marginBottom,
@@ -220,7 +203,7 @@ class _SingleImageComponentState extends State<SingleImageComponent>
                       child: Container(width: 5, color: AppColors.primary),
                     ),
                   ),
-                if (_shouldShowRightVerticalLine())
+                if (!isUploading && _shouldShowRightVerticalLine())
                   Positioned(
                     top: marginTop,
                     bottom: marginBottom,
@@ -230,7 +213,7 @@ class _SingleImageComponentState extends State<SingleImageComponent>
                       child: Container(width: 5, color: AppColors.primary),
                     ),
                   ),
-                if (_shouldShowBottomDropLine())
+                if (!isUploading && _shouldShowBottomDropLine())
                   Positioned(
                     bottom: 0,
                     left: 0,
@@ -537,19 +520,64 @@ class _SingleImageComponentState extends State<SingleImageComponent>
     return true;
   }
 
-  // 이미지 위젯 생성: editedBytes > 로컬 파일 경로 > 네트워크 URL 순서
+  // 이미지 위젯 생성: editedBytes > (업로드중: metadata.localPath) > 로컬 파일 경로 > 네트워크 URL 순서
   Widget _buildImage(Uint8List? editedBytes) {
     if (editedBytes != null) {
-      return Image.memory(editedBytes, fit: BoxFit.contain);
+      final double w = MediaQuery.of(context).size.width;
+      return Image.memory(
+        editedBytes,
+        fit: BoxFit.contain,
+        filterQuality: FilterQuality.low,
+        frameBuilder: (context, child, frame, wasSyncLoaded) {
+          if (wasSyncLoaded || frame != null) return child;
+          return ShimmerBox(width: w, height: 220);
+        },
+      );
     }
 
     final url = widget.imageUrl;
+
+    // 업로드 중이면 metadata.localPath로 미리보기
+    try {
+      final seState = context.findAncestorStateOfType<SuperEditorState>();
+      final doc = seState?.editContext.editor.document;
+      final node = doc?.getNodeById(widget.nodeId);
+      if (node is ImageNode) {
+        final meta = (node as dynamic).metadata as Map<String, dynamic>?;
+        final localPath = meta != null ? (meta['localPath']?.toString()) : null;
+        if ((url.isEmpty || !_isNetworkUrl(url)) &&
+            localPath != null &&
+            localPath.isNotEmpty) {
+          final filePath =
+              localPath.startsWith('file://')
+                  ? localPath.substring(7)
+                  : localPath;
+          final double w = MediaQuery.of(context).size.width;
+          return Image.file(
+            File(filePath),
+            fit: BoxFit.contain,
+            cacheWidth: w.isFinite ? w.toInt() : null,
+            filterQuality: FilterQuality.low,
+            frameBuilder: (context, child, frame, wasSyncLoaded) {
+              if (wasSyncLoaded || frame != null) return child;
+              return ShimmerBox(width: w, height: 220);
+            },
+            errorBuilder:
+                (context, error, stack) => ImageErrorPlaceholder(
+                  width: MediaQuery.of(context).size.width,
+                ),
+          );
+        }
+      }
+    } catch (_) {}
     if (_isLocalPath(url)) {
       final filePath = url.startsWith('file://') ? url.substring(7) : url;
       return Image.file(
         File(filePath),
         fit: BoxFit.contain,
-        errorBuilder: (context, error, stack) => _errorBox(),
+        errorBuilder:
+            (context, error, stack) =>
+                ImageErrorPlaceholder(width: MediaQuery.of(context).size.width),
       );
     }
 
@@ -558,11 +586,16 @@ class _SingleImageComponentState extends State<SingleImageComponent>
       fit: BoxFit.contain,
       loadingBuilder: (context, child, progress) {
         if (progress == null) return child; // 로드 완료
-        return const _ShimmerPlaceholder(); // 로드 중
+        return ShimmerBox(width: double.infinity, height: 200); // 로드 중
       },
-      errorBuilder: (context, error, stack) => _errorBox(),
-      gaplessPlayback: true,
+      errorBuilder:
+          (context, error, stack) =>
+              ImageErrorPlaceholder(width: 150, height: 200),
     );
+  }
+
+  bool _isNetworkUrl(String path) {
+    return path.startsWith('http://') || path.startsWith('https://');
   }
 
   bool _isLocalPath(String path) {
@@ -572,21 +605,6 @@ class _SingleImageComponentState extends State<SingleImageComponent>
     return path.startsWith('/') ||
         path.contains('/Application/') ||
         path.contains('/Documents/');
-  }
-
-  Widget _errorBox() {
-    return Container(
-      color: Colors.grey.shade300,
-      padding: const EdgeInsets.all(8),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: const [
-          Icon(Icons.broken_image, size: 40, color: Colors.grey),
-          SizedBox(height: 8),
-          Text("이미지를 불러올 수 없습니다.", style: TextStyle(color: Colors.black54)),
-        ],
-      ),
-    );
   }
 
   bool _hasNeighborImage(Document doc, String nodeId, int direction) {

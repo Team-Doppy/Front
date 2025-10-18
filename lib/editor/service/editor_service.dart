@@ -4,6 +4,7 @@ import 'package:doppy/editor/component/app_image_node.dart';
 import 'package:doppy/editor/component/link_component.dart';
 import 'package:doppy/editor/component/mention_component.dart';
 import 'package:doppy/editor/component/row_image_component.dart';
+import 'package:doppy/editor/component/clip_component.dart';
 import 'package:doppy/editor/postwrite_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
@@ -16,7 +17,7 @@ class EditorService extends ChangeNotifier {
   // 마지막 유효 selection 캐시 (포커스가 잠시 사라져도 사용)
   DocumentSelection? _lastSelection;
 
-  bool publishable = false;
+  bool publishable = false; // 문서 변경 시 1회 순회로 갱신되는 캐시 값
 
   // 최근 저장 스냅샷 지문
   String? _lastSavedFingerprint;
@@ -28,6 +29,7 @@ class EditorService extends ChangeNotifier {
   EditorService({required this.editor, required this.document}) {
     document.addListener(_onDocumentChanged);
     editor.composer.selectionNotifier.addListener(_onSelectionChanged);
+    _recomputePublishable();
   }
 
   void setDocumentLayoutKey(GlobalKey key) {
@@ -45,12 +47,14 @@ class EditorService extends ChangeNotifier {
       if (getEditingIndex() == 0) {
         // 타이틀 문단 삭제 방지
         _ensureTitleAtTop();
+        _recomputePublishable();
         notifyListeners();
         return;
       }
       // 삭제는 이전 인덱스 정보를 잃어서 부분 보정보다 전체 재계산이 안전
       //_recomputeParagraphMargins();
       _ensureParagraphAlignmentForIndex(getEditingIndex());
+      _recomputePublishable();
       return;
     }
 
@@ -60,7 +64,9 @@ class EditorService extends ChangeNotifier {
       // 삽입 지점 주변(상/하/본인)만 마진 재계산
       //_recomputeParagraphMarginsAround(change.insertionIndex);
       _ensureOnlyFirstIsTitle();
-
+      _recomputePublishable();
+      // 문서 구조가 변했으므로 UI 갱신 필요 (다음 버튼 상태 반영)
+      notifyListeners();
       return;
     }
 
@@ -69,7 +75,9 @@ class EditorService extends ChangeNotifier {
       //_recomputeParagraphMarginsAround(change.from);
       //_recomputeParagraphMarginsAround(change.to);
       _ensureOnlyFirstIsTitle();
-
+      _recomputePublishable();
+      // 문서 구조가 변했으므로 UI 갱신 필요 (다음 버튼 상태 반영)
+      notifyListeners();
       return;
     }
 
@@ -84,19 +92,23 @@ class EditorService extends ChangeNotifier {
         // _recomputeParagraphMargins();
         _ensureOnlyFirstIsTitle();
       }
-
+      _recomputePublishable();
+      // 문서 구조/내용이 변했으므로 UI 갱신 필요 (다음 버튼 상태 반영)
+      notifyListeners();
       return;
     }
 
     if (changeLog.changes[0] is TextInsertionEvent ||
         changeLog.changes[0] is TextDeletedEvent) {
       if (getEditingIndex() == 0) {
-        publishable = hasNonEmptyTitle();
+        _recomputePublishable();
         notifyListeners();
         return;
       }
       _ensureOnlyFirstIsTitle();
-
+      _recomputePublishable();
+      // 본문 텍스트 변경 또한 버튼 상태에 영향 → 갱신 통지
+      notifyListeners();
       return;
     }
   }
@@ -150,7 +162,48 @@ class EditorService extends ChangeNotifier {
 
   /// 제목과 본문이 모두 채워져 있는지 검증 (다음 버튼 활성화 조건)
   bool canProceedToPublish() {
-    return hasNonEmptyTitle() && hasNonEmptyBody();
+    return publishable;
+  }
+
+  // ====== 빠른 판정(변경 시 1회 순회) ======
+  void _recomputePublishable() {
+    try {
+      publishable = _hasNonEmptyTitleFast() && _hasNonEmptyBodyFast();
+    } catch (_) {
+      publishable = false;
+    }
+  }
+
+  bool _hasNonEmptyTitleFast() {
+    try {
+      final node = document.getNodeAt(0);
+      if (node is ParagraphNode && (node.metadata['isTitle'] == true)) {
+        return node.text.text.trim().isNotEmpty;
+      }
+    } catch (_) {}
+    return false;
+  }
+
+  bool _hasNonEmptyBodyFast() {
+    try {
+      for (int i = 1; i < document.length; i++) {
+        final node = document.getNodeAt(i);
+        if (node == null) continue;
+        if (node is ParagraphNode) {
+          if (node.text.text.trim().isNotEmpty) return true;
+        } else if (node is ImageNode || node is AppImageNode) {
+          return true;
+        } else if (node is ImageRowNode ||
+            node is LinkNode ||
+            node is MentionNode) {
+          return true;
+        } else {
+          // 기타 노드가 존재하면 본문이 있다고 간주
+          return true;
+        }
+      }
+    } catch (_) {}
+    return false;
   }
 
   /// 문서 내용을 간단 스냅샷으로 직렬화하여 지문(fingerprint)을 생성
@@ -267,6 +320,14 @@ class EditorService extends ChangeNotifier {
     // 둘 다 단일 이미지인 경우
     if (draggingNode is! ImageNode || targetNode is! ImageNode) return;
 
+    // 네트워크 URL만 허용 (file:// 또는 로컬 경로는 행에 포함 금지)
+    bool _isNetworkUrl(String u) =>
+        u.startsWith('http://') || u.startsWith('https://');
+    if (!_isNetworkUrl(draggingNode.imageUrl) ||
+        !_isNetworkUrl(targetNode.imageUrl)) {
+      return; // 업로드 완료 후 다시 시도
+    }
+
     // 두 이미지의 URL 수집 (최대 3개)
     final imageUrls = <String>[];
 
@@ -319,6 +380,13 @@ class EditorService extends ChangeNotifier {
 
     if (imageNode == null || rowNode == null) return;
     if (imageNode is! ImageNode || rowNode is! ImageRowNode) return;
+
+    // 네트워크 URL만 허용
+    bool _isNetworkUrl(String u) =>
+        u.startsWith('http://') || u.startsWith('https://');
+    if (!_isNetworkUrl(imageNode.imageUrl)) {
+      return;
+    }
 
     // 이미 3개가 있으면 추가하지 않음
     if (rowNode.imageUrls.length >= 3) return;
@@ -391,6 +459,23 @@ class EditorService extends ChangeNotifier {
       usernames: usernames,
     );
     _insertComponentNodeAtNextLine(node);
+  }
+
+  ///  노드 추가: 현재 캐럿 다음 슬롯에  삽입
+  void addClipNode({
+    String label = '',
+    String colorHex = '#FF5252',
+    required String url,
+  }) {
+    final int safeIndex = _getCaretNodeIndexSafe();
+    final node = ClipNode(
+      id: 'clip_${DateTime.now().millisecondsSinceEpoch}',
+      label: label,
+      colorHex: colorHex,
+    );
+    editor.execute([
+      InsertNodeAtIndexRequest(nodeIndex: safeIndex, newNode: node),
+    ]);
   }
 
   DocumentNode? findNodeAtPosition(Offset position) {
@@ -518,12 +603,17 @@ class EditorService extends ChangeNotifier {
 
   String addImagePlaceholderNode(String localPath) {
     final id = 'img_${DateTime.now().microsecondsSinceEpoch}';
-    // 로컬 파일 경로를 바로 imageUrl에 넣어 미리보기로 사용
+    // 단일 이미지 노드에는 로컬 경로를 imageUrl에 절대 저장하지 않음
+    // 로컬 경로는 metadata.localPath에만 저장하고, imageUrl은 비워둔다
     final imageNode = AppImageNode(
       id: id,
-      imageUrl: localPath.startsWith('file://') ? localPath : localPath,
+      imageUrl: '',
       altText: '',
-      metadata: {'isPlaceholder': true, 'localPath': localPath},
+      metadata: {
+        'isPlaceholder': true,
+        'localPath': localPath,
+        'uploadProgress': 0.0,
+      },
     );
     _insertComponentNodeAtNextLine(imageNode);
     return id;
@@ -531,6 +621,15 @@ class EditorService extends ChangeNotifier {
 
   Future<void> replacePlaceholderWithUrl(String id, String url) async {
     try {
+      // 기존 노드(localPath)를 기억하여 행 내부 로컬 URL 교체에 활용
+      String? localPath;
+      try {
+        final existing = editor.document.getNodeById(id);
+        if (existing is ImageNode) {
+          final meta = (existing as dynamic).metadata as Map<String, dynamic>?;
+          localPath = meta != null ? (meta['localPath']?.toString()) : null;
+        }
+      } catch (_) {}
       // 0) 네트워크 이미지 미리 로드하여 교체 시 깜빡임 제거
       final provider = NetworkImage(url);
       final completer = Completer<void>();
@@ -569,6 +668,32 @@ class EditorService extends ChangeNotifier {
       editor.execute([
         ReplaceNodeRequest(existingNodeId: id, newNode: newNode),
       ]);
+
+      // 업로드 성공 URL ↔ imageId 매핑을 등록할 수 있게끔 업로드 흐름에서 호출할 API 제공
+      // (이 메서드에서는 URL만 교체하고, ID는 업로드 서비스 쪽에서 NodeComponentService에 등록)
+
+      // ImageRowNode들 중 로컬 경로(file:// 또는 localPath) 포함된 URL을 신규 네트워크 URL로 교체
+      try {
+        for (int i = 0; i < editor.document.length; i++) {
+          final n = editor.document.getNodeAt(i);
+          if (n is ImageRowNode) {
+            final urls = List<String>.from(n.imageUrls);
+            bool changed = false;
+            for (int k = 0; k < urls.length; k++) {
+              final u = urls[k];
+              if ((localPath != null && u == localPath) ||
+                  u.startsWith('file://')) {
+                urls[k] = url;
+                changed = true;
+              }
+            }
+            if (changed) {
+              final updated = n.copyWith(imageUrls: urls);
+              editor.document.replaceNodeById(n.id, updated);
+            }
+          }
+        }
+      } catch (_) {}
 
       // 3) 다음 프레임에서 selection 복원
       if (prevSelection != null) {
@@ -665,35 +790,6 @@ class EditorService extends ChangeNotifier {
     }
     return 'center';
   }
-
-  /*
-  // 변경 지점 주변(상/하/본인)만 부분적으로 마진 재계산
-  void _recomputeParagraphMarginsAround(int centerIndex) {
-    for (final i in <int>[centerIndex - 1, centerIndex, centerIndex + 1]) {
-      if (i < 0 || i >= document.length) continue;
-      final node = document.getNodeAt(i);
-      if (node is! ParagraphNode) continue;
-
-      NodeType? prevType;
-      NodeType? nextType;
-      if (i > 0) {
-        final prev = document.getNodeAt(i - 1);
-        if (prev != null) prevType = getNodeType(prev.id);
-      }
-      if (i < document.length - 1) {
-        final next = document.getNodeAt(i + 1);
-        if (next != null) nextType = getNodeType(next.id);
-      }
-
-      final bool addTop = _isImageType(prevType);
-      final bool addBottom = _isImageType(nextType);
-      _paragraphMargins[node.id] = EdgeInsets.only(
-        top: addTop ? _imageTextMarginPx : _baseTopMarginPx,
-        bottom: addBottom ? _imageTextMarginPx : 0,
-      );
-    }
-  }
-  */
 
   // ===== 게시 가능 여부 판정 =====
 

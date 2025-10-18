@@ -34,6 +34,35 @@ class BlogService {
     print('[BlogService] 로그아웃 - 모든 캐시 초기화 완료');
   }
 
+  /// content(JSON or raw string)에서 최대 5줄 요약을 생성
+  String _buildSummaryFromContent(dynamic content) {
+    try {
+      String raw = '';
+      if (content is Map) {
+        // SuperEditor exported structure: { nodes: [ {text: ...}, ... ] }
+        final nodes = (content['nodes'] as List?) ?? const [];
+        final lines = <String>[];
+        for (final n in nodes) {
+          if (n is Map) {
+            final t = (n['text'] ?? n['label'] ?? '').toString().trim();
+            if (t.isNotEmpty) lines.add(t);
+            if (lines.length >= 5) break;
+          }
+        }
+        raw = lines.join('\n');
+      } else if (content is String) {
+        raw = content;
+      }
+      if (raw.isEmpty) return '';
+      final normalized = raw.replaceAll('\r\n', '\n').replaceAll('\r', '\n');
+      final parts =
+          normalized.split('\n').where((e) => e.trim().isNotEmpty).toList();
+      return parts.take(5).join('\n');
+    } catch (_) {
+      return '';
+    }
+  }
+
   /// 토큰 만료 시 자동 갱신 및 재시도 헬퍼
   Future<http.Response> _requestWithTokenRefresh(
     Future<http.Response> Function(String token) requestFn,
@@ -455,12 +484,21 @@ class BlogService {
       }
     }
 
+    // summary 생성: postData에 이미 있으면 사용, 없으면 content로부터 최대 5줄 추출
+    final String summary =
+        (postData['summary'] as String?)?.trim().toString() ??
+        _buildSummaryFromContent(contentJson);
+
     final requestBody = <String, dynamic>{
       'title': postData['title'] ?? '',
       'author': postData['author'] ?? '',
       'thumbnailImageUrl': postData['thumbnailImageUrl'] ?? '',
       'content': contentJson ?? const <String, dynamic>{'nodes': []},
       'accessLevel': accessLevel,
+      'summary': summary,
+      if (postData['usedImageIds'] != null)
+        'usedImageIds': List<int>.from(postData['usedImageIds'] as List),
+      if (thumbnailImageId != null) 'thumbnailImageId': thumbnailImageId,
     };
 
     print('[UploadPost] request body: ${json.encode(requestBody)}');
@@ -470,7 +508,7 @@ class BlogService {
           .post(
             uri,
             headers: {
-              'Content-Type': 'application/json',
+              'Content-Type': 'application/json; charset=utf-8',
               if (token.isNotEmpty) 'Authorization': 'Bearer $token',
             },
             body: json.encode(requestBody),
@@ -492,6 +530,49 @@ class BlogService {
       throw HttpException(
         'post upload failed ${response.statusCode}: $responseBody',
       );
+    }
+  }
+
+  /// 단일 포스트의 content만 조회한다 (피드에서 메타만 있을 때 본문 로딩용)
+  Future<Map<String, dynamic>> getPostContent(String postId) async {
+    final uri = Uri.parse('$_baseUrl/api/posts/$postId/content');
+    try {
+      final response = await _requestWithTokenRefresh(
+        (token) => http
+            .get(
+              uri,
+              headers: {
+                'Content-Type': 'application/json; charset=utf-8',
+                if (token.isNotEmpty) 'Authorization': 'Bearer $token',
+              },
+            )
+            .timeout(const Duration(seconds: 20)),
+      );
+
+      if (response.statusCode == 200) {
+        final decoded = json.decode(response.body);
+        if (decoded is Map<String, dynamic>) {
+          // 서버가 { content: {...} } 형태로 줄 수도 있고, content 자체를 줄 수도 있음
+          final dynamic c = decoded['content'] ?? decoded;
+          if (c is String) {
+            try {
+              final m = json.decode(c);
+              return (m is Map<String, dynamic>) ? m : <String, dynamic>{};
+            } catch (_) {
+              return <String, dynamic>{};
+            }
+          }
+          if (c is Map<String, dynamic>) return c;
+        }
+        return <String, dynamic>{};
+      } else {
+        throw HttpException(
+          'get content failed ${response.statusCode}: ${response.body}',
+        );
+      }
+    } catch (e) {
+      print('[BlogService] getPostContent error: $e');
+      rethrow;
     }
   }
 
@@ -531,12 +612,17 @@ class BlogService {
       }
     }
 
+    final String summary =
+        (postData['summary'] as String?)?.trim().toString() ??
+        _buildSummaryFromContent(contentJson);
+
     final requestBody = <String, dynamic>{
       'title': postData['title'] ?? '',
       'author': postData['author'] ?? '',
       'thumbnailImageUrl': postData['thumbnailImageUrl'] ?? '',
       'content': contentJson ?? const <String, dynamic>{'nodes': []},
       'accessLevel': accessLevel,
+      'summary': summary,
       if (thumbnailImageId != null) 'thumbnailImageId': thumbnailImageId,
     };
 
@@ -547,7 +633,7 @@ class BlogService {
           .put(
             uri,
             headers: {
-              'Content-Type': 'application/json',
+              'Content-Type': 'application/json; charset=utf-8',
               if (token.isNotEmpty) 'Authorization': 'Bearer $token',
             },
             body: json.encode(requestBody),

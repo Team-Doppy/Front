@@ -162,9 +162,6 @@ class CommentService extends ChangeNotifier {
       _hasMoreComments = true;
       _isTimingSheerActive = false;
 
-      // WebSocket 연결 및 구독
-      _setupWebSocket();
-
       notifyListeners();
     }
   }
@@ -226,10 +223,13 @@ class CommentService extends ChangeNotifier {
     _isTimingSheerActive = true;
     print('[CommentService] 타이밍 시어 활성화 - 댓글 로드 시작');
 
-    // WebSocket 연결도 시도
-    _setupWebSocket();
-
     loadComments();
+  }
+
+  /// 댓글 창 열 때 호출: 웹소켓 연결 및 구독 시작
+  void connectWebSocketForCurrentPost() {
+    if (_currentPostId == null || _currentPostId!.isEmpty) return;
+    _setupWebSocket();
   }
 
   /// WebSocket 이벤트 핸들러들

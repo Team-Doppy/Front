@@ -1046,10 +1046,13 @@ class _JoinScreenState extends State<JoinScreen> {
         // 회원가입 성공
         _nextStep(); // 완료 화면으로 이동
 
-        // 2초 후 자동으로 화면 닫기
-        await Future.delayed(const Duration(seconds: 2));
+        // 1초 후 스플래시 화면으로 이동 (자동 로그인 및 데이터 로드)
+        await Future.delayed(const Duration(seconds: 1));
+
         if (mounted) {
-          Navigator.pop(context);
+          // 모든 화면을 제거하고 스플래시 화면으로 이동
+          // 스플래시 화면에서 자동으로 로그인 시도 → 홈으로 이동
+          Navigator.of(context).pushNamedAndRemoveUntil('/', (route) => false);
         }
       } else {
         // 회원가입 실패

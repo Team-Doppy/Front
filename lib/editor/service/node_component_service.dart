@@ -17,26 +17,13 @@ class NodeComponentService extends ChangeNotifier {
   // URL ↔ imageId 매핑 (업로드 성공 시 등록)
   final Map<String, String> _urlToImageId = <String, String>{};
   void registerImageUrlId(String url, String imageId) {
+    print('registerImageUrlId: $url, $imageId');
     if (url.isEmpty || imageId.isEmpty) return;
     _urlToImageId[url] = imageId;
   }
 
   String? getImageIdByUrl(String url) => _urlToImageId[url];
   Map<String, String> get urlToImageIdMap => Map.unmodifiable(_urlToImageId);
-
-  // 삭제 시 URL 매핑 제거 (usedImageIds에서 빠지도록)
-  void unregisterImageUrl(String url) {
-    _urlToImageId.remove(url);
-    notifyListeners();
-  }
-
-  void unregisterImageUrls(Iterable<String> urls) {
-    bool changed = false;
-    for (final u in urls) {
-      if (_urlToImageId.remove(u) != null) changed = true;
-    }
-    if (changed) notifyListeners();
-  }
 
   // 현재 선택된 노드 ID (과거 호환: 이미지 기준 네이밍 유지)
   String? _selectedImageId;

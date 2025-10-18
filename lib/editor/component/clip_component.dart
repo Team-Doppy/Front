@@ -1,23 +1,27 @@
+import 'dart:ui';
+
 import 'package:flutter/material.dart';
 import 'package:super_editor/super_editor.dart';
-import 'package:doppy/theme/app_colors.dart';
 import 'package:doppy/editor/service/drag_service.dart';
 import 'package:doppy/editor/service/node_component_service.dart';
+import 'package:doppy/theme/app_colors.dart';
 import 'dart:math' as math;
 import 'package:provider/provider.dart';
-import 'package:doppy/editor/component/link_component.dart';
+import 'package:doppy/editor/component/mention_component.dart';
 import 'package:doppy/editor/component/row_image_component.dart';
 
-// 언급 블록 노드
-class MentionNode extends BlockNode {
-  MentionNode({required this.id, required this.usernames});
-
-  @override
-  final String id;
-  final List<String> usernames;
+/// 텍스트와 독립적인 핀 블록 노드
+class ClipNode extends BlockNode {
+  ClipNode({required this.id, this.label = '', this.colorHex = '#FF5252'});
 
   @override
   bool get isDeletable => false;
+  String get nodeType => 'pin';
+
+  @override
+  final String id;
+  final String label;
+  final String colorHex;
 
   @override
   bool containsPosition(Object position) =>
@@ -47,37 +51,36 @@ class MentionNode extends BlockNode {
   ) => const UpstreamDownstreamNodePosition.upstream();
 
   @override
-  DocumentNode copyAndReplaceMetadata(Map<String, dynamic> newMetadata) =>
-      MentionNode(id: id, usernames: usernames);
+  DocumentNode copyAndReplaceMetadata(Map<String, dynamic> newMetadata) {
+    return ClipNode(id: id, label: label, colorHex: colorHex);
+  }
 
   @override
-  String? copyContent(NodeSelection selection) => usernames.join(',');
+  String? copyContent(NodeSelection selection) => label;
 
   @override
-  DocumentNode copyWithAddedMetadata(Map<String, dynamic> newProperties) =>
-      MentionNode(id: id, usernames: usernames);
+  DocumentNode copyWithAddedMetadata(Map<String, dynamic> newProperties) {
+    return ClipNode(id: id, label: label, colorHex: colorHex);
+  }
 }
 
-class MentionComponentViewModel extends SingleColumnLayoutComponentViewModel {
-  MentionComponentViewModel({
+class PinComponentViewModel extends SingleColumnLayoutComponentViewModel {
+  PinComponentViewModel({
     required super.nodeId,
-    required this.usernames,
-    required this.mainAxis,
+    required this.label,
+    required this.colorHex,
   }) : super(padding: EdgeInsets.zero, createdAt: DateTime.now());
 
-  final List<String> usernames;
-  final MainAxisAlignment mainAxis;
+  final String label;
+  final String colorHex;
 
   @override
-  SingleColumnLayoutComponentViewModel copy() => MentionComponentViewModel(
-    nodeId: nodeId,
-    usernames: List<String>.from(usernames),
-    mainAxis: mainAxis,
-  );
+  SingleColumnLayoutComponentViewModel copy() =>
+      PinComponentViewModel(nodeId: nodeId, label: label, colorHex: colorHex);
 }
 
-class MentionComponentBuilder implements ComponentBuilder {
-  const MentionComponentBuilder({this.dragService});
+class PinComponentBuilder implements ComponentBuilder {
+  const PinComponentBuilder({this.dragService});
   final DragService? dragService;
 
   @override
@@ -85,12 +88,12 @@ class MentionComponentBuilder implements ComponentBuilder {
     SingleColumnDocumentComponentContext context,
     SingleColumnLayoutComponentViewModel viewModel,
   ) {
-    if (viewModel is MentionComponentViewModel) {
-      return _MentionComponent(
+    if (viewModel is PinComponentViewModel) {
+      return _PinComponent(
         componentKey: context.componentKey,
         nodeId: viewModel.nodeId,
-        usernames: viewModel.usernames,
-        mainAxis: viewModel.mainAxis,
+        label: viewModel.label,
+        colorHex: viewModel.colorHex,
         dragService: dragService,
       );
     }
@@ -102,82 +105,47 @@ class MentionComponentBuilder implements ComponentBuilder {
     Document document,
     DocumentNode node,
   ) {
-    if (node is MentionNode) {
-      // 인접 문단 정렬 값을 추론하여 정렬 적용
-      MainAxisAlignment align = MainAxisAlignment.center;
-      final int idx = document.getNodeIndexById(node.id);
-      String? alignStr;
-      // 이전 문단 우선
-      for (int i = idx - 1; i >= 0; i--) {
-        final prev = document.getNodeAt(i);
-        if (prev is ParagraphNode) {
-          alignStr = prev.metadata['textAlign'] as String?;
-          break;
-        }
-      }
-      // 다음 문단 보조
-      if (alignStr == null) {
-        for (int i = idx + 1; i < document.length; i++) {
-          final next = document.getNodeAt(i);
-          if (next is ParagraphNode) {
-            alignStr = next.metadata['textAlign'] as String?;
-            break;
-          }
-        }
-      }
-      switch (alignStr) {
-        case 'left':
-          align = MainAxisAlignment.start;
-          break;
-        case 'right':
-          align = MainAxisAlignment.end;
-          break;
-        case 'center':
-        default:
-          align = MainAxisAlignment.center;
-      }
-
-      return MentionComponentViewModel(
+    if (node is ClipNode) {
+      return PinComponentViewModel(
         nodeId: node.id,
-        usernames: node.usernames,
-        mainAxis: align,
+        label: node.label,
+        colorHex: node.colorHex,
       );
     }
     return null;
   }
 }
 
-class _MentionComponent extends StatefulWidget {
-  const _MentionComponent({
+class _PinComponent extends StatefulWidget {
+  const _PinComponent({
     required GlobalKey componentKey,
     required this.nodeId,
-    required this.usernames,
-    required this.mainAxis,
+    required this.label,
+    required this.colorHex,
     this.dragService,
   }) : _componentKey = componentKey,
        super(key: componentKey);
 
   final GlobalKey _componentKey;
   final String nodeId;
-  final List<String> usernames;
-  final MainAxisAlignment mainAxis;
+  final String label;
+  final String colorHex;
   final DragService? dragService;
 
   @override
-  State<_MentionComponent> createState() => _MentionComponentState();
+  State<_PinComponent> createState() => _PinComponentState();
 }
 
-class _MentionComponentState extends State<_MentionComponent>
-    with DocumentComponent {
+class _PinComponentState extends State<_PinComponent> with DocumentComponent {
   GlobalKey get componentKey => widget._componentKey;
 
   static const double marginTop = 4;
   static const double marginBottom = 2;
-  static const double paddingWithText = 5;
+  static const double paddingWithText = 15;
 
   @override
   Widget build(BuildContext context) {
-    // selection 핸들이 언급 노드를 포함하는지 확인
+    // selection 핸들이 링크 노드를 포함하는지 확인
     // ignore: invalid_use_of_visible_for_testing_member
     final seState = context.findAncestorStateOfType<SuperEditorState>();
     // ignore: invalid_use_of_visible_for_testing_member
@@ -185,20 +153,20 @@ class _MentionComponentState extends State<_MentionComponent>
     // ignore: invalid_use_of_visible_for_testing_member
     final doc = seState?.editContext.editor.document;
 
-    final bool hasMentionAbove =
-        doc == null ? false : _hasNeighborMention(doc, widget.nodeId, -1);
-    final bool hasMentionBelow =
-        doc == null ? false : _hasNeighborMention(doc, widget.nodeId, 1);
-
-    // 이웃하는 다른 타입의 노드들도 체크 (이미지, 링크)
-    final bool hasImageAbove =
-        doc == null ? false : _hasNeighborImage(doc, widget.nodeId, -1);
-    final bool hasImageBelow =
-        doc == null ? false : _hasNeighborImage(doc, widget.nodeId, 1);
     final bool hasLinkAbove =
         doc == null ? false : _hasNeighborLink(doc, widget.nodeId, -1);
     final bool hasLinkBelow =
         doc == null ? false : _hasNeighborLink(doc, widget.nodeId, 1);
+
+    // 이웃하는 다른 타입의 노드들도 체크 (이미지, 멘션)
+    final bool hasImageAbove =
+        doc == null ? false : _hasNeighborImage(doc, widget.nodeId, -1);
+    final bool hasImageBelow =
+        doc == null ? false : _hasNeighborImage(doc, widget.nodeId, 1);
+    final bool hasMentionAbove =
+        doc == null ? false : _hasNeighborMention(doc, widget.nodeId, -1);
+    final bool hasMentionBelow =
+        doc == null ? false : _hasNeighborMention(doc, widget.nodeId, 1);
 
     final imageService = context.watch<NodeComponentService>();
     final isSelected = imageService.selectedImageId == widget.nodeId;
@@ -214,75 +182,70 @@ class _MentionComponentState extends State<_MentionComponent>
       );
     }
 
-    final pillContent = GestureDetector(
+    final card = GestureDetector(
       onTap: () {
         imageService.selectImage(widget.nodeId);
       },
-      child: Container(
-        margin: EdgeInsets.only(top: marginTop, bottom: marginBottom),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-        child: Builder(
-          builder: (context) {
-            final CrossAxisAlignment cross =
-                widget.mainAxis == MainAxisAlignment.start
-                    ? CrossAxisAlignment.start
-                    : widget.mainAxis == MainAxisAlignment.end
-                    ? CrossAxisAlignment.end
-                    : CrossAxisAlignment.center;
-            return Column(
-              crossAxisAlignment: cross,
+      child: Stack(
+        children: [
+          // 핀 뷰 박스
+          Container(
+            height: 500,
+            margin: EdgeInsets.only(top: marginTop, bottom: marginBottom),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(5),
+              color: Theme.of(
+                context,
+              ).colorScheme.surfaceVariant.withOpacity(0.25),
+            ),
+            child: Row(
               children: [
-                for (final u in widget.usernames)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 4),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Icon(
-                          Icons.alternate_email,
-                          color: AppColors.darkTextPrimary,
-                          size: 18,
-                        ),
-                        const SizedBox(width: 6),
-                        Text(
-                          u,
-                          style: const TextStyle(
-                            color: AppColors.darkTextPrimary,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 18,
-                          ),
-                        ),
-                      ],
+                const SizedBox(width: 12),
+
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 10),
+                    child: Text(
+                      widget.label.isNotEmpty ? widget.label : 'clip',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.onSurface,
+                        fontWeight: FontWeight.w600,
+                        fontSize: 14,
+                      ),
                     ),
                   ),
+                ),
+                const SizedBox(width: 12),
               ],
-            );
-          },
-        ),
+            ),
+          ),
+        ],
       ),
     );
 
     return Column(
       children: [
-        // 위쪽 패딩: 멘션이나 이미지, 링크가 위에 있으면 패딩 제거
-        if (!hasMentionAbove && !hasImageAbove && !hasLinkAbove)
+        // 위쪽 패딩: 링크나 이미지, 멘션이 위에 있으면 패딩 제거
+        if (!hasLinkAbove && !hasImageAbove && !hasMentionAbove)
           SizedBox(height: paddingWithText),
         Stack(
           children: [
-            Row(mainAxisAlignment: widget.mainAxis, children: [pillContent]),
+            card,
             // 선택 하이라이트 오버레이
             if (isSelectionHighlighted)
               Positioned.fill(
                 child: IgnorePointer(
                   child: Container(
                     margin: EdgeInsets.only(
-                      top: marginTop + 4,
-                      bottom: marginBottom + 4,
-                      left: 50,
-                      right: 50,
+                      top: marginTop,
+                      bottom: marginBottom,
                     ),
                     decoration: BoxDecoration(
-                      color: AppColors.primary.withOpacity(0.2),
+                      color: AppColors.primary.withOpacity(0.4),
+                      borderRadius: BorderRadius.circular(12),
                     ),
                   ),
                 ),
@@ -295,12 +258,10 @@ class _MentionComponentState extends State<_MentionComponent>
                     margin: EdgeInsets.only(
                       top: marginTop,
                       bottom: marginBottom,
-                      left: 50,
-                      right: 50,
                     ),
                     decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(12),
                       border: Border.all(color: AppColors.primary, width: 3),
+                      borderRadius: BorderRadius.circular(12),
                     ),
                   ),
                 ),
@@ -328,14 +289,14 @@ class _MentionComponentState extends State<_MentionComponent>
               ),
           ],
         ),
-        // 아래쪽 패딩: 멘션이나 이미지, 링크가 아래에 있으면 패딩 제거
-        if (!hasMentionBelow && !hasImageBelow && !hasLinkBelow)
+        // 아래쪽 패딩: 링크나 이미지, 멘션이 아래에 있으면 패딩 제거
+        if (!hasLinkBelow && !hasImageBelow && !hasMentionBelow)
           SizedBox(height: paddingWithText),
       ],
     );
   }
 
-  // DocumentComponent 최소 구현
+  // DocumentComponent 최소 구현 (이미지/위치와 동일 정책)
   @override
   NodePosition getBeginningPosition() =>
       const UpstreamDownstreamNodePosition.upstream();
@@ -411,12 +372,13 @@ class _MentionComponentState extends State<_MentionComponent>
   @override
   MouseCursor? getDesiredCursorAtOffset(Offset localOffset) => null;
 
+  // 드래그 삽입 라인 표시 로직
   bool _shouldShowTopDropLine() {
     final svc = widget.dragService;
     if (svc == null) return false;
     final di = svc.dropIndex;
     if (di == null) return false;
-    final current = svc.getNodeIndex(widget.nodeId);
+    final current = _getCurrentNodeIndex();
     if (current == -1) return false;
 
     // 이 노드 위에 삽입하는 경우
@@ -431,7 +393,7 @@ class _MentionComponentState extends State<_MentionComponent>
     if (svc == null) return false;
     final di = svc.dropIndex;
     if (di == null) return false;
-    final current = svc.getNodeIndex(widget.nodeId);
+    final current = _getCurrentNodeIndex();
     if (current == -1) return false;
 
     // 마지막 노드인지 확인
@@ -461,7 +423,7 @@ class _MentionComponentState extends State<_MentionComponent>
     // 특수 노드 타입 체크
     bool isSpecialNode(DocumentNode? node) {
       if (node == null) return false;
-      return node is LinkNode ||
+      return node is ClipNode ||
           node is MentionNode ||
           node is ImageNode ||
           node is ImageRowNode;
@@ -505,7 +467,23 @@ class _MentionComponentState extends State<_MentionComponent>
     }
   }
 
-  // selection이 이 언급 노드를 포함하는지 계산
+  int _getCurrentNodeIndex() {
+    final svc = widget.dragService;
+    if (svc == null) return -1;
+    return svc.getNodeIndex(widget.nodeId);
+  }
+
+  Color? _parseColor(String hex) {
+    try {
+      var v = hex.replaceAll('#', '');
+      if (v.length == 6) v = 'FF$v';
+      return Color(int.parse(v, radix: 16));
+    } catch (_) {
+      return null;
+    }
+  }
+
+  // selection이 이 링크 노드를 포함하는지 계산
   bool _isNodeCoveredBySelection(
     Document doc,
     DocumentSelection selection,
@@ -540,6 +518,15 @@ class _MentionComponentState extends State<_MentionComponent>
     return true;
   }
 
+  bool _hasNeighborLink(Document doc, String nodeId, int direction) {
+    final myIndex = doc.getNodeIndexById(nodeId);
+    if (myIndex == -1) return false;
+    final neighborIndex = myIndex + direction;
+    if (neighborIndex < 0 || neighborIndex >= doc.nodeCount) return false;
+    final neighbor = doc.getNodeAt(neighborIndex);
+    return neighbor is ClipNode;
+  }
+
   bool _hasNeighborMention(Document doc, String nodeId, int direction) {
     final myIndex = doc.getNodeIndexById(nodeId);
     if (myIndex == -1) return false;
@@ -547,15 +534,6 @@ class _MentionComponentState extends State<_MentionComponent>
     if (neighborIndex < 0 || neighborIndex >= doc.nodeCount) return false;
     final neighbor = doc.getNodeAt(neighborIndex);
     return neighbor is MentionNode;
-  }
-
-  bool _hasNeighborLink(Document doc, String nodeId, int direction) {
-    final myIndex = doc.getNodeIndexById(nodeId);
-    if (myIndex == -1) return false;
-    final neighborIndex = myIndex + direction;
-    if (neighborIndex < 0 || neighborIndex >= doc.nodeCount) return false;
-    final neighbor = doc.getNodeAt(neighborIndex);
-    return neighbor is LinkNode;
   }
 
   bool _hasNeighborImage(Document doc, String nodeId, int direction) {

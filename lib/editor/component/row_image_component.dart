@@ -1,8 +1,10 @@
+import 'package:doppy/common/widgets/image_error_placeholder.dart';
 import 'package:doppy/editor/postwrite_screen.dart';
 import 'package:doppy/editor/component/link_component.dart';
 import 'package:doppy/editor/component/mention_component.dart';
-import 'package:doppy/editor/service/image_service.dart';
+import 'package:doppy/editor/service/node_component_service.dart';
 import 'package:doppy/editor/service/drag_service.dart';
+import 'package:doppy/pages/components/shimmer_box.dart';
 import 'package:doppy/theme/app_colors.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -361,7 +363,7 @@ class _ImageRowComponentState extends State<ImageRowComponent>
                                           ? EdgeInsets.zero
                                           : EdgeInsets.only(right: 1),
                                   child: SizedBox(
-                                    height: _unifiedHeight ?? 260,
+                                    height: _unifiedHeight ?? 150,
                                     child: Image.network(
                                       imageUrl,
                                       fit: BoxFit.cover,
@@ -371,37 +373,18 @@ class _ImageRowComponentState extends State<ImageRowComponent>
                                         loading,
                                       ) {
                                         if (loading == null) return child;
-                                        return Container(
-                                          height: _unifiedHeight ?? 260,
-                                          color: Colors.grey.shade200,
-                                          child: const Center(
-                                            child: CircularProgressIndicator(),
+                                        return ShimmerBox(
+                                          width: double.infinity,
+                                          height: _unifiedHeight ?? 150,
+                                          borderRadius: BorderRadius.circular(
+                                            0,
                                           ),
                                         );
                                       },
                                       errorBuilder: (context, error, stack) {
-                                        return Container(
-                                          height: _unifiedHeight ?? 260,
-                                          color: Colors.grey.shade300,
-                                          child: const Center(
-                                            child: Column(
-                                              mainAxisSize: MainAxisSize.min,
-                                              children: [
-                                                Icon(
-                                                  Icons.broken_image,
-                                                  size: 40,
-                                                  color: Colors.grey,
-                                                ),
-                                                SizedBox(height: 8),
-                                                Text(
-                                                  "이미지 로드 실패",
-                                                  style: TextStyle(
-                                                    color: Colors.black54,
-                                                  ),
-                                                ),
-                                              ],
-                                            ),
-                                          ),
+                                        print('Image error: $error');
+                                        return ImageErrorPlaceholder(
+                                          width: 200,
                                         );
                                       },
                                       frameBuilder: (
@@ -515,7 +498,7 @@ class _ImageRowComponentState extends State<ImageRowComponent>
   void _measureAndUnifyHeight(String imageUrl, double availableWidth) {
     if (!mounted) return;
 
-    final imageProvider = NetworkImage(imageUrl);
+    final ImageProvider imageProvider = NetworkImage(imageUrl);
     imageProvider
         .resolve(ImageConfiguration.empty)
         .addListener(

@@ -9,7 +9,8 @@ import 'package:doppy/providers/user_provider.dart';
 import 'package:provider/provider.dart';
 
 class CommentBottomSheet extends StatefulWidget {
-  const CommentBottomSheet({super.key});
+  const CommentBottomSheet({super.key, required this.title});
+  final String title;
 
   @override
   State<CommentBottomSheet> createState() => _CommentBottomSheetState();
@@ -21,9 +22,6 @@ class _CommentBottomSheetState extends State<CommentBottomSheet>
   final TextEditingController _commentController = TextEditingController();
   final FocusNode _commentFocus = FocusNode();
   final ScrollController _scrollController = ScrollController();
-
-  late AnimationController _animationController;
-  late Animation<double> _slideAnimation;
 
   // 바운싱 애니메이션을 위한 컨트롤러들
   late AnimationController _bounceAnimationController;
@@ -39,13 +37,6 @@ class _CommentBottomSheetState extends State<CommentBottomSheet>
   @override
   void initState() {
     super.initState();
-    _animationController = AnimationController(
-      duration: const Duration(milliseconds: 300),
-      vsync: this,
-    );
-    _slideAnimation = Tween<double>(begin: 1.0, end: 0.0).animate(
-      CurvedAnimation(parent: _animationController, curve: Curves.easeOutCubic),
-    );
 
     // 바운싱 애니메이션 초기화
     _bounceAnimationController = AnimationController(
@@ -60,9 +51,16 @@ class _CommentBottomSheetState extends State<CommentBottomSheet>
       ),
     );
 
-    _animationController.forward();
-
     _commentService.addListener(_onCommentServiceChanged);
+
+    // 오버레이 열릴 때 자동 포커스
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      Future.delayed(const Duration(milliseconds: 300), () {
+        if (mounted) {
+          _commentFocus.requestFocus();
+        }
+      });
+    });
   }
 
   void _onCommentServiceChanged() {
@@ -150,7 +148,6 @@ class _CommentBottomSheetState extends State<CommentBottomSheet>
   void dispose() {
     _commentService.removeListener(_onCommentServiceChanged);
 
-    _animationController.dispose();
     _bounceAnimationController.dispose();
     _commentController.dispose();
     _commentFocus.dispose();
@@ -483,587 +480,175 @@ class _CommentBottomSheetState extends State<CommentBottomSheet>
         allComments..sort((a, b) => a.createdAt.compareTo(b.createdAt));
     final bottomInset = MediaQuery.of(context).padding.bottom;
 
-    return AnimatedBuilder(
-      animation: _slideAnimation,
-      builder: (context, child) {
-        return Stack(
-          children: [
-            // 바텀시트
-            Transform.translate(
-              offset: Offset(
-                0,
-                _slideAnimation.value * MediaQuery.of(context).size.height,
-              ),
-              child: GestureDetector(
-                onTap: () {
-                  if (_commentFocus.hasFocus) {
-                    _commentFocus.unfocus();
-                  }
-                },
+    return Stack(
+      children: [
+        // 바텀시트
+        GestureDetector(
+          onTap: () {
+            if (_commentFocus.hasFocus) {
+              _commentFocus.unfocus();
+            }
+          },
+          child: Container(
+            height: MediaQuery.of(context).size.height,
+            decoration: BoxDecoration(
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.2),
+                  blurRadius: 20,
+                  offset: const Offset(0, -5),
+                ),
+              ],
+            ),
+            child: ClipRRect(
+              child: BackdropFilter(
+                filter: ui.ImageFilter.blur(sigmaX: 30, sigmaY: 30),
                 child: Container(
-                  height: MediaQuery.of(context).size.height,
                   decoration: BoxDecoration(
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.2),
-                        blurRadius: 20,
-                        offset: const Offset(0, -5),
-                      ),
-                    ],
+                    color: const Color.fromARGB(182, 96, 96, 96),
                   ),
-                  child: ClipRRect(
-                    child: BackdropFilter(
-                      filter: ui.ImageFilter.blur(sigmaX: 30, sigmaY: 30),
-                      child: Container(
-                        decoration: BoxDecoration(
-                          gradient: LinearGradient(
-                            begin: Alignment.topCenter,
-                            end: Alignment.bottomCenter,
-                            colors: [
-                              Theme.of(
-                                context,
-                              ).colorScheme.onSurface.withOpacity(0.25),
-                              Theme.of(
-                                context,
-                              ).colorScheme.onSurface.withOpacity(0.25),
-                            ],
-                          ),
-                        ),
-                        child: Column(
-                          children: [
-                            SizedBox(height: 50),
+                  child: Column(
+                    children: [
+                      SizedBox(height: 50),
 
-                            // 앱바
-                            Container(
-                              height: 56,
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 16,
-                              ),
-                              child: Row(
-                                children: [
-                                  GestureDetector(
-                                    onTap: () {
-                                      _animationController.reverse().then((_) {
-                                        Navigator.of(context).pop();
-                                      });
-                                    },
-                                    child: Icon(
-                                      Icons.arrow_back_ios_new,
-                                      color:
-                                          Theme.of(
-                                            context,
-                                          ).colorScheme.onSurface,
-                                      size: 15,
-                                    ),
-                                  ),
-                                  const SizedBox(width: 12),
-                                  Text(
-                                    '댓글 ${comments.length}개',
-                                    style: TextStyle(
-                                      color:
-                                          Theme.of(
-                                            context,
-                                          ).colorScheme.onSurface,
-                                      fontSize: 15,
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
-                                ],
+                      // 앱바
+                      Container(
+                        height: 40,
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        child: Row(
+                          children: [
+                            GestureDetector(
+                              onTap: () {
+                                Navigator.of(context).maybePop();
+                              },
+                              child: Icon(
+                                Icons.arrow_back_ios_new,
+                                color: Theme.of(context).colorScheme.onSurface,
+                                size: 20,
                               ),
                             ),
+                            const SizedBox(width: 12),
+                            Padding(
+                              padding: const EdgeInsets.only(top: 2),
+                              child: Text(
+                                widget.title,
+                                key: ValueKey(comments.length),
+                                style: TextStyle(
+                                  color:
+                                      Theme.of(context).colorScheme.onSurface,
+                                  fontSize: 20,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
 
-                            // 댓글 리스트
-                            Expanded(
-                              child:
-                                  _commentService.isLoading && comments.isEmpty
-                                      ? const Padding(
-                                        padding: EdgeInsets.symmetric(
-                                          horizontal: 16,
-                                          vertical: 8,
+                      // 댓글 리스트
+                      Expanded(
+                        child:
+                            _commentService.isLoading && comments.isEmpty
+                                ? const Padding(
+                                  padding: EdgeInsets.symmetric(
+                                    horizontal: 16,
+                                    vertical: 8,
+                                  ),
+                                  child: CommentShimmer(
+                                    itemCount: 5,
+                                    isPreview: false,
+                                  ),
+                                )
+                                : ListView.builder(
+                                  controller: _scrollController,
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 16,
+                                    vertical: 30,
+                                  ),
+                                  itemCount: comments.length,
+                                  itemBuilder: (context, index) {
+                                    final comment = comments[index]; // 정순으로 표시
+                                    final currentUser =
+                                        context
+                                            .read<UserProvider>()
+                                            .currentUser;
+                                    final isMe =
+                                        currentUser != null &&
+                                        comment.author == currentUser.username;
+                                    final hasReactions =
+                                        comment.emotionCounts.isNotEmpty;
+
+                                    // 이전 댓글과 같은 사람인지 확인
+                                    final bool isSameAuthorAsPrevious =
+                                        index > 0 &&
+                                        comments[index - 1].author ==
+                                            comment.author;
+                                    final bool showProfile =
+                                        !isSameAuthorAsPrevious;
+
+                                    // 다음 댓글도 같은 사람인지 확인
+                                    final bool isSameAuthorAsNext =
+                                        index < comments.length - 1 &&
+                                        comments[index + 1].author ==
+                                            comment.author;
+                                    final bool showAuthorInfo =
+                                        !isSameAuthorAsNext;
+
+                                    return TweenAnimationBuilder<double>(
+                                      duration: const Duration(
+                                        milliseconds: 400,
+                                      ),
+                                      curve: Curves.easeOutCubic,
+                                      tween: Tween(begin: 0.0, end: 1.0),
+                                      builder: (context, value, child) {
+                                        return Opacity(
+                                          opacity: value,
+                                          child: Transform.translate(
+                                            offset: Offset(0, 20 * (1 - value)),
+                                            child: child,
+                                          ),
+                                        );
+                                      },
+                                      child: Padding(
+                                        padding: EdgeInsets.only(
+                                          top: showProfile ? 8 : 2,
+                                          bottom: showAuthorInfo ? 8 : 2,
                                         ),
-                                        child: CommentShimmer(
-                                          itemCount: 5,
-                                          isPreview: false,
-                                        ),
-                                      )
-                                      : ListView.builder(
-                                        controller: _scrollController,
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 16,
-                                          vertical: 30,
-                                        ),
-                                        itemCount: comments.length,
-                                        itemBuilder: (context, index) {
-                                          final comment =
-                                              comments[index]; // 정순으로 표시
-                                          final currentUser =
-                                              context
-                                                  .read<UserProvider>()
-                                                  .currentUser;
-                                          final isMe =
-                                              currentUser != null &&
-                                              comment.author ==
-                                                  currentUser.username;
-                                          final hasReactions =
-                                              comment.emotionCounts.isNotEmpty;
-
-                                          return Padding(
-                                            padding: const EdgeInsets.symmetric(
-                                              vertical: 8,
-                                            ),
-                                            child: Row(
-                                              crossAxisAlignment:
-                                                  CrossAxisAlignment.start,
-                                              mainAxisAlignment:
-                                                  isMe
-                                                      ? MainAxisAlignment.end
-                                                      : MainAxisAlignment.start,
-                                              children: [
-                                                if (!isMe) ...[
-                                                  GestureDetector(
-                                                    onTap: () {
-                                                      Navigator.of(
-                                                        context,
-                                                      ).push(
-                                                        MaterialPageRoute(
-                                                          builder:
-                                                              (
-                                                                context,
-                                                              ) => UserProfileScreen(
-                                                                otherUser: User(
-                                                                  id: 0,
-                                                                  username:
-                                                                      comment
-                                                                          .author,
-                                                                  alias:
-                                                                      comment
-                                                                          .author,
-                                                                  profileImageUrl:
-                                                                      comment
-                                                                          .authorProfileImageUrl,
-                                                                ),
-                                                              ),
-                                                        ),
-                                                      );
-                                                    },
-                                                    child: Container(
-                                                      width: 50,
-                                                      height: 50,
-                                                      decoration: BoxDecoration(
-                                                        color:
-                                                            Theme.of(context)
-                                                                .colorScheme
-                                                                .surfaceVariant,
-                                                        shape: BoxShape.circle,
-                                                        border: Border.all(
-                                                          color: Theme.of(
-                                                                context,
-                                                              )
-                                                              .colorScheme
-                                                              .onSurfaceVariant
-                                                              .withOpacity(0.3),
-                                                          width: 1,
-                                                        ),
-                                                      ),
-                                                      clipBehavior:
-                                                          Clip.antiAlias,
-                                                      child:
-                                                          comment
-                                                                  .authorProfileImageUrl
-                                                                  .isNotEmpty
-                                                              ? Image.network(
-                                                                comment
-                                                                    .authorProfileImageUrl,
-                                                                fit:
-                                                                    BoxFit
-                                                                        .cover,
-                                                                cacheWidth: 120,
-                                                                cacheHeight:
-                                                                    120,
-                                                                filterQuality:
-                                                                    FilterQuality
-                                                                        .low,
-                                                              )
-                                                              : Icon(
-                                                                Icons.person,
-                                                                size: 16,
-                                                                color:
-                                                                    Theme.of(
-                                                                          context,
-                                                                        )
-                                                                        .colorScheme
-                                                                        .onSurfaceVariant,
-                                                              ),
-                                                    ),
-                                                  ),
-                                                  const SizedBox(width: 8),
-                                                ],
-
-                                                Flexible(
-                                                  child: Column(
-                                                    crossAxisAlignment:
-                                                        isMe
-                                                            ? CrossAxisAlignment
-                                                                .end
-                                                            : CrossAxisAlignment
-                                                                .start,
-                                                    children: [
-                                                      // 답글인 경우 타겟 댓글 표시
-                                                      if (comment.parentId !=
-                                                              null &&
-                                                          comment.parentId !=
-                                                              '0' &&
-                                                          comment.parentId !=
-                                                              '')
-                                                        ...() {
-                                                          final targetComment =
-                                                              _findTargetComment(
-                                                                comment
-                                                                    .parentId,
-                                                              );
-                                                          if (targetComment ==
-                                                              null)
-                                                            return <Widget>[];
-
-                                                          return [
-                                                            // 타겟 댓글 (투명한 말풍선)
-                                                            GestureDetector(
-                                                              onTap: () {
-                                                                // 타겟 댓글로 스크롤 점프
-                                                                _scrollToComment(
-                                                                  targetComment
-                                                                      .id,
-                                                                );
-                                                              },
-                                                              child: Container(
-                                                                constraints: BoxConstraints(
-                                                                  maxWidth:
-                                                                      MediaQuery.of(
-                                                                        context,
-                                                                      ).size.width *
-                                                                      0.75,
-                                                                ),
-                                                                margin:
-                                                                    const EdgeInsets.only(
-                                                                      bottom: 8,
-                                                                    ),
-                                                                padding:
-                                                                    const EdgeInsets.symmetric(
-                                                                      horizontal:
-                                                                          12,
-                                                                      vertical:
-                                                                          8,
-                                                                    ),
-                                                                decoration: BoxDecoration(
-                                                                  color: Theme.of(
-                                                                        context,
-                                                                      )
-                                                                      .colorScheme
-                                                                      .surfaceVariant
-                                                                      .withOpacity(
-                                                                        0.3,
-                                                                      ),
-                                                                  borderRadius:
-                                                                      BorderRadius.circular(
-                                                                        16,
-                                                                      ),
-                                                                  border: Border.all(
-                                                                    color: Theme.of(
-                                                                          context,
-                                                                        )
-                                                                        .colorScheme
-                                                                        .outline
-                                                                        .withOpacity(
-                                                                          0.2,
-                                                                        ),
-                                                                    width: 1,
-                                                                  ),
-                                                                ),
-                                                                child: Column(
-                                                                  crossAxisAlignment:
-                                                                      CrossAxisAlignment
-                                                                          .start,
-                                                                  children: [
-                                                                    Text(
-                                                                      targetComment
-                                                                          .author,
-                                                                      style: TextStyle(
-                                                                        color: Theme.of(
-                                                                          context,
-                                                                        ).colorScheme.onSurface.withOpacity(
-                                                                          0.7,
-                                                                        ),
-                                                                        fontSize:
-                                                                            12,
-                                                                        fontWeight:
-                                                                            FontWeight.w600,
-                                                                      ),
-                                                                    ),
-                                                                    const SizedBox(
-                                                                      height: 2,
-                                                                    ),
-                                                                    Text(
-                                                                      targetComment
-                                                                          .content,
-                                                                      style: TextStyle(
-                                                                        color: Theme.of(
-                                                                          context,
-                                                                        ).colorScheme.onSurface.withOpacity(
-                                                                          0.6,
-                                                                        ),
-                                                                        fontSize:
-                                                                            13,
-                                                                      ),
-                                                                      maxLines:
-                                                                          2,
-                                                                      overflow:
-                                                                          TextOverflow
-                                                                              .ellipsis,
-                                                                    ),
-                                                                  ],
-                                                                ),
+                                        child: Row(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          mainAxisAlignment:
+                                              isMe
+                                                  ? MainAxisAlignment.end
+                                                  : MainAxisAlignment.start,
+                                          children: [
+                                            if (!isMe) ...[
+                                              if (showProfile)
+                                                GestureDetector(
+                                                  onTap: () {
+                                                    Navigator.of(context).push(
+                                                      MaterialPageRoute(
+                                                        builder:
+                                                            (
+                                                              context,
+                                                            ) => UserProfileScreen(
+                                                              otherUser: User(
+                                                                id: 0,
+                                                                username:
+                                                                    comment
+                                                                        .author,
+                                                                alias:
+                                                                    comment
+                                                                        .author,
+                                                                profileImageUrl:
+                                                                    comment
+                                                                        .authorProfileImageUrl,
                                                               ),
                                                             ),
-                                                          ];
-                                                        }(),
-
-                                                      // 댓글 버블
-                                                      GestureDetector(
-                                                        onLongPressStart: (
-                                                          details,
-                                                        ) {
-                                                          HapticFeedback.mediumImpact();
-                                                          final Offset gp =
-                                                              details
-                                                                  .globalPosition;
-                                                          _openMessageMenu(
-                                                            anchor: gp,
-                                                            comment: comment,
-                                                          ).then((value) {
-                                                            if (value == null)
-                                                              return;
-                                                            if (value ==
-                                                                'reply') {
-                                                              _startReplyAnimation(
-                                                                comment.id,
-                                                              );
-                                                              setState(() {
-                                                                _replyTarget =
-                                                                    comment;
-                                                              });
-                                                              _commentFocus
-                                                                  .requestFocus();
-                                                            } else if (value ==
-                                                                'copy') {
-                                                              Clipboard.setData(
-                                                                ClipboardData(
-                                                                  text:
-                                                                      comment
-                                                                          .content,
-                                                                ),
-                                                              );
-                                                            } else if (value ==
-                                                                'edit') {
-                                                              _editComment(
-                                                                comment.id,
-                                                                comment.content,
-                                                              );
-                                                            } else if (value ==
-                                                                'delete') {
-                                                              _deleteComment(
-                                                                comment.id,
-                                                              );
-                                                            } else {
-                                                              _toggleReaction(
-                                                                comment.id,
-                                                                value,
-                                                              );
-                                                            }
-                                                          });
-                                                        },
-                                                        onDoubleTap:
-                                                            () =>
-                                                                _toggleReaction(
-                                                                  comment.id,
-                                                                  '❤️',
-                                                                ),
-                                                        child: AnimatedBuilder(
-                                                          animation:
-                                                              _bounceAnimationController,
-                                                          builder: (
-                                                            context,
-                                                            child,
-                                                          ) {
-                                                            final isAnimating =
-                                                                _animatingCommentId ==
-                                                                comment.id;
-                                                            final scale =
-                                                                isAnimating
-                                                                    ? _bounceScaleAnimation
-                                                                        .value
-                                                                    : 1.0;
-
-                                                            return Transform.scale(
-                                                              scale: scale,
-                                                              child: Container(
-                                                                constraints: BoxConstraints(
-                                                                  maxWidth:
-                                                                      MediaQuery.of(
-                                                                        context,
-                                                                      ).size.width *
-                                                                      0.75,
-                                                                ),
-                                                                padding:
-                                                                    const EdgeInsets.symmetric(
-                                                                      horizontal:
-                                                                          12,
-                                                                      vertical:
-                                                                          8,
-                                                                    ),
-                                                                decoration: BoxDecoration(
-                                                                  color:
-                                                                      isMe
-                                                                          ? Theme.of(
-                                                                            context,
-                                                                          ).colorScheme.primary
-                                                                          : Theme.of(
-                                                                            context,
-                                                                          ).colorScheme.surfaceVariant,
-                                                                  borderRadius: BorderRadius.only(
-                                                                    topLeft:
-                                                                        const Radius.circular(
-                                                                          16,
-                                                                        ),
-                                                                    topRight:
-                                                                        const Radius.circular(
-                                                                          16,
-                                                                        ),
-                                                                    bottomLeft:
-                                                                        Radius.circular(
-                                                                          isMe
-                                                                              ? 16
-                                                                              : 4,
-                                                                        ),
-                                                                    bottomRight:
-                                                                        Radius.circular(
-                                                                          isMe
-                                                                              ? 4
-                                                                              : 16,
-                                                                        ),
-                                                                  ),
-                                                                ),
-                                                                child: Text(
-                                                                  comment
-                                                                      .content,
-                                                                  style: TextStyle(
-                                                                    color:
-                                                                        isMe
-                                                                            ? Colors.white
-                                                                            : Theme.of(
-                                                                              context,
-                                                                            ).colorScheme.onSurface,
-                                                                    fontSize:
-                                                                        15,
-                                                                    height:
-                                                                        1.35,
-                                                                  ),
-                                                                ),
-                                                              ),
-                                                            );
-                                                          },
-                                                        ),
                                                       ),
-
-                                                      // 반응 표시
-                                                      if (hasReactions)
-                                                        Padding(
-                                                          padding:
-                                                              const EdgeInsets.only(
-                                                                top: 4,
-                                                              ),
-                                                          child: Row(
-                                                            mainAxisSize:
-                                                                MainAxisSize
-                                                                    .min,
-                                                            children: [
-                                                              for (final entry
-                                                                  in comment
-                                                                      .emotionCounts
-                                                                      .entries)
-                                                                if (entry
-                                                                        .value !=
-                                                                    '0')
-                                                                  Container(
-                                                                    margin:
-                                                                        const EdgeInsets.only(
-                                                                          right:
-                                                                              4,
-                                                                        ),
-                                                                    padding: const EdgeInsets.symmetric(
-                                                                      horizontal:
-                                                                          6,
-                                                                      vertical:
-                                                                          2,
-                                                                    ),
-                                                                    decoration: BoxDecoration(
-                                                                      color:
-                                                                          Theme.of(
-                                                                            context,
-                                                                          ).colorScheme.surface,
-                                                                      borderRadius:
-                                                                          BorderRadius.circular(
-                                                                            10,
-                                                                          ),
-                                                                      boxShadow: [
-                                                                        BoxShadow(
-                                                                          color: Colors.black.withOpacity(
-                                                                            0.1,
-                                                                          ),
-                                                                          blurRadius:
-                                                                              2,
-                                                                        ),
-                                                                      ],
-                                                                    ),
-                                                                    child: Text(
-                                                                      '${entry.key} ${entry.value}',
-                                                                      style: const TextStyle(
-                                                                        fontSize:
-                                                                            12,
-                                                                      ),
-                                                                    ),
-                                                                  ),
-                                                            ],
-                                                          ),
-                                                        ),
-
-                                                      // 시간 표시
-                                                      Padding(
-                                                        padding:
-                                                            const EdgeInsets.only(
-                                                              top: 4,
-                                                            ),
-                                                        child: Text(
-                                                          '${comment.author} • ${_formatRelativeTime(comment.createdAt)}',
-                                                          style: TextStyle(
-                                                            color: Theme.of(
-                                                                  context,
-                                                                )
-                                                                .colorScheme
-                                                                .onSurface
-                                                                .withOpacity(
-                                                                  0.6,
-                                                                ),
-                                                            fontSize: 11,
-                                                          ),
-                                                        ),
-                                                      ),
-                                                    ],
-                                                  ),
-                                                ),
-
-                                                if (isMe) ...[
-                                                  const SizedBox(width: 8),
-                                                  Container(
+                                                    );
+                                                  },
+                                                  child: Container(
                                                     width: 50,
                                                     height: 50,
                                                     decoration: BoxDecoration(
@@ -1076,7 +661,7 @@ class _CommentBottomSheetState extends State<CommentBottomSheet>
                                                         color: Theme.of(context)
                                                             .colorScheme
                                                             .onSurfaceVariant
-                                                            .withOpacity(1),
+                                                            .withOpacity(0.3),
                                                         width: 1,
                                                       ),
                                                     ),
@@ -1107,145 +692,550 @@ class _CommentBottomSheetState extends State<CommentBottomSheet>
                                                                       .onSurfaceVariant,
                                                             ),
                                                   ),
+                                                )
+                                              else
+                                                const SizedBox(width: 50),
+                                              const SizedBox(width: 8),
+                                            ],
+
+                                            Flexible(
+                                              child: Column(
+                                                crossAxisAlignment:
+                                                    isMe
+                                                        ? CrossAxisAlignment.end
+                                                        : CrossAxisAlignment
+                                                            .start,
+                                                children: [
+                                                  // 답글인 경우 타겟 댓글 표시
+                                                  if (comment.parentId !=
+                                                          null &&
+                                                      comment.parentId != '0' &&
+                                                      comment.parentId != '')
+                                                    ...() {
+                                                      final targetComment =
+                                                          _findTargetComment(
+                                                            comment.parentId,
+                                                          );
+                                                      if (targetComment == null)
+                                                        return <Widget>[];
+
+                                                      return [
+                                                        // 타겟 댓글 (투명한 말풍선)
+                                                        GestureDetector(
+                                                          onTap: () {
+                                                            // 타겟 댓글로 스크롤 점프
+                                                            _scrollToComment(
+                                                              targetComment.id,
+                                                            );
+                                                          },
+                                                          child: Container(
+                                                            constraints: BoxConstraints(
+                                                              maxWidth:
+                                                                  MediaQuery.of(
+                                                                    context,
+                                                                  ).size.width *
+                                                                  0.75,
+                                                            ),
+                                                            margin:
+                                                                const EdgeInsets.only(
+                                                                  bottom: 8,
+                                                                ),
+                                                            padding:
+                                                                const EdgeInsets.symmetric(
+                                                                  horizontal:
+                                                                      12,
+                                                                  vertical: 8,
+                                                                ),
+                                                            decoration: BoxDecoration(
+                                                              color: Theme.of(
+                                                                    context,
+                                                                  )
+                                                                  .colorScheme
+                                                                  .surfaceVariant
+                                                                  .withOpacity(
+                                                                    0.3,
+                                                                  ),
+                                                              borderRadius:
+                                                                  BorderRadius.circular(
+                                                                    16,
+                                                                  ),
+                                                              border: Border.all(
+                                                                color: Theme.of(
+                                                                      context,
+                                                                    )
+                                                                    .colorScheme
+                                                                    .outline
+                                                                    .withOpacity(
+                                                                      0.2,
+                                                                    ),
+                                                                width: 1,
+                                                              ),
+                                                            ),
+                                                            child: Column(
+                                                              crossAxisAlignment:
+                                                                  CrossAxisAlignment
+                                                                      .start,
+                                                              children: [
+                                                                Text(
+                                                                  targetComment
+                                                                      .author,
+                                                                  style: TextStyle(
+                                                                    color: Theme.of(
+                                                                          context,
+                                                                        )
+                                                                        .colorScheme
+                                                                        .onSurface
+                                                                        .withOpacity(
+                                                                          0.7,
+                                                                        ),
+                                                                    fontSize:
+                                                                        12,
+                                                                    fontWeight:
+                                                                        FontWeight
+                                                                            .w600,
+                                                                  ),
+                                                                ),
+                                                                const SizedBox(
+                                                                  height: 2,
+                                                                ),
+                                                                Text(
+                                                                  targetComment
+                                                                      .content,
+                                                                  style: TextStyle(
+                                                                    color: Theme.of(
+                                                                          context,
+                                                                        )
+                                                                        .colorScheme
+                                                                        .onSurface
+                                                                        .withOpacity(
+                                                                          0.6,
+                                                                        ),
+                                                                    fontSize:
+                                                                        13,
+                                                                  ),
+                                                                  maxLines: 2,
+                                                                  overflow:
+                                                                      TextOverflow
+                                                                          .ellipsis,
+                                                                ),
+                                                              ],
+                                                            ),
+                                                          ),
+                                                        ),
+                                                      ];
+                                                    }(),
+
+                                                  // 댓글 버블
+                                                  GestureDetector(
+                                                    onLongPressStart: (
+                                                      details,
+                                                    ) {
+                                                      HapticFeedback.mediumImpact();
+                                                      final Offset gp =
+                                                          details
+                                                              .globalPosition;
+                                                      _openMessageMenu(
+                                                        anchor: gp,
+                                                        comment: comment,
+                                                      ).then((value) {
+                                                        if (value == null)
+                                                          return;
+                                                        if (value == 'reply') {
+                                                          _startReplyAnimation(
+                                                            comment.id,
+                                                          );
+                                                          setState(() {
+                                                            _replyTarget =
+                                                                comment;
+                                                          });
+                                                          _commentFocus
+                                                              .requestFocus();
+                                                        } else if (value ==
+                                                            'copy') {
+                                                          Clipboard.setData(
+                                                            ClipboardData(
+                                                              text:
+                                                                  comment
+                                                                      .content,
+                                                            ),
+                                                          );
+                                                        } else if (value ==
+                                                            'edit') {
+                                                          _editComment(
+                                                            comment.id,
+                                                            comment.content,
+                                                          );
+                                                        } else if (value ==
+                                                            'delete') {
+                                                          _deleteComment(
+                                                            comment.id,
+                                                          );
+                                                        } else {
+                                                          _toggleReaction(
+                                                            comment.id,
+                                                            value,
+                                                          );
+                                                        }
+                                                      });
+                                                    },
+                                                    onDoubleTap:
+                                                        () => _toggleReaction(
+                                                          comment.id,
+                                                          '❤️',
+                                                        ),
+                                                    child: AnimatedBuilder(
+                                                      animation:
+                                                          _bounceAnimationController,
+                                                      builder: (
+                                                        context,
+                                                        child,
+                                                      ) {
+                                                        final isAnimating =
+                                                            _animatingCommentId ==
+                                                            comment.id;
+                                                        final scale =
+                                                            isAnimating
+                                                                ? _bounceScaleAnimation
+                                                                    .value
+                                                                : 1.0;
+
+                                                        return Transform.scale(
+                                                          scale: scale,
+                                                          child: Container(
+                                                            constraints: BoxConstraints(
+                                                              maxWidth:
+                                                                  MediaQuery.of(
+                                                                    context,
+                                                                  ).size.width *
+                                                                  0.75,
+                                                            ),
+                                                            padding:
+                                                                const EdgeInsets.symmetric(
+                                                                  horizontal:
+                                                                      12,
+                                                                  vertical: 8,
+                                                                ),
+                                                            decoration: BoxDecoration(
+                                                              color:
+                                                                  isMe
+                                                                      ? Theme.of(
+                                                                        context,
+                                                                      ).colorScheme.primary
+                                                                      : Theme.of(
+                                                                        context,
+                                                                      ).colorScheme.surfaceVariant,
+                                                              borderRadius: BorderRadius.only(
+                                                                topLeft:
+                                                                    const Radius.circular(
+                                                                      16,
+                                                                    ),
+                                                                topRight:
+                                                                    const Radius.circular(
+                                                                      16,
+                                                                    ),
+                                                                bottomLeft:
+                                                                    Radius.circular(
+                                                                      isMe
+                                                                          ? 16
+                                                                          : 4,
+                                                                    ),
+                                                                bottomRight:
+                                                                    Radius.circular(
+                                                                      isMe
+                                                                          ? 4
+                                                                          : 16,
+                                                                    ),
+                                                              ),
+                                                            ),
+                                                            child: Text(
+                                                              comment.content,
+                                                              style: TextStyle(
+                                                                color:
+                                                                    isMe
+                                                                        ? Colors
+                                                                            .white
+                                                                        : Theme.of(
+                                                                          context,
+                                                                        ).colorScheme.onSurface,
+                                                                fontSize: 15,
+                                                                height: 1.35,
+                                                              ),
+                                                            ),
+                                                          ),
+                                                        );
+                                                      },
+                                                    ),
+                                                  ),
+
+                                                  // 반응 표시
+                                                  if (hasReactions)
+                                                    Padding(
+                                                      padding:
+                                                          const EdgeInsets.only(
+                                                            top: 4,
+                                                          ),
+                                                      child: Row(
+                                                        mainAxisSize:
+                                                            MainAxisSize.min,
+                                                        children: [
+                                                          for (final entry
+                                                              in comment
+                                                                  .emotionCounts
+                                                                  .entries)
+                                                            if (entry.value !=
+                                                                '0')
+                                                              Container(
+                                                                margin:
+                                                                    const EdgeInsets.only(
+                                                                      right: 4,
+                                                                    ),
+                                                                padding:
+                                                                    const EdgeInsets.symmetric(
+                                                                      horizontal:
+                                                                          6,
+                                                                      vertical:
+                                                                          2,
+                                                                    ),
+                                                                decoration: BoxDecoration(
+                                                                  color:
+                                                                      Theme.of(
+                                                                        context,
+                                                                      ).colorScheme.surface,
+                                                                  borderRadius:
+                                                                      BorderRadius.circular(
+                                                                        10,
+                                                                      ),
+                                                                  boxShadow: [
+                                                                    BoxShadow(
+                                                                      color: Colors
+                                                                          .black
+                                                                          .withOpacity(
+                                                                            0.1,
+                                                                          ),
+                                                                      blurRadius:
+                                                                          2,
+                                                                    ),
+                                                                  ],
+                                                                ),
+                                                                child: Text(
+                                                                  '${entry.key} ${entry.value}',
+                                                                  style:
+                                                                      const TextStyle(
+                                                                        fontSize:
+                                                                            12,
+                                                                      ),
+                                                                ),
+                                                              ),
+                                                        ],
+                                                      ),
+                                                    ),
+
+                                                  // 시간 표시 (연속 댓글의 마지막에만 표시)
+                                                  if (showAuthorInfo)
+                                                    Padding(
+                                                      padding:
+                                                          const EdgeInsets.only(
+                                                            top: 4,
+                                                          ),
+                                                      child: Text(
+                                                        '${comment.author} • ${_formatRelativeTime(comment.createdAt)}',
+                                                        style: TextStyle(
+                                                          color: Theme.of(
+                                                                context,
+                                                              )
+                                                              .colorScheme
+                                                              .onSurface
+                                                              .withOpacity(0.6),
+                                                          fontSize: 11,
+                                                        ),
+                                                      ),
+                                                    ),
                                                 ],
-                                              ],
-                                            ),
-                                          );
-                                        },
-                                      ),
-                            ),
-
-                            // 댓글 입력창
-                            Container(
-                              padding: EdgeInsets.only(
-                                left: 16,
-                                right: 16,
-                                top: 0,
-                                bottom: bottomInset + 8,
-                              ),
-
-                              child: Column(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  // 답글 대상 표시
-                                  if (_replyTarget != null)
-                                    Container(
-                                      margin: const EdgeInsets.only(bottom: 8),
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 12,
-                                        vertical: 6,
-                                      ),
-                                      decoration: BoxDecoration(
-                                        color:
-                                            Theme.of(
-                                              context,
-                                            ).colorScheme.surfaceVariant,
-                                        borderRadius: BorderRadius.circular(12),
-                                      ),
-                                      child: Row(
-                                        children: [
-                                          Expanded(
-                                            child: Text(
-                                              '@${_replyTarget!.author}: ${_replyTarget!.content}',
-                                              overflow: TextOverflow.ellipsis,
-                                              style: TextStyle(
-                                                color:
-                                                    Theme.of(
-                                                      context,
-                                                    ).colorScheme.onSurface,
-                                                fontSize: 12,
                                               ),
                                             ),
-                                          ),
-                                          const SizedBox(width: 8),
-                                          GestureDetector(
-                                            onTap:
-                                                () => setState(
-                                                  () => _replyTarget = null,
-                                                ),
-                                            child: Icon(
-                                              Icons.close,
-                                              size: 16,
-                                              color: Theme.of(context)
-                                                  .colorScheme
-                                                  .onSurface
-                                                  .withOpacity(0.6),
-                                            ),
-                                          ),
-                                        ],
+
+                                            if (isMe) ...[
+                                              const SizedBox(width: 8),
+                                              if (showProfile)
+                                                Container(
+                                                  width: 50,
+                                                  height: 50,
+                                                  decoration: BoxDecoration(
+                                                    color:
+                                                        Theme.of(context)
+                                                            .colorScheme
+                                                            .surfaceVariant,
+                                                    shape: BoxShape.circle,
+                                                    border: Border.all(
+                                                      color: Theme.of(context)
+                                                          .colorScheme
+                                                          .onSurfaceVariant
+                                                          .withOpacity(1),
+                                                      width: 1,
+                                                    ),
+                                                  ),
+                                                  clipBehavior: Clip.antiAlias,
+                                                  child:
+                                                      comment
+                                                              .authorProfileImageUrl
+                                                              .isNotEmpty
+                                                          ? Image.network(
+                                                            comment
+                                                                .authorProfileImageUrl,
+                                                            fit: BoxFit.cover,
+                                                            cacheWidth: 120,
+                                                            cacheHeight: 120,
+                                                            filterQuality:
+                                                                FilterQuality
+                                                                    .low,
+                                                          )
+                                                          : Icon(
+                                                            Icons.person,
+                                                            size: 16,
+                                                            color:
+                                                                Theme.of(
+                                                                      context,
+                                                                    )
+                                                                    .colorScheme
+                                                                    .onSurfaceVariant,
+                                                          ),
+                                                )
+                                              else
+                                                const SizedBox(width: 50),
+                                            ],
+                                          ],
+                                        ),
+                                      ),
+                                    );
+                                  },
+                                ),
+                      ),
+
+                      // 댓글 입력창
+                      Container(
+                        padding: EdgeInsets.only(
+                          left: 16,
+                          right: 16,
+                          top: 0,
+                          bottom: bottomInset + 8,
+                        ),
+
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            // 답글 대상 표시
+                            if (_replyTarget != null)
+                              Container(
+                                margin: const EdgeInsets.only(bottom: 8),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 6,
+                                ),
+                                decoration: BoxDecoration(
+                                  color:
+                                      Theme.of(
+                                        context,
+                                      ).colorScheme.surfaceVariant,
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                child: Row(
+                                  children: [
+                                    Expanded(
+                                      child: Text(
+                                        '@${_replyTarget!.author}: ${_replyTarget!.content}',
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                          color:
+                                              Theme.of(
+                                                context,
+                                              ).colorScheme.onSurface,
+                                          fontSize: 12,
+                                        ),
                                       ),
                                     ),
-
-                                  // 입력창
-                                  Row(
-                                    children: [
-                                      Expanded(
-                                        child: TextField(
-                                          controller: _commentController,
-                                          focusNode: _commentFocus,
-                                          minLines: 1,
-                                          maxLines: 4,
-                                          decoration: InputDecoration(
-                                            hintText:
-                                                _replyTarget != null
-                                                    ? '답글을 입력하세요'
-                                                    : '댓글을 입력하세요',
-                                            border: OutlineInputBorder(
-                                              borderRadius:
-                                                  BorderRadius.circular(20),
-                                              borderSide: BorderSide.none,
-                                            ),
-                                            filled: true,
-                                            fillColor:
-                                                Theme.of(
-                                                  context,
-                                                ).colorScheme.surface,
-                                            contentPadding:
-                                                const EdgeInsets.symmetric(
-                                                  horizontal: 16,
-                                                  vertical: 12,
-                                                ),
+                                    const SizedBox(width: 8),
+                                    GestureDetector(
+                                      onTap:
+                                          () => setState(
+                                            () => _replyTarget = null,
                                           ),
-                                        ),
+                                      child: Icon(
+                                        Icons.close,
+                                        size: 16,
+                                        color: Theme.of(context)
+                                            .colorScheme
+                                            .onSurface
+                                            .withOpacity(0.6),
                                       ),
-                                      const SizedBox(width: 8),
-                                      GestureDetector(
-                                        onTap: _submitComment,
-                                        child: Container(
-                                          padding: const EdgeInsets.all(10),
-                                          decoration: BoxDecoration(
-                                            color:
-                                                Theme.of(
-                                                  context,
-                                                ).colorScheme.surface,
-                                            shape: BoxShape.circle,
-                                          ),
-                                          child: Icon(
-                                            Icons.send_rounded,
-                                            size: 24,
-                                            color:
-                                                Theme.of(
-                                                  context,
-                                                ).colorScheme.primary,
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ],
+                                    ),
+                                  ],
+                                ),
                               ),
+
+                            // 입력창
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: TextField(
+                                    cursorColor:
+                                        Theme.of(context).colorScheme.onSurface,
+                                    controller: _commentController,
+                                    focusNode: _commentFocus,
+                                    minLines: 1,
+                                    maxLines: 4,
+                                    decoration: InputDecoration(
+                                      hintText:
+                                          _replyTarget != null
+                                              ? '답글을 입력하세요'
+                                              : '댓글을 입력하세요',
+                                      border: OutlineInputBorder(
+                                        borderRadius: BorderRadius.circular(35),
+                                        borderSide: BorderSide.none,
+                                      ),
+                                      filled: true,
+                                      fillColor:
+                                          Theme.of(context).colorScheme.surface,
+                                      contentPadding:
+                                          const EdgeInsets.symmetric(
+                                            horizontal: 16,
+                                            vertical: 12,
+                                          ),
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                GestureDetector(
+                                  onTap: _submitComment,
+                                  child: Container(
+                                    padding: const EdgeInsets.all(12),
+                                    decoration: BoxDecoration(
+                                      color:
+                                          Theme.of(context).colorScheme.surface,
+                                      shape: BoxShape.circle,
+                                    ),
+                                    child: Icon(
+                                      Icons.send_rounded,
+                                      size: 24,
+                                      color:
+                                          Theme.of(
+                                            context,
+                                          ).colorScheme.onSurface,
+                                    ),
+                                  ),
+                                ),
+                              ],
                             ),
                           ],
                         ),
                       ),
-                    ),
+                    ],
                   ),
                 ),
               ),
             ),
-          ],
-        );
-      },
+          ),
+        ),
+      ],
     );
   }
 }

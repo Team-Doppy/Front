@@ -1,5 +1,5 @@
+import 'package:doppy/common/widgets/image_error_placeholder.dart';
 import 'package:doppy/editor/component/link_component.dart';
-import 'package:doppy/editor/component/location_component.dart';
 import 'package:doppy/editor/component/row_image_component.dart';
 import 'package:flutter/material.dart';
 import 'package:super_editor/super_editor.dart';
@@ -95,12 +95,7 @@ class DragOverlayWidget extends StatelessWidget {
                     height: 100,
                     fit: BoxFit.cover,
                     errorBuilder:
-                        (_, __, ___) => Container(
-                          width: 100,
-                          height: 100,
-                          color: const Color(0xFF2A2A2A),
-                          child: const Icon(Icons.link, color: Colors.white54),
-                        ),
+                        (context, error, stack) => ImageErrorPlaceholder(),
                   ),
                 )
               else
@@ -198,12 +193,7 @@ class DragOverlayWidget extends StatelessWidget {
           imageUrl,
           fit: BoxFit.cover,
           errorBuilder: (context, error, stackTrace) {
-            return Container(
-              width: 100,
-              height: 100,
-              color: Colors.grey.shade300,
-              child: const Icon(Icons.image, color: Colors.grey),
-            );
+            return ImageErrorPlaceholder();
           },
         ),
       ),
@@ -226,18 +216,7 @@ class _ImagePreviewContent extends StatelessWidget {
         return const Center(child: CircularProgressIndicator());
       },
       errorBuilder: (context, error, stackTrace) {
-        return Container(
-          color: Colors.grey.shade300,
-          padding: const EdgeInsets.all(8),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: const [
-              Icon(Icons.broken_image, size: 40, color: Colors.grey),
-              SizedBox(height: 8),
-              Text("이미지를 불러올 수 없습니다.", style: TextStyle(color: Colors.black54)),
-            ],
-          ),
-        );
+        return ImageErrorPlaceholder();
       },
     );
   }
@@ -289,27 +268,7 @@ class _ImageRowPreviewContentState extends State<_ImageRowPreviewContent> {
                           );
                         },
                         errorBuilder: (context, error, stack) {
-                          return Container(
-                            height: _unifiedHeight ?? 200,
-                            color: Colors.grey.shade300,
-                            child: const Center(
-                              child: Column(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Icon(
-                                    Icons.broken_image,
-                                    size: 40,
-                                    color: Colors.grey,
-                                  ),
-                                  SizedBox(height: 8),
-                                  Text(
-                                    "이미지를 불러올 수 없습니다.",
-                                    style: TextStyle(color: Colors.black54),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          );
+                          return ImageErrorPlaceholder();
                         },
                         frameBuilder: (
                           context,
@@ -318,12 +277,9 @@ class _ImageRowPreviewContentState extends State<_ImageRowPreviewContent> {
                           wasSynchronouslyLoaded,
                         ) {
                           if (frame == null) return child;
-
-                          // 이미지 크기 계산
                           WidgetsBinding.instance.addPostFrameCallback((_) {
                             _calculateImageSize(imageUrl, availableWidth);
                           });
-
                           return child;
                         },
                       ),

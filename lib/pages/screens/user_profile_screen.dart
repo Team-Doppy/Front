@@ -3,6 +3,7 @@ import 'package:doppy/pages/components/comps_for_profile/feed.dart';
 import 'package:doppy/data/services/feed_service.dart';
 import 'package:doppy/pages/screens/manage_group_screen.dart';
 import 'package:doppy/pages/user/setting_screen.dart';
+import 'package:doppy/utils/error_handler.dart';
 
 import 'package:doppy/utils/route_observer.dart';
 import 'package:flutter/material.dart';
@@ -38,8 +39,6 @@ class _UserProfileScreenState extends State<UserProfileScreen>
   late final bool _isOwnProfile;
 
   // Bird's-eye view를 위한 상태
-  final GlobalKey _contentKey = GlobalKey();
-  double _contentHeight = 0.0;
 
   // 배경 이미지 상태
 
@@ -55,6 +54,10 @@ class _UserProfileScreenState extends State<UserProfileScreen>
   static final Feed _feed = Feed();
   final GlobalKey _categoryButtonKey = GlobalKey();
   static bool _prefetchedFriendsOnce = false; // 첫 진입 1회만 프리캐싱
+
+  // 프로필 편집용 TextEditingController
+  final TextEditingController _nameController = TextEditingController();
+  final TextEditingController _descriptionController = TextEditingController();
 
   @override
   void initState() {
@@ -144,6 +147,8 @@ class _UserProfileScreenState extends State<UserProfileScreen>
     }
 
     _scrollController.dispose();
+    _nameController.dispose();
+    _descriptionController.dispose();
     if (_profileUploadTask != null && _profileTaskListener != null) {
       _profileUploadTask!.removeListener(_profileTaskListener!);
     }
@@ -718,13 +723,21 @@ class _UserProfileScreenState extends State<UserProfileScreen>
   }
 
   void showProfileInfoEditBottomSheet(User me) {
+    // 컨트롤러에 현재 값 설정
+    _nameController.text = me.alias ?? '';
+    _descriptionController.text = me.selfIntroduction ?? '';
+
+    print(
+      '[UserProfile] Bottom sheet 열기 - 이름: "${_nameController.text}", 소개: "${_descriptionController.text}"',
+    );
+
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
       isScrollControlled: true,
       builder: (BuildContext context) {
         return SizedBox(
-          height: MediaQuery.of(context).size.height * 0.73,
+          height: MediaQuery.of(context).size.height * 0.75,
           child: Container(
             width: MediaQuery.of(context).size.width,
             decoration: BoxDecoration(
@@ -733,10 +746,8 @@ class _UserProfileScreenState extends State<UserProfileScreen>
             ),
             child: ProfileInfoEditBottomSheet(
               user: me,
-              nameController: TextEditingController(text: me.alias ?? ''),
-              descriptionController: TextEditingController(
-                text: me.selfIntroduction ?? '',
-              ),
+              nameController: _nameController,
+              descriptionController: _descriptionController,
               onClearProfileImage: _clearProfileImage,
               onImagesSelected: (files) => _handleImageSelected(files.first),
               onSave: ({
@@ -859,15 +870,7 @@ class _UserProfileScreenState extends State<UserProfileScreen>
       if (task.state == UploadState.failed ||
           task.state == UploadState.cancelled) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                '업로드에 실패했어요 네트워크 상태를 확인해주세요',
-                style: TextStyle(color: Theme.of(context).colorScheme.onError),
-              ),
-              backgroundColor: Theme.of(context).colorScheme.error,
-            ),
-          );
+          ErrorHandler.showError(context, '프로필 이미지 업로드에 실패했습니다');
         }
         if (_profileTaskListener != null) {
           task.removeListener(_profileTaskListener!);
@@ -879,6 +882,7 @@ class _UserProfileScreenState extends State<UserProfileScreen>
             _isUploadingProfileImage = false;
           });
         }
+        return; // 흐름 즉시 중단
       }
     };
     task.addListener(_profileTaskListener!);

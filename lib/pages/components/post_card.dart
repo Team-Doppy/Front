@@ -238,7 +238,6 @@ class _PostCardState extends State<PostCard> {
                         username: widget.author,
                         size: 35,
                         borderWidth: 1,
-                        borderColor: Colors.black.withOpacity(0.2),
                       ),
                       const SizedBox(width: 4),
                       Text(

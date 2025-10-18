@@ -2,7 +2,7 @@ import 'dart:convert';
 import 'dart:ui' as ui;
 import 'package:doppy/data/services/upload_service.dart';
 import 'package:doppy/editor/image/native_image_picker.dart';
-import 'package:doppy/editor/service/image_service.dart';
+import 'package:doppy/editor/service/node_component_service.dart';
 import 'package:doppy/editor/service/sticker_service.dart';
 import 'package:doppy/pages/components/common_profile_avatar.dart';
 import 'package:doppy/pages/screens/post_reader_screen.dart';
@@ -14,6 +14,7 @@ import 'package:provider/provider.dart';
 import 'package:doppy/providers/group_provider.dart';
 import 'package:doppy/data/models/group_model.dart';
 import 'package:doppy/editor/publish/post_exporter.dart';
+import 'package:doppy/editor/service/node_component_service.dart';
 import 'package:doppy/data/services/blog_service.dart';
 import 'package:doppy/utils/error_handler.dart';
 
@@ -332,9 +333,23 @@ class _PostExportScreenState extends State<PostExportScreen>
       // BlogService를 통한 서버 업로드
 
       final blogService = BlogService();
+      // 썸네일 ID 일관성 보장: URL→ID 매핑 우선, 없으면 기존 값 사용
+      String? resolvedThumbId;
+      try {
+        final map = NodeComponentService().urlToImageIdMap;
+        final String? idStr = map[_exportedThumbnailImageUrl];
+        if (idStr != null && idStr.isNotEmpty) {
+          resolvedThumbId = idStr;
+        } else {
+          resolvedThumbId = _thumbnailImageId?.toString();
+        }
+      } catch (_) {
+        resolvedThumbId = _thumbnailImageId?.toString();
+      }
+
       final uploadResult = await blogService.uploadPost(
         postData: payload,
-        thumbnailImageId: _thumbnailImageId?.toString(),
+        thumbnailImageId: resolvedThumbId,
       );
 
       debugPrint('===== UPLOAD RESULT =====');
@@ -348,7 +363,6 @@ class _PostExportScreenState extends State<PostExportScreen>
       } catch (_) {}
 
       Navigator.of(context).pop();
-      ErrorHandler.showSuccess(context, '성공적으로 등록되었어요');
 
       // 업로드 성공 시 바로 글보기 화면으로 이동
       Navigator.of(context).pushReplacement(
@@ -404,15 +418,17 @@ class _PostExportScreenState extends State<PostExportScreen>
         ], kind: UploadKind.editorImage);
         if (tasks.isNotEmpty) {
           final t = tasks.first;
-          if (t.state == UploadState.success && (t.url ?? '').isNotEmpty) {
+          final hasUrl = (t.url ?? '').isNotEmpty;
+          final hasServerImageId = (t.imageId ?? '').toString().isNotEmpty;
+          if (t.state == UploadState.success && hasUrl && hasServerImageId) {
             setState(() {
               _exportedThumbnailImageUrl = t.url!;
-              _thumbnailImageId = t.imageId ?? t.id;
+              _thumbnailImageId = t.imageId; // 서버 imageId만 사용
             });
             await _persistThumbnail();
           } else {
             if (mounted) {
-              ErrorHandler.showError(context, '이미지 업로드에 실패했습니다.');
+              ErrorHandler.showError(context, '썸네일 업로드에 실패했어요. 다시 시도해주세요.');
             }
           }
         }
@@ -779,7 +795,12 @@ class _PostExportScreenState extends State<PostExportScreen>
                                         Positioned(
                                           left: 6,
                                           bottom: 6,
-                                          child: _buildAuthorInfo(),
+                                          child: GestureDetector(
+                                            onTap: () {
+                                              print('edit');
+                                            },
+                                            child: _buildEditButton(),
+                                          ),
                                         ),
                                       ],
                                     ),
@@ -1377,8 +1398,6 @@ class _PostExportScreenState extends State<PostExportScreen>
 
         // 카테고리 목록 즉시 새로고침
         await _loadCategoriesOnce();
-
-        ErrorHandler.showSuccess(context, '카테고리 "$name"이(가) 생성되었습니다.');
       }
     } catch (e) {
       if (mounted) {
@@ -1427,51 +1446,31 @@ class _PostExportScreenState extends State<PostExportScreen>
   }
 
   // PostCard와 동일한 좌하단 작성자 정보
-  Widget _buildAuthorInfo() {
-    return Consumer<UserProvider>(
-      builder: (context, userProvider, child) {
-        final currentUser = userProvider.currentUser;
-        final username =
-            currentUser?.username ?? currentUser?.alias ?? 'Unknown';
-        final profileImageUrl = currentUser?.profileImageUrl ?? '';
-
-        return ClipRRect(
-          borderRadius: BorderRadius.circular(35),
-          child: BackdropFilter(
-            filter: ui.ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-            child: Container(
-              padding: const EdgeInsets.only(right: 6),
-              decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.surface.withOpacity(0.15),
-                borderRadius: BorderRadius.circular(35),
-              ),
-              child: Row(
-                children: [
-                  CommonProfileAvatar(
-                    imageUrl: profileImageUrl,
-                    username: username,
-                    size: 35,
-                    borderWidth: 1,
-                    borderColor: Theme.of(
-                      context,
-                    ).colorScheme.surface.withOpacity(0.2),
-                  ),
-                  const SizedBox(width: 8),
-                  Text(
-                    username,
-                    style: TextStyle(
-                      color: Theme.of(context).colorScheme.onSurface,
-                      fontSize: 14,
-                      fontWeight: FontWeight.w300,
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                ],
-              ),
-            ),
+  Widget _buildEditButton() {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(35),
+      child: BackdropFilter(
+        filter: ui.ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.onSurface.withOpacity(0.2),
+            borderRadius: BorderRadius.circular(35),
           ),
-        );
-      },
+          child: Row(
+            children: [
+              Text(
+                '편집하기',
+                style: TextStyle(
+                  color: Theme.of(context).colorScheme.onSurface,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w300,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

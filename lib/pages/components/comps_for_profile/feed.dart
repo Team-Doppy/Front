@@ -2,6 +2,7 @@ import 'dart:math' as math;
 import 'dart:ui';
 
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:doppy/common/widgets/image_error_placeholder.dart';
 import 'package:doppy/data/models/post_data.dart';
 import 'package:doppy/data/services/blog_service.dart';
 import 'package:doppy/data/services/feed_service.dart';
@@ -123,15 +124,18 @@ class Feed {
               '[Feed] isLoading=${feedProvider.isLoading} postsRaw=${postsRaw.length} cats=${feedProvider.categories.length} selId=${feedProvider.selectedCategoryId} selBase=${feedProvider.selectedBase}',
             );
 
+            // 로딩 중이고 포스트가 비어있으면 아무것도 표시하지 않음
             if (feedProvider.isLoading && postsRaw.isEmpty) {
               // ignore: avoid_print
-              print('[Feed] 로딩중 + 포스트 비어있음 → 빈 슬리버 반환');
+              print('[Feed] 로딩중 + 포스트 비어있음 → 아무것도 표시 안 함');
               return const SliverToBoxAdapter(child: SizedBox.shrink());
             }
 
+            // 로딩 완료 후 포스트가 비어있는 경우에만 메시지 표시
             if (postsRaw.isEmpty) {
               // ignore: avoid_print
-              print('[Feed] 포스트 비어있음 → 비어있는 안내 UI 표시');
+              print('[Feed] 포스트 비어있음 (로딩 완료) → 비어있는 안내 UI 표시');
+
               // 포스트가 없더라도 카테고리가 있으면 빈 섹션 헤더를 표시
               final hasCategories = (feedProvider.categories.isNotEmpty);
               if (hasCategories) {
@@ -156,46 +160,24 @@ class Feed {
                   }, childCount: sections.length),
                 );
               }
+
+              // 빈 메시지 표시 (로딩 완료 후에만)
               return SliverToBoxAdapter(
                 child: Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 50),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 40,
+                  ),
                   child: Center(
-                    child: Column(
-                      children: [
-                        Container(
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-
-                            border: Border.all(
-                              color: Theme.of(
-                                context,
-                              ).colorScheme.onSurface.withOpacity(0.4),
-                              width: 1,
-                            ),
-                          ),
-                          child: Padding(
-                            padding: const EdgeInsets.all(40.0),
-                            child: Icon(
-                              Icons.photo_camera_outlined,
-                              color: Theme.of(
-                                context,
-                              ).colorScheme.onSurface.withOpacity(0.4),
-                              size: 50,
-                            ),
-                          ),
-                        ),
-                        SizedBox(height: 12),
-                        Text(
-                          '아직 글이 없어요',
-                          style: TextStyle(
-                            fontSize: 20,
-                            fontWeight: FontWeight.w300,
-                            color: Theme.of(
-                              context,
-                            ).colorScheme.onSurface.withOpacity(0.4),
-                          ),
-                        ),
-                      ],
+                    child: Text(
+                      '아직은 포스트가 없어요!',
+                      style: TextStyle(
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.onSurface.withOpacity(0.4),
+                        fontSize: 14,
+                        fontWeight: FontWeight.w300,
+                      ),
                     ),
                   ),
                 ),
@@ -313,7 +295,7 @@ class Feed {
                     ),
                     child: Center(
                       child: Text(
-                        '아직 글이 없어요',
+                        '아직은 포스트가 없어요!',
                         style: TextStyle(
                           color: theme.colorScheme.onSurface.withOpacity(0.4),
                           fontSize: 14,
@@ -1609,9 +1591,7 @@ class Feed {
                         color: theme.colorScheme.surface.withOpacity(0.1),
                       ),
                   errorWidget:
-                      (context, url, error) => Container(
-                        color: theme.colorScheme.surface.withOpacity(0.1),
-                      ),
+                      (context, url, error) => const ImageErrorPlaceholder(),
                 ),
               ),
               // 블러 효과
@@ -1648,16 +1628,8 @@ class Feed {
                                 ),
                               ),
                           errorWidget:
-                              (context, url, error) => Container(
-                                color: theme.colorScheme.surface.withOpacity(
-                                  0.1,
-                                ),
-                                child: Icon(
-                                  Icons.error_outline,
-                                  color: theme.colorScheme.onSurface
-                                      .withOpacity(0.3),
-                                ),
-                              ),
+                              (context, url, error) =>
+                                  const ImageErrorPlaceholder(),
                         ),
                       ),
                     ),
@@ -1777,15 +1749,7 @@ class Feed {
                     size: 24,
                   ),
                 ),
-            errorWidget:
-                (context, url, error) => Container(
-                  color: theme.colorScheme.surfaceVariant,
-                  child: Icon(
-                    Icons.image,
-                    color: theme.colorScheme.onSurfaceVariant,
-                    size: 24,
-                  ),
-                ),
+            errorWidget: (context, url, error) => const ImageErrorPlaceholder(),
           ),
         ),
       );
@@ -2505,7 +2469,7 @@ class Feed {
                   height: double.infinity,
                   borderRadius: BorderRadius.circular(14),
                 ),
-            errorWidget: (context, url, error) => const Icon(Icons.error),
+            errorWidget: (context, url, error) => const ImageErrorPlaceholder(),
           ),
         ),
       ),
@@ -2524,6 +2488,7 @@ class Feed {
           child: CachedNetworkImage(
             imageUrl: post.thumbnailImageUrl,
             fit: BoxFit.cover,
+            errorWidget: (context, url, error) => const ImageErrorPlaceholder(),
           ),
         ),
       );
@@ -2550,6 +2515,7 @@ class Feed {
           child: CachedNetworkImage(
             imageUrl: post.thumbnailImageUrl,
             fit: BoxFit.cover,
+            errorWidget: (context, url, error) => const ImageErrorPlaceholder(),
           ),
         ),
       ),
@@ -2560,6 +2526,7 @@ class Feed {
           child: CachedNetworkImage(
             imageUrl: post.thumbnailImageUrl,
             fit: BoxFit.cover,
+            errorWidget: (context, url, error) => const ImageErrorPlaceholder(),
           ),
         ),
       ),
@@ -2661,6 +2628,7 @@ class Feed {
           child: CachedNetworkImage(
             imageUrl: post.thumbnailImageUrl,
             fit: BoxFit.cover,
+            errorWidget: (context, url, error) => const ImageErrorPlaceholder(),
           ),
         ),
       ),

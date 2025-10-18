@@ -4,6 +4,7 @@ import 'package:dio/dio.dart';
 import 'package:doppy/data/services/api_service_base.dart';
 import 'package:doppy/data/services/auth_service.dart';
 import 'package:doppy/data/models/post_data.dart';
+import 'package:doppy/data/services/user_service.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -109,10 +110,14 @@ class SearchService extends ChangeNotifier {
 
   // 검색 기록을 계정 형태로 변환
   List<SearchContentItem> get searchHistoryAsAccounts {
+    final me = AuthService().currentUsernameSync;
     final seen = <String>{};
     final result = <SearchContentItem>[];
     for (final e in _searchHistory) {
-      if (seen.add(e.username)) {
+      print('e.username: ${e.username}');
+      print('me: $me');
+
+      if (seen.add(e.username) && e.username != me) {
         result.add(
           SearchContentItem.account(
             id: 'history_${e.username}',

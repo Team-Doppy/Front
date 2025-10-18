@@ -2,6 +2,8 @@ import 'dart:io';
 import 'dart:convert';
 import 'dart:ui' as ui;
 import 'dart:typed_data';
+import 'package:doppy/editor/component/clip_component.dart';
+import 'package:doppy/utils/error_handler.dart';
 import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 
@@ -16,7 +18,7 @@ import 'package:doppy/editor/overlay/drag_overlay_widget.dart';
 import 'package:doppy/editor/publish/post_export_screen.dart';
 import 'package:doppy/editor/service/drag_service.dart';
 import 'package:doppy/editor/service/editor_service.dart';
-import 'package:doppy/editor/service/image_service.dart';
+import 'package:doppy/editor/service/node_component_service.dart';
 import 'package:doppy/editor/service/sticker_service.dart';
 // removed unused image editor imports after simplifying selected toolbar
 import 'package:doppy/editor/style/style_sheet.dart';
@@ -34,7 +36,6 @@ import 'package:doppy/editor/publish/post_exporter.dart';
 import 'package:doppy/data/services/draft_service.dart';
 import 'package:doppy/data/services/upload_service.dart';
 import 'package:doppy/editor/image/custom_image_editor_screen.dart';
-import 'package:doppy/utils/snackbar_utils.dart';
 
 /// 글 공개 범위 옵션
 enum VisibilityOption { public, partial, private }
@@ -576,6 +577,9 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                                   LinkComponentBuilder(
                                     dragService: dragService,
                                   ),
+
+                                  PinComponentBuilder(dragService: dragService),
+
                                   // 기본 컴포넌트들 (Paragraph 제외)
                                   ...defaultComponentBuilders.where(
                                     (builder) =>
@@ -612,7 +616,8 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                                 if (node is ImageNode ||
                                     node is ImageRowNode ||
                                     node is LinkNode ||
-                                    node is MentionNode) {
+                                    node is MentionNode ||
+                                    node is ClipNode) {
                                   NodeComponentService().selectNode(nodeId);
                                 } else {
                                   NodeComponentService().selectNode(null);
@@ -623,8 +628,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                           onLongPressStart: (details) {
                             // 🚫 키보드가 올라와 있으면 드래그 불가
                             if (_isKeyboardVisible) {
-                              print('키보드가 올라와 있어 드래그가 비활성화되었습니다');
-                              return;
+                              FocusScope.of(context).unfocus();
                             }
 
                             final node = editorService.findNodeAtPosition(
@@ -715,9 +719,8 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                         color: Theme.of(
                           context,
                         ).colorScheme.background.withOpacity(1),
-                        borderRadius: BorderRadius.circular(15),
                       ),
-                      height: 45,
+                      height: 55,
                       width: MediaQuery.of(context).size.width,
                       child: Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -763,7 +766,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                                 color: Theme.of(
                                   context,
                                 ).colorScheme.onSurface.withOpacity(0.8),
-                                size: 18,
+                                size: 20,
                               ),
                             ),
                           ),
@@ -919,6 +922,8 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
       nodeType = 'mention';
     } else if (node is DividerNode) {
       nodeType = 'divider';
+    } else if (node is ClipNode) {
+      nodeType = 'clip';
     }
     return DragOverlayWidget(
       nodeId: nodeId,
@@ -1003,7 +1008,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                 document.deleteNode(selectedId);
                 setState(() {});
               } catch (e) {
-                SnackBarUtils.showError(context, '삭제할 수 없습니다');
+                ErrorHandler.showError(context, '삭제할 수 없습니다');
               }
             },
             icon: Icon(
@@ -1020,21 +1025,17 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
   /// 이미지 편집
   Future<void> _editImage(String imageId, ImageNode node) async {
     try {
+      FocusScope.of(context).unfocus();
       final response = await http.get(Uri.parse(node.imageUrl));
       if (response.statusCode != 200) {
         if (mounted) {
           ScaffoldMessenger.of(context).hideCurrentSnackBar();
-          SnackBarUtils.showError(context, '이미지를 불러올 수 없습니다');
+          ErrorHandler.showError(context, '이미지를 불러올 수 없습니다');
         }
         return;
       }
 
       final imageBytes = response.bodyBytes;
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).hideCurrentSnackBar();
-      }
-
       // 3. 이미지 편집기 열기 (오버레이 스타일)
       final editedBytes = await Navigator.push<Uint8List?>(
         // ignore: use_build_context_synchronously
@@ -1048,6 +1049,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
         ),
       );
 
+      FocusScope.of(context).unfocus();
       if (editedBytes == null || !mounted) return;
 
       final upload = context.read<UploadService>();
@@ -1071,7 +1073,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
       if (tasks.isEmpty || tasks.first.state != UploadState.success) {
         if (mounted) {
           ScaffoldMessenger.of(context).hideCurrentSnackBar();
-          SnackBarUtils.showError(context, '이미지 업로드에 실패했습니다');
+          ErrorHandler.showError(context, '이미지 업로드에 실패했습니다');
         }
         return;
       }
@@ -1080,7 +1082,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
       if (newUrl == null || newUrl.isEmpty) {
         if (mounted) {
           ScaffoldMessenger.of(context).hideCurrentSnackBar();
-          SnackBarUtils.showError(context, '이미지 URL을 받을 수 없습니다');
+          ErrorHandler.showError(context, '이미지 URL을 받을 수 없습니다');
         }
         return;
       }
@@ -1096,17 +1098,12 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
 
         document.deleteNode(imageId);
         document.insertNodeAt(nodeIndex, newNode);
-
-        if (mounted) {
-          ScaffoldMessenger.of(context).hideCurrentSnackBar();
-          setState(() {});
-        }
       }
     } catch (e) {
       print('이미지 편집 중 오류: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).hideCurrentSnackBar();
-        SnackBarUtils.showError(context, '이미지 편집 중 오류가 발생했습니다');
+        ErrorHandler.showError(context, '이미지 편집 중 오류가 발생했습니다');
       }
     }
   }
@@ -1223,10 +1220,6 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
         existingDraftId: null, // 새 버전 생성
       );
 
-      if (mounted) {
-        SnackBarUtils.showSuccess(context, '저장되었습니다');
-      }
-
       print('[PostwriteScreen] Manual save completed: $_currentDraftId');
       // 저장 스냅샷 마크
       editorService.markSavedSnapshot();
@@ -1236,7 +1229,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     } catch (e) {
       print('[PostwriteScreen] Manual save failed: $e');
       if (mounted) {
-        SnackBarUtils.showError(context, '임시저장 실패: $e');
+        ErrorHandler.showError(context, '임시저장 실패: $e');
       }
     }
   }
@@ -1296,7 +1289,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     } catch (e) {
       print('[PostwriteScreen] Error showing draft list: $e');
       if (mounted) {
-        SnackBarUtils.showError(context, '임시저장 목록을 불러올 수 없습니다: $e');
+        ErrorHandler.showError(context, '임시저장 목록을 불러올 수 없습니다: $e');
       }
     }
   }
@@ -1377,13 +1370,13 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
         context.read<StickerService>().saveInitialState();
       } else {
         if (mounted) {
-          SnackBarUtils.showError(context, '임시저장을 불러올 수 없습니다');
+          ErrorHandler.showError(context, '임시저장을 불러올 수 없습니다');
         }
       }
     } catch (e) {
       print('[PostwriteScreen] Error loading draft: $e');
       if (mounted) {
-        SnackBarUtils.showError(context, '임시저장 불러오기 실패: $e');
+        ErrorHandler.showError(context, '임시저장 불러오기 실패: $e');
       }
     }
   }
@@ -1399,13 +1392,13 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
         }
       } else {
         if (mounted) {
-          SnackBarUtils.showError(context, '임시저장 삭제에 실패했습니다');
+          ErrorHandler.showError(context, '임시저장 삭제에 실패했습니다');
         }
       }
     } catch (e) {
       print('[PostwriteScreen] Error deleting draft: $e');
       if (mounted) {
-        SnackBarUtils.showError(context, '임시저장 삭제 실패: $e');
+        ErrorHandler.showError(context, '임시저장 삭제 실패: $e');
       }
     }
   }

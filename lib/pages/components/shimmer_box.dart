@@ -42,20 +42,17 @@ class _ShimmerBoxState extends State<ShimmerBox>
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
 
-    // 화이트 모드에서도 잘 보이도록 색상 조정
-    final baseColor =
-        isDark ? theme.colorScheme.surfaceVariant : Colors.grey[300]!;
-    final highlightColor = isDark ? theme.colorScheme.surface : Colors.white;
+    final baseColor = theme.colorScheme.surface;
+    final highlightColor = theme.colorScheme.onSurface;
 
     return AnimatedBuilder(
       animation: _controller,
       builder: (context, child) {
-        // 펄스 효과를 위한 투명도 계산
+        // 펄스 효과를 위한 투명도 계산 (라이트는 더 밝게, 다크는 적당히 밝게)
         final double pulseValue =
             (1.0 + math.sin(2 * math.pi * _controller.value)) / 2.0;
-        final double opacity = 0.2 + (0.6 * pulseValue);
+        final double opacity = 0.2 + (0.3 * pulseValue);
 
         return Container(
           width: widget.width,

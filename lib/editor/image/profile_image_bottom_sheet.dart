@@ -144,6 +144,8 @@ class ProfileInfoEditBottomSheet extends StatefulWidget {
 class _ProfileInfoEditBottomSheetState
     extends State<ProfileInfoEditBottomSheet> {
   bool _saving = false;
+  final FocusNode _nameFocus = FocusNode();
+  final FocusNode _descriptionFocus = FocusNode();
 
   late String _initialName;
   late String _initialDescription;
@@ -151,21 +153,50 @@ class _ProfileInfoEditBottomSheetState
   @override
   void initState() {
     super.initState();
-    _initialName = widget.nameController.text;
-    _initialDescription = widget.descriptionController.text;
+    // trim()된 값으로 초기값 저장
+    _initialName = widget.nameController.text.trim();
+    _initialDescription = widget.descriptionController.text.trim();
+    print(
+      '[ProfileEdit] 초기값 저장 - 이름: "$_initialName", 소개: "$_initialDescription"',
+    );
+
+    // Bottom Sheet 열릴 때 자동으로 별명란에 포커스
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      Future.delayed(const Duration(milliseconds: 100), () {
+        if (mounted) {
+          _nameFocus.requestFocus();
+        }
+      });
+    });
+  }
+
+  @override
+  void dispose() {
+    _nameFocus.dispose();
+    _descriptionFocus.dispose();
+    super.dispose();
   }
 
   bool get _hasChanges {
     final currentName = widget.nameController.text.trim();
     final currentDescription = widget.descriptionController.text.trim();
 
+    final hasNameChange = currentName != _initialName;
+    final hasDescChange = currentDescription != _initialDescription;
+
+    print(
+      '[ProfileEdit] 변경 체크 - 이름: "$currentName" vs "$_initialName" = $hasNameChange',
+    );
+    print(
+      '[ProfileEdit] 변경 체크 - 소개: "$currentDescription" vs "$_initialDescription" = $hasDescChange',
+    );
+
     // 별명이 비어있으면 변경사항이 있어도 저장 불가
     if (currentName.isEmpty) {
       return false;
     }
 
-    return currentName != _initialName.trim() ||
-        currentDescription != _initialDescription.trim();
+    return hasNameChange || hasDescChange;
   }
 
   @override
@@ -181,10 +212,10 @@ class _ProfileInfoEditBottomSheetState
       child: SizedBox(
         height: sheetHeight,
         child: Container(
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+          padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
           decoration: BoxDecoration(
             color: theme.colorScheme.surface,
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
           ),
           child: ConstrainedBox(
             constraints: BoxConstraints(minHeight: sheetHeight - 32),
@@ -202,8 +233,10 @@ class _ProfileInfoEditBottomSheetState
                       ),
                     ),
                   ),
-                  const SizedBox(height: 30),
-                  // 원형 프로필 + 액션 버튼
+                  const SizedBox(height: 20),
+
+                  // 원형 프로필 + 액션 버튼]
+                  /*
                   Center(
                     child: Stack(
                       alignment: Alignment.center,
@@ -251,9 +284,7 @@ class _ProfileInfoEditBottomSheetState
                         ),
                       ],
                     ),
-                  ),
-
-                  const SizedBox(height: 18),
+                  ),*/
                   Text(
                     '별명',
                     style: TextStyle(
@@ -267,6 +298,7 @@ class _ProfileInfoEditBottomSheetState
                   // 별명 텍스트필드
                   TextField(
                     controller: widget.nameController,
+                    focusNode: _nameFocus,
                     textAlign: TextAlign.center,
                     onChanged: (value) => setState(() {}),
                     style: TextStyle(
@@ -281,7 +313,7 @@ class _ProfileInfoEditBottomSheetState
                       fillColor: Theme.of(context).colorScheme.surfaceVariant,
                       contentPadding: const EdgeInsets.symmetric(
                         horizontal: 16,
-                        vertical: 8,
+                        vertical: 14,
                       ),
                       border: OutlineInputBorder(
                         borderSide: BorderSide.none,
@@ -317,7 +349,7 @@ class _ProfileInfoEditBottomSheetState
                   ),
                   const SizedBox(height: 16),
                   Text(
-                    '소개글',
+                    '소개',
                     style: TextStyle(
                       color: Theme.of(
                         context,
@@ -329,8 +361,9 @@ class _ProfileInfoEditBottomSheetState
                   // 소개글 텍스트필드
                   TextField(
                     controller: widget.descriptionController,
+                    focusNode: _descriptionFocus,
                     textAlign: TextAlign.center,
-                    maxLines: null,
+                    maxLines: 1,
                     onChanged: (value) => setState(() {}),
                     style: TextStyle(
                       color: Theme.of(context).colorScheme.onSurface,
@@ -344,7 +377,7 @@ class _ProfileInfoEditBottomSheetState
                       fillColor: Theme.of(context).colorScheme.surfaceVariant,
                       contentPadding: const EdgeInsets.symmetric(
                         horizontal: 16,
-                        vertical: 12,
+                        vertical: 14,
                       ),
                       border: OutlineInputBorder(
                         borderSide: BorderSide.none,
@@ -360,7 +393,8 @@ class _ProfileInfoEditBottomSheetState
                       ),
                     ),
                   ),
-                  const Spacer(),
+                  Spacer(),
+
                   // 저장 버튼 (별명이 있고 변경사항이 있을 때만)
                   if (widget.onSave != null &&
                       _hasChanges &&
@@ -411,7 +445,7 @@ class _ProfileInfoEditBottomSheetState
                       },
                     ),
                   // 키보드가 올라올 때 하단 여백 추가
-                  SizedBox(height: keyboardHeight > 0 ? 20 : 0),
+                  SizedBox(height: keyboardHeight > 0 ? keyboardHeight : 0),
                 ],
               ),
             ),
@@ -431,13 +465,13 @@ class _ProfileInfoEditBottomSheetState
     final hasChanges = _hasChanges;
 
     return Container(
-      height: 48,
+      height: 55,
       decoration: BoxDecoration(
         color:
             hasChanges
                 ? theme.colorScheme.onSurface
                 : theme.colorScheme.surface,
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(20),
       ),
       child: Material(
         color: Colors.transparent,

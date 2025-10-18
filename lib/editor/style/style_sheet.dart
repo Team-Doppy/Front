@@ -1,3 +1,4 @@
+import 'package:doppy/editor/component/clip_component.dart';
 import 'package:doppy/editor/component/row_image_component.dart';
 import 'package:doppy/editor/config.dart';
 import 'package:doppy/editor/style/defualt_toolbar.dart'; // HighlightAttribution import
@@ -34,6 +35,7 @@ Stylesheet buildCustomStylesheet(BuildContext context) {
         if (docNode is ParagraphNode) {
           // 제목 문단 스타일
           final isTitle = (docNode.metadata['isTitle'] == true);
+
           // 제목 스타일은 문서의 0번째 문단에만 적용
           if (isTitle && doc.getNodeIndexById(docNode.id) == 0) {
             return {
@@ -44,21 +46,22 @@ Stylesheet buildCustomStylesheet(BuildContext context) {
                 height: 0,
               ),
               Styles.padding: const CascadingPadding.only(
-                top: 100,
+                top: 130,
                 bottom: 20,
-                left: 0,
-                right: 0,
+                left: 10,
+                right: 10,
               ),
             };
           }
+
           return {
             Styles.textStyle: TextStyle(fontSize: 16, color: bodyColor),
 
             Styles.padding: const CascadingPadding.only(
               top: 0,
               bottom: 0,
-              left: 0,
-              right: 0,
+              left: 20,
+              right: 20,
             ),
           };
         }
@@ -74,6 +77,15 @@ Stylesheet buildCustomStylesheet(BuildContext context) {
           return {
             Styles.padding: CascadingPadding.symmetric(
               vertical: EditorConfig.imagePadding,
+              horizontal: 0,
+            ),
+          };
+        }
+
+        if (docNode is ClipNode) {
+          return {
+            Styles.padding: CascadingPadding.symmetric(
+              vertical: 0,
               horizontal: 0,
             ),
           };

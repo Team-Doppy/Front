@@ -3,7 +3,7 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:super_editor/super_editor.dart';
 import 'package:doppy/editor/service/drag_service.dart';
-import 'package:doppy/editor/service/image_service.dart';
+import 'package:doppy/editor/service/node_component_service.dart';
 import 'package:doppy/theme/app_colors.dart';
 import 'dart:math' as math;
 import 'package:provider/provider.dart';
@@ -230,10 +230,7 @@ class _LinkComponentState extends State<_LinkComponent> with DocumentComponent {
             margin: EdgeInsets.only(top: marginTop, bottom: marginBottom),
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(5),
-              border: Border.all(
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
-                width: 2,
-              ),
+              color: Theme.of(context).colorScheme.surfaceVariant,
             ),
             child: Row(
               children: [
@@ -257,10 +254,8 @@ class _LinkComponentState extends State<_LinkComponent> with DocumentComponent {
 
                         const SizedBox(height: 8),
                         Text(
-                          widget.description.isNotEmpty
-                              ? widget.description
-                              : widget.url,
-                          maxLines: 2,
+                          widget.url,
+                          maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
                             color: Theme.of(

@@ -2,6 +2,7 @@ import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:doppy/editor/component/row_image_component.dart';
 import 'package:doppy/editor/component/mention_component.dart';
+import 'package:doppy/editor/service/node_component_service.dart';
 import 'package:doppy/providers/auth_provider.dart';
 import 'package:flutter/material.dart';
 
@@ -10,7 +11,7 @@ import 'package:doppy/editor/service/sticker_service.dart';
 import 'package:super_editor/super_editor.dart';
 import 'package:doppy/editor/style/defualt_toolbar.dart';
 import 'package:doppy/editor/component/link_component.dart';
-import 'package:doppy/editor/component/location_component.dart';
+import 'package:doppy/editor/component/clip_component.dart';
 import 'dart:convert';
 
 /// 간단 JSON 인코더 유틸리티
@@ -96,6 +97,16 @@ class PostExporter {
     final layout =
         editorService.documentLayoutKey?.currentState as DocumentLayout?;
     final List<Map<String, dynamic>> nodes = <Map<String, dynamic>>[];
+    // 업로드 성공된 URL→imageId 매핑(전역 서비스)
+    final Map<String, String> urlToId = NodeComponentService().urlToImageIdMap;
+    final Set<int> usedImageIds = <int>{};
+
+    int? _idFromUrl(String url) {
+      final s = urlToId[url];
+      if (s == null || s.isEmpty) return null;
+      return int.tryParse(s);
+    }
+
     String titleText = '';
 
     for (int i = 0; i < doc.length; i++) {
@@ -113,6 +124,8 @@ class PostExporter {
           'text': node.text.text,
           'align': meta['textAlign'] ?? 'center',
           'isTitle': meta['isTitle'] == true,
+          'isSubheading': meta['isSubheading'] == true,
+          'pin': meta['pin'] == true,
           'spans': _buildParagraphSpans(node.text),
         });
         continue;
@@ -126,6 +139,8 @@ class PostExporter {
           'url': node.imageUrl,
           'altText': node.altText,
         });
+        final int? id = _idFromUrl(node.imageUrl);
+        if (id != null) usedImageIds.add(id);
         continue;
       }
 
@@ -136,6 +151,21 @@ class PostExporter {
           'type': 'imageRow',
           'urls': node.imageUrls,
           'spacing': node.spacing,
+        });
+        for (final u in node.imageUrls) {
+          final int? id = _idFromUrl(u);
+          if (id != null) usedImageIds.add(id);
+        }
+        continue;
+      }
+
+      //   (커스텀)
+      if (node is ClipNode) {
+        nodes.add({
+          'id': node.id,
+          'type': 'clip',
+          'label': node.label,
+          'color': node.colorHex,
         });
         continue;
       }
@@ -256,7 +286,7 @@ class PostExporter {
     }
 
     //초안 뽑기
-    return {
+    final Map<String, dynamic> result = {
       'title':
           titleText.isNotEmpty
               ? titleText
@@ -267,6 +297,8 @@ class PostExporter {
       'content': {'nodes': nodes},
       'stickers': stickers,
     };
+
+    return result;
   }
 
   /// 리치 텍스트(AttributedText)에서 spans를 추출한다.
@@ -481,6 +513,57 @@ class PostExporter {
     }
     result['thumbnailImageUrl'] = thumbnailImageUrl;
 
+    // 7. usedImageIds 보강: base에 없으면 문서 노드/매핑으로 재생성, 썸네일 id도 병합
+    try {
+      final Set<int> usedIds = <int>{};
+      final dynamic baseIds = base['usedImageIds'];
+      if (baseIds is List) {
+        for (final v in baseIds) {
+          final int? n = (v is int) ? v : int.tryParse(v.toString());
+          if (n != null) usedIds.add(n);
+        }
+      }
+
+      final Map<String, String> urlToId =
+          NodeComponentService().urlToImageIdMap;
+
+      // 썸네일 URL → id 매핑 병합
+      final String? thumbIdStr = urlToId[thumbnailImageUrl];
+      final int? thumbId = thumbIdStr == null ? null : int.tryParse(thumbIdStr);
+      if (thumbId != null) usedIds.add(thumbId);
+
+      // 문서 노드를 항상 스캔하여 보강(중복은 Set으로 자동 제거)
+      try {
+        final dynamic content = base['content'];
+        final List<dynamic> nodes =
+            (content is Map)
+                ? List<dynamic>.from(content['nodes'] as List? ?? const [])
+                : const [];
+        for (final n in nodes) {
+          if (n is! Map) continue;
+          final String type = (n['type'] ?? '').toString();
+          if (type == 'image') {
+            final String url = (n['url'] ?? '').toString();
+            final String? idStr = urlToId[url];
+            final int? id = idStr == null ? null : int.tryParse(idStr);
+            if (id != null) usedIds.add(id);
+          } else if (type == 'imageRow') {
+            final List<dynamic> urls = List<dynamic>.from(
+              n['urls'] ?? const [],
+            );
+            for (final u in urls) {
+              final String url = u.toString();
+              final String? idStr = urlToId[url];
+              final int? id = idStr == null ? null : int.tryParse(idStr);
+              if (id != null) usedIds.add(id);
+            }
+          }
+        }
+      } catch (_) {}
+
+      result['usedImageIds'] = usedIds.toList()..sort();
+    } catch (_) {}
+
     print('==============================================');
     print('Final API Payload (Server Spec Compliant):');
     print('Title: $title');
@@ -489,6 +572,7 @@ class PostExporter {
       print('SharedGroupIds: $sharedGroupIds');
     }
     print('Thumbnail: ${result['thumbnailImageUrl'] ?? 'none'}');
+    print('UsedImageIds: ${result['usedImageIds'] ?? 'none'}');
     print(JsonExport.encode(result, pretty: true));
 
     return result;

@@ -1,17 +1,20 @@
 import 'dart:typed_data';
+import 'dart:math' as math;
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
+import 'package:flutter_svg/svg.dart';
 import 'package:image_editor_plus/image_editor_plus.dart';
 import 'package:provider/provider.dart';
 import 'package:image/image.dart' as img;
 
 // Services
-import 'package:doppy/editor/service/image_service.dart';
+import 'package:doppy/editor/service/node_component_service.dart';
 
 // Models
 import 'package:doppy/editor/image/models/filter_preset.dart';
 import 'package:doppy/editor/image/models/crop_aspect_ratio.dart';
 import 'package:doppy/editor/image/models/image_adjustment.dart';
+import 'package:doppy/editor/image/models/text_overlay_model.dart';
 
 // Widgets
 import 'package:doppy/editor/image/widgets/crop_overlay.dart';
@@ -20,6 +23,8 @@ import 'package:doppy/editor/image/widgets/ratio_chip.dart';
 import 'package:doppy/editor/image/widgets/filter_chip.dart';
 import 'package:doppy/editor/image/widgets/adjustment_chip.dart';
 import 'package:doppy/editor/image/widgets/adjustment_slider.dart';
+import 'package:doppy/editor/image/widgets/text_overlay_editor.dart';
+import 'package:doppy/editor/style/font_catalog.dart';
 
 /// image_editor_plus 기반의 간단한 편집 화면
 /// - 입력: Uint8List 이미지 바이트
@@ -75,6 +80,8 @@ class _CustomImageEditorScreenState extends State<CustomImageEditorScreen>
   Rect _cropRect = const Rect.fromLTWH(0.1, 0.1, 0.8, 0.8);
   CropAspectRatio _selectedRatio = CropAspectRatio.free;
   Size? _cachedImageSize; // 이미지 크기 캐시
+  int? _imageHeightPixels; // 이미지 세로 픽셀
+  late Future<int?> _imageHeightFuture; // 이미지 높이 계산 Future
 
   // 필터 관련
   FilterType _selectedFilter = FilterType.none;
@@ -83,6 +90,8 @@ class _CustomImageEditorScreenState extends State<CustomImageEditorScreen>
 
   // 조정 관련
   ImageAdjustmentState _adjustmentState = const ImageAdjustmentState();
+  ImageAdjustmentState _savedAdjustmentState =
+      const ImageAdjustmentState(); // 조정 모드 진입 시점의 상태 저장
   AdjustmentType? _selectedAdjustmentType;
   bool _isAdjustmentDetailMode = false; // 상세 조정 모드 여부
 
@@ -96,6 +105,21 @@ class _CustomImageEditorScreenState extends State<CustomImageEditorScreen>
   // UI 토글
   bool _showUI = true;
 
+  // 텍스트 오버레이 관련
+  bool _isAddingText = false;
+  List<TextOverlayData> _textOverlays = [];
+  // 텍스트 드래그/삭제 상태
+  String? _draggingOverlayId;
+  Offset _dragFingerDeltaGlobal = Offset.zero;
+
+  bool _showTrashBin = false;
+  bool _isOverTrash = false;
+  final GlobalKey _trashKey = GlobalKey();
+  final GlobalKey _imageAreaKey = GlobalKey();
+  // 텍스트 스케일(핀치줌)
+  String? _scalingOverlayId;
+  double _initialScaleFontSize = 0.0;
+
   // Undo/Redo 스택
   final List<Uint8List> _history = [];
   final List<Uint8List> _redoStack = [];
@@ -104,6 +128,9 @@ class _CustomImageEditorScreenState extends State<CustomImageEditorScreen>
   void initState() {
     _currentImage = widget.imageBytes;
     _history.add(widget.imageBytes); // 초기 이미지 저장
+
+    // 이미지 세로 픽셀 계산 Future 초기화
+    _imageHeightFuture = _calculateImageHeightPixels();
 
     // 애니메이션 컨트롤러 초기화
     _bottomSheetController = AnimationController(
@@ -116,7 +143,9 @@ class _CustomImageEditorScreenState extends State<CustomImageEditorScreen>
       curve: Curves.easeInOut,
     );
 
-    _imageScaleAnimation = Tween<double>(begin: 1.0, end: 0.7).animate(
+    // 이미지 높이에 따른 동적 축소 비율 계산
+    final scaleEnd = _calculateDynamicScale();
+    _imageScaleAnimation = Tween<double>(begin: 1.0, end: scaleEnd).animate(
       CurvedAnimation(parent: _bottomSheetController, curve: Curves.easeInOut),
     );
     // 바텀시트 올라올 때 이미지도 위로 이동
@@ -130,12 +159,66 @@ class _CustomImageEditorScreenState extends State<CustomImageEditorScreen>
     super.dispose();
   }
 
+  Future<int?> _calculateImageHeightPixels() async {
+    try {
+      final codec = await ui.instantiateImageCodec(_currentImage);
+      final frame = await codec.getNextFrame();
+      _imageHeightPixels = frame.image.height;
+      final scale = _calculateDynamicScale();
+      print(
+        '이미지 세로 픽셀: $_imageHeightPixels, 축소 비율: ${(scale * 100).toStringAsFixed(1)}%',
+      );
+      return _imageHeightPixels;
+    } catch (e) {
+      print('이미지 세로 픽셀 계산 오류: $e');
+      _imageHeightPixels = null;
+      return null;
+    }
+  }
+
+  double _calculateDynamicScale() {
+    if (_imageHeightPixels == null) return 0.96; // 기본값
+
+    final height = _imageHeightPixels!;
+    print('이미지 높이: $height');
+
+    // 이미지 높이에 따른 축소 비율 계산 (더 급격한 축소)
+    if (height >= 2000) {
+      // 짧은 이미지 (500px 이하) - 약간 축소
+      return 0.7;
+    } else if (height >= 1000) {
+      return 0.8;
+    } else {
+      return 0.96;
+    }
+  }
+
   void _saveToHistory() {
     _history.add(_currentImage);
     _redoStack.clear(); // 새로운 작업 시 redo 스택 초기화
     if (_history.length > 20) {
       _history.removeAt(0); // 메모리 관리를 위해 20개로 제한
     }
+    // 이미지가 변경될 때마다 세로 픽셀 재계산 및 축소 비율 업데이트
+    _imageHeightFuture = _calculateImageHeightPixels();
+    _updateImageScaleAnimation();
+  }
+
+  void _updateImageScaleAnimation() {
+    final scaleEnd = _calculateDynamicScale();
+    _imageScaleAnimation = Tween<double>(begin: 1.0, end: scaleEnd).animate(
+      CurvedAnimation(parent: _bottomSheetController, curve: Curves.easeInOut),
+    );
+  }
+
+  double _getCurrentScale() {
+    if (!_isBottomSheetOpen) return 1.0;
+
+    final scaleEnd = _calculateDynamicScale();
+    final progress = _bottomSheetController.value;
+
+    // 1.0에서 scaleEnd로 애니메이션
+    return 1.0 + (scaleEnd - 1.0) * progress;
   }
 
   void _undo() {
@@ -250,9 +333,13 @@ class _CustomImageEditorScreenState extends State<CustomImageEditorScreen>
         _cachedImageSize = null; // 캐시 초기화
         _saveToHistory(); // 히스토리에 저장
         _isCropping = false;
+        _isBottomSheetOpen = false; // 바텀시트 닫기
         _cropRect = const Rect.fromLTWH(0.1, 0.1, 0.8, 0.8); // 리셋
         _selectedRatio = CropAspectRatio.free; // 비율 리셋
       });
+
+      // 바텀시트 애니메이션 닫기
+      _bottomSheetController.reverse();
     } catch (e) {
       print('자르기 오류: $e');
     }
@@ -262,14 +349,23 @@ class _CustomImageEditorScreenState extends State<CustomImageEditorScreen>
     _toggleFilter();
   }
 
-  void _onDone() {
+  Future<void> _onDone() async {
+    // 텍스트 오버레이 정보와 함께 편집 결과 반환
+    final result = {
+      'image': _currentImage,
+      'textOverlays': _textOverlays,
+      'adjustments': _adjustmentState,
+      'filter': _selectedFilter,
+      'cropRect': _isCropping ? _cropRect : null,
+    };
+
     // 편집 결과를 ImageService에 반영. 선택된 이미지가 존재하는 경우에만.
     final imageService = context.read<NodeComponentService>();
     final selectedId = imageService.selectedImageId;
     if (selectedId != null) {
       imageService.applyEditedBytes(nodeId: selectedId, bytes: _currentImage);
     }
-    Navigator.pop(context, _currentImage);
+    Navigator.pop(context, result);
   }
 
   void _updateCropRect(Offset delta, String handle) {
@@ -357,11 +453,6 @@ class _CustomImageEditorScreenState extends State<CustomImageEditorScreen>
   }
 
   Future<Size> _getImageSize() async {
-    // 캐시된 크기가 있으면 반환
-    if (_cachedImageSize != null) {
-      return _cachedImageSize!;
-    }
-
     // 이미지의 실제 크기 계산 및 캐시
     final codec = await ui.instantiateImageCodec(_currentImage);
     final frame = await codec.getNextFrame();
@@ -407,6 +498,8 @@ class _CustomImageEditorScreenState extends State<CustomImageEditorScreen>
       _isAdjusting = !_isAdjusting;
       _isBottomSheetOpen = _isAdjusting;
       if (_isAdjusting) {
+        // 조정 모드 진입 시 현재 상태 저장
+        _savedAdjustmentState = _adjustmentState;
         _bottomSheetController.forward();
         // 기본 조정 타입 선택
         _selectedAdjustmentType = AdjustmentType.brightness;
@@ -433,6 +526,19 @@ class _CustomImageEditorScreenState extends State<CustomImageEditorScreen>
     _bottomSheetController.reverse();
   }
 
+  void _cancelAdjustment() {
+    setState(() {
+      // 저장된 상태로 복원
+      _adjustmentState = _savedAdjustmentState;
+      _isAdjusting = false;
+      _isBottomSheetOpen = false;
+      _selectedAdjustmentType = null;
+      _isAdjustmentDetailMode = false;
+      _dragOffset = 0.0;
+    });
+    _bottomSheetController.reverse();
+  }
+
   void _updateAdjustment(AdjustmentType type, double value) {
     setState(() {
       _adjustmentState = _adjustmentState.setValue(type, value);
@@ -453,14 +559,6 @@ class _CustomImageEditorScreenState extends State<CustomImageEditorScreen>
     });
   }
 
-  void _resetAllAdjustments() {
-    setState(() {
-      _adjustmentState = const ImageAdjustmentState();
-      _selectedAdjustmentType = null;
-      _isAdjustmentDetailMode = false; // 상세 모드 초기화
-    });
-  }
-
   void _toggleUI() {
     // 편집 모드가 아닐 때만 UI 토글 가능
     if (!_isBottomSheetOpen) {
@@ -468,6 +566,24 @@ class _CustomImageEditorScreenState extends State<CustomImageEditorScreen>
         _showUI = !_showUI;
       });
     }
+  }
+
+  void _toggleTextOverlay() {
+    setState(() {
+      _isAddingText = !_isAddingText;
+      // 텍스트 오버레이 모드일 때 UI 숨김
+      if (_isAddingText) {
+        _showUI = false;
+      } else {
+        _showUI = true;
+      }
+    });
+  }
+
+  void _updateTextOverlays(List<TextOverlayData> overlays) {
+    setState(() {
+      _textOverlays = overlays;
+    });
   }
 
   void _onBottomSheetDragStart(DragStartDetails details) {
@@ -555,6 +671,7 @@ class _CustomImageEditorScreenState extends State<CustomImageEditorScreen>
 
   @override
   Widget build(BuildContext context) {
+    print('이미지 높1이: $_imageHeightPixels');
     return Scaffold(
       backgroundColor: Colors.transparent,
       body: Stack(
@@ -604,7 +721,7 @@ class _CustomImageEditorScreenState extends State<CustomImageEditorScreen>
                   child: Container(
                     color: Theme.of(
                       context,
-                    ).colorScheme.background.withOpacity(0.8),
+                    ).colorScheme.background.withOpacity(1),
                   ),
                 ),
               ),
@@ -612,305 +729,1037 @@ class _CustomImageEditorScreenState extends State<CustomImageEditorScreen>
           ),
 
           // 이미지 컨테이너
-          AnimatedBuilder(
-            animation: _bottomSheetController,
-            builder: (context, child) {
-              return Positioned(
-                left: 0,
-                right: 0,
-                top: -_imageScaleAnimation.value,
-                bottom: 0,
-                child: SafeArea(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      AnimatedContainer(
-                        duration: const Duration(milliseconds: 200),
-                        height: (!_isBottomSheetOpen && _showUI) ? 60.0 : 60.0,
-                        child: SafeArea(
-                          bottom: false,
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 0),
-                            child: Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [
-                                Row(
-                                  children: [
-                                    IconButton(
-                                      onPressed: () {
-                                        if (_isCropping) {
-                                          _toggleCrop();
-                                        } else if (_isFiltering) {
-                                          _toggleFilter();
-                                        } else if (_isAdjusting) {
-                                          if (_isAdjustmentDetailMode) {
-                                            _exitAdjustmentDetailMode();
-                                          } else {
-                                            _toggleAdjustment();
-                                          }
-                                        } else {
-                                          Navigator.pop(context);
-                                        }
-                                      },
-                                      icon: Icon(
-                                        _isCropping ||
-                                                _isFiltering ||
-                                                (_isAdjusting &&
-                                                    !_isAdjustmentDetailMode)
-                                            ? null
-                                            : Icons.close,
-                                      ),
-                                    ),
-                                    // Undo/Redo 버튼 (편집 모드가 아닐 때만)
-                                    if (!_isCropping &&
-                                        !_isFiltering &&
-                                        !_isAdjusting) ...[
-                                      IconButton(
-                                        onPressed:
-                                            _history.length > 1 ? _undo : null,
-                                        icon: Icon(
-                                          Icons.undo,
-                                          color:
-                                              _history.length > 1
-                                                  ? Colors.white
-                                                  : Colors.white.withOpacity(
-                                                    0.3,
-                                                  ),
-                                        ),
-                                      ),
-                                      IconButton(
-                                        onPressed:
-                                            _redoStack.isNotEmpty
-                                                ? _redo
-                                                : null,
-                                        icon: Icon(
-                                          Icons.redo,
-                                          color:
-                                              _redoStack.isNotEmpty
-                                                  ? Colors.white
-                                                  : Colors.white.withOpacity(
-                                                    0.3,
-                                                  ),
-                                        ),
-                                      ),
-                                    ],
-                                  ],
-                                ),
-                                // 완료/적용 버튼 (바텀시트가 열렸을 때는 숨김)
-                                if (!_isBottomSheetOpen)
-                                  GestureDetector(
-                                    onTap: _onDone,
-                                    child: ClipRRect(
-                                      borderRadius: BorderRadius.circular(12),
-                                      child: BackdropFilter(
-                                        filter: ui.ImageFilter.blur(
-                                          sigmaX: 10,
-                                          sigmaY: 10,
-                                        ),
-                                        child: Container(
-                                          padding: const EdgeInsets.symmetric(
-                                            horizontal: 20,
-                                            vertical: 10,
-                                          ),
-                                          child: const Text(
-                                            '완료',
-                                            style: TextStyle(
-                                              color: Colors.white,
-                                              fontSize: 15,
-                                              fontWeight: FontWeight.w600,
+          FutureBuilder<int?>(
+            future: _imageHeightFuture,
+            builder: (context, snapshot) {
+              return AnimatedBuilder(
+                animation: _bottomSheetController,
+                builder: (context, child) {
+                  return Positioned(
+                    left: 0,
+                    right: 0,
+                    top: 10,
+                    bottom: 0,
+                    child: SafeArea(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          // 이미지 미리보기
+                          Expanded(
+                            child: AnimatedBuilder(
+                              animation: _bottomSheetController,
+                              builder: (context, child) {
+                                return Transform.scale(
+                                  alignment: Alignment.topCenter,
+                                  scale: _getCurrentScale(),
+                                  child: Padding(
+                                    padding: const EdgeInsets.only(top: 50),
+                                    child: Stack(
+                                      children: [
+                                        // 메인 이미지
+                                        Positioned.fill(
+                                          child: GestureDetector(
+                                            onTap: _toggleUI,
+                                            onPanUpdate:
+                                                _isFiltering
+                                                    ? _onFilterSwipe
+                                                    : null,
+                                            onPanEnd:
+                                                _isFiltering
+                                                    ? _onFilterSwipeEnd
+                                                    : null,
+                                            child: ColorFiltered(
+                                              key: ValueKey(
+                                                '${_selectedFilter}_${_adjustmentState.hashCode}',
+                                              ),
+                                              colorFilter:
+                                                  ImageAdjustmentUtils.getColorFilter(
+                                                    _adjustmentState,
+                                                  ) ??
+                                                  _getColorFilter(
+                                                    FilterPresets.defaults
+                                                        .firstWhere(
+                                                          (preset) =>
+                                                              preset.type ==
+                                                              _selectedFilter,
+                                                          orElse:
+                                                              () =>
+                                                                  FilterPresets
+                                                                      .defaults
+                                                                      .first,
+                                                        ),
+                                                  ) ??
+                                                  const ColorFilter.matrix([
+                                                    1,
+                                                    0,
+                                                    0,
+                                                    0,
+                                                    0,
+                                                    0,
+                                                    1,
+                                                    0,
+                                                    0,
+                                                    0,
+                                                    0,
+                                                    0,
+                                                    1,
+                                                    0,
+                                                    0,
+                                                    0,
+                                                    0,
+                                                    0,
+                                                    1,
+                                                    0,
+                                                  ]),
+                                              child: KeyedSubtree(
+                                                key: _imageAreaKey,
+                                                child: Image.memory(
+                                                  _currentImage,
+                                                  fit: BoxFit.contain,
+                                                ),
+                                              ),
                                             ),
                                           ),
                                         ),
-                                      ),
+
+                                        // 텍스트 오버레이 표시
+                                        if (!_isAddingText &&
+                                            _textOverlays.isNotEmpty)
+                                          FutureBuilder<Size>(
+                                            future: _getImageSize(),
+                                            builder: (
+                                              context,
+                                              imageSizeSnapshot,
+                                            ) {
+                                              if (!imageSizeSnapshot.hasData) {
+                                                return const SizedBox.shrink();
+                                              }
+
+                                              return LayoutBuilder(
+                                                builder: (
+                                                  context,
+                                                  constraints,
+                                                ) {
+                                                  final containerSize = Size(
+                                                    constraints.maxWidth,
+                                                    constraints.maxHeight,
+                                                  );
+
+                                                  // 이미지의 실제 크기
+                                                  final imageSize =
+                                                      imageSizeSnapshot.data!;
+
+                                                  // 이미지가 화면에 표시되는 크기 계산
+                                                  final imageAspectRatio =
+                                                      imageSize.width /
+                                                      imageSize.height;
+                                                  final containerAspectRatio =
+                                                      containerSize.width /
+                                                      containerSize.height;
+
+                                                  late Size displaySize;
+                                                  late Offset imageOffset;
+
+                                                  if (imageAspectRatio >
+                                                      containerAspectRatio) {
+                                                    // 이미지가 더 넓음 - 너비에 맞춤
+                                                    displaySize = Size(
+                                                      containerSize.width,
+                                                      containerSize.width /
+                                                          imageAspectRatio,
+                                                    );
+                                                    imageOffset = Offset(
+                                                      0,
+                                                      (containerSize.height -
+                                                              displaySize
+                                                                  .height) /
+                                                          2,
+                                                    );
+                                                  } else {
+                                                    // 이미지가 더 높음 - 높이에 맞춤
+                                                    displaySize = Size(
+                                                      containerSize.height *
+                                                          imageAspectRatio,
+                                                      containerSize.height,
+                                                    );
+                                                    imageOffset = Offset(
+                                                      (containerSize.width -
+                                                              displaySize
+                                                                  .width) /
+                                                          2,
+                                                      0,
+                                                    );
+                                                  }
+
+                                                  return Stack(
+                                                    children: [
+                                                      ..._textOverlays.map((
+                                                        overlay,
+                                                      ) {
+                                                        // 실제 텍스트 크기 측정 (정확한 경계 계산)
+                                                        TextStyle style;
+                                                        final item =
+                                                            overlay.fontIdentifier !=
+                                                                    null
+                                                                ? FontCatalog.findByIdentifier(
+                                                                  overlay
+                                                                      .fontIdentifier!,
+                                                                )
+                                                                : null;
+                                                        if (item != null) {
+                                                          style = item.getTextStyle(
+                                                            fontWeight:
+                                                                overlay
+                                                                    .fontWeight,
+                                                            fontSize:
+                                                                overlay
+                                                                    .fontSize,
+                                                            color:
+                                                                overlay
+                                                                    .textColor,
+                                                          );
+                                                        } else {
+                                                          style = TextStyle(
+                                                            color:
+                                                                overlay
+                                                                    .textColor,
+                                                            fontSize:
+                                                                overlay
+                                                                    .fontSize,
+                                                            fontWeight:
+                                                                overlay
+                                                                    .fontWeight,
+                                                          );
+                                                        }
+                                                        final tp = TextPainter(
+                                                          text: TextSpan(
+                                                            text: overlay.text,
+                                                            style: style,
+                                                          ),
+                                                          textDirection:
+                                                              TextDirection.ltr,
+                                                          maxLines: null,
+                                                          textHeightBehavior:
+                                                              const TextHeightBehavior(
+                                                                applyHeightToFirstAscent:
+                                                                    false,
+                                                                applyHeightToLastDescent:
+                                                                    false,
+                                                              ),
+                                                        )..layout(
+                                                          maxWidth:
+                                                              displaySize.width,
+                                                        );
+                                                        final double padH =
+                                                            overlay.backgroundColor !=
+                                                                    null
+                                                                ? 16
+                                                                : 0;
+                                                        final double padV =
+                                                            overlay.backgroundColor !=
+                                                                    null
+                                                                ? 8
+                                                                : 0;
+                                                        final double textWidth =
+                                                            tp.width + padH * 2;
+                                                        final double
+                                                        textHeight =
+                                                            tp.height +
+                                                            padV * 2;
+                                                        // 큰 폰트/여러 줄에서 하방 치우침 보정
+                                                        const double
+                                                        verticalBias = 0.0;
+
+                                                        // 이미지 내에서의 상대적 위치를 실제 화면 좌표로 변환 (좌상단 기준)
+                                                        final relativeX =
+                                                            overlay.position.dx;
+                                                        final relativeY =
+                                                            overlay.position.dy;
+                                                        final absoluteX =
+                                                            imageOffset.dx +
+                                                            (relativeX *
+                                                                displaySize
+                                                                    .width);
+                                                        final absoluteY =
+                                                            imageOffset.dy +
+                                                            (relativeY *
+                                                                displaySize
+                                                                    .height) -
+                                                            verticalBias;
+
+                                                        final minLeft =
+                                                            imageOffset.dx;
+                                                        final double
+                                                        maxLeftRaw =
+                                                            imageOffset.dx +
+                                                            displaySize.width -
+                                                            textWidth;
+                                                        final maxLeft =
+                                                            maxLeftRaw < minLeft
+                                                                ? minLeft
+                                                                : maxLeftRaw;
+                                                        final minTop =
+                                                            imageOffset.dy;
+                                                        final double maxTopRaw =
+                                                            imageOffset.dy +
+                                                            displaySize.height -
+                                                            textHeight;
+                                                        final maxTop =
+                                                            maxTopRaw < minTop
+                                                                ? minTop
+                                                                : maxTopRaw;
+
+                                                        final left =
+                                                            absoluteX
+                                                                .clamp(
+                                                                  minLeft,
+                                                                  maxLeft,
+                                                                )
+                                                                .toDouble();
+                                                        final top =
+                                                            absoluteY
+                                                                .clamp(
+                                                                  minTop,
+                                                                  maxTop,
+                                                                )
+                                                                .toDouble();
+
+                                                        return Positioned(
+                                                          left: left,
+                                                          top: top,
+                                                          child: GestureDetector(
+                                                            onTap: () {
+                                                              setState(() {
+                                                                _isAddingText =
+                                                                    true;
+                                                              });
+                                                            },
+                                                            onPanStart: null,
+                                                            onScaleStart: (
+                                                              details,
+                                                            ) {
+                                                              _scalingOverlayId =
+                                                                  overlay.id;
+                                                              _initialScaleFontSize =
+                                                                  overlay
+                                                                      .fontSize;
+                                                              _draggingOverlayId =
+                                                                  overlay.id;
+                                                              // 손가락-텍스트 좌상단 델타(글로벌) 저장
+                                                              final RenderBox?
+                                                              imageBox =
+                                                                  _imageAreaKey
+                                                                          .currentContext
+                                                                          ?.findRenderObject()
+                                                                      as RenderBox?;
+                                                              final Offset
+                                                              imageGlobalTopLeft =
+                                                                  imageBox
+                                                                      ?.localToGlobal(
+                                                                        Offset
+                                                                            .zero,
+                                                                      ) ??
+                                                                  (context.findRenderObject()
+                                                                              as RenderBox)
+                                                                          .localToGlobal(Offset.zero) +
+                                                                      imageOffset;
+                                                              final Offset
+                                                              textTopLeftGlobalAtStart =
+                                                                  imageGlobalTopLeft +
+                                                                  Offset(
+                                                                    overlay
+                                                                            .position
+                                                                            .dx *
+                                                                        displaySize
+                                                                            .width,
+                                                                    overlay
+                                                                            .position
+                                                                            .dy *
+                                                                        displaySize
+                                                                            .height,
+                                                                  );
+                                                              _dragFingerDeltaGlobal =
+                                                                  details
+                                                                      .focalPoint -
+                                                                  textTopLeftGlobalAtStart;
+                                                              _showTrashBin =
+                                                                  true;
+                                                              _isOverTrash =
+                                                                  false;
+                                                              setState(() {});
+                                                            },
+                                                            onScaleUpdate: (
+                                                              details,
+                                                            ) {
+                                                              // 2손가락 이상 + 스케일 변화 → 폰트 크기 변경
+                                                              if (_scalingOverlayId ==
+                                                                      overlay
+                                                                          .id &&
+                                                                  details.pointerCount >=
+                                                                      2 &&
+                                                                  (details.scale -
+                                                                              1.0)
+                                                                          .abs() >
+                                                                      0.01) {
+                                                                // 새 폰트 크기 계산 및 영역 검증
+                                                                final proposed =
+                                                                    (_initialScaleFontSize *
+                                                                            details.scale)
+                                                                        .clamp(
+                                                                          8.0,
+                                                                          300.0,
+                                                                        );
+                                                                final tpScaled = TextPainter(
+                                                                  text: TextSpan(
+                                                                    text:
+                                                                        overlay
+                                                                            .text,
+                                                                    style: style
+                                                                        .copyWith(
+                                                                          fontSize:
+                                                                              proposed,
+                                                                        ),
+                                                                  ),
+                                                                  textDirection:
+                                                                      TextDirection
+                                                                          .ltr,
+                                                                  maxLines:
+                                                                      null,
+                                                                  textHeightBehavior: const TextHeightBehavior(
+                                                                    applyHeightToFirstAscent:
+                                                                        false,
+                                                                    applyHeightToLastDescent:
+                                                                        false,
+                                                                  ),
+                                                                )..layout();
+                                                                final sw =
+                                                                    tpScaled
+                                                                        .width +
+                                                                    padH * 2;
+                                                                final sh =
+                                                                    tpScaled
+                                                                        .height +
+                                                                    padV * 2;
+                                                                // 스케일 시 텍스트가 이미지보다 커지는 경우 방지
+                                                                double target =
+                                                                    proposed
+                                                                        .toDouble();
+                                                                if (sw >
+                                                                        displaySize
+                                                                            .width ||
+                                                                    sh >
+                                                                        displaySize
+                                                                            .height) {
+                                                                  final widthScale =
+                                                                      displaySize
+                                                                          .width /
+                                                                      sw;
+                                                                  final heightScale =
+                                                                      displaySize
+                                                                          .height /
+                                                                      sh;
+                                                                  final safeScale = (widthScale <
+                                                                              heightScale
+                                                                          ? widthScale
+                                                                          : heightScale)
+                                                                      .clamp(
+                                                                        0.1,
+                                                                        1.0,
+                                                                      );
+                                                                  target = (_initialScaleFontSize *
+                                                                          safeScale)
+                                                                      .clamp(
+                                                                        8.0,
+                                                                        300.0,
+                                                                      );
+                                                                }
+                                                                final updated = List<
+                                                                  TextOverlayData
+                                                                >.from(
+                                                                  _textOverlays,
+                                                                );
+                                                                final idx = updated
+                                                                    .indexWhere(
+                                                                      (e) =>
+                                                                          e.id ==
+                                                                          overlay
+                                                                              .id,
+                                                                    );
+                                                                if (idx != -1) {
+                                                                  updated[idx] =
+                                                                      overlay.copyWith(
+                                                                        fontSize:
+                                                                            target,
+                                                                      );
+                                                                  _updateTextOverlays(
+                                                                    updated,
+                                                                  );
+                                                                }
+                                                                return;
+                                                              }
+
+                                                              // 1손가락 드래그 → 위치 변경
+                                                              // 글로벌 좌표 기준: 실제 이미지 위젯의 글로벌 좌상단/우하단을 직접 사용
+                                                              final RenderBox?
+                                                              imageBox =
+                                                                  _imageAreaKey
+                                                                          .currentContext
+                                                                          ?.findRenderObject()
+                                                                      as RenderBox?;
+                                                              final Offset
+                                                              imageGlobalTopLeft =
+                                                                  imageBox
+                                                                      ?.localToGlobal(
+                                                                        Offset
+                                                                            .zero,
+                                                                      ) ??
+                                                                  (context.findRenderObject()
+                                                                              as RenderBox)
+                                                                          .localToGlobal(Offset.zero) +
+                                                                      imageOffset;
+
+                                                              // 휴지통 hover 판정
+                                                              final Offset
+                                                              fingerGlobal =
+                                                                  details
+                                                                      .focalPoint;
+                                                              final RenderObject?
+                                                              trashObj =
+                                                                  _trashKey
+                                                                      .currentContext
+                                                                      ?.findRenderObject();
+                                                              if (trashObj
+                                                                  is RenderBox) {
+                                                                final Offset
+                                                                trashTopLeft = trashObj
+                                                                    .localToGlobal(
+                                                                      Offset
+                                                                          .zero,
+                                                                    );
+                                                                final Size
+                                                                trashSize =
+                                                                    trashObj
+                                                                        .size;
+                                                                _isOverTrash =
+                                                                    Rect.fromLTWH(
+                                                                      trashTopLeft
+                                                                          .dx,
+                                                                      trashTopLeft
+                                                                          .dy,
+                                                                      trashSize
+                                                                          .width,
+                                                                      trashSize
+                                                                          .height,
+                                                                    ).contains(
+                                                                      fingerGlobal,
+                                                                    );
+                                                              } else {
+                                                                _isOverTrash =
+                                                                    false;
+                                                              }
+
+                                                              final Offset
+                                                              textTopLeftGlobal =
+                                                                  fingerGlobal -
+                                                                  _dragFingerDeltaGlobal;
+                                                              final tpDrag = TextPainter(
+                                                                text: TextSpan(
+                                                                  text:
+                                                                      overlay
+                                                                          .text,
+                                                                  style: style,
+                                                                ),
+                                                                textDirection:
+                                                                    TextDirection
+                                                                        .ltr,
+                                                                maxLines: null,
+                                                                textHeightBehavior:
+                                                                    const TextHeightBehavior(
+                                                                      applyHeightToFirstAscent:
+                                                                          false,
+                                                                      applyHeightToLastDescent:
+                                                                          false,
+                                                                    ),
+                                                              )..layout(
+                                                                maxWidth:
+                                                                    displaySize
+                                                                        .width,
+                                                              );
+                                                              final double w =
+                                                                  tpDrag.width +
+                                                                  padH * 2;
+                                                              final double h =
+                                                                  tpDrag
+                                                                      .height +
+                                                                  padV * 2;
+                                                              const double
+                                                              verticalBiasDrag =
+                                                                  0.0;
+
+                                                              // 좌상단 기준 비율로 직접 계산 (손가락과 동일 좌표계)
+                                                              final double
+                                                              relXRaw =
+                                                                  (textTopLeftGlobal
+                                                                          .dx -
+                                                                      imageGlobalTopLeft
+                                                                          .dx) /
+                                                                  displaySize
+                                                                      .width;
+                                                              final double
+                                                              relYRaw =
+                                                                  (textTopLeftGlobal
+                                                                          .dy -
+                                                                      imageGlobalTopLeft
+                                                                          .dy) /
+                                                                  displaySize
+                                                                      .height;
+                                                              final double
+                                                              rawMaxRelX =
+                                                                  (displaySize
+                                                                          .width -
+                                                                      w) /
+                                                                  displaySize
+                                                                      .width;
+                                                              final double
+                                                              rawMaxRelY =
+                                                                  (displaySize
+                                                                          .height -
+                                                                      h) /
+                                                                  displaySize
+                                                                      .height;
+                                                              final double
+                                                              maxRelX =
+                                                                  rawMaxRelX <
+                                                                          0.0
+                                                                      ? 0.0
+                                                                      : (rawMaxRelX >
+                                                                              1.0
+                                                                          ? 1.0
+                                                                          : rawMaxRelX);
+                                                              final double
+                                                              maxRelY =
+                                                                  rawMaxRelY <
+                                                                          0.0
+                                                                      ? 0.0
+                                                                      : (rawMaxRelY >
+                                                                              1.0
+                                                                          ? 1.0
+                                                                          : rawMaxRelY);
+                                                              final double
+                                                              relX = (relXRaw)
+                                                                  .clamp(
+                                                                    0.0,
+                                                                    maxRelX,
+                                                                  );
+                                                              final double
+                                                              relY = (relYRaw)
+                                                                  .clamp(
+                                                                    0.0,
+                                                                    maxRelY,
+                                                                  );
+
+                                                              final updatedOverlays =
+                                                                  List<
+                                                                    TextOverlayData
+                                                                  >.from(
+                                                                    _textOverlays,
+                                                                  );
+                                                              final index = updatedOverlays
+                                                                  .indexWhere(
+                                                                    (e) =>
+                                                                        e.id ==
+                                                                        overlay
+                                                                            .id,
+                                                                  );
+                                                              if (index != -1) {
+                                                                updatedOverlays[index] =
+                                                                    overlay.copyWith(
+                                                                      position:
+                                                                          Offset(
+                                                                            relX,
+                                                                            relY,
+                                                                          ),
+                                                                    );
+                                                                _updateTextOverlays(
+                                                                  updatedOverlays,
+                                                                );
+                                                              }
+                                                              setState(() {});
+                                                            },
+                                                            onScaleEnd: (_) {
+                                                              if (_isOverTrash &&
+                                                                  _draggingOverlayId !=
+                                                                      null) {
+                                                                final updated = List<
+                                                                  TextOverlayData
+                                                                >.from(
+                                                                  _textOverlays,
+                                                                )..removeWhere(
+                                                                  (e) =>
+                                                                      e.id ==
+                                                                      _draggingOverlayId,
+                                                                );
+                                                                _updateTextOverlays(
+                                                                  updated,
+                                                                );
+                                                              }
+                                                              _scalingOverlayId =
+                                                                  null;
+                                                              _draggingOverlayId =
+                                                                  null;
+                                                              _showTrashBin =
+                                                                  false;
+                                                              _isOverTrash =
+                                                                  false;
+                                                              setState(() {});
+                                                            },
+                                                            child: Container(
+                                                              padding: EdgeInsets.symmetric(
+                                                                horizontal:
+                                                                    overlay.backgroundColor !=
+                                                                            null
+                                                                        ? 16
+                                                                        : 0,
+                                                                vertical:
+                                                                    overlay.backgroundColor !=
+                                                                            null
+                                                                        ? 8
+                                                                        : 0,
+                                                              ),
+                                                              decoration: BoxDecoration(
+                                                                color:
+                                                                    overlay
+                                                                        .backgroundColor,
+                                                                borderRadius:
+                                                                    BorderRadius.circular(
+                                                                      8,
+                                                                    ),
+                                                              ),
+                                                              child: Text(
+                                                                overlay.text,
+                                                                textAlign:
+                                                                    overlay
+                                                                        .textAlign,
+                                                                softWrap: false,
+                                                                textHeightBehavior:
+                                                                    const TextHeightBehavior(
+                                                                      applyHeightToFirstAscent:
+                                                                          false,
+                                                                      applyHeightToLastDescent:
+                                                                          false,
+                                                                    ),
+                                                                style:
+                                                                    (() {
+                                                                      // Google Fonts 적용
+                                                                      if (overlay
+                                                                              .fontIdentifier !=
+                                                                          null) {
+                                                                        final item = FontCatalog.findByIdentifier(
+                                                                          overlay
+                                                                              .fontIdentifier!,
+                                                                        );
+                                                                        if (item !=
+                                                                            null) {
+                                                                          return item.getTextStyle(
+                                                                            fontWeight:
+                                                                                overlay.fontWeight,
+                                                                            fontSize:
+                                                                                overlay.fontSize,
+                                                                            color:
+                                                                                overlay.textColor,
+                                                                          );
+                                                                        }
+                                                                      }
+                                                                      return TextStyle(
+                                                                        color:
+                                                                            overlay.textColor,
+                                                                        fontSize:
+                                                                            overlay.fontSize,
+                                                                        fontWeight:
+                                                                            overlay.fontWeight,
+                                                                        shadows: [
+                                                                          if (overlay.backgroundColor ==
+                                                                              null)
+                                                                            const Shadow(
+                                                                              color:
+                                                                                  Colors.black54,
+                                                                              offset: Offset(
+                                                                                0,
+                                                                                2,
+                                                                              ),
+                                                                              blurRadius:
+                                                                                  4,
+                                                                            ),
+                                                                        ],
+                                                                      );
+                                                                    })(),
+                                                              ),
+                                                            ),
+                                                          ),
+                                                        );
+                                                      }).toList(),
+
+                                                      // 드래그 중 휴지통: 이미지 영역 내부 하단 중앙
+                                                      if (_showTrashBin)
+                                                        Positioned(
+                                                          left:
+                                                              imageOffset.dx +
+                                                              (displaySize.width -
+                                                                      (_isOverTrash
+                                                                          ? 74
+                                                                          : 64)) /
+                                                                  2,
+                                                          top:
+                                                              imageOffset.dy +
+                                                              displaySize
+                                                                  .height -
+                                                              (_isOverTrash
+                                                                  ? 74
+                                                                  : 64) -
+                                                              12,
+                                                          child: AnimatedContainer(
+                                                            key: _trashKey,
+                                                            duration:
+                                                                const Duration(
+                                                                  milliseconds:
+                                                                      120,
+                                                                ),
+                                                            width:
+                                                                _isOverTrash
+                                                                    ? 74
+                                                                    : 64,
+                                                            height:
+                                                                _isOverTrash
+                                                                    ? 74
+                                                                    : 64,
+                                                            decoration: BoxDecoration(
+                                                              color: (_isOverTrash
+                                                                      ? Colors
+                                                                          .redAccent
+                                                                      : Colors
+                                                                          .black)
+                                                                  .withOpacity(
+                                                                    0.8,
+                                                                  ),
+                                                              shape:
+                                                                  BoxShape
+                                                                      .circle,
+                                                            ),
+                                                            child: const Icon(
+                                                              Icons
+                                                                  .delete_outline,
+                                                              color:
+                                                                  Colors.white,
+                                                              size: 30,
+                                                            ),
+                                                          ),
+                                                        ),
+                                                    ],
+                                                  );
+                                                },
+                                              );
+                                            },
+                                          ),
+
+                                        // 자르기 오버레이
+                                        if (_isCropping)
+                                          FutureBuilder<Size>(
+                                            key: ValueKey(
+                                              _currentImage.hashCode,
+                                            ),
+                                            future: _getImageSize(),
+                                            builder: (context, snapshot) {
+                                              if (snapshot.hasData) {
+                                                return CropOverlay(
+                                                  cropRect: _cropRect,
+                                                  onUpdate: _updateCropRect,
+                                                  imageSize: snapshot.data!,
+                                                  scale: _getCurrentScale(),
+                                                );
+                                              }
+                                              return const SizedBox.shrink();
+                                            },
+                                          ),
+                                      ],
                                     ),
                                   ),
-                              ],
+                                );
+                              },
                             ),
                           ),
-                        ),
-                      ),
-                      // 이미지 미리보기
-                      Expanded(
-                        child: AnimatedBuilder(
-                          animation: _bottomSheetController,
-                          builder: (context, child) {
-                            return Transform.scale(
-                              alignment: Alignment.topCenter,
-                              scale: _imageScaleAnimation.value,
+
+                          // 텍스트 오버레이 모드가 아닐 때만 하단 툴바 표시
+                          AnimatedOpacity(
+                            opacity: _showUI ? 1.0 : 0.0,
+                            duration: const Duration(milliseconds: 0),
+                            child: SafeArea(
+                              top: false,
                               child: Padding(
                                 padding: const EdgeInsets.symmetric(
-                                  horizontal: 0,
-                                ),
-                                child: Stack(
-                                  children: [
-                                    Positioned.fill(
-                                      child: GestureDetector(
-                                        onTap: _toggleUI,
-                                        onPanUpdate:
-                                            _isFiltering
-                                                ? _onFilterSwipe
-                                                : null,
-                                        onPanEnd:
-                                            _isFiltering
-                                                ? _onFilterSwipeEnd
-                                                : null,
-
-                                        child: Transform(
-                                          transform:
-                                              ImageAdjustmentUtils.getTransform(
-                                                _adjustmentState,
-                                              ),
-                                          alignment: Alignment.center,
-                                          child: ColorFiltered(
-                                            key: ValueKey(
-                                              '${_selectedFilter}_${_adjustmentState.hashCode}',
-                                            ),
-                                            colorFilter:
-                                                // 조정과 필터를 결합 (조정이 우선)
-                                                ImageAdjustmentUtils.getColorFilter(
-                                                  _adjustmentState,
-                                                ) ??
-                                                _getColorFilter(
-                                                  FilterPresets.defaults
-                                                      .firstWhere(
-                                                        (preset) =>
-                                                            preset.type ==
-                                                            _selectedFilter,
-                                                        orElse:
-                                                            () =>
-                                                                FilterPresets
-                                                                    .defaults
-                                                                    .first,
-                                                      ),
-                                                ) ??
-                                                const ColorFilter.matrix([
-                                                  1,
-                                                  0,
-                                                  0,
-                                                  0,
-                                                  0,
-                                                  0,
-                                                  1,
-                                                  0,
-                                                  0,
-                                                  0,
-                                                  0,
-                                                  0,
-                                                  1,
-                                                  0,
-                                                  0,
-                                                  0,
-                                                  0,
-                                                  0,
-                                                  1,
-                                                  0,
-                                                ]),
-                                            child: Image.memory(
-                                              _currentImage,
-                                              fit: BoxFit.contain,
-                                            ),
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-
-                                    // 자르기 오버레이
-                                    if (_isCropping)
-                                      FutureBuilder<Size>(
-                                        key: ValueKey(_currentImage.hashCode),
-                                        future: _getImageSize(),
-                                        builder: (context, snapshot) {
-                                          if (snapshot.hasData) {
-                                            return CropOverlay(
-                                              cropRect: _cropRect,
-                                              onUpdate: _updateCropRect,
-                                              imageSize: snapshot.data!,
-                                              containerSize: Size(
-                                                MediaQuery.of(
-                                                      context,
-                                                    ).size.width -
-                                                    20,
-                                                MediaQuery.of(
-                                                      context,
-                                                    ).size.height *
-                                                    0.6,
-                                              ),
-                                              scale: _imageScaleAnimation.value,
-                                            );
-                                          }
-                                          return const SizedBox.shrink();
-                                        },
-                                      ),
-                                  ],
-                                ),
-                              ),
-                            );
-                          },
-                        ),
-                      ),
-
-                      const SizedBox(height: 20),
-
-                      // 메인 툴바
-                      AnimatedOpacity(
-                        opacity: _showUI ? 1.0 : 0.0,
-                        duration: const Duration(milliseconds: 200),
-                        child: SafeArea(
-                          top: false,
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 20),
-                            child: ClipRRect(
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(
                                   horizontal: 20,
-                                  vertical: 16,
                                 ),
-                                child: Row(
-                                  mainAxisAlignment:
-                                      MainAxisAlignment.spaceEvenly,
-                                  children: [
-                                    GlassToolButton(
-                                      icon: Icons.tune,
-                                      label: '조정',
-                                      onTap: _toggleAdjustment,
-                                      isActive: _isAdjusting,
+                                child: ClipRRect(
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 20,
+                                      vertical: 16,
                                     ),
-                                    Container(
-                                      width: 1,
-                                      height: 40,
-                                      color: Colors.white.withOpacity(0.2),
+                                    child: Row(
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.spaceEvenly,
+                                      children: [
+                                        GlassToolButton(
+                                          icon: Icons.text_fields,
+                                          label: '텍스트',
+                                          onTap: _toggleTextOverlay,
+                                          isActive: _isAddingText,
+                                        ),
+                                        Container(
+                                          width: 1,
+                                          height: 40,
+                                          color: Colors.white.withOpacity(0.2),
+                                        ),
+                                        GlassToolButton(
+                                          icon: Icons.tune,
+                                          label: '조정',
+                                          onTap: _toggleAdjustment,
+                                          isActive: _isAdjusting,
+                                        ),
+                                        Container(
+                                          width: 1,
+                                          height: 40,
+                                          color: Colors.white.withOpacity(0.2),
+                                        ),
+                                        GlassToolButton(
+                                          icon: Icons.crop,
+                                          label: '자르기',
+                                          onTap: _toggleCrop,
+                                          isActive: _isCropping,
+                                        ),
+                                        Container(
+                                          width: 1,
+                                          height: 40,
+                                          color: Colors.white.withOpacity(0.2),
+                                        ),
+                                        GlassToolButton(
+                                          icon: Icons.color_lens,
+                                          label: '필터',
+                                          onTap: _onFilter,
+                                          isActive: _isFiltering,
+                                        ),
+                                      ],
                                     ),
-                                    GlassToolButton(
-                                      icon: Icons.crop,
-                                      label: '자르기',
-                                      onTap: _toggleCrop,
-                                      isActive: _isCropping,
-                                    ),
-                                    Container(
-                                      width: 1,
-                                      height: 40,
-                                      color: Colors.white.withOpacity(0.2),
-                                    ),
-                                    GlassToolButton(
-                                      icon: Icons.color_lens,
-                                      label: '필터',
-                                      onTap: _onFilter,
-                                      isActive: _isFiltering,
-                                    ),
-                                  ],
+                                  ),
                                 ),
                               ),
                             ),
                           ),
-                        ),
+                        ],
                       ),
+                    ),
+                  );
+                },
+              );
+            },
+          ),
 
-                      const SizedBox(height: 20),
+          // 텍스트 오버레이 모드가 아닐 때만 상단 앱바 표시
+          Positioned(
+            left: 0,
+            right: 0,
+            top: 0,
+            child: AnimatedOpacity(
+              opacity: _showUI ? 1.0 : 0,
+              duration: const Duration(milliseconds: 200),
+              child: SafeArea(
+                bottom: false,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 0),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Row(
+                        children: [
+                          IconButton(
+                            onPressed: () {
+                              if (_isCropping) {
+                                _toggleCrop();
+                              } else if (_isFiltering) {
+                                _toggleFilter();
+                              } else if (_isAdjusting) {
+                                if (_isAdjustmentDetailMode) {
+                                  _exitAdjustmentDetailMode();
+                                } else {
+                                  _toggleAdjustment();
+                                }
+                              } else {
+                                Navigator.pop(context);
+                              }
+                            },
+                            icon: Icon(
+                              _isCropping ||
+                                      _isFiltering ||
+                                      (_isAdjusting && !_isAdjustmentDetailMode)
+                                  ? null
+                                  : Icons.close,
+                            ),
+                          ),
+                          // Undo/Redo 버튼 (편집 모드가 아닐 때만)
+                          if (!_isCropping &&
+                              !_isFiltering &&
+                              !_isAdjusting) ...[
+                            GestureDetector(
+                              onTap: _history.length > 1 ? _undo : null,
+                              child: SvgPicture.asset(
+                                'assets/icons/editor_undo.svg',
+                                width: 24,
+                                height: 24,
+                                color:
+                                    _history.length > 1
+                                        ? Colors.white
+                                        : Colors.white.withOpacity(0.3),
+                              ),
+                            ),
+                            GestureDetector(
+                              onTap: _redoStack.isNotEmpty ? _redo : null,
+                              child: SvgPicture.asset(
+                                'assets/icons/editor_redo.svg',
+                                width: 24,
+                                height: 24,
+                                color:
+                                    _redoStack.isNotEmpty
+                                        ? Colors.white
+                                        : Colors.white.withOpacity(0.3),
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                      // 완료/적용 버튼 (바텀시트가 열렸을 때는 숨김)
+                      if (!_isBottomSheetOpen)
+                        GestureDetector(
+                          onTap: _onDone,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 20,
+                              vertical: 10,
+                            ),
+
+                            child: const Text(
+                              '완료',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 15,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        ),
                     ],
                   ),
                 ),
-              );
-            },
+              ),
+            ),
           ),
 
           // 바텀시트
@@ -978,7 +1827,11 @@ class _CustomImageEditorScreenState extends State<CustomImageEditorScreen>
                                   children: [
                                     TextButton(
                                       onPressed: () {
-                                        _closeBottomSheet();
+                                        if (_isAdjusting) {
+                                          _cancelAdjustment();
+                                        } else {
+                                          _closeBottomSheet();
+                                        }
                                       },
                                       style: ElevatedButton.styleFrom(),
                                       child: Text(
@@ -1042,6 +1895,53 @@ class _CustomImageEditorScreenState extends State<CustomImageEditorScreen>
                     );
                   },
                 ),
+              ),
+            ),
+          // 텍스트 오버레이 편집 모드 (입력 영역을 약간 위로, 내부 스크롤 방지용 최대 크기 전달)
+          if (_isAddingText)
+            Positioned.fill(
+              child: LayoutBuilder(
+                builder: (c, constraints) {
+                  // 이미지 표시 영역 추정 (캐시가 있으면 더욱 정확)
+                  final containerSize = Size(
+                    constraints.maxWidth,
+                    constraints.maxHeight,
+                  );
+                  Size displaySize;
+                  if (_cachedImageSize == null) {
+                    displaySize = containerSize;
+                  } else {
+                    final imgAR =
+                        _cachedImageSize!.width / _cachedImageSize!.height;
+                    final contAR = containerSize.width / containerSize.height;
+                    if (imgAR > contAR) {
+                      displaySize = Size(
+                        containerSize.width,
+                        containerSize.width / imgAR,
+                      );
+                    } else {
+                      displaySize = Size(
+                        containerSize.height * imgAR,
+                        containerSize.height,
+                      );
+                    }
+                  }
+
+                  return TextOverlayEditor(
+                    textOverlays: _textOverlays,
+                    onTextOverlaysChanged: _updateTextOverlays,
+                    imageBytes: _currentImage,
+                    imageSize: _cachedImageSize,
+                    maxTextWidth: displaySize.width,
+                    maxTextHeight: displaySize.height * 0.8,
+                    onFinish: () {
+                      setState(() {
+                        _isAddingText = false;
+                        _showUI = true; // UI 다시 보이게 하기
+                      });
+                    },
+                  );
+                },
               ),
             ),
         ],
@@ -1156,7 +2056,7 @@ class _CustomImageEditorScreenState extends State<CustomImageEditorScreen>
           padding: const EdgeInsets.symmetric(horizontal: 12),
           child: Row(
             children: [
-              // 전체 리셋 버튼
+              // 전체 리셋 버튼z
 
               // 조정 타입 칩들
               ...AdjustmentTypeUtils.allTypes.map((type) {

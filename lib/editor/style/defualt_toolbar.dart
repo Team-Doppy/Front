@@ -712,6 +712,15 @@ extension _TopExpandedRow on _DefaultToolbarState {
           child: Row(
             children: [
               _buildSvgChip(
+                svgPath: 'assets/icons/pin_point.svg',
+                label: '핀포인트',
+                onTap: () {
+                  //widget.editorService.addPinNode();
+                  _forceCloseToolbar();
+                },
+              ),
+              const SizedBox(width: 8),
+              _buildSvgChip(
                 svgPath: 'assets/icons/editor_sticker.svg',
                 label: '스티커',
                 onTap: () {
@@ -1143,41 +1152,135 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
           svgPath: 'assets/icons/editor_gallery.svg',
           isActive: false,
           onTap: () async {
-            final picker = NativeImagePicker();
-            final files = await picker.pickMultipleImages(maxCount: 10);
+            String mode = 'none';
+            await showModalBottomSheet(
+              backgroundColor: Colors.transparent,
+              context: context,
+              builder:
+                  (context) => ClipRRect(
+                    borderRadius: BorderRadius.circular(16),
+                    child: BackdropFilter(
+                      filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.onSurface.withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        height: 180,
+                        width: double.infinity,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.center,
 
-            if (files.isNotEmpty) {
-              print('DEBUG: 선택된 파일 수: ${files.length}');
-              final upload = context.read<UploadService>();
+                          children: [
+                            const SizedBox(height: 8),
+                            Container(
+                              width: 50,
+                              height: 5,
+                              decoration: BoxDecoration(
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.onSurface.withOpacity(0.15),
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                            ),
+                            const SizedBox(height: 8),
 
-              final placeholderIds = <String>[];
-              for (final f in files) {
-                placeholderIds.add(
-                  widget.editorService.addImagePlaceholderNode(f.path),
-                );
-              }
+                            ListTile(
+                              onTap: () async {
+                                mode = 'image';
+                                return Navigator.of(context).pop(mode);
+                              },
 
-              final tasks = await upload.uploadFilesViaServerBatches(
-                files,
-                kind: UploadKind.editorImage,
-              );
+                              title: Text('이미지 업로드'),
+                            ),
+                            ListTile(
+                              onTap: () async {
+                                mode = 'short clip';
+                                return Navigator.of(context).pop(mode);
+                              },
 
-              final count =
-                  tasks.length < placeholderIds.length
-                      ? tasks.length
-                      : placeholderIds.length;
-              for (int i = 0; i < count; i++) {
-                final t = tasks[i];
-                final id = placeholderIds[i];
-                if (t.state == UploadState.success &&
-                    (t.url ?? '').isNotEmpty) {
-                  await widget.editorService.replacePlaceholderWithUrl(
-                    id,
-                    t.url!,
+                              title: Text('short clip 업로드'),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+            );
+            if (mode == 'image') {
+              FocusScope.of(context).unfocus();
+              final picker = NativeImagePicker();
+              final files = await picker.pickMultipleImages(maxCount: 10);
+
+              if (files.isNotEmpty) {
+                print('DEBUG: 선택된 파일 수: ${files.length}');
+                final upload = context.read<UploadService>();
+
+                final placeholderIds = <String>[];
+                for (final f in files) {
+                  placeholderIds.add(
+                    widget.editorService.addImagePlaceholderNode(f.path),
                   );
-                } else {
-                  widget.editorService.deleteImagePlaceholderNode(id);
                 }
+
+                // 즉시 로딩 피드백: 업로드 시작 전 가벼운 로딩 오버레이를 잠깐 표시할 수 있음(필요 시)
+                final tasks = await upload.uploadFilesViaServerBatches(
+                  files,
+                  kind: UploadKind.editorImage,
+                );
+
+                final count =
+                    tasks.length < placeholderIds.length
+                        ? tasks.length
+                        : placeholderIds.length;
+                for (int i = 0; i < count; i++) {
+                  final t = tasks[i];
+                  final id = placeholderIds[i];
+                  if (t.state == UploadState.success &&
+                      (t.url ?? '').isNotEmpty) {
+                    await widget.editorService.replacePlaceholderWithUrl(
+                      id,
+                      t.url!,
+                    );
+                  } else {
+                    widget.editorService.deleteImagePlaceholderNode(id);
+                  }
+                }
+              }
+            }
+            if (mode == 'short clip') {
+              try {
+                FocusScope.of(context).unfocus();
+                // 시스템 비디오 피커(1개)
+                final picker = NativeImagePicker();
+                final file = await picker.pickSingleVideo();
+                if (file == null) return;
+
+                // 길이/용량 선검증(선택)
+                // TODO: 필요 시 video_player로 duration 체크, 파일 크기 200MB 이하 확인
+
+                final upload = context.read<UploadService>();
+                final task = upload.enqueueFile(
+                  file,
+                  kind: UploadKind.video,
+                  overrideName: file.path.split('/').last,
+                );
+
+                // 완료 대기(간단 버전)
+                task.addListener(() {
+                  if (task.state == UploadState.success && task.url != null) {
+                    // 에디터에 clip 노드 삽입 (label은 파일명으로 기본)
+                    widget.editorService.addClipNode(
+                      label: file.path.split('/').last,
+                      url: task.url!,
+                    );
+                    _forceCloseToolbar();
+                  }
+                });
+              } catch (e) {
+                debugPrint('video pick/upload error: $e');
               }
             }
           },

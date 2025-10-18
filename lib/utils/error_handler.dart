@@ -38,40 +38,6 @@ class ErrorHandler {
     );
   }
 
-  /// 성공 스낵바 표시
-  static void showSuccess(
-    BuildContext context,
-    String message, {
-    Duration duration = const Duration(seconds: 2),
-  }) {
-    if (!context.mounted) return;
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Row(
-          children: [
-            Icon(Icons.check_circle_outline, color: Colors.white, size: 20),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                message,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 14,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-            ),
-          ],
-        ),
-        backgroundColor: Colors.green.shade600,
-        behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-        duration: duration,
-      ),
-    );
-  }
-
   /// 경고 스낵바 표시
   static void showWarning(
     BuildContext context,

@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 
 /// 이미지 조정 타입
 enum AdjustmentType {
-  angle, // 각도
   exposure, // 조도
   brightness, // 밝기
   contrast, // 대비
@@ -17,8 +16,6 @@ class AdjustmentTypeUtils {
   /// 조정 타입의 표시 이름
   static String getLabel(AdjustmentType type) {
     switch (type) {
-      case AdjustmentType.angle:
-        return '각도';
       case AdjustmentType.exposure:
         return '조도';
       case AdjustmentType.brightness:
@@ -39,8 +36,6 @@ class AdjustmentTypeUtils {
   /// 조정 타입의 아이콘
   static IconData getIcon(AdjustmentType type) {
     switch (type) {
-      case AdjustmentType.angle:
-        return Icons.rotate_90_degrees_ccw;
       case AdjustmentType.exposure:
         return Icons.exposure;
       case AdjustmentType.brightness:
@@ -60,34 +55,12 @@ class AdjustmentTypeUtils {
 
   /// 조정 값의 최소값
   static double getMinValue(AdjustmentType type) {
-    switch (type) {
-      case AdjustmentType.angle:
-        return -180.0;
-      case AdjustmentType.exposure:
-      case AdjustmentType.brightness:
-      case AdjustmentType.contrast:
-      case AdjustmentType.temperature:
-      case AdjustmentType.saturation:
-      case AdjustmentType.highlight:
-      case AdjustmentType.shadow:
-        return -100.0;
-    }
+    return -100.0;
   }
 
   /// 조정 값의 최대값
   static double getMaxValue(AdjustmentType type) {
-    switch (type) {
-      case AdjustmentType.angle:
-        return 180.0;
-      case AdjustmentType.exposure:
-      case AdjustmentType.brightness:
-      case AdjustmentType.contrast:
-      case AdjustmentType.temperature:
-      case AdjustmentType.saturation:
-      case AdjustmentType.highlight:
-      case AdjustmentType.shadow:
-        return 100.0;
-    }
+    return 100.0;
   }
 
   /// 조정 값의 기본값
@@ -97,19 +70,18 @@ class AdjustmentTypeUtils {
 
   /// 모든 조정 타입 목록
   static const List<AdjustmentType> allTypes = [
-    AdjustmentType.angle,
     AdjustmentType.exposure,
     AdjustmentType.brightness,
     AdjustmentType.contrast,
     AdjustmentType.temperature,
     AdjustmentType.saturation,
+    AdjustmentType.highlight,
     AdjustmentType.shadow,
   ];
 }
 
 /// 이미지 조정 상태
 class ImageAdjustmentState {
-  final double angle;
   final double exposure;
   final double brightness;
   final double contrast;
@@ -119,7 +91,6 @@ class ImageAdjustmentState {
   final double shadow;
 
   const ImageAdjustmentState({
-    this.angle = 0.0,
     this.exposure = 0.0,
     this.brightness = 0.0,
     this.contrast = 0.0,
@@ -132,8 +103,6 @@ class ImageAdjustmentState {
   /// 특정 조정 값 가져오기
   double getValue(AdjustmentType type) {
     switch (type) {
-      case AdjustmentType.angle:
-        return angle;
       case AdjustmentType.exposure:
         return exposure;
       case AdjustmentType.brightness:
@@ -154,8 +123,6 @@ class ImageAdjustmentState {
   /// 특정 조정 값 설정하여 새 상태 반환
   ImageAdjustmentState setValue(AdjustmentType type, double value) {
     switch (type) {
-      case AdjustmentType.angle:
-        return copyWith(angle: value);
       case AdjustmentType.exposure:
         return copyWith(exposure: value);
       case AdjustmentType.brightness:
@@ -175,8 +142,7 @@ class ImageAdjustmentState {
 
   /// 모든 값이 기본값인지 확인
   bool get isDefault {
-    return angle == 0.0 &&
-        exposure == 0.0 &&
+    return exposure == 0.0 &&
         brightness == 0.0 &&
         contrast == 0.0 &&
         temperature == 0.0 &&
@@ -186,7 +152,6 @@ class ImageAdjustmentState {
   }
 
   ImageAdjustmentState copyWith({
-    double? angle,
     double? exposure,
     double? brightness,
     double? contrast,
@@ -196,7 +161,6 @@ class ImageAdjustmentState {
     double? shadow,
   }) {
     return ImageAdjustmentState(
-      angle: angle ?? this.angle,
       exposure: exposure ?? this.exposure,
       brightness: brightness ?? this.brightness,
       contrast: contrast ?? this.contrast,
@@ -277,14 +241,5 @@ class ImageAdjustmentUtils {
       // A
       0, 0, 0, 1, 0,
     ]);
-  }
-
-  /// 각도 조정을 적용한 Transform 생성
-  static Matrix4 getTransform(ImageAdjustmentState state) {
-    if (state.angle == 0.0) return Matrix4.identity();
-
-    // 라디안으로 변환
-    final radians = state.angle * (3.141592653589793 / 180.0);
-    return Matrix4.rotationZ(radians);
   }
 }

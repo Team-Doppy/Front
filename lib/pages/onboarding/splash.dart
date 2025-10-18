@@ -144,19 +144,21 @@ class _SplashScreenState extends State<SplashScreen>
 
   Future<void> _loadHomeData() async {
     try {
-      print('[SplashScreen] Loading home data...');
-      final serverData = await _blogService.getHomePosts(page: 0, size: 10);
+      // 기본 필터가 "친구만 보기"이므로 getFriendsPosts 사용
+      final serverData = await _blogService.getFriendsPosts(page: 0, size: 10);
       final posts =
           serverData.map((data) => PostData.fromServer(data)).toList();
 
       setState(() {
         _preloadedPosts = posts;
-        _loadingStatus = '이미지를 미리 로드하는 중...';
+        _loadingStatus = posts.isEmpty ? '데이터 로드 완료' : '이미지를 미리 로드하는 중...';
       });
       print('[SplashScreen] Successfully loaded ${posts.length} posts');
 
       // 이미지 미리 로드 (최대 3개)
-      await _preloadImages(posts.take(3).toList());
+      if (posts.isNotEmpty) {
+        await _preloadImages(posts.take(3).toList());
+      }
 
       setState(() {
         _isDataLoaded = true;

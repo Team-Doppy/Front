@@ -59,6 +59,7 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
       // 친구 데이터도 함께 로드
       context.read<FriendProvider>().fetchAllFriendData();
     });
+    // 0.5초 후 로딩 로고 표시
   }
 
   @override
@@ -83,19 +84,46 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
         builder: (context, groupProv, child) {
           return groupProv.isLoading
               ? Center(
-                child: AnimatedBuilder(
-                  animation: _loadingAnimationController,
-                  builder: (context, child) {
-                    return Text(
-                      'doppy',
-                      style: TextStyle(
-                        fontSize: 32,
-                        fontWeight: FontWeight.w800,
-                        color: Colors.white,
-                        letterSpacing: 1.2,
+                child: AnimatedOpacity(
+                  opacity: 1,
+                  duration: const Duration(milliseconds: 400),
+                  curve: Curves.easeIn,
+                  child: const Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Text(
+                        "d",
+                        style: TextStyle(
+                          fontSize: 32,
+                          fontWeight: FontWeight.w800,
+                          color: Colors.white,
+                          letterSpacing: 1.2,
+                        ),
                       ),
-                    );
-                  },
+                      Padding(
+                        padding: EdgeInsets.only(top: 2),
+                        child: SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 3,
+                            valueColor: AlwaysStoppedAnimation<Color>(
+                              Colors.white,
+                            ),
+                          ),
+                        ),
+                      ),
+                      Text(
+                        "ppy",
+                        style: TextStyle(
+                          fontSize: 32,
+                          fontWeight: FontWeight.w800,
+                          color: Colors.white,
+                          letterSpacing: 1.2,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               )
               : Consumer<FriendProvider>(

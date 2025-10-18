@@ -31,6 +31,7 @@ class HomeScreenState extends State<HomeScreen> {
   bool _hasMoreData = true;
   int _currentPostIndex = 0; // 현재 보이는 포스트 인덱스
   bool _isCardShimmering = false; // 새로고침 시 카드 영역만 쉬머 표시
+  int _loadTick = 0; // 응답 정합성 보장용 토큰
 
   // 검색 오버레이 상태
   bool _isSearchOverlayVisible = false;
@@ -38,17 +39,18 @@ class HomeScreenState extends State<HomeScreen> {
   String _searchQuery = ''; // 현재 검색어
 
   // 피드 필터 상태
-  bool _isShowingFriendsOnly = false; // 친구만 보기 여부
+  bool _isShowingFriendsOnly = true; // 친구만 보기 여부 (기본: 친구글)
 
   @override
   void initState() {
     super.initState();
     // 스플래시에서 전달된 선로딩 데이터를 즉시 반영
-    if (widget.preloadedPosts != null && widget.preloadedPosts!.isNotEmpty) {
+    if (widget.preloadedPosts != null) {
       _posts = List<PostData>.from(widget.preloadedPosts!);
       _isLoading = false;
       _hasMoreData = _posts.length == 10;
-      _currentPage = 1; // 다음 페이지부터 로드
+      _currentPage = _posts.isNotEmpty ? 1 : 0; // 데이터가 있으면 다음 페이지부터 로드
+      print('[HomeScreen] Preloaded ${_posts.length} posts from splash');
     }
 
     print('[HomeScreen] initState: ${widget.preloadedPosts?.length}');
@@ -88,23 +90,35 @@ class HomeScreenState extends State<HomeScreen> {
     });
   }
 
+  void _resetFeed({bool showLoading = true}) {
+    setState(() {
+      _posts = [];
+      _currentPage = 0;
+      _hasMoreData = true;
+      _isLoading = showLoading;
+      _isLoadingMore = false;
+      _error = null;
+      _currentPostIndex = 0;
+      _isCardShimmering = false;
+      _isShowingSearchResults = false;
+    });
+  }
+
   Future<void> _loadPosts({bool refresh = false}) async {
     // 검색 결과 표시 중에는 로드하지 않음
     if (_isShowingSearchResults && !refresh) return;
 
     try {
-      setState(() {
-        if (refresh) {
-          _currentPage = 0;
-          _hasMoreData = true;
-          // 배경 블러 유지 위해 기존 포스트 유지
-          _isCardShimmering = _posts.isNotEmpty;
-          _isShowingSearchResults = false; // 새로고침 시 검색 결과 모드 해제
-        }
-        // 초기 진입 시에만 전체 로딩; 새로고침은 카드 쉬머만
-        _isLoading = !refresh && _posts.isEmpty;
-        _error = null;
-      });
+      if (refresh) {
+        _resetFeed(showLoading: true); // 완전 청소 후 로딩 표시
+      } else {
+        setState(() {
+          _isLoading = _posts.isEmpty; // 처음 진입 시 전체 로딩
+          _error = null;
+        });
+      }
+
+      final int token = ++_loadTick; // 응답 토큰 발급
 
       // 필터에 따라 다른 엔드포인트 호출
       final serverData =
@@ -119,6 +133,8 @@ class HomeScreenState extends State<HomeScreen> {
 
       // 전환 전에 썸네일 이미지 프리캐싱 (상위 몇 개)
       await _precacheImages(posts.take(3).toList());
+
+      if (token != _loadTick) return; // 최신 요청이 아니면 무시
 
       setState(() {
         if (refresh) {
@@ -327,11 +343,9 @@ class HomeScreenState extends State<HomeScreen> {
                       context,
                       isShowingFriendsOnly: _isShowingFriendsOnly,
                       onFilterChanged: (showFriendsOnly) {
-                        setState(() {
-                          _isShowingFriendsOnly = showFriendsOnly;
-                        });
-                        // TODO: 친구 게시물만 로드하는 로직 추가
-                        _loadPosts(refresh: true);
+                        _resetFeed(showLoading: true);
+                        _isShowingFriendsOnly = showFriendsOnly;
+                        _loadPosts(refresh: true); // 완전 새로고침
                       },
                     );
                   },
@@ -368,8 +382,13 @@ class HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildContent(double screenWidth) {
+    print(
+      '[HomeScreen._buildContent] _isLoading=$_isLoading, postsCount=${_posts.length}, error=$_error',
+    );
+
     // 데이터가 준비되어 있다면 애니메이션 없이 즉시 렌더링
     if (!_isLoading && _error == null && _posts.isNotEmpty) {
+      print('[HomeScreen._buildContent] 즉시 PostList 렌더링');
       return PostList(
         containerWidth: screenWidth,
         posts: _posts,
@@ -385,6 +404,7 @@ class HomeScreenState extends State<HomeScreen> {
         },
       );
     }
+
     final Widget child =
         (_error != null)
             ? _buildError()
@@ -403,7 +423,10 @@ class HomeScreenState extends State<HomeScreen> {
               },
             )
             : (_posts.isEmpty)
-            ? _buildEmptyResult()
+            ? (() {
+              print('[HomeScreen._buildContent] 포스트 비어있음 → EmptyPostList 표시');
+              return _buildEmptyResult();
+            })()
             : PostList(
               containerWidth: screenWidth,
               posts: _posts,

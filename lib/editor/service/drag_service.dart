@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'package:doppy/editor/postwrite_screen.dart';
 import 'package:doppy/editor/service/editor_service.dart';
-import 'package:doppy/editor/service/image_service.dart';
+import 'package:doppy/editor/service/node_component_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:super_editor/super_editor.dart';
