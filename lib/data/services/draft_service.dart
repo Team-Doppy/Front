@@ -3,6 +3,7 @@ import 'dart:ui' as ui;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:doppy/editor/service/editor_service.dart';
 import 'package:doppy/editor/service/sticker_service.dart';
+import 'package:doppy/editor/service/node_component_service.dart';
 import 'package:doppy/editor/publish/post_exporter.dart';
 import 'package:super_editor/super_editor.dart';
 import 'package:doppy/editor/component/link_component.dart';
@@ -97,14 +98,18 @@ class DraftService {
             publicOnly: publicOnly,
             selectedGroupIds: selectedGroupIds,
             createdAt: DateTime.now(),
+            skipValidation: true, // 임시저장은 제목 검증 생략
           );
 
-      final draftId = existingDraftId ?? _generateDraftId(title);
+      // 제목이 비어있으면 기본값 사용
+      final effectiveTitle = title.trim().isEmpty ? '제목 없음' : title;
+
+      final draftId = existingDraftId ?? _generateDraftId(effectiveTitle);
       final now = DateTime.now();
 
       final draftData = DraftData(
         id: draftId,
-        title: title,
+        title: effectiveTitle,
         content: json.encode(finalPayload), // 최종 페이로드 기준 저장
         thumbnailUrl: thumbnailUrl,
         visibility: visibility,
@@ -136,7 +141,7 @@ class DraftService {
       return draftId;
     } catch (e) {
       print('[DraftService] Error saving draft: $e');
-      throw Exception('임시저장에 실패했습니다: $e');
+      throw Exception('임시저장에 실패했습니다');
     }
   }
 
@@ -193,6 +198,51 @@ class DraftService {
         if (stickerData is Map<String, dynamic>) {
           stickerService.addStickerFromData(stickerData);
         }
+      }
+
+      // URL-ID 매핑 복원
+      try {
+        final dynamic content = exportedData['content'];
+        final List<dynamic> nodes =
+            (content is Map)
+                ? List<dynamic>.from(content['nodes'] as List? ?? const [])
+                : const [];
+
+        print('[DraftService] URL-ID 매핑 복원 시작 (노드 ${nodes.length}개)');
+        int restoredCount = 0;
+
+        for (final n in nodes) {
+          if (n is! Map) continue;
+          final String type = (n['type'] ?? '').toString();
+
+          if (type == 'image') {
+            final String url = (n['url'] ?? '').toString();
+            final String? imageId = (n['imageId'] ?? '').toString();
+            if (url.isNotEmpty && imageId != null && imageId.isNotEmpty) {
+              NodeComponentService().registerImageUrlId(url, imageId);
+              restoredCount++;
+            }
+          } else if (type == 'imageRow') {
+            final List<dynamic> urls = List<dynamic>.from(
+              n['urls'] ?? const [],
+            );
+            final List<dynamic> imageIds = List<dynamic>.from(
+              n['imageIds'] ?? const [],
+            );
+            for (int i = 0; i < urls.length && i < imageIds.length; i++) {
+              final String url = urls[i].toString();
+              final String imageId = imageIds[i].toString();
+              if (url.isNotEmpty && imageId.isNotEmpty) {
+                NodeComponentService().registerImageUrlId(url, imageId);
+                restoredCount++;
+              }
+            }
+          }
+        }
+
+        print('[DraftService] URL-ID 매핑 복원 완료 ($restoredCount개)');
+      } catch (e) {
+        print('[DraftService] URL-ID 매핑 복원 실패: $e');
       }
 
       // 썸네일/usedImageIds 복원 보조(필요 시 화면 상태 업데이트용 Hook 지점)

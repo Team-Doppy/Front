@@ -1,3 +1,4 @@
+import 'package:doppy/utils/error_handler.dart';
 import 'package:flutter/material.dart';
 import '../data/models/user_model.dart';
 import '../data/services/user_service.dart';
@@ -134,7 +135,7 @@ class UserProvider with ChangeNotifier {
   }
 
   /// 프로필 이미지 삭제 (기본 이미지로 되돌리기)
-  Future<bool> deleteProfileImage() async {
+  Future<bool> deleteProfileImage(BuildContext context) async {
     try {
       // 서버에 삭제 요청
       await _userService.deleteProfileImage();
@@ -170,6 +171,7 @@ class UserProvider with ChangeNotifier {
       return true;
     } catch (e) {
       debugPrint('[UserProvider] deleteProfileImage failed: $e');
+      ErrorHandler.showError(context, '프로필 이미지 삭제에 실패했습니다');
       return false;
     }
   }

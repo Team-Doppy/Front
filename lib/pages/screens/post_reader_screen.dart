@@ -13,6 +13,7 @@ import 'package:doppy/editor/component/row_image_component.dart'
     show ImageRowNode, RowImageComponentBuilder;
 import 'package:doppy/editor/postwrite_screen.dart';
 import 'package:doppy/providers/user_provider.dart';
+import 'package:doppy/providers/profile_feed_provider.dart';
 import 'package:doppy/data/services/comment_service.dart';
 import 'package:doppy/data/services/blog_service.dart';
 import 'package:doppy/data/services/like_service.dart';
@@ -131,6 +132,14 @@ class _PostReaderScreenState extends State<PostReaderScreen>
       await _blogService.deletePost(postId);
 
       if (mounted) {
+        // 프로필 피드 캐시 무효화 (포스트 삭제)
+        try {
+          context.read<ProfileFeedProvider>().invalidateCache();
+          print('[PostReaderScreen] 포스트 삭제 후 캐시 무효화 완료');
+        } catch (e) {
+          print('[PostReaderScreen] 캐시 무효화 실패: $e');
+        }
+
         ErrorHandler.showInfo(context, '게시물이 삭제되었습니다');
         // 삭제 후 이전 화면으로 돌아가기
         Navigator.of(context).pop();
@@ -350,6 +359,15 @@ class _PostReaderScreenState extends State<PostReaderScreen>
     final String postAuthor = (widget.exported['author'] ?? '').toString();
     final bool isMyPost =
         currentUser != null && currentUser.username == postAuthor;
+
+    // 권한 디버깅 로그
+    print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    print('🔐 [PostReader 권한 체크]');
+    print('현재 사용자: ${currentUser?.username ?? "null"}');
+    print('포스트 작성자: $postAuthor');
+    print('내 글인가? $isMyPost');
+    print('exported 키: ${widget.exported.keys.toList()}');
+    print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 
     return WillPopScope(
       onWillPop: () async {

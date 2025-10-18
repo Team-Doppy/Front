@@ -21,11 +21,14 @@ class ImageErrorPlaceholder extends StatelessWidget {
     return Container(
       width: width ?? 100,
       height: height ?? 150,
-      color: backgroundColor ?? theme.colorScheme.surface.withOpacity(0.12),
+      color: backgroundColor,
       alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: backgroundColor ?? theme.colorScheme.surface.withOpacity(0.03),
+      ),
       child: Icon(
         Icons.error_outline,
-        color: iconColor ?? theme.colorScheme.onSurface.withOpacity(1),
+        color: theme.colorScheme.surface.withOpacity(1),
         size: iconSize,
       ),
     );

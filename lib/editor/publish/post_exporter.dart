@@ -133,11 +133,16 @@ class PostExporter {
 
       // ImageNode (SuperEditor 내장)
       if (node is ImageNode) {
+        final imageIdStr = NodeComponentService().getImageIdByUrl(
+          node.imageUrl,
+        );
         nodes.add({
           'id': node.id,
           'type': 'image',
           'url': node.imageUrl,
           'altText': node.altText,
+          if (imageIdStr != null && imageIdStr.isNotEmpty)
+            'imageId': imageIdStr,
         });
         final int? id = _idFromUrl(node.imageUrl);
         if (id != null) usedImageIds.add(id);
@@ -146,11 +151,20 @@ class PostExporter {
 
       // ImageRowNode (프로젝트에 존재하는 경우)
       if (node is ImageRowNode) {
+        final imageIds = <String>[];
+        for (final url in node.imageUrls) {
+          final imageIdStr = NodeComponentService().getImageIdByUrl(url);
+          if (imageIdStr != null && imageIdStr.isNotEmpty) {
+            imageIds.add(imageIdStr);
+          }
+        }
+
         nodes.add({
           'id': node.id,
           'type': 'imageRow',
           'urls': node.imageUrls,
           'spacing': node.spacing,
+          if (imageIds.isNotEmpty) 'imageIds': imageIds,
         });
         for (final u in node.imageUrls) {
           final int? id = _idFromUrl(u);
@@ -462,15 +476,16 @@ class PostExporter {
     bool? privateOnly = false,
     bool? publicOnly = false,
     List<int>? selectedGroupIds = const [],
+    bool skipValidation = false, // 임시저장용 검증 생략 플래그
   }) {
     // 1. 필수 필드 검증
     final String title = base['title']?.toString() ?? '';
-    if (title.trim().isEmpty) {
+    if (!skipValidation && title.trim().isEmpty) {
       throw StateError('title is required for all access levels');
     }
 
     final dynamic content = base['content'];
-    if (content == null) {
+    if (!skipValidation && content == null) {
       throw StateError('content is required for all access levels');
     }
 
@@ -488,8 +503,8 @@ class PostExporter {
       accessLevel = 'GROUPS';
       sharedGroupIds = selectedGroupIds ?? [];
 
-      // GROUPS 선택시 최소 1개 이상의 그룹 ID 필요
-      if (sharedGroupIds.isEmpty) {
+      // GROUPS 선택시 최소 1개 이상의 그룹 ID 필요 (발행 시에만 검증)
+      if (!skipValidation && sharedGroupIds.isEmpty) {
         throw StateError(
           'GROUPS access level requires at least one group ID in sharedGroupIds',
         );
@@ -508,61 +523,121 @@ class PostExporter {
     }
 
     // 6. 썸네일 필수 필드 검증 및 추가
-    if (thumbnailImageUrl.trim().isEmpty) {
+    if (!skipValidation && thumbnailImageUrl.trim().isEmpty) {
       throw StateError('thumbnailImageUrl is required for all access levels');
     }
     result['thumbnailImageUrl'] = thumbnailImageUrl;
 
     // 7. usedImageIds 보강: base에 없으면 문서 노드/매핑으로 재생성, 썸네일 id도 병합
     try {
+      print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      print('🔍 [페이로드 이미지 ID 수집 시작]');
+
       final Set<int> usedIds = <int>{};
       final dynamic baseIds = base['usedImageIds'];
+      print('📦 Base에서 가져온 ID 개수: ${baseIds is List ? baseIds.length : 0}');
       if (baseIds is List) {
         for (final v in baseIds) {
           final int? n = (v is int) ? v : int.tryParse(v.toString());
-          if (n != null) usedIds.add(n);
+          if (n != null) {
+            usedIds.add(n);
+            print('  ✓ Base ID: $n');
+          }
         }
       }
 
       final Map<String, String> urlToId =
           NodeComponentService().urlToImageIdMap;
+      print('💾 URL→ID 매핑 맵 크기: ${urlToId.length}');
+      urlToId.forEach((url, id) {
+        print(
+          '  • ${url.substring(url.length > 60 ? url.length - 60 : 0)} → $id',
+        );
+      });
 
       // 썸네일 URL → id 매핑 병합
+      print('🖼️ 썸네일 URL: $thumbnailImageUrl');
       final String? thumbIdStr = urlToId[thumbnailImageUrl];
       final int? thumbId = thumbIdStr == null ? null : int.tryParse(thumbIdStr);
-      if (thumbId != null) usedIds.add(thumbId);
+      if (thumbId != null) {
+        usedIds.add(thumbId);
+        print('  ✓ 썸네일 ID 추가: $thumbId');
+      } else {
+        print('  ⚠️ 썸네일 ID 매핑 없음!');
+      }
 
       // 문서 노드를 항상 스캔하여 보강(중복은 Set으로 자동 제거)
+      print('📄 문서 노드 스캔 시작...');
       try {
         final dynamic content = base['content'];
         final List<dynamic> nodes =
             (content is Map)
                 ? List<dynamic>.from(content['nodes'] as List? ?? const [])
                 : const [];
+        print('  노드 총 개수: ${nodes.length}');
+
+        int imageNodeCount = 0;
+        int imageRowNodeCount = 0;
+        int foundIdCount = 0;
+        int missingIdCount = 0;
+
         for (final n in nodes) {
           if (n is! Map) continue;
           final String type = (n['type'] ?? '').toString();
           if (type == 'image') {
+            imageNodeCount++;
             final String url = (n['url'] ?? '').toString();
+            print('  🖼️ image 노드 URL: $url');
             final String? idStr = urlToId[url];
             final int? id = idStr == null ? null : int.tryParse(idStr);
-            if (id != null) usedIds.add(id);
+            if (id != null) {
+              usedIds.add(id);
+              foundIdCount++;
+              print('    ✓ ID 찾음: $id');
+            } else {
+              missingIdCount++;
+              print('    ⚠️ ID 매핑 없음!');
+            }
           } else if (type == 'imageRow') {
+            imageRowNodeCount++;
             final List<dynamic> urls = List<dynamic>.from(
               n['urls'] ?? const [],
             );
+            print('  📸 imageRow 노드 (${urls.length}개 이미지)');
             for (final u in urls) {
               final String url = u.toString();
+              print('    URL: $url');
               final String? idStr = urlToId[url];
               final int? id = idStr == null ? null : int.tryParse(idStr);
-              if (id != null) usedIds.add(id);
+              if (id != null) {
+                usedIds.add(id);
+                foundIdCount++;
+                print('      ✓ ID 찾음: $id');
+              } else {
+                missingIdCount++;
+                print('      ⚠️ ID 매핑 없음!');
+              }
             }
           }
         }
-      } catch (_) {}
+
+        print('📊 스캔 결과:');
+        print('  - image 노드: $imageNodeCount개');
+        print('  - imageRow 노드: $imageRowNodeCount개');
+        print('  - ID 찾음: $foundIdCount개');
+        print('  - ID 누락: $missingIdCount개');
+      } catch (e) {
+        print('  ❌ 문서 스캔 오류: $e');
+      }
 
       result['usedImageIds'] = usedIds.toList()..sort();
-    } catch (_) {}
+      print(
+        '✅ 최종 usedImageIds (${usedIds.length}개): ${result['usedImageIds']}',
+      );
+      print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    } catch (e) {
+      print('❌ usedImageIds 수집 실패: $e');
+    }
 
     print('==============================================');
     print('Final API Payload (Server Spec Compliant):');

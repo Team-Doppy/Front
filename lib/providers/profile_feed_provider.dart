@@ -1,10 +1,70 @@
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'dart:convert';
 import '../data/services/blog_service.dart';
 import '../data/services/auth_service.dart';
 import '../data/models/post_data.dart';
 
 // 카테고리 필터 타입
 enum BaseFilter { all, private, groups, public }
+
+// 캐시 데이터 모델
+class _ProfileFeedCache {
+  final List<Map<String, dynamic>> categories;
+  final Map<String, List<Map<String, dynamic>>> postsByCategory;
+  final Map<String, dynamic>? userInfo;
+  final Map<String, List<Map<String, dynamic>>>? systemCategoryMappings;
+  final DateTime cachedAt;
+  final int currentPage;
+  final int totalPages;
+  final bool hasMore;
+
+  _ProfileFeedCache({
+    required this.categories,
+    required this.postsByCategory,
+    required this.userInfo,
+    required this.systemCategoryMappings,
+    required this.cachedAt,
+    required this.currentPage,
+    required this.totalPages,
+    required this.hasMore,
+  });
+
+  Map<String, dynamic> toJson() {
+    return {
+      'categories': categories,
+      'postsByCategory': postsByCategory,
+      'userInfo': userInfo,
+      'systemCategoryMappings': systemCategoryMappings,
+      'cachedAt': cachedAt.toIso8601String(),
+      'currentPage': currentPage,
+      'totalPages': totalPages,
+      'hasMore': hasMore,
+    };
+  }
+
+  factory _ProfileFeedCache.fromJson(Map<String, dynamic> json) {
+    return _ProfileFeedCache(
+      categories: List<Map<String, dynamic>>.from(json['categories'] ?? []),
+      postsByCategory:
+          (json['postsByCategory'] as Map<String, dynamic>?)?.map(
+            (key, value) =>
+                MapEntry(key, List<Map<String, dynamic>>.from(value)),
+          ) ??
+          {},
+      userInfo: json['userInfo'] as Map<String, dynamic>?,
+      systemCategoryMappings:
+          (json['systemCategoryMappings'] as Map<String, dynamic>?)?.map(
+            (key, value) =>
+                MapEntry(key, List<Map<String, dynamic>>.from(value)),
+          ),
+      cachedAt: DateTime.parse(json['cachedAt']),
+      currentPage: json['currentPage'] ?? 0,
+      totalPages: json['totalPages'] ?? 0,
+      hasMore: json['hasMore'] ?? false,
+    );
+  }
+}
 
 class ProfileFeedProvider extends ChangeNotifier {
   final BlogService _blogService = BlogService();
@@ -15,6 +75,10 @@ class ProfileFeedProvider extends ChangeNotifier {
   final Map<String, List<Map<String, dynamic>>> _postsByCategory = {};
   Map<String, dynamic>? _userInfo;
   Map<String, List<Map<String, dynamic>>>? _systemCategoryMappings;
+
+  // 캐시 관련
+  static const String _cacheKeyPrefix = 'profile_feed_cache_';
+  static const Duration _cacheTTL = Duration(minutes: 5); // 5분 TTL
 
   // 카테고리 선택 상태 관리
   BaseFilter _selectedBase = BaseFilter.all;
@@ -73,6 +137,54 @@ class ProfileFeedProvider extends ChangeNotifier {
     _username = resolved;
 
     if (_username == null) return;
+
+    // 내 프로필인 경우 캐시 확인 (force가 아닐 때만)
+    if (!force) {
+      final currentUsername = await _authService.getUsername();
+      final isMyProfile =
+          currentUsername != null && currentUsername == _username;
+
+      if (isMyProfile) {
+        print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+        print('💾 [ProfileFeed] 내 프로필 캐시 확인 중...');
+
+        final cache = await _loadCache(_username!);
+        if (cache != null) {
+          final age = DateTime.now().difference(cache.cachedAt);
+          print('📦 캐시 발견! 나이: ${age.inSeconds}초');
+
+          if (age < _cacheTTL) {
+            print('✅ 캐시 유효 - 캐시 데이터 사용');
+            _categories.clear();
+            _categories.addAll(cache.categories);
+            _postsByCategory.clear();
+            _postsByCategory.addAll(cache.postsByCategory);
+            _userInfo = cache.userInfo;
+            _systemCategoryMappings = cache.systemCategoryMappings;
+
+            // 페이지네이션 정보 복원
+            _currentPage = cache.currentPage;
+            _totalPages = cache.totalPages;
+            _hasMore = cache.hasMore;
+
+            print(
+              '📄 페이지 정보: page=${_currentPage + 1}/${_totalPages}, hasMore=$_hasMore',
+            );
+
+            _loading = false;
+            if (_username != null) _inFlightUsers.remove(_username!);
+            notifyListeners();
+            print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+            return;
+          } else {
+            print('⏰ 캐시 만료 - 새로 로드');
+          }
+        } else {
+          print('📭 캐시 없음 - 새로 로드');
+        }
+        print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      }
+    }
 
     // 사용자 전환 시, 기존 리스트를 즉시 비워 잘못된 피드 표시 방지
     if (previous != null && previous != _username) {
@@ -215,22 +327,7 @@ class ProfileFeedProvider extends ChangeNotifier {
           _postsByCategory[key] = merged;
           final sample = merged.isNotEmpty ? merged.first : null;
           print(
-            '[ProfileFeedProvider] 병합 결과 카테고리 ' +
-                key +
-                ': ' +
-                merged.length.toString() +
-                '개, 샘플=' +
-                (sample != null
-                    ? '{id:' +
-                        (sample['id']?.toString() ?? 'null') +
-                        ', title:' +
-                        (sample['title']?.toString() ?? 'null') +
-                        ', thumb:' +
-                        (sample['thumbnailUrl']?.toString() ??
-                            sample['thumbnailImageUrl']?.toString() ??
-                            'null') +
-                        '}'
-                    : '없음'),
+            '[ProfileFeedProvider] 병합 결과 카테고리 $key: ${merged.length}개, 샘플=${sample != null ? '{id:${sample['id']?.toString() ?? 'null'}, title:${sample['title']?.toString() ?? 'null'}, thumb:${sample['thumbnailUrl']?.toString() ?? sample['thumbnailImageUrl']?.toString() ?? 'null'}}' : '없음'}',
           );
         }
 
@@ -251,6 +348,15 @@ class ProfileFeedProvider extends ChangeNotifier {
           '[ProfileFeedProvider] 데이터 로드 성공: ${_categories.length}개 카테고리, ${_postsByCategory.length}개 카테고리별 포스트',
         );
         _debugDumpState('after-merge');
+
+        // 내 프로필인 경우 캐시 저장
+        final currentUsername = await _authService.getUsername();
+        final isMyProfile =
+            currentUsername != null && currentUsername == _username;
+        if (isMyProfile) {
+          await _saveCache(_username!);
+          print('✅ [ProfileFeed] 내 프로필 캐시 저장 완료');
+        }
       } else {
         print('[ProfileFeedProvider] 서버 응답 실패: ${postsResp['message']}');
         _clearData();
@@ -380,16 +486,59 @@ class ProfileFeedProvider extends ChangeNotifier {
   }
 
   Future<void> loadMore() async {
-    // 새로운 API 구조에서는 loadMore가 필요 없을 수 있음
-    // 필요시 카테고리별 페이지네이션으로 구현
-    if (_loadingMore || !_hasMore) return;
+    if (_loadingMore || !_hasMore || _username == null) return;
+
     _loadingMore = true;
     notifyListeners();
 
     try {
-      // TODO: 카테고리별 추가 로딩 구현 필요시
-      _hasMore = false;
+      print('[ProfileFeed] 다음 페이지 로드 중... (page: ${_currentPage + 1})');
+
+      // 다음 페이지 로드
+      final postsResp = await _blogService.getProfilePosts(
+        _username!,
+        page: _currentPage + 1,
+        size: _pageSize,
+      );
+
+      if (postsResp['success'] == true) {
+        final List<dynamic> newPosts = postsResp['data']['posts'] ?? [];
+        final totalPages = postsResp['data']['totalPages'] ?? 0;
+
+        print('[ProfileFeed] 추가 포스트 ${newPosts.length}개 로드');
+
+        if (newPosts.isEmpty) {
+          _hasMore = false;
+        } else {
+          // 새 포스트를 카테고리별로 병합
+          for (final postData in newPosts) {
+            if (postData is! Map<String, dynamic>) continue;
+
+            final categoryId = (postData['categoryId'] ?? 0).toString();
+            if (!_postsByCategory.containsKey(categoryId)) {
+              _postsByCategory[categoryId] = [];
+            }
+            _postsByCategory[categoryId]!.add(postData);
+          }
+
+          _currentPage++;
+          _totalPages = totalPages;
+          _hasMore = _currentPage < _totalPages;
+
+          // 캐시 업데이트 (내 프로필인 경우)
+          final currentUsername = await _authService.getUsername();
+          final isMyProfile =
+              currentUsername != null && currentUsername == _username;
+          if (isMyProfile) {
+            await _saveCache(_username!);
+            print('✅ [ProfileFeed] 추가 페이지 캐시 병합 완료');
+          }
+        }
+      } else {
+        _hasMore = false;
+      }
     } catch (e) {
+      print('[ProfileFeed] loadMore 실패: $e');
       _hasMore = false;
     } finally {
       _loadingMore = false;
@@ -558,6 +707,7 @@ class ProfileFeedProvider extends ChangeNotifier {
       _categories
         ..clear()
         ..addAll(ordered);
+
       notifyListeners();
       print('[ProfileFeedProvider] 카테고리 로컬 재정렬 완료: $orderedIds');
     } catch (e) {
@@ -594,6 +744,9 @@ class ProfileFeedProvider extends ChangeNotifier {
     try {
       await _blogService.reorderCategories(orderedIntIds);
       print('[ProfileFeedProvider] 서버 저장 완료');
+
+      // 서버 성공 시 캐시 무효화
+      invalidateCache();
     } catch (e) {
       // 4) 실패 시 롤백
       print('[ProfileFeedProvider] reorderAllSections 서버 실패, 롤백: $e');
@@ -664,6 +817,76 @@ class ProfileFeedProvider extends ChangeNotifier {
         return '그룹공유';
       case BaseFilter.public:
         return '전체공개';
+    }
+  }
+
+  // ============ 캐시 관리 메서드 ============
+
+  /// 캐시 키 생성
+  String _getCacheKey(String username) => '$_cacheKeyPrefix$username';
+
+  /// 캐시 저장 (내 프로필만)
+  Future<void> _saveCache(String username) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final cache = _ProfileFeedCache(
+        categories: List<Map<String, dynamic>>.from(_categories),
+        postsByCategory: Map<String, List<Map<String, dynamic>>>.from(
+          _postsByCategory.map(
+            (key, value) =>
+                MapEntry(key, List<Map<String, dynamic>>.from(value)),
+          ),
+        ),
+        userInfo: _userInfo,
+        systemCategoryMappings: _systemCategoryMappings?.map(
+          (key, value) => MapEntry(key, List<Map<String, dynamic>>.from(value)),
+        ),
+        cachedAt: DateTime.now(),
+        currentPage: _currentPage,
+        totalPages: _totalPages,
+        hasMore: _hasMore,
+      );
+
+      final cacheJson = json.encode(cache.toJson());
+      await prefs.setString(_getCacheKey(username), cacheJson);
+      print(
+        '[ProfileFeed] 캐시 저장 완료: ${_getCacheKey(username)} (page: ${_currentPage + 1}/${_totalPages})',
+      );
+    } catch (e) {
+      print('[ProfileFeed] 캐시 저장 실패: $e');
+    }
+  }
+
+  /// 캐시 불러오기
+  Future<_ProfileFeedCache?> _loadCache(String username) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final cacheJson = prefs.getString(_getCacheKey(username));
+      if (cacheJson == null) return null;
+
+      final cacheData = json.decode(cacheJson) as Map<String, dynamic>;
+      return _ProfileFeedCache.fromJson(cacheData);
+    } catch (e) {
+      print('[ProfileFeed] 캐시 불러오기 실패: $e');
+      return null;
+    }
+  }
+
+  /// 캐시 무효화 (내 프로필만)
+  Future<void> invalidateCache() async {
+    try {
+      final currentUsername = await _authService.getUsername();
+      if (currentUsername == null) return;
+
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(_getCacheKey(currentUsername));
+
+      print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      print('🗑️ [ProfileFeed] 캐시 무효화');
+      print('사용자: $currentUsername');
+      print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    } catch (e) {
+      print('[ProfileFeed] 캐시 무효화 실패: $e');
     }
   }
 }

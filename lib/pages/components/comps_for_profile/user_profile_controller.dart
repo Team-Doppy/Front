@@ -1,11 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-
 import 'package:doppy/providers/friend_provider.dart';
 import 'package:doppy/providers/profile_feed_provider.dart';
 import 'package:doppy/providers/user_provider.dart';
 import 'package:doppy/data/services/account_manager_service.dart';
-import 'package:doppy/data/services/account_context_service.dart';
 
 class RemoveAccountResult {
   final bool isCurrentRemoved;
@@ -35,7 +33,7 @@ class UserProfileController {
 
   Future<bool> deleteProfileImageAndUpdateCache() async {
     final userProvider = context.read<UserProvider>();
-    final success = await userProvider.deleteProfileImage();
+    final success = await userProvider.deleteProfileImage(context);
     if (success) {
       await AccountManagerService.updateCurrentAccount(profileImageUrl: '');
     }

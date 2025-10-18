@@ -31,16 +31,9 @@ class UserProfileScreen extends StatefulWidget {
 
 class _UserProfileScreenState extends State<UserProfileScreen>
     with SingleTickerProviderStateMixin, RouteAware {
-  // 위치 관련 상수
-  static const double _baseHeight = 100.0; // 기본 높이 (topPadding + 이 값)
-
   // 스크롤 컨트롤러 및 상태
   late ScrollController _scrollController;
   late final bool _isOwnProfile;
-
-  // Bird's-eye view를 위한 상태
-
-  // 배경 이미지 상태
 
   // 업로드 진행 상태
   UploadTask? _profileUploadTask;
@@ -94,12 +87,8 @@ class _UserProfileScreenState extends State<UserProfileScreen>
     }
 
     // 카테고리 변경 콜백 설정
-    _categoryDropDown.setOnCategoryChanged(() {
-      print('[-] [UserProfileScreen] Category changed callback called');
-      // setState 제거: ProfileFeedProvider.notifyListeners()가 Consumer를 통해 재빌드 트리거
-    });
+    _categoryDropDown.setOnCategoryChanged(() {});
 
-    // ✅ [구조 개선] Provider를 통해 필요한 데이터를 한번에 요청합니다.
     // 이 코드 하나로 모든 데이터 로딩이 시작됩니다.
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       if (_isOwnProfile) {
@@ -191,15 +180,26 @@ class _UserProfileScreenState extends State<UserProfileScreen>
             child: ValueListenableBuilder<bool>(
               valueListenable: _feed.isDraggingCategory,
               builder: (context, isDraggingCategory, _) {
-                return Transform.scale(
-                  scale: isDraggingCategory ? 0.7 : 1.0,
-                  alignment: Alignment.center,
+                return TweenAnimationBuilder<double>(
+                  tween: Tween<double>(
+                    begin: isDraggingCategory ? 1.0 : 0.7,
+                    end: isDraggingCategory ? 0.7 : 1.0,
+                  ),
+                  duration: const Duration(milliseconds: 400),
+                  curve: Curves.easeOutCubic,
+                  builder: (context, scale, child) {
+                    return Transform.scale(
+                      scale: scale,
+                      alignment: Alignment.center,
+                      child: child,
+                    );
+                  },
                   child: CustomScrollView(
                     clipBehavior: Clip.none,
                     controller: _scrollController,
                     slivers: [
                       SliverAppBar(
-                        expandedHeight: topPadding + _baseHeight,
+                        expandedHeight: topPadding + 100,
                         toolbarHeight: 60,
                         backgroundColor: Colors.transparent,
                         automaticallyImplyLeading: false,

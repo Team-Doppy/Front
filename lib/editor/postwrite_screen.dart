@@ -166,6 +166,11 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
       // 최초 진입 스냅샷 마크(현재 상태를 저장 기준으로 간주)
       editorService.markSavedSnapshot();
 
+      // 스티커 초기 상태 저장 (변경 감지를 위해)
+      try {
+        context.read<StickerService>().saveInitialState();
+      } catch (_) {}
+
       // 스크롤 리스너 추가
       scrollController.addListener(_onScrollChanged);
 
@@ -197,10 +202,23 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
       return;
     }
 
-    // 스크롤 임계값 설정 (너무 작은 변화는 무시)
-    const threshold = 5.0;
+    // 맨 위에 있을 때는 항상 앱바 표시
+    const topThreshold = 10.0;
+    if (currentOffset <= topThreshold) {
+      if (!_showAppBar) {
+        setState(() {
+          _showAppBar = true;
+          _isScrollingUp = true;
+        });
+      }
+      _lastOffset = currentOffset;
+      return;
+    }
 
-    if (delta.abs() > threshold) {
+    // 스크롤 임계값 설정 (너무 작은 변화는 무시)
+    const scrollThreshold = 5.0;
+
+    if (delta.abs() > scrollThreshold) {
       if (delta < 0) {
         // 위로 스크롤 (앱바 표시)
         if (!_isScrollingUp) {
@@ -401,6 +419,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
       final img = NodeComponentService();
       img.clearHighlightedSelection();
       img.selectImage(null);
+      img.clearImageUrlMapping(); // 매핑 맵 정리
 
       // 3) 스티커 서비스 상태 초기화(선택/드래그/리스트)
       try {
@@ -1116,6 +1135,14 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
       NodeComponentService().clearHighlightedSelection();
       composer.clearSelection();
 
+      // 이미지 URL을 매핑에서 제거
+      final node = document.getNodeById(imageId);
+      if (node is ImageNode && node.imageUrl.isNotEmpty) {
+        NodeComponentService().unregisterImageUrl(node.imageUrl);
+      } else if (node is ImageRowNode) {
+        NodeComponentService().unregisterImageUrls(node.imageUrls);
+      }
+
       // 2단계: 포커스 해제 (SuperEditor가 자체적으로 처리)
       // FocusScope.of(context).unfocus(); // 제거: 불필요한 포커스 간섭 방지
 
@@ -1123,18 +1150,8 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) {
           try {
-            // 삭제할 노드의 인덱스 찾기
-            final nodeIndex = document.getNodeIndexById(imageId);
-
             // 이미지 삭제
             document.deleteNode(imageId);
-
-            // 마진 재계산 (삭제된 노드 주변)
-            if (nodeIndex != -1) {
-              editorService.recomputeParagraphMarginsAround(nodeIndex);
-            }
-
-            // 에디터 상태 강제 업데이트
             setState(() {});
           } catch (e) {
             print('이미지 삭제 중 오류: $e');
@@ -1226,6 +1243,8 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
 
       // 스티커 초기 상태 저장 (임시저장 후 변화 감지를 위해)
       context.read<StickerService>().saveInitialState();
+
+      // 임시저장 후에는 매핑 맵을 유지 (계속 작업할 수 있도록)
     } catch (e) {
       print('[PostwriteScreen] Manual save failed: $e');
       if (mounted) {
@@ -1314,60 +1333,64 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
       if (success) {
         _currentDraftId = draftId;
 
-        // UI 강제 업데이트
+        // 불러온 문서의 이미지 URL과 ID 로그 출력
+        print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+        print('📂 [임시저장 불러오기 완료]');
+        print('Draft ID: $draftId');
+
+        final imageUrls = <String>[];
+        for (int i = 0; i < document.length; i++) {
+          final node = document.getNodeAt(i);
+          if (node is ImageNode && node.imageUrl.isNotEmpty) {
+            imageUrls.add(node.imageUrl);
+          } else if (node is ImageRowNode) {
+            imageUrls.addAll(node.imageUrls.where((url) => url.isNotEmpty));
+          }
+        }
+
+        print('📸 문서 내 이미지 개수: ${imageUrls.length}');
+
+        // 매핑 맵 상태 확인
+        final urlToIdMap = NodeComponentService().urlToImageIdMap;
+        print('💾 현재 매핑 맵 크기: ${urlToIdMap.length}');
+
+        if (imageUrls.isNotEmpty) {
+          print('🖼️ 이미지 URL 및 ID 매핑 리스트:');
+          for (int i = 0; i < imageUrls.length; i++) {
+            final url = imageUrls[i];
+            final imageId = urlToIdMap[url];
+            final urlDisplay = url.substring(
+              url.length > 70 ? url.length - 70 : 0,
+            );
+            if (imageId != null) {
+              print('  ${i + 1}. $urlDisplay');
+              print('     → ID: $imageId ✓');
+            } else {
+              print('  ${i + 1}. $urlDisplay');
+              print('     → ID: 없음 ⚠️');
+            }
+          }
+        }
+        print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+
+        // UI 강제 업데이트 및 포커스 정리
         if (mounted) {
-          setState(() {});
+          // 포커스 해제 (키보드 숨김)
+          _editorFocusNode.unfocus();
 
-          // 안전한 위치로 캐럿 배치(문서 끝의 문단 또는 첫 문단 끝)
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            try {
-              // 가능한 한 본문 문단(제목 아님)으로 이동
-              ParagraphNode? targetPara;
-              for (int i = 0; i < document.length; i++) {
-                final node = document.getNodeAt(i);
-                if (node is ParagraphNode && node.metadata['isTitle'] != true) {
-                  targetPara = node;
-                  break;
-                }
-              }
-              // 없으면 마지막 노드를 문단으로 시도
-              targetPara ??= () {
-                for (int i = document.length - 1; i >= 0; i--) {
-                  final node = document.getNodeAt(i);
-                  if (node is ParagraphNode) return node;
-                }
-                return null;
-              }();
+          // 불러온 상태를 저장 스냅샷으로 간주
+          editorService.markSavedSnapshot();
 
-              if (targetPara != null) {
-                final end = targetPara.text.text.length;
-                composer.setSelectionWithReason(
-                  DocumentSelection.collapsed(
-                    position: DocumentPosition(
-                      nodeId: targetPara.id,
-                      nodePosition: TextNodePosition(offset: end),
-                    ),
-                  ),
-                  SelectionReason.userInteraction,
-                );
-              } else {
-                // 문단이 전혀 없으면 선택을 비움
-                composer.clearSelection();
-              }
-              _editorFocusNode.requestFocus();
-            } catch (_) {
-              try {
-                composer.clearSelection();
-                _editorFocusNode.requestFocus();
-              } catch (_) {}
+          // 스티커 초기 상태 저장
+          context.read<StickerService>().saveInitialState();
+
+          // 발행 가능 여부 체크를 위한 UI 업데이트 (약간의 지연 후)
+          Future.delayed(const Duration(milliseconds: 300), () {
+            if (mounted) {
+              editorService.updatePublishableStatus();
             }
           });
         }
-        // 불러온 상태를 저장 스냅샷으로 간주
-        editorService.markSavedSnapshot();
-
-        // 스티커 초기 상태 저장
-        context.read<StickerService>().saveInitialState();
       } else {
         if (mounted) {
           ErrorHandler.showError(context, '임시저장을 불러올 수 없습니다');

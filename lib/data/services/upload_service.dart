@@ -210,6 +210,9 @@ class UploadService with ChangeNotifier {
   }
 
   Future<Map<String, dynamic>> _uploadProfileImage(UploadTask task) async {
+    // 업로드 전 토큰 유효성 사전 체크 및 갱신
+    await _authService.validateAndRefreshToken();
+
     return await _requestWithTokenRefresh(() async {
       final uri = Uri.parse('$_baseUrl/api/profile/image/upload');
       final token = await _authService.getToken();
@@ -277,6 +280,10 @@ class UploadService with ChangeNotifier {
     if (username == null) {
       throw HttpException('username is null');
     }
+
+    // 업로드 전 토큰 유효성 사전 체크 및 갱신
+    await _authService.validateAndRefreshToken();
+
     return await _requestWithTokenRefresh(() async {
       final uri = Uri.parse('$_baseUrl/api/images/upload');
       final token = await _authService.getToken();
@@ -284,7 +291,7 @@ class UploadService with ChangeNotifier {
       final request =
           http.MultipartRequest('POST', uri)
             ..fields['uid'] = username
-            ..headers['Authorization'] = 'Bearer $token'; // 임시 토큰
+            ..headers['Authorization'] = 'Bearer $token';
 
       final bytes = await _prepareImageBytes(task);
       final mediaType = _createMediaType(task.fileName);
@@ -315,6 +322,9 @@ class UploadService with ChangeNotifier {
   }
 
   Future<Map<String, dynamic>> _uploadVideo(UploadTask task) async {
+    // 업로드 전 토큰 유효성 사전 체크 및 갱신
+    await _authService.validateAndRefreshToken();
+
     return await _requestWithTokenRefresh(() async {
       final username = await _authService.getUsername();
       if (username == null) {
@@ -532,6 +542,10 @@ class UploadService with ChangeNotifier {
     if (username == null) {
       throw HttpException('username is null');
     }
+
+    // 업로드 전 토큰 유효성 사전 체크 및 갱신
+    await _authService.validateAndRefreshToken();
+
     return await _requestWithTokenRefresh(() async {
       final uri = Uri.parse('$_baseUrl/api/images/upload-multiple');
       final token = await _authService.getToken();

@@ -4,9 +4,9 @@ import 'package:doppy/data/services/upload_service.dart';
 import 'package:doppy/editor/image/native_image_picker.dart';
 import 'package:doppy/editor/service/node_component_service.dart';
 import 'package:doppy/editor/service/sticker_service.dart';
-import 'package:doppy/pages/components/common_profile_avatar.dart';
 import 'package:doppy/pages/screens/post_reader_screen.dart';
 import 'package:doppy/providers/user_provider.dart';
+import 'package:doppy/providers/profile_feed_provider.dart';
 import 'package:flutter/foundation.dart';
 import 'package:doppy/theme/app_colors.dart';
 import 'package:flutter/material.dart';
@@ -14,7 +14,6 @@ import 'package:provider/provider.dart';
 import 'package:doppy/providers/group_provider.dart';
 import 'package:doppy/data/models/group_model.dart';
 import 'package:doppy/editor/publish/post_exporter.dart';
-import 'package:doppy/editor/service/node_component_service.dart';
 import 'package:doppy/data/services/blog_service.dart';
 import 'package:doppy/utils/error_handler.dart';
 
@@ -361,6 +360,16 @@ class _PostExportScreenState extends State<PostExportScreen>
       try {
         context.read<StickerService>().removeAll();
       } catch (_) {}
+
+      // 이미지 매핑 맵 정리 (발행 완료 후)
+      NodeComponentService().clearImageUrlMapping();
+
+      // 내 프로필 피드 캐시 무효화 (새 포스트 발행)
+      try {
+        context.read<ProfileFeedProvider>().invalidateCache();
+      } catch (e) {
+        print('[PostExport] 캐시 무효화 실패: $e');
+      }
 
       Navigator.of(context).pop();
 

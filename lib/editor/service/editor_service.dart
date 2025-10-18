@@ -165,6 +165,11 @@ class EditorService extends ChangeNotifier {
     return publishable;
   }
 
+  void updatePublishableStatus() {
+    _recomputePublishable();
+    notifyListeners();
+  }
+
   // ====== 빠른 판정(변경 시 1회 순회) ======
   void _recomputePublishable() {
     try {
@@ -578,11 +583,6 @@ class EditorService extends ChangeNotifier {
     notifyListeners();
 
     return newImageId;
-  }
-
-  /// 변경 지점 주변(상/하/본인)만 부분적으로 마진 재계산 (public)
-  void recomputeParagraphMarginsAround(int centerIndex) {
-    //_recomputeParagraphMarginsAround(centerIndex);
   }
 
   /// 이미지 추가: 현재 커서 다음 줄에 로컬 경로 기반 이미지 노드 삽입

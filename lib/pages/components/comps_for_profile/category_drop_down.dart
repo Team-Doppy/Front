@@ -146,10 +146,12 @@ class CategoryDropDown {
         _buildCategoryItem(
           title: '전체',
           count: totalPosts,
-          isSelected: feedProvider.selectedCategoryId == null,
+          isSelected:
+              feedProvider.selectedBase == BaseFilter.all &&
+              feedProvider.selectedCategoryId == null,
           context: context,
           onTap: () {
-            feedProvider.selectCategory(null);
+            feedProvider.selectBase(BaseFilter.all);
             Navigator.of(context).pop();
             _onCategoryChanged?.call();
           },
@@ -157,39 +159,51 @@ class CategoryDropDown {
 
         // 시스템 카테고리들은 본인 프로필일 때만 표시
         if (isOwnProfile) ...[
-          _buildCategoryItem(
-            title: '나만보기',
-            count: _getSystemCategoryCount(postsByCategory, '나만보기'),
-            isSelected: feedProvider.selectedCategoryId == '-2',
-            context: context,
-            onTap: () {
-              feedProvider.selectCategory('-2');
-              Navigator.of(context).pop();
-              _onCategoryChanged?.call();
-            },
-          ),
-          _buildCategoryItem(
-            title: '그룹공유',
-            count: _getSystemCategoryCount(postsByCategory, '그룹공유'),
-            isSelected: feedProvider.selectedCategoryId == '-3',
-            context: context,
-            onTap: () {
-              feedProvider.selectCategory('-3');
-              Navigator.of(context).pop();
-              _onCategoryChanged?.call();
-            },
-          ),
-          _buildCategoryItem(
-            title: '전체공개',
-            count: _getSystemCategoryCount(postsByCategory, '전체공개'),
-            isSelected: feedProvider.selectedCategoryId == '-1',
-            context: context,
-            onTap: () {
-              feedProvider.selectCategory('-1');
-              Navigator.of(context).pop();
-              _onCategoryChanged?.call();
-            },
-          ),
+          if (_getSystemCategoryCount(postsByCategory, '나만보기') > 0) ...[
+            _buildCategoryItem(
+              title: '나만보기',
+              count: _getSystemCategoryCount(postsByCategory, '나만보기'),
+              isSelected:
+                  feedProvider.selectedBase == BaseFilter.private &&
+                  feedProvider.selectedCategoryId == null,
+              context: context,
+              onTap: () {
+                feedProvider.selectBase(BaseFilter.private);
+                Navigator.of(context).pop();
+                _onCategoryChanged?.call();
+              },
+            ),
+          ],
+          if (_getSystemCategoryCount(postsByCategory, '그룹공유') > 0) ...[
+            _buildCategoryItem(
+              title: '그룹공유',
+              count: _getSystemCategoryCount(postsByCategory, '그룹공유'),
+              isSelected:
+                  feedProvider.selectedBase == BaseFilter.groups &&
+                  feedProvider.selectedCategoryId == null,
+              context: context,
+              onTap: () {
+                feedProvider.selectBase(BaseFilter.groups);
+                Navigator.of(context).pop();
+                _onCategoryChanged?.call();
+              },
+            ),
+          ],
+          if (_getSystemCategoryCount(postsByCategory, '전체공개') > 0) ...[
+            _buildCategoryItem(
+              title: '전체공개',
+              count: _getSystemCategoryCount(postsByCategory, '전체공개'),
+              isSelected:
+                  feedProvider.selectedBase == BaseFilter.public &&
+                  feedProvider.selectedCategoryId == null,
+              context: context,
+              onTap: () {
+                feedProvider.selectBase(BaseFilter.public);
+                Navigator.of(context).pop();
+                _onCategoryChanged?.call();
+              },
+            ),
+          ],
         ],
 
         Container(

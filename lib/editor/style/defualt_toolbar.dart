@@ -1152,6 +1152,9 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
           svgPath: 'assets/icons/editor_gallery.svg',
           isActive: false,
           onTap: () async {
+            // 바텀시트 열기 전 키보드 내리기
+            FocusScope.of(context).unfocus();
+
             String mode = 'none';
             await showModalBottomSheet(
               backgroundColor: Colors.transparent,
@@ -1209,53 +1212,105 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
                     ),
                   ),
             );
+
+            // 바텀시트 닫힌 후 키보드 내리기 보장
+            if (context.mounted) {
+              await Future.delayed(const Duration(milliseconds: 50));
+              if (context.mounted) {
+                FocusScope.of(context).unfocus();
+              }
+            }
+
             if (mode == 'image') {
-              FocusScope.of(context).unfocus();
-              final picker = NativeImagePicker();
-              final files = await picker.pickMultipleImages(maxCount: 10);
-
-              if (files.isNotEmpty) {
-                print('DEBUG: 선택된 파일 수: ${files.length}');
-                final upload = context.read<UploadService>();
-
-                final placeholderIds = <String>[];
-                for (final f in files) {
-                  placeholderIds.add(
-                    widget.editorService.addImagePlaceholderNode(f.path),
-                  );
+              try {
+                // 이미지 선택 전 키보드 내리기
+                if (context.mounted) {
+                  await Future.delayed(const Duration(milliseconds: 50));
+                  if (context.mounted) {
+                    FocusScope.of(context).unfocus();
+                  }
                 }
 
-                // 즉시 로딩 피드백: 업로드 시작 전 가벼운 로딩 오버레이를 잠깐 표시할 수 있음(필요 시)
-                final tasks = await upload.uploadFilesViaServerBatches(
-                  files,
-                  kind: UploadKind.editorImage,
-                );
+                final picker = NativeImagePicker();
+                final files = await picker.pickMultipleImages(maxCount: 10);
 
-                final count =
-                    tasks.length < placeholderIds.length
-                        ? tasks.length
-                        : placeholderIds.length;
-                for (int i = 0; i < count; i++) {
-                  final t = tasks[i];
-                  final id = placeholderIds[i];
-                  if (t.state == UploadState.success &&
-                      (t.url ?? '').isNotEmpty) {
-                    await widget.editorService.replacePlaceholderWithUrl(
-                      id,
-                      t.url!,
+                if (files.isNotEmpty) {
+                  print('DEBUG: 선택된 파일 수: ${files.length}');
+                  final upload = context.read<UploadService>();
+
+                  final placeholderIds = <String>[];
+                  for (final f in files) {
+                    placeholderIds.add(
+                      widget.editorService.addImagePlaceholderNode(f.path),
                     );
-                  } else {
-                    widget.editorService.deleteImagePlaceholderNode(id);
+                  }
+
+                  // 즉시 로딩 피드백: 업로드 시작 전 가벼운 로딩 오버레이를 잠깐 표시할 수 있음(필요 시)
+                  final tasks = await upload.uploadFilesViaServerBatches(
+                    files,
+                    kind: UploadKind.editorImage,
+                  );
+
+                  final count =
+                      tasks.length < placeholderIds.length
+                          ? tasks.length
+                          : placeholderIds.length;
+                  for (int i = 0; i < count; i++) {
+                    final t = tasks[i];
+                    final id = placeholderIds[i];
+                    if (t.state == UploadState.success &&
+                        (t.url ?? '').isNotEmpty) {
+                      await widget.editorService.replacePlaceholderWithUrl(
+                        id,
+                        t.url!,
+                      );
+                    } else {
+                      widget.editorService.deleteImagePlaceholderNode(id);
+                    }
+                  }
+
+                  // 문서 변경 후 SuperEditor가 포커스를 복원하기 전에 명시적으로 해제
+                  if (context.mounted) {
+                    await Future.delayed(const Duration(milliseconds: 100));
+                    if (context.mounted) {
+                      FocusScope.of(context).unfocus();
+                    }
+                  }
+                }
+              } catch (e) {
+                debugPrint('image pick/upload error: $e');
+              } finally {
+                // 이미지 업로드 완료/실패 후 키보드 내리기 보장
+                if (context.mounted) {
+                  await Future.delayed(const Duration(milliseconds: 50));
+                  if (context.mounted) {
+                    FocusScope.of(context).unfocus();
                   }
                 }
               }
             }
             if (mode == 'short clip') {
               try {
-                FocusScope.of(context).unfocus();
+                // 영상 선택 전 키보드 내리기
+                if (context.mounted) {
+                  await Future.delayed(const Duration(milliseconds: 50));
+                  if (context.mounted) {
+                    FocusScope.of(context).unfocus();
+                  }
+                }
+
                 // 시스템 비디오 피커(1개)
                 final picker = NativeImagePicker();
                 final file = await picker.pickSingleVideo();
+
+                // 영상 선택 후 키보드 내리기 보장
+                if (context.mounted) {
+                  await Future.delayed(const Duration(milliseconds: 50));
+                  if (context.mounted) {
+                    FocusScope.of(context).unfocus();
+                  }
+                }
+
                 if (file == null) return;
 
                 // 길이/용량 선검증(선택)
@@ -1269,7 +1324,7 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
                 );
 
                 // 완료 대기(간단 버전)
-                task.addListener(() {
+                task.addListener(() async {
                   if (task.state == UploadState.success && task.url != null) {
                     // 에디터에 clip 노드 삽입 (label은 파일명으로 기본)
                     widget.editorService.addClipNode(
@@ -1277,10 +1332,31 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
                       url: task.url!,
                     );
                     _forceCloseToolbar();
+
+                    // 문서 변경 후 SuperEditor가 포커스를 복원하기 전에 명시적으로 해제
+                    if (context.mounted) {
+                      await Future.delayed(const Duration(milliseconds: 100));
+                      if (context.mounted) {
+                        FocusScope.of(context).unfocus();
+                      }
+                    }
+                  } else if (task.state == UploadState.failed) {
+                    // 영상 업로드 실패 후 키보드 내리기 보장
+                    if (context.mounted) {
+                      FocusScope.of(context).unfocus();
+                    }
                   }
                 });
               } catch (e) {
                 debugPrint('video pick/upload error: $e');
+              } finally {
+                // 영상 처리 완료/실패 후 키보드 내리기 보장
+                if (context.mounted) {
+                  await Future.delayed(const Duration(milliseconds: 50));
+                  if (context.mounted) {
+                    FocusScope.of(context).unfocus();
+                  }
+                }
               }
             }
           },

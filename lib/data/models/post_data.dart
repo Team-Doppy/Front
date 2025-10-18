@@ -55,6 +55,13 @@ class PostData {
       content = contentData?.toString() ?? '';
     }
 
+    // author 필드 우선순위: author > username > authorUsername > ''
+    final author =
+        data['author']?.toString() ??
+        data['username']?.toString() ??
+        data['authorUsername']?.toString() ??
+        '';
+
     return PostData(
       id: data['id']?.toString() ?? '',
       thumbnailImageUrl:
@@ -62,7 +69,7 @@ class PostData {
           data['thumbnailImageUrl'] ??
           'assets/images/feed2.png',
       title: data['title'] ?? '',
-      author: data['author'] ?? data['username'] ?? '',
+      author: author,
       authorProfileImageUrl: data['authorProfileImageUrl'] ?? '',
       content: content,
       summary: data['summary'] ?? '',

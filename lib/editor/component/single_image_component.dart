@@ -590,7 +590,7 @@ class _SingleImageComponentState extends State<SingleImageComponent>
       },
       errorBuilder:
           (context, error, stack) =>
-              ImageErrorPlaceholder(width: 150, height: 200),
+              ImageErrorPlaceholder(width: double.infinity, height: 200),
     );
   }
 

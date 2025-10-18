@@ -46,10 +46,10 @@ Stylesheet buildCustomStylesheet(BuildContext context) {
                 height: 0,
               ),
               Styles.padding: const CascadingPadding.only(
-                top: 130,
+                top: 150,
                 bottom: 20,
-                left: 10,
-                right: 10,
+                left: 20,
+                right: 20,
               ),
             };
           }

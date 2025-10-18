@@ -368,29 +368,61 @@ class PostDragDropService extends ChangeNotifier {
     int targetCategoryId, {
     int? targetPosition,
   }) async {
+    final provider = context.read<ProfileFeedProvider>();
+
+    // 백업: 원래 카테고리 정보 저장
+    String? sourceCategoryId;
+    int? sourcePosition;
+    Map<String, dynamic>? backupPost;
+
+    // 원본 위치 찾기
+    for (final categoryId in provider.postsByCategory.keys) {
+      final posts = provider.postsByCategory[categoryId]!;
+      final idx = posts.indexWhere((p) => '${p['id']}' == post.id);
+      if (idx != -1) {
+        sourceCategoryId = categoryId;
+        sourcePosition = idx;
+        backupPost = Map<String, dynamic>.from(posts[idx]);
+        break;
+      }
+    }
+
+    print(
+      '[FeedService] 포스트 이동 시작: ${post.id} ($sourceCategoryId[$sourcePosition] → $targetCategoryId[$targetPosition])',
+    );
+
+    // 1) 낙관적 로컬 반영 (먼저 UI 업데이트)
+    provider.movePostLocally(post.id, targetCategoryId, targetPosition);
+
+    // 2) 서버 저장 시도
     try {
-      // 단일 엔드포인트로 위임: 서버가 미분류(0) 포함해 모두 처리
       await movePostToCategory(
         post,
         targetCategoryId,
         targetPosition: targetPosition,
       );
+      print('[FeedService] 서버 저장 완료');
 
-      // 서버 호출 성공 후 로컬 업데이트 (전체 새로고침 없음)
-      context.read<ProfileFeedProvider>().movePostLocally(
-        post.id,
-        targetCategoryId,
-        targetPosition,
-      );
+      // 서버 성공 시 캐시 무효화
+      provider.invalidateCache();
     } catch (e) {
-      print('⚠️ [PostDragDropService] 서버 이동 실패: $e');
-      // 사용자에게 알림 (크래시 방지)
+      print('⚠️ [FeedService] 서버 이동 실패, 롤백: $e');
+
+      // 3) 실패 시 롤백
+      if (sourceCategoryId != null && backupPost != null) {
+        provider.movePostLocally(
+          post.id,
+          int.tryParse(sourceCategoryId) ?? 0,
+          sourcePosition,
+        );
+      }
+
+      // 사용자에게 알림
       try {
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(SnackBar(content: Text('이동 실패: 서버 오류가 발생했습니다')));
+        ).showSnackBar(const SnackBar(content: Text('이동 실패: 서버 오류가 발생했습니다')));
       } catch (_) {}
-      // 실패 시 예외 전파하지 않음 (UI 크래시 방지)
     }
   }
 
