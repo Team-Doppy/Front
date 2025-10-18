@@ -92,7 +92,22 @@ class Feed {
             CategoryMetaData(title: title, posts: posts, categoryId: idStr),
           );
         }
+        // 아무런 글도 없을 때,
+        if (categoryMetaDataList.length == 1 &&
+            categoryMetaDataList[0].title == 'system_doppy_uncategorized' &&
+            categoryMetaDataList[0].posts.isEmpty) {
+          return SliverToBoxAdapter(
+            child: Column(
+              children: [
+                SizedBox(height: 100),
+                Text('아직은 포스트가 없어요!'),
+                SizedBox(height: 300),
+              ],
+            ),
+          );
+        }
 
+        //글이 있을 때,
         return SliverToBoxAdapter(
           child: Column(
             children: [
