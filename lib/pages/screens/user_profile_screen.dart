@@ -342,7 +342,6 @@ class _UserProfileScreenState extends State<UserProfileScreen>
                       _feed.buildFeedContent(
                         scrollController: _scrollController,
                       ),
-                      const SliverToBoxAdapter(child: SizedBox(height: 60)),
                     ],
                   ),
                 );

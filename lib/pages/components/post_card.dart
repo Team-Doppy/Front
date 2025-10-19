@@ -101,8 +101,8 @@ class _PostCardState extends State<PostCard> {
               imageUrl: widget.thumbnailImageUrl,
               fit: BoxFit.cover,
               key: ValueKey('bg-${widget.thumbnailImageUrl}'),
-              fadeInDuration: const Duration(milliseconds: 300),
-              fadeOutDuration: const Duration(milliseconds: 100),
+              fadeInDuration: const Duration(milliseconds: 0), // 캐시된 이미지는 즉시 표시
+              fadeOutDuration: const Duration(milliseconds: 0),
               placeholder:
                   (context, url) => ShimmerBox(
                     width: double.infinity,
@@ -122,6 +122,8 @@ class _PostCardState extends State<PostCard> {
                       ),
                     ),
                   ),
+              memCacheWidth: 800, // 메모리 캐시 크기 지정
+              maxWidthDiskCache: 800, // 디스크 캐시 크기
             ),
           ),
         ),

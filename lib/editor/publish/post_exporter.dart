@@ -476,6 +476,7 @@ class PostExporter {
     bool? privateOnly = false,
     bool? publicOnly = false,
     List<int>? selectedGroupIds = const [],
+    int? categoryId, // 카테고리 ID (필수)
     bool skipValidation = false, // 임시저장용 검증 생략 플래그
   }) {
     // 1. 필수 필드 검증
@@ -487,6 +488,11 @@ class PostExporter {
     final dynamic content = base['content'];
     if (!skipValidation && content == null) {
       throw StateError('content is required for all access levels');
+    }
+
+    // 카테고리 ID 검증 (발행 시에만 필수, 0은 미지정 카테고리로 유효)
+    if (!skipValidation && categoryId == null) {
+      throw StateError('categoryId is required for publishing');
     }
 
     // 2. 공개 범위에 따른 필수 필드 설정
@@ -522,13 +528,23 @@ class PostExporter {
       result['sharedGroupIds'] = sharedGroupIds;
     }
 
-    // 6. 썸네일 필수 필드 검증 및 추가
+    // 6. 카테고리 ID 추가 (필수)
+    if (categoryId != null) {
+      result['categoryId'] = categoryId;
+    }
+
+    // 7. summary 필드 추가 (base에 있으면 사용, 없으면 excerpt 사용)
+    final String summary =
+        base['summary']?.toString() ?? base['excerpt']?.toString() ?? '';
+    result['summary'] = summary;
+
+    // 8. 썸네일 필수 필드 검증 및 추가
     if (!skipValidation && thumbnailImageUrl.trim().isEmpty) {
       throw StateError('thumbnailImageUrl is required for all access levels');
     }
     result['thumbnailImageUrl'] = thumbnailImageUrl;
 
-    // 7. usedImageIds 보강: base에 없으면 문서 노드/매핑으로 재생성, 썸네일 id도 병합
+    // 9. usedImageIds 보강: base에 없으면 문서 노드/매핑으로 재생성, 썸네일 id도 병합
     try {
       print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
       print('🔍 [페이로드 이미지 ID 수집 시작]');

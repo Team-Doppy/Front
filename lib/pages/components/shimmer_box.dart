@@ -49,10 +49,10 @@ class _ShimmerBoxState extends State<ShimmerBox>
     return AnimatedBuilder(
       animation: _controller,
       builder: (context, child) {
-        // 펄스 효과를 위한 투명도 계산 (라이트는 더 밝게, 다크는 적당히 밝게)
+        // 펄스 효과를 위한 투명도 계산 (매우 은은하게)
         final double pulseValue =
             (1.0 + math.sin(2 * math.pi * _controller.value)) / 2.0;
-        final double opacity = 0.2 + (0.3 * pulseValue);
+        final double opacity = 0.05 + (0.06 * pulseValue);
 
         return Container(
           width: widget.width,

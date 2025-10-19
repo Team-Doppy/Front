@@ -1,5 +1,6 @@
-// import 'dart:math';
+import 'dart:math' as math;
 import 'dart:async';
+import 'dart:ui' as ui;
 import 'package:doppy/pages/components/post_card.dart';
 import 'package:doppy/pages/components/shimmer_box.dart';
 import 'package:doppy/pages/screens/post_reader_screen.dart';
@@ -7,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:doppy/data/models/post_data.dart';
 import 'package:doppy/data/services/like_service.dart';
 import 'package:flutter/rendering.dart';
+import 'package:google_fonts/google_fonts.dart';
 
 class PostList extends StatefulWidget {
   final double containerWidth;
@@ -17,6 +19,14 @@ class PostList extends StatefulWidget {
   final Function(int)? onPageChanged;
   final bool showCardShimmer;
 
+  // 홈화면 앱바 관련 파라미터들
+  final bool isShowingSearchResults;
+  final String searchQuery;
+  final VoidCallback? onSearchChipTap;
+  final VoidCallback? onClearSearch;
+  final bool isShowingFriendsOnly;
+  final VoidCallback? onFilterTap;
+
   const PostList({
     super.key,
     required this.containerWidth,
@@ -26,6 +36,12 @@ class PostList extends StatefulWidget {
     this.onRefresh,
     this.onPageChanged,
     this.showCardShimmer = false,
+    this.isShowingSearchResults = false,
+    this.searchQuery = '',
+    this.onSearchChipTap,
+    this.onClearSearch,
+    this.isShowingFriendsOnly = false,
+    this.onFilterTap,
   });
 
   @override
@@ -47,11 +63,10 @@ class _PostListState extends State<PostList> {
   double _accumDx = 0.0;
   double _accumDy = 0.0;
   bool? _isVerticalDrag; // null: 미정, true: 수직, false: 수평
-  static const double _deadZonePx = 150.0; // 150px 이전에는 게이지 표시/증가 억제
+  static const double _deadZonePx = 80.0; // 80px 이전에는 게이지 표시/증가 억제
 
-  // 제스처 감지용 변수들
-  double _gestureStartY = 0.0;
   double _gestureAccumY = 0.0;
+  double _gestureStartX = 0.0; // 탭 시작 X 위치
   bool _isGestureActive = false;
 
   // 연속 스크롤용 변수들
@@ -138,56 +153,6 @@ class _PostListState extends State<PostList> {
     super.dispose();
   }
 
-  // 연속 스크롤 메서드
-  void _startContinuousScroll(bool isNext) {
-    // 이미 연속 스크롤이 진행 중이면 중단
-    if (_isContinuousScroll) return;
-
-    // 지연 타이머 취소
-    _continuousScrollDelayTimer?.cancel();
-
-    // 300ms 후에 연속 스크롤 시작 사용자가 손을 300ms 동안 유지했을 때 연속 스크롤을 시작
-    _continuousScrollDelayTimer = Timer(const Duration(milliseconds: 100), () {
-      _continuousScrollTimer?.cancel();
-      _isContinuousScroll = true;
-
-      //200ms마다 페이지를 이동 (100ms 애니메이션으로)
-      _continuousScrollTimer = Timer.periodic(
-        const Duration(milliseconds: 300),
-        (timer) {
-          if (!_isContinuousScroll) {
-            timer.cancel();
-            return;
-          }
-
-          // 현재 페이지 인덱스를 PageController에서 직접 가져옴
-          final currentPage = _pageController.page?.round() ?? _currentIndex;
-
-          if (isNext && currentPage < widget.posts.length - 1) {
-            _pageController.nextPage(
-              duration: const Duration(milliseconds: 300),
-              curve: Curves.easeInOut,
-            );
-          } else if (!isNext && currentPage > 0) {
-            _pageController.previousPage(
-              duration: const Duration(milliseconds: 300),
-              curve: Curves.easeInOut,
-            );
-          } else {
-            timer.cancel();
-            _isContinuousScroll = false;
-          }
-        },
-      );
-    });
-  }
-
-  void _stopContinuousScroll() {
-    _continuousScrollTimer?.cancel();
-    _continuousScrollDelayTimer?.cancel();
-    _isContinuousScroll = false;
-  }
-
   @override
   Widget build(BuildContext context) {
     // 커스텀 게이지 위젯 내부 정의
@@ -254,6 +219,124 @@ class _PostListState extends State<PostList> {
     final List<Widget> slivers = [];
     // CupertinoSliverRefreshControl 제거: 바운싱 없이도 새로고침을 지원하기 위해 Material RefreshIndicator 사용
 
+    // 새로고침 당김 정도에 따른 투명도 계산 (가파른 속도)
+    final double pullOpacity =
+        (_pullExtentPx - _deadZonePx) > 0.0
+            ? (1.0 -
+                math
+                    .pow(
+                      (_pullExtentPx - _deadZonePx) /
+                          (_refreshTrigger - _deadZonePx),
+                      0.5,
+                    )
+                    .clamp(0.0, 1.0))
+            : 1.0;
+
+    slivers.add(
+      SliverAppBar(
+        toolbarHeight: 40,
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        pinned: false,
+        floating: true,
+        snap: false,
+        title: AnimatedOpacity(
+          opacity: pullOpacity,
+          duration: const Duration(milliseconds: 100),
+          child: Text(
+            ' Doppy',
+            style: GoogleFonts.notoSansKr(
+              fontSize: 25,
+              fontWeight: FontWeight.bold,
+              color: Theme.of(context).colorScheme.primary,
+            ),
+          ),
+        ),
+        centerTitle: false,
+        actions: [
+          // 검색 중이면 검색어 칩 + 아이콘, 아니면 검색 아이콘만
+          if (widget.isShowingSearchResults && widget.searchQuery.isNotEmpty)
+            AnimatedOpacity(
+              opacity: pullOpacity,
+              duration: const Duration(milliseconds: 100),
+              child: GestureDetector(
+                onTap: widget.onSearchChipTap,
+                child: Container(
+                  margin: const EdgeInsets.only(right: 8),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(16),
+                    child: BackdropFilter(
+                      filter: ui.ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 6,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.surface.withOpacity(0.2),
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.primary.withOpacity(0.3),
+                            width: 1,
+                          ),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.search,
+                              size: 18,
+                              color: Theme.of(context).colorScheme.primary,
+                            ),
+                            const SizedBox(width: 6),
+                            Text(
+                              widget.searchQuery,
+                              style: TextStyle(
+                                color: Theme.of(context).colorScheme.onSurface,
+                                fontSize: 14,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                            const SizedBox(width: 6),
+                            GestureDetector(
+                              onTap: widget.onClearSearch,
+                              child: Icon(
+                                Icons.close,
+                                size: 18,
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.onSurface.withOpacity(0.7),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            )
+          else ...[
+            // 피드 필터 드롭다운
+            AnimatedOpacity(
+              opacity: pullOpacity,
+              duration: const Duration(milliseconds: 100),
+              child: IconButton(
+                onPressed: widget.onFilterTap,
+                icon: Icon(Icons.keyboard_arrow_down_rounded),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+    SliverToBoxAdapter(child: SizedBox(height: 30));
+
     slivers.add(
       SliverToBoxAdapter(
         child: SizedBox(
@@ -298,13 +381,29 @@ class _PostListState extends State<PostList> {
 
     return SafeArea(
       child: Listener(
-        onPointerDown: (_) {
+        onPointerDown: (details) {
+          print('onPointerDown');
+          print(details.position.dy);
+          // 앱바 영역(상단 80px)에서는 포인터 이벤트 무시
+          if (details.position.dy < 250) {
+            print('onPointerDown - 앱바 영역 무시');
+            return;
+          }
+
+          print('onPointerDown');
           _isPointerDown = true;
           _accumDx = 0.0;
           _accumDy = 0.0;
           _isVerticalDrag = null;
+          _gestureStartX = details.position.dx; // 탭 시작 위치 저장
         },
         onPointerMove: (e) {
+          print('onPointerMove');
+          // 앱바 영역(상단 80px)에서는 포인터 이벤트 무시
+          if (e.position.dy < 250) {
+            return;
+          }
+
           // 연속 스크롤 중이면 방향 변경 무시
           if (_isContinuousScroll) {
             return;
@@ -314,48 +413,25 @@ class _PostListState extends State<PostList> {
           _accumDx += e.delta.dx.abs();
           _accumDy += e.delta.dy.abs();
 
-          // 가로 스크롤 우선 감지 (페이지 이동)
-          if (_accumDx > _accumDy * 1.2 && _accumDx > 15.0) {
-            if (e.delta.dx > 0 && _currentIndex > 0) {
-              // 오른쪽으로 스크롤 - 이전 페이지
-              _pageController.previousPage(
-                duration: const Duration(milliseconds: 300),
-                curve: Curves.easeInOut,
-              );
-              // 연속 스크롤 시작 (이전 페이지)
-              _startContinuousScroll(false);
-            } else if (e.delta.dx < 0 &&
-                _currentIndex < widget.posts.length - 1) {
-              // 왼쪽으로 스크롤 - 다음 페이지
-              _pageController.nextPage(
-                duration: const Duration(milliseconds: 300),
-                curve: Curves.easeInOut,
-              );
-              // 연속 스크롤 시작 (다음 페이지)
-              _startContinuousScroll(true);
-            }
-            return; // 가로 스크롤 감지 시 세로 스크롤 처리 완전 중단
-          } else {
-            // 가로 스크롤이 아닐 때 연속 스크롤 중단
-            _stopContinuousScroll();
-          }
-
-          // 세로 스크롤 감지 (새로고침) - 가로 스크롤이 아닐 때만
-          if (widget.onRefresh == null) return;
-          if (!_scrollController.hasClients) return;
-          final atTop =
-              _scrollController.position.pixels <=
-              _scrollController.position.minScrollExtent + 0.5;
-          if (!atTop) return;
-
+          // 방향이 아직 결정되지 않았을 때만 방향 판정
           if (_isVerticalDrag == null) {
             if (_accumDy > _accumDx * 2.0 && _accumDy > 10.0) {
-              _isVerticalDrag = true;
+              _isVerticalDrag = true; // 세로 드래그로 결정
             } else if (_accumDx > _accumDy * 1.2 && _accumDx > 15.0) {
-              _isVerticalDrag = false;
+              _isVerticalDrag = false; // 가로 드래그로 결정
             }
           }
+
+          // 세로 드래그가 결정된 경우 가로 스크롤 완전 차단
           if (_isVerticalDrag == true) {
+            // 세로 스크롤 감지 (새로고침)
+            if (widget.onRefresh == null) return;
+            if (!_scrollController.hasClients) return;
+            final atTop =
+                _scrollController.position.pixels <=
+                _scrollController.position.minScrollExtent + 0.5;
+            if (!atTop) return;
+
             double delta = 0.0;
             if (e.delta.dy > 0) {
               delta = e.delta.dy * 0.4; // 둔감한 증가
@@ -367,12 +443,125 @@ class _PostListState extends State<PostList> {
               _passedTrigger = _pullExtentPx >= _refreshTrigger;
               setState(() {});
             }
+            return; // 세로 드래그 중에는 가로 스크롤 완전 차단
+          }
+
+          // 가로 드래그가 결정된 경우에만 페이지 이동 처리
+          if (_isVerticalDrag == false) {
+            if (e.delta.dx > 0 && _currentIndex > 0) {
+              // 오른쪽으로 스크롤 - 이전 페이지
+              _pageController.previousPage(
+                duration: const Duration(milliseconds: 200),
+                curve: Curves.easeInOut,
+              );
+            } else if (e.delta.dx < 0 &&
+                _currentIndex < widget.posts.length - 1) {
+              // 왼쪽으로 스크롤 - 다음 페이지
+              _pageController.nextPage(
+                duration: const Duration(milliseconds: 200),
+                curve: Curves.easeInOut,
+              );
+            }
+            return; // 가로 스크롤 감지 시 세로 스크롤 처리 완전 중단
           }
         },
-        onPointerUp: (_) async {
+        onPointerUp: (details) async {
+          // 앱바 영역(상단 80px)에서는 포인터 이벤트 무시
+          if (details.position.dy < 80) {
+            print('onPointerUp - 앱바 영역 무시');
+            _isPointerDown = false;
+            _isVerticalDrag = null;
+            _accumDx = 0.0;
+            _accumDy = 0.0;
+            return;
+          }
+
+          // 탭인지 스와이프인지 판단
+          // 1. 움직임이 5px 미만이어야 함 (거의 안 움직임)
+          // 2. 방향이 결정되지 않았어야 함 (스와이프로 인식되지 않음)
+          final isTap =
+              _accumDx < 5.0 && _accumDy < 5.0 && _isVerticalDrag == null;
+
+          // 상태 리셋
           _isPointerDown = false;
-          _stopContinuousScroll(); // 연속 스크롤 중단
-          if (widget.onRefresh != null && _passedTrigger) {
+          final wasVerticalDrag = _isVerticalDrag;
+          _isVerticalDrag = null;
+          _accumDx = 0.0;
+          _accumDy = 0.0;
+
+          if (isTap) {
+            // 탭으로 판단 - 화면 좌우에 따라 페이지 이동
+            final screenWidth = MediaQuery.of(context).size.width;
+            final tapX = _gestureStartX;
+
+            if (tapX < screenWidth * 0.3) {
+              // 왼쪽 30% - 이전 페이지
+              if (_currentIndex > 0) {
+                _pageController.previousPage(
+                  duration: const Duration(milliseconds: 200),
+                  curve: Curves.easeOutCubic,
+                );
+              }
+            } else if (tapX > screenWidth * 0.7) {
+              // 오른쪽 30% - 다음 페이지
+              if (_currentIndex < widget.posts.length - 1) {
+                _pageController.nextPage(
+                  duration: const Duration(milliseconds: 200),
+                  curve: Curves.easeOutCubic,
+                );
+              }
+            } else {
+              // 중앙 40% - 포스트 상세보기
+              final safeIndex = _currentIndex.clamp(0, widget.posts.length - 1);
+              final post = _items[safeIndex];
+              Navigator.of(context).push(
+                PageRouteBuilder(
+                  transitionDuration: const Duration(milliseconds: 340),
+                  reverseTransitionDuration: const Duration(milliseconds: 100),
+                  opaque: false,
+                  pageBuilder:
+                      (_, __, ___) => PostReaderScreen(
+                        exported: post.toExportedData(),
+                        heroTag: 'post-hero-${post.id}-$safeIndex',
+                      ),
+                  transitionsBuilder: (
+                    context,
+                    animation,
+                    secondaryAnimation,
+                    child,
+                  ) {
+                    const begin = Offset(0.0, 0.1);
+                    const end = Offset.zero;
+                    const curve = Curves.easeOutCubic;
+                    var tween = Tween(
+                      begin: begin,
+                      end: end,
+                    ).chain(CurveTween(curve: curve));
+                    var offsetAnimation = animation.drive(tween);
+                    var fadeAnimation = Tween<double>(
+                      begin: 0.0,
+                      end: 1.0,
+                    ).animate(
+                      CurvedAnimation(parent: animation, curve: Curves.easeOut),
+                    );
+                    return FadeTransition(
+                      opacity: fadeAnimation,
+                      child: SlideTransition(
+                        position: offsetAnimation,
+                        child: child,
+                      ),
+                    );
+                  },
+                ),
+              );
+            }
+            return;
+          }
+
+          // 스와이프인 경우 - 새로고침 처리 (세로 드래그가 확정된 경우에만)
+          if (wasVerticalDrag == true &&
+              widget.onRefresh != null &&
+              _passedTrigger) {
             setState(() {});
             try {
               await widget.onRefresh!();
@@ -403,7 +592,7 @@ class _PostListState extends State<PostList> {
             content,
             if (widget.onRefresh != null && (_pullExtentPx - _deadZonePx) > 0.0)
               Positioned(
-                top: 0,
+                top: 30,
                 left: 0,
                 right: 0,
                 height: 72,
@@ -425,49 +614,9 @@ class _PostListState extends State<PostList> {
 
   Widget _buildPostItem(BuildContext context, PostData post, int index) {
     // 스케일은 AnimatedBuilder 안에서 PageController.page 기반으로 계산합니다
+    // 탭 처리는 Listener의 onPointerUp에서 처리
 
     final content = GestureDetector(
-      onTap: () {
-        Navigator.of(context).push(
-          PageRouteBuilder(
-            transitionDuration: const Duration(milliseconds: 340),
-            reverseTransitionDuration: const Duration(milliseconds: 100),
-            opaque: false,
-            pageBuilder:
-                (_, __, ___) => PostReaderScreen(
-                  exported: post.toExportedData(),
-                  heroTag: 'post-hero-${post.id}-$index',
-                ),
-            transitionsBuilder: (
-              context,
-              animation,
-              secondaryAnimation,
-              child,
-            ) {
-              // 부드러운 페이드 인/아웃과 스케일 효과
-              const begin = Offset(0.0, 0.1);
-              const end = Offset.zero;
-              const curve = Curves.easeOutCubic;
-
-              var tween = Tween(
-                begin: begin,
-                end: end,
-              ).chain(CurveTween(curve: curve));
-
-              var offsetAnimation = animation.drive(tween);
-              var fadeAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
-                CurvedAnimation(parent: animation, curve: Curves.easeOut),
-              );
-
-              return FadeTransition(
-                opacity: fadeAnimation,
-                child: SlideTransition(position: offsetAnimation, child: child),
-              );
-            },
-          ),
-        );
-      },
-
       onDoubleTap: () async {
         /*
         final id = post.id.toString();
@@ -604,7 +753,6 @@ class _PostListState extends State<PostList> {
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onPanStart: (details) {
-        _gestureStartY = details.globalPosition.dy;
         _gestureAccumY = 0.0;
         _isGestureActive = true;
       },
@@ -687,68 +835,138 @@ class _PostListState extends State<PostList> {
   }
 }
 
-class _RefreshGauge extends StatelessWidget {
+class _RefreshGauge extends StatefulWidget {
   final double progress; // 0.0 ~ 1.0
   const _RefreshGauge({required this.progress});
 
   @override
+  State<_RefreshGauge> createState() => _RefreshGaugeState();
+}
+
+class _RefreshGaugeState extends State<_RefreshGauge>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _animationController;
+  late Animation<double> _rotationAnimation;
+
+  @override
+  void initState() {
+    super.initState();
+    _animationController = AnimationController(
+      duration: const Duration(milliseconds: 1000),
+      vsync: this,
+    );
+    _rotationAnimation = Tween<double>(
+      begin: 0.0,
+      end: 1.0,
+    ).animate(_animationController);
+
+    // 새로고침이 진행 중일 때만 회전
+    if (widget.progress > 0) {
+      _animationController.repeat();
+    }
+  }
+
+  @override
+  void didUpdateWidget(_RefreshGauge oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.progress > 0 && !_animationController.isAnimating) {
+      _animationController.repeat();
+    } else if (widget.progress == 0 && _animationController.isAnimating) {
+      _animationController.stop();
+    }
+  }
+
+  @override
+  void dispose() {
+    _animationController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final double size = 26;
-    final Color track = Colors.white.withOpacity(0.18);
-    final Color fill = Colors.white.withOpacity(0.9);
+    final double size = 40;
     return SizedBox(
       width: size,
       height: size,
-      child: CustomPaint(
-        painter: _GaugePainter(progress: progress, track: track, fill: fill),
+      child: AnimatedBuilder(
+        animation: _rotationAnimation,
+        builder: (context, child) {
+          return CustomPaint(
+            painter: _SpinnerPainter(
+              progress: widget.progress,
+              rotation: _rotationAnimation.value,
+            ),
+          );
+        },
       ),
     );
   }
 }
 
-class _GaugePainter extends CustomPainter {
+class _SpinnerPainter extends CustomPainter {
   final double progress;
-  final Color track;
-  final Color fill;
+  final double rotation;
 
-  _GaugePainter({
-    required this.progress,
-    required this.track,
-    required this.fill,
-  });
+  _SpinnerPainter({required this.progress, required this.rotation});
 
   @override
   void paint(Canvas canvas, Size size) {
     final center = Offset(size.width / 2, size.height / 2);
-    final radius = size.width / 2;
-    final stroke =
-        Paint()
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 2.8
-          ..strokeCap = StrokeCap.round
-          ..color = track;
+    final radius = size.width / 2 - 2;
 
-    // 배경 트랙
-    canvas.drawCircle(center, radius, stroke);
+    // 회전 변환 적용
+    canvas.save();
+    canvas.translate(center.dx, center.dy);
+    canvas.rotate(rotation * 2 * math.pi); // 전체 회전
+    canvas.translate(-center.dx, -center.dy);
 
-    // 진행 아크
-    final progressPaint =
-        Paint()
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 2.8
-          ..strokeCap = StrokeCap.round
-          ..color = fill;
+    // 12개의 막대를 그리기
+    for (int i = 0; i < 12; i++) {
+      final angle = (i * 30.0) * (math.pi / 180.0); // 각 막대의 각도
+      final opacity = _calculateOpacity(i, progress);
 
-    final rect = Rect.fromCircle(center: center, radius: radius);
-    final startAngle = -3.1415926 / 2; // 12시 방향
-    final sweep = 2 * 3.1415926 * progress;
-    canvas.drawArc(rect, startAngle, sweep, false, progressPaint);
+      final paint =
+          Paint()
+            ..color = Colors.white.withOpacity(opacity)
+            ..strokeWidth = 3.0
+            ..strokeCap = StrokeCap.round;
+
+      // 막대의 시작점과 끝점 계산
+      final startRadius = radius * 0.6;
+      final endRadius = radius * 0.9;
+
+      final startX = center.dx + startRadius * math.cos(angle);
+      final startY = center.dy + startRadius * math.sin(angle);
+      final endX = center.dx + endRadius * math.cos(angle);
+      final endY = center.dy + endRadius * math.sin(angle);
+
+      canvas.drawLine(Offset(startX, startY), Offset(endX, endY), paint);
+    }
+
+    canvas.restore();
+  }
+
+  double _calculateOpacity(int barIndex, double progress) {
+    // 진행률에 따라 막대들의 투명도 계산
+    // 12시 방향부터 시계방향으로 점진적으로 밝아지다가 어두워짐
+    final normalizedProgress = progress * 12; // 0~12 범위로 변환
+    final distance = (barIndex - normalizedProgress).abs();
+
+    // 최소 거리 계산 (원형이므로 12를 넘어가면 반대편으로)
+    final minDistance = math.min(distance, 12 - distance);
+
+    // 거리가 가까울수록 밝게, 멀수록 어둡게
+    if (minDistance <= 2) {
+      return 0.9 - (minDistance * 0.3); // 0.9 ~ 0.3
+    } else if (minDistance <= 4) {
+      return 0.3 - ((minDistance - 2) * 0.15); // 0.3 ~ 0.0
+    } else {
+      return 0.05; // 매우 어둡게
+    }
   }
 
   @override
-  bool shouldRepaint(covariant _GaugePainter oldDelegate) {
-    return oldDelegate.progress != progress ||
-        oldDelegate.track != track ||
-        oldDelegate.fill != fill;
+  bool shouldRepaint(covariant _SpinnerPainter oldDelegate) {
+    return oldDelegate.progress != progress;
   }
 }

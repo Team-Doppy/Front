@@ -4,6 +4,7 @@ import 'package:doppy/editor/service/node_component_service.dart';
 import 'package:doppy/editor/service/sticker_service.dart';
 import 'package:doppy/data/services/feed_service.dart';
 import 'package:doppy/pages/screens/home_screen.dart';
+import 'package:doppy/pages/screens/search_screen_overlay.dart';
 import 'package:doppy/data/models/post_data.dart';
 import 'package:doppy/pages/components/custom_bottom_navigation_bar.dart';
 import 'package:doppy/pages/onboarding/splash.dart';
@@ -165,6 +166,48 @@ class _RootShellState extends State<RootShell> {
     });
   }
 
+  // 검색 화면 열기 (현재 화면에서 바로)
+  void _openSearchScreen({String? initialQuery}) {
+    Navigator.of(context).push(
+      PageRouteBuilder(
+        opaque: true,
+        pageBuilder: (context, animation, secondaryAnimation) {
+          return FadeTransition(
+            opacity: animation,
+            child: SearchScreenOverlay(
+              initialQuery: initialQuery,
+              onSearchComplete: (results, query) {
+                // 검색 결과를 받아서 홈화면으로 전환하며 표시
+                Navigator.of(context).pop(); // 검색 화면 닫기
+
+                // 홈 탭으로 전환 후 검색 결과 설정
+                if (mounted) {
+                  setState(() => _index = 0);
+
+                  // 홈화면이 빌드된 후 검색 결과 전달
+                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                    final homeState = _homeScreenKey.currentState;
+                    if (homeState != null && homeState.mounted) {
+                      homeState.setSearchResults(results, query);
+                    }
+                  });
+                }
+              },
+              onClose: () {
+                Navigator.of(context).pop();
+              },
+            ),
+          );
+        },
+        transitionsBuilder: (context, animation, secondaryAnimation, child) {
+          return child;
+        },
+        transitionDuration: const Duration(milliseconds: 200),
+        reverseTransitionDuration: const Duration(milliseconds: 200),
+      ),
+    );
+  }
+
   void _onTap(int i) {
     final searchResultProvider = context.read<SearchResultProvider>();
 
@@ -174,15 +217,11 @@ class _RootShellState extends State<RootShell> {
       return;
     }
 
-    // 검색 버튼 클릭 시: 홈으로 이동하고 SearchOverlay 열기
+    // 검색 버튼 클릭 시: 현재 화면에서 바로 SearchOverlay 열기
     if (i == 1) {
       print('[RootShell] 검색 버튼 클릭됨');
-      setState(() => _index = 0); // 홈 탭으로 이동
-      // 다음 프레임에서 SearchOverlay 열기
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        print('[RootShell] SearchOverlay 열기 시도');
-        _homeScreenKey.currentState?.openSearchOverlay();
-      });
+      // 탭 전환 없이 바로 검색 화면 열기 (현재 화면 위에서)
+      _openSearchScreen();
       return;
     }
 

@@ -25,6 +25,7 @@ class _DrawingOverlayState extends State<DrawingOverlay>
   Color _color = Colors.white;
   double _width = 8;
   bool _eraser = false;
+  bool _isAdjustingWidth = false; // 펜 두께 조절 중 여부
 
   late AnimationController _animationController;
   late Animation<double> _fadeAnimation;
@@ -92,9 +93,9 @@ class _DrawingOverlayState extends State<DrawingOverlay>
         children: [
           // 전체 화면 투명 캔버스
           Positioned.fill(
-            child: GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onPanStart: (d) {
+            child: Listener(
+              behavior: HitTestBehavior.translucent,
+              onPointerDown: (d) {
                 _redo.clear();
 
                 // 스크롤 오프셋 계산
@@ -105,20 +106,21 @@ class _DrawingOverlayState extends State<DrawingOverlay>
 
                 // 앱바 높이 (50px) 제거 후 스크롤 오프셋 추가
                 final adjustedPos = Offset(
-                  d.globalPosition.dx,
-                  d.globalPosition.dy - 50 + scrollY,
+                  d.position.dx,
+                  d.position.dy - 50 + scrollY,
                 );
 
-                _strokes.add(
-                  _Stroke(
-                    color: _eraser ? Colors.black : _color,
-                    width: _width,
-                    erase: _eraser,
-                  )..points.add(adjustedPos),
-                );
-                setState(() {});
+                setState(() {
+                  _strokes.add(
+                    _Stroke(
+                      color: _eraser ? Colors.black : _color,
+                      width: _width,
+                      erase: _eraser,
+                    )..points.add(adjustedPos),
+                  );
+                });
               },
-              onPanUpdate: (d) {
+              onPointerMove: (d) {
                 if (_strokes.isEmpty) return;
 
                 // 스크롤 오프셋 계산
@@ -129,12 +131,13 @@ class _DrawingOverlayState extends State<DrawingOverlay>
 
                 // 앱바 높이 (50px) 제거 후 스크롤 오프셋 추가
                 final adjustedPos = Offset(
-                  d.globalPosition.dx,
-                  d.globalPosition.dy - 50 + scrollY,
+                  d.position.dx,
+                  d.position.dy - 50 + scrollY,
                 );
 
-                _strokes.last.points.add(adjustedPos);
-                setState(() {});
+                setState(() {
+                  _strokes.last.points.add(adjustedPos);
+                });
               },
               child: RepaintBoundary(
                 key: _canvasKey,
@@ -157,11 +160,11 @@ class _DrawingOverlayState extends State<DrawingOverlay>
 
           // 상단 툴바
           Positioned(
-            top: 50,
+            top: 45,
             left: 0,
             right: 0,
             child: Container(
-              height: 50,
+              height: 60,
               decoration: BoxDecoration(
                 color: Theme.of(context).colorScheme.background,
               ),
@@ -236,85 +239,84 @@ class _DrawingOverlayState extends State<DrawingOverlay>
             ),
           ),
 
-          // 왼쪽 펜 두께 슬라이더
+          // 좌측 세로 펜 두께 슬라이더 (약간 보이다가 터치 시 완전히 튀어나옴)
           Positioned(
             left: 0,
-            top: MediaQuery.of(context).padding.top + 80,
-            bottom: MediaQuery.of(context).padding.bottom + 100,
-            child: FadeTransition(
-              opacity: _fadeAnimation,
-              child: Container(
-                width: 40,
-                decoration: BoxDecoration(
-                  color: Theme.of(
-                    context,
-                  ).colorScheme.background.withOpacity(0.9),
-                  borderRadius: BorderRadius.circular(24),
-                ),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    const Spacer(),
-                    // 두께 표시
-                    Container(
-                      width: 28,
-                      height: 32,
-                      alignment: Alignment.center,
-                      decoration: BoxDecoration(shape: BoxShape.circle),
-                      child: Text(
-                        '${_width.toInt()}',
-                        style: TextStyle(
-                          color: Theme.of(
-                            context,
-                          ).colorScheme.onSurface.withOpacity(0.9),
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
+            top: MediaQuery.of(context).size.height * 0.25,
+            bottom: MediaQuery.of(context).size.height * 0.25, // 키보드 높이 고려
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 250),
+              curve: Curves.easeOut,
+              transform: Matrix4.translationValues(
+                _isAdjustingWidth ? 0 : -20,
+                0,
+                0,
+              ),
+              child: Row(
+                children: [
+                  // 슬라이더 영역
+                  SizedBox(
+                    width: _isAdjustingWidth ? 60 : 40,
 
-                    // 세로 슬라이더
-                    Expanded(
-                      flex: 2,
-                      child: RotatedBox(
-                        quarterTurns: 3,
-                        child: SliderTheme(
-                          data: SliderThemeData(
-                            trackHeight: 6,
-                            thumbShape: const RoundSliderThumbShape(
-                              enabledThumbRadius: 6,
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        // 현재 펜 두께 표시
+                        if (_isAdjustingWidth)
+                          Text(
+                            '${_width.round()}',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
                             ),
-                            overlayShape: const RoundSliderOverlayShape(
-                              overlayRadius: 16,
-                            ),
-                            activeTrackColor: Theme.of(
-                              context,
-                            ).colorScheme.onSurface.withOpacity(1),
-                            inactiveTrackColor: Theme.of(
-                              context,
-                            ).colorScheme.onSurface.withOpacity(0.1),
-                            thumbColor: Theme.of(
-                              context,
-                            ).colorScheme.onSurface.withOpacity(1),
                           ),
-                          child: Slider(
-                            value: _width,
-                            min: 1,
-                            max: 30,
-                            onChanged: (value) {
-                              setState(() => _width = value);
-                            },
+                        const SizedBox(height: 12),
+                        // 세로 슬라이더
+                        Expanded(
+                          child: RotatedBox(
+                            quarterTurns: -1,
+                            child: SliderTheme(
+                              data: SliderTheme.of(context).copyWith(
+                                trackHeight: 6,
+                                thumbShape: const RoundSliderThumbShape(
+                                  enabledThumbRadius: 8,
+                                ),
+                                overlayShape: const RoundSliderOverlayShape(
+                                  overlayRadius: 16,
+                                ),
+                              ),
+                              child: Slider(
+                                activeColor: Colors.white.withOpacity(0.9),
+                                inactiveColor: Colors.white.withOpacity(0.2),
+                                min: 1,
+                                max: 30,
+                                value: _width.clamp(1.0, 30.0),
+                                onChangeStart: (v) {
+                                  setState(() => _isAdjustingWidth = true);
+                                },
+                                onChanged: (v) {
+                                  setState(() {
+                                    _width = v.clamp(1.0, 30.0);
+                                  });
+                                },
+                                onChangeEnd: (v) {
+                                  setState(() {
+                                    _width = v.clamp(1.0, 30.0);
+                                    _isAdjustingWidth = false;
+                                  });
+                                },
+                              ),
+                            ),
                           ),
                         ),
-                      ),
+                      ],
                     ),
-                    const Spacer(),
-                  ],
-                ),
+                  ),
+                ],
               ),
             ),
           ),
-
           // 하단 툴바 - SingleChildScrollView로 오버플로우 방지
           Positioned(
             bottom: MediaQuery.of(context).padding.bottom + 8,
@@ -587,7 +589,9 @@ class _DrawingPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _DrawingPainter oldDelegate) {
-    // 포인트가 같은 리스트 내부에서 변하므로 항상 리페인트
-    return true;
+    // 스트로크 개수가 변경되었거나 스크롤 위치가 변경되었을 때만 리페인트
+    return strokes.length != oldDelegate.strokes.length ||
+        scrollY != oldDelegate.scrollY ||
+        strokes.isNotEmpty; // 현재 그리는 중이면 항상 리페인트
   }
 }

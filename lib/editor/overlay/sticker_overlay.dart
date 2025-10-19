@@ -91,6 +91,26 @@ class _StickerOverlayState extends State<StickerOverlay> {
 
   @override
   Widget build(BuildContext context) {
+    // 그리기 모드일 때는 제스처로 닫기 비활성화
+    if (_kind == StickerKind.draw) {
+      return DrawingOverlay(
+        initialStrokes: widget.initialDrawingStrokes,
+        scrollController: widget.scrollController,
+        onSubmitDrawing: (strokes, position) {
+          // 벡터 데이터를 전달
+          widget.onSubmit(
+            text: '',
+            textStyle: {
+              'drawingData': {
+                'strokes': strokes,
+                'position': {'x': position.dx, 'y': position.dy},
+              },
+            },
+          );
+        },
+      );
+    }
+
     return GestureDetector(
       onPanUpdate: (details) {
         // 드래그 중에는 아무것도 하지 않음 (시각적 피드백만)
@@ -110,117 +130,92 @@ class _StickerOverlayState extends State<StickerOverlay> {
           }
         }
       },
-      child:
-          _kind == StickerKind.draw
-              ? DrawingOverlay(
-                initialStrokes: widget.initialDrawingStrokes,
-                scrollController: widget.scrollController,
-                onSubmitDrawing: (strokes, position) {
-                  // 벡터 데이터를 전달
-                  widget.onSubmit(
-                    text: '',
-                    textStyle: {
-                      'drawingData': {
-                        'strokes': strokes,
-                        'position': {'x': position.dx, 'y': position.dy},
-                      },
-                    },
-                  );
-                },
-              )
-              : Scaffold(
-                backgroundColor: Colors.transparent,
+      child: Scaffold(
+        backgroundColor: Colors.transparent,
 
-                body: ClipRect(
-                  child: BackdropFilter(
-                    filter: ui.ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-                    child: Container(
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          begin: Alignment.topCenter,
-                          end: Alignment.bottomCenter,
-                          colors: [
-                            const ui.Color.fromARGB(182, 144, 144, 144),
-                            const ui.Color.fromARGB(200, 100, 100, 100),
-                          ],
-                        ),
-                      ),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 20),
-                        child: Column(
-                          children: [
-                            SizedBox(
-                              height: MediaQuery.of(context).padding.top + 50,
-                              child: Row(
-                                children: [
-                                  const SizedBox(width: 20),
-                                  GestureDetector(
-                                    onTap: () {
-                                      _focus.unfocus();
+        body: ClipRect(
+          child: BackdropFilter(
+            filter: ui.ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+            child: Container(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    const ui.Color.fromARGB(182, 144, 144, 144),
+                    const ui.Color.fromARGB(200, 100, 100, 100),
+                  ],
+                ),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 20),
+                child: Column(
+                  children: [
+                    SizedBox(
+                      height: MediaQuery.of(context).padding.top + 50,
+                      child: Row(
+                        children: [
+                          const SizedBox(width: 20),
+                          GestureDetector(
+                            onTap: () {
+                              _focus.unfocus();
 
-                                      Navigator.of(context).pop();
-                                    },
-                                    child: Icon(
-                                      Icons.arrow_back_ios_new,
-                                      color: Colors.white.withOpacity(0.9),
-                                      size: 20,
-                                    ),
-                                  ),
-                                  Spacer(),
-                                  _canSubmit
-                                      ? TextButton(
-                                        onPressed: _submit,
-                                        style: TextButton.styleFrom(
-                                          foregroundColor: Colors.white,
-                                        ),
-                                        child: Text(
-                                          _getSubmitButtonText(),
-                                          style: const TextStyle(
-                                            fontSize: 18,
-                                            fontWeight: FontWeight.w400,
-                                          ),
-                                        ),
-                                      )
-                                      : Padding(
-                                        padding: const EdgeInsets.only(
-                                          right: 20,
-                                        ),
-                                        child: GestureDetector(
-                                          onTap:
-                                              () => Navigator.of(context).pop(),
-                                          child: Icon(
-                                            Icons.close,
-                                            color: Colors.white.withOpacity(
-                                              0.8,
-                                            ),
-                                          ),
-                                        ),
-                                      ),
-                                ],
-                              ),
+                              Navigator.of(context).pop();
+                            },
+                            child: Icon(
+                              Icons.arrow_back_ios_new,
+                              color: Colors.white.withOpacity(0.9),
+                              size: 20,
                             ),
-
-                            // 중앙 프리뷰/에디터 영역
-                            Expanded(
-                              flex: 3,
-                              child: Center(
-                                child: Padding(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 24,
+                          ),
+                          Spacer(),
+                          _canSubmit
+                              ? TextButton(
+                                onPressed: _submit,
+                                style: TextButton.styleFrom(
+                                  foregroundColor: Colors.white,
+                                ),
+                                child: Text(
+                                  _getSubmitButtonText(),
+                                  style: const TextStyle(
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.w400,
                                   ),
-                                  child: _buildEditor(),
+                                ),
+                              )
+                              : Padding(
+                                padding: const EdgeInsets.only(right: 20),
+                                child: GestureDetector(
+                                  onTap: () => Navigator.of(context).pop(),
+                                  child: Icon(
+                                    Icons.close,
+                                    color: Colors.white.withOpacity(0.8),
+                                  ),
                                 ),
                               ),
-                            ),
+                        ],
+                      ),
+                    ),
 
-                            // 텍스트 편집 하단 컨트롤
-                          ],
+                    // 중앙 프리뷰/에디터 영역
+                    Expanded(
+                      flex: 3,
+                      child: Center(
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 24),
+                          child: _buildEditor(),
                         ),
                       ),
                     ),
-                  ),
+
+                    // 텍스트 편집 하단 컨트롤
+                  ],
                 ),
               ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 

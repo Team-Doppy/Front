@@ -32,8 +32,9 @@ class Feed {
         final filteredBase = feedProvider.selectedBase;
         final filteredCategoryId = feedProvider.selectedCategoryId;
 
-        // 로딩 중이면 비워두기
-        if (feedProvider.isLoading) {
+        // 로딩 중이면 이전 컨텐츠 유지 (깜빡임 방지)
+        // 단, 초기 로딩이고 데이터가 없을 때만 비워두기
+        if (feedProvider.isLoading && feedProvider.categories.isEmpty) {
           return const SliverToBoxAdapter(child: SizedBox.shrink());
         }
 
@@ -93,9 +94,10 @@ class Feed {
           );
         }
         // 아무런 글도 없을 때,
-        if (categoryMetaDataList.length == 1 &&
-            categoryMetaDataList[0].title == 'system_doppy_uncategorized' &&
-            categoryMetaDataList[0].posts.isEmpty) {
+        if (feedProvider.posts.isEmpty ||
+            categoryMetaDataList.length == 1 &&
+                categoryMetaDataList[0].title == 'system_doppy_uncategorized' &&
+                categoryMetaDataList[0].posts.isEmpty) {
           return SliverToBoxAdapter(
             child: Column(
               children: [

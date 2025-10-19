@@ -46,7 +46,7 @@ Stylesheet buildCustomStylesheet(BuildContext context) {
                 height: 0,
               ),
               Styles.padding: const CascadingPadding.only(
-                top: 150,
+                top: 100,
                 bottom: 20,
                 left: 20,
                 right: 20,

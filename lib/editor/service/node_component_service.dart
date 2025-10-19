@@ -114,8 +114,17 @@ class NodeComponentService extends ChangeNotifier {
   final Map<String, String> _tempThumbnailUrlBySession = <String, String>{};
   final Map<String, String> _tempThumbnailIdBySession = <String, String>{};
 
-  String? getTempThumbnailUrl(String sessionKey) =>
-      _tempThumbnailUrlBySession[sessionKey];
+  String? getTempThumbnailUrl(String sessionKey) {
+    final url = _tempThumbnailUrlBySession[sessionKey];
+    print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    print('🔍 [NodeComponentService] getTempThumbnailUrl');
+    print('   sessionKey: $sessionKey');
+    print('   결과: $url');
+    print('   전체 맵: $_tempThumbnailUrlBySession');
+    print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    return url;
+  }
+
   String? getTempThumbnailId(String sessionKey) =>
       _tempThumbnailIdBySession[sessionKey];
 
@@ -124,6 +133,13 @@ class NodeComponentService extends ChangeNotifier {
     if (id != null) {
       _tempThumbnailIdBySession[sessionKey] = id;
     }
+    print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    print('💾 [NodeComponentService] setTempThumbnail');
+    print('   sessionKey: $sessionKey');
+    print('   url: $url');
+    print('   id: $id');
+    print('   저장 후 전체 맵: $_tempThumbnailUrlBySession');
+    print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
     notifyListeners();
   }
 
@@ -131,6 +147,12 @@ class NodeComponentService extends ChangeNotifier {
     _tempThumbnailUrlBySession.remove(sessionKey);
     _tempThumbnailIdBySession.remove(sessionKey);
     notifyListeners();
+  }
+
+  // notifyListeners() 없이 조용히 썸네일 정리 (dispose 시 사용)
+  void clearTempThumbnailSilently(String sessionKey) {
+    _tempThumbnailUrlBySession.remove(sessionKey);
+    _tempThumbnailIdBySession.remove(sessionKey);
   }
 
   /// 노드 선택 (과거 호환: 이미지 선택)

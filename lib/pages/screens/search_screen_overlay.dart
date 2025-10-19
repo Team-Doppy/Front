@@ -1,4 +1,3 @@
-import 'dart:ui' as ui;
 import 'package:doppy/data/models/user_model.dart';
 import 'package:doppy/pages/components/common_profile_avatar.dart';
 import 'package:doppy/pages/screens/user_profile_screen.dart';
@@ -11,8 +10,14 @@ import '../../../data/services/search_service.dart';
 class SearchScreenOverlay extends StatefulWidget {
   final Function(List<PostData>, String)? onSearchComplete; // 검색 결과와 검색어 함께 전달
   final VoidCallback? onClose;
+  final String? initialQuery; // 초기 검색어 (검색어 칩에서 올 때)
 
-  const SearchScreenOverlay({super.key, this.onSearchComplete, this.onClose});
+  const SearchScreenOverlay({
+    super.key,
+    this.onSearchComplete,
+    this.onClose,
+    this.initialQuery,
+  });
 
   @override
   State<SearchScreenOverlay> createState() => _SearchScreenOverlayState();
@@ -28,9 +33,19 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
   @override
   void initState() {
     super.initState();
+
+    // 초기 검색어가 있으면 설정
+    if (widget.initialQuery != null && widget.initialQuery!.isNotEmpty) {
+      _searchController.text = widget.initialQuery!;
+    }
+
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       await context.read<SearchService>().initialize();
       if (mounted) {
+        // 초기 검색어가 있으면 검색 실행
+        if (widget.initialQuery != null && widget.initialQuery!.isNotEmpty) {
+          context.read<SearchService>().onSearchChanged(widget.initialQuery!);
+        }
         _searchFocusNode.requestFocus();
       }
     });
@@ -69,105 +84,89 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
   Widget build(BuildContext context) {
     return Consumer<SearchService>(
       builder: (context, searchService, child) {
-        return Positioned.fill(
-          child: BackdropFilter(
-            filter: ui.ImageFilter.blur(sigmaX: 15, sigmaY: 15),
-            child: Container(
-              color: Theme.of(context).colorScheme.background.withOpacity(1),
-              child: Scaffold(
-                backgroundColor: Colors.transparent,
-                body: SafeArea(
-                  child: Column(
-                    children: [
-                      const SizedBox(height: 5),
-                      _SearchTopBar(
-                        controller: _searchController,
-                        focusNode: _searchFocusNode,
-                        query: searchService.query,
-                        onClear: _clearSearch,
-                        onBack: _resetToInitial,
-                        onClose: widget.onClose,
-                        onSubmitted: () async {
-                          print(
-                            '[SearchOverlay] onSubmitted: ${searchService.query}',
-                          );
-                          await searchService.searchBlogsByTitleOnce(
-                            keyword: searchService.query,
-                          );
+        return Scaffold(
+          backgroundColor: Theme.of(context).colorScheme.background,
+          body: SafeArea(
+            child: Column(
+              children: [
+                const SizedBox(height: 5),
+                _SearchTopBar(
+                  controller: _searchController,
+                  focusNode: _searchFocusNode,
+                  query: searchService.query,
+                  onClear: _clearSearch,
+                  onBack: _resetToInitial,
+                  onClose: widget.onClose,
+                  onSubmitted: () async {
+                    print(
+                      '[SearchOverlay] onSubmitted: ${searchService.query}',
+                    );
+                    await searchService.searchBlogsByTitleOnce(
+                      keyword: searchService.query,
+                    );
 
-                          // 검색 완료 후 결과를 PostData로 변환
-                          final blogResults = searchService.blogResults;
-                          final posts =
-                              blogResults.map((item) {
-                                return PostData(
-                                  id: item.id,
-                                  thumbnailImageUrl: item.imageUrl ?? '',
-                                  title: item.title ?? '',
-                                  summary: '',
-                                  author: item.author ?? item.username ?? '',
-                                  authorProfileImageUrl:
-                                      item.profileImageUrl ?? '',
-                                  content: item.content ?? '',
-                                  accessLevel: AccessLevel.public,
-                                  createdAt:
-                                      item.createdAt ??
-                                      DateTime.now().toIso8601String(),
-                                  updatedAt:
-                                      item.createdAt ??
-                                      DateTime.now().toIso8601String(),
-                                  viewCount: 0,
-                                  likeCount: item.likes ?? 0,
-                                  isLiked: false,
-                                );
-                              }).toList();
-
-                          // 콜백으로 검색 결과와 검색어 전달
-                          widget.onSearchComplete?.call(
-                            posts,
-                            searchService.query,
+                    // 검색 완료 후 결과를 PostData로 변환
+                    final blogResults = searchService.blogResults;
+                    final posts =
+                        blogResults.map((item) {
+                          return PostData(
+                            id: item.id,
+                            thumbnailImageUrl: item.imageUrl ?? '',
+                            title: item.title ?? '',
+                            summary: '',
+                            author: item.author ?? item.username ?? '',
+                            authorProfileImageUrl: item.profileImageUrl ?? '',
+                            content: item.content ?? '',
+                            accessLevel: AccessLevel.public,
+                            createdAt:
+                                item.createdAt ??
+                                DateTime.now().toIso8601String(),
+                            updatedAt:
+                                item.createdAt ??
+                                DateTime.now().toIso8601String(),
+                            viewCount: 0,
+                            likeCount: item.likes ?? 0,
+                            isLiked: false,
                           );
+                        }).toList();
 
-                          // 오버레이 닫기
-                          widget.onClose?.call();
+                    // 콜백으로 검색 결과와 검색어 전달 (콜백에서 Navigator.pop 처리)
+                    widget.onSearchComplete?.call(posts, searchService.query);
+                  },
+                ),
+                Expanded(
+                  child: AnimatedBuilder(
+                    animation: searchService,
+                    builder: (_, __) {
+                      final bool disableAnim =
+                          _freezeDuringPush || searchService.query.isNotEmpty;
+                      return AnimatedSwitcher(
+                        duration:
+                            disableAnim
+                                ? const Duration(milliseconds: 0)
+                                : const Duration(milliseconds: 250),
+                        switchInCurve: Curves.easeOut,
+                        switchOutCurve: Curves.easeIn,
+                        transitionBuilder: (child, anim) {
+                          if (disableAnim) return child;
+                          final slide = Tween<Offset>(
+                            begin: const Offset(0.0, 0.04),
+                            end: Offset.zero,
+                          ).animate(anim);
+                          return FadeTransition(
+                            opacity: anim,
+                            child: SlideTransition(
+                              position: slide,
+                              child: child,
+                            ),
+                          );
                         },
-                      ),
-                      Expanded(
-                        child: AnimatedBuilder(
-                          animation: searchService,
-                          builder: (_, __) {
-                            final bool disableAnim =
-                                _freezeDuringPush ||
-                                searchService.query.isNotEmpty;
-                            return AnimatedSwitcher(
-                              duration:
-                                  disableAnim
-                                      ? const Duration(milliseconds: 0)
-                                      : const Duration(milliseconds: 250),
-                              switchInCurve: Curves.easeOut,
-                              switchOutCurve: Curves.easeIn,
-                              transitionBuilder: (child, anim) {
-                                if (disableAnim) return child;
-                                final slide = Tween<Offset>(
-                                  begin: const Offset(0.0, 0.04),
-                                  end: Offset.zero,
-                                ).animate(anim);
-                                return FadeTransition(
-                                  opacity: anim,
-                                  child: SlideTransition(
-                                    position: slide,
-                                    child: child,
-                                  ),
-                                );
-                              },
-                              child: _buildSearchBody(context, searchService),
-                            );
-                          },
-                        ),
-                      ),
-                    ],
+                        child: _buildSearchBody(context, searchService),
+                      );
+                    },
                   ),
                 ),
-              ),
+              ],
             ),
           ),
         );

@@ -41,6 +41,9 @@ class HomeScreenState extends State<HomeScreen> {
   // 피드 필터 상태
   bool _isShowingFriendsOnly = true; // 친구만 보기 여부 (기본: 친구글)
 
+  // 새로고침 시 배경 이미지 유지용
+  String? _previousBackgroundImageUrl;
+
   @override
   void initState() {
     super.initState();
@@ -81,16 +84,60 @@ class HomeScreenState extends State<HomeScreen> {
     });
   }
 
-  // 검색 오버레이 열기
-  void openSearchOverlay() {
-    print('[HomeScreen.openSearchOverlay] 호출됨');
-    context.read<SearchResultProvider>().setSearchOverlayVisible(true);
-    setState(() {
-      _isSearchOverlayVisible = true;
-    });
+  // 검색 결과 설정 (외부에서 호출)
+  void setSearchResults(List<PostData> results, String query) {
+    if (mounted) {
+      setState(() {
+        _posts = results;
+        _isShowingSearchResults = true;
+        _searchQuery = query;
+        _currentPostIndex = 0;
+      });
+    }
+  }
+
+  // 검색 오버레이 열기 (독립 화면으로)
+  void openSearchOverlay({String? initialQuery}) {
+    print('[HomeScreen.openSearchOverlay] 호출됨 - initialQuery: $initialQuery');
+    Navigator.of(context).push(
+      PageRouteBuilder(
+        opaque: true,
+        pageBuilder: (context, animation, secondaryAnimation) {
+          return FadeTransition(
+            opacity: animation,
+            child: SearchScreenOverlay(
+              initialQuery: initialQuery, // 초기 검색어 전달
+              onSearchComplete: (results, query) {
+                // 검색 결과를 받아서 홈화면으로 돌아가며 표시
+                Navigator.of(context).pop(); // 검색 화면 닫기
+                setSearchResults(results, query); // 검색 결과 설정
+              },
+              onClose: () {
+                Navigator.of(context).pop();
+              },
+            ),
+          );
+        },
+        transitionsBuilder: (context, animation, secondaryAnimation, child) {
+          return child;
+        },
+        transitionDuration: const Duration(milliseconds: 200),
+        reverseTransitionDuration: const Duration(milliseconds: 200),
+      ),
+    );
   }
 
   void _resetFeed({bool showLoading = true}) {
+    // 새로고침 시 현재 배경 이미지를 이전 이미지로 저장
+    if (_posts.isNotEmpty) {
+      final safeIndex = _currentPostIndex.clamp(0, _posts.length - 1);
+      final currentPost = _posts[safeIndex];
+      final String imageUrl = currentPost.thumbnailImageUrl.trim();
+      if (imageUrl.startsWith('http')) {
+        _previousBackgroundImageUrl = imageUrl;
+      }
+    }
+
     setState(() {
       _posts = [];
       _currentPage = 0;
@@ -139,6 +186,8 @@ class HomeScreenState extends State<HomeScreen> {
       setState(() {
         if (refresh) {
           _posts = posts;
+          // 새로고침 완료 후 이전 배경 이미지 정리
+          _previousBackgroundImageUrl = null;
         } else {
           _posts.addAll(posts);
         }
@@ -170,6 +219,54 @@ class HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildDynamicBackground() {
+    // 새로고침 중이고 이전 배경 이미지가 있으면 그것을 사용
+    if (_posts.isEmpty && _previousBackgroundImageUrl != null) {
+      return Positioned.fill(
+        child: Stack(
+          children: [
+            Positioned.fill(
+              child: CachedNetworkImage(
+                imageUrl: _previousBackgroundImageUrl!,
+                fit: BoxFit.cover,
+                key: ValueKey('bg-previous-$_previousBackgroundImageUrl'),
+                placeholder:
+                    (context, url) => ShimmerBox(
+                      width: double.infinity,
+                      height: double.infinity,
+                    ),
+                errorWidget: (context, url, error) => const Icon(Icons.error),
+              ),
+            ),
+            Positioned.fill(
+              child: BackdropFilter(
+                filter: ui.ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+                child: Container(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [
+                        Theme.of(
+                          context,
+                        ).colorScheme.background.withOpacity(0.8),
+                        Theme.of(
+                          context,
+                        ).colorScheme.background.withOpacity(0.8),
+                        Theme.of(
+                          context,
+                        ).colorScheme.background.withOpacity(0.8),
+                      ],
+                      stops: const [0.0, 0.7, 1.0],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
     if (_posts.isEmpty) return const SizedBox.shrink();
 
     // 안전한 인덱스 범위 체크
@@ -210,13 +307,13 @@ class HomeScreenState extends State<HomeScreen> {
                     colors: [
                       Theme.of(
                         context,
-                      ).colorScheme.background.withOpacity(0.85),
+                      ).colorScheme.background.withOpacity(0.75),
                       Theme.of(
                         context,
-                      ).colorScheme.background.withOpacity(0.85),
+                      ).colorScheme.background.withOpacity(0.75),
                       Theme.of(
                         context,
-                      ).colorScheme.background.withOpacity(0.85),
+                      ).colorScheme.background.withOpacity(0.75),
                     ],
                     stops: const [0.0, 0.7, 1.0],
                   ),
@@ -234,161 +331,13 @@ class HomeScreenState extends State<HomeScreen> {
     final screenWidth = MediaQuery.of(context).size.width;
 
     return Stack(
-      children: [
-        _buildDynamicBackground(),
-        Scaffold(
-          backgroundColor: Colors.transparent,
-          extendBodyBehindAppBar: true,
-          appBar: AppBar(
-            toolbarHeight: 40,
-            backgroundColor: Colors.transparent,
-            elevation: 0,
-            scrolledUnderElevation: 0,
-            title: Text(
-              ' Doppy',
-              style: GoogleFonts.notoSansKr(
-                fontSize: 25,
-                fontWeight: FontWeight.bold,
-                color: Theme.of(context).colorScheme.primary,
-              ),
-            ),
-            centerTitle: false,
-
-            actions: [
-              // 검색 중이면 검색어 칩 + 아이콘, 아니면 검색 아이콘만
-              if (_isShowingSearchResults && _searchQuery.isNotEmpty)
-                GestureDetector(
-                  onTap: () {
-                    setState(() {
-                      _isSearchOverlayVisible = true;
-                    });
-                  },
-                  child: Container(
-                    margin: const EdgeInsets.only(right: 8),
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(16),
-                      child: BackdropFilter(
-                        filter: ui.ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 6,
-                          ),
-                          decoration: BoxDecoration(
-                            color: Theme.of(
-                              context,
-                            ).colorScheme.surface.withOpacity(0.2),
-                            borderRadius: BorderRadius.circular(16),
-                            border: Border.all(
-                              color: Theme.of(
-                                context,
-                              ).colorScheme.primary.withOpacity(0.3),
-                              width: 1,
-                            ),
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(
-                                Icons.search,
-                                size: 18,
-                                color: Theme.of(context).colorScheme.primary,
-                              ),
-                              const SizedBox(width: 6),
-                              Text(
-                                _searchQuery,
-                                style: TextStyle(
-                                  color:
-                                      Theme.of(context).colorScheme.onSurface,
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.w500,
-                                ),
-                              ),
-                              const SizedBox(width: 6),
-                              GestureDetector(
-                                onTap: () {
-                                  // Provider 클리어
-                                  context
-                                      .read<SearchResultProvider>()
-                                      .clearSearchResults();
-
-                                  setState(() {
-                                    _isShowingSearchResults = false;
-                                    _searchQuery = '';
-                                    _currentPostIndex = 0;
-                                  });
-                                  // 홈 포스트 다시 로드
-                                  _loadPosts(refresh: true);
-                                },
-                                child: Icon(
-                                  Icons.close,
-                                  size: 18,
-                                  color: Theme.of(
-                                    context,
-                                  ).colorScheme.onSurface.withOpacity(0.7),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                )
-              else ...[
-                // 피드 필터 드롭다운
-                IconButton(
-                  onPressed: () {
-                    FeedFilterDropdown.show(
-                      context,
-                      isShowingFriendsOnly: _isShowingFriendsOnly,
-                      onFilterChanged: (showFriendsOnly) {
-                        _resetFeed(showLoading: true);
-                        _isShowingFriendsOnly = showFriendsOnly;
-                        _loadPosts(refresh: true); // 완전 새로고침
-                      },
-                    );
-                  },
-                  icon: Icon(Icons.keyboard_arrow_down_rounded),
-                ),
-              ],
-            ],
-          ),
-          body: _buildContent(screenWidth),
-        ),
-
-        // 검색 오버레이
-        if (_isSearchOverlayVisible)
-          SearchScreenOverlay(
-            onSearchComplete: (results, query) {
-              setState(() {
-                _posts = results;
-                _isShowingSearchResults = true;
-                _searchQuery = query; // 검색어 저장
-                _currentPostIndex = 0; // 첫 번째 포스트로 리셋
-              });
-            },
-            onClose: () {
-              context.read<SearchResultProvider>().setSearchOverlayVisible(
-                false,
-              );
-              setState(() {
-                _isSearchOverlayVisible = false;
-              });
-            },
-          ),
-      ],
+      children: [_buildDynamicBackground(), _buildContent(screenWidth)],
     );
   }
 
   Widget _buildContent(double screenWidth) {
-    print(
-      '[HomeScreen._buildContent] _isLoading=$_isLoading, postsCount=${_posts.length}, error=$_error',
-    );
-
     // 데이터가 준비되어 있다면 애니메이션 없이 즉시 렌더링
     if (!_isLoading && _error == null && _posts.isNotEmpty) {
-      print('[HomeScreen._buildContent] 즉시 PostList 렌더링');
       return PostList(
         containerWidth: screenWidth,
         posts: _posts,
@@ -401,6 +350,33 @@ class HomeScreenState extends State<HomeScreen> {
           setState(() {
             _currentPostIndex = index;
           });
+        },
+        isShowingSearchResults: _isShowingSearchResults,
+        searchQuery: _searchQuery,
+        onSearchChipTap: () => openSearchOverlay(initialQuery: _searchQuery),
+        onClearSearch: () {
+          // Provider 클리어
+          context.read<SearchResultProvider>().clearSearchResults();
+
+          setState(() {
+            _isShowingSearchResults = false;
+            _searchQuery = '';
+            _currentPostIndex = 0;
+          });
+          // 홈 포스트 다시 로드
+          _loadPosts(refresh: true);
+        },
+        isShowingFriendsOnly: _isShowingFriendsOnly,
+        onFilterTap: () {
+          FeedFilterDropdown.show(
+            context,
+            isShowingFriendsOnly: _isShowingFriendsOnly,
+            onFilterChanged: (showFriendsOnly) {
+              _resetFeed(showLoading: true);
+              _isShowingFriendsOnly = showFriendsOnly;
+              _loadPosts(refresh: true); // 완전 새로고침
+            },
+          );
         },
       );
     }
@@ -420,6 +396,34 @@ class HomeScreenState extends State<HomeScreen> {
                 setState(() {
                   _currentPostIndex = index;
                 });
+              },
+              isShowingSearchResults: _isShowingSearchResults,
+              searchQuery: _searchQuery,
+              onSearchChipTap:
+                  () => openSearchOverlay(initialQuery: _searchQuery),
+              onClearSearch: () {
+                // Provider 클리어
+                context.read<SearchResultProvider>().clearSearchResults();
+
+                setState(() {
+                  _isShowingSearchResults = false;
+                  _searchQuery = '';
+                  _currentPostIndex = 0;
+                });
+                // 홈 포스트 다시 로드
+                _loadPosts(refresh: true);
+              },
+              isShowingFriendsOnly: _isShowingFriendsOnly,
+              onFilterTap: () {
+                FeedFilterDropdown.show(
+                  context,
+                  isShowingFriendsOnly: _isShowingFriendsOnly,
+                  onFilterChanged: (showFriendsOnly) {
+                    _resetFeed(showLoading: true);
+                    _isShowingFriendsOnly = showFriendsOnly;
+                    _loadPosts(refresh: true); // 완전 새로고침
+                  },
+                );
               },
             )
             : (_posts.isEmpty)

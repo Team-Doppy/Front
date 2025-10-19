@@ -187,10 +187,24 @@ class BlogService {
         ),
       );
 
-      print('[BlogService] 프로필 포스트 응답 상태: ${response.statusCode}');
-
       if (response.statusCode == 200) {
         final data = json.decode(response.body) as Map<String, dynamic>;
+
+        // 디버깅: 서버 응답 데이터 구조 확인
+        print('[BlogService] 서버 응답 데이터 구조:');
+        if (data.containsKey('data') && data['data'] is Map) {
+          final dataMap = data['data'] as Map<String, dynamic>;
+          if (dataMap.containsKey('posts') && dataMap['posts'] is List) {
+            final posts = dataMap['posts'] as List;
+            print('[BlogService] 포스트 개수: ${posts.length}');
+            if (posts.isNotEmpty) {
+              final firstPost = posts.first as Map<String, dynamic>;
+              print('[BlogService] 첫 번째 포스트 필드들: ${firstPost.keys.toList()}');
+              print('[BlogService] 첫 번째 포스트 데이터: $firstPost');
+            }
+          }
+        }
+
         return data;
       } else if (response.statusCode == 404) {
         throw Exception('사용자를 찾을 수 없습니다.');
@@ -496,6 +510,7 @@ class BlogService {
       'content': contentJson ?? const <String, dynamic>{'nodes': []},
       'accessLevel': accessLevel,
       'summary': summary,
+      'categoryId': postData['categoryId'] ?? 0,
       if (postData['usedImageIds'] != null)
         'usedImageIds': List<int>.from(postData['usedImageIds'] as List),
       if (thumbnailImageId != null) 'thumbnailImageId': thumbnailImageId,

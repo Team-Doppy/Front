@@ -159,10 +159,10 @@ class CategoryDropDown {
 
         // 시스템 카테고리들은 본인 프로필일 때만 표시
         if (isOwnProfile) ...[
-          if (_getSystemCategoryCount(postsByCategory, '나만보기') > 0) ...[
+          if (_getSystemCategoryCount(feedProvider, '나만보기') > 0) ...[
             _buildCategoryItem(
               title: '나만보기',
-              count: _getSystemCategoryCount(postsByCategory, '나만보기'),
+              count: _getSystemCategoryCount(feedProvider, '나만보기'),
               isSelected:
                   feedProvider.selectedBase == BaseFilter.private &&
                   feedProvider.selectedCategoryId == null,
@@ -174,10 +174,10 @@ class CategoryDropDown {
               },
             ),
           ],
-          if (_getSystemCategoryCount(postsByCategory, '그룹공유') > 0) ...[
+          if (_getSystemCategoryCount(feedProvider, '그룹공유') > 0) ...[
             _buildCategoryItem(
               title: '그룹공유',
-              count: _getSystemCategoryCount(postsByCategory, '그룹공유'),
+              count: _getSystemCategoryCount(feedProvider, '그룹공유'),
               isSelected:
                   feedProvider.selectedBase == BaseFilter.groups &&
                   feedProvider.selectedCategoryId == null,
@@ -189,10 +189,10 @@ class CategoryDropDown {
               },
             ),
           ],
-          if (_getSystemCategoryCount(postsByCategory, '전체공개') > 0) ...[
+          if (_getSystemCategoryCount(feedProvider, '전체공개') > 0) ...[
             _buildCategoryItem(
               title: '전체공개',
-              count: _getSystemCategoryCount(postsByCategory, '전체공개'),
+              count: _getSystemCategoryCount(feedProvider, '전체공개'),
               isSelected:
                   feedProvider.selectedBase == BaseFilter.public &&
                   feedProvider.selectedCategoryId == null,
@@ -360,17 +360,30 @@ class CategoryDropDown {
 
   /// 시스템 카테고리별 포스트 수 계산
   int _getSystemCategoryCount(
-    Map<String, List<Map<String, dynamic>>> postsByCategory,
+    ProfileFeedProvider feedProvider,
     String categoryName,
   ) {
-    // 시스템 카테고리 ID 매핑
-    final systemCategoryIds = {'전체공개': '-1', '나만보기': '-2', '그룹공유': '-3'};
-
-    final categoryId = systemCategoryIds[categoryName];
-    if (categoryId != null) {
-      return postsByCategory[categoryId]?.length ?? 0;
+    // 실제 포스트 데이터의 accessLevel을 기준으로 계산
+    int count;
+    switch (categoryName) {
+      case '전체':
+        count = feedProvider.totalPostCount;
+        break;
+      case '나만보기':
+        count = feedProvider.privatePostCount;
+        break;
+      case '그룹공유':
+        count = feedProvider.groupsPostCount;
+        break;
+      case '전체공개':
+        count = feedProvider.publicPostCount;
+        break;
+      default:
+        count = 0;
     }
-    return 0;
+
+    print('[CategoryDropDown] _getSystemCategoryCount($categoryName): $count');
+    return count;
   }
 
   /// 카테고리 생성 (서버 API 호출)

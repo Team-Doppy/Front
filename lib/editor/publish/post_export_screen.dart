@@ -56,21 +56,24 @@ class _PostExportScreenState extends State<PostExportScreen>
   bool _editMode = false;
 
   // Step 2: 공개 범위 선택
-  String _audienceButtonText = '전체 공개';
   final Set<int> _selectedAudienceGroupIds = {};
   bool _audienceSelectAll = true;
   bool _audiencePrivateOnly = false;
 
   // Step 3: 카테고리 선택
-  int? _selectedCategoryId;
-  String _selectedCategoryName = '미분류';
+  int? _selectedCategoryId = 0; // 기본값: 미지정 카테고리 (ID: 0)
   bool _isCreatingCategory = false;
   final TextEditingController _newCategoryController = TextEditingController();
   List<Map<String, dynamic>>? _cachedCategories; // 캐시된 카테고리 목록
+  bool _isLoadingCategories = false; // 카테고리 로딩 상태
+  bool _showCategoryLoading = false; // 1초 후에만 표시할 카테고리 로딩
+  bool _showGroupLoading = false; // 1초 후에만 표시할 그룹 로딩
+  bool _isGroupLoadingStarted = false; // 그룹 로딩 시작 여부
 
   bool _isUploading = false;
   bool _isUploadingThumb = false;
   String? _thumbnailImageId;
+  bool _showLoadingOverlay = false; // 0.8초 후에만 표시할 로딩 오버레이
 
   late final AnimationController _controller = AnimationController(
     vsync: this,
@@ -78,25 +81,32 @@ class _PostExportScreenState extends State<PostExportScreen>
   );
   late final AnimationController _intro = AnimationController(
     vsync: this,
-    duration: const Duration(milliseconds: 800),
+    duration: const Duration(milliseconds: 300),
   );
   late final Animation<double> _introCurve = CurvedAnimation(
     parent: _intro,
     curve: Curves.elasticOut,
+    reverseCurve: Curves.easeInCubic, // 닫힐 때는 부드럽게
   );
 
   @override
   void initState() {
     super.initState();
+    print('[PostExport] ═══════════════════════════════════════');
+    print('[PostExport] initState 호출됨 - sessionKey: $_nsKey');
+    print('[PostExport] ═══════════════════════════════════════');
     _hydrateFromExported(jsonDecode(widget.exported));
     _intro.forward();
-    _loadPersistedThumbnail();
     _titleFocusNode.addListener(_onEditFocusChange);
     _excerptFocusNode.addListener(_onEditFocusChange);
   }
 
   @override
   void dispose() {
+    print('[PostExport] ═══════════════════════════════════════');
+    print('[PostExport] dispose 호출됨 - sessionKey: $_nsKey');
+    print('[PostExport] 썸네일은 유지됨 (에디터가 켜져있는 동안)');
+    print('[PostExport] ═══════════════════════════════════════');
     try {
       _titleFocusNode.removeListener(_onEditFocusChange);
       _excerptFocusNode.removeListener(_onEditFocusChange);
@@ -104,7 +114,12 @@ class _PostExportScreenState extends State<PostExportScreen>
       _titleFocusNode.dispose();
       _excerptController.dispose();
       _excerptFocusNode.dispose();
-    } catch (_) {}
+
+      // 썸네일은 dispose에서 정리하지 않음!
+      // 발행 성공 시 또는 작성취소 시에만 정리
+    } catch (e) {
+      print('[PostExport] dispose 에러: $e');
+    }
     super.dispose();
   }
 
@@ -128,12 +143,22 @@ class _PostExportScreenState extends State<PostExportScreen>
       _titleController.text = _title;
     }
 
-    _exportedThumbnailImageUrl =
-        _readString(
-          exported,
-          keys: const ['thumbnailImageUrl', 'thumbnailUrl', 'thumnailUrl'],
-        ) ??
-        '';
+    // 썸네일: persist된 값만 사용 (exported 값은 무시)
+    final svc = NodeComponentService();
+    print('[PostExport] 썸네일 복원 시도 - sessionKey: $_nsKey');
+    final persistedUrl = svc.getTempThumbnailUrl(_nsKey) ?? '';
+    final persistedId = svc.getTempThumbnailId(_nsKey);
+
+    _exportedThumbnailImageUrl = persistedUrl;
+    _thumbnailImageId = persistedId;
+
+    if (persistedUrl.isNotEmpty) {
+      print(
+        '[PostExport] ✅ persist된 썸네일 복원 성공: $persistedUrl (ID: $persistedId)',
+      );
+    } else {
+      print('[PostExport] ⚠️ persist된 썸네일 없음 (새로 추가 필요)');
+    }
 
     // 본문 전체 내용
     String collected = _collectText(exported);
@@ -153,19 +178,6 @@ class _PostExportScreenState extends State<PostExportScreen>
     setState(() {});
   }
 
-  // ImageService의 휘발성 캐시에 저장/로드/삭제
-  void _loadPersistedThumbnail() {
-    final svc = NodeComponentService();
-    final url = svc.getTempThumbnailUrl(_nsKey) ?? '';
-    final id = svc.getTempThumbnailId(_nsKey);
-    if (mounted && _exportedThumbnailImageUrl.isEmpty && url.isNotEmpty) {
-      setState(() {
-        _exportedThumbnailImageUrl = url;
-        _thumbnailImageId = id;
-      });
-    }
-  }
-
   Future<void> _persistThumbnail() async {
     if (_exportedThumbnailImageUrl.isNotEmpty) {
       NodeComponentService().setTempThumbnail(
@@ -173,6 +185,11 @@ class _PostExportScreenState extends State<PostExportScreen>
         url: _exportedThumbnailImageUrl,
         id: _thumbnailImageId,
       );
+      print(
+        '[PostExport] 썸네일 persist 완료: $_exportedThumbnailImageUrl (ID: $_thumbnailImageId, sessionKey: $_nsKey)',
+      );
+    } else {
+      print('[PostExport] 썸네일 persist 실패: URL이 비어있음');
     }
   }
 
@@ -228,6 +245,30 @@ class _PostExportScreenState extends State<PostExportScreen>
     }
   }
 
+  // 부드러운 애니메이션과 함께 닫기
+  Future<void> _closeWithAnimation() async {
+    // 썸네일 정리
+    try {
+      NodeComponentService().clearTempThumbnail(_nsKey);
+      print('[PostExport] 에디터 닫기 - 로컬 썸네일 이미지 정리 완료');
+    } catch (e) {
+      print('[PostExport] 에디터 닫기 - 썸네일 정리 실패: $e');
+    }
+
+    // 닫힐 때는 빠르게 (250ms)
+    _intro.duration = const Duration(milliseconds: 250);
+    await _intro.reverse();
+    // 다시 원래 duration으로 복원
+    _intro.duration = const Duration(milliseconds: 800);
+
+    if (!mounted) return;
+
+    Navigator.of(context).pop({
+      'thumbnailImageUrl': _exportedThumbnailImageUrl,
+      'thumbnailImageId': _thumbnailImageId,
+    });
+  }
+
   // 등록 가능 여부 확인 (서버 API 스펙 준수)
   bool _canPublish() {
     // 1. 기본 상태 확인
@@ -235,11 +276,14 @@ class _PostExportScreenState extends State<PostExportScreen>
       return false;
     }
 
-    // 2. 필수 필드 확인 (모든 공개 범위에서 필수)
-    if (_title.trim().isEmpty) {
+    // 2. 필수 필드 확인 (편집된 내용 기준)
+    final editedTitle = _titleController.text.trim();
+    final editedExcerpt = _excerptController.text.trim();
+
+    if (editedTitle.isEmpty) {
       return false;
     }
-    if (_excerpt.trim().isEmpty) {
+    if (editedExcerpt.isEmpty) {
       return false;
     }
     if (_exportedThumbnailImageUrl.trim().isEmpty) {
@@ -253,6 +297,9 @@ class _PostExportScreenState extends State<PostExportScreen>
       return false;
     }
 
+    // 4. 카테고리 선택 확인 (미지정 카테고리 ID: 0도 유효)
+    // _selectedCategoryId는 기본값이 0이므로 항상 유효
+
     return true;
   }
 
@@ -261,10 +308,13 @@ class _PostExportScreenState extends State<PostExportScreen>
     if (_isUploadingThumb) {
       return '이미지 업로드 중입니다.';
     }
-    if (_title.trim().isEmpty) {
+    final editedTitle = _titleController.text.trim();
+    final editedExcerpt = _excerptController.text.trim();
+
+    if (editedTitle.isEmpty) {
       return '제목을 입력해주세요.';
     }
-    if (_excerpt.trim().isEmpty) {
+    if (editedExcerpt.isEmpty) {
       return '본문 내용을 입력해주세요.';
     }
     if (_exportedThumbnailImageUrl.trim().isEmpty) {
@@ -275,19 +325,24 @@ class _PostExportScreenState extends State<PostExportScreen>
         _selectedAudienceGroupIds.isEmpty) {
       return '그룹 공유를 선택했을 경우 최소 1개 이상의 그룹을 선택해주세요.';
     }
+    // 카테고리 선택은 기본값이 0(미지정)이므로 항상 유효
     return '등록할 수 없습니다.';
   }
 
   Future<void> _publish() async {
     try {
+      // 최종 편집된 내용으로 검증
+      final finalTitle = _titleController.text.trim();
+      final finalExcerpt = _excerptController.text.trim();
+
       // 1. 제목 검증 (모든 공개 범위에서 필수)
-      if (_title.trim().isEmpty) {
+      if (finalTitle.isEmpty) {
         ErrorHandler.showError(context, '제목을 입력해주세요.');
         return;
       }
 
       // 2. 컨텐츠 검증 (모든 공개 범위에서 필수)
-      if (_excerpt.trim().isEmpty) {
+      if (finalExcerpt.isEmpty) {
         ErrorHandler.showError(context, '본문 내용을 입력해주세요.');
         return;
       }
@@ -306,9 +361,22 @@ class _PostExportScreenState extends State<PostExportScreen>
         return;
       }
 
+      // 5. 카테고리 선택 검증 (기본값이 0이므로 항상 유효)
+      // _selectedCategoryId는 기본값이 0(미지정)이므로 검증 불필요
+
       // 모든 검증 통과 후 업로드 시작
       setState(() {
         _isUploading = true;
+        _showLoadingOverlay = false; // 초기에는 오버레이 숨김
+      });
+
+      // 0.8초 후에 로딩 오버레이 표시
+      Future.delayed(const Duration(milliseconds: 1000), () {
+        if (mounted && _isUploading) {
+          setState(() {
+            _showLoadingOverlay = true;
+          });
+        }
       });
 
       final Map<String, dynamic> payload = await _buildFinalJson();
@@ -316,8 +384,8 @@ class _PostExportScreenState extends State<PostExportScreen>
       // 최종 검증된 데이터 로깅
       final String json = const JsonEncoder.withIndent('  ').convert(payload);
       debugPrint('===== FINAL POST JSON (API SPEC COMPLIANT) =====');
-      debugPrint('제목: $_title');
-      debugPrint('컨텐츠: $_excerpt');
+      debugPrint('제목: $finalTitle');
+      debugPrint('컨텐츠: $finalExcerpt');
       debugPrint('썸네일: $_exportedThumbnailImageUrl');
       debugPrint(
         '공개 범위: ${_audienceSelectAll ? "PUBLIC" : (_audiencePrivateOnly ? "PRIVATE" : "GROUPS")}',
@@ -325,6 +393,7 @@ class _PostExportScreenState extends State<PostExportScreen>
       if (!_audienceSelectAll && !_audiencePrivateOnly) {
         debugPrint('선택된 그룹: $_selectedAudienceGroupIds');
       }
+      debugPrint('카테고리 ID: $_selectedCategoryId');
       printLarge(json);
 
       if (!mounted) return;
@@ -364,9 +433,23 @@ class _PostExportScreenState extends State<PostExportScreen>
       // 이미지 매핑 맵 정리 (발행 완료 후)
       NodeComponentService().clearImageUrlMapping();
 
-      // 내 프로필 피드 캐시 무효화 (새 포스트 발행)
+      // 로컬 썸네일 이미지 정리 (발행 완료 후)
       try {
-        context.read<ProfileFeedProvider>().invalidateCache();
+        NodeComponentService().clearTempThumbnail(_nsKey);
+        print('[PostExport] 로컬 썸네일 이미지 정리 완료');
+      } catch (e) {
+        print('[PostExport] 썸네일 정리 실패: $e');
+      }
+
+      // 내 프로필 피드 캐시 무효화 후 백그라운드에서 재로드 (새 포스트 발행)
+      try {
+        final feedProvider = context.read<ProfileFeedProvider>();
+        await feedProvider.invalidateCache();
+        // 백그라운드에서 서버 재로드 (await 제거)
+        feedProvider.refresh().catchError((e) {
+          print('[PostExport] 백그라운드 재로드 실패: $e');
+        });
+        print('[PostExport] 캐시 무효화 완료, 백그라운드 재로드 시작');
       } catch (e) {
         print('[PostExport] 캐시 무효화 실패: $e');
       }
@@ -397,18 +480,37 @@ class _PostExportScreenState extends State<PostExportScreen>
       if (mounted) {
         setState(() {
           _isUploading = false;
+          _showLoadingOverlay = false; // 업로드 완료 시 오버레이 숨김
         });
       }
     }
   }
 
   Future<Map<String, dynamic>> _buildFinalJson() async {
+    // 사용자가 최종 편집한 제목과 본문 사용
+    final editedTitle = _titleController.text.trim();
+    final editedExcerpt = _excerptController.text.trim();
+
+    // 기존 exportedBase를 복사하고 편집된 내용으로 덮어쓰기
+    final editedBase = Map<String, dynamic>.from(_exportedBase);
+
+    // 제목과 본문을 편집된 내용으로 업데이트
+    editedBase['title'] = editedTitle;
+    editedBase['excerpt'] = editedExcerpt;
+    editedBase['summary'] = editedExcerpt; // 사용자가 편집한 내용을 summary로 설정
+
+    // 본문 내용도 업데이트 (필요한 경우)
+    if (editedBase.containsKey('content')) {
+      editedBase['content'] = editedExcerpt;
+    }
+
     return PostExporter.composeFinalPayload(
       thumbnailImageUrl: _exportedThumbnailImageUrl,
-      base: Map<String, dynamic>.from(_exportedBase),
+      base: editedBase,
       privateOnly: _audiencePrivateOnly,
       publicOnly: _audienceSelectAll,
       selectedGroupIds: _selectedAudienceGroupIds.toList(),
+      categoryId: _selectedCategoryId, // 카테고리 ID 전달
       createdAt: DateTime.now(),
     );
   }
@@ -430,11 +532,17 @@ class _PostExportScreenState extends State<PostExportScreen>
           final hasUrl = (t.url ?? '').isNotEmpty;
           final hasServerImageId = (t.imageId ?? '').toString().isNotEmpty;
           if (t.state == UploadState.success && hasUrl && hasServerImageId) {
-            setState(() {
-              _exportedThumbnailImageUrl = t.url!;
-              _thumbnailImageId = t.imageId; // 서버 imageId만 사용
-            });
+            // 먼저 persist (setState 전에)
+            _exportedThumbnailImageUrl = t.url!;
+            _thumbnailImageId = t.imageId;
             await _persistThumbnail();
+
+            // 그 다음 UI 업데이트
+            if (mounted) {
+              setState(() {
+                // 이미 위에서 설정했으므로 여기서는 UI만 업데이트
+              });
+            }
           } else {
             if (mounted) {
               ErrorHandler.showError(context, '썸네일 업로드에 실패했어요. 다시 시도해주세요.');
@@ -522,7 +630,7 @@ class _PostExportScreenState extends State<PostExportScreen>
       });
 
       // Step 3 진입 시 카테고리 로드
-      if (_currentStep == 2 && _cachedCategories == null) {
+      if (_currentStep == 1 && _cachedCategories == null) {
         _loadCategoriesOnce();
       }
     }
@@ -541,9 +649,11 @@ class _PostExportScreenState extends State<PostExportScreen>
   bool _canProceedToNextStep() {
     switch (_currentStep) {
       case 0: // Step 1: 썸네일 & 글 편집
+        final editedTitle = _titleController.text.trim();
+        final editedExcerpt = _excerptController.text.trim();
         return _exportedThumbnailImageUrl.isNotEmpty &&
-            _title.trim().isNotEmpty &&
-            _excerpt.trim().isNotEmpty;
+            editedTitle.isNotEmpty &&
+            editedExcerpt.isNotEmpty;
       case 1: // Step 2: 공개 범위
         // 전체공개, 나만보기, 또는 그룹 중 하나는 선택되어야 함
         return _audienceSelectAll ||
@@ -562,35 +672,126 @@ class _PostExportScreenState extends State<PostExportScreen>
 
     return WillPopScope(
       onWillPop: () async {
+        // 업로드 중에는 뒤로 가기 방지
+        if (_isUploading) {
+          return false;
+        }
+
         if (_currentStep > 0) {
           _previousStep();
           return false;
         }
-        Navigator.of(context).pop({
-          'thumbnailImageUrl': _exportedThumbnailImageUrl,
-          'thumbnailImageId': _thumbnailImageId,
-        });
-        return true;
+
+        // Step 0에서 뒤로가기 시 부드러운 애니메이션과 함께 닫기
+        await _closeWithAnimation();
+        return false; // WillPopScope가 직접 처리하지 않도록 false 반환
       },
-      child: Stack(
-        children: [
-          _buildDynamicBackground(),
-          Scaffold(
-            backgroundColor: Colors.transparent,
-            extendBodyBehindAppBar: true,
-            appBar: _editMode ? _buildFocusAppBar() : _buildNormalAppBar(),
-            body: SafeArea(
-              child: IndexedStack(
-                index: _currentStep,
-                children: [
-                  _buildStep1ThumbnailAndEdit(cardRadius),
-                  _buildStep2AudienceSelection(),
-                  _buildStep3CategorySelection(),
-                ],
+      child: FadeTransition(
+        opacity: _intro,
+        child: Stack(
+          children: [
+            _buildDynamicBackground(),
+            Scaffold(
+              backgroundColor: Colors.transparent,
+              extendBodyBehindAppBar: true,
+              appBar: _editMode ? _buildFocusAppBar() : _buildNormalAppBar(),
+              body: SafeArea(
+                child: IndexedStack(
+                  index: _currentStep,
+                  children: [
+                    _buildStep1ThumbnailAndEdit(cardRadius),
+                    _buildStep2AudienceSelection(),
+                    _buildStep3CategorySelection(),
+                  ],
+                ),
               ),
             ),
-          ),
-        ],
+            // 업로드 중 전체 화면 오버레이 (0.8초 후에만 표시)
+            AnimatedOpacity(
+              opacity: _showLoadingOverlay ? 1.0 : 0.0,
+              duration: const Duration(milliseconds: 300),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 300),
+                curve: Curves.easeInOut,
+                color:
+                    _showLoadingOverlay
+                        ? Colors.black.withOpacity(0.8)
+                        : Colors.transparent,
+                child:
+                    _showLoadingOverlay
+                        ? Center(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              // 부드러운 로딩 인디케이터
+                              TweenAnimationBuilder<double>(
+                                duration: const Duration(milliseconds: 800),
+                                tween: Tween(begin: 0.0, end: 1.0),
+                                builder: (context, value, child) {
+                                  return Transform.scale(
+                                    scale: 0.8 + (0.2 * value),
+                                    child: Opacity(
+                                      opacity: value,
+                                      child: Container(
+                                        padding: const EdgeInsets.all(20),
+                                        decoration: BoxDecoration(
+                                          color: Colors.white.withOpacity(0.1),
+                                          borderRadius: BorderRadius.circular(
+                                            20,
+                                          ),
+                                          border: Border.all(
+                                            color: Colors.white.withOpacity(
+                                              0.2,
+                                            ),
+                                            width: 1,
+                                          ),
+                                        ),
+                                        child: Column(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            const CircularProgressIndicator(
+                                              valueColor:
+                                                  AlwaysStoppedAnimation<Color>(
+                                                    Colors.white,
+                                                  ),
+                                              strokeWidth: 3,
+                                            ),
+                                            const SizedBox(height: 16),
+                                            Text(
+                                              '업로드 중...',
+                                              style: TextStyle(
+                                                color: Colors.white,
+                                                fontSize: 16,
+                                                fontWeight: FontWeight.w500,
+                                                letterSpacing: 0.5,
+                                              ),
+                                            ),
+                                            const SizedBox(height: 8),
+                                            Text(
+                                              '잠시만 기다려주세요',
+                                              style: TextStyle(
+                                                color: Colors.white.withOpacity(
+                                                  0.7,
+                                                ),
+                                                fontSize: 14,
+                                                fontWeight: FontWeight.w400,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                  );
+                                },
+                              ),
+                            ],
+                          ),
+                        )
+                        : const SizedBox.shrink(),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -611,8 +812,6 @@ class _PostExportScreenState extends State<PostExportScreen>
           child: TextButton(
             onPressed: () {
               setState(() {
-                _title = _titleController.text.trim();
-                _excerpt = _excerptController.text.trim();
                 _editMode = false;
               });
               FocusScope.of(context).unfocus();
@@ -639,11 +838,12 @@ class _PostExportScreenState extends State<PostExportScreen>
       scrolledUnderElevation: 0,
       automaticallyImplyLeading: false,
       leading: GestureDetector(
-        onTap: () {
+        onTap: () async {
           if (_currentStep > 0) {
             _previousStep();
           } else {
-            Navigator.of(context).pop();
+            // Step 0에서 뒤로가기 시 부드러운 애니메이션
+            await _closeWithAnimation();
           }
         },
         child: Padding(
@@ -680,34 +880,49 @@ class _PostExportScreenState extends State<PostExportScreen>
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 10.0),
             child: TextButton(
-              onPressed: () {
-                final bool canPublish = _canPublish();
-                if (canPublish) {
-                  _publish();
-                } else {
-                  String msg = _getPublishErrorMessage();
-                  ErrorHandler.showError(context, msg);
-                }
-              },
-              child:
+              onPressed:
                   _isUploading
-                      ? const SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          valueColor: AlwaysStoppedAnimation<Color>(
-                            Colors.white,
+                      ? null
+                      : () async {
+                        final bool canPublish = _canPublish();
+                        if (canPublish) {
+                          await _publish();
+                        } else {
+                          String msg = _getPublishErrorMessage();
+                          ErrorHandler.showError(context, msg);
+                        }
+                      },
+              child: AnimatedSwitcher(
+                duration: const Duration(milliseconds: 300),
+                transitionBuilder: (Widget child, Animation<double> animation) {
+                  return FadeTransition(
+                    opacity: animation,
+                    child: ScaleTransition(scale: animation, child: child),
+                  );
+                },
+                child:
+                    _isUploading
+                        ? Container(
+                          key: const ValueKey('loading'),
+                          width: 20,
+                          height: 20,
+                          child: const CircularProgressIndicator(
+                            strokeWidth: 2.5,
+                            valueColor: AlwaysStoppedAnimation<Color>(
+                              Colors.white,
+                            ),
+                          ),
+                        )
+                        : Text(
+                          '업로드',
+                          key: const ValueKey('text'),
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w600,
+                            fontSize: 16,
                           ),
                         ),
-                      )
-                      : const Text(
-                        '업로드',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
+              ),
             ),
           ),
       ],
@@ -885,7 +1100,6 @@ class _PostExportScreenState extends State<PostExportScreen>
                         isCollapsed: true,
                         contentPadding: EdgeInsets.zero,
                       ),
-                      onChanged: (v) => _title = v,
                     ),
                   ),
                 ),
@@ -920,7 +1134,6 @@ class _PostExportScreenState extends State<PostExportScreen>
                         contentPadding: EdgeInsets.zero,
                       ),
                       scrollPhysics: NeverScrollableScrollPhysics(),
-                      onChanged: (v) => _excerpt = v,
                     ),
                   ),
                 ),
@@ -941,7 +1154,21 @@ class _PostExportScreenState extends State<PostExportScreen>
       builder: (context, groupProvider, child) {
         // 그룹 목록 로드
         WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (groupProvider.myGroups.isEmpty && !groupProvider.isLoading) {
+          if (groupProvider.myGroups.isEmpty &&
+              !groupProvider.isLoading &&
+              !_isGroupLoadingStarted) {
+            _isGroupLoadingStarted = true;
+            _showGroupLoading = false;
+
+            // 1초 후에 로딩 표시
+            Future.delayed(const Duration(milliseconds: 1000), () {
+              if (mounted && groupProvider.isLoading) {
+                setState(() {
+                  _showGroupLoading = true;
+                });
+              }
+            });
+
             groupProvider.fetchMyGroups();
           }
         });
@@ -987,7 +1214,6 @@ class _PostExportScreenState extends State<PostExportScreen>
                               _audienceSelectAll = true;
                               _audiencePrivateOnly = false;
                               _selectedAudienceGroupIds.clear();
-                              _audienceButtonText = '전체 공개';
                             });
                           },
                           child: Padding(
@@ -1040,7 +1266,6 @@ class _PostExportScreenState extends State<PostExportScreen>
                               _audiencePrivateOnly = true;
                               _audienceSelectAll = false;
                               _selectedAudienceGroupIds.clear();
-                              _audienceButtonText = '나만 보기';
                             });
                           },
                           child: Padding(
@@ -1095,13 +1320,15 @@ class _PostExportScreenState extends State<PostExportScreen>
               Expanded(
                 child:
                     groupProvider.isLoading
-                        ? Center(
-                          child: CircularProgressIndicator(
-                            valueColor: AlwaysStoppedAnimation<Color>(
-                              Colors.white,
-                            ),
-                          ),
-                        )
+                        ? (_showGroupLoading
+                            ? Center(
+                              child: CircularProgressIndicator(
+                                valueColor: AlwaysStoppedAnimation<Color>(
+                                  Colors.white,
+                                ),
+                              ),
+                            )
+                            : const SizedBox.shrink()) // 로딩이 1초 미만이면 아무것도 표시하지 않음
                         : ListView.builder(
                           itemCount: groupProvider.myGroups.length,
                           itemBuilder: (context, index) {
@@ -1137,32 +1364,6 @@ class _PostExportScreenState extends State<PostExportScreen>
                                           .isNotEmpty) {
                                         _audienceSelectAll = false;
                                         _audiencePrivateOnly = false;
-                                      }
-
-                                      // 선택된 그룹이 있으면 버튼 텍스트 업데이트
-                                      if (_selectedAudienceGroupIds
-                                          .isNotEmpty) {
-                                        final selectedNames =
-                                            groupProvider.myGroups
-                                                .where(
-                                                  (g) =>
-                                                      _selectedAudienceGroupIds
-                                                          .contains(g.id),
-                                                )
-                                                .map((g) => g.name)
-                                                .toList();
-
-                                        if (selectedNames.length > 3) {
-                                          final extra =
-                                              selectedNames.length - 3;
-                                          _audienceButtonText =
-                                              '${selectedNames.take(3).join(', ')} 외 $extra개';
-                                        } else {
-                                          _audienceButtonText = selectedNames
-                                              .join(', ');
-                                        }
-                                      } else {
-                                        _audienceButtonText = '그룹 공유';
                                       }
                                     });
                                   },
@@ -1223,11 +1424,15 @@ class _PostExportScreenState extends State<PostExportScreen>
           Expanded(
             child:
                 _cachedCategories == null
-                    ? const Center(
-                      child: CircularProgressIndicator(
-                        valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-                      ),
-                    )
+                    ? (_showCategoryLoading
+                        ? const Center(
+                          child: CircularProgressIndicator(
+                            valueColor: AlwaysStoppedAnimation<Color>(
+                              Colors.white,
+                            ),
+                          ),
+                        )
+                        : const SizedBox.shrink()) // 로딩이 1초 미만이면 아무것도 표시하지 않음
                     : ListView(
                       children: [
                         // 새 카테고리 만들기 버튼
@@ -1248,7 +1453,6 @@ class _PostExportScreenState extends State<PostExportScreen>
                             onTap: () {
                               setState(() {
                                 _selectedCategoryId = id;
-                                _selectedCategoryName = name;
                               });
                             },
                           );
@@ -1262,7 +1466,22 @@ class _PostExportScreenState extends State<PostExportScreen>
   }
 
   Future<void> _loadCategoriesOnce() async {
-    if (_cachedCategories != null) return; // 이미 로드됨
+    if (_cachedCategories != null || _isLoadingCategories)
+      return; // 이미 로드 중이거나 완료됨
+
+    setState(() {
+      _isLoadingCategories = true;
+      _showCategoryLoading = false; // 초기에는 로딩 숨김
+    });
+
+    // 1초 후에 로딩 표시
+    Future.delayed(const Duration(milliseconds: 1000), () {
+      if (mounted && _isLoadingCategories) {
+        setState(() {
+          _showCategoryLoading = true;
+        });
+      }
+    });
 
     try {
       final currentUser =
@@ -1274,15 +1493,23 @@ class _PostExportScreenState extends State<PostExportScreen>
       }
 
       final categories = await BlogService().getUserCategories(username);
-      setState(() {
-        _cachedCategories = categories;
-      });
+      if (mounted) {
+        setState(() {
+          _cachedCategories = categories;
+          _isLoadingCategories = false;
+          _showCategoryLoading = false;
+        });
+      }
     } catch (e) {
       print('[PostExportScreen] 카테고리 로드 실패: $e');
-      // 에러 발생 시 빈 리스트로 설정하여 재시도 방지
-      setState(() {
-        _cachedCategories = [];
-      });
+      if (mounted) {
+        // 에러 발생 시 빈 리스트로 설정하여 재시도 방지
+        setState(() {
+          _cachedCategories = [];
+          _isLoadingCategories = false;
+          _showCategoryLoading = false;
+        });
+      }
     }
   }
 
@@ -1485,9 +1712,6 @@ class _PostExportScreenState extends State<PostExportScreen>
 }
 
 class _AudiencePicker extends StatefulWidget {
-  final Set<int> initialSelectedIds;
-  final bool initialSelectAll;
-  final bool initialPrivateOnly;
   final String title;
   final String excerpt;
   final String thumbnailImageUrl;
@@ -1500,9 +1724,6 @@ class _AudiencePicker extends StatefulWidget {
   onSelectionChanged;
 
   const _AudiencePicker({
-    this.initialSelectedIds = const {},
-    this.initialSelectAll = true,
-    this.initialPrivateOnly = false,
     required this.title,
     required this.excerpt,
     required this.thumbnailImageUrl,
@@ -1514,16 +1735,13 @@ class _AudiencePicker extends StatefulWidget {
 }
 
 class _AudiencePickerState extends State<_AudiencePicker> {
-  late Set<int> _selectedGroupIds;
-  late bool _selectAll; // 전체공개 토글
-  late bool _privateOnly; // 나만보기
+  final Set<int> _selectedGroupIds = {};
+  bool _selectAll = true; // 전체공개 토글
+  bool _privateOnly = false; // 나만보기
 
   @override
   void initState() {
     super.initState();
-    _selectedGroupIds = Set<int>.from(widget.initialSelectedIds);
-    _selectAll = widget.initialSelectAll;
-    _privateOnly = widget.initialPrivateOnly;
 
     // 바텀시트 진입 시 실제 그룹 목록 로드
     WidgetsBinding.instance.addPostFrameCallback((_) {

@@ -800,6 +800,51 @@ class ProfileFeedProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// 전체 포스트 수 (시스템 카테고리 3개 합계)
+  int get totalPostCount {
+    final publicCount = publicPostCount;
+    final privateCount = privatePostCount;
+    final groupsCount = groupsPostCount;
+    final totalCount = publicCount + privateCount + groupsCount;
+    print(
+      '[ProfileFeedProvider] totalPostCount (시스템 카테고리 합계): $totalCount (전체공개:$publicCount + 나만보기:$privateCount + 그룹공유:$groupsCount)',
+    );
+    return totalCount;
+  }
+
+  /// 나만보기 포스트 수 (systemCategoryMappings 기반)
+  int get privatePostCount {
+    if (_systemCategoryMappings == null) return 0;
+    final postIds = _systemCategoryMappings!['나만보기'] as List?;
+    final count = postIds?.length ?? 0;
+    print(
+      '[ProfileFeedProvider] privatePostCount (systemCategoryMappings): $count',
+    );
+    return count;
+  }
+
+  /// 그룹공유 포스트 수 (systemCategoryMappings 기반)
+  int get groupsPostCount {
+    if (_systemCategoryMappings == null) return 0;
+    final postIds = _systemCategoryMappings!['그룹공유'] as List?;
+    final count = postIds?.length ?? 0;
+    print(
+      '[ProfileFeedProvider] groupsPostCount (systemCategoryMappings): $count',
+    );
+    return count;
+  }
+
+  /// 전체공개 포스트 수 (systemCategoryMappings 기반)
+  int get publicPostCount {
+    if (_systemCategoryMappings == null) return 0;
+    final postIds = _systemCategoryMappings!['전체공개'] as List?;
+    final count = postIds?.length ?? 0;
+    print(
+      '[ProfileFeedProvider] publicPostCount (systemCategoryMappings): $count',
+    );
+    return count;
+  }
+
   String get selectedLabel {
     if (_selectedCategoryId != null) {
       final cat = _categories.firstWhere(

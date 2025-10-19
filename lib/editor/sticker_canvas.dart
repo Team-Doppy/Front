@@ -239,13 +239,14 @@ class _StickerViewState extends State<_StickerView> {
           // 선택 처리
           //svc.select(widget.sticker.id);
         },
+
         onScaleStart: (d) {
           // 두 손가락 핀치 전용 (스케일/회전)
           if (d.pointerCount < 2) return;
 
           _lastFocalPoint = d.focalPoint;
           setState(() => _pressing = true);
-          FocusScope.of(context).unfocus();
+          FocusManager.instance.primaryFocus?.unfocus();
           svc.beginDrag(widget.sticker.id);
           svc.bringToFront(widget.sticker.id);
           _dragStartScale = widget.sticker.scale;
@@ -434,9 +435,6 @@ class _StickerViewState extends State<_StickerView> {
           if (mounted) setState(() => _pressing = false);
         },
         onLongPressStart: (details) {
-          print('롱프레스 드래그 시작');
-
-          // 롱프레스 드래그 시작: 테두리 표시
           _lastFocalPoint = details.globalPosition;
           setState(() => _pressing = true);
           svc.beginDrag(widget.sticker.id);

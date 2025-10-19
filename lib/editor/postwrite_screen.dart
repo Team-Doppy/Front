@@ -647,7 +647,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                           onLongPressStart: (details) {
                             // 🚫 키보드가 올라와 있으면 드래그 불가
                             if (_isKeyboardVisible) {
-                              FocusScope.of(context).unfocus();
+                              FocusManager.instance.primaryFocus?.unfocus();
                             }
 
                             final node = editorService.findNodeAtPosition(
@@ -779,7 +779,10 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                               }
                             },
                             child: Container(
-                              padding: const EdgeInsets.all(12),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 20,
+                                vertical: 8,
+                              ),
                               child: Icon(
                                 Icons.arrow_back_ios_new_rounded,
                                 color: Theme.of(

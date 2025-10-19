@@ -723,7 +723,9 @@ extension _TopExpandedRow on _DefaultToolbarState {
               _buildSvgChip(
                 svgPath: 'assets/icons/editor_sticker.svg',
                 label: '스티커',
-                onTap: () {
+                onTap: () async {
+                  // 키보드 내리기
+                  FocusManager.instance.primaryFocus?.unfocus();
                   Navigator.of(context).push(
                     PageRouteBuilder(
                       opaque: false,
@@ -746,36 +748,17 @@ extension _TopExpandedRow on _DefaultToolbarState {
                                   scrollY + size.height / 2 - 200,
                                 );
                                 svc.addImageSticker(image, at);
-                              } else if ((emoji ?? '').isNotEmpty) {
-                                final Size size = MediaQuery.of(context).size;
-                                final scrollY =
-                                    widget.scrollController?.offset ?? 0.0;
-                                final at = Offset(
-                                  size.width * 0.5 - 60,
-                                  scrollY + 200,
-                                );
-                                svc.addEmojiSticker(emoji!, at);
-                              } else if (text.trim().isNotEmpty) {
-                                final Size size = MediaQuery.of(context).size;
-                                final scrollY =
-                                    widget.scrollController?.offset ?? 0.0;
-                                final at = Offset(
-                                  size.width * 0.5 - 60,
-                                  scrollY + 200,
-                                );
-                                svc.addTextStickerWithStyle(
-                                  text.trim(),
-                                  textStyle,
-                                  at,
-                                );
                               }
-                              // 스티커 추가 후 상단 두번째 툴바 자동 닫기
+
                               _toggle(ToolbarSection.none);
                             },
                             initialKind: StickerKind.image,
                           ),
                     ),
                   );
+                  if (context.mounted) {
+                    FocusManager.instance.primaryFocus?.unfocus();
+                  }
                 },
               ),
 
@@ -1052,6 +1035,7 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
     setState(() {
       _expanded = _expanded == section ? ToolbarSection.none : section;
     });
+
     if (_expanded == ToolbarSection.text) {
       WidgetsBinding.instance.addPostFrameCallback((_) => _updateTopAnchor());
     }
@@ -1081,8 +1065,8 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
     // 🔧 선택 영역을 저장 (포커스 해제 전에)
     final savedSelection = widget.stylingService.composer.selection;
     print('[FontDebug] 저장된 selection: $savedSelection');
+    FocusManager.instance.primaryFocus?.unfocus();
 
-    FocusScope.of(context).unfocus();
     Navigator.of(context)
         .push(
           PageRouteBuilder(
@@ -1114,10 +1098,9 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
           ),
         )
         .then((_) {
-          // 🔧 오버레이 닫힌 후 에디터 포커스 복원
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            widget.onRequestFocus?.call();
-          });
+          if (context.mounted) {
+            FocusManager.instance.primaryFocus?.unfocus();
+          }
         });
   }
 
@@ -1150,11 +1133,10 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
         // 카메라 섹션 (아이콘만, 옵션은 상단 행)
         _buildMainSvgIcon(
           svgPath: 'assets/icons/editor_gallery.svg',
-          isActive: false,
+          isActive: true,
           onTap: () async {
-            // 바텀시트 열기 전 키보드 내리기
-            FocusScope.of(context).unfocus();
-
+            // 키보드 내리기 (한 번만, 충분한 시간 대기)
+            FocusManager.instance.primaryFocus?.unfocus();
             String mode = 'none';
             await showModalBottomSheet(
               backgroundColor: Colors.transparent,
@@ -1213,24 +1195,10 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
                   ),
             );
 
-            // 바텀시트 닫힌 후 키보드 내리기 보장
-            if (context.mounted) {
-              await Future.delayed(const Duration(milliseconds: 50));
-              if (context.mounted) {
-                FocusScope.of(context).unfocus();
-              }
-            }
+            if (!context.mounted) return;
 
             if (mode == 'image') {
               try {
-                // 이미지 선택 전 키보드 내리기
-                if (context.mounted) {
-                  await Future.delayed(const Duration(milliseconds: 50));
-                  if (context.mounted) {
-                    FocusScope.of(context).unfocus();
-                  }
-                }
-
                 final picker = NativeImagePicker();
                 final files = await picker.pickMultipleImages(maxCount: 10);
 
@@ -1269,47 +1237,17 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
                     }
                   }
 
-                  // 문서 변경 후 SuperEditor가 포커스를 복원하기 전에 명시적으로 해제
-                  if (context.mounted) {
-                    await Future.delayed(const Duration(milliseconds: 100));
-                    if (context.mounted) {
-                      FocusScope.of(context).unfocus();
-                    }
-                  }
+                  // 키보드는 이미 내려가 있으므로 추가 unfocus 불필요
                 }
               } catch (e) {
                 debugPrint('image pick/upload error: $e');
-              } finally {
-                // 이미지 업로드 완료/실패 후 키보드 내리기 보장
-                if (context.mounted) {
-                  await Future.delayed(const Duration(milliseconds: 50));
-                  if (context.mounted) {
-                    FocusScope.of(context).unfocus();
-                  }
-                }
               }
             }
             if (mode == 'short clip') {
               try {
-                // 영상 선택 전 키보드 내리기
-                if (context.mounted) {
-                  await Future.delayed(const Duration(milliseconds: 50));
-                  if (context.mounted) {
-                    FocusScope.of(context).unfocus();
-                  }
-                }
-
                 // 시스템 비디오 피커(1개)
                 final picker = NativeImagePicker();
                 final file = await picker.pickSingleVideo();
-
-                // 영상 선택 후 키보드 내리기 보장
-                if (context.mounted) {
-                  await Future.delayed(const Duration(milliseconds: 50));
-                  if (context.mounted) {
-                    FocusScope.of(context).unfocus();
-                  }
-                }
 
                 if (file == null) return;
 
@@ -1335,15 +1273,12 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
 
                     // 문서 변경 후 SuperEditor가 포커스를 복원하기 전에 명시적으로 해제
                     if (context.mounted) {
-                      await Future.delayed(const Duration(milliseconds: 100));
-                      if (context.mounted) {
-                        FocusScope.of(context).unfocus();
-                      }
+                      FocusManager.instance.primaryFocus?.unfocus();
                     }
                   } else if (task.state == UploadState.failed) {
                     // 영상 업로드 실패 후 키보드 내리기 보장
                     if (context.mounted) {
-                      FocusScope.of(context).unfocus();
+                      FocusManager.instance.primaryFocus?.unfocus();
                     }
                   }
                 });
@@ -1352,10 +1287,7 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
               } finally {
                 // 영상 처리 완료/실패 후 키보드 내리기 보장
                 if (context.mounted) {
-                  await Future.delayed(const Duration(milliseconds: 50));
-                  if (context.mounted) {
-                    FocusScope.of(context).unfocus();
-                  }
+                  FocusManager.instance.primaryFocus?.unfocus();
                 }
               }
             }
@@ -1473,7 +1405,7 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
           width: 36,
           height: 50,
           alignment: Alignment.center,
-          child: Icon(icon, size: isActive ? 26 : 22, color: color),
+          child: Icon(icon, size: isActive ? 28 : 25, color: color),
         ),
       ),
     );
@@ -1483,11 +1415,9 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
     required String svgPath,
     required bool isActive,
     required VoidCallback onTap,
-    Color? activeColor,
   }) {
     final Color onSurface = Theme.of(context).colorScheme.onSurface;
-    final Color color =
-        isActive ? (activeColor ?? onSurface) : onSurface.withOpacity(0.5);
+    final Color color = onSurface.withOpacity(0.5);
     return Material(
       color: Colors.transparent,
       child: InkWell(
@@ -1499,8 +1429,8 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
           alignment: Alignment.center,
           child: SvgPicture.asset(
             svgPath,
-            width: 20,
-            height: 20,
+            width: isActive ? 28 : 25,
+            height: isActive ? 28 : 25,
             colorFilter: ColorFilter.mode(color, BlendMode.srcIn),
           ),
         ),
@@ -1864,11 +1794,11 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
   // 스티커 종류 선택 메서드
   Future<void> _selectStickerType(StickerKind kind) async {
     _toggle(ToolbarSection.none); // 메뉴 닫기
-    FocusScope.of(context).unfocus();
-    await Future.delayed(const Duration(milliseconds: 200));
 
+    // 키보드 내리기 (한 번만, 충분한 시간 대기)
+    FocusManager.instance.primaryFocus?.unfocus();
     // 선택된 종류에 따라 해당 오버레이로 이동
-    Navigator.of(context).push(
+    await Navigator.of(context).push(
       PageRouteBuilder(
         opaque: false,
         barrierDismissible: true,
@@ -1926,15 +1856,11 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
             ),
       ),
     );
+
+    if (context.mounted) {
+      FocusManager.instance.primaryFocus?.unfocus();
+    }
   }
-
-  // legacy helpers (not used in the new expandable UI)
-  // kept here intentionally commented out for reference
-  // Widget _buildColorButton(...) {}
-
-  // Widget _buildAlignmentButton(...) {}
-
-  // Widget _buildFontSizeButton(...) {}
 
   // 🎨 형광펜 토글 버튼 (색상 팔레트 포함)
   Widget _buildHighlightToggleIcon() {
