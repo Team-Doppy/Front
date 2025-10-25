@@ -6,8 +6,10 @@ import 'package:doppy/editor/component/mention_component.dart';
 import 'package:doppy/editor/component/row_image_component.dart';
 import 'package:doppy/editor/component/clip_component.dart';
 import 'package:doppy/editor/postwrite_screen.dart';
+import 'package:doppy/editor/service/sticker_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
+import 'package:provider/provider.dart';
 import 'package:super_editor/super_editor.dart';
 
 class EditorService extends ChangeNotifier {
@@ -222,6 +224,7 @@ class EditorService extends ChangeNotifier {
           't': 'p',
           'title': node.metadata['isTitle'] == true,
           'align': node.metadata['textAlign'],
+          'fontFamily': node.metadata['fontFamily'], // 폰트 정보 포함
           'text': node.text.text,
         });
       } else if (node is AppImageNode) {
@@ -247,12 +250,13 @@ class EditorService extends ChangeNotifier {
   }
 
   /// 종료 시 임시저장 다이얼로그 노출 필요 여부
-  bool shouldPromptSaveOnExit() {
+  bool shouldPromptSaveOnExit(BuildContext context) {
+    final hasStickerChanges = context.read<StickerService>().hasChanges;
     // 제목 또는 본문 중 하나라도 유효한 입력이 있어야 함
     final bool anyContent = hasNonEmptyTitle() || hasNonEmptyBody();
     if (!anyContent) return false;
     final now = computeDocumentFingerprint();
-    if (_lastSavedFingerprint == null) {
+    if (_lastSavedFingerprint == null || hasStickerChanges) {
       // 저장 이력이 없다면 변경이 있는 상태로 간주
       return true;
     }
@@ -455,6 +459,46 @@ class EditorService extends ChangeNotifier {
       thumbnailUrl: thumbnailUrl ?? '',
     );
     _insertComponentNodeAtNextLine(node);
+  }
+
+  /// 지정 인덱스에 빈 문단을 삽입하고 캐럿을 그 문단 앞으로 이동
+  void insertEmptyParagraphAtIndex(int index) {
+    try {
+      final doc = editor.document;
+      int insertIndex = index;
+      if (insertIndex < 0) insertIndex = 0;
+      if (insertIndex > doc.nodeCount) insertIndex = doc.nodeCount;
+
+      final String align = _getPreviousParagraphAlign(insertIndex);
+      final String paragraphId = 'p_${DateTime.now().millisecondsSinceEpoch}';
+      final ParagraphNode newParagraph = ParagraphNode(
+        id: paragraphId,
+        text: AttributedText(''),
+        metadata: {'textAlign': align},
+      );
+
+      editor.execute([
+        InsertNodeAtIndexRequest(nodeIndex: insertIndex, newNode: newParagraph),
+      ]);
+
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        try {
+          editor.execute([
+            ChangeSelectionRequest(
+              DocumentSelection.collapsed(
+                position: DocumentPosition(
+                  nodeId: paragraphId,
+                  nodePosition: const TextNodePosition(offset: 0),
+                ),
+              ),
+              SelectionChangeType.placeCaret,
+              SelectionReason.userInteraction,
+            ),
+          ]);
+        } catch (_) {}
+      });
+      notifyListeners();
+    } catch (_) {}
   }
 
   /// 언급 노드를 현재 커서 다음 슬롯에 삽입
@@ -733,9 +777,29 @@ class EditorService extends ChangeNotifier {
   /// 만약 삽입 지점이 문서의 마지막(끝)이면, 그 아래에 빈 문단을 추가하고
   /// 커서를 그 빈 문단 앞으로 이동한다.
   void _insertComponentNodeAtNextLine(DocumentNode componentNode) {
+    print('DEBUG: _insertComponentNodeAtNextLine: $componentNode');
     final doc = editor.document;
     final safeIndex = _getCaretNodeIndexSafe();
     int insertIndex = safeIndex;
+
+    // 제목 노드(index 0)에 커서가 있으면 강제로 다음 라인에 삽입
+    if (insertIndex == 0) {
+      insertIndex = 1;
+      print('🎯 제목 노드에 커서가 있음, 다음 라인(index 1)에 삽입');
+
+      // 제목 다음에 빈 문단이 없으면 먼저 생성
+      if (doc.nodeCount < 2) {
+        final paragraphId = 'p_${DateTime.now().millisecondsSinceEpoch}';
+        final ParagraphNode newParagraph = ParagraphNode(
+          id: paragraphId,
+          text: AttributedText(''),
+          metadata: {'textAlign': 'center'},
+        );
+        doc.insertNodeAt(1, newParagraph);
+        print('📝 제목 다음에 빈 문단 생성');
+      }
+    }
+
     if (insertIndex > doc.nodeCount) insertIndex = doc.nodeCount;
 
     final bool insertingAtEnd = insertIndex == doc.nodeCount;

@@ -2,10 +2,10 @@ import 'package:doppy/data/services/blog_service.dart';
 import 'dart:async';
 import 'package:doppy/pages/components/comps_for_profile/category_fullscreen_overlay.dart';
 import 'package:doppy/data/models/post_data.dart';
+import 'package:doppy/providers/feed_provider/base_feed_provider.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:doppy/providers/profile_feed_provider.dart';
 
 enum FeedDisplayMode { card, imageOnly }
 
@@ -340,7 +340,6 @@ class PostDragDropService extends ChangeNotifier {
     int targetCategoryId, {
     int? targetPosition,
   }) async {
-    print('🚀 [PostDragDropService] 포스트 카테고리 이동 시작');
     print('   - 포스트 ID: ${post.id}');
     print('   - 포스트 제목: ${post.title}');
     print('   - 타겟 카테고리 ID: $targetCategoryId');
@@ -367,8 +366,9 @@ class PostDragDropService extends ChangeNotifier {
     PostData post,
     int targetCategoryId, {
     int? targetPosition,
+    BaseFeedProvider? provider,
   }) async {
-    final provider = context.read<ProfileFeedProvider>();
+    provider ??= context.read<BaseFeedProvider>();
 
     // 백업: 원래 카테고리 정보 저장
     String? sourceCategoryId;
@@ -402,9 +402,6 @@ class PostDragDropService extends ChangeNotifier {
         targetPosition: targetPosition,
       );
       print('[FeedService] 서버 저장 완료');
-
-      // 서버 성공 시 캐시 무효화
-      provider.invalidateCache();
     } catch (e) {
       print('⚠️ [FeedService] 서버 이동 실패, 롤백: $e');
 

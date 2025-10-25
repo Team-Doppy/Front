@@ -1,10 +1,7 @@
-import 'package:doppy/data/services/api_service_base.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
-
 import '../models/login_response_model.dart';
-import 'account_manager_service.dart';
 
 class AuthService {
   static final AuthService _instance = AuthService._internal();
@@ -15,7 +12,7 @@ class AuthService {
   final String _tokenKey = 'auth_token';
   final String _refreshTokenKey = 'refresh_token';
   final String _usernameKey = 'username';
-  final String _baseUrl = ApiServiceBase.baseUrl;
+  static const String baseUrl = "http://13.125.227.178:5000";
 
   // 앱 시작 시 1회 로드되어 메모리에 보관되는 동기 접근용 사용자명
   static String? _cachedUsername;
@@ -36,12 +33,11 @@ class AuthService {
     required String password,
     String? alias,
   }) async {
-    final url = Uri.parse('$_baseUrl/api/auth/register');
-    final body = {'username': username, 'password': password, 'alias': alias};
-    // null 값은 보내지 않도록 처리
-    body.removeWhere((key, value) => value == null);
+    final body = {'username': username, 'password': password};
+    if (alias != null) body['alias'] = alias;
 
     try {
+      final url = Uri.parse('$baseUrl/api/auth/register');
       final response = await http.post(
         url,
         headers: {'Content-Type': 'application/json'},
@@ -66,32 +62,24 @@ class AuthService {
     String password, {
     bool setAsCurrent = true,
   }) async {
-    final url = Uri.parse('$_baseUrl/api/auth/login');
     final body = {'username': username, 'password': password};
     try {
+      final url = Uri.parse('$baseUrl/api/auth/login');
       final response = await http.post(
         url,
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode(body),
       );
+
       if (response.statusCode == 200) {
-        final loginResponse = LoginResponse.fromJson(
-          jsonDecode(utf8.decode(response.bodyBytes)),
-        );
+        final responseData = jsonDecode(utf8.decode(response.bodyBytes));
+        final loginResponse = LoginResponse.fromJson(responseData);
 
         // 기존 토큰 저장
         await _saveToken(loginResponse.token);
         await _saveRefreshToken(loginResponse.refreshToken);
         await _saveUsername(loginResponse.username);
         await initAfterLogin();
-
-        // 로컬 계정 기록도 업데이트 (로그인 시)
-        if (setAsCurrent) {
-          await AccountManagerService.updateCurrentAccountTokens(
-            token: loginResponse.token,
-            refreshToken: loginResponse.refreshToken,
-          );
-        }
 
         print('[-] [AuthService] login success: ${loginResponse.username}');
         return loginResponse;
@@ -104,15 +92,13 @@ class AuthService {
 
   /// 3. 사용자명 중복 확인 (인증 불필요)
   Future<bool> checkUsernameDuplicate(String username) async {
-    final url = Uri.parse('$_baseUrl/api/auth/check-username/$username');
     try {
-      final response = await http.get(
-        url,
-        headers: {'Content-Type': 'application/json'},
-      );
+      final url = Uri.parse('$baseUrl/api/auth/check-username/$username');
+      final response = await http.get(url);
 
       if (response.statusCode == 200) {
-        if (jsonDecode(utf8.decode(response.bodyBytes))['available'] == true) {
+        final responseData = jsonDecode(utf8.decode(response.bodyBytes));
+        if (responseData['available'] == true) {
           return true;
         }
         return false;
@@ -149,7 +135,6 @@ class AuthService {
     await _storage.delete(key: _tokenKey);
     await _storage.delete(key: _refreshTokenKey);
     await _storage.delete(key: _usernameKey);
-    await AccountManagerService.clearCurrentAccount();
     _cachedUsername = null; // 메모리 캐시 초기화
     print('[-] [AuthService] logout success');
   }
@@ -198,65 +183,14 @@ class AuthService {
       print('[AuthService] Token is expired: $isExpired');
 
       if (isExpired) {
-        print('[AuthService] Token expired, attempting refresh...');
-        return await _refreshToken();
+        print('[AuthService] Token expired - will be handled by DioClient');
+        return false; // DioClient에서 갱신 처리
       } else {
         print('[AuthService] Token is valid');
         return true;
       }
     } catch (e) {
       print('[AuthService] Token validation error: $e');
-      return false;
-    }
-  }
-
-  /// 5. 토큰 갱신 (public)
-  Future<bool> refreshToken() async {
-    return await _refreshToken();
-  }
-
-  /// 5. 토큰 갱신 (리프레시 토큰 사용) - private
-  Future<bool> _refreshToken() async {
-    final refreshToken = await getRefreshToken();
-    if (refreshToken == null) {
-      print('❌ [AuthService] 리프레시 토큰이 없습니다');
-      return false;
-    }
-
-    try {
-      final url = Uri.parse('$_baseUrl/api/auth/refresh');
-      final response = await http.post(
-        url,
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'refreshToken': refreshToken}),
-      );
-
-      if (response.statusCode == 200) {
-        final responseData = jsonDecode(utf8.decode(response.bodyBytes));
-        final newToken = responseData['token'];
-        final newRefreshToken = responseData['refreshToken'];
-
-        // 새로운 토큰들 저장
-        await _saveToken(newToken);
-        await _saveRefreshToken(newRefreshToken);
-
-        // AccountManagerService의 현재 계정 토큰도 업데이트 (로컬 저장된 계정 기록 포함)
-        await AccountManagerService.updateCurrentAccountTokens(
-          token: newToken,
-          refreshToken: newRefreshToken,
-        );
-
-        print('✅ [AuthService] 토큰 갱신 성공 - 로컬 계정 기록도 업데이트됨');
-        return true;
-      } else {
-        print('❌ [AuthService] 토큰 갱신 실패: ${response.statusCode}');
-        print('❌ [AuthService] 응답 내용: ${response.body}');
-        await logout();
-        return false;
-      }
-    } catch (e) {
-      print('❌ [AuthService] 토큰 갱신 오류: $e');
-      await logout();
       return false;
     }
   }

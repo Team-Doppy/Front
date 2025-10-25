@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:doppy/editor/postwrite_screen.dart';
+import 'package:doppy/editor/component/row_image_component.dart';
 import 'package:doppy/editor/service/editor_service.dart';
 import 'package:doppy/editor/service/node_component_service.dart';
 import 'package:flutter/material.dart';
@@ -16,6 +17,9 @@ class DragService extends ChangeNotifier {
   NodeComponentService? get imageService => _imageService;
 
   String? draggingNodeId;
+  final ValueNotifier<String?> draggingNodeIdNotifier = ValueNotifier<String?>(
+    null,
+  );
   NodeType? draggingNodeType;
   String? targetNodeId;
   NodeType? targetNodeType;
@@ -28,10 +32,102 @@ class DragService extends ChangeNotifier {
   // 이미지 분리 정보
   String? _splitImageRowId;
   int? _splitImageIndex;
+  // 이미지 행 타겟 삽입 정보
+  String? _targetRowId;
+  int? _targetInsertIndex;
 
   // Auto-scroll state
   Timer? _autoScrollTimer;
   double _autoScrollDirection = 0.0; // -1: up, 1: down, 0: none
+
+  // ===== 레이아웃/좌표 유틸 및 성능 캐시 =====
+  final Map<String, Rect> _nodeRectCache = {};
+  void invalidateNodeRectCache() => _nodeRectCache.clear();
+
+  Rect? getNodeGlobalRect(String nodeId) {
+    try {
+      final cached = _nodeRectCache[nodeId];
+      if (cached != null) return cached;
+      final layout =
+          editorService.documentLayoutKey?.currentState as DocumentLayout?;
+      if (layout == null) return null;
+      final component = layout.getComponentByNodeId(nodeId);
+      if (component == null) return null;
+
+      final ro = component.context.findRenderObject();
+      RenderBox? box;
+      if (ro is RenderSliverToBoxAdapter) {
+        box = ro.child;
+      } else if (ro is RenderBox) {
+        box = ro;
+      }
+      if (box == null) return null;
+      final topLeft = box.localToGlobal(Offset.zero);
+      final rect = topLeft & box.size;
+      _nodeRectCache[nodeId] = rect;
+      return rect;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Offset? globalToDocumentLocal(Offset global) {
+    try {
+      final ro =
+          editorService.documentLayoutKey?.currentContext?.findRenderObject();
+      RenderBox? renderBox;
+      if (ro is RenderSliverToBoxAdapter) {
+        renderBox = ro.child;
+      } else if (ro is RenderBox) {
+        renderBox = ro;
+      }
+      if (renderBox == null) return null;
+      return renderBox.globalToLocal(global);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// 세로 노드 사이 클릭 감지. 감지 시 삽입 인덱스 반환
+  int? detectVerticalGapAt(Offset globalPos, {double pad = 12.0}) {
+    final layout =
+        editorService.documentLayoutKey?.currentState as DocumentLayout?;
+    if (layout == null) return null;
+
+    final local = globalToDocumentLocal(globalPos);
+    if (local == null) return null;
+
+    DocumentPosition? nearest;
+    try {
+      nearest = layout.getDocumentPositionNearestToOffset(local);
+    } catch (_) {
+      return null;
+    }
+    if (nearest == null) return null;
+
+    final doc = editorService.document;
+    final idx = doc.getNodeIndexById(nearest.nodeId);
+    if (idx < 0) return null;
+
+    bool isGapBetween(int aIndex, int bIndex) {
+      final a = doc.getNodeAt(aIndex);
+      final b = doc.getNodeAt(bIndex);
+      if (a == null || b == null) return false;
+      final ra = getNodeGlobalRect(a.id);
+      final rb = getNodeGlobalRect(b.id);
+      if (ra == null || rb == null) return false;
+      final y = globalPos.dy;
+      return (y >= ra.bottom - pad && y <= rb.top + pad);
+    }
+
+    if (idx + 1 < doc.nodeCount && isGapBetween(idx, idx + 1)) {
+      return idx + 1;
+    }
+    if (idx - 1 >= 0 && isGapBetween(idx - 1, idx)) {
+      return idx;
+    }
+    return null;
+  }
 
   DragService({
     required this.editorService,
@@ -67,6 +163,7 @@ class DragService extends ChangeNotifier {
 
   void startDrag(String nodeId, BuildContext context, Offset globalPosition) {
     draggingNodeId = nodeId;
+    draggingNodeIdNotifier.value = nodeId;
     draggingNodeType = editorService.getNodeType(nodeId);
     dragPosition = globalPosition;
     lastMovedPosition = globalPosition;
@@ -117,15 +214,18 @@ class DragService extends ChangeNotifier {
   }
 
   void endDrag() {
+    draggingNodeIdNotifier.value = null;
     if (draggingNodeId == null) {
       _cleanup();
       return;
     }
 
-    // 이미지 분리 예정이면서, 가로 병합 모드로 자신의 원래 행에 드롭한 경우만 분리하지 않음
-    if (hasSplitImageInfo && dragMode == DragType.imageRowMerge) {
-      if (targetNodeId != null && targetNodeId == _splitImageRowId) {
-        // 사용자가 원래 이미지 행에 병합하려고 드롭 → 아무 변경도 하지 않음
+    // 이미지 분리 예정이고, 원래 행으로 돌아왔으며 중앙 영역(=reorder) 드롭이면 분리 취소
+    if (hasSplitImageInfo) {
+      final backToOriginal =
+          (targetNodeId != null && targetNodeId == _splitImageRowId) ||
+          (_targetRowId != null && _targetRowId == _splitImageRowId);
+      if (backToOriginal && dragMode != DragType.imageRowMerge) {
         imageService?.clearSelection();
         _cleanup();
         return;
@@ -139,28 +239,17 @@ class DragService extends ChangeNotifier {
       final imageIndex = _splitImageIndex;
 
       if (rowId != null && imageIndex != null) {
-        if (dragMode == DragType.reorder && dropIndex != null) {
-          // 분리 드래그에서 위/아래 드롭 방향을 그대로 반영해 해당 위치로 즉시 삽입
-          final splitImageId = editorService.splitImageFromRow(
-            rowId,
-            imageIndex,
-            insertIndex: dropIndex,
-          );
-          if (splitImageId != null) {
-            draggingNodeId = splitImageId;
-            draggingNodeType = editorService.getNodeType(splitImageId);
-            handledBySplitInsertion = true;
-          }
-        } else {
-          // 병합 등 다른 모드: 먼저 분리만 수행하고 이후 로직에서 처리
-          final splitImageId = editorService.splitImageFromRow(
-            rowId,
-            imageIndex,
-          );
-          if (splitImageId != null) {
-            draggingNodeId = splitImageId;
-            draggingNodeType = editorService.getNodeType(splitImageId);
-          }
+        // 분리 확정 시점: targetRowId가 있으면 그 행에 삽입, 없으면 기존 로우 근처 단독 삽입
+        final splitImageId = editorService.splitImageFromRow(
+          rowId,
+          imageIndex,
+          insertIndex: (dragMode == DragType.reorder) ? dropIndex : null,
+        );
+        if (splitImageId != null) {
+          draggingNodeId = splitImageId;
+          draggingNodeType = editorService.getNodeType(splitImageId);
+          handledBySplitInsertion =
+              (dragMode == DragType.reorder && dropIndex != null);
         }
       }
     }
@@ -180,12 +269,15 @@ class DragService extends ChangeNotifier {
         }
         break;
       case DragType.imageRowMerge:
-        if (targetNodeId != null) {
-          editorService.mergeImagesIntoRow(
-            draggingNodeId!,
-            targetNodeId!,
-            isFromLeft: isDraggingFromLeft,
-          );
+        {
+          final String? mergeTargetId = _targetRowId ?? targetNodeId;
+          if (mergeTargetId != null) {
+            editorService.mergeImagesIntoRow(
+              draggingNodeId!,
+              mergeTargetId,
+              isFromLeft: isDraggingFromLeft,
+            );
+          }
         }
         break;
       case DragType.none:
@@ -209,6 +301,8 @@ class DragService extends ChangeNotifier {
     // 분리 정보 초기화
     _splitImageRowId = null;
     _splitImageIndex = null;
+    _targetRowId = null;
+    _targetInsertIndex = null;
 
     notifyListeners();
   }
@@ -478,21 +572,19 @@ class DragService extends ChangeNotifier {
     }
 
     // 맨 위 삽입을 위한 특별 처리
-    if (finalCandidate == 0) {
-      finalCandidate = 0;
-    }
+    // 첫 행(타이틀 아래) 배치 허용: 타이틀을 건드리지 않되, 그 아래로는 허용
+    // finalCandidate가 0이면 이후 타이틀 보정에서 +1 처리됨
 
     // 타이틀 고정: 타이틀(isTitle=true) 위로는 드롭 불가 → 항상 타이틀 바로 아래로 보정
     try {
-      if (dragMode == DragType.reorder && finalCandidate != null) {
+      if (finalCandidate != null) {
         final doc = editorService.document;
         int titleIndex = -1;
-
         final n = doc.getNodeAt(0);
         if (n is ParagraphNode && (n.metadata['isTitle'] == true)) {
           titleIndex = 0;
         }
-
+        // 타이틀 바로 아래로 최소 보정. 타이틀 없으면 보정 생략
         if (titleIndex != -1 && finalCandidate <= titleIndex) {
           finalCandidate = titleIndex + 1;
         }
@@ -501,6 +593,13 @@ class DragService extends ChangeNotifier {
 
     // 가로배치 모드일 때는 dropIndex를 null로 설정 (가로라인 표시 안함)
     if (dragMode == DragType.imageRowMerge) {
+      finalCandidate = null;
+    }
+
+    // 분리 취소 감지(원래 행 + 중앙 영역) 시에도 드롭 라인을 표시하지 않음
+    if (hasSplitImageInfo &&
+        targetNodeId == _splitImageRowId &&
+        dragMode == DragType.reorder) {
       finalCandidate = null;
     }
 
@@ -513,6 +612,34 @@ class DragService extends ChangeNotifier {
     print('최종 드롭 인덱스: $finalCandidate');
     print('드래그 모드: $dragMode');
     */
+
+    // 이미지 행 타겟에 대한 삽입 인덱스 계산 (분리/병합 판단에 활용)
+    if (targetNodeType == NodeType.imageRow) {
+      _targetRowId = node.id;
+      // targetRect와 로컬 X로 삽입 위치 추정
+      try {
+        final Rect? targetRect = documentLayout.getRectForPosition(position);
+        // rowNode 정보 없이도 좌표 기반으로 삽입 슬롯 계산 (폭 기준 균등 분할)
+        if (targetRect != null) {
+          final double localXWithinTarget = localPosition.dx - targetRect.left;
+          const int slots = 8; // 보수적 기본 슬롯 수 (필요 시 컴포넌트에서 전달하도록 개선)
+          final double slotW = (targetRect.width / slots).clamp(
+            1.0,
+            targetRect.width,
+          );
+          int idx = (localXWithinTarget / slotW).floor();
+          idx = idx.clamp(0, slots - 1);
+          _targetInsertIndex = idx;
+        } else {
+          _targetInsertIndex = null;
+        }
+      } catch (_) {
+        _targetInsertIndex = null;
+      }
+    } else {
+      _targetRowId = null;
+      _targetInsertIndex = null;
+    }
 
     return {'dropIndex': finalCandidate};
   }

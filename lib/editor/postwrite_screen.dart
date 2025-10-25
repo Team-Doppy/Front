@@ -1,12 +1,12 @@
 import 'dart:io';
-import 'dart:convert';
-import 'dart:ui' as ui;
-import 'dart:typed_data';
+import 'package:doppy/editor/%20adf.dart';
 import 'package:doppy/editor/component/clip_component.dart';
+
+import 'package:doppy/editor/style/selected_toolbar.dart';
 import 'package:doppy/utils/error_handler.dart';
+import 'package:flutter/rendering.dart';
 import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
-
 import 'package:doppy/editor/component/link_component.dart';
 import 'package:doppy/editor/component/single_image_component.dart';
 import 'package:doppy/editor/component/row_image_component.dart';
@@ -15,12 +15,12 @@ import 'package:doppy/editor/component/paragraph_component.dart';
 import 'package:doppy/editor/component/mention_component.dart';
 import 'package:doppy/editor/component/divider_component.dart';
 import 'package:doppy/editor/overlay/drag_overlay_widget.dart';
-import 'package:doppy/editor/publish/post_export_screen.dart';
 import 'package:doppy/editor/service/drag_service.dart';
 import 'package:doppy/editor/service/editor_service.dart';
 import 'package:doppy/editor/service/node_component_service.dart';
+import 'package:doppy/editor/service/edit_service.dart';
 import 'package:doppy/editor/service/sticker_service.dart';
-// removed unused image editor imports after simplifying selected toolbar
+import 'package:doppy/utils/dialog_utils.dart';
 import 'package:doppy/editor/style/style_sheet.dart';
 import 'package:doppy/editor/style/defualt_toolbar.dart';
 import 'package:doppy/editor/sticker_canvas.dart';
@@ -30,7 +30,6 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter/services.dart';
 import 'package:super_editor/super_editor.dart';
-import 'package:doppy/editor/overlay/save_draft_overlay.dart';
 import 'package:doppy/editor/overlay/draft_list_overlay.dart';
 import 'package:doppy/editor/publish/post_exporter.dart';
 import 'package:doppy/data/services/draft_service.dart';
@@ -43,17 +42,13 @@ enum VisibilityOption { public, partial, private }
 enum NodeType { paragraph, image, imageRow, location, unknown }
 
 class PostwriteScreen extends StatefulWidget {
-  final double screenWidth;
-  final Map<String, dynamic>? initialExported; // 기존 글 불러오기용
-  final bool isEditMode; // 수정 모드 여부
-  final String? postId; // 수정할 포스트 ID
+  final bool isEditingMode;
+  final Map<String, dynamic>? exportedDataForEdit;
 
   const PostwriteScreen({
     super.key,
-    required this.screenWidth,
-    this.initialExported,
-    this.isEditMode = false,
-    this.postId,
+    this.isEditingMode = false,
+    this.exportedDataForEdit,
   });
 
   @override
@@ -61,6 +56,7 @@ class PostwriteScreen extends StatefulWidget {
 }
 
 class _PostwriteScreenState extends State<PostwriteScreen> {
+  //super_editor
   late final Editor editor;
   late final MutableDocument document;
   late final MutableDocumentComposer composer;
@@ -68,47 +64,79 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
 
   //service
   late final EditorService editorService;
+  late final StickerService stickerService;
+  late final NodeComponentService nodeComponentService;
   late final DragService dragService;
   late final DraftService draftService;
   late final TextStylingService textStylingService;
+  late final EditService editService;
 
+  //overlay
   OverlayEntry? overlayEntry;
   GlobalKey overlayKey = GlobalKey();
   final GlobalKey _documentLayoutKey = GlobalKey();
 
+  //manipulation
   ScrollController scrollController = ScrollController();
   Offset? _lastTapPosition; // 마지막 탭 위치 저장
-  bool _isKeyboardVisible = false; // 키보드 표시 상태
 
-  // 임시저장 관련
-  String? _currentDraftId;
-  // StickerCanvas는 화면 Stack 내에 부착 (기타 오버레이보다 아래)
+  //keyboard
+  bool isKeyboardVisible = false; // 키보드 표시 상태
+  String? currentDraftId; // 임시저장 관련
 
   @override
   void initState() {
     super.initState();
 
-    document = MutableDocument(
-      nodes: [
-        ParagraphNode(
-          id: '1',
-          text: AttributedText(''),
-          metadata: {'isTitle': true, 'textAlign': 'center'},
-        ),
-        ParagraphNode(
-          id: '2',
-          text: AttributedText(''),
-          metadata: {'textAlign': 'center'},
-        ),
-      ],
-    );
+    // 편집 모드이면 전달된 exportedDataForEdit를 기반으로 문서를 복원
+    // 새 글 작성 모드이면 빈 문서 생성
+    if (widget.isEditingMode && widget.exportedDataForEdit != null) {
+      try {
+        document = EditService().rebuildDocumentForEdit(
+          widget.exportedDataForEdit!,
+        );
+      } catch (e) {
+        // 실패 시 빈 문서로 초기화
+        document = MutableDocument(
+          nodes: [
+            ParagraphNode(id: Editor.createNodeId(), text: AttributedText()),
+          ],
+        );
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) {
+            ErrorHandler.showError(context, '게시물 데이터를 불러올 수 없습니다');
+          }
+        });
+      }
+    } else {
+      print('🔄 새 글 작성 모드');
+      // 새 글 작성 모드 - 빈 문서 생성
+      document = MutableDocument(
+        nodes: [
+          ParagraphNode(
+            id: '1',
+            text: AttributedText(''),
+            metadata: {'isTitle': true, 'textAlign': 'center'},
+          ),
+          ParagraphNode(
+            id: '2',
+            text: AttributedText(''),
+            metadata: {'textAlign': 'center'},
+          ),
+        ],
+      );
+    }
     composer = MutableDocumentComposer();
 
     // FocusNode 초기화
     _editorFocusNode = FocusNode(debugLabel: 'editor_focus');
 
-    // 키보드 상태 감지
-    _editorFocusNode.addListener(_onFocusChange);
+    // 포커스 변화 감지 (키보드 상태 추적)
+    _editorFocusNode.addListener(() {
+      setState(() {
+        isKeyboardVisible = _editorFocusNode.hasFocus;
+      });
+    });
 
     editor = createDefaultDocumentEditor(
       document: document,
@@ -118,75 +146,91 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     editorService = EditorService(editor: editor, document: document);
     editorService.setDocumentLayoutKey(_documentLayoutKey);
     textStylingService = TextStylingService(editor: editor, composer: composer);
+
+    //service 초기화2
+
+    stickerService = StickerService();
+    nodeComponentService = NodeComponentService();
+
     // 전역 스타일링 서비스 설정 (렌더링용)
     setGlobalTextStylingService(textStylingService);
+    // 편집 서비스
+    editService = EditService();
+
     // ImageService는 build 메서드에서 설정
     dragService = DragService(
       editorService: editorService,
       scrollController: scrollController,
     );
     dragService.attachScrollController(scrollController);
-    dragService.addListener(_onDragChange);
+    dragService.addListener(_onDragging);
 
     // 임시저장 서비스 초기화
     draftService = DraftService();
-    _initializeDraft();
-
-    // 초기 콘텐츠가 전달되었다면 문서를 교체하여 불러오기
-    try {
-      final initData = widget.initialExported;
-      if (initData != null) {
-        final newDoc = _rebuildDocument(initData);
-        _replaceDocumentSafely(newDoc);
-      }
-    } catch (_) {}
-
-    // 선택 범위가 바뀔 때 이미지 하이라이트 갱신
-    composer.selectionNotifier.addListener(_updateImageSelectionHighlight);
 
     // 문서 변경 시 다음 버튼 상태 업데이트
     editorService.addListener(_onEditorServiceChange);
 
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _updateImageSelectionHighlight();
-      // 초기 진입 시 제목 아래 문단(id: '2')로 커서 이동 및 포커스 요청
-      final node = document.getNodeById('2');
-      if (node is ParagraphNode) {
-        final offset = node.text.text.length;
-        composer.setSelectionWithReason(
-          DocumentSelection.collapsed(
-            position: DocumentPosition(
-              nodeId: node.id,
-              nodePosition: TextNodePosition(offset: offset),
-            ),
-          ),
-          SelectionReason.userInteraction,
-        );
-      }
-      // 최초 진입 스냅샷 마크(현재 상태를 저장 기준으로 간주)
-      editorService.markSavedSnapshot();
+    // 폰트 변경 감지
+    textStylingService.addListener(_onEditorServiceChange);
 
-      // 스티커 초기 상태 저장 (변경 감지를 위해)
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      // 편집 모드가 아닐 때만 커서 이동
+      if (!widget.isEditingMode) {
+        final node = document.getNodeById('2');
+        if (node is ParagraphNode) {
+          final offset = node.text.text.length;
+          composer.setSelectionWithReason(
+            DocumentSelection.collapsed(
+              position: DocumentPosition(
+                nodeId: node.id,
+                nodePosition: TextNodePosition(offset: offset),
+              ),
+            ),
+            SelectionReason.userInteraction,
+          );
+        }
+      }
       try {
-        context.read<StickerService>().saveInitialState();
+        // 최초 진입 스냅샷 마크(현재 상태를 저장 기준으로 간주)
+        editorService.markSavedSnapshot();
+        stickerService.saveInitialState();
       } catch (_) {}
 
       // 스크롤 리스너 추가
       scrollController.addListener(_onScrollChanged);
-
-      // StickerCanvas는 화면 Stack에 직접 부착하므로 여기선 별도 처리 없음
     });
   }
 
+  bool _showAppBar = true;
   double _lastOffset = 0.0;
   bool _isScrollingUp = false;
-  bool _showAppBar = true; // 초기에는 항상 표시
 
-  void _onScrollChanged() {
-    final currentOffset = scrollController.offset;
+  void _onKeyboardVisibilityChanged() {
+    if (!mounted) return;
+
+    final viewInsets = MediaQuery.of(context).viewInsets;
+    final keyboardHeight = viewInsets.bottom;
+    final currentOffset =
+        scrollController.hasClients ? scrollController.offset : 0.0;
     final delta = currentOffset - _lastOffset;
 
-    // 스크롤 가능 여부 확인
+    // 키보드 상태에 따른 스크롤 가능 여부 판단
+    final isKeyboardUp = keyboardHeight > 200;
+    final isKeyboardDown = keyboardHeight <= 30;
+
+    // 키보드가 완전히 내려갔을 때는 항상 앱바 표시
+    if (isKeyboardDown) {
+      if (!_showAppBar) {
+        setState(() {
+          _showAppBar = true;
+          _isScrollingUp = true;
+        });
+      }
+      return;
+    }
+
+    // 키보드가 올라와 있을 때의 스크롤 가능 여부 확인
     final canScroll =
         scrollController.hasClients &&
         scrollController.position.maxScrollExtent > 0;
@@ -202,8 +246,8 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
       return;
     }
 
-    // 맨 위에 있을 때는 항상 앱바 표시
-    const topThreshold = 10.0;
+    // 3. 맨 위에 있을 때는 항상 앱바 표시
+    const topThreshold = 15.0;
     if (currentOffset <= topThreshold) {
       if (!_showAppBar) {
         setState(() {
@@ -215,9 +259,8 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
       return;
     }
 
-    // 스크롤 임계값 설정 (너무 작은 변화는 무시)
-    const scrollThreshold = 5.0;
-
+    // 4. 스크롤 방향에 따른 앱바 표시/숨김
+    const scrollThreshold = 3.0;
     if (delta.abs() > scrollThreshold) {
       if (delta < 0) {
         // 위로 스크롤 (앱바 표시)
@@ -228,8 +271,8 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
           });
         }
       } else {
-        // 아래로 스크롤 (앱바 숨김)
-        if (_isScrollingUp) {
+        // 아래로 스크롤 (앱바 숨김) - 키보드가 올라와 있을 때만
+        if (_isScrollingUp && isKeyboardUp) {
           setState(() {
             _isScrollingUp = false;
             _showAppBar = false;
@@ -241,712 +284,472 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     _lastOffset = currentOffset;
   }
 
+  void _onScrollChanged() {
+    // 스크롤 시 서비스 캐시 무효화
+    try {
+      dragService.invalidateNodeRectCache();
+    } catch (_) {}
+    // 레이아웃 변동 시 노드 rect 캐시 무효화 (스크롤시)
+    try {
+      dragService.invalidateNodeRectCache();
+    } catch (_) {}
+
+    // 앱바 표시 로직은 _onKeyboardVisibilityChanged에서 처리
+    _onKeyboardVisibilityChanged();
+  }
+
   void _onEditorServiceChange() {
-    // 문서 변경 시 UI 업데이트 (다음 버튼 상태 반영)
     if (mounted) {
       setState(() {});
     }
   }
 
-  /// 키보드가 현재 표시되고 있는지 확인
-  bool get isKeyboardVisible => _isKeyboardVisible;
-
-  /// 키보드 높이 가져오기
-  double get keyboardHeight => MediaQuery.of(context).viewInsets.bottom;
-
-  void _onFocusChange() {
-    setState(() {
-      _isKeyboardVisible = _editorFocusNode.hasFocus;
-    });
-  }
-
-  @override
-  void dispose() {
-    // 이미지 선택 상태 초기화 (조용히)
-    NodeComponentService().clearHighlightedSelectionSilently();
-    NodeComponentService().clearSelectionSilently();
-
-    textStylingService.dispose();
-    editorService.removeListener(_onEditorServiceChange);
-    editorService.dispose();
-    dragService.removeListener(_onDragChange);
-    scrollController.removeListener(_onScrollChanged);
-    _editorFocusNode.removeListener(_onFocusChange);
-    try {
-      composer.selectionNotifier.removeListener(_updateImageSelectionHighlight);
-    } catch (_) {}
-    try {
-      _editorFocusNode.dispose();
-    } catch (_) {}
-    super.dispose();
-  }
-
-  // 전달된 exported(Map)으로 문서를 구성
-  MutableDocument _rebuildDocument(Map<String, dynamic> data) {
-    dynamic content = data['content'];
-    if (content is String) {
-      try {
-        content = json.decode(content);
-      } catch (_) {
-        content = const {'nodes': []};
-      }
-    }
-    if (content is! Map) {
-      content = const {'nodes': []};
-    }
-    final nodes = (content['nodes'] as List?) ?? const [];
-    final rebuilt = <DocumentNode>[];
-    for (final raw in nodes) {
-      final m = (raw as Map).cast<String, dynamic>();
-      final id = (m['id'] ?? '').toString();
-      final type = (m['type'] ?? '').toString();
-      switch (type) {
-        case 'paragraph':
-          final text = (m['text'] ?? '').toString();
-          final align = (m['align'] ?? 'center').toString();
-          final isTitle = m['isTitle'] == true;
-          final spans = (m['spans'] as List?) ?? const [];
-          final attributed = _buildAttributedText(text, spans);
-          final meta = <String, dynamic>{'textAlign': align};
-          if (isTitle) meta['isTitle'] = true;
-          rebuilt.add(ParagraphNode(id: id, text: attributed, metadata: meta));
-          break;
-        case 'image':
-          rebuilt.add(
-            ImageNode(
-              id: id,
-              imageUrl: (m['url'] ?? '').toString(),
-              altText: (m['altText'] ?? '').toString(),
-            ),
-          );
-          break;
-        case 'imageRow':
-          rebuilt.add(
-            ImageRowNode(
-              id: id,
-              imageUrls:
-                  ((m['urls'] as List?) ?? const [])
-                      .map((e) => e.toString())
-                      .toList(),
-              spacing: (m['spacing'] as num?)?.toDouble() ?? 4.0,
-            ),
-          );
-          break;
-        case 'link':
-          rebuilt.add(
-            LinkNode(
-              id: id,
-              url: (m['url'] ?? '').toString(),
-              title: (m['title'] ?? '').toString(),
-              description: (m['description'] ?? '').toString(),
-              thumbnailUrl: (m['thumbnailUrl'] ?? '').toString(),
-            ),
-          );
-          break;
-        case 'location':
-        case 'mention':
-          rebuilt.add(
-            MentionNode(
-              id: id,
-              usernames:
-                  ((m['usernames'] as List?) ?? const [])
-                      .map((e) => e.toString())
-                      .toList(),
-            ),
-          );
-          break;
-        default:
-          rebuilt.add(ParagraphNode(id: id, text: AttributedText('[$type]')));
-      }
-    }
-    return MutableDocument(nodes: rebuilt);
-  }
-
-  AttributedText _buildAttributedText(String text, List spans) {
-    final attributed = AttributedText(text);
-    for (final s in spans) {
-      final m = (s as Map).cast<String, dynamic>();
-      final start = (m['start'] as num?)?.toInt() ?? 0;
-      final end = (m['end'] as num?)?.toInt() ?? start;
-      final ann = (m['attrs'] as Map?)?.cast<String, dynamic>() ?? {};
-      final atts = <Attribution>{};
-      if (ann['bold'] == true) atts.add(boldAttribution);
-      if (ann['italic'] == true) atts.add(italicsAttribution);
-      if (ann['underline'] == true) atts.add(underlineAttribution);
-      if (ann['strikethrough'] == true) atts.add(strikethroughAttribution);
-      final fs = (ann['font_size'] as num?)?.toDouble();
-      if (fs != null) atts.add(FontSizeAttribution(fs));
-      final colorHex = ann['color'] as String?;
-      if (colorHex != null && colorHex.isNotEmpty) {
-        atts.add(ColorAttribution(_parseHexColor(colorHex)));
-      }
-      for (final a in atts) {
-        attributed.addAttribution(a, SpanRange(start, end - 1));
-      }
-    }
-    return attributed;
-  }
-
-  ui.Color _parseHexColor(String hex) {
-    var v = hex.replaceAll('#', '');
-    if (v.length == 6) v = 'FF$v';
-    return ui.Color(int.parse(v, radix: 16));
-  }
-
-  void _replaceDocumentSafely(MutableDocument newDocument) {
-    try {
-      for (int i = document.length - 1; i >= 0; i--) {
-        final node = document.getNodeAt(i);
-        if (node != null) {
-          document.deleteNode(node.id);
-        }
-      }
-      for (int i = 0; i < newDocument.length; i++) {
-        final node = newDocument.getNodeAt(i);
-        if (node != null) {
-          document.insertNodeAt(i, node);
-        }
-      }
-    } catch (_) {}
+  // 드래그 프리뷰 렌더링을 위한 리스너
+  void _onDragging() {
+    if (mounted) setState(() {});
   }
 
   void _cleanupAndExit() {
     try {
-      // 1) 포커스 정리 (SuperEditor가 자체적으로 처리하도록 위임)
-      // FocusScope.of(context).unfocus(); // 제거: SuperEditor가 자체적으로 포커스 관리
+      dragService.endDrag();
+      composer.clearSelection();
+      nodeComponentService.clearAll();
+    } catch (_) {}
 
-      // 2) 이미지 서비스 상태 초기화
-      final img = NodeComponentService();
-      img.clearHighlightedSelection();
-      img.selectImage(null);
-      img.clearImageUrlMapping(); // 매핑 맵 정리
-
-      // 3) 스티커 서비스 상태 초기화(선택/드래그/리스트)
-      try {
-        final stickerSvc = context.read<StickerService>();
-        stickerSvc.select(null);
-        stickerSvc.removeAll();
-        // 드래그 상태 리셋을 위해 begin/ end 없이 내부 플래그만 초기화
-        // 리스트는 그대로 두되, 화면 이탈이므로 선택/플래그만 리셋
-      } catch (_) {}
-
-      // 4) 드래그 서비스 플래그 정리
-      try {
-        dragService.endDrag();
-      } catch (_) {}
-
-      // 5) 에디터 선택/하이라이트 제거
-      try {
-        composer.clearSelection();
-      } catch (_) {}
-
-      // 6) overlay 등 정리 후 종료
-      Navigator.of(context).pop();
-    } catch (_) {
-      Navigator.of(context).pop();
-    }
-  }
-
-  // 드래그 프리뷰 렌더링을 위한 리스너
-  void _onDragChange() {
-    if (mounted) setState(() {});
-  }
-
-  /// 텍스트 선택 범위에 포함된 이미지/이미지행을 회색 하이라이트로 표시
-  void _updateImageSelectionHighlight() {
     try {
-      final sel = composer.selection;
-      if (sel == null) {
-        NodeComponentService().clearHighlightedSelection();
-        return;
-      }
+      stickerService.select(null);
+      stickerService.removeAll();
+    } catch (_) {}
 
-      final baseIndex = document.getNodeIndexById(sel.base.nodeId);
-      final extentIndex = document.getNodeIndexById(sel.extent.nodeId);
-      if (baseIndex == -1 || extentIndex == -1) {
-        NodeComponentService().clearHighlightedSelection();
-        return;
-      }
+    if (mounted) Navigator.of(context).pop();
+  }
 
-      final start = baseIndex <= extentIndex ? baseIndex : extentIndex;
-      final end = baseIndex <= extentIndex ? extentIndex : baseIndex;
-      final ids = <String>{};
-      for (int i = start; i <= end; i++) {
-        final node = document.getNodeAt(i);
-        if (node == null) continue;
-        if (node is ImageNode || node is ImageRowNode) {
-          ids.add(node.id);
+  void _handleTap() {
+    if (_lastTapPosition == null) return;
+    // 1) 세로 노드 사이 클릭 감지 → (이미지-이미지 사이에서만) 빈 문단 삽입
+    final verticalGapIndex = _detectVerticalGapAt(_lastTapPosition!);
+    if (verticalGapIndex != null) {
+      final before =
+          verticalGapIndex - 1 >= 0
+              ? document.getNodeAt(verticalGapIndex - 1)
+              : null;
+      final after =
+          verticalGapIndex < document.nodeCount
+              ? document.getNodeAt(verticalGapIndex)
+              : null;
+      final bool isImageBefore = before is ImageNode || before is ImageRowNode;
+      final bool isImageAfter = after is ImageNode || after is ImageRowNode;
+      if (isImageBefore && isImageAfter) {
+        editorService.insertEmptyParagraphAtIndex(verticalGapIndex);
+      }
+      nodeComponentService.selectNode(null);
+      return;
+    }
+
+    final nodeId = editorService.findNodeAtPosition(_lastTapPosition!)?.id;
+    if (nodeId == null) return;
+
+    final node = document.getNodeById(nodeId);
+
+    // 2) 이미지행 내부 경계(이미지 사이) 클릭 감지 → 빈 문단 삽입
+    if (node is ImageRowNode) {
+      final betweenIndex = _detectImageRowBoundaryGap(node, _lastTapPosition!);
+      if (betweenIndex != null) {
+        final rowIndex = document.getNodeIndexById(node.id);
+        if (rowIndex != -1) {
+          editorService.insertEmptyParagraphAtIndex(rowIndex + 1);
         }
+        nodeComponentService.selectNode(null);
+        return;
       }
+    }
 
-      NodeComponentService().setHighlightedSelection(ids);
-    } catch (_) {
-      NodeComponentService().clearHighlightedSelection();
+    final bool isSpecial =
+        node is ImageNode ||
+        node is ImageRowNode ||
+        node is LinkNode ||
+        node is MentionNode ||
+        node is ClipNode;
+
+    nodeComponentService.selectNode(isSpecial ? nodeId : null);
+  }
+
+  // moved to EditorService (getNodeGlobalRect)
+
+  int? _detectVerticalGapAt(Offset globalPos) {
+    // delegate to DragService
+    return dragService.detectVerticalGapAt(globalPos);
+  }
+
+  int? _detectImageRowBoundaryGap(ImageRowNode rowNode, Offset globalPos) {
+    const double threshold = 12.0; // 경계 감지 임계
+    final rect = dragService.getNodeGlobalRect(rowNode.id);
+    if (rect == null) return null;
+
+    // 수직으로 행 안쪽에 위치해야 함 (약간 오차 허용)
+    if (globalPos.dy < rect.top - 8 || globalPos.dy > rect.bottom + 8) {
+      return null;
+    }
+
+    final localX = globalPos.dx - rect.left;
+    final int count = rowNode.imageUrls.length;
+    if (count <= 1) return null;
+    final double slot = rect.width / count;
+
+    // 경계는 k*slot (k=1..count-1). 경계에 가까우면 감지
+    for (int k = 1; k < count; k++) {
+      final double boundaryX = slot * k;
+      if ((localX - boundaryX).abs() <= threshold) {
+        return k; // k번째 경계 = 앞 이미지 인덱스와 뒤 이미지 인덱스 사이
+      }
+    }
+    return null;
+  }
+
+  void _handleLongPressStart(LongPressStartDetails details) {
+    if (isKeyboardVisible) {
+      _editorFocusNode.unfocus();
+    }
+
+    final node = editorService.findNodeAtPosition(details.globalPosition);
+    if (node == null) return;
+    final nodeId = node.id;
+
+    // 타이틀 문단은 드래그 금지
+    if (node is ParagraphNode && node.metadata['isTitle'] == true) {
+      return;
+    }
+
+    // 노드 타입별 분기
+    if (node is ImageRowNode) {
+      final isRowSelected = nodeComponentService.selectedImageId == nodeId;
+      if (isRowSelected) {
+        dragService.startDrag(nodeId, context, details.globalPosition);
+      } else {
+        _startImageRowDrag(nodeId, details.globalPosition);
+      }
+      return;
+    }
+
+    if (node is ImageNode) {
+      dragService.startDrag(nodeId, context, details.globalPosition);
+      return;
+    }
+
+    // 기타 노드(문단, 링크, 멘션, 구분선 등)
+    dragService.startDrag(nodeId, context, details.globalPosition);
+  }
+
+  void _handleDragMoveAndAutoScroll(
+    BuildContext context,
+    LongPressMoveUpdateDetails details,
+  ) {
+    dragService.updateDrag(details.globalPosition, context);
+
+    if (!scrollController.hasClients) return;
+
+    final double screenHeight = MediaQuery.of(context).size.height;
+    final double globalY = details.globalPosition.dy;
+    const double edge = 140.0; // 감지 폭 확대
+    const double base = 12.0; // 기본 속도
+    final pos = scrollController.position;
+
+    double speedFor(double distanceToEdge) {
+      final d = (edge - distanceToEdge).clamp(0.0, edge);
+      final factor = (d / edge);
+      return base * (0.3 + 0.7 * factor); // 가장자리 근접 시 가속
+    }
+
+    if (globalY < edge) {
+      final distance = globalY; // 상단까지 거리
+      final delta = speedFor(distance);
+      final next = (pos.pixels - delta).clamp(0.0, pos.maxScrollExtent);
+      if (next != pos.pixels) {
+        scrollController.jumpTo(next);
+      }
+    } else if (globalY > screenHeight - edge) {
+      final distance = screenHeight - globalY; // 하단까지 거리
+      final delta = speedFor(distance);
+      final next = (pos.pixels + delta).clamp(0.0, pos.maxScrollExtent);
+      if (next != pos.pixels) {
+        scrollController.jumpTo(next);
+      }
     }
   }
 
   @override
-  Widget build(BuildContext context) {
-    // 키보드 상태 업데이트
-    final keyboardHeight = MediaQuery.of(context).viewInsets.bottom;
-    _isKeyboardVisible = keyboardHeight > 0;
+  void dispose() {
+    // 이미지 선택 상태 초기화
+    nodeComponentService.clearHighlightedSelectionSilently();
+    nodeComponentService.clearSelectionSilently();
 
-    // ignore: deprecated_member_use
+    textStylingService.removeListener(_onEditorServiceChange);
+    textStylingService.dispose();
+    editorService.removeListener(_onEditorServiceChange);
+    editorService.dispose();
+    dragService.removeListener(_onDragging);
+    scrollController.removeListener(_onScrollChanged);
+    _editorFocusNode.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // 키보드 상태 변화 감지
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _onKeyboardVisibilityChanged();
+    });
+
     return WillPopScope(
       onWillPop: () async {
-        // 나가기 전 저장 필요 여부 판단(서비스 로직)
-        final needPrompt = editorService.shouldPromptSaveOnExit();
-        final stickerService = context.read<StickerService>();
-        final hasStickerChanges = stickerService.hasChanges;
-        if (needPrompt || hasStickerChanges) {
-          final decision = await Navigator.of(context).push<ExitDecision>(
-            PageRouteBuilder(
-              opaque: false,
-              barrierDismissible: true,
-              pageBuilder: (_, __, ___) => const SaveDraftOverlay(),
-            ),
+        if (widget.isEditingMode) {
+          final shouldCancel = await DialogUtils.showConfirmDialog(
+            context,
+            title: '수정 취소',
+            message: '수정 중인 내용이 사라집니다.\n정말 취소하시겠습니까?',
+            confirmText: '취소',
+            cancelText: '계속 수정',
+            isDestructive: true,
           );
-          if (decision == ExitDecision.saveDraft) {
-            await _manualSaveDraft();
-            // 저장 후 종료 (정리 포함)
-            _cleanupAndExit();
-          } else if (decision == ExitDecision.discard) {
-            await Future.delayed(const Duration(milliseconds: 180));
+          if (shouldCancel == true) {
             _cleanupAndExit();
           }
+          return false;
+        }
+
+        // 새 글 작성 모드: 변경사항이 있으면 임시저장 다이얼로그
+        final needPrompt = editorService.shouldPromptSaveOnExit(context);
+        if (needPrompt) {
+          final shouldSave = await DialogUtils.showConfirmDialog(
+            context,
+            title: '작성 취소',
+            message: '작성 중인 내용을 임시저장할까요?',
+            confirmText: '임시저장',
+            cancelText: '저장 안 함',
+            isDestructive: false,
+          );
+          if (shouldSave == true) {
+            await _saveDraft();
+            _cleanupAndExit();
+          } else if (shouldSave == false) {
+            _cleanupAndExit();
+          }
+          // null이면 아무 것도 안 함 (다이얼로그만 닫힘)
         } else {
-          // 바로 종료(서비스 상태만 정리)
           _cleanupAndExit();
         }
         return false;
       },
+
       child: Scaffold(
-        resizeToAvoidBottomInset: true,
-        body: Stack(
+        resizeToAvoidBottomInset: false,
+        body: Column(
           children: [
-            AnimatedScale(
-              alignment: Alignment.center,
-              duration: const Duration(milliseconds: 100),
-              scale: dragService.draggingNodeId != null ? 0.95 : 1.0,
+            Expanded(
               child: Stack(
+                clipBehavior: Clip.none,
                 children: [
-                  AnimatedOpacity(
-                    duration: const Duration(milliseconds: 100),
-
-                    opacity:
-                        dragService.draggingNodeId != null
-                            ? 0.6
-                            : 1.0, // 드래그 중일 때 투명도 조정
-                    child: Padding(
-                      padding: EdgeInsets.only(
-                        top: 0, // SafeArea만
-                        bottom: 0,
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          // 타이틀 문단은 SuperEditor 안에서 metadata로 스타일링 처리
-                          Expanded(
-                            child: Theme(
-                              data: AppTheme.lightTheme,
-                              child: SuperEditor(
-                                gestureMode:
-                                    Platform.isIOS
-                                        ? DocumentGestureMode.iOS
-                                        : DocumentGestureMode.android,
-                                editor: editor,
-                                focusNode: _editorFocusNode,
-                                stylesheet: buildCustomStylesheet(context),
-                                documentLayoutKey: _documentLayoutKey,
-                                scrollController: scrollController,
-
-                                selectionStyle: SelectionStyles(
-                                  selectionColor: AppColors.primary.withOpacity(
-                                    0.3,
-                                  ),
-                                  highlightEmptyTextBlocks: false,
-                                ),
-
-                                componentBuilders: [
-                                  // 타이틀 문단 전용 빌더(드래그 없음)
-                                  TitleParagraphComponentBuilder(
-                                    editorService: editorService,
-                                  ),
-                                  // 커스텀 이미지 컴포넌트들
-                                  SingleImageComponentBuilder(
-                                    dragService: dragService,
-                                  ),
-                                  RowImageComponentBuilder(
-                                    dragService: dragService,
-                                  ),
-                                  CustomParagraphComponentBuilder(
-                                    dragService: dragService,
-                                    editorService: editorService,
-                                  ),
-
-                                  // 커스텀 언급 노드 컴포넌트
-                                  MentionComponentBuilder(
-                                    dragService: dragService,
-                                  ),
-                                  // 구분선 전용 컴포넌트
-                                  DividerComponentBuilder(
-                                    dragService: dragService,
-                                  ),
-
-                                  LinkComponentBuilder(
-                                    dragService: dragService,
-                                  ),
-
-                                  PinComponentBuilder(dragService: dragService),
-
-                                  // 기본 컴포넌트들 (Paragraph 제외)
-                                  ...defaultComponentBuilders.where(
-                                    (builder) =>
-                                        builder.runtimeType.toString() !=
-                                        'ParagraphComponentBuilder',
-                                  ),
-                                ],
-                              ),
-                            ),
+                  Positioned.fill(
+                    child: ValueListenableBuilder<String?>(
+                      valueListenable: dragService.draggingNodeIdNotifier,
+                      builder: (context, draggingNodeId, _) {
+                        return TweenAnimationBuilder<double>(
+                          tween: Tween<double>(
+                            begin: draggingNodeId != null ? 1.0 : 0.86,
+                            end: draggingNodeId != null ? 0.86 : 1.0,
                           ),
-                        ],
-                      ),
+                          duration: const Duration(milliseconds: 400),
+                          curve: Curves.easeOutCubic,
+                          builder: (context, scale, child) {
+                            return Transform.scale(
+                              scale: scale,
+                              alignment: Alignment.center,
+                              child: child,
+                            );
+                          },
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Expanded(
+                                child: Theme(
+                                  data: AppTheme.lightTheme,
+                                  child: SuperEditor(
+                                    gestureMode:
+                                        Platform.isIOS
+                                            ? DocumentGestureMode.iOS
+                                            : DocumentGestureMode.android,
+                                    editor: editor,
+                                    focusNode: _editorFocusNode,
+                                    stylesheet: buildCustomStylesheet(context),
+                                    selectionStyle: SelectionStyles(
+                                      selectionColor: AppColors.primary
+                                          .withValues(alpha: 0.3),
+                                      highlightEmptyTextBlocks: false,
+                                    ),
+                                    documentLayoutKey: _documentLayoutKey,
+                                    scrollController: scrollController,
+
+                                    componentBuilders: [
+                                      // 타이틀 문단 전용 빌더(드래그 없음)
+                                      TitleParagraphComponentBuilder(
+                                        editorService: editorService,
+                                      ),
+                                      // 커스텀 이미지 컴포넌트들
+                                      SingleImageComponentBuilder(
+                                        dragService: dragService,
+                                      ),
+                                      RowImageComponentBuilder(
+                                        dragService: dragService,
+                                      ),
+                                      CustomParagraphComponentBuilder(
+                                        dragService: dragService,
+                                        editorService: editorService,
+                                      ),
+
+                                      // 커스텀 언급 노드 컴포넌트
+                                      MentionComponentBuilder(
+                                        dragService: dragService,
+                                      ),
+                                      // 구분선 전용 컴포넌트
+                                      DividerComponentBuilder(
+                                        dragService: dragService,
+                                      ),
+
+                                      LinkComponentBuilder(
+                                        dragService: dragService,
+                                      ),
+
+                                      PinComponentBuilder(
+                                        dragService: dragService,
+                                      ),
+
+                                      // 기본 컴포넌트들 (Paragraph 제외)
+                                      ...defaultComponentBuilders.where(
+                                        (builder) =>
+                                            builder.runtimeType.toString() !=
+                                            'ParagraphComponentBuilder',
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                      },
                     ),
                   ),
 
-                  !context.read<StickerService>().isDragging
-                      ? Positioned.fill(
-                        child: GestureDetector(
-                          onTapDown: (details) {
-                            // 탭 다운 시 위치 저장
-                            _lastTapPosition = details.globalPosition;
-                            print('탭 다운: ${details.globalPosition}');
-                          },
-                          onTap: () {
-                            // 짧은 클릭 처리
-                            if (_lastTapPosition != null) {
-                              final nodeId =
-                                  editorService
-                                      .findNodeAtPosition(_lastTapPosition!)
-                                      ?.id;
-                              if (nodeId != null) {
-                                // 특수 노드 탭 선택: 이미지/이미지행/링크/멘션
-                                final node = document.getNodeById(nodeId);
-                                if (node is ImageNode ||
-                                    node is ImageRowNode ||
-                                    node is LinkNode ||
-                                    node is MentionNode ||
-                                    node is ClipNode) {
-                                  NodeComponentService().selectNode(nodeId);
-                                } else {
-                                  NodeComponentService().selectNode(null);
-                                }
-                              }
-                            }
-                          },
-                          onLongPressStart: (details) {
-                            // 🚫 키보드가 올라와 있으면 드래그 불가
-                            if (_isKeyboardVisible) {
-                              FocusManager.instance.primaryFocus?.unfocus();
-                            }
-
-                            final node = editorService.findNodeAtPosition(
-                              details.globalPosition,
-                            );
-                            print('클릭한 노드: $node');
-                            if (node != null) {
-                              final nodeId = node.id;
-                              final imageService =
-                                  context.read<NodeComponentService>();
-
-                              if (node is ParagraphNode &&
-                                  node.metadata['isTitle'] == true) {
-                                return;
-                              }
-
-                              if (node is ImageRowNode) {
-                                // 이미지 행이 선택된 상태라면 전체 행 드래그
-                                if (imageService.selectedImageId == nodeId) {
-                                  dragService.startDrag(
-                                    nodeId,
-                                    context,
-                                    details.globalPosition,
-                                  );
-                                } else {
-                                  // 손가락이 클릭한 쪽의 가장 근접한 이미지를 분리해서 드래그
-                                  _startImageRowDrag(
-                                    nodeId,
-                                    details.globalPosition,
-                                  );
-                                }
-                              } else if (node is ImageNode) {
-                                // 단일 이미지 드래그
-                                dragService.startDrag(
-                                  nodeId,
-                                  context,
-                                  details.globalPosition,
-                                );
-                              } else {
-                                // 이미지가 아닌 요소 드래그
-                                dragService.startDrag(
-                                  nodeId,
-                                  context,
-                                  details.globalPosition,
-                                );
-                              }
-                            }
-                          },
-                          onLongPressMoveUpdate: (details) {
-                            // 🚫 키보드가 올라와 있으면 드래그 업데이트 불가
-                            if (_isKeyboardVisible) return;
-
-                            dragService.updateDrag(
-                              details.globalPosition,
-                              context,
-                            );
-                          },
-                          onLongPressEnd: (details) {
-                            // 🚫 키보드가 올라와 있으면 드래그 종료 처리 불가
-                            if (_isKeyboardVisible) return;
-
-                            dragService.endDrag();
-                          },
-                          behavior: HitTestBehavior.translucent,
-                        ),
-                      )
-                      : SizedBox.shrink(),
+                  if (!stickerService.isDragging)
+                    Positioned.fill(
+                      child: GestureDetector(
+                        onTapDown: (details) {
+                          _lastTapPosition = details.globalPosition;
+                        },
+                        onTap: _handleTap,
+                        onLongPressStart:
+                            (details) => _handleLongPressStart(details),
+                        onLongPressMoveUpdate:
+                            (details) =>
+                                _handleDragMoveAndAutoScroll(context, details),
+                        onLongPressEnd: (details) {
+                          dragService.endDrag();
+                        },
+                        behavior: HitTestBehavior.translucent,
+                      ),
+                    ),
 
                   // 드래그 오버레이 (키보드가 내려가 있을 때만 표시)
-                  if (dragService.draggingNodeId != null && !_isKeyboardVisible)
+                  if (dragService.draggingNodeId != null && !isKeyboardVisible)
                     _buildDragOverlay(),
+
+                  // 스티커 캔버스
+                  Positioned.fill(
+                    child: StickerCanvas(scrollController: scrollController),
+                  ),
+
+                  // 앱바
+                  AnimatedPositioned(
+                    duration: const Duration(milliseconds: 200),
+                    curve: Curves.easeInOut,
+                    top: _showAppBar ? -10 : -100,
+                    child:
+                        widget.isEditingMode
+                            ? EditModeAppBar(
+                              editorService: editorService,
+                              onSave: _saveEditedPost,
+                            )
+                            : EditorAppBar(
+                              editorService: editorService,
+                              stickerService: stickerService,
+                            ),
+                  ),
+
+                  // 툴바 위 패딩
+                  Positioned(
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    height: MediaQuery.of(context).padding.top,
+                    child: TopPadding(),
+                  ),
                 ],
-              ),
-            ),
-
-            // 커스텀 투명 앱바 (왼쪽 - 뒤로가기)
-            AnimatedPositioned(
-              duration: const Duration(milliseconds: 200),
-              curve: Curves.easeInOut,
-              top: _showAppBar ? -10 : -100,
-              left: 0,
-              child: SafeArea(
-                child: ClipRRect(
-                  child: BackdropFilter(
-                    filter: ui.ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-                    child: Container(
-                      decoration: BoxDecoration(
-                        color: Theme.of(
-                          context,
-                        ).colorScheme.background.withOpacity(1),
-                      ),
-                      height: 55,
-                      width: MediaQuery.of(context).size.width,
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          // 뒤로가기 버튼
-                          GestureDetector(
-                            onTap: () async {
-                              final needPrompt =
-                                  editorService.shouldPromptSaveOnExit();
-                              final stickerService =
-                                  context.read<StickerService>();
-                              final hasStickerChanges =
-                                  stickerService.hasChanges;
-                              if (needPrompt || hasStickerChanges) {
-                                final decision = await Navigator.of(
-                                  context,
-                                ).push<ExitDecision>(
-                                  PageRouteBuilder(
-                                    opaque: false,
-                                    barrierDismissible: true,
-                                    pageBuilder:
-                                        (_, __, ___) =>
-                                            const SaveDraftOverlay(),
-                                  ),
-                                );
-                                if (decision == ExitDecision.saveDraft) {
-                                  await _manualSaveDraft();
-                                  _cleanupAndExit();
-                                } else if (decision == ExitDecision.discard) {
-                                  await Future.delayed(
-                                    const Duration(milliseconds: 180),
-                                  );
-                                  _cleanupAndExit();
-                                }
-                              } else {
-                                _cleanupAndExit();
-                              }
-                            },
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 20,
-                                vertical: 8,
-                              ),
-                              child: Icon(
-                                Icons.arrow_back_ios_new_rounded,
-                                color: Theme.of(
-                                  context,
-                                ).colorScheme.onSurface.withOpacity(0.8),
-                                size: 20,
-                              ),
-                            ),
-                          ),
-
-                          if (editorService.canProceedToPublish())
-                            GestureDetector(
-                              onTap:
-                                  editorService.canProceedToPublish()
-                                      ? () {
-                                        _editorFocusNode.unfocus();
-
-                                        final json =
-                                            PostExporter.exportToJsonString(
-                                              editorService: editorService,
-                                              stickerService:
-                                                  context
-                                                      .read<StickerService>(),
-                                              viewportSize:
-                                                  MediaQuery.of(context).size,
-                                              pretty: true,
-                                            );
-                                        NodeComponentService().selectNode(null);
-
-                                        Navigator.of(context).push(
-                                          PageRouteBuilder(
-                                            opaque: false,
-                                            barrierDismissible: true,
-                                            pageBuilder:
-                                                (_, __, ___) =>
-                                                    PostExportScreen(
-                                                      exported: json,
-                                                    ),
-                                          ),
-                                        );
-                                      }
-                                      : null,
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 16,
-                                  vertical: 8,
-                                ),
-
-                                child: Text(
-                                  '다음',
-                                  style: TextStyle(
-                                    color: Theme.of(
-                                      context,
-                                    ).colorScheme.onSurface.withOpacity(0.9),
-                                    fontWeight: FontWeight.w600,
-                                    fontSize: 15,
-                                  ),
-                                ),
-                              ),
-                            ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-
-            // 스티커 캔버스 (기본 화면 위, 기타 오버레이 아래)
-            Positioned.fill(
-              child: StickerCanvas(scrollController: scrollController),
-            ),
-            Positioned(
-              top: 0,
-              left: 0,
-              right: 0,
-              height: MediaQuery.of(context).padding.top - 10,
-              child: ClipRRect(
-                child: BackdropFilter(
-                  filter: ui.ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-                  child: Container(
-                    decoration: BoxDecoration(
-                      color: Theme.of(
-                        context,
-                      ).colorScheme.background.withOpacity(1),
-                    ),
-                  ),
-                ),
               ),
             ),
           ],
         ),
-        bottomNavigationBar: AnimatedPadding(
-          duration: const Duration(milliseconds: 100),
-          curve: Curves.easeOut,
+
+        bottomNavigationBar: AnimatedContainer(
+          duration: const Duration(milliseconds: 50),
+          curve: Curves.easeInOut,
           padding: EdgeInsets.only(
-            bottom: MediaQuery.of(context).viewInsets.bottom,
+            bottom:
+                MediaQuery.of(context).viewInsets.bottom <= 30
+                    ? 20
+                    : MediaQuery.of(context).viewInsets.bottom,
           ),
-          child: SafeArea(
-            top: false,
-            child: Consumer<NodeComponentService>(
-              builder: (context, imageService, child) {
-                return imageService.selectedNodeId != null
-                    ? _buildSelectedToolbar()
-                    : _buildDefaultToolbar();
-              },
-            ),
+          child: Consumer<NodeComponentService>(
+            builder: (context, nodeService, child) {
+              return nodeService.selectedNodeId != null
+                  ? _buildSelectedToolbar()
+                  : _buildDefaultToolbar();
+            },
           ),
         ),
       ),
     );
   }
 
-  // 드래그 오버레이 빌드 (노션 스타일 컴포넌트 미리보기)
   Widget _buildDragOverlay() {
     final pos = dragService.dragPosition;
     final nodeId = dragService.draggingNodeId;
     if (pos == null || nodeId == null) return const SizedBox.shrink();
 
-    // 분리할 이미지 정보가 있으면 해당 이미지의 오버레이 표시
+    // 이미지 행 분리 모드
     if (dragService.hasSplitImageInfo) {
-      // DragService에서 분리 정보 가져오기
       final splitInfo = dragService.getSplitImageInfo();
-      if (splitInfo != null) {
-        final rowId = splitInfo['rowId'] as String;
-        final imageIndex = splitInfo['imageIndex'] as int;
+      final rowNode =
+          document.getNodeById(splitInfo?['rowId']) as ImageRowNode?;
+      final imageIndex = splitInfo?['imageIndex'] as int?;
 
-        // 분리할 이미지의 URL 가져오기
-        final rowNode = document.getNodeById(rowId);
-        if (rowNode is ImageRowNode && imageIndex < rowNode.imageUrls.length) {
-          final splitImageUrl = rowNode.imageUrls[imageIndex];
-
-          // 분리할 이미지의 오버레이 표시
-          return DragOverlayWidget(
-            nodeId: 'temp_split_image',
-            nodeType: 'image',
-            position: pos,
-            document: document,
-            splitImageUrl: splitImageUrl, // 분리용 임시 이미지 URL 전달
-          );
-        }
+      if (rowNode != null &&
+          imageIndex != null &&
+          imageIndex < rowNode.imageUrls.length) {
+        return DragOverlayWidget(
+          nodeId: 'temp_split_image',
+          nodeType: 'image',
+          position: pos,
+          document: document,
+          splitImageUrl: rowNode.imageUrls[imageIndex],
+        );
       }
     }
 
-    // 일반적인 경우 (분리할 이미지 정보가 없을 때)
+    // 일반 노드 드래그
     final node = document.getNodeById(nodeId);
     if (node == null) return const SizedBox.shrink();
 
-    String nodeType = 'default';
-    if (node is ImageNode) {
-      nodeType = 'image';
-    } else if (node is ImageRowNode) {
-      nodeType = 'imageRow';
-    } else if (node is ParagraphNode) {
-      nodeType = 'paragraph';
-    } else if (node is LinkNode) {
-      nodeType = 'link';
-    } else if (node is MentionNode) {
-      nodeType = 'mention';
-    } else if (node is DividerNode) {
-      nodeType = 'divider';
-    } else if (node is ClipNode) {
-      nodeType = 'clip';
-    }
+    final nodeType = _getNodeType(node);
     return DragOverlayWidget(
       nodeId: nodeId,
       nodeType: nodeType,
@@ -955,92 +758,40 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     );
   }
 
+  String _getNodeType(dynamic node) {
+    if (node is ImageNode) return 'image';
+    if (node is ImageRowNode) return 'imageRow';
+    if (node is ParagraphNode) return 'paragraph';
+    if (node is LinkNode) return 'link';
+    if (node is MentionNode) return 'mention';
+    if (node is DividerNode) return 'divider';
+    if (node is ClipNode) return 'clip';
+    return 'default';
+  }
+
   Widget _buildDefaultToolbar() {
     return DefaultToolbar(
       stylingService: textStylingService,
       editorService: editorService,
       scrollController: scrollController,
-      isKeyboardVisible: _isKeyboardVisible,
-      isEditMode: widget.isEditMode,
-
+      isKeyboardVisible: isKeyboardVisible,
       onDismissKeyboard: () {
-        // 키보드 내리기 (SuperEditor의 포커스 관리 활용)
         _editorFocusNode.unfocus();
-      },
-      onRequestFocus: () {
-        // 에디터 포커스 복원
-        _editorFocusNode.requestFocus();
       },
       onShowDraftList: _showDraftList,
     );
   }
 
   Widget _buildSelectedToolbar() {
-    final selectedId = NodeComponentService().selectedNodeId;
+    final selectedId = nodeComponentService.selectedNodeId;
     if (selectedId == null) return const SizedBox.shrink();
-
     final node = document.getNodeById(selectedId);
     // 링크/멘션/이미지 공통 삭제 전용 툴바
-    return Container(
-      height: 38,
-      padding: const EdgeInsets.symmetric(horizontal: 12),
-
-      child: Row(
-        children: [
-          const SizedBox(width: 8),
-          Text(
-            '선택됨',
-            style: TextStyle(
-              color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
-              fontSize: 14,
-              fontWeight: FontWeight.w500,
-            ),
-          ),
-          /*
-          Text(
-            '선택됨: ${node.runtimeType}',
-            style: Theme.of(context).textTheme.bodyMedium,
-          ),
-         */
-          const Spacer(),
-          if (node is ImageNode)
-            IconButton(
-              tooltip: '수정',
-              onPressed: () => _editImage(selectedId, node),
-              icon: Icon(
-                Icons.crop,
-                size: 20,
-                color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
-              ),
-            ),
-
-          IconButton(
-            tooltip: '삭제',
-            onPressed: () {
-              // 이미지 계열은 안전 삭제 루틴 사용
-              if (node is ImageNode || node is ImageRowNode) {
-                _deleteImageSafely(selectedId);
-                return;
-              }
-
-              // 링크/멘션 등 다른 특수 노드 삭제
-              try {
-                NodeComponentService().selectNode(null);
-                composer.clearSelection();
-                document.deleteNode(selectedId);
-                setState(() {});
-              } catch (e) {
-                ErrorHandler.showError(context, '삭제할 수 없습니다');
-              }
-            },
-            icon: Icon(
-              size: 20,
-              Icons.delete,
-              color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
-            ),
-          ),
-        ],
-      ),
+    return SelectedToolbar(
+      node: node,
+      selectedId: selectedId,
+      onEdit: () => _editImage(selectedId, node as ImageNode),
+      onDelete: (node, selectedId) => _deleteNode(node, selectedId),
     );
   }
 
@@ -1071,7 +822,6 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
         ),
       );
 
-      FocusScope.of(context).unfocus();
       if (editedBytes == null || !mounted) return;
 
       final upload = context.read<UploadService>();
@@ -1130,56 +880,25 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     }
   }
 
-  /// 안전한 이미지 삭제 메서드
-  void _deleteImageSafely(String imageId) {
+  void _deleteNode(DocumentNode node, String selectedId) {
+    // 링크/멘션 등 다른 특수 노드 삭제
     try {
-      // 1단계: 모든 선택 상태를 먼저 초기화
-      NodeComponentService().selectNode(null);
-      NodeComponentService().clearHighlightedSelection();
-      composer.clearSelection();
-
-      // 이미지 URL을 매핑에서 제거
-      final node = document.getNodeById(imageId);
-      if (node is ImageNode && node.imageUrl.isNotEmpty) {
-        NodeComponentService().unregisterImageUrl(node.imageUrl);
-      } else if (node is ImageRowNode) {
-        NodeComponentService().unregisterImageUrls(node.imageUrls);
-      }
-
-      // 2단계: 포커스 해제 (SuperEditor가 자체적으로 처리)
-      // FocusScope.of(context).unfocus(); // 제거: 불필요한 포커스 간섭 방지
-
-      // 3단계: 다음 프레임에서 이미지 삭제 실행
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) {
-          try {
-            // 이미지 삭제
-            document.deleteNode(imageId);
-            setState(() {});
-          } catch (e) {
-            print('이미지 삭제 중 오류: $e');
-          }
-        }
-      });
+      nodeComponentService.selectNode(null);
+      document.deleteNode(selectedId);
+      setState(() {});
     } catch (e) {
-      print('이미지 삭제 준비 중 오류: $e');
+      ErrorHandler.showError(context, '삭제할 수 없습니다');
     }
   }
 
   // 이미지 행에서 특정 이미지 드래그 시작 (분리는 드롭 시)
   void _startImageRowDrag(String imageRowId, Offset globalPosition) {
-    // 클릭한 위치에서 가장 근접한 이미지 인덱스 찾기
     final rowNode = document.getNodeById(imageRowId) as ImageRowNode?;
     if (rowNode != null) {
       final imageIndex = _findClickedImageIndex(rowNode, globalPosition);
 
       if (imageIndex != null) {
-        print('분리할 이미지 인덱스: $imageIndex');
-
-        // 이미지 행 전체를 드래그하되, 분리할 이미지 정보를 저장
         dragService.startDrag(imageRowId, context, globalPosition);
-
-        // 분리할 이미지 정보를 DragService에 저장
         dragService.setSplitImageInfo(imageRowId, imageIndex);
       }
     }
@@ -1188,7 +907,6 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
   // 클릭한 위치에서 가장 근접한 이미지 인덱스 찾기
   int? _findClickedImageIndex(ImageRowNode rowNode, Offset globalPosition) {
     try {
-      // 간단한 방법: 화면 너비를 기반으로 이미지 인덱스 계산
       final imageCount = rowNode.imageUrls.length;
       final screenWidth = MediaQuery.of(context).size.width;
       final imageWidth = screenWidth / imageCount;
@@ -1198,101 +916,64 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
 
       // 유효한 인덱스 범위 확인
       if (clickedIndex >= 0 && clickedIndex < imageCount) {
-        print('계산된 이미지 인덱스: $clickedIndex (전체: $imageCount)');
         return clickedIndex;
       }
 
-      // 기본값으로 첫 번째 이미지 반환
-      print('기본값으로 첫 번째 이미지 선택');
       return 0;
     } catch (e) {
-      print('이미지 인덱스 계산 에러: $e');
-      return 0; // 에러 시 첫 번째 이미지 반환
-    }
-  }
-
-  /// 임시저장 초기화
-  Future<void> _initializeDraft() async {
-    try {
-      // 기존 임시저장이 있는지 확인
-      _currentDraftId = await draftService.getCurrentDraftId();
-
-      print('[PostwriteScreen] Draft initialized: $_currentDraftId');
-    } catch (e) {
-      print('[PostwriteScreen] Error initializing draft: $e');
+      return 0;
     }
   }
 
   /// 수동 임시저장 (새 버전 생성)
-  Future<void> _manualSaveDraft() async {
+  Future<void> _saveDraft() async {
     try {
-      final title = _getTitleFromDocument();
-      final thumbnailUrl = _getThumbnailFromDocument();
+      final title = PostExporter.getTitleFromDocument(document);
+      final thumbnailUrl = nodeComponentService.getTempThumbnailUrl(
+        currentDraftId ?? '',
+      );
 
       // 항상 새로운 버전으로 저장 (existingDraftId를 null로)
-      _currentDraftId = await draftService.saveDraft(
+      currentDraftId = await draftService.saveDraft(
         editorService: editorService,
-        stickerService: context.read<StickerService>(),
+        stickerService: stickerService,
         title: title,
-        thumbnailUrl: thumbnailUrl,
+        thumbnailUrl: thumbnailUrl ?? '',
         visibility: 'public', // 기본값
         selectedGroupIds: [],
         existingDraftId: null, // 새 버전 생성
       );
 
-      print('[PostwriteScreen] Manual save completed: $_currentDraftId');
       // 저장 스냅샷 마크
       editorService.markSavedSnapshot();
-
-      // 스티커 초기 상태 저장 (임시저장 후 변화 감지를 위해)
-      context.read<StickerService>().saveInitialState();
+      stickerService.saveInitialState();
 
       // 임시저장 후에는 매핑 맵을 유지 (계속 작업할 수 있도록)
     } catch (e) {
-      print('[PostwriteScreen] Manual save failed: $e');
       if (mounted) {
-        ErrorHandler.showError(context, '임시저장 실패: $e');
+        ErrorHandler.showError(context, '임시저장에 실패했습니다');
       }
     }
   }
 
-  /// 문서에서 제목 추출
-  String _getTitleFromDocument() {
+  /// 수정된 포스트 저장 (편집 모드 전용)
+  Future<void> _saveEditedPost() async {
     try {
-      for (int i = 0; i < document.length; i++) {
-        final node = document.getNodeAt(i);
-        if (node is ParagraphNode && node.metadata['isTitle'] == true) {
-          return node.text.text.trim();
-        }
-      }
+      // TODO: implement update API call
+      // 1. 현재 문서 상태를 export
+      // 2. BlogService.updatePost 호출
+      // 3. 성공 시 PostReaderScreen으로 돌아가기
+      print('[PostwriteScreen] 수정 완료 버튼 클릭 (구현 예정)');
     } catch (e) {
-      print('[PostwriteScreen] Error getting title: $e');
-    }
-    return '제목 없음';
-  }
-
-  /// 문서에서 썸네일 URL 추출
-  String _getThumbnailFromDocument() {
-    try {
-      for (int i = 0; i < document.length; i++) {
-        final node = document.getNodeAt(i);
-        if (node is ImageNode) {
-          return node.imageUrl;
-        } else if (node is ImageRowNode && node.imageUrls.isNotEmpty) {
-          return node.imageUrls.first;
-        }
+      if (mounted) {
+        ErrorHandler.showError(context, '수정에 실패했습니다');
       }
-    } catch (e) {
-      print('[PostwriteScreen] Error getting thumbnail: $e');
     }
-    return '';
   }
 
   /// 임시저장 목록 보기
   Future<void> _showDraftList() async {
     try {
-      final groupedDrafts = await draftService.getDraftsByTitle();
-
       if (!mounted) return;
 
       Navigator.of(context).push(
@@ -1301,130 +982,44 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
           barrierDismissible: true,
           pageBuilder:
               (_, __, ___) => DraftListOverlay(
-                drafts: groupedDrafts,
-                currentDraftId: _currentDraftId,
-                onLoadDraft: _loadDraft,
-                onDeleteDraft: _deleteDraft,
+                currentDraftId: currentDraftId,
+                onLoadDraft: (draftId) async {
+                  try {
+                    nodeComponentService.clearHighlightedSelectionSilently();
+                    nodeComponentService.clearSelectionSilently();
+                    composer.clearSelection();
+                  } catch (_) {}
+                  if (!mounted) return;
+                  final success = await draftService.loadDraft(
+                    draftId: draftId,
+                    editorService: editorService,
+                    stickerService: stickerService,
+                  );
+
+                  if (success && mounted) {
+                    currentDraftId = draftId;
+
+                    // 불러온 상태를 저장 스냅샷으로 간주
+                    editorService.markSavedSnapshot();
+                    stickerService.saveInitialState();
+
+                    // UI 업데이트
+                    Future.delayed(const Duration(milliseconds: 200), () {
+                      if (mounted) {
+                        editorService.updatePublishableStatus();
+                        setState(() {});
+                      }
+                    });
+                  } else if (!success && mounted) {
+                    ErrorHandler.showError(context, '임시저장을 불러올 수 없습니다');
+                  }
+                },
               ),
         ),
       );
     } catch (e) {
-      print('[PostwriteScreen] Error showing draft list: $e');
       if (mounted) {
         ErrorHandler.showError(context, '임시저장 목록을 불러올 수 없습니다: $e');
-      }
-    }
-  }
-
-  /// 임시저장 불러오기
-  Future<void> _loadDraft(String draftId) async {
-    try {
-      // 기존 선택/하이라이트를 먼저 정리하여 SuperEditor가
-      // 사라진 노드에 대한 selection을 적용하지 않도록 방지
-      try {
-        NodeComponentService().clearHighlightedSelection();
-        NodeComponentService().selectNode(null);
-        composer.clearSelection();
-      } catch (_) {}
-
-      final success = await draftService.loadDraft(
-        draftId: draftId,
-        editorService: editorService,
-        stickerService: context.read<StickerService>(),
-      );
-
-      if (success) {
-        _currentDraftId = draftId;
-
-        // 불러온 문서의 이미지 URL과 ID 로그 출력
-        print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-        print('📂 [임시저장 불러오기 완료]');
-        print('Draft ID: $draftId');
-
-        final imageUrls = <String>[];
-        for (int i = 0; i < document.length; i++) {
-          final node = document.getNodeAt(i);
-          if (node is ImageNode && node.imageUrl.isNotEmpty) {
-            imageUrls.add(node.imageUrl);
-          } else if (node is ImageRowNode) {
-            imageUrls.addAll(node.imageUrls.where((url) => url.isNotEmpty));
-          }
-        }
-
-        print('📸 문서 내 이미지 개수: ${imageUrls.length}');
-
-        // 매핑 맵 상태 확인
-        final urlToIdMap = NodeComponentService().urlToImageIdMap;
-        print('💾 현재 매핑 맵 크기: ${urlToIdMap.length}');
-
-        if (imageUrls.isNotEmpty) {
-          print('🖼️ 이미지 URL 및 ID 매핑 리스트:');
-          for (int i = 0; i < imageUrls.length; i++) {
-            final url = imageUrls[i];
-            final imageId = urlToIdMap[url];
-            final urlDisplay = url.substring(
-              url.length > 70 ? url.length - 70 : 0,
-            );
-            if (imageId != null) {
-              print('  ${i + 1}. $urlDisplay');
-              print('     → ID: $imageId ✓');
-            } else {
-              print('  ${i + 1}. $urlDisplay');
-              print('     → ID: 없음 ⚠️');
-            }
-          }
-        }
-        print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-
-        // UI 강제 업데이트 및 포커스 정리
-        if (mounted) {
-          // 포커스 해제 (키보드 숨김)
-          _editorFocusNode.unfocus();
-
-          // 불러온 상태를 저장 스냅샷으로 간주
-          editorService.markSavedSnapshot();
-
-          // 스티커 초기 상태 저장
-          context.read<StickerService>().saveInitialState();
-
-          // 발행 가능 여부 체크를 위한 UI 업데이트 (약간의 지연 후)
-          Future.delayed(const Duration(milliseconds: 300), () {
-            if (mounted) {
-              editorService.updatePublishableStatus();
-            }
-          });
-        }
-      } else {
-        if (mounted) {
-          ErrorHandler.showError(context, '임시저장을 불러올 수 없습니다');
-        }
-      }
-    } catch (e) {
-      print('[PostwriteScreen] Error loading draft: $e');
-      if (mounted) {
-        ErrorHandler.showError(context, '임시저장 불러오기 실패: $e');
-      }
-    }
-  }
-
-  /// 임시저장 삭제
-  Future<void> _deleteDraft(String draftId) async {
-    try {
-      final success = await draftService.deleteDraft(draftId);
-
-      if (success) {
-        if (_currentDraftId == draftId) {
-          _currentDraftId = null;
-        }
-      } else {
-        if (mounted) {
-          ErrorHandler.showError(context, '임시저장 삭제에 실패했습니다');
-        }
-      }
-    } catch (e) {
-      print('[PostwriteScreen] Error deleting draft: $e');
-      if (mounted) {
-        ErrorHandler.showError(context, '임시저장 삭제 실패: $e');
       }
     }
   }

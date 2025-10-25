@@ -1,12 +1,12 @@
-import 'dart:math' as math;
-import 'dart:async';
 import 'dart:ui' as ui;
 import 'package:doppy/pages/components/post_card.dart';
 import 'package:doppy/pages/components/shimmer_box.dart';
+import 'package:doppy/pages/components/custom_refresh_indicator.dart';
 import 'package:doppy/pages/screens/post_reader_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:doppy/data/models/post_data.dart';
 import 'package:doppy/data/services/like_service.dart';
+import 'package:doppy/utils/network_utils.dart';
 import 'package:flutter/rendering.dart';
 import 'package:google_fonts/google_fonts.dart';
 
@@ -26,6 +26,11 @@ class PostList extends StatefulWidget {
   final VoidCallback? onClearSearch;
   final bool isShowingFriendsOnly;
   final VoidCallback? onFilterTap;
+  final bool showAppBar; // 앱바 표시 여부
+  final String? sectionLabel; // 섹션 레이블 (친구글/전체글)
+  final double appBarOpacity; // 앱바 추가 투명도 (섹션 전환 시 페이드 효과)
+  final NetworkError? networkError; // 네트워크 에러 상태
+  final VoidCallback? onRetryError; // 에러 재시도 콜백
 
   const PostList({
     super.key,
@@ -42,6 +47,11 @@ class PostList extends StatefulWidget {
     this.onClearSearch,
     this.isShowingFriendsOnly = false,
     this.onFilterTap,
+    this.showAppBar = true, // 기본값은 true (기존 동작 유지)
+    this.sectionLabel,
+    this.appBarOpacity = 1.0, // 기본값은 1.0 (완전 불투명)
+    this.networkError, // 네트워크 에러 상태
+    this.onRetryError, // 에러 재시도 콜백
   });
 
   @override
@@ -55,40 +65,19 @@ class _PostListState extends State<PostList> {
   late List<PostData> _items;
   final Set<String> _likingInFlight = <String>{};
   final LikeService _likeService = LikeService();
-  bool _isPointerDown = false; // 당김 중 손가락 눌림 상태 추적
-  double _pullExtentPx = 0.0; // 커스텀 게이지 표현용 당김 픽셀
-  static const double _refreshTrigger = 200.0; // 트리거 거리(더 둔감하게)
-  bool _passedTrigger = false; // 임계치 통과 여부 (릴리즈 시점 확인용)
-  // 스와이프 방향 판정 및 데드존 처리용
-  double _accumDx = 0.0;
-  double _accumDy = 0.0;
-  bool? _isVerticalDrag; // null: 미정, true: 수직, false: 수평
-  static const double _deadZonePx = 80.0; // 80px 이전에는 게이지 표시/증가 억제
 
   double _gestureAccumY = 0.0;
-  double _gestureStartX = 0.0; // 탭 시작 X 위치
+  double _gestureAccumX = 0.0;
   bool _isGestureActive = false;
-
-  // 연속 스크롤용 변수들
-  bool _isContinuousScroll = false;
-  Timer? _continuousScrollTimer;
-  Timer? _continuousScrollDelayTimer;
-  double _pointerX = 0.0; // 손의 X 위치 추적
-  double _screenCenter = 0.0; // 화면 중앙 위치
+  bool _isHorizontalGesture = false; // 가로 제스처 감지 여부
+  double _pullProgress = 0.0; // 당기는 진행률 (0.0 ~ 1.0)
+  double _verticalSwipeThreshold = 500.0;
 
   @override
   void initState() {
     super.initState();
-    // 전체 화면 사용 (인스타그램 릴스 스타일)
-    _pageController = PageController(viewportFraction: 0.65);
+    _pageController = PageController(viewportFraction: 0.75);
     _items = List<PostData>.from(widget.posts);
-
-    // 화면 중앙 위치 설정 (didChangeDependencies에서 업데이트됨)
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) {
-        _screenCenter = MediaQuery.of(context).size.width / 2;
-      }
-    });
 
     // LikeService 변경사항 감지
     _likeService.addListener(_onLikeServiceChanged);
@@ -129,16 +118,22 @@ class _PostListState extends State<PostList> {
 
     // 게시물 목록이 변경되었을 때
     if (widget.posts != oldWidget.posts) {
+      print(
+        '📝 PostList 업데이트: 기존 ${_items.length}개 → 새로운 ${widget.posts.length}개',
+      );
+
       // 새로운 포스트가 추가된 경우 (기존보다 길이가 길어짐)
       if (widget.posts.length > _items.length) {
         // 기존 _items에 새로운 포스트들만 추가
         final newPosts = widget.posts.skip(_items.length).toList();
         _items.addAll(newPosts);
         _loadLikeStatusForNewPosts(newPosts);
+        print('➕ 새로운 포스트 ${newPosts.length}개 추가됨');
       } else {
         // 완전히 새로운 목록인 경우 (길이가 같거나 짧아짐)
         _items = List<PostData>.from(widget.posts);
         _loadLikeStatusForAllPosts();
+        print('🔄 완전히 새로운 포스트 목록으로 교체');
       }
     }
   }
@@ -148,504 +143,475 @@ class _PostListState extends State<PostList> {
     _likeService.removeListener(_onLikeServiceChanged);
     _scrollController.dispose();
     _pageController.dispose();
-    _continuousScrollTimer?.cancel();
-    _continuousScrollDelayTimer?.cancel();
     super.dispose();
+  }
+
+  Widget _buildScrollView(BuildContext context) {
+    return CustomScrollView(
+      controller: _scrollController,
+      physics:
+          _isHorizontalGesture
+              ? const NeverScrollableScrollPhysics() // 가로 제스처 시 스크롤 차단
+              : const AlwaysScrollableScrollPhysics(),
+      slivers: [
+        // AppBar (조건부 표시)
+        if (widget.showAppBar)
+          SliverAppBar(
+            toolbarHeight: 35,
+            backgroundColor: Colors.transparent,
+            elevation: 0,
+            scrolledUnderElevation: 0,
+            pinned: false,
+            floating: true,
+            snap: false,
+            title: AnimatedOpacity(
+              opacity: (1.0 - _pullProgress) * widget.appBarOpacity,
+              duration:
+                  _pullProgress != 0.0
+                      ? Duration(milliseconds: 0)
+                      : Duration(milliseconds: 100),
+              curve: Curves.easeInOut,
+              child: Text(
+                ' Doppy',
+                style: GoogleFonts.notoSansKr(
+                  fontSize: 22,
+                  fontWeight: FontWeight.bold,
+                  color: Theme.of(context).colorScheme.primary,
+                ),
+              ),
+            ),
+            centerTitle: false,
+            actions: [
+              // 검색 중이면 검색어 칩, 아니면 필터 아이콘
+              AnimatedOpacity(
+                opacity: (1.0 - _pullProgress) * widget.appBarOpacity,
+                duration: Duration(milliseconds: 150),
+                curve: Curves.easeInOut,
+                child:
+                    widget.isShowingSearchResults &&
+                            widget.searchQuery.isNotEmpty
+                        ? GestureDetector(
+                          onTap: widget.onSearchChipTap,
+                          child: Container(
+                            margin: const EdgeInsets.only(right: 8),
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(16),
+                              child: BackdropFilter(
+                                filter: ui.ImageFilter.blur(
+                                  sigmaX: 10,
+                                  sigmaY: 10,
+                                ),
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 12,
+                                    vertical: 6,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: Theme.of(
+                                      context,
+                                    ).colorScheme.surface.withOpacity(0.2),
+                                    borderRadius: BorderRadius.circular(16),
+                                    border: Border.all(
+                                      color: Theme.of(
+                                        context,
+                                      ).colorScheme.primary.withOpacity(0.3),
+                                      width: 1,
+                                    ),
+                                  ),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Icon(
+                                        Icons.search,
+                                        size: 18,
+                                        color:
+                                            Theme.of(
+                                              context,
+                                            ).colorScheme.primary,
+                                      ),
+                                      const SizedBox(width: 6),
+                                      Text(
+                                        widget.searchQuery,
+                                        style: TextStyle(
+                                          color:
+                                              Theme.of(
+                                                context,
+                                              ).colorScheme.onSurface,
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.w500,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 6),
+                                      GestureDetector(
+                                        onTap: widget.onClearSearch,
+                                        child: Icon(
+                                          Icons.close,
+                                          size: 18,
+                                          color: Theme.of(context)
+                                              .colorScheme
+                                              .onSurface
+                                              .withOpacity(0.7),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        )
+                        : Padding(
+                          padding: const EdgeInsets.only(right: 12, top: 10),
+                          child: GestureDetector(
+                            onTap: widget.onFilterTap,
+                            child: Row(
+                              children: [
+                                if (widget.sectionLabel != null) ...[
+                                  Padding(
+                                    padding: const EdgeInsets.only(top: 2),
+                                    child: Text(
+                                      widget.sectionLabel!,
+                                      style: TextStyle(
+                                        color: Theme.of(context)
+                                            .colorScheme
+                                            .onSurface
+                                            .withOpacity(0.8),
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.w500,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                                SizedBox(width: 4),
+                                Icon(
+                                  Icons.keyboard_arrow_up_rounded,
+                                  size: 18,
+                                  color: Theme.of(
+                                    context,
+                                  ).colorScheme.onSurface.withOpacity(0.8),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+              ),
+            ],
+          ),
+        SliverToBoxAdapter(
+          child: Container(
+            height: 30,
+            decoration: BoxDecoration(color: Colors.transparent),
+          ),
+        ),
+
+        // PageView 또는 빈 상태
+        SliverToBoxAdapter(
+          child: Container(
+            height: 400,
+            decoration: BoxDecoration(color: Colors.transparent),
+            child:
+                _items.isEmpty && !widget.showCardShimmer
+                    ? _buildEmptyState(context)
+                    : PageView.builder(
+                      scrollDirection: Axis.horizontal,
+                      controller: _pageController,
+                      pageSnapping: true,
+                      physics: const ClampingScrollPhysics(),
+                      clipBehavior: Clip.none,
+                      padEnds: true,
+                      onPageChanged: (index) {
+                        setState(() {
+                          _currentIndex = index;
+                        });
+
+                        // 페이지 변경 콜백 호출
+                        if (widget.onPageChanged != null) {
+                          widget.onPageChanged!(index);
+                        }
+
+                        // 무한 스크롤: 마지막 페이지 근처에서 더 로드
+                        if (widget.onLoadMore != null &&
+                            index >= _items.length - 2 &&
+                            !widget.isLoadingMore) {
+                          print(
+                            '🔄 로드 모어 실행! 현재 인덱스: $index, 전체 아이템: ${_items.length}',
+                          );
+                          widget.onLoadMore!();
+                        }
+                      },
+                      itemCount: _items.length + (widget.isLoadingMore ? 1 : 0),
+                      itemBuilder: (context, index) {
+                        if (index >= _items.length) {
+                          // 로딩 인디케이터
+                          return const Center(
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                CircularProgressIndicator(color: Colors.white),
+                                SizedBox(height: 16),
+                                Text(
+                                  '더 많은 포스트를 불러오는 중...',
+                                  style: TextStyle(color: Colors.white70),
+                                ),
+                              ],
+                            ),
+                          );
+                        }
+
+                        final post = _items[index];
+                        return _buildPostItem(context, post, index);
+                      },
+                    ),
+          ),
+        ),
+
+        // Author Section
+        SliverFillRemaining(
+          hasScrollBody: false,
+          child: Listener(
+            behavior: HitTestBehavior.opaque,
+            onPointerDown: (details) {
+              _gestureAccumY = 0.0;
+              _gestureAccumX = 0.0;
+              _isGestureActive = true;
+              _isHorizontalGesture = false;
+            },
+            onPointerMove: (details) {
+              if (!_isGestureActive) return;
+
+              // 제스처 방향 결정 (더 빠르게, 더 민감하게)
+              if (!_isHorizontalGesture) {
+                _gestureAccumY += details.delta.dy;
+                _gestureAccumX += details.delta.dx;
+
+                // 제스처 방향 빠르게 결정 (3px 이상 움직임 시)
+                if (_gestureAccumX.abs() > 3 || _gestureAccumY.abs() > 3) {
+                  // 가로 움직임이 세로보다 크면 가로 제스처로 고정
+                  if (_gestureAccumX.abs() > _gestureAccumY.abs()) {
+                    setState(() {
+                      _isHorizontalGesture = true;
+                    });
+                    print('🔄 가로 제스처 감지! 세로 완전 차단');
+                  }
+                }
+              }
+
+              // 가로 제스처가 활성화되면 세로 누적값 무시
+              if (_isHorizontalGesture) {
+                _gestureAccumX += details.delta.dx;
+                // 세로 움직임은 완전히 무시 (누적하지 않음)
+
+                // 수평 스크롤만 처리
+                if (_gestureAccumX.abs() > 30) {
+                  if (_gestureAccumX > 0 && _currentIndex > 0) {
+                    // 오른쪽으로 스크롤 - 이전 페이지
+                    _pageController.previousPage(
+                      duration: const Duration(milliseconds: 200),
+                      curve: Curves.easeInOut,
+                    );
+                    _isGestureActive = false;
+                  } else if (_gestureAccumX < 0 &&
+                      _currentIndex < _items.length - 1) {
+                    // 왼쪽으로 스크롤 - 다음 페이지
+                    _pageController.nextPage(
+                      duration: const Duration(milliseconds: 200),
+                      curve: Curves.easeInOut,
+                    );
+                    _isGestureActive = false;
+                  }
+                }
+                return; // 세로 동작 완전 차단
+              }
+
+              // 세로 제스처 처리 (가로가 아닐 때만)
+              _gestureAccumY += details.delta.dy;
+
+              // 위로 스와이프 감지 (섹션 전환용)
+              if (_gestureAccumY < -_verticalSwipeThreshold &&
+                  widget.onFilterTap != null) {
+                print(
+                  '⬆️ Listener로 위로 스와이프 감지! 섹션 전환 (임계값: $_verticalSwipeThreshold)',
+                );
+                widget.onFilterTap!();
+                _isGestureActive = false;
+                return;
+              }
+            },
+            onPointerUp: (details) {
+              setState(() {
+                _isGestureActive = false;
+                _isHorizontalGesture = false;
+              });
+              _gestureAccumY = 0.0;
+              _gestureAccumX = 0.0;
+            },
+            child: GestureDetector(
+              onTapUp: (details) {
+                // 텍스트 영역에서도 탭 위치에 따라 다른 동작
+                final screenWidth = MediaQuery.of(context).size.width;
+                final tapX = details.globalPosition.dx;
+
+                if (tapX < screenWidth * 0.3) {
+                  // 왼쪽 30% - 이전 페이지
+                  if (_currentIndex > 0) {
+                    _pageController.previousPage(
+                      duration: const Duration(milliseconds: 300),
+                      curve: Curves.easeOutCubic,
+                    );
+                  }
+                } else if (tapX > screenWidth * 0.7) {
+                  // 오른쪽 30% - 다음 페이지
+                  if (_currentIndex < _items.length - 1) {
+                    _pageController.nextPage(
+                      duration: const Duration(milliseconds: 300),
+                      curve: Curves.easeOutCubic,
+                    );
+                  }
+                } else {
+                  // 중앙 40% - 포스트 상세보기
+                  Navigator.of(context).push(
+                    PageRouteBuilder(
+                      transitionDuration: const Duration(milliseconds: 340),
+                      reverseTransitionDuration: const Duration(
+                        milliseconds: 100,
+                      ),
+                      opaque: false,
+                      pageBuilder:
+                          (_, __, ___) => PostReaderScreen(
+                            exported: _items[_currentIndex].toExportedData(),
+                            heroTag:
+                                'post-hero-${_items[_currentIndex].id}-$_currentIndex',
+                          ),
+                      transitionsBuilder: (
+                        context,
+                        animation,
+                        secondaryAnimation,
+                        child,
+                      ) {
+                        const begin = Offset(0.0, 0.1);
+                        const end = Offset.zero;
+                        const curve = Curves.easeOutCubic;
+                        var tween = Tween(
+                          begin: begin,
+                          end: end,
+                        ).chain(CurveTween(curve: curve));
+                        var offsetAnimation = animation.drive(tween);
+                        var fadeAnimation = Tween<double>(
+                          begin: 0.0,
+                          end: 1.0,
+                        ).animate(
+                          CurvedAnimation(
+                            parent: animation,
+                            curve: Curves.easeOut,
+                          ),
+                        );
+                        return FadeTransition(
+                          opacity: fadeAnimation,
+                          child: SlideTransition(
+                            position: offsetAnimation,
+                            child: child,
+                          ),
+                        );
+                      },
+                    ),
+                  );
+                }
+              },
+              child: Container(
+                decoration: BoxDecoration(color: Colors.transparent),
+                child: AnimatedOpacity(
+                  duration: Duration(milliseconds: 200),
+                  curve: Curves.easeInOut,
+                  opacity: widget.appBarOpacity,
+                  child: _textArea(context),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
   }
 
   @override
   Widget build(BuildContext context) {
-    // 커스텀 게이지 위젯 내부 정의
-
-    Widget pageView = PageView.builder(
-      scrollDirection: Axis.horizontal,
-      controller: _pageController,
-      pageSnapping: true,
-      physics: const ClampingScrollPhysics(),
-      clipBehavior: Clip.none,
-      padEnds: true,
-      onPageChanged: (index) {
-        setState(() {
-          _currentIndex = index;
-        });
-
-        // 페이지 변경 콜백 호출
-        if (widget.onPageChanged != null) {
-          widget.onPageChanged!(index);
-        }
-
-        // 무한 스크롤: 마지막 페이지 근처에서 더 로드
-        if (widget.onLoadMore != null &&
-            index >= widget.posts.length - 2 &&
-            !widget.isLoadingMore) {
-          widget.onLoadMore!();
-        }
-      },
-      itemCount: _items.length + (widget.isLoadingMore ? 1 : 0),
-      itemBuilder: (context, index) {
-        if (index >= _items.length) {
-          // 로딩 인디케이터
-          return Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                const CircularProgressIndicator(color: Colors.white),
-                const SizedBox(height: 16),
-                Text(
-                  '더 많은 포스트를 불러오는 중...',
-                  style: TextStyle(color: Colors.white70),
-                ),
-              ],
-            ),
-          );
-        }
-
-        // 안전한 범위 체크
-        if (index >= _items.length) {
-          return Container(
-            color: Colors.black,
-            child: const Center(
-              child: Text('로딩 중...', style: TextStyle(color: Colors.white70)),
-            ),
-          );
-        }
-
-        final post = _items[index];
-        return _buildPostItem(context, post, index);
-      },
-    );
-
-    // 전체 화면 어디서든 아래로 당겨 새로고침 가능하도록 (커스텀 게이지 + 취소 지원)
-    final List<Widget> slivers = [];
-    // CupertinoSliverRefreshControl 제거: 바운싱 없이도 새로고침을 지원하기 위해 Material RefreshIndicator 사용
-
-    // 새로고침 당김 정도에 따른 투명도 계산 (가파른 속도)
-    final double pullOpacity =
-        (_pullExtentPx - _deadZonePx) > 0.0
-            ? (1.0 -
-                math
-                    .pow(
-                      (_pullExtentPx - _deadZonePx) /
-                          (_refreshTrigger - _deadZonePx),
-                      0.5,
-                    )
-                    .clamp(0.0, 1.0))
-            : 1.0;
-
-    slivers.add(
-      SliverAppBar(
-        toolbarHeight: 40,
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        scrolledUnderElevation: 0,
-        pinned: false,
-        floating: true,
-        snap: false,
-        title: AnimatedOpacity(
-          opacity: pullOpacity,
-          duration: const Duration(milliseconds: 100),
-          child: Text(
-            ' Doppy',
-            style: GoogleFonts.notoSansKr(
-              fontSize: 25,
-              fontWeight: FontWeight.bold,
-              color: Theme.of(context).colorScheme.primary,
-            ),
-          ),
-        ),
-        centerTitle: false,
-        actions: [
-          // 검색 중이면 검색어 칩 + 아이콘, 아니면 검색 아이콘만
-          if (widget.isShowingSearchResults && widget.searchQuery.isNotEmpty)
-            AnimatedOpacity(
-              opacity: pullOpacity,
-              duration: const Duration(milliseconds: 100),
-              child: GestureDetector(
-                onTap: widget.onSearchChipTap,
-                child: Container(
-                  margin: const EdgeInsets.only(right: 8),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(16),
-                    child: BackdropFilter(
-                      filter: ui.ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 6,
-                        ),
-                        decoration: BoxDecoration(
-                          color: Theme.of(
-                            context,
-                          ).colorScheme.surface.withOpacity(0.2),
-                          borderRadius: BorderRadius.circular(16),
-                          border: Border.all(
-                            color: Theme.of(
-                              context,
-                            ).colorScheme.primary.withOpacity(0.3),
-                            width: 1,
-                          ),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(
-                              Icons.search,
-                              size: 18,
-                              color: Theme.of(context).colorScheme.primary,
-                            ),
-                            const SizedBox(width: 6),
-                            Text(
-                              widget.searchQuery,
-                              style: TextStyle(
-                                color: Theme.of(context).colorScheme.onSurface,
-                                fontSize: 14,
-                                fontWeight: FontWeight.w500,
-                              ),
-                            ),
-                            const SizedBox(width: 6),
-                            GestureDetector(
-                              onTap: widget.onClearSearch,
-                              child: Icon(
-                                Icons.close,
-                                size: 18,
-                                color: Theme.of(
-                                  context,
-                                ).colorScheme.onSurface.withOpacity(0.7),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            )
-          else ...[
-            // 피드 필터 드롭다운
-            AnimatedOpacity(
-              opacity: pullOpacity,
-              duration: const Duration(milliseconds: 100),
-              child: IconButton(
-                onPressed: widget.onFilterTap,
-                icon: Icon(Icons.keyboard_arrow_down_rounded),
-              ),
-            ),
-          ],
-        ],
-      ),
-    );
-    SliverToBoxAdapter(child: SizedBox(height: 30));
-
-    slivers.add(
-      SliverToBoxAdapter(
-        child: SizedBox(
-          height: MediaQuery.of(context).size.height * 0.5,
-          child: pageView,
-        ),
-      ),
-    );
-
-    slivers.add(
-      SliverFillRemaining(
-        hasScrollBody: false,
-        child: _buildStickyAuthor(context),
-      ),
-    );
-
-    final scrollable = CustomScrollView(
-      controller: _scrollController,
-      physics: const AlwaysScrollableScrollPhysics(),
-      slivers: slivers,
-    );
-
-    Widget content =
-        (widget.onRefresh != null)
-            ? NotificationListener<ScrollNotification>(
-              onNotification: (n) {
-                // 스크롤 종료/유휴 시 임계 미만이면 리셋
-                if (n is ScrollEndNotification ||
-                    n is UserScrollNotification &&
-                        (n).direction == ScrollDirection.idle) {
-                  if (_pullExtentPx < _refreshTrigger && !_isPointerDown) {
-                    _pullExtentPx = 0.0;
-                    _passedTrigger = false;
-                    setState(() {});
-                  }
-                }
-                return false;
-              },
-              child: scrollable,
-            )
-            : scrollable;
-
     return SafeArea(
-      child: Listener(
-        onPointerDown: (details) {
-          print('onPointerDown');
-          print(details.position.dy);
-          // 앱바 영역(상단 80px)에서는 포인터 이벤트 무시
-          if (details.position.dy < 250) {
-            print('onPointerDown - 앱바 영역 무시');
-            return;
-          }
-
-          print('onPointerDown');
-          _isPointerDown = true;
-          _accumDx = 0.0;
-          _accumDy = 0.0;
-          _isVerticalDrag = null;
-          _gestureStartX = details.position.dx; // 탭 시작 위치 저장
+      child: CustomRefreshIndicator(
+        top: 50,
+        onRefresh: widget.onRefresh,
+        onPullProgress: (progress) {
+          setState(() {
+            _pullProgress = progress;
+          });
         },
-        onPointerMove: (e) {
-          print('onPointerMove');
-          // 앱바 영역(상단 80px)에서는 포인터 이벤트 무시
-          if (e.position.dy < 250) {
-            return;
-          }
-
-          // 연속 스크롤 중이면 방향 변경 무시
-          if (_isContinuousScroll) {
-            return;
-          }
-
-          // 방향 판정: 누적 방식으로 안정적인 감지
-          _accumDx += e.delta.dx.abs();
-          _accumDy += e.delta.dy.abs();
-
-          // 방향이 아직 결정되지 않았을 때만 방향 판정
-          if (_isVerticalDrag == null) {
-            if (_accumDy > _accumDx * 2.0 && _accumDy > 10.0) {
-              _isVerticalDrag = true; // 세로 드래그로 결정
-            } else if (_accumDx > _accumDy * 1.2 && _accumDx > 15.0) {
-              _isVerticalDrag = false; // 가로 드래그로 결정
-            }
-          }
-
-          // 세로 드래그가 결정된 경우 가로 스크롤 완전 차단
-          if (_isVerticalDrag == true) {
-            // 세로 스크롤 감지 (새로고침)
-            if (widget.onRefresh == null) return;
-            if (!_scrollController.hasClients) return;
-            final atTop =
-                _scrollController.position.pixels <=
-                _scrollController.position.minScrollExtent + 0.5;
-            if (!atTop) return;
-
-            double delta = 0.0;
-            if (e.delta.dy > 0) {
-              delta = e.delta.dy * 0.4; // 둔감한 증가
-            } else if (e.delta.dy < 0) {
-              delta = e.delta.dy * 0.6; // 감소는 빠르게
-            }
-            if (delta != 0.0) {
-              _pullExtentPx = (_pullExtentPx + delta).clamp(0.0, 200.0);
-              _passedTrigger = _pullExtentPx >= _refreshTrigger;
-              setState(() {});
-            }
-            return; // 세로 드래그 중에는 가로 스크롤 완전 차단
-          }
-
-          // 가로 드래그가 결정된 경우에만 페이지 이동 처리
-          if (_isVerticalDrag == false) {
-            if (e.delta.dx > 0 && _currentIndex > 0) {
-              // 오른쪽으로 스크롤 - 이전 페이지
-              _pageController.previousPage(
-                duration: const Duration(milliseconds: 200),
-                curve: Curves.easeInOut,
-              );
-            } else if (e.delta.dx < 0 &&
-                _currentIndex < widget.posts.length - 1) {
-              // 왼쪽으로 스크롤 - 다음 페이지
-              _pageController.nextPage(
-                duration: const Duration(milliseconds: 200),
-                curve: Curves.easeInOut,
-              );
-            }
-            return; // 가로 스크롤 감지 시 세로 스크롤 처리 완전 중단
-          }
-        },
-        onPointerUp: (details) async {
-          // 앱바 영역(상단 80px)에서는 포인터 이벤트 무시
-          if (details.position.dy < 80) {
-            print('onPointerUp - 앱바 영역 무시');
-            _isPointerDown = false;
-            _isVerticalDrag = null;
-            _accumDx = 0.0;
-            _accumDy = 0.0;
-            return;
-          }
-
-          // 탭인지 스와이프인지 판단
-          // 1. 움직임이 5px 미만이어야 함 (거의 안 움직임)
-          // 2. 방향이 결정되지 않았어야 함 (스와이프로 인식되지 않음)
-          final isTap =
-              _accumDx < 5.0 && _accumDy < 5.0 && _isVerticalDrag == null;
-
-          // 상태 리셋
-          _isPointerDown = false;
-          final wasVerticalDrag = _isVerticalDrag;
-          _isVerticalDrag = null;
-          _accumDx = 0.0;
-          _accumDy = 0.0;
-
-          if (isTap) {
-            // 탭으로 판단 - 화면 좌우에 따라 페이지 이동
-            final screenWidth = MediaQuery.of(context).size.width;
-            final tapX = _gestureStartX;
-
-            if (tapX < screenWidth * 0.3) {
-              // 왼쪽 30% - 이전 페이지
-              if (_currentIndex > 0) {
-                _pageController.previousPage(
-                  duration: const Duration(milliseconds: 200),
-                  curve: Curves.easeOutCubic,
-                );
-              }
-            } else if (tapX > screenWidth * 0.7) {
-              // 오른쪽 30% - 다음 페이지
-              if (_currentIndex < widget.posts.length - 1) {
-                _pageController.nextPage(
-                  duration: const Duration(milliseconds: 200),
-                  curve: Curves.easeOutCubic,
-                );
-              }
-            } else {
-              // 중앙 40% - 포스트 상세보기
-              final safeIndex = _currentIndex.clamp(0, widget.posts.length - 1);
-              final post = _items[safeIndex];
-              Navigator.of(context).push(
-                PageRouteBuilder(
-                  transitionDuration: const Duration(milliseconds: 340),
-                  reverseTransitionDuration: const Duration(milliseconds: 100),
-                  opaque: false,
-                  pageBuilder:
-                      (_, __, ___) => PostReaderScreen(
-                        exported: post.toExportedData(),
-                        heroTag: 'post-hero-${post.id}-$safeIndex',
-                      ),
-                  transitionsBuilder: (
-                    context,
-                    animation,
-                    secondaryAnimation,
-                    child,
-                  ) {
-                    const begin = Offset(0.0, 0.1);
-                    const end = Offset.zero;
-                    const curve = Curves.easeOutCubic;
-                    var tween = Tween(
-                      begin: begin,
-                      end: end,
-                    ).chain(CurveTween(curve: curve));
-                    var offsetAnimation = animation.drive(tween);
-                    var fadeAnimation = Tween<double>(
-                      begin: 0.0,
-                      end: 1.0,
-                    ).animate(
-                      CurvedAnimation(parent: animation, curve: Curves.easeOut),
-                    );
-                    return FadeTransition(
-                      opacity: fadeAnimation,
-                      child: SlideTransition(
-                        position: offsetAnimation,
-                        child: child,
-                      ),
-                    );
-                  },
-                ),
-              );
-            }
-            return;
-          }
-
-          // 스와이프인 경우 - 새로고침 처리 (세로 드래그가 확정된 경우에만)
-          if (wasVerticalDrag == true &&
-              widget.onRefresh != null &&
-              _passedTrigger) {
-            setState(() {});
-            try {
-              await widget.onRefresh!();
-            } finally {
-              _pullExtentPx = 0.0;
-              _passedTrigger = false;
-              if (mounted) setState(() {});
-            }
-          } else {
-            if (_pullExtentPx > 0.0) {
-              _pullExtentPx = 0.0;
-              _passedTrigger = false;
-              if (mounted) setState(() {});
-              // 제자리로 스크롤 복귀 애니메이션
-              if (_scrollController.hasClients) {
-                _scrollController.animateTo(
-                  _scrollController.position.minScrollExtent,
-                  duration: const Duration(milliseconds: 220),
-                  curve: Curves.easeOutCubic,
-                );
-              }
-            }
-          }
-        },
-        onPointerCancel: (_) => _isPointerDown = false,
-        child: Stack(
-          children: [
-            content,
-            if (widget.onRefresh != null && (_pullExtentPx - _deadZonePx) > 0.0)
-              Positioned(
-                top: 30,
-                left: 0,
-                right: 0,
-                height: 72,
-                child: IgnorePointer(
-                  child: Center(
-                    child: _RefreshGauge(
-                      progress: (((_pullExtentPx - _deadZonePx) /
-                              (_refreshTrigger - _deadZonePx))
-                          .clamp(0.0, 1.0)),
-                    ),
-                  ),
-                ),
-              ),
-          ],
-        ),
+        child: _buildScrollView(context),
       ),
     );
   }
 
   Widget _buildPostItem(BuildContext context, PostData post, int index) {
-    // 스케일은 AnimatedBuilder 안에서 PageController.page 기반으로 계산합니다
-    // 탭 처리는 Listener의 onPointerUp에서 처리
+    return GestureDetector(
+      onTapUp: (details) {
+        // 탭 위치에 따라 다른 동작
+        final screenWidth = MediaQuery.of(context).size.width;
+        final tapX = details.globalPosition.dx;
 
-    final content = GestureDetector(
-      onDoubleTap: () async {
-        /*
-        final id = post.id.toString();
-        if (id.isEmpty) {
-          print('[PostList] 유효하지 않은 포스트 ID: $id');
-          return;
-        }
-
-        if (_likingInFlight.contains(id)) return;
-        setState(() => _likingInFlight.add(id));
-
-        try {
-          await _likeService.togglePostLike(id);
-          // setState() 제거 - LikeService의 notifyListeners()가 자동으로 UI 업데이트
-        } catch (e) {
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text('좋아요 처리 중 오류가 발생했습니다 $e'),
-                behavior: SnackBarBehavior.floating,
-                duration: const Duration(milliseconds: 900),
-              ),
+        if (tapX < screenWidth * 0.3) {
+          // 왼쪽 30% - 이전 페이지
+          if (_currentIndex > 0) {
+            _pageController.previousPage(
+              duration: const Duration(milliseconds: 300),
+              curve: Curves.easeOutCubic,
             );
           }
-        } finally {
-          if (mounted) {
-            setState(() => _likingInFlight.remove(id));
+        } else if (tapX > screenWidth * 0.7) {
+          // 오른쪽 30% - 다음 페이지
+          if (_currentIndex < _items.length - 1) {
+            _pageController.nextPage(
+              duration: const Duration(milliseconds: 300),
+              curve: Curves.easeOutCubic,
+            );
           }
-        }*/
+        } else {
+          // 중앙 40% - 포스트 상세보기
+          Navigator.of(context).push(
+            PageRouteBuilder(
+              transitionDuration: const Duration(milliseconds: 340),
+              reverseTransitionDuration: const Duration(milliseconds: 100),
+              opaque: false,
+              pageBuilder:
+                  (_, __, ___) => PostReaderScreen(
+                    exported: post.toExportedData(),
+                    heroTag: 'post-hero-${post.id}-$index',
+                  ),
+              transitionsBuilder: (
+                context,
+                animation,
+                secondaryAnimation,
+                child,
+              ) {
+                const begin = Offset(0.0, 0.1);
+                const end = Offset.zero;
+                const curve = Curves.easeOutCubic;
+                var tween = Tween(
+                  begin: begin,
+                  end: end,
+                ).chain(CurveTween(curve: curve));
+                var offsetAnimation = animation.drive(tween);
+                var fadeAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
+                  CurvedAnimation(parent: animation, curve: Curves.easeOut),
+                );
+                return FadeTransition(
+                  opacity: fadeAnimation,
+                  child: SlideTransition(
+                    position: offsetAnimation,
+                    child: child,
+                  ),
+                );
+              },
+            ),
+          );
+        }
       },
       child: AnimatedBuilder(
         animation: _pageController,
@@ -656,70 +622,60 @@ class _PostListState extends State<PostList> {
                   : _currentIndex.toDouble();
           final double ad = (pageNow - index).abs().clamp(0.0, 1.0);
           final double t = 1.0 - ad;
-          // 커브로 더 부드럽게, 변화폭 크게 (0.85 ~ 1.0)
           final double eased = Curves.easeOutCubic.transform(t);
           final double scale = 0.85 + 0.15 * eased;
           return Transform.scale(scale: scale, child: child);
         },
-        child: Stack(
-          children: [
-            Center(
-              child: AspectRatio(
-                aspectRatio: 4 / 5,
-                child:
-                    widget.showCardShimmer
-                        ? _buildImageAreaShimmer()
-                        : PostCard(
-                          containerWidth: widget.containerWidth,
-                          thumbnailImageUrl: post.thumbnailImageUrl,
-                          heroTag: 'post-hero-${post.id}-$index',
-                          title: post.title,
-                          author: post.author,
-                          authorProfileImageUrl: post.authorProfileImageUrl,
-                          content: post.parsedContent,
-                          isVisible: _currentIndex == index,
-                          postId: post.id.toString(),
-                          isLiked: _likeService.isPostLiked(post.id.toString()),
-                          likeCount: _likeService.getPostLikeCount(
-                            post.id.toString(),
-                          ),
-                          onLikePressed: () async {
-                            final id = post.id.toString();
-                            if (id.isEmpty) {
-                              print('[PostList] 유효하지 않은 포스트 ID: $id');
-                              return;
-                            }
+        child: Center(
+          child: AspectRatio(
+            aspectRatio: 4 / 5,
+            child:
+                widget.showCardShimmer
+                    ? _buildImageAreaShimmer()
+                    : PostCard(
+                      containerWidth: widget.containerWidth,
+                      thumbnailImageUrl: post.thumbnailImageUrl,
+                      heroTag: 'post-hero-${post.id}-$index',
+                      title: post.title,
+                      author: post.author,
+                      authorProfileImageUrl: post.authorProfileImageUrl,
+                      content: post.parsedContent,
+                      isVisible: _currentIndex == index,
+                      postId: post.id.toString(),
+                      isLiked: _likeService.isPostLiked(post.id.toString()),
+                      likeCount: _likeService.getPostLikeCount(
+                        post.id.toString(),
+                      ),
+                      onLikePressed: () async {
+                        final id = post.id.toString();
+                        if (id.isEmpty) return;
 
-                            if (_likingInFlight.contains(id)) return;
-                            setState(() => _likingInFlight.add(id));
+                        if (_likingInFlight.contains(id)) return;
+                        setState(() => _likingInFlight.add(id));
 
-                            try {
-                              await _likeService.togglePostLike(id);
-                              // setState() 제거 - LikeService의 notifyListeners()가 자동으로 UI 업데이트
-                            } catch (e) {
-                              if (mounted) {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(
-                                    content: Text('좋아요 처리 중 오류가 발생했습니다'),
-                                    behavior: SnackBarBehavior.floating,
-                                    duration: const Duration(milliseconds: 900),
-                                  ),
-                                );
-                              }
-                            } finally {
-                              if (mounted) {
-                                setState(() => _likingInFlight.remove(id));
-                              }
-                            }
-                          },
-                        ),
-              ),
-            ),
-          ],
+                        try {
+                          await _likeService.togglePostLike(id);
+                        } catch (e) {
+                          if (mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text('좋아요 처리 중 오류가 발생했습니다'),
+                                behavior: SnackBarBehavior.floating,
+                                duration: Duration(milliseconds: 900),
+                              ),
+                            );
+                          }
+                        } finally {
+                          if (mounted) {
+                            setState(() => _likingInFlight.remove(id));
+                          }
+                        }
+                      },
+                    ),
+          ),
         ),
       ),
     );
-    return content;
   }
 
   Widget _buildImageAreaShimmer() {
@@ -743,230 +699,173 @@ class _PostListState extends State<PostList> {
     );
   }
 
-  Widget _buildStickyAuthor(BuildContext context) {
-    if (widget.posts.isEmpty) {
+  Widget _buildEmptyState(BuildContext context) {
+    // 현재 탭에 따른 메시지 결정
+    String message;
+    String subtitle;
+    IconData icon;
+    bool showRecommendButton = false;
+
+    if (widget.isShowingFriendsOnly) {
+      message = "친구들의 글이 아직 없어요";
+      subtitle = "친구들이 첫 번째 글을 올릴 때까지 기다려보세요!";
+      icon = Icons.people_outline;
+      showRecommendButton = true; // 친구글 탭에서만 추천글 버튼 표시
+    } else {
+      message = "아직 글이 없어요";
+      subtitle = "새로운 글들이 곧 올라올 거예요!";
+      icon = Icons.article_outlined;
+    }
+
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Container(
+            width: 80,
+            height: 80,
+            decoration: BoxDecoration(
+              color: Theme.of(context).colorScheme.primary.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(40),
+            ),
+            child: Icon(
+              icon,
+              size: 40,
+              color: Theme.of(context).colorScheme.primary.withOpacity(0.6),
+            ),
+          ),
+          const SizedBox(height: 24),
+          Text(
+            message,
+            style: TextStyle(
+              color: Theme.of(context).colorScheme.onSurface,
+              fontSize: 20,
+              fontWeight: FontWeight.w600,
+              letterSpacing: -0.2,
+            ),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 8),
+          Text(
+            subtitle,
+            style: TextStyle(
+              color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
+              fontSize: 14,
+              fontWeight: FontWeight.w400,
+              height: 1.4,
+            ),
+            textAlign: TextAlign.center,
+          ),
+
+          // 추천글 보러가기 버튼 (친구글 탭에서만 표시)
+          if (showRecommendButton) ...[
+            const SizedBox(height: 32),
+            GestureDetector(
+              onTap: () {
+                // 전체글 탭으로 전환 (위로 스와이프와 동일한 동작)
+                if (widget.onFilterTap != null) {
+                  widget.onFilterTap!();
+                }
+              },
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 24,
+                  vertical: 12,
+                ),
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.primary,
+                  borderRadius: BorderRadius.circular(24),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.primary.withOpacity(0.3),
+                      blurRadius: 8,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.explore_outlined,
+                      size: 18,
+                      color: Theme.of(context).colorScheme.onPrimary,
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      '추천글 보러가기',
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.onPrimary,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    Icon(
+                      Icons.arrow_upward_rounded,
+                      size: 16,
+                      color: Theme.of(context).colorScheme.onPrimary,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _textArea(BuildContext context) {
+    if (_items.isEmpty) {
+      // 빈 상태일 때는 빈 공간 표시
       return const SizedBox.shrink();
     }
-    final safeIndex = _currentIndex.clamp(0, widget.posts.length - 1);
-    final post = widget.posts[safeIndex];
+    final safeIndex = _currentIndex.clamp(0, _items.length - 1);
+    final post = _items[safeIndex];
 
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onPanStart: (details) {
-        _gestureAccumY = 0.0;
-        _isGestureActive = true;
-      },
-      onPanUpdate: (details) {
-        if (!_isGestureActive) return;
-
-        _gestureAccumY += details.delta.dy;
-
-        // 누적된 수직 움직임이 50px 이상일 때 페이지 이동
-        if (_gestureAccumY.abs() > 50) {
-          if (_gestureAccumY > 0 && _currentIndex > 0) {
-            // 아래로 스크롤 - 이전 페이지
-            _pageController.previousPage(
-              duration: const Duration(milliseconds: 200),
-              curve: Curves.easeInOut,
-            );
-            _isGestureActive = false; // 제스처 비활성화
-          } else if (_gestureAccumY < 0 &&
-              _currentIndex < widget.posts.length - 1) {
-            // 위로 스크롤 - 다음 페이지
-            _pageController.nextPage(
-              duration: const Duration(milliseconds: 200),
-              curve: Curves.easeInOut,
-            );
-            _isGestureActive = false; // 제스처 비활성화
-          }
-        }
-      },
-      onPanEnd: (details) {
-        _isGestureActive = false;
-        _gestureAccumY = 0.0;
-      },
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.center,
-          mainAxisAlignment: MainAxisAlignment.start,
-          children: [
-            // 제목
-            IgnorePointer(
-              child: Text(
-                post.title,
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  color: Theme.of(context).colorScheme.onSurface,
-                  fontSize: 38,
-                  fontWeight: FontWeight.bold,
-                  letterSpacing: -0.2,
-                ),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        mainAxisAlignment: MainAxisAlignment.start,
+        children: [
+          SizedBox(height: 10),
+          // 제목
+          Text(
+            post.title,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: Theme.of(context).colorScheme.onSurface,
+              fontSize: 32,
+              fontWeight: FontWeight.bold,
+              letterSpacing: -0.2,
             ),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
 
-            // 내용 (남은 공간 모두 사용)
-            Expanded(
-              child: IgnorePointer(
-                child: Text(
-                  post.parsedContent,
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    color: Theme.of(
-                      context,
-                    ).colorScheme.onSurface.withOpacity(0.7),
-                    fontSize: 14,
-                    fontWeight: FontWeight.w300,
-                    height: 1.8,
-                    letterSpacing: -0.1,
-                  ),
-                  maxLines: 5,
-                  overflow: TextOverflow.ellipsis,
-                ),
+          // 내용 (남은 공간 모두 사용)
+          Expanded(
+            child: Text(
+              post.parsedContent,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
+                fontSize: 14,
+                fontWeight: FontWeight.w300,
+                height: 1.8,
+                letterSpacing: -0.1,
               ),
+              maxLines: 5,
+              overflow: TextOverflow.ellipsis,
             ),
-            const SizedBox(height: 30),
-          ],
-        ),
+          ),
+          const SizedBox(height: 30),
+        ],
       ),
     );
-  }
-}
-
-class _RefreshGauge extends StatefulWidget {
-  final double progress; // 0.0 ~ 1.0
-  const _RefreshGauge({required this.progress});
-
-  @override
-  State<_RefreshGauge> createState() => _RefreshGaugeState();
-}
-
-class _RefreshGaugeState extends State<_RefreshGauge>
-    with SingleTickerProviderStateMixin {
-  late AnimationController _animationController;
-  late Animation<double> _rotationAnimation;
-
-  @override
-  void initState() {
-    super.initState();
-    _animationController = AnimationController(
-      duration: const Duration(milliseconds: 1000),
-      vsync: this,
-    );
-    _rotationAnimation = Tween<double>(
-      begin: 0.0,
-      end: 1.0,
-    ).animate(_animationController);
-
-    // 새로고침이 진행 중일 때만 회전
-    if (widget.progress > 0) {
-      _animationController.repeat();
-    }
-  }
-
-  @override
-  void didUpdateWidget(_RefreshGauge oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (widget.progress > 0 && !_animationController.isAnimating) {
-      _animationController.repeat();
-    } else if (widget.progress == 0 && _animationController.isAnimating) {
-      _animationController.stop();
-    }
-  }
-
-  @override
-  void dispose() {
-    _animationController.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final double size = 40;
-    return SizedBox(
-      width: size,
-      height: size,
-      child: AnimatedBuilder(
-        animation: _rotationAnimation,
-        builder: (context, child) {
-          return CustomPaint(
-            painter: _SpinnerPainter(
-              progress: widget.progress,
-              rotation: _rotationAnimation.value,
-            ),
-          );
-        },
-      ),
-    );
-  }
-}
-
-class _SpinnerPainter extends CustomPainter {
-  final double progress;
-  final double rotation;
-
-  _SpinnerPainter({required this.progress, required this.rotation});
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final center = Offset(size.width / 2, size.height / 2);
-    final radius = size.width / 2 - 2;
-
-    // 회전 변환 적용
-    canvas.save();
-    canvas.translate(center.dx, center.dy);
-    canvas.rotate(rotation * 2 * math.pi); // 전체 회전
-    canvas.translate(-center.dx, -center.dy);
-
-    // 12개의 막대를 그리기
-    for (int i = 0; i < 12; i++) {
-      final angle = (i * 30.0) * (math.pi / 180.0); // 각 막대의 각도
-      final opacity = _calculateOpacity(i, progress);
-
-      final paint =
-          Paint()
-            ..color = Colors.white.withOpacity(opacity)
-            ..strokeWidth = 3.0
-            ..strokeCap = StrokeCap.round;
-
-      // 막대의 시작점과 끝점 계산
-      final startRadius = radius * 0.6;
-      final endRadius = radius * 0.9;
-
-      final startX = center.dx + startRadius * math.cos(angle);
-      final startY = center.dy + startRadius * math.sin(angle);
-      final endX = center.dx + endRadius * math.cos(angle);
-      final endY = center.dy + endRadius * math.sin(angle);
-
-      canvas.drawLine(Offset(startX, startY), Offset(endX, endY), paint);
-    }
-
-    canvas.restore();
-  }
-
-  double _calculateOpacity(int barIndex, double progress) {
-    // 진행률에 따라 막대들의 투명도 계산
-    // 12시 방향부터 시계방향으로 점진적으로 밝아지다가 어두워짐
-    final normalizedProgress = progress * 12; // 0~12 범위로 변환
-    final distance = (barIndex - normalizedProgress).abs();
-
-    // 최소 거리 계산 (원형이므로 12를 넘어가면 반대편으로)
-    final minDistance = math.min(distance, 12 - distance);
-
-    // 거리가 가까울수록 밝게, 멀수록 어둡게
-    if (minDistance <= 2) {
-      return 0.9 - (minDistance * 0.3); // 0.9 ~ 0.3
-    } else if (minDistance <= 4) {
-      return 0.3 - ((minDistance - 2) * 0.15); // 0.3 ~ 0.0
-    } else {
-      return 0.05; // 매우 어둡게
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant _SpinnerPainter oldDelegate) {
-    return oldDelegate.progress != progress;
   }
 }

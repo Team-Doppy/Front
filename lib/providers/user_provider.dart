@@ -17,11 +17,6 @@ class UserProvider with ChangeNotifier {
 
   bool _isLoading = false;
 
-  // 런타임 캐시: username -> User, 및 페치 시각
-  final Map<String, User> _userCache = {};
-  final Map<String, DateTime> _userCacheTime = {};
-  Duration userCacheTtl = const Duration(minutes: 5);
-
   User? get currentUser => _currentUser;
   int? get friendCount => _friendCount;
   String? get selfIntroduction => _selfIntroduction;
@@ -184,8 +179,6 @@ class UserProvider with ChangeNotifier {
     _viewedUser = null;
     _viewedUserSelfIntroduction = null;
     _isLoading = false;
-    _userCache.clear();
-    _userCacheTime.clear();
     notifyListeners();
     print('[UserProvider] 로그아웃 - 사용자 데이터 초기화 완료');
   }

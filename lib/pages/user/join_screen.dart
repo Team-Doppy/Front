@@ -1008,12 +1008,7 @@ class _JoinScreenState extends State<JoinScreen> {
     if (!mounted) return;
 
     if (success) {
-      // 로그인 직후 내 프로필을 선조회하여 초기 화면에서도 사용자 정보를 보장
-      try {
-        await context.read<UserProvider>().fetchMyProfile();
-      } catch (_) {}
-
-      Navigator.of(context).pushNamedAndRemoveUntil('/home', (route) => false);
+      Navigator.of(context).pushNamedAndRemoveUntil('/', (route) => false);
     } else {
       // 로그인 실패 시 사용자에게 피드백 제공
       ScaffoldMessenger.of(context).showSnackBar(

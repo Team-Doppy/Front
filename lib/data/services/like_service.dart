@@ -1,15 +1,14 @@
 import 'dart:io';
 import 'package:flutter/foundation.dart';
-import 'package:doppy/data/services/api_service_base.dart';
-import 'package:doppy/data/services/auth_service.dart';
-import 'package:http/http.dart' as http;
+import 'package:dio/dio.dart';
+import 'package:doppy/data/services/base_api_service.dart';
 
 class LikeService extends ChangeNotifier {
   static final LikeService _instance = LikeService._internal();
   factory LikeService() => _instance;
   LikeService._internal();
 
-  static final String _baseUrl = ApiServiceBase.baseUrl;
+  final Dio _dio = BaseApiService().dio;
 
   // 포스트별 좋아요 상태 캐시 (프론트엔드에서만 관리)
   final Map<String, bool> _postLikeStatus = {};
@@ -34,47 +33,22 @@ class LikeService extends ChangeNotifier {
     }
 
     try {
-      final token = await AuthService().getToken();
-      if (token == null) {
-        print('[LikeService] 토큰이 없습니다');
-        throw HttpException('인증 토큰이 없습니다');
-      }
-
       final isCurrentlyLiked = _postLikeStatus[postId] ?? false;
-
-      Uri uri;
-      if (isCurrentlyLiked) {
-        // 좋아요 취소
-        uri = Uri.parse('$_baseUrl/api/posts/$postId/like');
-      } else {
-        // 좋아요 추가
-        uri = Uri.parse('$_baseUrl/api/posts/$postId/like');
-      }
 
       print('[LikeService] 좋아요 ${isCurrentlyLiked ? '취소' : '추가'}: $postId');
 
       final response =
           isCurrentlyLiked
-              ? await http
-                  .delete(
-                    uri,
-                    headers: {
-                      'Authorization': 'Bearer $token',
-                      'Content-Type': 'application/json',
-                    },
-                  )
-                  .timeout(const Duration(seconds: 5))
-              : await http
-                  .post(
-                    uri,
-                    headers: {
-                      'Authorization': 'Bearer $token',
-                      'Content-Type': 'application/json',
-                    },
-                  )
-                  .timeout(const Duration(seconds: 5));
+              ? await _dio.delete(
+                '/api/posts/$postId/like',
+                options: Options(receiveTimeout: const Duration(seconds: 5)),
+              )
+              : await _dio.post(
+                '/api/posts/$postId/like',
+                options: Options(receiveTimeout: const Duration(seconds: 5)),
+              );
 
-      print('[LikeService] 좋아요 응답: ${response.statusCode} - ${response.body}');
+      print('[LikeService] 좋아요 응답: ${response.statusCode} - ${response.data}');
 
       if (response.statusCode == 200 || response.statusCode == 204) {
         // 성공 시 로컬 상태 업데이트
@@ -91,64 +65,56 @@ class LikeService extends ChangeNotifier {
         print(
           '[LikeService] 좋아요 토글 성공: $postId = ${_postLikeStatus[postId]}, 카운트: ${_postLikeCounts[postId]}',
         );
-      } else if (response.statusCode == 400) {
-        print(
-          '[LikeService] 잘못된 요청: ${response.statusCode} - ${response.body}',
-        );
-        // 400 에러 시 서버 상태로 강제 동기화
-        await _forceSyncWithServer(postId, token);
-        throw HttpException('좋아요 상태가 서버와 다릅니다. 다시 시도해주세요.');
-      } else if (response.statusCode == 401) {
-        print('[LikeService] 인증 실패: ${response.statusCode}');
-        throw HttpException('인증이 필요합니다. 다시 로그인해주세요.');
-      } else if (response.statusCode == 404) {
-        print('[LikeService] 포스트를 찾을 수 없음: ${response.statusCode}');
-        throw HttpException('포스트를 찾을 수 없습니다.');
-      } else {
-        print(
-          '[LikeService] 좋아요 토글 실패: ${response.statusCode} - ${response.body}',
-        );
-        throw HttpException('좋아요 처리 중 오류가 발생했습니다: ${response.statusCode}');
       }
     } catch (e) {
       print('[LikeService] 좋아요 토글 오류: $e');
+
+      if (e is DioException) {
+        final statusCode = e.response?.statusCode;
+        final responseData = e.response?.data;
+
+        if (statusCode == 400) {
+          print('[LikeService] 잘못된 요청: $statusCode - $responseData');
+          // 400 에러 시 서버 상태로 강제 동기화
+          await _forceSyncWithServer(postId);
+          throw HttpException('좋아요 상태가 서버와 다릅니다. 다시 시도해주세요.');
+        } else if (statusCode == 401) {
+          print('[LikeService] 인증 실패: $statusCode');
+          throw HttpException('인증이 필요합니다. 다시 로그인해주세요.');
+        } else if (statusCode == 404) {
+          print('[LikeService] 포스트를 찾을 수 없음: $statusCode');
+          throw HttpException('포스트를 찾을 수 없습니다.');
+        } else {
+          print('[LikeService] 좋아요 토글 실패: $statusCode - $responseData');
+          throw HttpException('좋아요 처리 중 오류가 발생했습니다: $statusCode');
+        }
+      }
       rethrow;
     }
   }
 
   /// 서버 상태로 강제 동기화 (400 에러 시)
-  Future<void> _forceSyncWithServer(String postId, String token) async {
+  Future<void> _forceSyncWithServer(String postId) async {
     try {
       // 서버 상태 확인
-      final statusUri = Uri.parse('$_baseUrl/api/posts/$postId/like/status');
-      final statusResponse = await http
-          .get(
-            statusUri,
-            headers: {
-              'Authorization': 'Bearer $token',
-              'Content-Type': 'application/json',
-            },
-          )
-          .timeout(const Duration(seconds: 3));
+      final statusResponse = await _dio.get(
+        '/api/posts/$postId/like/status',
+        options: Options(receiveTimeout: const Duration(seconds: 3)),
+      );
 
       if (statusResponse.statusCode == 200) {
-        final serverIsLiked = statusResponse.body.toLowerCase() == 'true';
+        final serverIsLiked =
+            statusResponse.data.toString().toLowerCase() == 'true';
         _postLikeStatus[postId] = serverIsLiked;
 
         // 카운트도 서버에서 가져오기
-        final countUri = Uri.parse('$_baseUrl/api/posts/$postId/like/count');
-        final countResponse = await http
-            .get(
-              countUri,
-              headers: {
-                'Authorization': 'Bearer $token',
-                'Content-Type': 'application/json',
-              },
-            )
-            .timeout(const Duration(seconds: 3));
+        final countResponse = await _dio.get(
+          '/api/posts/$postId/like/count',
+          options: Options(receiveTimeout: const Duration(seconds: 3)),
+        );
 
         if (countResponse.statusCode == 200) {
-          final serverCount = int.tryParse(countResponse.body) ?? 0;
+          final serverCount = int.tryParse(countResponse.data.toString()) ?? 0;
           _postLikeCounts[postId] = serverCount;
         }
 

@@ -1,10 +1,10 @@
 import 'dart:ui' as ui;
 import 'package:doppy/data/models/user_model.dart';
+import 'package:doppy/pages/components/shimmer_box.dart';
 import 'package:doppy/pages/screens/user_profile_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:doppy/data/services/comment_service.dart';
-import 'package:doppy/pages/components/comment_shimmer.dart';
 import 'package:doppy/providers/user_provider.dart';
 import 'package:provider/provider.dart';
 
@@ -29,7 +29,7 @@ class _CommentBottomSheetState extends State<CommentBottomSheet>
 
   // 애니메이션 중인 댓글 ID와 타입
   String? _animatingCommentId;
-  String? _animationType; // 'reaction' 또는 'reply'
+  // 'reaction' 또는 'reply'
 
   Comment? _replyTarget;
   int _lastCommentCount = 0; // 이전 댓글 개수 추적
@@ -189,7 +189,6 @@ class _CommentBottomSheetState extends State<CommentBottomSheet>
     // 바운싱 애니메이션과 동시에 반응 처리
     setState(() {
       _animatingCommentId = commentId;
-      _animationType = 'reaction';
     });
 
     // 애니메이션과 동시에 실제 반응 처리
@@ -200,7 +199,6 @@ class _CommentBottomSheetState extends State<CommentBottomSheet>
       _bounceAnimationController.reset();
       setState(() {
         _animatingCommentId = null;
-        _animationType = null;
       });
     });
   }
@@ -259,14 +257,12 @@ class _CommentBottomSheetState extends State<CommentBottomSheet>
   void _startReplyAnimation(String commentId) {
     setState(() {
       _animatingCommentId = commentId;
-      _animationType = 'reply';
     });
 
     _bounceAnimationController.forward().then((_) {
       _bounceAnimationController.reset();
       setState(() {
         _animatingCommentId = null;
-        _animationType = null;
       });
     });
   }
@@ -554,9 +550,9 @@ class _CommentBottomSheetState extends State<CommentBottomSheet>
                                     horizontal: 16,
                                     vertical: 8,
                                   ),
-                                  child: CommentShimmer(
-                                    itemCount: 5,
-                                    isPreview: false,
+                                  child: ShimmerBox(
+                                    width: double.infinity,
+                                    height: double.infinity,
                                   ),
                                 )
                                 : ListView.builder(

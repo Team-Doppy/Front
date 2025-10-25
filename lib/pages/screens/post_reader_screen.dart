@@ -8,12 +8,11 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:super_editor/super_editor.dart';
 import 'package:doppy/editor/style/style_sheet.dart';
-import 'package:doppy/editor/style/defualt_toolbar.dart'; // HighlightAttribution import
+import 'package:doppy/editor/style/defualt_toolbar.dart';
 import 'package:doppy/editor/component/row_image_component.dart'
     show ImageRowNode, RowImageComponentBuilder;
 import 'package:doppy/editor/postwrite_screen.dart';
 import 'package:doppy/providers/user_provider.dart';
-import 'package:doppy/providers/profile_feed_provider.dart';
 import 'package:doppy/data/services/comment_service.dart';
 import 'package:doppy/data/services/blog_service.dart';
 import 'package:doppy/data/services/like_service.dart';
@@ -68,9 +67,6 @@ class _PostReaderScreenState extends State<PostReaderScreen>
   bool _showCommentsOverlay = false;
   late final AnimationController _commentOverlayCtrl;
   late final Animation<double> _commentFade;
-  double _overlayHeightFrac = 0.65; // 0~1 (초기 65%)
-  final List<double> _snapPoints = [0.35, 0.65, 0.92];
-  double? _dragStartFrac;
 
   // 좋아요/댓글 데이터
   final CommentService _commentService = CommentService();
@@ -132,20 +128,10 @@ class _PostReaderScreenState extends State<PostReaderScreen>
       await _blogService.deletePost(postId);
 
       if (mounted) {
-        // 프로필 피드 캐시 무효화 (포스트 삭제)
-        try {
-          context.read<ProfileFeedProvider>().invalidateCache();
-          print('[PostReaderScreen] 포스트 삭제 후 캐시 무효화 완료');
-        } catch (e) {
-          print('[PostReaderScreen] 캐시 무효화 실패: $e');
-        }
-
         ErrorHandler.showInfo(context, '게시물이 삭제되었습니다');
-        // 삭제 후 이전 화면으로 돌아가기
         Navigator.of(context).pop();
       }
     } catch (e) {
-      print('[PostReaderScreen] 게시물 삭제 오류: $e');
       if (mounted) {
         ErrorHandler.showError(context, '게시물 삭제 중 오류가 발생했습니다');
       }
@@ -159,7 +145,6 @@ class _PostReaderScreenState extends State<PostReaderScreen>
     _commentService.connectWebSocketForCurrentPost();
     setState(() {
       _showCommentsOverlay = true;
-      _overlayHeightFrac = 0.65;
     });
     _commentOverlayCtrl.forward(from: 0.0);
   }
@@ -724,15 +709,8 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                                               MaterialPageRoute(
                                                 builder:
                                                     (_) => PostwriteScreen(
-                                                      screenWidth:
-                                                          MediaQuery.of(
-                                                            context,
-                                                          ).size.width,
-                                                      isEditMode: true,
-                                                      postId:
-                                                          dataToEdit['id']
-                                                              ?.toString(),
-                                                      initialExported:
+                                                      isEditingMode: true,
+                                                      exportedDataForEdit:
                                                           dataToEdit,
                                                     ),
                                               ),

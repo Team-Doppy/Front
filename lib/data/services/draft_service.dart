@@ -3,7 +3,6 @@ import 'dart:ui' as ui;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:doppy/editor/service/editor_service.dart';
 import 'package:doppy/editor/service/sticker_service.dart';
-import 'package:doppy/editor/service/node_component_service.dart';
 import 'package:doppy/editor/publish/post_exporter.dart';
 import 'package:super_editor/super_editor.dart';
 import 'package:doppy/editor/component/link_component.dart';
@@ -200,56 +199,6 @@ class DraftService {
         }
       }
 
-      // URL-ID 매핑 복원
-      try {
-        final dynamic content = exportedData['content'];
-        final List<dynamic> nodes =
-            (content is Map)
-                ? List<dynamic>.from(content['nodes'] as List? ?? const [])
-                : const [];
-
-        print('[DraftService] URL-ID 매핑 복원 시작 (노드 ${nodes.length}개)');
-        int restoredCount = 0;
-
-        for (final n in nodes) {
-          if (n is! Map) continue;
-          final String type = (n['type'] ?? '').toString();
-
-          if (type == 'image') {
-            final String url = (n['url'] ?? '').toString();
-            final String? imageId = (n['imageId'] ?? '').toString();
-            if (url.isNotEmpty && imageId != null && imageId.isNotEmpty) {
-              NodeComponentService().registerImageUrlId(url, imageId);
-              restoredCount++;
-            }
-          } else if (type == 'imageRow') {
-            final List<dynamic> urls = List<dynamic>.from(
-              n['urls'] ?? const [],
-            );
-            final List<dynamic> imageIds = List<dynamic>.from(
-              n['imageIds'] ?? const [],
-            );
-            for (int i = 0; i < urls.length && i < imageIds.length; i++) {
-              final String url = urls[i].toString();
-              final String imageId = imageIds[i].toString();
-              if (url.isNotEmpty && imageId.isNotEmpty) {
-                NodeComponentService().registerImageUrlId(url, imageId);
-                restoredCount++;
-              }
-            }
-          }
-        }
-
-        print('[DraftService] URL-ID 매핑 복원 완료 ($restoredCount개)');
-      } catch (e) {
-        print('[DraftService] URL-ID 매핑 복원 실패: $e');
-      }
-
-      // 썸네일/usedImageIds 복원 보조(필요 시 화면 상태 업데이트용 Hook 지점)
-      // exportedData['thumbnailImageUrl'] 는 draftData.thumbnailUrl와 동일/우선순위 선택 가능
-      // exportedData['usedImageIds'] 는 서버 전송 시 그대로 재사용 가능
-
-      print('[DraftService] Draft loaded: $draftId');
       return true;
     } catch (e) {
       print('[DraftService] Error loading draft: $e');
@@ -360,10 +309,14 @@ class DraftService {
           final text = (m['text'] ?? '').toString();
           final align = (m['align'] ?? 'center').toString();
           final isTitle = m['isTitle'] == true;
+          final fontFamily = m['fontFamily'] as String?; // 폰트 정보 복원
           final spans = (m['spans'] as List?) ?? const [];
           final attributed = _buildAttributedText(text, spans);
           final meta = <String, dynamic>{'textAlign': align};
           if (isTitle) meta['isTitle'] = true;
+          if (fontFamily != null && fontFamily.isNotEmpty) {
+            meta['fontFamily'] = fontFamily; // 폰트 정보를 메타데이터에 복원
+          }
           rebuilt.add(ParagraphNode(id: id, text: attributed, metadata: meta));
           break;
         case 'image':
@@ -420,34 +373,58 @@ class DraftService {
   /// PostReaderScreen의 _buildAttributedText 로직을 활용
   AttributedText _buildAttributedText(String text, List spans) {
     final attributed = AttributedText(text);
-    for (final s in spans) {
-      final m = (s as Map).cast<String, dynamic>();
-      final start = (m['start'] as num?)?.toInt() ?? 0;
-      final end = (m['end'] as num?)?.toInt() ?? start;
-      final ann = (m['attrs'] as Map?)?.cast<String, dynamic>() ?? {};
-      final atts = <Attribution>{};
-      if (ann['bold'] == true) atts.add(boldAttribution);
-      if (ann['italic'] == true) atts.add(italicsAttribution);
-      if (ann['underline'] == true) atts.add(underlineAttribution);
-      if (ann['strikethrough'] == true) atts.add(strikethroughAttribution);
-      final fs = (ann['font_size'] as num?)?.toDouble();
-      if (fs != null) atts.add(FontSizeAttribution(fs));
-      final colorHex = ann['color'] as String?;
-      if (colorHex != null && colorHex.isNotEmpty) {
-        atts.add(ColorAttribution(_parseHexColor(colorHex)));
-      }
-      // 🎨 형광펜 속성 디코딩
-      final highlightHex = ann['highlight'] as String?;
-      if (highlightHex != null && highlightHex.isNotEmpty) {
-        print('DEBUG: DraftService 형광펜 디코딩 - HEX: $highlightHex');
-        final highlightColor = _parseHexColor(highlightHex);
-        print('DEBUG: DraftService 형광펜 디코딩 - 색상: $highlightColor');
-        atts.add(HighlightAttribution(highlightColor));
-      }
-      for (final a in atts) {
-        attributed.addAttribution(a, SpanRange(start, end - 1));
-      }
+
+    // spans가 null이거나 비어있으면 기본 텍스트 반환
+    if (spans.isEmpty) {
+      return attributed;
     }
+
+    try {
+      for (final s in spans) {
+        if (s == null) continue; // null 체크
+
+        final m = (s as Map).cast<String, dynamic>();
+        final start = (m['start'] as num?)?.toInt() ?? 0;
+        final end = (m['end'] as num?)?.toInt() ?? start;
+
+        // 텍스트 길이 범위 체크
+        if (start < 0 || end > text.length || start > end) {
+          print(
+            '[DraftService] Invalid span range: start=$start, end=$end, textLength=${text.length}',
+          );
+          continue;
+        }
+
+        final ann = (m['attrs'] as Map?)?.cast<String, dynamic>() ?? {};
+        final atts = <Attribution>{};
+        if (ann['bold'] == true) atts.add(boldAttribution);
+        if (ann['italic'] == true) atts.add(italicsAttribution);
+        if (ann['underline'] == true) atts.add(underlineAttribution);
+        if (ann['strikethrough'] == true) atts.add(strikethroughAttribution);
+        final fs = (ann['font_size'] as num?)?.toDouble();
+        if (fs != null) atts.add(FontSizeAttribution(fs));
+        final colorHex = ann['color'] as String?;
+        if (colorHex != null && colorHex.isNotEmpty) {
+          atts.add(ColorAttribution(_parseHexColor(colorHex)));
+        }
+        // 🎨 형광펜 속성 디코딩
+        final highlightHex = ann['highlight'] as String?;
+        if (highlightHex != null && highlightHex.isNotEmpty) {
+          print('DEBUG: DraftService 형광펜 디코딩 - HEX: $highlightHex');
+          final highlightColor = _parseHexColor(highlightHex);
+          print('DEBUG: DraftService 형광펜 디코딩 - 색상: $highlightColor');
+          atts.add(HighlightAttribution(highlightColor));
+        }
+
+        for (final a in atts) {
+          attributed.addAttribution(a, SpanRange(start, end - 1));
+        }
+      }
+    } catch (e) {
+      print('[DraftService] Error building attributed text: $e');
+      // 오류 발생 시 기본 텍스트 반환
+    }
+
     return attributed;
   }
 

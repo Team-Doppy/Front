@@ -5,8 +5,8 @@ import 'package:doppy/editor/image/native_image_picker.dart';
 import 'package:doppy/editor/service/node_component_service.dart';
 import 'package:doppy/editor/service/sticker_service.dart';
 import 'package:doppy/pages/screens/post_reader_screen.dart';
+import 'package:doppy/providers/feed_provider/my_profile_feed_provider.dart';
 import 'package:doppy/providers/user_provider.dart';
-import 'package:doppy/providers/profile_feed_provider.dart';
 import 'package:flutter/foundation.dart';
 import 'package:doppy/theme/app_colors.dart';
 import 'package:flutter/material.dart';
@@ -145,20 +145,11 @@ class _PostExportScreenState extends State<PostExportScreen>
 
     // 썸네일: persist된 값만 사용 (exported 값은 무시)
     final svc = NodeComponentService();
-    print('[PostExport] 썸네일 복원 시도 - sessionKey: $_nsKey');
     final persistedUrl = svc.getTempThumbnailUrl(_nsKey) ?? '';
     final persistedId = svc.getTempThumbnailId(_nsKey);
 
     _exportedThumbnailImageUrl = persistedUrl;
     _thumbnailImageId = persistedId;
-
-    if (persistedUrl.isNotEmpty) {
-      print(
-        '[PostExport] ✅ persist된 썸네일 복원 성공: $persistedUrl (ID: $persistedId)',
-      );
-    } else {
-      print('[PostExport] ⚠️ persist된 썸네일 없음 (새로 추가 필요)');
-    }
 
     // 본문 전체 내용
     String collected = _collectText(exported);
@@ -401,20 +392,8 @@ class _PostExportScreenState extends State<PostExportScreen>
       // BlogService를 통한 서버 업로드
 
       final blogService = BlogService();
-      // 썸네일 ID 일관성 보장: URL→ID 매핑 우선, 없으면 기존 값 사용
-      String? resolvedThumbId;
-      try {
-        final map = NodeComponentService().urlToImageIdMap;
-        final String? idStr = map[_exportedThumbnailImageUrl];
-        if (idStr != null && idStr.isNotEmpty) {
-          resolvedThumbId = idStr;
-        } else {
-          resolvedThumbId = _thumbnailImageId?.toString();
-        }
-      } catch (_) {
-        resolvedThumbId = _thumbnailImageId?.toString();
-      }
-
+      // 매핑 제거: 서버로 전달할 썸네일 ID는 업로더가 반환한 값만 사용 (없으면 null)
+      final String? resolvedThumbId = _thumbnailImageId?.toString();
       final uploadResult = await blogService.uploadPost(
         postData: payload,
         thumbnailImageId: resolvedThumbId,
@@ -430,8 +409,7 @@ class _PostExportScreenState extends State<PostExportScreen>
         context.read<StickerService>().removeAll();
       } catch (_) {}
 
-      // 이미지 매핑 맵 정리 (발행 완료 후)
-      NodeComponentService().clearImageUrlMapping();
+      // 이미지 매핑 정리 로직 제거됨
 
       // 로컬 썸네일 이미지 정리 (발행 완료 후)
       try {
@@ -441,17 +419,14 @@ class _PostExportScreenState extends State<PostExportScreen>
         print('[PostExport] 썸네일 정리 실패: $e');
       }
 
-      // 내 프로필 피드 캐시 무효화 후 백그라운드에서 재로드 (새 포스트 발행)
       try {
-        final feedProvider = context.read<ProfileFeedProvider>();
-        await feedProvider.invalidateCache();
-        // 백그라운드에서 서버 재로드 (await 제거)
+        final feedProvider = context.read<MyProfileFeedProvider>();
         feedProvider.refresh().catchError((e) {
           print('[PostExport] 백그라운드 재로드 실패: $e');
         });
-        print('[PostExport] 캐시 무효화 완료, 백그라운드 재로드 시작');
+        print('[PostExport] 백그라운드 재로드 시작');
       } catch (e) {
-        print('[PostExport] 캐시 무효화 실패: $e');
+        print('[PostExport] 백그라운드 재로드 실패: $e');
       }
 
       Navigator.of(context).pop();
@@ -459,14 +434,36 @@ class _PostExportScreenState extends State<PostExportScreen>
       // 업로드 성공 시 바로 글보기 화면으로 이동
       Navigator.of(context).pushReplacement(
         PageRouteBuilder(
-          transitionDuration: const Duration(milliseconds: 1000),
+          transitionDuration: const Duration(milliseconds: 600),
+          reverseTransitionDuration: const Duration(milliseconds: 220),
           pageBuilder:
               (_, __, ___) => PostReaderScreen(
                 exported: uploadResult, // 서버 응답 데이터 직접 사용
                 heroTag:
                     'uploaded-post-${DateTime.now().millisecondsSinceEpoch}',
               ),
-          transitionsBuilder: (_, animation, __, child) => child,
+          transitionsBuilder: (context, animation, secondaryAnimation, child) {
+            final curved = CurvedAnimation(
+              parent: animation,
+              curve: Curves.easeOutCubic,
+            );
+            final slide = Tween<Offset>(
+              begin: const Offset(0, 0.06),
+              end: Offset.zero,
+            ).chain(CurveTween(curve: Curves.easeOutCubic)).animate(animation);
+            final scale = Tween<double>(
+              begin: 0.98,
+              end: 1.0,
+            ).chain(CurveTween(curve: Curves.easeOutCubic)).animate(animation);
+
+            return FadeTransition(
+              opacity: curved,
+              child: SlideTransition(
+                position: slide,
+                child: ScaleTransition(scale: scale, child: child),
+              ),
+            );
+          },
         ),
       );
     } catch (e) {
@@ -496,14 +493,7 @@ class _PostExportScreenState extends State<PostExportScreen>
 
     // 제목과 본문을 편집된 내용으로 업데이트
     editedBase['title'] = editedTitle;
-    editedBase['excerpt'] = editedExcerpt;
     editedBase['summary'] = editedExcerpt; // 사용자가 편집한 내용을 summary로 설정
-
-    // 본문 내용도 업데이트 (필요한 경우)
-    if (editedBase.containsKey('content')) {
-      editedBase['content'] = editedExcerpt;
-    }
-
     return PostExporter.composeFinalPayload(
       thumbnailImageUrl: _exportedThumbnailImageUrl,
       base: editedBase,

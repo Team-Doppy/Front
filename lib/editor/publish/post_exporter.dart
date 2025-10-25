@@ -2,7 +2,6 @@ import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:doppy/editor/component/row_image_component.dart';
 import 'package:doppy/editor/component/mention_component.dart';
-import 'package:doppy/editor/service/node_component_service.dart';
 import 'package:doppy/providers/auth_provider.dart';
 import 'package:flutter/material.dart';
 
@@ -87,6 +86,17 @@ class PostExporter {
     return JsonExport.encode(map, pretty: pretty);
   }
 
+  /// 문서에서 제목 추출
+  static String getTitleFromDocument(MutableDocument document) {
+    for (int i = 0; i < document.length; i++) {
+      final node = document.getNodeAt(i);
+      if (node is ParagraphNode && node.metadata['isTitle'] == true) {
+        return node.text.text.trim();
+      }
+    }
+    return '';
+  }
+
   /// 편집 중 문서/스티커를 JSON(Map)으로 내보낸다.
   static Map<String, dynamic> exportToMap({
     required EditorService editorService,
@@ -97,15 +107,6 @@ class PostExporter {
     final layout =
         editorService.documentLayoutKey?.currentState as DocumentLayout?;
     final List<Map<String, dynamic>> nodes = <Map<String, dynamic>>[];
-    // 업로드 성공된 URL→imageId 매핑(전역 서비스)
-    final Map<String, String> urlToId = NodeComponentService().urlToImageIdMap;
-    final Set<int> usedImageIds = <int>{};
-
-    int? _idFromUrl(String url) {
-      final s = urlToId[url];
-      if (s == null || s.isEmpty) return null;
-      return int.tryParse(s);
-    }
 
     String titleText = '';
 
@@ -125,7 +126,7 @@ class PostExporter {
           'align': meta['textAlign'] ?? 'center',
           'isTitle': meta['isTitle'] == true,
           'isSubheading': meta['isSubheading'] == true,
-          'pin': meta['pin'] == true,
+          'fontFamily': meta['fontFamily'], // 폰트 정보 저장
           'spans': _buildParagraphSpans(node.text),
         });
         continue;
@@ -133,43 +134,23 @@ class PostExporter {
 
       // ImageNode (SuperEditor 내장)
       if (node is ImageNode) {
-        final imageIdStr = NodeComponentService().getImageIdByUrl(
-          node.imageUrl,
-        );
         nodes.add({
           'id': node.id,
           'type': 'image',
           'url': node.imageUrl,
           'altText': node.altText,
-          if (imageIdStr != null && imageIdStr.isNotEmpty)
-            'imageId': imageIdStr,
         });
-        final int? id = _idFromUrl(node.imageUrl);
-        if (id != null) usedImageIds.add(id);
         continue;
       }
 
       // ImageRowNode (프로젝트에 존재하는 경우)
       if (node is ImageRowNode) {
-        final imageIds = <String>[];
-        for (final url in node.imageUrls) {
-          final imageIdStr = NodeComponentService().getImageIdByUrl(url);
-          if (imageIdStr != null && imageIdStr.isNotEmpty) {
-            imageIds.add(imageIdStr);
-          }
-        }
-
         nodes.add({
           'id': node.id,
           'type': 'imageRow',
           'urls': node.imageUrls,
           'spacing': node.spacing,
-          if (imageIds.isNotEmpty) 'imageIds': imageIds,
         });
-        for (final u in node.imageUrls) {
-          final int? id = _idFromUrl(u);
-          if (id != null) usedImageIds.add(id);
-        }
         continue;
       }
 
@@ -299,14 +280,10 @@ class PostExporter {
       throw StateError('author is required');
     }
 
+    final title = getTitleFromDocument(doc);
     //초안 뽑기
     final Map<String, dynamic> result = {
-      'title':
-          titleText.isNotEmpty
-              ? titleText
-              : (nodes.isNotEmpty
-                  ? (nodes.first['text'] ?? '').toString()
-                  : ''),
+      'title': title,
       'author': author,
       'content': {'nodes': nodes},
       'stickers': stickers,
@@ -544,115 +521,40 @@ class PostExporter {
     }
     result['thumbnailImageUrl'] = thumbnailImageUrl;
 
-    // 9. usedImageIds 보강: base에 없으면 문서 노드/매핑으로 재생성, 썸네일 id도 병합
+    // 9. usedImageUrls → URL 문자열로 전환: 문서 노드/썸네일에서 URL을 수집해 문자열 배열로 제공
     try {
-      print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-      print('🔍 [페이로드 이미지 ID 수집 시작]');
+      final Set<String> usedUrls = <String>{};
 
-      final Set<int> usedIds = <int>{};
-      final dynamic baseIds = base['usedImageIds'];
-      print('📦 Base에서 가져온 ID 개수: ${baseIds is List ? baseIds.length : 0}');
-      if (baseIds is List) {
-        for (final v in baseIds) {
-          final int? n = (v is int) ? v : int.tryParse(v.toString());
-          if (n != null) {
-            usedIds.add(n);
-            print('  ✓ Base ID: $n');
+      // 문서 노드에서 URL 수집
+      final dynamic content = base['content'];
+      final List<dynamic> nodes =
+          (content is Map)
+              ? List<dynamic>.from(content['nodes'] as List? ?? const [])
+              : const [];
+      for (final n in nodes) {
+        if (n is! Map) continue;
+        final String type = (n['type'] ?? '').toString();
+        if (type == 'image') {
+          final String url = (n['url'] ?? '').toString();
+          if (url.isNotEmpty) usedUrls.add(url);
+        } else if (type == 'imageRow') {
+          final List<dynamic> urls = List<dynamic>.from(n['urls'] ?? const []);
+          for (final u in urls) {
+            final String url = u.toString();
+            if (url.isNotEmpty) usedUrls.add(url);
           }
         }
       }
 
-      final Map<String, String> urlToId =
-          NodeComponentService().urlToImageIdMap;
-      print('💾 URL→ID 매핑 맵 크기: ${urlToId.length}');
-      urlToId.forEach((url, id) {
-        print(
-          '  • ${url.substring(url.length > 60 ? url.length - 60 : 0)} → $id',
-        );
-      });
-
-      // 썸네일 URL → id 매핑 병합
-      print('🖼️ 썸네일 URL: $thumbnailImageUrl');
-      final String? thumbIdStr = urlToId[thumbnailImageUrl];
-      final int? thumbId = thumbIdStr == null ? null : int.tryParse(thumbIdStr);
-      if (thumbId != null) {
-        usedIds.add(thumbId);
-        print('  ✓ 썸네일 ID 추가: $thumbId');
-      } else {
-        print('  ⚠️ 썸네일 ID 매핑 없음!');
+      // 썸네일 URL도 포함(이전 로직에서 썸네일 ID를 병합했었음)
+      if (thumbnailImageUrl.trim().isNotEmpty) {
+        usedUrls.add(thumbnailImageUrl.trim());
       }
 
-      // 문서 노드를 항상 스캔하여 보강(중복은 Set으로 자동 제거)
-      print('📄 문서 노드 스캔 시작...');
-      try {
-        final dynamic content = base['content'];
-        final List<dynamic> nodes =
-            (content is Map)
-                ? List<dynamic>.from(content['nodes'] as List? ?? const [])
-                : const [];
-        print('  노드 총 개수: ${nodes.length}');
-
-        int imageNodeCount = 0;
-        int imageRowNodeCount = 0;
-        int foundIdCount = 0;
-        int missingIdCount = 0;
-
-        for (final n in nodes) {
-          if (n is! Map) continue;
-          final String type = (n['type'] ?? '').toString();
-          if (type == 'image') {
-            imageNodeCount++;
-            final String url = (n['url'] ?? '').toString();
-            print('  🖼️ image 노드 URL: $url');
-            final String? idStr = urlToId[url];
-            final int? id = idStr == null ? null : int.tryParse(idStr);
-            if (id != null) {
-              usedIds.add(id);
-              foundIdCount++;
-              print('    ✓ ID 찾음: $id');
-            } else {
-              missingIdCount++;
-              print('    ⚠️ ID 매핑 없음!');
-            }
-          } else if (type == 'imageRow') {
-            imageRowNodeCount++;
-            final List<dynamic> urls = List<dynamic>.from(
-              n['urls'] ?? const [],
-            );
-            print('  📸 imageRow 노드 (${urls.length}개 이미지)');
-            for (final u in urls) {
-              final String url = u.toString();
-              print('    URL: $url');
-              final String? idStr = urlToId[url];
-              final int? id = idStr == null ? null : int.tryParse(idStr);
-              if (id != null) {
-                usedIds.add(id);
-                foundIdCount++;
-                print('      ✓ ID 찾음: $id');
-              } else {
-                missingIdCount++;
-                print('      ⚠️ ID 매핑 없음!');
-              }
-            }
-          }
-        }
-
-        print('📊 스캔 결과:');
-        print('  - image 노드: $imageNodeCount개');
-        print('  - imageRow 노드: $imageRowNodeCount개');
-        print('  - ID 찾음: $foundIdCount개');
-        print('  - ID 누락: $missingIdCount개');
-      } catch (e) {
-        print('  ❌ 문서 스캔 오류: $e');
-      }
-
-      result['usedImageIds'] = usedIds.toList()..sort();
-      print(
-        '✅ 최종 usedImageIds (${usedIds.length}개): ${result['usedImageIds']}',
-      );
-      print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      // 결과 키는 기존과 동일하게 유지(호환)하되 값은 URL 문자열 목록로 제공
+      result['usedImageUrls'] = usedUrls.toList();
     } catch (e) {
-      print('❌ usedImageIds 수집 실패: $e');
+      print('❌ usedImageUrls 수집 실패: $e');
     }
 
     print('==============================================');
@@ -663,7 +565,7 @@ class PostExporter {
       print('SharedGroupIds: $sharedGroupIds');
     }
     print('Thumbnail: ${result['thumbnailImageUrl'] ?? 'none'}');
-    print('UsedImageIds: ${result['usedImageIds'] ?? 'none'}');
+    print('UsedImageUrls: ${result['usedImageUrls'] ?? 'none'}');
     print(JsonExport.encode(result, pretty: true));
 
     return result;

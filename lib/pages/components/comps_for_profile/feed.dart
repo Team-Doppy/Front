@@ -1,10 +1,9 @@
 import 'package:doppy/data/models/post_data.dart';
 
-import 'package:doppy/data/services/feed_service.dart';
+import 'package:doppy/providers/feed_provider/feed_ui_service.dart';
 import 'package:doppy/pages/components/comps_for_profile/sections/horizontal_category_section.dart';
 import 'package:doppy/pages/components/comps_for_profile/sections/category_model.dart';
-
-import 'package:doppy/providers/profile_feed_provider.dart';
+import 'package:doppy/providers/feed_provider/base_feed_provider.dart';
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -22,11 +21,72 @@ class Feed {
   // 드래그 상태 변경 콜백
   VoidCallback? onDragStateChanged;
 
+  // ========= Helper functions (visibility & filtering rules) =========
+
+  /// Raw 데이터를 PostData 리스트로 변환
+  List<PostData> _mapRawToPosts(List<dynamic> rawList) {
+    return rawList
+        .map((raw) {
+          try {
+            return PostData.fromServer(raw);
+          } catch (_) {
+            return null;
+          }
+        })
+        .whereType<PostData>()
+        .toList();
+  }
+
+  /// BaseFilter에 따라 포스트 필터링
+  List<PostData> _applyBaseFilter(List<PostData> posts, BaseFilter base) {
+    if (base == BaseFilter.all) return posts;
+    return posts.where((post) {
+      switch (base) {
+        case BaseFilter.private:
+          return post.accessLevel == AccessLevel.private;
+        case BaseFilter.groups:
+          return post.accessLevel == AccessLevel.groups;
+        case BaseFilter.public:
+          return post.accessLevel == AccessLevel.public;
+        case BaseFilter.all:
+          return true;
+      }
+    }).toList();
+  }
+
+  /// 시스템 카테고리 여부 판단
+  bool _isSystemCategory(Map<String, dynamic> cat) {
+    return (cat['isSystem'] == true);
+  }
+
+  /// 미분류 카테고리 여부 판단 (system_doppy_uncategorized 또는 id=0)
+  bool _isUncategorized(Map<String, dynamic> cat) {
+    final name = (cat['name']?.toString() ?? '');
+    final idVal = (cat['id'] as int?) ?? -1;
+    return name == 'system_doppy_uncategorized' || idVal == 0;
+  }
+
+  /// 전체 탭에서 카테고리 포함 여부 판단
+  /// - 시스템 카테고리는 숨김 (단, 미분류는 예외)
+  /// - 미분류도 포스트가 없으면 숨김
+  bool _includeCategoryInAll(Map<String, dynamic> cat, List<PostData> posts) {
+    final isSystem = _isSystemCategory(cat);
+    final isUncategorized = _isUncategorized(cat);
+
+    // 시스템 카테고리는 숨기되, 미분류는 예외
+    if (isSystem && !isUncategorized) return false;
+
+    // 미분류도 포스트가 없으면 숨김
+    if (isUncategorized && posts.isEmpty) return false;
+
+    return true;
+  }
+
   /// 메인 빌드: 카테고리별 수평 섹션 렌더링 (전체 탭 기준)
   Widget buildFeedContent({ScrollController? scrollController}) {
     _mainScrollController = scrollController;
 
-    return Consumer<ProfileFeedProvider>(
+    return Consumer<BaseFeedProvider>(
       builder: (context, feedProvider, _) {
         // 필터링 조건 가져오기
         final filteredBase = feedProvider.selectedBase;
@@ -41,7 +101,7 @@ class Feed {
         // 카테고리 → 섹션 메타 구성 (시스템 카테고리 포함)
         final List<CategoryMetaData> categoryMetaDataList = [];
 
-        // 사용자 정의 카테고리
+        // 사용자 정의 카테고리만 표시 (시스템 카테고리는 숨김)
         for (final cat in feedProvider.categories) {
           final idStr = (cat['id'] ?? '').toString();
           final title = (cat['name'] ?? '').toString();
@@ -55,39 +115,20 @@ class Feed {
 
           print('[Feed] 선택됨 - $title (id: $idStr)');
 
-          // 원본 포스트 목록
+          // 원본 포스트 목록을 PostData로 변환 후 필터링
           final rawPosts = feedProvider.postsByCategory[idStr] ?? const [];
-          List<PostData> posts =
-              rawPosts
-                  .map((raw) {
-                    try {
-                      return PostData.fromServer(raw);
-                    } catch (_) {
-                      return null;
-                    }
-                  })
-                  .whereType<PostData>()
-                  .toList();
-
-          // BaseFilter에 따라 필터링
-          if (filteredBase != BaseFilter.all) {
-            posts =
-                posts.where((post) {
-                  switch (filteredBase) {
-                    case BaseFilter.private:
-                      return post.accessLevel == AccessLevel.private;
-                    case BaseFilter.groups:
-                      return post.accessLevel == AccessLevel.groups;
-                    case BaseFilter.public:
-                      return post.accessLevel == AccessLevel.public;
-                    case BaseFilter.all:
-                      return true;
-                  }
-                }).toList();
-          }
+          List<PostData> posts = _applyBaseFilter(
+            _mapRawToPosts(rawPosts),
+            filteredBase,
+          );
 
           // 타인 프로필이면 빈 카테고리 숨김
           if (posts.isEmpty && feedProvider.isReadOnly) continue;
+
+          // 전체 탭에서 시스템 카테고리 필터링 (미분류는 예외)
+          if (filteredBase == BaseFilter.all) {
+            if (!_includeCategoryInAll(cat, posts)) continue;
+          }
 
           categoryMetaDataList.add(
             CategoryMetaData(title: title, posts: posts, categoryId: idStr),

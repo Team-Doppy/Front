@@ -17,7 +17,7 @@ class ImageView extends StatelessWidget {
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(12),
             border: Border.all(
-              color: theme.colorScheme.outline.withOpacity(0.1),
+              color: theme.colorScheme.onSurface.withOpacity(0.3),
             ),
           ),
           child: ClipRRect(

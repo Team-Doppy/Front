@@ -1,8 +1,8 @@
 import 'package:doppy/main.dart';
 import 'package:doppy/providers/auth_provider.dart';
 import 'package:doppy/providers/user_provider.dart';
-import 'package:doppy/data/services/blog_service.dart';
-import 'package:doppy/data/models/post_data.dart';
+import 'package:doppy/data/services/home_data_service.dart';
+import 'package:doppy/utils/network_utils.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -22,10 +22,9 @@ class _SplashScreenState extends State<SplashScreen>
   late final Animation<double> _glow;
   late final Animation<double> _flash;
 
-  final BlogService _blogService = BlogService();
+  final HomeDataService _homeDataService = HomeDataService();
 
-  // ignore: unused_field
-  List<PostData> _preloadedPosts = [];
+  HomeData? _preloadedHomeData;
   bool _isDataLoaded = false;
   bool _isTokenValidated = false;
   String _loadingStatus = '앱을 시작하는 중...';
@@ -107,24 +106,16 @@ class _SplashScreenState extends State<SplashScreen>
         setState(() {
           _loadingStatus = '데이터를 불러오는 중...';
         });
-        // 내 프로필 선로딩 - 실패 시 전체 진행 중단
-        try {
-          // ignore: use_build_context_synchronously
-          await context.read<UserProvider>().fetchMyProfile();
-        } catch (e) {
-          setState(() {
-            _isTokenValidated = false; // 게이트 다운
-            _isDataLoaded = true;
-            _loadingStatus = '프로필 로딩 실패';
-          });
-        }
-        if (_isTokenValidated) {
-          await _loadHomeData();
-        }
+        // 인스타그램 방식: 일단 홈화면으로 진입, 네트워크 에러는 홈에서 처리
+        setState(() {
+          _preloadedHomeData = HomeData(friendsPosts: [], allPosts: []);
+          _isDataLoaded = true;
+          _loadingStatus = '홈화면 준비 완료';
+        });
       } else {
         // 토큰이 없거나 유효하지 않은 경우 빈 데이터로 설정
         setState(() {
-          _preloadedPosts = [];
+          _preloadedHomeData = HomeData(friendsPosts: [], allPosts: []);
           _isDataLoaded = true;
         });
       }
@@ -132,11 +123,12 @@ class _SplashScreenState extends State<SplashScreen>
       // 3. 네비게이션
       await _navigateAfterReady();
     } catch (e) {
+      final networkError = NetworkUtils.parseError(e);
       setState(() {
         _isTokenValidated = false;
         _isDataLoaded = true;
-        _preloadedPosts = [];
-        _loadingStatus = '오류가 발생했습니다';
+        _preloadedHomeData = HomeData(friendsPosts: [], allPosts: []);
+        _loadingStatus = networkError.userMessage;
       });
       await _navigateAfterReady();
     }
@@ -144,61 +136,44 @@ class _SplashScreenState extends State<SplashScreen>
 
   Future<void> _loadHomeData() async {
     try {
-      // 기본 필터가 "친구만 보기"이므로 getFriendsPosts 사용
-      final serverData = await _blogService.getFriendsPosts(page: 0, size: 10);
-      final posts =
-          serverData.map((data) => PostData.fromServer(data)).toList();
+      setState(() {
+        _loadingStatus = '피드 데이터를 불러오는 중...';
+      });
+
+      // 통합 피드 데이터 서비스를 사용하여 두 섹션 동시 로드
+      final homeData = await _homeDataService.preloadAllSections(
+        page: 0,
+        size: 10,
+      );
 
       setState(() {
-        _preloadedPosts = posts;
-        _loadingStatus = posts.isEmpty ? '데이터 로드 완료' : '이미지를 미리 로드하는 중...';
+        _preloadedHomeData = homeData;
+        _loadingStatus = homeData.isEmpty ? '데이터 로드 완료' : '이미지를 미리 로드하는 중...';
       });
-      print('[SplashScreen] Successfully loaded ${posts.length} posts');
 
-      // 이미지 미리 로드 (최대 3개)
-      if (posts.isNotEmpty) {
-        await _preloadImages(posts.take(3).toList());
+      print(
+        '[SplashScreen] 피드 데이터 로드 완료: 친구글 ${homeData.friendsPosts.length}개, 전체글 ${homeData.allPosts.length}개',
+      );
+
+      // 이미지 미리 로드 (두 섹션 모두)
+      if (!homeData.isEmpty) {
+        final allPosts = [...homeData.friendsPosts, ...homeData.allPosts];
+        await _homeDataService.precacheImages(allPosts, context);
       }
 
       setState(() {
         _isDataLoaded = true;
+        _loadingStatus = '로딩 완료';
       });
     } catch (e) {
-      print('[SplashScreen] Error loading home data: $e');
-      // 서버 오류 시 빈 리스트로 초기화
+      print('[SplashScreen] 피드 데이터 로드 실패: $e');
+      final networkError = NetworkUtils.parseError(e);
+
       setState(() {
-        _preloadedPosts = [];
+        _preloadedHomeData = HomeData(friendsPosts: [], allPosts: []);
         _isDataLoaded = true;
+        _loadingStatus = networkError.userMessage;
       });
-    }
-  }
-
-  Future<void> _preloadImages(List<PostData> posts) async {
-    final List<Future<void>> preloadFutures = [];
-
-    for (final post in posts) {
-      if (post.thumbnailImageUrl.isNotEmpty) {
-        print('[SplashScreen] Preloading image: ${post.thumbnailImageUrl}');
-        preloadFutures.add(
-          precacheImage(
-            NetworkImage(post.thumbnailImageUrl),
-            context,
-          ).catchError((error) {
-            print('[SplashScreen] Failed to preload image: $error');
-          }),
-        );
-      }
-    }
-
-    if (preloadFutures.isNotEmpty) {
-      try {
-        await Future.wait(preloadFutures);
-        print(
-          '[SplashScreen] Successfully preloaded ${preloadFutures.length} images',
-        );
-      } catch (e) {
-        print('[SplashScreen] Error preloading images: $e');
-      }
     }
   }
 
@@ -225,8 +200,10 @@ class _SplashScreenState extends State<SplashScreen>
       Navigator.of(context).pushReplacement(
         PageRouteBuilder(
           pageBuilder:
-              (_, __, ___) =>
-                  RootShell(initialIndex: 0, preloadedPosts: _preloadedPosts),
+              (_, __, ___) => RootShell(
+                initialIndex: 0,
+                preloadedHomeData: _preloadedHomeData,
+              ),
           transitionDuration: const Duration(milliseconds: 250),
           transitionsBuilder:
               (_, a, __, child) => FadeTransition(opacity: a, child: child),

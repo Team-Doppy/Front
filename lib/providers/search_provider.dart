@@ -1,7 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:doppy/data/models/post_data.dart';
 
-class SearchResultProvider extends ChangeNotifier {
+class SearchProvider extends ChangeNotifier {
   List<PostData> _searchResults = [];
   String _searchQuery = '';
   bool _hasSearchResults = false;

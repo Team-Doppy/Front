@@ -33,17 +33,54 @@ const Color highlightOrange = Color(0xFFFFCC80); // 더 연한 주황색
 const Color highlightPurple = Color(0xFFCE93D8); // 더 연한 보라색
 
 /// 텍스트 스타일링 관리자
-class TextStylingService {
+class TextStylingService extends ChangeNotifier {
   final Editor editor;
   final MutableDocumentComposer composer;
 
   // 전역 폰트 (새로 입력되는 모든 텍스트에 적용)
-  String? globalFontFamily;
+  String? _globalFontFamily;
+
+  String? get globalFontFamily => _globalFontFamily;
 
   TextStylingService({required this.editor, required this.composer});
 
+  /// 메타데이터에 폰트 적용
+  void applyFontToMetadata(String fontFamily) {
+    final selection = composer.selection;
+    if (selection == null) return;
+
+    // 선택된 모든 노드에 폰트 메타데이터 적용
+    final selectedNodes = editor.document.getNodesInside(
+      selection.extent,
+      selection.base,
+    );
+
+    for (final node in selectedNodes) {
+      if (node is ParagraphNode) {
+        final updatedMetadata = Map<String, dynamic>.from(node.metadata);
+        if (fontFamily.isNotEmpty) {
+          updatedMetadata['fontFamily'] = fontFamily;
+        } else {
+          updatedMetadata.remove('fontFamily');
+        }
+
+        // 노드 교체로 메타데이터 업데이트
+        final newNode = ParagraphNode(
+          id: node.id,
+          text: node.text,
+          metadata: updatedMetadata,
+        );
+
+        editor.execute([
+          ReplaceNodeRequest(existingNodeId: node.id, newNode: newNode),
+        ]);
+      }
+    }
+  }
+
+  @override
   void dispose() {
-    // 리스너 제거 (더 이상 사용하지 않음)
+    super.dispose();
   }
 
   /// 굵게 토글
@@ -548,37 +585,42 @@ class TextStylingService {
     }
 
     if (selection != null && !selection.isCollapsed) {
-      // ✅ 선택 영역이 있으면: 선택된 텍스트에만 즉시 적용
+      // ✅ 선택 영역이 있으면: 메타데이터에 폰트 적용
       print('[FontDebug] 선택 영역에 폰트 적용: $targetFamily');
-
-      // 기존 폰트 제거
-      final existingAttributions = _getAttributionsInSelection();
-      final fontAttributions =
-          existingAttributions.whereType<FontFamilyAttribution>().toSet();
-      if (fontAttributions.isNotEmpty) {
-        editor.execute([
-          RemoveTextAttributionsRequest(
-            documentRange: selection,
-            attributions: fontAttributions,
-          ),
-        ]);
-      }
-
-      // 새 폰트 적용
-      if (targetFamily.isNotEmpty) {
-        editor.execute([
-          AddTextAttributionsRequest(
-            documentRange: selection,
-            attributions: {FontFamilyAttribution(targetFamily)},
-          ),
-        ]);
-      }
+      applyFontToMetadata(targetFamily);
     } else {
-      // ✅ 선택 영역이 없으면: 전역 폰트 설정
-      print('[FontDebug] 전역 폰트 설정: $targetFamily');
-      globalFontFamily = targetFamily.isNotEmpty ? targetFamily : null;
+      // ✅ 선택 영역이 없으면: 모든 ParagraphNode에 전역 폰트 적용
+      print('[FontDebug] 전역 폰트 적용: $targetFamily');
 
-      // 전역 폰트만 설정 (composer.preferences는 SuperEditor가 자동으로 관리)
+      // 전역 폰트 설정
+      if (_globalFontFamily != targetFamily) {
+        _globalFontFamily = targetFamily.isNotEmpty ? targetFamily : null;
+        notifyListeners();
+      }
+
+      // 모든 ParagraphNode에 폰트 적용
+      for (int i = 0; i < editor.document.length; i++) {
+        final node = editor.document.getNodeAt(i);
+        if (node is ParagraphNode) {
+          final updatedMetadata = Map<String, dynamic>.from(node.metadata);
+          if (targetFamily.isNotEmpty) {
+            updatedMetadata['fontFamily'] = targetFamily;
+          } else {
+            updatedMetadata.remove('fontFamily');
+          }
+
+          // 노드 교체로 메타데이터 업데이트
+          final newNode = ParagraphNode(
+            id: node.id,
+            text: node.text,
+            metadata: updatedMetadata,
+          );
+
+          editor.execute([
+            ReplaceNodeRequest(existingNodeId: node.id, newNode: newNode),
+          ]);
+        }
+      }
     }
   }
 
@@ -1202,6 +1244,8 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
                 final picker = NativeImagePicker();
                 final files = await picker.pickMultipleImages(maxCount: 10);
 
+                if (!mounted) return;
+
                 if (files.isNotEmpty) {
                   print('DEBUG: 선택된 파일 수: ${files.length}');
                   final upload = context.read<UploadService>();
@@ -1218,6 +1262,8 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
                     files,
                     kind: UploadKind.editorImage,
                   );
+
+                  if (!mounted) return;
 
                   final count =
                       tasks.length < placeholderIds.length
@@ -1249,6 +1295,7 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
                 final picker = NativeImagePicker();
                 final file = await picker.pickSingleVideo();
 
+                if (!mounted) return;
                 if (file == null) return;
 
                 // 길이/용량 선검증(선택)

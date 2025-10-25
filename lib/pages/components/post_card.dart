@@ -76,8 +76,8 @@ class _PostCardState extends State<PostCard> {
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(12),
           border: Border.all(
-            color: Theme.of(context).colorScheme.surfaceVariant,
-            width: 1.5,
+            color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
+            width: 0.5,
           ),
         ),
         child: ClipRRect(
@@ -160,38 +160,7 @@ class _PostCardState extends State<PostCard> {
                   ? _buildImage()
                   : Hero(tag: widget.heroTag!, child: _buildImage()),
         ),
-        // 우상단 하트 아이콘
-        /*
-        Positioned(
-          right: 12,
-          bottom: 10,
-          child: GestureDetector(
-            onTap: widget.onLikePressed,
-            behavior: HitTestBehavior.opaque,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
-              decoration: BoxDecoration(
-                color: Colors.black.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(20),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(
-                    _likeService.isPostLiked(widget.postId)
-                        ? Icons.favorite
-                        : Icons.favorite_border,
-                    color:
-                        _likeService.isPostLiked(widget.postId)
-                            ? Colors.redAccent
-                            : Colors.white,
-                    size: 20,
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),*/
+
         Positioned(
           left: 6,
           bottom: 6,

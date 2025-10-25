@@ -29,6 +29,7 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
   bool _freezeDuringPush = false;
   List<SearchContentItem> _frozenAccounts = const [];
   String _freezeKind = '';
+  bool _hasNetworkError = false;
 
   @override
   void initState() {
@@ -101,37 +102,52 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
                     print(
                       '[SearchOverlay] onSubmitted: ${searchService.query}',
                     );
-                    await searchService.searchBlogsByTitleOnce(
-                      keyword: searchService.query,
-                    );
 
-                    // 검색 완료 후 결과를 PostData로 변환
-                    final blogResults = searchService.blogResults;
-                    final posts =
-                        blogResults.map((item) {
-                          return PostData(
-                            id: item.id,
-                            thumbnailImageUrl: item.imageUrl ?? '',
-                            title: item.title ?? '',
-                            summary: '',
-                            author: item.author ?? item.username ?? '',
-                            authorProfileImageUrl: item.profileImageUrl ?? '',
-                            content: item.content ?? '',
-                            accessLevel: AccessLevel.public,
-                            createdAt:
-                                item.createdAt ??
-                                DateTime.now().toIso8601String(),
-                            updatedAt:
-                                item.createdAt ??
-                                DateTime.now().toIso8601String(),
-                            viewCount: 0,
-                            likeCount: item.likes ?? 0,
-                            isLiked: false,
-                          );
-                        }).toList();
+                    try {
+                      setState(() {
+                        _hasNetworkError = false;
+                      });
 
-                    // 콜백으로 검색 결과와 검색어 전달 (콜백에서 Navigator.pop 처리)
-                    widget.onSearchComplete?.call(posts, searchService.query);
+                      await searchService.searchBlogsByTitleOnce(
+                        keyword: searchService.query,
+                      );
+
+                      // 검색 완료 후 결과를 PostData로 변환
+                      final blogResults = searchService.blogResults;
+                      final posts =
+                          blogResults.map((item) {
+                            return PostData(
+                              id: item.id,
+                              thumbnailImageUrl: item.imageUrl ?? '',
+                              title: item.title ?? '',
+                              summary: '',
+                              author: item.author ?? item.username ?? '',
+                              authorProfileImageUrl: item.profileImageUrl ?? '',
+                              content: item.content ?? '',
+                              accessLevel: AccessLevel.public,
+                              viewCount: 0,
+                              likeCount: item.likes ?? 0,
+                              isLiked: false,
+                              createdAt:
+                                  item.createdAt ??
+                                  DateTime.now().toIso8601String(),
+                              updatedAt:
+                                  item.createdAt ??
+                                  DateTime.now().toIso8601String(),
+                            );
+                          }).toList();
+
+                      // 콜백으로 검색 결과와 검색어 전달 (콜백에서 Navigator.pop 처리)
+                      widget.onSearchComplete?.call(posts, searchService.query);
+                    } catch (e) {
+                      // 네트워크 에러 발생 시 처리
+                      print('[SearchOverlay] 검색 실패: $e');
+                      setState(() {
+                        _hasNetworkError = true;
+                      });
+                      // 에러가 발생해도 빈 결과로 처리하여 "오프라인 상태입니다" 메시지 표시
+                      widget.onSearchComplete?.call([], searchService.query);
+                    }
                   },
                 ),
                 Expanded(
@@ -181,6 +197,7 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
         accounts: _frozenAccounts,
         searchHistory: const [],
         query: enableHero ? searchService.query : '',
+        hasNetworkError: _hasNetworkError,
         onAnyTapDown: () {},
         onTapAccount: (item) {},
         onTapHistory: (_) {},
@@ -203,6 +220,7 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
             accounts: searchService.searchingAccounts,
             searchHistory: const [],
             query: searchService.query,
+            hasNetworkError: _hasNetworkError,
             onAnyTapDown:
                 () => setState(() {
                   _freezeDuringPush = true;
@@ -257,6 +275,7 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
             accounts: searchService.searchHistory,
             searchHistory: const [],
             query: '',
+            hasNetworkError: false,
             onAnyTapDown:
                 () => setState(() {
                   _freezeDuringPush = true;
@@ -311,6 +330,7 @@ class _SearchResults extends StatelessWidget {
   final List<SearchContentItem> accounts;
   final List<String> searchHistory;
   final String query;
+  final bool hasNetworkError;
   final VoidCallback onAnyTapDown;
   final Function(SearchContentItem) onTapAccount;
   final Function(String) onTapHistory;
@@ -321,6 +341,7 @@ class _SearchResults extends StatelessWidget {
     required this.accounts,
     required this.searchHistory,
     required this.query,
+    required this.hasNetworkError,
     required this.onAnyTapDown,
     required this.onTapAccount,
     required this.onTapHistory,
@@ -347,13 +368,16 @@ class _SearchResults extends StatelessWidget {
         );
       }
     } else if (query.isNotEmpty) {
+      // 네트워크 에러 상태에 따라 다른 메시지 표시
+      final message = hasNetworkError ? '오프라인 상태입니다' : '검색 결과가 없습니다';
+
       children.add(
-        const Padding(
-          padding: EdgeInsets.all(16),
+        Padding(
+          padding: const EdgeInsets.all(16),
           child: Center(
             child: Text(
-              '검색 결과가 없습니다',
-              style: TextStyle(color: Colors.grey, fontSize: 16),
+              message,
+              style: const TextStyle(color: Colors.grey, fontSize: 16),
             ),
           ),
         ),
@@ -480,6 +504,7 @@ class _SearchTopBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     final searchService = context.watch<SearchService>();
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
@@ -493,7 +518,10 @@ class _SearchTopBar extends StatelessWidget {
                 onTap: onClose,
                 child: Icon(
                   Icons.arrow_back_ios_new_rounded,
-                  color: Colors.white.withOpacity(0.9),
+                  color:
+                      isDark
+                          ? Colors.white.withOpacity(0.9)
+                          : Colors.black.withOpacity(0.9),
                   size: 20,
                 ),
               ),
@@ -513,7 +541,10 @@ class _SearchTopBar extends StatelessWidget {
                     onTap: onBack,
                     child: Icon(
                       Icons.arrow_back_ios_new_rounded,
-                      color: Colors.white.withOpacity(0.9),
+                      color:
+                          isDark
+                              ? Colors.white.withOpacity(0.9)
+                              : Colors.black.withOpacity(0.9),
                       size: 20,
                     ),
                   ),
@@ -534,14 +565,23 @@ class _SearchTopBar extends StatelessWidget {
                   onSubmitted();
                 },
                 onTap: () => context.read<SearchService>().setFocused(true),
-                style: const TextStyle(color: Colors.white, fontSize: 16),
-                cursorColor: Colors.white,
+                style: TextStyle(
+                  color: isDark ? Colors.white : Colors.black,
+                  fontSize: 16,
+                ),
+                cursorColor: isDark ? Colors.white : Colors.black,
                 decoration: InputDecoration(
                   filled: true,
-                  fillColor: Colors.white.withOpacity(0.1),
+                  fillColor:
+                      isDark
+                          ? Colors.white.withOpacity(0.1)
+                          : Colors.black.withOpacity(0.1),
                   hintText: '무엇이든 검색해보세요',
                   hintStyle: TextStyle(
-                    color: Colors.white.withOpacity(0.6),
+                    color:
+                        isDark
+                            ? Colors.white.withOpacity(0.6)
+                            : Colors.black.withOpacity(0.6),
                     fontSize: 16,
                     fontWeight: FontWeight.w500,
                   ),
@@ -555,13 +595,19 @@ class _SearchTopBar extends StatelessWidget {
                             },
                             icon: Icon(
                               Icons.search,
-                              color: Colors.white.withOpacity(0.8),
+                              color:
+                                  isDark
+                                      ? Colors.white.withOpacity(0.8)
+                                      : Colors.black.withOpacity(0.8),
                               size: 22,
                             ),
                           )
                           : Icon(
                             Icons.search,
-                            color: Colors.white.withOpacity(0.6),
+                            color:
+                                isDark
+                                    ? Colors.white.withOpacity(0.6)
+                                    : Colors.black.withOpacity(0.6),
                             size: 22,
                           ),
                   contentPadding: const EdgeInsets.symmetric(

@@ -28,7 +28,7 @@ Stylesheet buildCustomStylesheet(BuildContext context) {
           : AppColors.lightTextPrimary;
 
   return defaultStylesheet.copyWith(
-    documentPadding: const EdgeInsets.all(EditorConfig.documentPadding),
+    documentPadding: EdgeInsets.all(EditorConfig.documentPadding),
     addRulesAfter: [
       // 텍스트 노드 스타일
       StyleRule(BlockSelector.all, (doc, docNode) {
@@ -38,15 +38,33 @@ Stylesheet buildCustomStylesheet(BuildContext context) {
 
           // 제목 스타일은 문서의 0번째 문단에만 적용
           if (isTitle && doc.getNodeIndexById(docNode.id) == 0) {
+            // 메타데이터에서 폰트 정보 읽기
+            final fontFamily = docNode.metadata['fontFamily'] as String?;
+
+            TextStyle titleStyle = TextStyle(
+              fontSize: 28,
+              fontWeight: FontWeight.w900,
+              color: titleColor,
+              height: 0,
+            );
+
+            // 구글 폰트 적용
+            if (fontFamily != null && fontFamily.isNotEmpty) {
+              try {
+                titleStyle = GoogleFonts.getFont(
+                  fontFamily,
+                  textStyle: titleStyle,
+                );
+              } catch (e) {
+                print('[FontDebug] 제목 폰트 적용 실패: $fontFamily (오류: $e)');
+                titleStyle = titleStyle.copyWith(fontFamily: fontFamily);
+              }
+            }
+
             return {
-              Styles.textStyle: TextStyle(
-                fontSize: 28,
-                fontWeight: FontWeight.w900,
-                color: titleColor,
-                height: 0,
-              ),
-              Styles.padding: const CascadingPadding.only(
-                top: 100,
+              Styles.textStyle: titleStyle,
+              Styles.padding: CascadingPadding.only(
+                top: 120,
                 bottom: 20,
                 left: 20,
                 right: 20,
@@ -54,10 +72,28 @@ Stylesheet buildCustomStylesheet(BuildContext context) {
             };
           }
 
-          return {
-            Styles.textStyle: TextStyle(fontSize: 16, color: bodyColor),
+          // 메타데이터에서 폰트 정보 읽기
+          final fontFamily = docNode.metadata['fontFamily'] as String?;
 
-            Styles.padding: const CascadingPadding.only(
+          TextStyle bodyStyle = TextStyle(
+            fontSize: 16,
+            color: bodyColor,
+            height: 1.4,
+          );
+
+          // 구글 폰트 적용
+          if (fontFamily != null && fontFamily.isNotEmpty) {
+            try {
+              bodyStyle = GoogleFonts.getFont(fontFamily, textStyle: bodyStyle);
+            } catch (e) {
+              print('[FontDebug] 본문 폰트 적용 실패: $fontFamily (오류: $e)');
+              bodyStyle = bodyStyle.copyWith(fontFamily: fontFamily);
+            }
+          }
+
+          return {
+            Styles.textStyle: bodyStyle,
+            Styles.padding: CascadingPadding.only(
               top: 0,
               bottom: 0,
               left: 20,

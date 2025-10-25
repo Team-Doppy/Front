@@ -1,11 +1,9 @@
-import 'dart:convert';
 import 'dart:io';
 import 'dart:async';
 import 'package:flutter/foundation.dart';
-import 'package:doppy/data/services/api_service_base.dart';
-import 'package:doppy/data/services/auth_service.dart';
+import 'package:dio/dio.dart';
+import 'package:doppy/data/services/base_api_service.dart';
 import 'package:doppy/data/services/websocket_service.dart';
-import 'package:http/http.dart' as http;
 
 class Comment {
   final String id;
@@ -136,7 +134,7 @@ class CommentService extends ChangeNotifier {
   factory CommentService() => _instance;
   CommentService._internal();
 
-  static final String _baseUrl = ApiServiceBase.baseUrl;
+  final Dio _dio = BaseApiService().dio;
   WebSocketService? _webSocketService;
 
   final List<Comment> _comments = [];
@@ -348,32 +346,19 @@ class CommentService extends ChangeNotifier {
     notifyListeners();
 
     try {
-      // 명세서에 따른 올바른 엔드포인트 사용
-      final uri = Uri.parse(
-        '$_baseUrl/api/comments/post/$_currentPostId?page=0&size=20',
-      );
-      final token = await AuthService().getToken();
-
       print('[CommentService] API 호출 시작');
-      print('[CommentService] URL: $uri');
       print('[CommentService] PostId: $_currentPostId');
-      print('[CommentService] Token: ${token?.substring(0, 20)}...');
 
-      final response = await http
-          .get(
-            uri,
-            headers: {
-              'Authorization': 'Bearer $token',
-              'Content-Type': 'application/json',
-            },
-          )
-          .timeout(const Duration(seconds: 10));
+      final response = await _dio.get(
+        '/api/comments/post/$_currentPostId?page=0&size=20',
+        options: Options(receiveTimeout: const Duration(seconds: 10)),
+      );
 
       print('[CommentService] 응답 상태: ${response.statusCode}');
-      print('[CommentService] 응답 본문: ${response.body}');
+      print('[CommentService] 응답 데이터: ${response.data}');
 
       if (response.statusCode == 200) {
-        final data = json.decode(response.body) as Map<String, dynamic>;
+        final data = response.data as Map<String, dynamic>;
         print('[CommentService] 파싱된 데이터: $data');
 
         // 명세서에 따른 페이지네이션 응답 구조
@@ -405,11 +390,15 @@ class CommentService extends ChangeNotifier {
         print('[CommentService] 댓글 로드 완료: ${newComments.length}개');
       } else {
         print('[CommentService] 댓글 로드 실패: ${response.statusCode}');
-        print('[CommentService] 에러 응답: ${response.body}');
         throw HttpException('댓글 로드 실패: ${response.statusCode}');
       }
     } catch (e) {
       print('[CommentService] 댓글 로드 오류: $e');
+      if (e is DioException) {
+        print(
+          '[CommentService] Dio 에러: ${e.response?.statusCode} - ${e.response?.data}',
+        );
+      }
       // 오류 발생 시 빈 리스트 유지 (폴백 데이터 제거)
       // _loadFallbackComments();
     } finally {
@@ -449,9 +438,6 @@ class CommentService extends ChangeNotifier {
     if (_currentPostId == null) return;
 
     try {
-      final uri = Uri.parse('$_baseUrl/api/comments');
-      final token = await AuthService().getToken();
-
       final requestBody = {
         'content': content,
         'postId': int.parse(_currentPostId!),
@@ -461,19 +447,14 @@ class CommentService extends ChangeNotifier {
 
       print('[CommentService] 댓글 추가 요청: $requestBody');
 
-      final response = await http
-          .post(
-            uri,
-            headers: {
-              'Authorization': 'Bearer $token',
-              'Content-Type': 'application/json',
-            },
-            body: json.encode(requestBody),
-          )
-          .timeout(const Duration(seconds: 10));
+      final response = await _dio.post(
+        '/api/comments',
+        data: requestBody,
+        options: Options(receiveTimeout: const Duration(seconds: 10)),
+      );
 
       print(
-        '[CommentService] 댓글 추가 응답: ${response.statusCode} - ${response.body}',
+        '[CommentService] 댓글 추가 응답: ${response.statusCode} - ${response.data}',
       );
 
       if (response.statusCode == 200 || response.statusCode == 201) {
@@ -485,15 +466,17 @@ class CommentService extends ChangeNotifier {
       }
     } catch (e) {
       print('[CommentService] 댓글 추가 오류: $e');
+      if (e is DioException) {
+        print(
+          '[CommentService] Dio 에러: ${e.response?.statusCode} - ${e.response?.data}',
+        );
+      }
     }
   }
 
   /// 댓글에 반응 추가/제거 (API 호출) - 사용자당 하나의 이모지만
   Future<void> toggleReaction(String commentId, String emoji) async {
     try {
-      final token = await AuthService().getToken();
-      if (token == null) return;
-
       // 현재 반응 상태 확인
       final commentIndex = _comments.indexWhere((c) => c.id == commentId);
       if (commentIndex == -1) return;
@@ -506,16 +489,16 @@ class CommentService extends ChangeNotifier {
       if (hasAnyReaction && !hasThisReaction) {
         // 기존 반응 제거
         final existingEmoji = comment.myEmotions.keys.first;
-        await _removeReactionFromServer(commentId, existingEmoji, token);
+        await _removeReactionFromServer(commentId, existingEmoji);
 
         // 새 반응 추가
-        await _addReactionToServer(commentId, emoji, token);
+        await _addReactionToServer(commentId, emoji);
       } else if (hasThisReaction) {
         // 같은 이모지인 경우 제거
-        await _removeReactionFromServer(commentId, emoji, token);
+        await _removeReactionFromServer(commentId, emoji);
       } else {
         // 반응이 없는 경우 새 반응 추가
-        await _addReactionToServer(commentId, emoji, token);
+        await _addReactionToServer(commentId, emoji);
       }
 
       // 로컬 상태 업데이트
@@ -529,52 +512,26 @@ class CommentService extends ChangeNotifier {
   }
 
   /// 서버에 반응 추가
-  Future<void> _addReactionToServer(
-    String commentId,
-    String emoji,
-    String token,
-  ) async {
-    final uri = Uri.parse(
-      '$_baseUrl/api/comments/$commentId/emotions?emoji=${Uri.encodeComponent(emoji)}',
+  Future<void> _addReactionToServer(String commentId, String emoji) async {
+    final response = await _dio.post(
+      '/api/comments/$commentId/emotions?emoji=${Uri.encodeComponent(emoji)}',
+      options: Options(receiveTimeout: const Duration(seconds: 5)),
     );
 
-    final response = await http
-        .post(
-          uri,
-          headers: {
-            'Authorization': 'Bearer $token',
-            'Content-Type': 'application/json',
-          },
-        )
-        .timeout(const Duration(seconds: 5));
-
     print(
-      '[CommentService] 반응 추가 응답: ${response.statusCode} - ${response.body}',
+      '[CommentService] 반응 추가 응답: ${response.statusCode} - ${response.data}',
     );
   }
 
   /// 서버에서 반응 제거
-  Future<void> _removeReactionFromServer(
-    String commentId,
-    String emoji,
-    String token,
-  ) async {
-    final uri = Uri.parse(
-      '$_baseUrl/api/comments/$commentId/emotions?emoji=${Uri.encodeComponent(emoji)}',
+  Future<void> _removeReactionFromServer(String commentId, String emoji) async {
+    final response = await _dio.delete(
+      '/api/comments/$commentId/emotions?emoji=${Uri.encodeComponent(emoji)}',
+      options: Options(receiveTimeout: const Duration(seconds: 5)),
     );
 
-    final response = await http
-        .delete(
-          uri,
-          headers: {
-            'Authorization': 'Bearer $token',
-            'Content-Type': 'application/json',
-          },
-        )
-        .timeout(const Duration(seconds: 5));
-
     print(
-      '[CommentService] 반응 제거 응답: ${response.statusCode} - ${response.body}',
+      '[CommentService] 반응 제거 응답: ${response.statusCode} - ${response.data}',
     );
   }
 
@@ -604,12 +561,10 @@ class CommentService extends ChangeNotifier {
   /// 댓글 삭제 (API 호출)
   Future<void> deleteComment(String commentId) async {
     try {
-      final uri = Uri.parse('$_baseUrl/api/comments/$commentId');
-      final token = await AuthService().getToken();
-
-      final response = await http
-          .delete(uri, headers: {'Authorization': 'Bearer $token'})
-          .timeout(const Duration(seconds: 5));
+      final response = await _dio.delete(
+        '/api/comments/$commentId',
+        options: Options(receiveTimeout: const Duration(seconds: 5)),
+      );
 
       if (response.statusCode == 200 || response.statusCode == 204) {
         _comments.removeWhere((c) => c.id == commentId);
@@ -621,6 +576,11 @@ class CommentService extends ChangeNotifier {
       }
     } catch (e) {
       print('[CommentService] 댓글 삭제 오류: $e');
+      if (e is DioException) {
+        print(
+          '[CommentService] Dio 에러: ${e.response?.statusCode} - ${e.response?.data}',
+        );
+      }
       // 오류 발생 시 로컬에서만 삭제
       _comments.removeWhere((c) => c.id == commentId);
       notifyListeners();
@@ -630,19 +590,11 @@ class CommentService extends ChangeNotifier {
   /// 댓글 수정 (API 호출)
   Future<void> updateComment(String commentId, String newContent) async {
     try {
-      final uri = Uri.parse('$_baseUrl/api/comments/$commentId');
-      final token = await AuthService().getToken();
-
-      final response = await http
-          .put(
-            uri,
-            headers: {
-              'Authorization': 'Bearer $token',
-              'Content-Type': 'application/json',
-            },
-            body: json.encode({'content': newContent}),
-          )
-          .timeout(const Duration(seconds: 5));
+      final response = await _dio.put(
+        '/api/comments/$commentId',
+        data: {'content': newContent},
+        options: Options(receiveTimeout: const Duration(seconds: 5)),
+      );
 
       if (response.statusCode == 200) {
         final commentIndex = _comments.indexWhere((c) => c.id == commentId);
@@ -659,6 +611,11 @@ class CommentService extends ChangeNotifier {
       }
     } catch (e) {
       print('[CommentService] 댓글 수정 오류: $e');
+      if (e is DioException) {
+        print(
+          '[CommentService] Dio 에러: ${e.response?.statusCode} - ${e.response?.data}',
+        );
+      }
       // 오류 발생 시 로컬에서만 수정
       final commentIndex = _comments.indexWhere((c) => c.id == commentId);
       if (commentIndex != -1) {

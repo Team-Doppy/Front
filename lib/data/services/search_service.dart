@@ -1,10 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:dio/dio.dart';
-import 'package:doppy/data/services/api_service_base.dart';
 import 'package:doppy/data/services/auth_service.dart';
+import 'package:doppy/data/services/base_api_service.dart';
 import 'package:doppy/data/models/post_data.dart';
-import 'package:doppy/data/services/user_service.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -14,15 +13,7 @@ class SearchService extends ChangeNotifier {
   factory SearchService() => _instance;
   SearchService._internal();
 
-  final AuthService _authService = AuthService();
-  final Dio _dio = Dio(
-    BaseOptions(
-      connectTimeout: const Duration(seconds: 10),
-      receiveTimeout: const Duration(seconds: 10),
-      validateStatus: (code) => true,
-      receiveDataWhenStatusError: true,
-    ),
-  );
+  final Dio _dio = BaseApiService().dio;
 
   // UI 상태 관리
   String _query = '';
@@ -39,9 +30,6 @@ class SearchService extends ChangeNotifier {
   // 통합 컨텐츠 데이터
   List<SearchContentItem> _filteredItems = [];
   List<SearchContentItem> _allItems = [];
-  // 최근 검색 결과(탭 전환용): 계정/블로그 각각 보관
-  List<SearchContentItem> _lastAccountResults = [];
-  List<SearchContentItem> _lastBlogResults = [];
 
   // 검색 최적화
   String _lastAccountQuery = '';
@@ -133,12 +121,6 @@ class SearchService extends ChangeNotifier {
   }
 
   // ---- 공통 로깅 유틸
-  static String _maskToken(String token) {
-    if (token.isEmpty) return '(empty)';
-    final n = token.length;
-    final tail = token.substring(n - (n >= 6 ? 6 : n));
-    return '***$tail';
-  }
 
   static String _prettyJson(dynamic data) {
     try {
@@ -162,82 +144,81 @@ class SearchService extends ChangeNotifier {
     required String query,
     CancelToken? cancelToken,
   }) async {
-    final baseUrl = ApiServiceBase.baseUrl;
-    final token = await _getAuthToken();
-
-    if (token == null || token.isEmpty) {
-      throw Exception('로그인이 필요합니다(토큰 없음).');
-    }
-
-    final jwtLike = RegExp(r'^[A-Za-z0-9-_]+\.[A-Za-z0-9-_]+\.[A-Za-z0-9-_]+$');
-    if (!jwtLike.hasMatch(token)) {
-      throw Exception('로그인 상태가 유효하지 않습니다(토큰 형식 오류).');
-    }
-
-    final uri = '$baseUrl/api/friends/search';
     final sw = Stopwatch()..start();
 
-    debugPrint('┌─[REQ] GET $uri?username=$query');
-    debugPrint('│ Authorization: Bearer ${_maskToken(token)}');
+    debugPrint('┌─[REQ] GET /api/friends/search?username=$query');
     debugPrint('└────────────────────────────────');
 
-    final res = await _requestWithTokenRefresh(() async {
-      final options = await _authorizedOptions();
-      return await _dio.get(
-        uri,
+    try {
+      final res = await _dio.get(
+        '/api/friends/search',
         queryParameters: {'username': query},
         cancelToken: cancelToken,
-        options: options,
       );
-    });
-    sw.stop();
+      sw.stop();
 
-    final status = res.statusCode;
-    final body = res.data;
-    final uriFinal = res.requestOptions.uri;
-    final headers = res.headers.map.map((k, v) => MapEntry(k, v));
+      final status = res.statusCode;
+      final body = res.data;
+      final uriFinal = res.requestOptions.uri;
+      final headers = res.headers.map.map((k, v) => MapEntry(k, v));
 
-    debugPrint('┌─[RES] ${res.requestOptions.method} $uriFinal');
-    debugPrint('│ status: $status');
-    debugPrint('│ headers: ${_trimLong(headers.toString())}');
-    debugPrint('│ body: ${_trimLong(_prettyJson(body))}');
-    debugPrint('│ elapsed: ${sw.elapsedMilliseconds}ms');
-    debugPrint('└────────────────────────────────');
+      debugPrint('┌─[RES] ${res.requestOptions.method} $uriFinal');
+      debugPrint('│ status: $status');
+      debugPrint('│ headers: ${_trimLong(headers.toString())}');
+      debugPrint('│ body: ${_trimLong(_prettyJson(body))}');
+      debugPrint('│ elapsed: ${sw.elapsedMilliseconds}ms');
+      debugPrint('└────────────────────────────────');
 
-    String? pickMessage(dynamic b) {
-      try {
-        if (b is Map<String, dynamic>) {
-          return (b['message'] ?? b['error'] ?? b['detail'] ?? b['msg'])
-              ?.toString();
-        }
-        if (b is String) return b;
-      } catch (_) {}
-      return null;
-    }
-
-    final usernames = <String>[];
-    if (status == 200) {
-      if (body is List) {
-        for (final e in body) {
-          if (e is Map<String, dynamic>) {
-            final u = e['username']?.toString();
-            if (u != null && u.isNotEmpty) usernames.add(u);
+      String? pickMessage(dynamic b) {
+        try {
+          if (b is Map<String, dynamic>) {
+            return (b['message'] ?? b['error'] ?? b['detail'] ?? b['msg'])
+                ?.toString();
           }
-        }
-      } else {
-        debugPrint('[-] WARN: 200인데 body가 List가 아님: ${body.runtimeType}');
+          if (b is String) return b;
+        } catch (_) {}
+        return null;
       }
-    }
 
-    return FriendSearchResult(
-      status: status,
-      usernames: usernames,
-      body: body,
-      headers: headers,
-      uri: uriFinal,
-      elapsed: sw.elapsed,
-      serverMessage: pickMessage(body),
-    );
+      final usernames = <String>[];
+      if (status == 200) {
+        if (body is List) {
+          for (final e in body) {
+            if (e is Map<String, dynamic>) {
+              final u = e['username']?.toString();
+              if (u != null && u.isNotEmpty) usernames.add(u);
+            }
+          }
+        } else {
+          debugPrint('[-] WARN: 200인데 body가 List가 아님: ${body.runtimeType}');
+        }
+      }
+
+      return FriendSearchResult(
+        status: status,
+        usernames: usernames,
+        body: body,
+        headers: headers,
+        uri: uriFinal,
+        elapsed: sw.elapsed,
+        serverMessage: pickMessage(body),
+      );
+    } catch (e) {
+      sw.stop();
+      debugPrint('[SearchService] searchUsers error: $e');
+      if (e is DioException) {
+        return FriendSearchResult(
+          status: e.response?.statusCode ?? -1,
+          usernames: [],
+          body: e.response?.data,
+          headers: e.response?.headers.map ?? {},
+          uri: e.requestOptions.uri,
+          elapsed: sw.elapsed,
+          serverMessage: e.message,
+        );
+      }
+      rethrow;
+    }
   }
 
   // ---- 사용자 정보 조회
@@ -245,241 +226,47 @@ class SearchService extends ChangeNotifier {
     required String username,
     CancelToken? cancelToken,
   }) async {
-    final baseUrl = ApiServiceBase.baseUrl;
-    final token = await _getAuthToken();
-
-    if (token == null || token.isEmpty) {
-      throw Exception('로그인이 필요합니다(토큰 없음).');
-    }
-
-    final jwtLike = RegExp(r'^[A-Za-z0-9-_]+\.[A-Za-z0-9-_]+\.[A-Za-z0-9-_]+$');
-    if (!jwtLike.hasMatch(token)) {
-      throw Exception('로그인 상태가 유효하지 않습니다(토큰 형식 오류).');
-    }
-
-    final uri = '$baseUrl/api/auth/users/$username';
     final sw = Stopwatch()..start();
 
-    debugPrint('┌─[REQ] GET $uri');
-    debugPrint('│ Authorization: Bearer ${_maskToken(token)}');
+    debugPrint('┌─[REQ] GET /api/auth/users/$username');
     debugPrint('└────────────────────────────────');
 
-    final res = await _requestWithTokenRefresh(() async {
-      final options = await _authorizedOptions();
-      return await _dio.get(uri, cancelToken: cancelToken, options: options);
-    });
-    sw.stop();
-
-    final status = res.statusCode;
-    final body = res.data;
-    final uriFinal = res.requestOptions.uri;
-
-    debugPrint('┌─[RES] ${res.requestOptions.method} $uriFinal');
-    debugPrint('│ status: $status');
-    debugPrint('│ body: ${_trimLong(_prettyJson(body))}');
-    debugPrint('│ elapsed: ${sw.elapsedMilliseconds}ms');
-    debugPrint('└────────────────────────────────');
-
-    if (status == 200 && body is Map<String, dynamic>) {
-      try {
-        return UserDto(
-          id: (body['id'] as num).toInt(),
-          username: body['username']?.toString() ?? '',
-          role: body['role']?.toString() ?? '',
-        );
-      } catch (e) {
-        debugPrint('[-] parse error: $e');
-        return null;
-      }
-    }
-
-    debugPrint('[-] getUserByUsername failed | code=$status');
-    return null;
-  }
-
-  // ---- 친구 신청
-  Future<Response> requestFriend({required String targetUsername}) async {
-    final baseUrl = ApiServiceBase.baseUrl;
-    final token = await _getAuthToken();
-
-    if (token == null || token.isEmpty) {
-      throw Exception('로그인이 필요합니다(토큰 없음).');
-    }
-
-    final jwtLike = RegExp(r'^[A-Za-z0-9-_]+\.[A-Za-z0-9-_]+\.[A-Za-z0-9-_]+$');
-    if (!jwtLike.hasMatch(token)) {
-      throw Exception('로그인 상태가 유효하지 않습니다(토큰 형식 오류).');
-    }
-
-    final uri = '$baseUrl/api/friends/request';
-    debugPrint('┌─[REQ] POST $uri | body={"targetUsername":"$targetUsername"}');
-    debugPrint('│ Authorization: Bearer ${_maskToken(token)}');
-    debugPrint('└────────────────────────────────');
-
-    return _requestWithTokenRefresh(() async {
-      final options = await _authorizedOptions(json: true);
-      return await _dio.post(
-        uri,
-        data: {'targetUsername': targetUsername},
-        options: options,
+    try {
+      final res = await _dio.get(
+        '/api/auth/users/$username',
+        cancelToken: cancelToken,
       );
-    });
-  }
+      sw.stop();
 
-  // ---- 친구 수락
-  Future<Response> acceptFriend({required String requesterUsername}) async {
-    final baseUrl = ApiServiceBase.baseUrl;
-    final token = await _getAuthToken();
+      final status = res.statusCode;
+      final body = res.data;
+      final uriFinal = res.requestOptions.uri;
 
-    if (token == null || token.isEmpty) {
-      throw Exception('로그인이 필요합니다(토큰 없음).');
-    }
+      debugPrint('┌─[RES] ${res.requestOptions.method} $uriFinal');
+      debugPrint('│ status: $status');
+      debugPrint('│ body: ${_trimLong(_prettyJson(body))}');
+      debugPrint('│ elapsed: ${sw.elapsedMilliseconds}ms');
+      debugPrint('└────────────────────────────────');
 
-    final jwtLike = RegExp(r'^[A-Za-z0-9-_]+\.[A-Za-z0-9-_]+\.[A-Za-z0-9-_]+$');
-    if (!jwtLike.hasMatch(token)) {
-      throw Exception('로그인 상태가 유효하지 않습니다(토큰 형식 오류).');
-    }
-
-    final uri = '$baseUrl/api/friends/accept/$requesterUsername';
-    debugPrint('┌─[REQ] POST $uri');
-    debugPrint('│ Authorization: Bearer ${_maskToken(token)}');
-    debugPrint('└────────────────────────────────');
-
-    return _requestWithTokenRefresh(() async {
-      final options = await _authorizedOptions();
-      return await _dio.post(uri, options: options);
-    });
-  }
-
-  // ---- 친구 거절
-  Future<Response> rejectFriend({required String requesterUsername}) async {
-    final baseUrl = ApiServiceBase.baseUrl;
-    final token = await _getAuthToken();
-
-    if (token == null || token.isEmpty) {
-      throw Exception('로그인이 필요합니다(토큰 없음).');
-    }
-
-    final jwtLike = RegExp(r'^[A-Za-z0-9-_]+\.[A-Za-z0-9-_]+\.[A-Za-z0-9-_]+$');
-    if (!jwtLike.hasMatch(token)) {
-      throw Exception('로그인 상태가 유효하지 않습니다(토큰 형식 오류).');
-    }
-
-    final uri = '$baseUrl/api/friends/reject/$requesterUsername';
-    debugPrint('┌─[REQ] POST $uri');
-    debugPrint('│ Authorization: Bearer ${_maskToken(token)}');
-    debugPrint('└────────────────────────────────');
-
-    return _requestWithTokenRefresh(() async {
-      final options = await _authorizedOptions();
-      return await _dio.post(uri, options: options);
-    });
-  }
-
-  // ---- 친구 차단
-  Future<Response> blockUser({required String targetUsername}) async {
-    final baseUrl = ApiServiceBase.baseUrl;
-    final token = await _getAuthToken();
-
-    if (token == null || token.isEmpty) {
-      throw Exception('로그인이 필요합니다(토큰 없음).');
-    }
-
-    final jwtLike = RegExp(r'^[A-Za-z0-9-_]+\.[A-Za-z0-9-_]+\.[A-Za-z0-9-_]+$');
-    if (!jwtLike.hasMatch(token)) {
-      throw Exception('로그인 상태가 유효하지 않습니다(토큰 형식 오류).');
-    }
-
-    final uri = '$baseUrl/api/friends/block/$targetUsername';
-    debugPrint('┌─[REQ] POST $uri');
-    debugPrint('│ Authorization: Bearer ${_maskToken(token)}');
-    debugPrint('└────────────────────────────────');
-
-    return _requestWithTokenRefresh(() async {
-      final options = await _authorizedOptions();
-      return await _dio.post(uri, options: options);
-    });
-  }
-
-  // ---- 친구 삭제
-  Future<Response> deleteFriend({required String targetUsername}) async {
-    final baseUrl = ApiServiceBase.baseUrl;
-    final token = await _getAuthToken();
-
-    if (token == null || token.isEmpty) {
-      throw Exception('로그인이 필요합니다(토큰 없음).');
-    }
-
-    final jwtLike = RegExp(r'^[A-Za-z0-9-_]+\.[A-Za-z0-9-_]+\.[A-Za-z0-9-_]+$');
-    if (!jwtLike.hasMatch(token)) {
-      throw Exception('로그인 상태가 유효하지 않습니다(토큰 형식 오류).');
-    }
-
-    final uri = '$baseUrl/api/friends/delete/$targetUsername';
-    debugPrint('┌─[REQ] DELETE $uri');
-    debugPrint('│ Authorization: Bearer ${_maskToken(token)}');
-    debugPrint('└────────────────────────────────');
-
-    return _requestWithTokenRefresh(() async {
-      final options = await _authorizedOptions();
-      return await _dio.delete(uri, options: options);
-    });
-  }
-
-  Future<String?> _getAuthToken() async {
-    try {
-      final t = await _authService.getToken();
-      final trimmed = t?.trim();
-      debugPrint('[AuthService] token(raw)="${trimmed ?? 'null'}"');
-      return trimmed;
-    } catch (e) {
-      debugPrint('[AuthService] getToken failed: $e');
-      return null;
-    }
-  }
-
-  // 최신 토큰으로 Authorization 헤더 구성 (재시도 전 항상 최신 토큰 사용)
-  Future<Options> _authorizedOptions({bool json = false}) async {
-    final token = await _getAuthToken();
-    if (token == null || token.isEmpty) {
-      throw Exception('로그인이 필요합니다(토큰 없음).');
-    }
-    final headers = <String, String>{'Authorization': 'Bearer $token'};
-    if (json) headers['Content-Type'] = 'application/json';
-    return Options(headers: headers, responseType: ResponseType.json);
-  }
-
-  /// 토큰 갱신과 함께 요청을 재시도하는 헬퍼 메서드
-  Future<Response> _requestWithTokenRefresh(
-    Future<Response> Function() request,
-  ) async {
-    try {
-      // 첫 번째 시도
-      return await request();
-    } catch (e) {
-      // 401 또는 JWT 만료 관련 오류인지 확인
-      if (e is DioException) {
-        final statusCode = e.response?.statusCode;
-        if (statusCode == 401 ||
-            (e.response?.data?.toString().contains('ExpiredJwtException') ==
-                true) ||
-            (e.response?.data?.toString().contains('JWT expired') == true)) {
-          debugPrint('[SearchService] Token expired, attempting refresh...');
-
-          try {
-            // 토큰 갱신 시도
-            await _authService.refreshToken();
-            debugPrint('[SearchService] Token refreshed successfully');
-
-            // 갱신된 토큰으로 재시도
-            return await request();
-          } catch (refreshError) {
-            debugPrint('[SearchService] Token refresh failed: $refreshError');
-            rethrow;
-          }
+      if (status == 200 && body is Map<String, dynamic>) {
+        try {
+          return UserDto(
+            id: (body['id'] as num).toInt(),
+            username: body['username']?.toString() ?? '',
+            role: body['role']?.toString() ?? '',
+          );
+        } catch (e) {
+          debugPrint('[-] parse error: $e');
+          return null;
         }
       }
-      rethrow;
+
+      debugPrint('[-] getUserByUsername failed | code=$status');
+      return null;
+    } catch (e) {
+      sw.stop();
+      debugPrint('[SearchService] getUserByUsername error: $e');
+      return null;
     }
   }
 
@@ -491,7 +278,6 @@ class SearchService extends ChangeNotifier {
     _currentPage = 0;
     _hasMorePosts = true;
     await _loadSearchHistory();
-    await loadRecommendations();
     notifyListeners();
   }
 
@@ -500,7 +286,6 @@ class SearchService extends ChangeNotifier {
     _allContentItems.clear();
     _currentPage = 0;
     _hasMorePosts = true;
-    await loadRecommendations();
   }
 
   /// 최근 본 컨텐츠에 추가
@@ -517,84 +302,6 @@ class SearchService extends ChangeNotifier {
   /// 포스트 데이터 가져오기
   Map<String, dynamic>? getPostData(String id) {
     return _postData[id];
-  }
-
-  /// 추천 게시글 불러오기
-  Future<void> loadRecommendations() async {
-    if (isLoadingMore || !_hasMorePosts) return;
-
-    try {
-      isLoadingMore = true;
-      final baseUrl = ApiServiceBase.baseUrl;
-      final token = await _getAuthToken();
-
-      if (token == null || token.isEmpty) {
-        throw Exception('로그인이 필요합니다(토큰 없음).');
-      }
-
-      final uri =
-          '$baseUrl/api/posts/recommendation?page=$_currentPage&size=10';
-      final res = await _requestWithTokenRefresh(() async {
-        return await _dio.get(
-          uri,
-          options: Options(
-            headers: {'Authorization': 'Bearer $token'},
-            responseType: ResponseType.json,
-          ),
-        );
-      });
-
-      if (res.statusCode == 200 && res.data != null) {
-        final data = res.data;
-        final posts =
-            (data['content'] as List? ?? []).map((post) {
-              final id = post['id']?.toString() ?? '';
-              final title = post['title']?.toString() ?? '';
-              final author = post['author']?.toString() ?? '';
-              final imageUrl = post['thumbnailImageUrl']?.toString() ?? '';
-              final likes = (post['likeCount'] as num?)?.toInt() ?? 0;
-              final comments = (post['commentCount'] as num?)?.toInt() ?? 0;
-              final content = post['content']?.toString() ?? '';
-
-              // PostData의 parsedContent getter를 활용
-              final tempPostData = PostData.fromServer(post);
-              final parsedContent = tempPostData.parsedContent;
-              debugPrint(
-                '[loadRecommendations] parsedContent: "$parsedContent"',
-              );
-
-              // 실제 포스트 데이터 저장
-              _postData[id] = post;
-
-              return SearchContentItem.post(
-                id: id,
-                title: title,
-                author: author,
-                imageUrl: imageUrl,
-                likes: likes,
-                comments: comments,
-                content: content,
-                parsedContent: parsedContent,
-              );
-            }).toList();
-
-        if (posts.isEmpty) {
-          _hasMorePosts = false;
-        } else {
-          _allContentItems.addAll(posts);
-          _currentPage++;
-        }
-
-        _allItems = List.from(_allContentItems);
-        _filteredItems = List.from(_allContentItems);
-        _selectedCategory = '추천';
-      }
-    } catch (e) {
-      debugPrint('[SearchService] Failed to load recommendations: $e');
-    } finally {
-      isLoadingMore = false;
-      notifyListeners();
-    }
   }
 
   /// 검색어 변경
@@ -698,7 +405,6 @@ class SearchService extends ChangeNotifier {
       }
 
       _filteredItems = accountResults;
-      _lastAccountResults = accountResults;
       _lastAccountQuery = q;
       _lastAccountCount = accountResults.length;
 
@@ -723,23 +429,10 @@ class SearchService extends ChangeNotifier {
   }) async {
     if (keyword.isEmpty) return;
     try {
-      final baseUrl = ApiServiceBase.baseUrl;
-      final token = await _getAuthToken();
-      if (token == null || token.isEmpty) {
-        throw Exception('로그인이 필요합니다(토큰 없음).');
-      }
-
-      final uri = '$baseUrl/api/posts/search';
-      final res = await _requestWithTokenRefresh(() async {
-        return await _dio.get(
-          uri,
-          queryParameters: {'keyword': keyword, 'page': page, 'size': size},
-          options: Options(
-            headers: {'Authorization': 'Bearer $token'},
-            responseType: ResponseType.json,
-          ),
-        );
-      });
+      final res = await _dio.get(
+        '/api/posts/search',
+        queryParameters: {'keyword': keyword, 'page': page, 'size': size},
+      );
 
       final List<SearchContentItem> posts = [];
       if (res.statusCode == 200 && res.data is Map<String, dynamic>) {

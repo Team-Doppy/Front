@@ -1,10 +1,10 @@
-import 'package:doppy/data/models/login_response_model.dart';
+import 'package:doppy/providers/feed_provider/my_profile_feed_provider.dart';
+import 'package:doppy/providers/feed_provider/other_profile_feed_provider.dart';
 import 'package:flutter/material.dart';
 import '../../data/services/auth_service.dart';
 import '../../data/services/blog_service.dart';
 import 'user_provider.dart';
 import 'friend_provider.dart';
-import 'profile_feed_provider.dart';
 import 'group_provider.dart';
 
 class AuthProvider extends ChangeNotifier {
@@ -32,7 +32,8 @@ class AuthProvider extends ChangeNotifier {
     // 3. 모든 Provider 초기화
     UserProvider().logout();
     FriendProvider().logout();
-    ProfileFeedProvider().logout();
+    OtherProfileFeedProvider().logout();
+    MyProfileFeedProvider().logout();
     GroupProvider().logout();
 
     // 4. 모든 서비스 캐시 초기화

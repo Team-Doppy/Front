@@ -6,16 +6,12 @@ import 'package:doppy/data/services/draft_service.dart';
 class DraftListOverlay extends StatefulWidget {
   const DraftListOverlay({
     super.key,
-    required this.drafts,
     required this.currentDraftId,
     required this.onLoadDraft,
-    required this.onDeleteDraft,
   });
 
-  final Map<String, List<DraftData>> drafts;
   final String? currentDraftId;
   final void Function(String draftId) onLoadDraft;
-  final Future<void> Function(String draftId) onDeleteDraft;
 
   @override
   State<DraftListOverlay> createState() => _DraftListOverlayState();
@@ -36,16 +32,19 @@ class _DraftListOverlayState extends State<DraftListOverlay>
   double _verticalDragCurrentY = 0.0;
   bool _isDragging = false;
   bool _isScrolling = false;
-  double _scrollOffset = 0.0;
+
+  bool _isLoading = true;
+
+  // 스크롤 관련 변수들
+  final ScrollController _scrollController = ScrollController();
+  double _lastScrollOffset = 0.0;
+  bool _showAppBar = true;
 
   @override
   void initState() {
     super.initState();
-    // 깊은 복사로 로컬 상태 보관 (UI 반영 위해 직접 수정)
-    _drafts = {
-      for (final e in widget.drafts.entries)
-        e.key: List<DraftData>.from(e.value),
-    };
+    _drafts = {}; // 초기화
+
     _ctrl = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 240),
@@ -61,35 +60,89 @@ class _DraftListOverlayState extends State<DraftListOverlay>
       end: 0.0,
     ).animate(CurvedAnimation(parent: _ctrl, curve: Curves.easeOut));
     _ctrl.forward();
+
+    // 깊은 복사로 로컬 상태 보관 (UI 반영 위해 직접 수정)
+    _loadDrafts();
+
+    // 스크롤 리스너 추가
+    _scrollController.addListener(_onScrollChanged);
+  }
+
+  void _onScrollChanged() {
+    if (!_scrollController.hasClients) return;
+
+    final currentOffset = _scrollController.offset;
+    final maxScroll = _scrollController.position.maxScrollExtent;
+
+    // 스크롤할 내용이 없으면 (maxScrollExtent가 0이면) 항상 앱바 표시
+    if (maxScroll <= 0) {
+      if (!_showAppBar) {
+        setState(() => _showAppBar = true);
+      }
+      return;
+    }
+
+    final delta = currentOffset - _lastScrollOffset;
+
+    // 스크롤 임계값 (5px 이상 움직여야 반응)
+    if (delta.abs() > 5.0) {
+      if (delta < 0) {
+        // 위로 스크롤 - 앱바 보이기
+        if (!_showAppBar) {
+          setState(() => _showAppBar = true);
+        }
+      } else {
+        // 아래로 스크롤 - 앱바 숨기기
+        if (_showAppBar && currentOffset > 20) {
+          setState(() => _showAppBar = false);
+        }
+      }
+    }
+
+    // 맨 위에 있으면 항상 앱바 표시
+    if (currentOffset <= 10) {
+      if (!_showAppBar) {
+        setState(() => _showAppBar = true);
+      }
+    }
+
+    _lastScrollOffset = currentOffset;
+  }
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    _ctrl.dispose();
+    super.dispose();
   }
 
   void _closeWithAnimation() {
     Navigator.of(context).pop();
   }
 
+  Future<void> _loadDrafts() async {
+    final drafts = await DraftService().getDraftsByTitle();
+    if (mounted) {
+      setState(() {
+        _drafts = {
+          for (final e in drafts.entries) e.key: List<DraftData>.from(e.value),
+        };
+        _isLoading = false;
+      });
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    if (_isLoading) {
+      return Scaffold(
+        backgroundColor: Colors.transparent,
+        body: Center(child: CircularProgressIndicator()),
+      );
+    }
+
     return Scaffold(
       backgroundColor: Colors.transparent,
-      appBar: AppBar(
-        backgroundColor: const ui.Color.fromARGB(234, 54, 54, 54),
-        elevation: 0,
-        leading: IconButton(
-          onPressed: () => _closeWithAnimation(),
-          icon: Icon(
-            Icons.close,
-            color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
-          ),
-        ),
-        title: Text(
-          '임시저장 목록',
-          style: TextStyle(
-            color: Theme.of(context).colorScheme.onSurface.withOpacity(0.8),
-            fontSize: 18,
-          ),
-        ),
-        scrolledUnderElevation: 0,
-      ),
       body: Stack(
         children: [
           // 배경 블러 + 반투명
@@ -138,7 +191,7 @@ class _DraftListOverlayState extends State<DraftListOverlay>
               child: BackdropFilter(
                 filter: ui.ImageFilter.blur(sigmaX: 10, sigmaY: 10),
                 child: Container(
-                  color: const ui.Color.fromARGB(234, 54, 54, 54),
+                  color: const ui.Color.fromARGB(234, 28, 28, 28),
                 ),
               ),
             ),
@@ -234,6 +287,46 @@ class _DraftListOverlayState extends State<DraftListOverlay>
               ),
             ),
           ),
+
+          // 애니메이션 앱바 (맨 위로 이동)
+          AnimatedPositioned(
+            duration: const Duration(milliseconds: 200),
+            curve: Curves.easeInOut,
+            top: _showAppBar ? 0 : -100,
+            left: 0,
+            right: 0,
+            child: Container(
+              height: 56 + MediaQuery.of(context).padding.top,
+              decoration: BoxDecoration(
+                color: const ui.Color.fromARGB(234, 28, 28, 28),
+              ),
+              padding: EdgeInsets.only(top: MediaQuery.of(context).padding.top),
+              child: Row(
+                children: [
+                  IconButton(
+                    onPressed: () => _closeWithAnimation(),
+                    icon: Icon(
+                      Icons.close,
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.onSurface.withOpacity(0.6),
+                    ),
+                  ),
+                  Expanded(
+                    child: Text(
+                      '임시저장 목록',
+                      style: TextStyle(
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.onSurface.withOpacity(0.8),
+                        fontSize: 18,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
         ],
       ),
     );
@@ -264,8 +357,17 @@ class _DraftListOverlayState extends State<DraftListOverlay>
   }
 
   Widget _buildDraftList() {
+    final topPadding =
+        MediaQuery.of(context).padding.top + 56 + 20; // SafeArea + 앱바 + 여백
+
     return ListView.builder(
-      padding: const EdgeInsets.all(20),
+      controller: _scrollController,
+      padding: EdgeInsets.only(
+        top: topPadding,
+        left: 20,
+        right: 20,
+        bottom: 20,
+      ),
       itemCount: _drafts.length,
       itemBuilder: (context, index) {
         final title = _drafts.keys.elementAt(index);
@@ -318,126 +420,215 @@ class _DraftListOverlayState extends State<DraftListOverlay>
 
   Widget _buildDraftItem(DraftData draft) {
     final title = draft.title.isNotEmpty ? draft.title : '무제';
+    final isSwiping = _swipingDraftId == draft.id;
 
-    return Dismissible(
+    // 스와이프 거리 계산 (30%까지만 밀림, 그 이후는 고정)
+    final double swipeOffset =
+        isSwiping
+            ? (_swipeProgress < 0.3 ? _swipeProgress : 0.3) *
+                MediaQuery.of(context).size.width
+            : 0.0;
+
+    final bool showDeleteButton = isSwiping && _swipeProgress >= 0.3;
+
+    return GestureDetector(
       key: ValueKey('draft_${draft.id}'),
-      direction: DismissDirection.endToStart, // 오른쪽→왼쪽으로 밀어 삭제
-      background: Container(
-        margin: const EdgeInsets.only(bottom: 8, left: 0),
-        decoration: BoxDecoration(
-          color: Colors.red.withOpacity(0.15),
-          borderRadius: BorderRadius.circular(8),
-        ),
-        alignment: Alignment.centerRight,
-        padding: const EdgeInsets.only(right: 16),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.end,
-          children: [
-            Icon(Icons.delete, color: Colors.red.withOpacity(0.9)),
-            const SizedBox(width: 8),
-            Text('삭제', style: TextStyle(color: Colors.red.withOpacity(0.9))),
-          ],
-        ),
-      ),
-      onUpdate: (details) {
-        setState(() {
-          if (details.direction == DismissDirection.endToStart &&
-              details.progress > 0) {
-            _swipingDraftId = draft.id;
-            _swipeProgress = details.progress;
-          } else {
+      // 다른 곳 터치 시 원위치
+      onTap: () async {
+        if (isSwiping) {
+          // 스와이프 중이면 원위치로 복귀
+          setState(() {
             _swipingDraftId = null;
             _swipeProgress = 0.0;
-          }
-        });
-      },
-      confirmDismiss: (direction) async {
-        // 일정 거리 넘어가면 바로 삭제. 추가 확인 없음
-        return true;
-      },
-      onDismissed: (direction) async {
-        setState(() {
-          _swipingDraftId = null;
-          _swipeProgress = 0.0;
-          // 즉시 로컬에서 제거하여 Dismissible가 트리에서 사라지도록 함
-          for (final list in _drafts.values) {
-            list.removeWhere((d) => d.id == draft.id);
-          }
-          _drafts.removeWhere((key, value) => value.isEmpty);
-        });
-        // 비동기 삭제 및 최신 목록 재동기화(실패해도 UI는 즉시 반영됨)
-        try {
-          await widget.onDeleteDraft(draft.id);
-          final updated = await DraftService().getDraftsByTitle();
-          if (!mounted) return;
-          setState(() {
-            _drafts = {
-              for (final e in updated.entries)
-                e.key: List<DraftData>.from(e.value),
-            };
           });
-        } catch (_) {
-          // ignore: rethrow or rollback; UI는 이미 제거됨
+        } else {
+          // 스와이프 중이 아니면 Draft 로드
+          Navigator.of(context).pop();
+          await Future.delayed(const Duration(milliseconds: 100));
+          widget.onLoadDraft(draft.id);
         }
       },
+      onHorizontalDragStart: (details) {
+        // 다른 아이템이 열려있으면 먼저 닫기
+        if (_swipingDraftId != null && _swipingDraftId != draft.id) {
+          setState(() {
+            _swipingDraftId = null;
+            _swipeProgress = 0.0;
+          });
+        }
+      },
+      onHorizontalDragUpdate: (details) {
+        if (details.delta.dx < 0) {
+          // 왼쪽으로 드래그
+          setState(() {
+            _swipingDraftId = draft.id;
+            final screenWidth = MediaQuery.of(context).size.width;
+            final currentSwipe = swipeOffset - details.delta.dx;
+            _swipeProgress = (currentSwipe / screenWidth).clamp(0.0, 0.3);
+          });
+        } else if (details.delta.dx > 0 && isSwiping) {
+          // 오른쪽으로 드래그 (되돌리기)
+          setState(() {
+            final screenWidth = MediaQuery.of(context).size.width;
+            final currentSwipe = swipeOffset - details.delta.dx;
+            _swipeProgress = (currentSwipe / screenWidth).clamp(0.0, 0.3);
+
+            if (_swipeProgress <= 0.05) {
+              _swipingDraftId = null;
+              _swipeProgress = 0.0;
+            }
+          });
+        }
+      },
+      onHorizontalDragEnd: (details) {
+        if (_swipeProgress < 0.15) {
+          // 15% 미만이면 원위치
+          setState(() {
+            _swipingDraftId = null;
+            _swipeProgress = 0.0;
+          });
+        } else if (_swipeProgress >= 0.15 && _swipeProgress < 0.3) {
+          // 15~30% 사이면 30%로 스냅
+          setState(() {
+            _swipeProgress = 0.3;
+          });
+        }
+        // 30% 이상이면 그대로 유지 (버튼 고정)
+      },
       child: Container(
-        margin: const EdgeInsets.only(bottom: 8, left: 0),
-        decoration: BoxDecoration(
-          color: AppColors.darkBorder.withOpacity(0.3),
-          borderRadius:
-              (_swipingDraftId == draft.id && _swipeProgress > 0.0)
-                  ? const BorderRadius.only(
-                    topLeft: Radius.circular(8),
-                    bottomLeft: Radius.circular(8),
-                    topRight: Radius.circular(0),
-                    bottomRight: Radius.circular(0),
-                  )
-                  : BorderRadius.circular(8),
-          border:
-              widget.currentDraftId == draft.id
-                  ? Border.all(color: AppColors.primary, width: 2)
-                  : null,
-        ),
-        child: ListTile(
-          contentPadding: const EdgeInsets.symmetric(
-            horizontal: 24,
-            vertical: 8,
-          ),
-          onTap: () {
-            widget.onLoadDraft(draft.id);
-            Navigator.of(context).pop();
-          },
-          title: Text(
-            title,
-            style: TextStyle(
-              color: AppColors.darkTextPrimary,
-              fontWeight: FontWeight.w600,
-              fontSize: 14,
-            ),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
-          subtitle: Text(
-            '저장: ${_formatDateTime(draft.updatedAt)}',
-            style: const TextStyle(
-              color: AppColors.darkTextSecondary,
-              fontSize: 11,
-            ),
-          ),
-          // 오른쪽 끝에 스와이프 힌트 핸들
-          trailing: Container(
-            width: 16,
-            height: 28,
-            alignment: Alignment.centerRight,
-            child: Container(
-              width: 4,
-              height: 20,
-              decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.35),
-                borderRadius: BorderRadius.circular(2),
+        margin: const EdgeInsets.only(bottom: 8),
+        height: 80, // 명시적인 높이 지정
+        child: Stack(
+          clipBehavior: Clip.none,
+          children: [
+            // 배경 (삭제 버튼)
+            Positioned.fill(
+              child: Container(
+                decoration: BoxDecoration(
+                  color: Colors.red.withOpacity(0.2),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                alignment: Alignment.centerRight,
+                padding: const EdgeInsets.only(right: 20),
+                child: AnimatedScale(
+                  scale: showDeleteButton ? 1.0 : 0.0,
+                  duration: const Duration(milliseconds: 250),
+                  curve: Curves.elasticOut,
+                  child: GestureDetector(
+                    onTap: () async {
+                      // 삭제 버튼 클릭 시
+                      setState(() {
+                        _swipingDraftId = null;
+                        _swipeProgress = 0.0;
+                        for (final list in _drafts.values) {
+                          list.removeWhere((d) => d.id == draft.id);
+                        }
+                        _drafts.removeWhere((key, value) => value.isEmpty);
+                      });
+
+                      final draftService = DraftService();
+                      await draftService.deleteDraft(draft.id);
+                      final updated = await draftService.getDraftsByTitle();
+                      if (!mounted) return;
+                      setState(() {
+                        _drafts = {
+                          for (final e in updated.entries)
+                            e.key: List<DraftData>.from(e.value),
+                        };
+                      });
+                    },
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 8,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.red,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.delete, color: Colors.white, size: 20),
+                          const SizedBox(width: 8),
+                          Text(
+                            '삭제',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 14,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
               ),
             ),
-          ),
+
+            // 드래프트 아이템 (위로 슬라이드)
+            Positioned.fill(
+              child: Transform.translate(
+                offset: Offset(-swipeOffset, 0),
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: AppColors.darkBorder.withOpacity(0.3),
+                    borderRadius:
+                        (_swipingDraftId == draft.id && _swipeProgress > 0.0)
+                            ? const BorderRadius.only(
+                              topLeft: Radius.circular(8),
+                              bottomLeft: Radius.circular(8),
+                              topRight: Radius.circular(0),
+                              bottomRight: Radius.circular(0),
+                            )
+                            : BorderRadius.circular(8),
+                    border:
+                        widget.currentDraftId == draft.id
+                            ? Border.all(color: AppColors.primary, width: 2)
+                            : null,
+                  ),
+                  child: ListTile(
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 24,
+                      vertical: 8,
+                    ),
+                    title: Text(
+                      title,
+                      style: TextStyle(
+                        color: AppColors.darkTextPrimary,
+                        fontWeight: FontWeight.w600,
+                        fontSize: 14,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    subtitle: Text(
+                      '저장: ${_formatDateTime(draft.updatedAt)}',
+                      style: const TextStyle(
+                        color: AppColors.darkTextSecondary,
+                        fontSize: 11,
+                      ),
+                    ),
+                    // 오른쪽 끝에 스와이프 힌트 핸들
+                    trailing: Container(
+                      width: 16,
+                      height: 28,
+                      alignment: Alignment.centerRight,
+                      child: Container(
+                        width: 4,
+                        height: 20,
+                        decoration: BoxDecoration(
+                          color: Colors.white.withOpacity(0.35),
+                          borderRadius: BorderRadius.circular(2),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );

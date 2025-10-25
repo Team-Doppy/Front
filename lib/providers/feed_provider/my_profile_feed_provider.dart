@@ -1,0 +1,462 @@
+import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'base_feed_provider.dart';
+import '../user_provider.dart';
+import '../../utils/network_utils.dart';
+
+/// 내 피드 전용 Provider (캐시 포함)
+class MyProfileFeedProvider extends BaseFeedProvider {
+  // 독립적인 상태 관리
+  String? _username;
+  bool _loading = false;
+  bool _loadingMore = false;
+  bool _hasMore = true;
+  int _currentPage = 0;
+  int _totalPages = 0;
+
+  // 내 피드 캐시
+  Map<String, dynamic>? _cachedUserInfo;
+  List<Map<String, dynamic>>? _cachedCategories;
+  Map<String, List<Map<String, dynamic>>>? _cachedPostsByCategory;
+  Map<String, List<Map<String, dynamic>>>? _cachedSystemCategoryMappings;
+  DateTime? _lastCacheTime;
+  static const Duration _cacheValidDuration = Duration(minutes: 5); // 5분 캐시
+
+  // Getters 구현
+  @override
+  String? get username => _username;
+  @override
+  bool get isLoading => _loading;
+  @override
+  bool get isLoadingMore => _loadingMore;
+  @override
+  bool get hasMore => _hasMore;
+
+  bool get _isCacheValid {
+    if (_lastCacheTime == null) return false;
+    return DateTime.now().difference(_lastCacheTime!) < _cacheValidDuration;
+  }
+
+  @override
+  Future<void> loadInitial({String? username, bool force = false}) async {
+    // 내 피드는 항상 현재 로그인한 사용자
+    if (_loading) return;
+
+    final String? myUsername = await authService.getUsername();
+    if (myUsername == null) return;
+
+    _username = myUsername;
+
+    // 캐시 확인 (force가 아닌 경우)
+    if (!force && _isCacheValid && _cachedUserInfo != null) {
+      print('[MyProfileFeedProvider] 캐시에서 로드');
+      _loadFromCache();
+      notifyListeners();
+      return;
+    }
+
+    print('[MyProfileFeedProvider] 서버에서 로드 시작: $_username');
+
+    _loading = true;
+    _hasMore = true;
+    notifyListeners();
+
+    try {
+      // 병렬 호출: 스키마 + 첫 페이지 포스트
+      final results = await Future.wait([
+        blogService.getProfileSchema(_username!),
+        blogService.getProfilePosts(_username!, page: 0, size: pageSize),
+      ]);
+
+      final schemaResp = results[0];
+      final postsResp = results[1];
+
+      if (schemaResp['success'] == true && postsResp['success'] == true) {
+        // 부모 클래스의 공통 처리 로직 사용
+        processServerResponse(schemaResp, postsResp);
+        setNetworkError(null); // 성공 시 에러 클리어
+
+        // 페이지네이션 처리
+        final postsData = postsResp['data'];
+        _currentPage = 0;
+        _totalPages = postsData['totalPages'] ?? 0;
+        _hasMore = _currentPage < _totalPages;
+
+        // 캐시에 저장
+        _saveToCache();
+
+        print('[MyProfileFeedProvider] 서버 로드 완료');
+      } else {
+        print('[MyProfileFeedProvider] 서버 응답 실패');
+        clearData();
+      }
+    } catch (e) {
+      print('[MyProfileFeedProvider] 서버 로드 실패: $e');
+
+      // 네트워크 에러 처리
+      final networkError = NetworkUtils.parseError(e);
+      setNetworkError(networkError);
+
+      clearData();
+    } finally {
+      _loading = false;
+      notifyListeners();
+    }
+  }
+
+  /// 캐시에서 데이터 로드
+  void _loadFromCache() {
+    if (_cachedUserInfo != null)
+      userInfoInternal = Map<String, dynamic>.from(_cachedUserInfo!);
+
+    if (_cachedCategories != null) {
+      categoriesInternal.clear();
+      categoriesInternal.addAll(
+        _cachedCategories!.map((e) => Map<String, dynamic>.from(e)),
+      );
+    }
+
+    if (_cachedPostsByCategory != null) {
+      postsByCategoryInternal.clear();
+      _cachedPostsByCategory!.forEach((key, value) {
+        postsByCategoryInternal[key] =
+            value.map((e) => Map<String, dynamic>.from(e)).toList();
+      });
+    }
+
+    if (_cachedSystemCategoryMappings != null) {
+      systemCategoryMappingsInternal = _cachedSystemCategoryMappings!.map(
+        (key, value) => MapEntry(
+          key,
+          value.map((e) => Map<String, dynamic>.from(e)).toList(),
+        ),
+      );
+    }
+  }
+
+  /// 캐시에 데이터 저장
+  void _saveToCache() {
+    _cachedUserInfo =
+        userInfoInternal != null
+            ? Map<String, dynamic>.from(userInfoInternal!)
+            : null;
+    _cachedCategories =
+        categoriesInternal.map((e) => Map<String, dynamic>.from(e)).toList();
+    _cachedPostsByCategory = postsByCategoryInternal.map(
+      (key, value) => MapEntry(
+        key,
+        value.map((e) => Map<String, dynamic>.from(e)).toList(),
+      ),
+    );
+    _cachedSystemCategoryMappings = systemCategoryMappingsInternal?.map(
+      (key, value) => MapEntry(
+        key,
+        value.map((e) => Map<String, dynamic>.from(e)).toList(),
+      ),
+    );
+    _lastCacheTime = DateTime.now();
+
+    print('[MyProfileFeedProvider] 캐시 저장 완료');
+  }
+
+  /// 캐시 무효화
+  void invalidateCache() {
+    _cachedUserInfo = null;
+    _cachedCategories = null;
+    _cachedPostsByCategory = null;
+    _cachedSystemCategoryMappings = null;
+    _lastCacheTime = null;
+    print('[MyProfileFeedProvider] 캐시 무효화');
+  }
+
+  /// 프로필 이미지 업로드 후 업데이트
+  Future<void> updateProfileImageAfterUpload(
+    String imageUrl,
+    BuildContext context,
+  ) async {
+    try {
+      await context.read<UserProvider>().updateProfileImage(imageUrl: imageUrl);
+
+      // 현재 userInfo와 캐시 업데이트
+      if (userInfoInternal != null) {
+        userInfoInternal!['profileImageUrl'] = imageUrl;
+      }
+      if (_cachedUserInfo != null) {
+        _cachedUserInfo!['profileImageUrl'] = imageUrl;
+      }
+
+      notifyListeners();
+    } catch (e) {
+      print('[MyProfileFeedProvider] updateProfileImageAfterUpload 실패: $e');
+      rethrow;
+    }
+  }
+
+  /// 프로필 이미지 삭제 후 업데이트
+  Future<bool> deleteProfileImageAndUpdateCache(BuildContext context) async {
+    try {
+      final success = await context.read<UserProvider>().deleteProfileImage(
+        context,
+      );
+
+      if (success) {
+        // 현재 userInfo와 캐시 업데이트
+        if (userInfoInternal != null) {
+          userInfoInternal!['profileImageUrl'] = '';
+        }
+        if (_cachedUserInfo != null) {
+          _cachedUserInfo!['profileImageUrl'] = '';
+        }
+
+        notifyListeners();
+      }
+
+      return success;
+    } catch (e) {
+      print('[MyProfileFeedProvider] deleteProfileImageAndUpdateCache 실패: $e');
+      return false;
+    }
+  }
+
+  /// 포스트 추가/수정 시 캐시 업데이트
+  void updatePostInCache(Map<String, dynamic> updatedPost) {
+    final postId = updatedPost['id']?.toString();
+    if (postId == null) return;
+
+    // 현재 데이터 업데이트
+    for (final categoryId in _cachedPostsByCategory!.keys) {
+      final posts = _cachedPostsByCategory![categoryId]!;
+      final idx = posts.indexWhere((p) => p['id']?.toString() == postId);
+      if (idx != -1) {
+        posts[idx] = updatedPost;
+        break;
+      }
+    }
+
+    // 캐시 데이터도 업데이트
+    if (_cachedPostsByCategory != null) {
+      for (final categoryId in _cachedPostsByCategory!.keys) {
+        final posts = _cachedPostsByCategory![categoryId]!;
+        final idx = posts.indexWhere((p) => p['id']?.toString() == postId);
+        if (idx != -1) {
+          posts[idx] = Map<String, dynamic>.from(updatedPost);
+          break;
+        }
+      }
+    }
+
+    notifyListeners();
+  }
+
+  /// 포스트 삭제 시 캐시 업데이트
+  void removePostFromCache(String postId) {
+    // 현재 데이터에서 제거
+    for (final categoryId in _cachedPostsByCategory!.keys) {
+      final posts = _cachedPostsByCategory![categoryId]!;
+      posts.removeWhere((p) => p['id']?.toString() == postId);
+    }
+
+    // 캐시 데이터에서도 제거
+    if (_cachedPostsByCategory != null) {
+      for (final categoryId in _cachedPostsByCategory!.keys) {
+        final posts = _cachedPostsByCategory![categoryId]!;
+        posts.removeWhere((p) => p['id']?.toString() == postId);
+      }
+    }
+
+    notifyListeners();
+  }
+
+  @override
+  Future<void> loadMore() async {
+    if (_loadingMore || !_hasMore || _username == null) return;
+
+    _loadingMore = true;
+    notifyListeners();
+
+    try {
+      final postsResp = await blogService.getProfilePosts(
+        _username!,
+        page: _currentPage + 1,
+        size: pageSize,
+      );
+
+      if (postsResp['success'] == true) {
+        final List<dynamic> newPosts = postsResp['data']['posts'] ?? [];
+        final totalPages = postsResp['data']['totalPages'] ?? 0;
+
+        if (newPosts.isEmpty) {
+          _hasMore = false;
+        } else {
+          // 새 포스트를 카테고리별로 병합
+          for (final postData in newPosts) {
+            if (postData is! Map<String, dynamic>) continue;
+
+            final categoryId = (postData['categoryId'] ?? 0).toString();
+            if (!postsByCategoryInternal.containsKey(categoryId)) {
+              postsByCategoryInternal[categoryId] = [];
+            }
+            postsByCategoryInternal[categoryId]!.add(postData);
+          }
+
+          _currentPage++;
+          _totalPages = totalPages;
+          _hasMore = _currentPage < _totalPages;
+
+          // 캐시 업데이트
+          _saveToCache();
+        }
+      } else {
+        _hasMore = false;
+      }
+    } catch (e) {
+      print('[MyProfileFeedProvider] loadMore 실패: $e');
+      _hasMore = false;
+    } finally {
+      _loadingMore = false;
+      notifyListeners();
+    }
+  }
+
+  @override
+  void logout() {
+    clearData();
+    _loading = false;
+    _loadingMore = false;
+    _hasMore = true;
+    _username = null;
+    _currentPage = 0;
+    _totalPages = 0;
+    invalidateCache();
+    notifyListeners();
+  }
+
+  @override
+  void clearInMemory() {
+    clearData();
+    _loading = false;
+    _loadingMore = false;
+    // 캐시는 유지 (메모리 정리 시에는 캐시 보존)
+    // 화면 dispose 중에는 알림을 보내지 않음 (프레임 락 방지)
+  }
+
+  /// 주어진 순서를 로컬에 즉시 반영
+  @override
+  void reorderPostsLocally(int categoryId, List<String> orderedPostIds) {
+    reorderPostsLocallyImpl(categoryId, orderedPostIds);
+  }
+
+  @override
+  void reorderCategoriesLocally(List<int> orderedIntIds) {
+    if (orderedIntIds.isEmpty) return;
+
+    final orderSet = orderedIntIds.toSet();
+
+    // 요청된 순서대로 먼저 배치
+    final ordered = <Map<String, dynamic>>[];
+    for (final id in orderedIntIds) {
+      final idx = categoriesInternal.indexWhere((c) => (c['id'] as int?) == id);
+      if (idx != -1) ordered.add(categoriesInternal[idx]);
+    }
+
+    // 나머지(요청에 없는 항목) 기존 순서 유지하여 뒤에 추가
+    for (final cat in categoriesInternal) {
+      final cid = cat['id'] as int?;
+      if (cid == null || !orderSet.contains(cid)) {
+        ordered.add(cat);
+      }
+    }
+
+    categoriesInternal
+      ..clear()
+      ..addAll(ordered);
+
+    notifyListeners();
+  }
+
+  @override
+  Future<void> reorderPostsInCategory(
+    int categoryId,
+    List<String> postIds,
+  ) async {
+    try {
+      // 문자열 ID를 정수로 변환
+      final orderedIntIds =
+          postIds
+              .map((id) => int.tryParse(id))
+              .where((id) => id != null)
+              .cast<int>()
+              .toList();
+
+      if (orderedIntIds.isEmpty) {
+        print('[MyProfileFeedProvider] 유효한 포스트 ID가 없음');
+        return;
+      }
+
+      // 낙관적 업데이트: 먼저 로컬에서 순서 변경
+      final prevPosts = Map<String, List<Map<String, dynamic>>>.from(
+        postsByCategoryProtected,
+      );
+      reorderPostsLocally(categoryId, postIds);
+
+      try {
+        // 서버에 순서 변경 요청
+        await blogService.reorderPostsInCategory(
+          categoryId: categoryId,
+          orderedIds: orderedIntIds,
+        );
+        print('[MyProfileFeedProvider] 카테고리 $categoryId 포스트 순서 서버 저장 성공');
+
+        // 캐시 업데이트
+        _saveToCache();
+      } catch (e) {
+        print('⚠️ [MyProfileFeedProvider] 서버 포스트 순서 변경 실패, 롤백: $e');
+
+        // 실패 시 롤백
+        postsByCategoryProtected.clear();
+        postsByCategoryProtected.addAll(prevPosts);
+        notifyListeners();
+        rethrow;
+      }
+    } catch (e) {
+      print('[MyProfileFeedProvider] 포스트 순서 변경 실패: $e');
+      rethrow;
+    }
+  }
+
+  @override
+  Future<void> reorderAllSections(List<String> newOrderIds) async {
+    final orderedIntIds = <int>[];
+    for (final idStr in newOrderIds) {
+      if (idStr == 'system_doppy_uncategorized') {
+        orderedIntIds.add(0);
+        continue;
+      }
+      final id = int.tryParse(idStr);
+      if (id != null) orderedIntIds.add(id);
+    }
+    if (orderedIntIds.isEmpty) return;
+
+    final prevOrder =
+        categoriesInternal.map<int>((c) => (c['id'] as int)).toList();
+    reorderCategoriesLocally(orderedIntIds); // Optimistic update
+
+    try {
+      await blogService.reorderCategories(orderedIntIds);
+      print('[MyProfileFeedProvider] 서버 카테고리 재정렬 성공');
+      _saveToCache(); // Update cache on success
+    } catch (e) {
+      print('⚠️ [MyProfileFeedProvider] 서버 재정렬 실패, 롤백: $e');
+      categoriesInternal
+        ..clear()
+        ..addAll(
+          prevOrder
+              .map((id) => findCategoryById(id))
+              .where((c) => c != null)
+              .cast<Map<String, dynamic>>(),
+        );
+      notifyListeners();
+      rethrow;
+    }
+  }
+}

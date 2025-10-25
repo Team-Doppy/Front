@@ -390,14 +390,6 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "3.1.2"
-  flutter_spinkit:
-    dependency: "direct main"
-    description:
-      name: flutter_spinkit
-      sha256: "77850df57c00dc218bfe96071d576a8babec24cf58b2ed121c83cca4a2fdce7f"
-      url: "https://pub.dev"
-    source: hosted
-    version: "5.2.2"
   flutter_staggered_grid_view:
     dependency: "direct main"
     description:
@@ -1145,10 +1137,10 @@ packages:
     dependency: "direct main"
     description:
       name: super_editor
-      sha256: "2b64aa38ac7d88dd0eac44853a723db65c904535448d700f38b275d125572c82"
+      sha256: "6503e54cbd5a3a0a7e8cb1a5513071ceb33218cb6241e74c1f280ddaa4c8e49c"
       url: "https://pub.dev"
     source: hosted
-    version: "0.3.0-dev.33"
+    version: "0.3.0-dev.35"
   super_keyboard:
     dependency: transitive
     description:

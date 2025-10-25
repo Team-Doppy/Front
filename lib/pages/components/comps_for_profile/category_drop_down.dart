@@ -1,10 +1,11 @@
 import 'dart:ui';
 
+import 'package:doppy/providers/feed_provider/base_feed_provider.dart';
+import 'package:doppy/providers/feed_provider/my_profile_feed_provider.dart';
+import 'package:doppy/utils/error_handler.dart';
 import 'package:flutter/material.dart';
-import 'package:doppy/providers/profile_feed_provider.dart';
-import 'package:provider/provider.dart';
 import 'package:doppy/pages/components/comps_for_profile/category_create_dialog.dart';
-import 'package:doppy/data/services/feed_service.dart';
+import 'package:doppy/providers/feed_provider/feed_ui_service.dart';
 import 'package:doppy/data/services/blog_service.dart';
 
 // 카테고리 필터 관리
@@ -37,7 +38,7 @@ class CategoryDropDown {
   void showCategoryDropdown(
     BuildContext context,
     GlobalKey buttonKey,
-    ProfileFeedProvider feedProvider,
+    BaseFeedProvider feedProvider,
   ) async {
     // 버튼 위치 계산
     final RenderBox? renderBox =
@@ -118,9 +119,8 @@ class CategoryDropDown {
   /// 카테고리 드롭다운 내용 빌드
   Widget _buildCategoryContent(
     BuildContext context,
-    ProfileFeedProvider feedProvider,
+    BaseFeedProvider feedProvider,
   ) {
-    final feedProvider = context.read<ProfileFeedProvider>();
     final categories = feedProvider.categories;
     final postsByCategory = feedProvider.postsByCategory;
     final userInfo = feedProvider.userInfo;
@@ -230,7 +230,9 @@ class CategoryDropDown {
                 ),
                 confirmDismiss: (_) async => isOwnProfile,
                 onDismissed: (_) {
-                  _deleteCategory(context, feedProvider, c['id']);
+                  if (isOwnProfile && feedProvider is MyProfileFeedProvider) {
+                    _deleteCategory(context, feedProvider, c['id']);
+                  }
                 },
                 child: _buildCategoryItem(
                   title: c['name'],
@@ -252,7 +254,7 @@ class CategoryDropDown {
 
   Widget _buildCreateCategoryButton(
     BuildContext context,
-    ProfileFeedProvider feedProvider,
+    BaseFeedProvider feedProvider,
   ) {
     final feedModeManager = FeedDisplayModeManager();
     final isImageOnlyMode = feedModeManager.isImageOnly;
@@ -360,7 +362,7 @@ class CategoryDropDown {
 
   /// 시스템 카테고리별 포스트 수 계산
   int _getSystemCategoryCount(
-    ProfileFeedProvider feedProvider,
+    BaseFeedProvider feedProvider,
     String categoryName,
   ) {
     // 실제 포스트 데이터의 accessLevel을 기준으로 계산
@@ -389,7 +391,7 @@ class CategoryDropDown {
   /// 카테고리 생성 (서버 API 호출)
   Future<void> _createCategory(
     BuildContext context,
-    ProfileFeedProvider feedProvider,
+    BaseFeedProvider feedProvider,
     String name,
   ) async {
     try {
@@ -450,13 +452,7 @@ class CategoryDropDown {
         final ordered = <int>[newId, ...withoutZero];
         if (hasZero) ordered.add(0);
 
-        // 로컬 낙관적 반영 + 서버 저장
-        feedProvider.reorderCategoriesLocally(ordered);
-        try {
-          await BlogService().reorderCategories(ordered);
-        } catch (_) {
-          // 실패해도 UI는 유지, 다음 동기화 때 정합성 복구
-        }
+        // TODO: 카테고리 재정렬 API 연동 시 구현
       }
       _onCategoryChanged?.call();
 
@@ -479,7 +475,7 @@ class CategoryDropDown {
   /// 카테고리 삭제 (서버 API 호출)
   Future<void> _deleteCategory(
     BuildContext context,
-    ProfileFeedProvider feedProvider,
+    MyProfileFeedProvider myProfileFeedProvider,
     int categoryId,
   ) async {
     try {
@@ -491,18 +487,27 @@ class CategoryDropDown {
 
       print('[CategoryDropDown] 카테고리 삭제 성공');
       // 전체 피드 데이터 강제 재로딩 (카테고리/포스트 등 전부)
-      await feedProvider.hardRefresh();
+      await myProfileFeedProvider.refresh();
       _onCategoryChanged?.call();
 
       // 성공 메시지
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('카테고리가 삭제되었습니다')));
+      _showSnackBarSafely(context, '카테고리가 삭제되었습니다');
     } catch (e) {
       print('[CategoryDropDown] 카테고리 삭제 에러: $e');
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('카테고리 삭제 중 오류가 발생했습니다')));
+      _showSnackBarSafely(context, '카테고리 삭제 중 오류가 발생했습니다');
+    }
+  }
+
+  /// 안전한 SnackBar 표시 (Scaffold가 없을 때 오류 방지)
+  void _showSnackBarSafely(BuildContext context, String message) {
+    try {
+      // context가 유효하고 Scaffold가 있는지 확인
+      if (context.mounted) {
+        ErrorHandler.showInfo(context, message);
+      }
+    } catch (e) {
+      // 오류 발생 시 콘솔에만 출력
+      print('[CategoryDropDown] SnackBar 표시 오류: $e - 메시지: $message');
     }
   }
 }

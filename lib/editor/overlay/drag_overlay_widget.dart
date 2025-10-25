@@ -5,7 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:super_editor/super_editor.dart';
 
 /// 드래그 중인 컴포넌트의 미리보기를 보여주는 오버레이 위젯
-class DragOverlayWidget extends StatelessWidget {
+class DragOverlayWidget extends StatefulWidget {
   const DragOverlayWidget({
     required this.nodeId,
     required this.nodeType,
@@ -22,16 +22,45 @@ class DragOverlayWidget extends StatelessWidget {
   final String? splitImageUrl;
 
   @override
+  State<DragOverlayWidget> createState() => _DragOverlayWidgetState();
+}
+
+class _DragOverlayWidgetState extends State<DragOverlayWidget> {
+  final GlobalKey _previewKey = GlobalKey();
+  Size? _childSize;
+
+  void _measureChild() {
+    final ctx = _previewKey.currentContext;
+    if (ctx == null) return;
+    final render = ctx.findRenderObject() as RenderBox?;
+    if (render == null) return;
+    final size = render.size;
+    if (_childSize == null || _childSize != size) {
+      setState(() => _childSize = size);
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
+    WidgetsBinding.instance.addPostFrameCallback((_) => _measureChild());
+
+    final double width = _childSize?.width ?? 160.0;
+    final double height = _childSize?.height ?? 120.0;
+    final double left = widget.position.dx - (width / 2);
+    final double top = widget.position.dy - (height / 2);
+
     return Positioned(
-      left: position.dx - 80, // 오버레이 너비의 절반만큼 왼쪽으로 이동
-      top: position.dy, // 오버레이 높이의 절반만큼 위로 이동
+      left: left,
+      top: top,
       child: Material(
         elevation: 8,
         borderRadius: BorderRadius.circular(8),
         child: ClipRRect(
           borderRadius: BorderRadius.circular(8),
-          child: _buildNodePreview(context),
+          child: KeyedSubtree(
+            key: _previewKey,
+            child: _buildNodePreview(context),
+          ),
         ),
       ),
     );
@@ -39,17 +68,16 @@ class DragOverlayWidget extends StatelessWidget {
 
   Widget _buildNodePreview(BuildContext context) {
     // 커스텀 이미지 URL이 있으면 해당 이미지 표시
-    if (splitImageUrl != null && nodeType == 'image') {
-      return _buildSplitImagePreview(splitImageUrl!);
+    if (widget.splitImageUrl != null && widget.nodeType == 'image') {
+      return _buildSplitImagePreview(widget.splitImageUrl!);
     }
 
-    final node = document.getNodeById(nodeId);
+    final node = widget.document.getNodeById(widget.nodeId);
     if (node == null) return const SizedBox.shrink();
 
     Widget preview;
-    print('node: $node');
-    print('nodeType: $nodeType');
-    switch (nodeType) {
+
+    switch (widget.nodeType) {
       case 'image':
         preview = _buildImagePreview(node as ImageNode);
         break;

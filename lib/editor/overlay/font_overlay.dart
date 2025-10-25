@@ -1,8 +1,53 @@
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
-import 'package:doppy/data/services/font_prefs_service.dart';
 import 'package:doppy/editor/style/font_catalog.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+class FontPrefsService {
+  static const String _keyCurrentFamily = 'editor.current_font_family';
+  static const String _keyCurrentWeight = 'editor.current_font_weight';
+  static const String _keyFavorites = 'editor.favorite_fonts';
+
+  Future<void> saveCurrentFont(String? family, int weight) async {
+    final prefs = await SharedPreferences.getInstance();
+    if (family == null || family.isEmpty) {
+      await prefs.remove(_keyCurrentFamily);
+    } else {
+      await prefs.setString(_keyCurrentFamily, family);
+    }
+    await prefs.setInt(_keyCurrentWeight, weight);
+  }
+
+  Future<(String?, int?)> loadCurrentFont() async {
+    final prefs = await SharedPreferences.getInstance();
+    final family = prefs.getString(_keyCurrentFamily);
+    final weight = prefs.getInt(_keyCurrentWeight);
+    return (family, weight);
+  }
+
+  Future<List<String>> loadFavorites() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getStringList(_keyFavorites) ?? const [];
+  }
+
+  Future<void> toggleFavorite(String family) async {
+    final prefs = await SharedPreferences.getInstance();
+    final list = prefs.getStringList(_keyFavorites) ?? <String>[];
+    if (list.contains(family)) {
+      list.removeWhere((e) => e == family);
+    } else {
+      list.add(family);
+    }
+    await prefs.setStringList(_keyFavorites, list);
+  }
+
+  Future<bool> isFavorite(String family) async {
+    final prefs = await SharedPreferences.getInstance();
+    final list = prefs.getStringList(_keyFavorites) ?? const [];
+    return list.contains(family);
+  }
+}
 
 /// 폰트 선택 오버레이 (mention_overlay와 유사한 구조)
 class FontOverlay extends StatefulWidget {

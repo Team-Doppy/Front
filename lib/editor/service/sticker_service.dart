@@ -54,6 +54,10 @@ class Sticker {
 }
 
 class StickerService extends ChangeNotifier {
+  static final StickerService _instance = StickerService._internal();
+  factory StickerService() => _instance;
+  StickerService._internal();
+
   // 스케일 한계
   static const double minScale = 0.4;
   static const double maxScale = 3.0;

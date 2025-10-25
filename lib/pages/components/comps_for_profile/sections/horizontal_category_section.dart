@@ -1,10 +1,12 @@
 import 'dart:math' as math;
 import 'package:doppy/data/models/post_data.dart';
-import 'package:doppy/data/services/feed_service.dart';
+import 'package:doppy/providers/feed_provider/feed_ui_service.dart';
 import 'package:doppy/pages/components/comps_for_profile/sections/category_model.dart';
 import 'package:doppy/pages/components/comps_for_profile/sections/image_view.dart';
 import 'package:doppy/pages/screens/post_reader_screen.dart';
-import 'package:doppy/providers/profile_feed_provider.dart';
+import 'package:doppy/providers/feed_provider/base_feed_provider.dart';
+
+import 'package:doppy/providers/feed_provider/my_profile_feed_provider.dart';
 import 'package:doppy/providers/user_provider.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -55,7 +57,7 @@ class _HorizontalCategorySectionState extends State<HorizontalCategorySection> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final username = context.read<UserProvider>().currentUser?.username;
-    final isReadOnly = context.read<ProfileFeedProvider>().isReadOnly;
+    final isReadOnly = context.read<BaseFeedProvider>().isReadOnly;
     final height = 200.0;
     final hController = context
         .read<PostDragDropService>()
@@ -138,7 +140,7 @@ class _HorizontalCategorySectionState extends State<HorizontalCategorySection> {
                           .value = null,
               onAccept: (draggedMeta) async {
                 if (isReadOnly) return;
-                final pf = context.read<ProfileFeedProvider>();
+                final pf = context.read<MyProfileFeedProvider>();
                 final prev =
                     pf.categories.map((c) => c['id'].toString()).toList();
                 final draggedId = draggedMeta.categoryId ?? '';
@@ -180,6 +182,7 @@ class _HorizontalCategorySectionState extends State<HorizontalCategorySection> {
                                 '[HorizontalCategorySection] 헤더에 포스트 드롭: ${draggedPost.title} -> 카테고리 ${widget.categoryId}',
                               );
                               // 카테고리 간 이동: 맨 앞(position 0)에 삽입
+                              final pf = context.read<BaseFeedProvider>();
                               await context
                                   .read<PostDragDropService>()
                                   .movePostToCategoryWithContext(
@@ -187,6 +190,7 @@ class _HorizontalCategorySectionState extends State<HorizontalCategorySection> {
                                     draggedPost,
                                     int.parse(widget.categoryId!),
                                     targetPosition: 0,
+                                    provider: pf,
                                   );
                             },
                             builder: (
@@ -399,17 +403,14 @@ class _HorizontalCategorySectionState extends State<HorizontalCategorySection> {
                                                       print(
                                                         '[ImageOnly] 같은 카테고리 끝 위치 드롭: $draggedIndex -> $targetIndex',
                                                       );
-                                                      context
-                                                          .read<
-                                                            ProfileFeedProvider
-                                                          >()
-                                                          .movePostLocally(
-                                                            draggedPost.id,
-                                                            int.parse(
-                                                              categoryId,
-                                                            ),
-                                                            targetIndex,
-                                                          );
+
+                                                      // 같은 카테고리 내 순서 변경: 서버에도 저장
+                                                      await _reorderPostsInCategoryWithServer(
+                                                        context,
+                                                        int.parse(categoryId),
+                                                        draggedPost.id,
+                                                        targetIndex,
+                                                      );
                                                     } else {
                                                       // 다른 카테고리에서 이동 (카테고리 이동 + 맨 끝에 배치)
                                                       print(
@@ -478,16 +479,17 @@ class _HorizontalCategorySectionState extends State<HorizontalCategorySection> {
                                                               opacity: 1.0,
                                                               child: IgnorePointer(
                                                                 child: Container(
-                                                                  width: 3,
+                                                                  margin:
+                                                                      const EdgeInsets.symmetric(
+                                                                        vertical:
+                                                                            5,
+                                                                      ),
+                                                                  width: 5,
                                                                   decoration: BoxDecoration(
                                                                     color:
                                                                         theme
                                                                             .colorScheme
                                                                             .primary,
-                                                                    borderRadius:
-                                                                        BorderRadius.circular(
-                                                                          2,
-                                                                        ),
                                                                   ),
                                                                 ),
                                                               ),
@@ -561,15 +563,14 @@ class _HorizontalCategorySectionState extends State<HorizontalCategorySection> {
                                                     print(
                                                       '[ImageOnly] 같은 카테고리 내 순서 변경: $draggedIndex -> $targetIndex (categoryId: $categoryId)',
                                                     );
-                                                    context
-                                                        .read<
-                                                          ProfileFeedProvider
-                                                        >()
-                                                        .movePostLocally(
-                                                          draggedPost.id,
-                                                          int.parse(categoryId),
-                                                          targetIndex,
-                                                        );
+
+                                                    // 같은 카테고리 내 순서 변경: 서버에도 저장
+                                                    await _reorderPostsInCategoryWithServer(
+                                                      context,
+                                                      int.parse(categoryId),
+                                                      draggedPost.id,
+                                                      targetIndex,
+                                                    );
                                                   } else {
                                                     // 다른 카테고리에서 이동 (카테고리 이동 + 순서 지정)
                                                     print(
@@ -848,16 +849,16 @@ class _HorizontalCategorySectionState extends State<HorizontalCategorySection> {
                                                                   : 0.0,
                                                           child: IgnorePointer(
                                                             child: Container(
-                                                              width: 3,
+                                                              width: 5,
+                                                              margin:
+                                                                  const EdgeInsets.symmetric(
+                                                                    vertical: 5,
+                                                                  ),
                                                               decoration: BoxDecoration(
                                                                 color:
                                                                     theme
                                                                         .colorScheme
                                                                         .primary,
-                                                                borderRadius:
-                                                                    BorderRadius.circular(
-                                                                      2,
-                                                                    ),
                                                               ),
                                                             ),
                                                           ),
@@ -1075,6 +1076,47 @@ class _HorizontalCategorySectionState extends State<HorizontalCategorySection> {
         transitionDuration: const Duration(milliseconds: 200),
       ),
     );
+  }
+
+  /// 카테고리 내부 포스트 순서 변경을 서버에 저장하는 헬퍼 메서드
+  Future<void> _reorderPostsInCategoryWithServer(
+    BuildContext context,
+    int categoryId,
+    String movedPostId,
+    int targetPosition,
+  ) async {
+    try {
+      final provider = context.read<BaseFeedProvider>();
+
+      // MyProfileFeedProvider인 경우에만 서버 저장 시도
+      if (provider is MyProfileFeedProvider) {
+        // 먼저 로컬에서 순서 변경
+        provider.movePostLocally(movedPostId, categoryId, targetPosition);
+
+        // 현재 카테고리의 모든 포스트 ID 순서 가져오기
+        final categoryStr = categoryId.toString();
+        final posts = provider.postsByCategory[categoryStr] ?? [];
+        final orderedPostIds = posts.map((post) => '${post['id']}').toList();
+
+        // 서버에 순서 변경 저장
+        await provider.reorderPostsInCategory(categoryId, orderedPostIds);
+
+        print('[HorizontalCategorySection] 카테고리 $categoryId 포스트 순서 서버 저장 완료');
+      } else {
+        // OtherProfileFeedProvider인 경우 로컬 변경만
+        provider.movePostLocally(movedPostId, categoryId, targetPosition);
+        print('[HorizontalCategorySection] 읽기 전용 프로필: 로컬 변경만 수행');
+      }
+    } catch (e) {
+      print('⚠️ [HorizontalCategorySection] 포스트 순서 서버 저장 실패: $e');
+
+      // 에러 발생 시 사용자에게 알림
+      try {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('포스트 순서 저장에 실패했습니다')));
+      } catch (_) {}
+    }
   }
 }
 

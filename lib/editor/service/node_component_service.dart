@@ -8,91 +8,12 @@ class NodeComponentService extends ChangeNotifier {
   factory NodeComponentService() => _instance;
   NodeComponentService._internal();
 
-  List<String> _imageIds = [];
-  List<String> get imageIds => _imageIds;
-  void addImageId(String imageId) {
-    _imageIds.add(imageId);
+  void clearAll() {
+    clearHighlightedSelection();
+    selectImage(null);
   }
 
-  // URL ↔ imageId 매핑 (업로드 성공 시 등록)
-  final Map<String, String> _urlToImageId = <String, String>{};
-  void registerImageUrlId(String url, String imageId) {
-    if (url.isEmpty || imageId.isEmpty) return;
-    _urlToImageId[url] = imageId;
-
-    print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-    print('📸 [이미지 매핑 등록]');
-    print('URL: $url');
-    print('ID: $imageId');
-    print('💾 현재 매핑 맵 (총 ${_urlToImageId.length}개):');
-    _urlToImageId.forEach((key, value) {
-      print(
-        '  • ${key.substring(key.length > 50 ? key.length - 50 : 0)} → $value',
-      );
-    });
-    print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-  }
-
-  String? getImageIdByUrl(String url) => _urlToImageId[url];
-  Map<String, String> get urlToImageIdMap => Map.unmodifiable(_urlToImageId);
-
-  // 삭제 시 URL 매핑 제거 (usedImageIds에서 빠지도록)
-  void unregisterImageUrl(String url) {
-    final removed = _urlToImageId.remove(url);
-    if (removed != null) {
-      print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-      print('🗑️ [이미지 매핑 제거]');
-      print('URL: $url');
-      print('제거된 ID: $removed');
-      print('💾 현재 매핑 맵 (총 ${_urlToImageId.length}개):');
-      _urlToImageId.forEach((key, value) {
-        print(
-          '  • ${key.substring(key.length > 50 ? key.length - 50 : 0)} → $value',
-        );
-      });
-      print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-      notifyListeners();
-    }
-  }
-
-  void unregisterImageUrls(Iterable<String> urls) {
-    bool changed = false;
-    final removedUrls = <String>[];
-    for (final u in urls) {
-      if (_urlToImageId.remove(u) != null) {
-        changed = true;
-        removedUrls.add(u);
-      }
-    }
-    if (changed) {
-      print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-      print('🗑️ [이미지 매핑 일괄 제거]');
-      print('제거된 URL 개수: ${removedUrls.length}');
-      removedUrls.forEach((url) => print('  • $url'));
-      print('💾 현재 매핑 맵 (총 ${_urlToImageId.length}개):');
-      _urlToImageId.forEach((key, value) {
-        print(
-          '  • ${key.substring(key.length > 50 ? key.length - 50 : 0)} → $value',
-        );
-      });
-      print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-      notifyListeners();
-    }
-  }
-
-  // 매핑 맵 전체 정리 (발행/임시저장/에디터 종료 시)
-  void clearImageUrlMapping() {
-    final count = _urlToImageId.length;
-    if (count > 0) {
-      print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-      print('🧹 [이미지 매핑 맵 전체 정리]');
-      print('정리 전 매핑 개수: $count');
-      _urlToImageId.clear();
-      print('✅ 매핑 맵 초기화 완료');
-      print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-      notifyListeners();
-    }
-  }
+  // URL↔ID 매핑 로직 제거됨
 
   // 현재 선택된 노드 ID (과거 호환: 이미지 기준 네이밍 유지)
   String? _selectedImageId;

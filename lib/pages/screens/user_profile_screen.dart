@@ -1,21 +1,21 @@
+import 'package:doppy/pages/components/common_profile_avatar.dart';
 import 'package:doppy/pages/components/comps_for_profile/category_drop_down.dart';
 import 'package:doppy/pages/components/comps_for_profile/feed.dart';
-import 'package:doppy/data/services/feed_service.dart';
+import 'package:doppy/pages/components/custom_refresh_indicator.dart';
+import 'package:doppy/pages/components/error_state_widget.dart';
+import 'package:doppy/providers/feed_provider/feed_ui_service.dart';
 import 'package:doppy/pages/screens/manage_group_screen.dart';
 import 'package:doppy/pages/user/setting_screen.dart';
+import 'package:doppy/providers/feed_provider/other_profile_feed_provider.dart';
 import 'package:doppy/utils/error_handler.dart';
-
-import 'package:doppy/utils/route_observer.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:doppy/data/services/upload_service.dart';
 import 'package:doppy/providers/user_provider.dart';
 import 'package:doppy/providers/friend_provider.dart';
-import 'package:doppy/providers/profile_feed_provider.dart';
+import 'package:doppy/providers/feed_provider/my_profile_feed_provider.dart';
+import 'package:doppy/providers/feed_provider/base_feed_provider.dart';
 import 'package:doppy/data/models/user_model.dart';
-
-import 'package:doppy/pages/components/comps_for_profile/profile_avatar.dart';
-import 'package:doppy/pages/components/comps_for_profile/user_profile_controller.dart';
 import 'package:doppy/editor/image/profile_image_bottom_sheet.dart';
 import 'dart:io';
 import 'dart:ui';
@@ -29,24 +29,26 @@ class UserProfileScreen extends StatefulWidget {
   State<UserProfileScreen> createState() => _UserProfileScreenState();
 }
 
-class _UserProfileScreenState extends State<UserProfileScreen>
-    with SingleTickerProviderStateMixin, RouteAware {
+class _UserProfileScreenState extends State<UserProfileScreen> {
   // 스크롤 컨트롤러 및 상태
   late ScrollController _scrollController;
   late final bool _isOwnProfile;
+  late final BaseFeedProvider _feedProvider;
 
   // 업로드 진행 상태
   UploadTask? _profileUploadTask;
   VoidCallback? _profileTaskListener;
-  PageRoute<dynamic>? _activeRoute; // RouteObserver 중복 구독 방지
 
   // 프로필 사진 변경 상태
   bool _isUploadingProfileImage = false;
-  late UserProfileController _controller;
+
   static final CategoryDropDown _categoryDropDown = CategoryDropDown();
   static final Feed _feed = Feed();
   final GlobalKey _categoryButtonKey = GlobalKey();
   static bool _prefetchedFriendsOnce = false; // 첫 진입 1회만 프리캐싱
+  double _pullProgress = 0.0; // 당기는 진행률 (0.0 ~ 1.0)
+  bool _friendStatusChecked = false; // 친구 상태 1회 확인 완료 여부
+  Future<void>? _friendStatusFuture; // 친구 상태 초기 확인 Future (빌드 내 로딩 제어)
 
   // 프로필 편집용 TextEditingController
   final TextEditingController _nameController = TextEditingController();
@@ -58,6 +60,13 @@ class _UserProfileScreenState extends State<UserProfileScreen>
     _isOwnProfile = (widget.otherUser == null);
     _scrollController = ScrollController();
 
+    // 내 프로필이면 MyProfileFeedProvider, 다른 사람 프로필이면 ProfileFeedProvider 사용
+    if (_isOwnProfile) {
+      _feedProvider = context.read<MyProfileFeedProvider>();
+    } else {
+      _feedProvider = context.read<OtherProfileFeedProvider>();
+    }
+
     WidgetsBinding.instance.addPostFrameCallback((_) {
       try {
         context.read<PostDragDropService>().setVerticalController(
@@ -65,12 +74,11 @@ class _UserProfileScreenState extends State<UserProfileScreen>
         );
       } catch (_) {}
     });
-    _controller = UserProfileController(context);
-    // 전역 ProfileFeedProvider 사용
+
+    // 피드 설정
     WidgetsBinding.instance.addPostFrameCallback((_) {
       try {
-        final feed = context.read<ProfileFeedProvider>();
-        feed.setReadOnly(!_isOwnProfile);
+        _feedProvider.setReadOnly(!_isOwnProfile);
       } catch (_) {}
     });
 
@@ -78,12 +86,25 @@ class _UserProfileScreenState extends State<UserProfileScreen>
     if (!_isOwnProfile) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         try {
-          final feed = context.read<ProfileFeedProvider>();
-          if (feed.selectedBase != BaseFilter.all) {
-            feed.selectBase(BaseFilter.all);
+          if (_feedProvider.selectedBase != BaseFilter.all) {
+            _feedProvider.selectBase(BaseFilter.all);
           }
         } catch (_) {}
       });
+
+      // 친구 상태 확인은 초기 1회만 수행하되, Future를 저장해 빌드에서 로딩 제어
+      try {
+        final friendProvider = context.read<FriendProvider>();
+        _friendStatusFuture = friendProvider
+            .checkFriendStatus(widget.otherUser!.username)
+            .whenComplete(() {
+              if (mounted) {
+                setState(() {
+                  _friendStatusChecked = true;
+                });
+              }
+            });
+      } catch (_) {}
     }
 
     // 카테고리 변경 콜백 설정
@@ -93,16 +114,13 @@ class _UserProfileScreenState extends State<UserProfileScreen>
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       if (_isOwnProfile) {
         // 내 프로필에 필요한 데이터 로딩
-      } else {
-        // 다른 사용자 프로필: 서버에서 상세 정보 & 친구 상태 병렬 로딩
-        _controller.checkFriendStatus(widget.otherUser!.username);
-      }
+      } else {}
       // 프로필 피드 초기 로드
       try {
         final bool isOther = !_isOwnProfile;
-        await _controller.loadFeed(
+        await _feedProvider.loadInitial(
           username: isOther ? widget.otherUser!.username : null,
-          force: isOther, // 타인: 항상 새로 로드, 내 계정: 캐시 사용
+          force: false, // 스마트 캐시 전략 사용 (3분 TTL)
         );
       } catch (_) {}
     });
@@ -111,16 +129,18 @@ class _UserProfileScreenState extends State<UserProfileScreen>
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    print('[UserProfileScreen] didChangeDependencies');
+  }
 
-    // RouteObserver 구독 (중복 방지)
-    final modal = ModalRoute.of(context);
-    if (modal is PageRoute<dynamic>) {
-      if (!identical(_activeRoute, modal)) {
-        // 이전 라우트 구독 해제 후 새 라우트로 구독
-        routeObserver.unsubscribe(this);
-        _activeRoute = modal;
-        routeObserver.subscribe(this, modal);
-      }
+  Future<void> _handleRefresh() async {
+    try {
+      final bool isOther = !_isOwnProfile;
+      await _feedProvider.loadInitial(
+        username: isOther ? widget.otherUser!.username : null,
+        force: true, // 강제로 새로 로드
+      );
+    } catch (e) {
+      print('[UserProfileScreen] Refresh error: $e');
     }
   }
 
@@ -128,10 +148,9 @@ class _UserProfileScreenState extends State<UserProfileScreen>
   void dispose() {
     _categoryDropDown.setOnCategoryChanged(null);
 
-    // 화면 종료 시, 피드 메모리 정리 (캐시는 유지)
     if (mounted) {
       try {
-        context.read<ProfileFeedProvider>().clearInMemory();
+        _feedProvider.clearInMemory();
       } catch (_) {}
     }
 
@@ -141,7 +160,6 @@ class _UserProfileScreenState extends State<UserProfileScreen>
     if (_profileUploadTask != null && _profileTaskListener != null) {
       _profileUploadTask!.removeListener(_profileTaskListener!);
     }
-    routeObserver.unsubscribe(this);
     super.dispose();
   }
 
@@ -170,204 +188,263 @@ class _UserProfileScreenState extends State<UserProfileScreen>
       _displayAlias = me.alias;
     }
 
-    return Material(
-      color: Theme.of(context).colorScheme.background,
-      child: Stack(
-        clipBehavior: Clip.none,
-        children: [
-          // 스크롤 가능한 컨텐츠 (Sliver)
-          Positioned.fill(
-            child: ValueListenableBuilder<bool>(
-              valueListenable: _feed.isDraggingCategory,
-              builder: (context, isDraggingCategory, _) {
-                return TweenAnimationBuilder<double>(
-                  tween: Tween<double>(
-                    begin: isDraggingCategory ? 1.0 : 0.7,
-                    end: isDraggingCategory ? 0.7 : 1.0,
-                  ),
-                  duration: const Duration(milliseconds: 400),
-                  curve: Curves.easeOutCubic,
-                  builder: (context, scale, child) {
-                    return Transform.scale(
-                      scale: scale,
-                      alignment: Alignment.center,
-                      child: child,
-                    );
-                  },
-                  child: CustomScrollView(
-                    clipBehavior: Clip.none,
-                    controller: _scrollController,
-                    slivers: [
-                      SliverAppBar(
-                        expandedHeight: topPadding + 100,
-                        toolbarHeight: 60,
-                        backgroundColor: Colors.transparent,
-                        automaticallyImplyLeading: false,
-                        elevation: 0,
-                        title: Row(
-                          children: [
-                            if (isOther)
-                              GestureDetector(
-                                child: Icon(
-                                  Icons.arrow_back_ios_new,
-                                  size: 20,
-                                  color: Theme.of(
-                                    context,
-                                  ).colorScheme.onSurface.withOpacity(0.8),
-                                ),
-                                onTap: () => Navigator.of(context).pop(),
-                              ),
-                            Padding(
-                              padding: EdgeInsets.only(
-                                left: isOther ? 20.0 : 5.0,
-                                bottom: 3.0,
-                              ),
-                              child: Text(
-                                _displayUsername,
-                                style: TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 24,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
+    // 이 화면 하위 트리에 BaseFeedProvider 타입으로 현재 피드 프로바이더를 주입
+    return ChangeNotifierProvider<BaseFeedProvider>.value(
+      value: _feedProvider,
+      child: Material(
+        color: Theme.of(context).colorScheme.background,
+        child: Stack(
+          clipBehavior: Clip.none,
+          children: [
+            // 스크롤 가능한 컨텐츠 (Sliver)
+            Positioned.fill(
+              child: ValueListenableBuilder<bool>(
+                valueListenable: _feed.isDraggingCategory,
+                builder: (context, isDraggingCategory, _) {
+                  return TweenAnimationBuilder<double>(
+                    tween: Tween<double>(
+                      begin: isDraggingCategory ? 1.0 : 0.7,
+                      end: isDraggingCategory ? 0.7 : 1.0,
+                    ),
+                    duration: const Duration(milliseconds: 400),
+                    curve: Curves.easeOutCubic,
+                    builder: (context, scale, child) {
+                      return Transform.scale(
+                        scale: scale,
+                        alignment: Alignment.center,
+                        child: child,
+                      );
+                    },
 
-                        actions: [
-                          if (_isOwnProfile) ...[
-                            IconButton(
-                              icon: Icon(
-                                Icons.edit,
-                                color: Theme.of(
-                                  context,
-                                ).colorScheme.onSurface.withOpacity(0.5),
-                              ),
-                              onPressed: () {
-                                me != null
-                                    ? showProfileInfoEditBottomSheet(me)
-                                    : null;
-                              },
-                            ),
-                            // 설정 버튼
-                            IconButton(
-                              icon: Icon(
-                                Icons.settings,
-                                color: Theme.of(
-                                  context,
-                                ).colorScheme.onSurface.withOpacity(0.5),
-                              ),
-                              onPressed: () {
-                                Navigator.of(context).push(
-                                  MaterialPageRoute(
-                                    builder: (_) => SettingScreen(),
+                    child: CustomRefreshIndicator(
+                      top: 120,
+                      onRefresh: _handleRefresh,
+                      onPullProgress: (progress) {
+                        setState(() {
+                          _pullProgress = progress;
+                        });
+                      },
+                      child: CustomScrollView(
+                        clipBehavior: Clip.none,
+                        controller: _scrollController,
+                        slivers: [
+                          SliverAppBar(
+                            expandedHeight: topPadding + 100,
+                            toolbarHeight: 60,
+                            backgroundColor: Colors.transparent,
+                            automaticallyImplyLeading: false,
+                            elevation: 0,
+                            title: Opacity(
+                              opacity: 1.0 - _pullProgress,
+                              child: Row(
+                                children: [
+                                  if (isOther)
+                                    GestureDetector(
+                                      child: Icon(
+                                        Icons.arrow_back_ios_new,
+                                        size: 20,
+                                        color: Theme.of(context)
+                                            .colorScheme
+                                            .onSurface
+                                            .withOpacity(0.8),
+                                      ),
+                                      onTap: () => Navigator.of(context).pop(),
+                                    ),
+                                  Padding(
+                                    padding: EdgeInsets.only(
+                                      left: isOther ? 20.0 : 5.0,
+                                      bottom: 3.0,
+                                    ),
+                                    child: Text(
+                                      _displayUsername,
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 24,
+                                      ),
+                                    ),
                                   ),
-                                );
-                              },
+                                ],
+                              ),
                             ),
-                          ],
-                        ],
-                      ),
-                      SliverToBoxAdapter(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.center,
-                          children: [
-                            const SizedBox(height: 50),
-                            // 원형 아바타 (텍스트 위에 위치)
-                            Column(
+
+                            actions: [
+                              Opacity(
+                                opacity: 1.0 - _pullProgress,
+                                child: Row(
+                                  children: [
+                                    if (_isOwnProfile) ...[
+                                      IconButton(
+                                        icon: Icon(
+                                          Icons.edit,
+                                          color: Theme.of(context)
+                                              .colorScheme
+                                              .onSurface
+                                              .withOpacity(0.5),
+                                        ),
+                                        onPressed: () {
+                                          me != null
+                                              ? showProfileInfoEditBottomSheet(
+                                                me,
+                                              )
+                                              : null;
+                                        },
+                                      ),
+                                      // 설정 버튼
+                                      IconButton(
+                                        icon: Icon(
+                                          Icons.settings,
+                                          color: Theme.of(context)
+                                              .colorScheme
+                                              .onSurface
+                                              .withOpacity(0.5),
+                                        ),
+                                        onPressed: () {
+                                          Navigator.of(context).push(
+                                            MaterialPageRoute(
+                                              builder: (_) => SettingScreen(),
+                                            ),
+                                          );
+                                        },
+                                      ),
+                                    ],
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                          SliverToBoxAdapter(
+                            child: Column(
                               crossAxisAlignment: CrossAxisAlignment.center,
                               children: [
-                                ProfileAvatar(
-                                  imageUrl: _displayImageUrl,
-                                  username: _displayUsername,
-                                  size: 150,
-                                  borderWidth: 2,
-                                  borderColor:
-                                      Theme.of(context).brightness ==
-                                              Brightness.dark
-                                          ? Colors.grey.shade300
-                                          : Colors.grey.shade600,
-                                  isUploading: _isUploadingProfileImage,
-                                  onTap:
-                                      _isOwnProfile && !_isUploadingProfileImage
-                                          ? _changeProfileImage
-                                          : null,
+                                const SizedBox(height: 50),
+                                // 원형 아바타 (텍스트 위에 위치)
+                                Column(
+                                  crossAxisAlignment: CrossAxisAlignment.center,
+                                  children: [
+                                    CommonProfileAvatar(
+                                      imageUrl: _displayImageUrl,
+                                      username: _displayUsername,
+                                      size: 150,
+                                      borderWidth: 2,
+                                      borderColor:
+                                          Theme.of(context).brightness ==
+                                                  Brightness.dark
+                                              ? Colors.grey.shade300
+                                              : Colors.grey.shade600,
+                                      isUploading: _isUploadingProfileImage,
+                                      onTap:
+                                          _isOwnProfile &&
+                                                  !_isUploadingProfileImage
+                                              ? _changeProfileImage
+                                              : null,
+                                    ),
+                                    const SizedBox(height: 30),
+                                    // 사용자 이름 (1차 스냅 이후 페이드아웃)
+                                    Text(
+                                      _displayAlias ?? _displayUsername,
+                                      style: TextStyle(
+                                        color:
+                                            Theme.of(
+                                              context,
+                                            ).colorScheme.onSurface,
+                                        fontSize: 36,
+                                        fontWeight: FontWeight.bold,
+                                        height: 1.1,
+                                      ),
+                                    ),
+                                  ],
                                 ),
-                                const SizedBox(height: 30),
-                                // 사용자 이름 (1차 스냅 이후 페이드아웃)
+                                const SizedBox(height: 4),
                                 Text(
-                                  _displayAlias ?? _displayUsername,
+                                  isOther
+                                      ? (other?.selfIntroduction?.isNotEmpty ==
+                                              true
+                                          ? other!.selfIntroduction!
+                                          : _displayUsername)
+                                      : (me?.selfIntroduction?.isNotEmpty ==
+                                              true
+                                          ? me!.selfIntroduction!
+                                          : ''),
                                   style: TextStyle(
                                     color:
-                                        Theme.of(context).colorScheme.onSurface,
-                                    fontSize: 36,
-                                    fontWeight: FontWeight.bold,
-                                    height: 1.1,
+                                        Theme.of(context).brightness ==
+                                                Brightness.dark
+                                            ? Theme.of(context)
+                                                .colorScheme
+                                                .onSurfaceVariant
+                                                .withOpacity(0.8)
+                                            : Colors.black,
+                                    fontSize: 14,
+                                    height: 1.3,
                                   ),
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
                                 ),
+
+                                // 다른 사용자 프로필일 때만 친구 추가 버튼 표시
+                                if (isOther) ...[_buildOtherProfileButton()],
+                                if (_isOwnProfile) ...[_buildMyProfileButton()],
                               ],
                             ),
-                            const SizedBox(height: 4),
-                            Text(
-                              isOther
-                                  ? (other?.selfIntroduction?.isNotEmpty == true
-                                      ? other!.selfIntroduction!
-                                      : _displayUsername)
-                                  : (me?.selfIntroduction?.isNotEmpty == true
-                                      ? me!.selfIntroduction!
-                                      : ''),
-                              style: TextStyle(
-                                color:
-                                    Theme.of(context).brightness ==
-                                            Brightness.dark
-                                        ? Theme.of(context)
-                                            .colorScheme
-                                            .onSurfaceVariant
-                                            .withOpacity(0.8)
-                                        : Colors.black,
-                                fontSize: 14,
-                                height: 1.3,
-                              ),
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                            ),
+                          ),
+                          // Feed 모드 전환 스위처 (카드뷰 / 이미지 전용)
+                          _buildFeedModeSwitcher(),
+                          // Feed 컨텐츠 (네트워크 에러 처리 포함)
+                          Consumer<BaseFeedProvider>(
+                            builder: (context, feedProvider, _) {
+                              // 네트워크 에러가 있고 데이터가 없으면 에러 화면 표시
+                              if (feedProvider.networkError != null &&
+                                  feedProvider.categories.isEmpty) {
+                                return SliverFillRemaining(
+                                  hasScrollBody: false,
+                                  child: ErrorStateWidget(
+                                    error: feedProvider.networkError!,
+                                    onRetry: () {
+                                      _handleRefresh();
+                                    },
+                                    onPullProgress: (progress) {
+                                      setState(() {
+                                        _pullProgress = progress;
+                                      });
+                                    },
+                                  ),
+                                );
+                              }
 
-                            // 다른 사용자 프로필일 때만 친구 추가 버튼 표시
-                            if (isOther) ...[_buildOtherProfileButton()],
-                            if (_isOwnProfile) ...[_buildMyProfileButton()],
-                          ],
-                        ),
+                              // 정상 상태일 때 Feed 컨텐츠 표시
+                              return _feed.buildFeedContent(
+                                scrollController: _scrollController,
+                              );
+                            },
+                          ),
+                        ],
                       ),
-                      // Feed 모드 전환 스위처 (카드뷰 / 이미지 전용)
-                      _buildFeedModeSwitcher(),
-                      _feed.buildFeedContent(
-                        scrollController: _scrollController,
-                      ),
-                    ],
-                  ),
-                );
-              },
+                    ),
+                  );
+                },
+              ),
             ),
-          ),
 
-          Positioned(
-            top: 0,
-            left: 0,
-            right: 0,
-            height: MediaQuery.of(context).padding.top - 10,
-            child: ClipRRect(
-              child: BackdropFilter(
-                filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: Theme.of(
-                      context,
-                    ).colorScheme.background.withOpacity(1),
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              height: MediaQuery.of(context).padding.top - 10,
+              child: ClipRRect(
+                child: BackdropFilter(
+                  filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.background.withOpacity(1),
+                    ),
                   ),
                 ),
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -406,7 +483,7 @@ class _UserProfileScreenState extends State<UserProfileScreen>
         _categoryDropDown.showCategoryDropdown(
           context,
           _categoryButtonKey,
-          context.read<ProfileFeedProvider>(),
+          _feedProvider,
         );
       },
       child: Container(
@@ -417,16 +494,33 @@ class _UserProfileScreenState extends State<UserProfileScreen>
           child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Text(
-                context.watch<ProfileFeedProvider>().selectedLabel,
-                style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w300,
-                  color: Theme.of(
-                    context,
-                  ).colorScheme.onSurface.withOpacity(0.5),
-                ),
-              ),
+              _isOwnProfile
+                  ? Consumer<MyProfileFeedProvider>(
+                    builder:
+                        (context, provider, _) => Text(
+                          provider.selectedLabel,
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w300,
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.onSurface.withOpacity(0.5),
+                          ),
+                        ),
+                  )
+                  : Consumer<OtherProfileFeedProvider>(
+                    builder:
+                        (context, provider, _) => Text(
+                          provider.selectedLabel,
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w300,
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.onSurface.withOpacity(0.5),
+                          ),
+                        ),
+                  ),
               SizedBox(width: 4),
               Icon(
                 Icons.keyboard_arrow_down,
@@ -444,7 +538,7 @@ class _UserProfileScreenState extends State<UserProfileScreen>
     final displayModeManager = FeedDisplayModeManager();
     final bool selected = displayModeManager.value == mode;
     final theme = Theme.of(context);
-    return InkWell(
+    return GestureDetector(
       onTap: () {
         if (mode == FeedDisplayMode.card) {
           displayModeManager.switchToCard();
@@ -452,14 +546,14 @@ class _UserProfileScreenState extends State<UserProfileScreen>
           displayModeManager.switchToImageOnly();
         }
       },
-      borderRadius: BorderRadius.circular(10),
+
       child: Container(
         padding: const EdgeInsets.all(8),
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(10),
           color:
               selected
-                  ? theme.colorScheme.onSurface.withOpacity(0.2)
+                  ? theme.colorScheme.onSurface.withOpacity(0.1)
                   : theme.colorScheme.surfaceVariant.withOpacity(0.2),
         ),
         child: Icon(
@@ -468,7 +562,7 @@ class _UserProfileScreenState extends State<UserProfileScreen>
           color:
               selected
                   ? theme.colorScheme.onSurface
-                  : theme.colorScheme.onSurface.withOpacity(0.2),
+                  : theme.colorScheme.onSurface.withOpacity(0.3),
         ),
       ),
     );
@@ -546,8 +640,13 @@ class _UserProfileScreenState extends State<UserProfileScreen>
   }
 
   Widget _buildOtherProfileButton() {
-    return Consumer<FriendProvider>(
-      builder: (context, friendProvider, _) {
+    return Consumer2<FriendProvider, BaseFeedProvider>(
+      builder: (context, friendProvider, feedProvider, _) {
+        // 네트워크 에러가 있으면 로딩 상태로 표시
+        if (feedProvider.networkError != null) {
+          return SizedBox.shrink();
+        }
+
         // 친구 상태에 따른 버튼 텍스트와 액션 결정
         String buttonText;
         VoidCallback buttonAction;
@@ -590,14 +689,38 @@ class _UserProfileScreenState extends State<UserProfileScreen>
             buttonAction = () {};
         }
 
-        return Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
-          child: _buildFilledButton(
-            text: buttonText,
-            onTap: buttonAction,
-            isLoading: friendProvider.isLoading,
-            isFilled: friendProvider.friendStatus == FriendRequestStatus.none,
-          ),
+        // 빌드 안에서 FutureBuilder로 로딩 → 완료 후 부드럽게 버튼 표시
+        return FutureBuilder<void>(
+          future: _friendStatusFuture,
+          builder: (context, snapshot) {
+            if (snapshot.connectionState == ConnectionState.waiting) {
+              return Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 20,
+                ),
+                child: Opacity(
+                  opacity: 0.0,
+                  child: _buildFilledButton(
+                    text: '로딩중',
+                    onTap: () {},
+                    isLoading: true,
+                    isFilled: false,
+                  ),
+                ),
+              );
+            }
+            return Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
+              child: _buildFilledButton(
+                text: buttonText,
+                onTap: buttonAction,
+                isLoading: friendProvider.isLoading,
+                isFilled:
+                    friendProvider.friendStatus == FriendRequestStatus.none,
+              ),
+            );
+          },
         );
       },
     );
@@ -661,19 +784,19 @@ class _UserProfileScreenState extends State<UserProfileScreen>
     return GestureDetector(
       onTap: isLoading ? null : onTap,
       child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 24),
+        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 20),
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(12),
           border: Border.all(
-            color: Theme.of(context).colorScheme.onSurface.withOpacity(0.2),
+            color: Theme.of(context).colorScheme.onSurface.withOpacity(0.1),
             width: 0.5,
           ),
           gradient: LinearGradient(
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
             colors: [
-              Theme.of(context).colorScheme.onSurface.withOpacity(0.05),
-              Theme.of(context).colorScheme.onSurface.withOpacity(0.05),
+              Theme.of(context).colorScheme.onSurface.withOpacity(0.01),
+              Theme.of(context).colorScheme.onSurface.withOpacity(0.01),
             ],
           ),
         ),
@@ -694,7 +817,7 @@ class _UserProfileScreenState extends State<UserProfileScreen>
                     text,
                     style: TextStyle(
                       color: Theme.of(context).colorScheme.onSurface,
-                      fontSize: 16,
+                      fontSize: 14,
                       fontWeight: FontWeight.w600,
                     ),
                   ),
@@ -799,7 +922,16 @@ class _UserProfileScreenState extends State<UserProfileScreen>
     });
 
     try {
-      final success = await _controller.deleteProfileImageAndUpdateCache();
+      bool success = false;
+      if (_isOwnProfile) {
+        success = await context
+            .read<MyProfileFeedProvider>()
+            .deleteProfileImageAndUpdateCache(context);
+      } else {
+        // 다른 사람 프로필에서는 이 기능을 사용할 수 없음
+        throw Exception('다른 사람의 프로필 이미지는 삭제할 수 없습니다');
+      }
+
       if (!success) {
         throw Exception('프로필 이미지 삭제 실패');
       }
@@ -841,7 +973,14 @@ class _UserProfileScreenState extends State<UserProfileScreen>
           final imageUrl = task.url ?? '';
 
           if (imageUrl.isNotEmpty) {
-            await _controller.updateProfileImageAfterUpload(imageUrl);
+            if (_isOwnProfile) {
+              await context
+                  .read<MyProfileFeedProvider>()
+                  .updateProfileImageAfterUpload(imageUrl, context);
+            } else {
+              // 다른 사람 프로필에서는 이 기능을 사용할 수 없음
+              throw Exception('다른 사람의 프로필 이미지는 업데이트할 수 없습니다');
+            }
           } else {
             print(
               '[UserProfileScreen] imageUrl is empty, calling fetchMyProfile',
@@ -887,5 +1026,3 @@ class _UserProfileScreenState extends State<UserProfileScreen>
     task.addListener(_profileTaskListener!);
   }
 }
-
-// 위젯 분리: ShimmerEffect, ProfileAvatar는 각 widgets/ 파일로 이동

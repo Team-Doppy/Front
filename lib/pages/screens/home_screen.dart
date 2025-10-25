@@ -1,45 +1,65 @@
 import 'package:cached_network_image/cached_network_image.dart';
-import 'package:doppy/pages/components/empty_post_list.dart';
+
 import 'package:doppy/pages/components/post_list.dart';
-import 'package:doppy/pages/components/feed_filter_dropdown.dart';
 import 'package:doppy/data/models/post_data.dart';
-import 'package:doppy/data/services/blog_service.dart';
+import 'package:doppy/data/services/home_data_service.dart';
 import 'package:doppy/pages/components/shimmer_box.dart';
 import 'package:doppy/pages/screens/search_screen_overlay.dart';
-import 'package:doppy/providers/search_result_provider.dart';
+import 'package:doppy/providers/user_provider.dart';
+import 'package:doppy/pages/components/error_state_widget.dart';
+import 'package:doppy/providers/search_provider.dart';
+import 'package:doppy/utils/network_utils.dart';
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
 import 'dart:ui' as ui;
 
 class HomeScreen extends StatefulWidget {
-  final List<PostData>? preloadedPosts;
+  final HomeData? preloadedHomeData;
 
-  const HomeScreen({super.key, this.preloadedPosts});
+  const HomeScreen({super.key, this.preloadedHomeData});
 
   @override
   State<HomeScreen> createState() => HomeScreenState();
 }
 
-class HomeScreenState extends State<HomeScreen> {
-  final BlogService _blogService = BlogService();
-  List<PostData> _posts = [];
-  bool _isLoading = true;
-  bool _isLoadingMore = false;
-  String? _error;
-  int _currentPage = 0;
-  bool _hasMoreData = true;
-  int _currentPostIndex = 0; // 현재 보이는 포스트 인덱스
-  bool _isCardShimmering = false; // 새로고침 시 카드 영역만 쉬머 표시
-  int _loadTick = 0; // 응답 정합성 보장용 토큰
+class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
+  final HomeDataService _homeDataService = HomeDataService();
+
+  // 수직 PageView 컨트롤러
+  late PageController _sectionPageController;
+  int _currentSectionIndex = 0; // 0: 친구글, 1: 전체글
+  double _appBarOpacity = 1.0; // 앱바 투명도
+
+  // 친구글 섹션 데이터
+  List<PostData> _friendsPosts = [];
+  bool _friendsIsLoading = true;
+  bool _friendsIsLoadingMore = false;
+  NetworkError? _friendsError;
+  bool _friendsIsRetrying = false;
+  int _friendsCurrentPage = 0;
+  bool _friendsHasMoreData = true;
+  int _friendsCurrentPostIndex = 0;
+  bool _friendsIsCardShimmering = false;
+  int _friendsLoadTick = 0;
+  int _friendsRefreshCount = 0; // 리프레시 카운터
+
+  // 전체글 섹션 데이터
+  List<PostData> _allPosts = [];
+  bool _allIsLoading = true;
+  bool _allIsLoadingMore = false;
+  NetworkError? _allError;
+  bool _allIsRetrying = false;
+  int _allCurrentPage = 0;
+  bool _allHasMoreData = true;
+  int _allCurrentPostIndex = 0;
+  bool _allIsCardShimmering = false;
+  int _allLoadTick = 0;
+  int _allRefreshCount = 0; // 리프레시 카운터
 
   // 검색 오버레이 상태
   bool _isSearchOverlayVisible = false;
-  bool _isShowingSearchResults = false; // 검색 결과 표시 중인지
-  String _searchQuery = ''; // 현재 검색어
-
-  // 피드 필터 상태
-  bool _isShowingFriendsOnly = true; // 친구만 보기 여부 (기본: 친구글)
+  bool _isShowingSearchResults = false;
+  String _searchQuery = '';
 
   // 새로고침 시 배경 이미지 유지용
   String? _previousBackgroundImageUrl;
@@ -47,27 +67,66 @@ class HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
-    // 스플래시에서 전달된 선로딩 데이터를 즉시 반영
-    if (widget.preloadedPosts != null) {
-      _posts = List<PostData>.from(widget.preloadedPosts!);
-      _isLoading = false;
-      _hasMoreData = _posts.length == 10;
-      _currentPage = _posts.isNotEmpty ? 1 : 0; // 데이터가 있으면 다음 페이지부터 로드
-      print('[HomeScreen] Preloaded ${_posts.length} posts from splash');
+
+    // 수직 PageView 컨트롤러 초기화 (친구글부터 시작)
+    _sectionPageController = PageController(initialPage: 0);
+
+    // 스플래시에서 전달된 선로딩 데이터 반영
+    if (widget.preloadedHomeData != null) {
+      final homeData = widget.preloadedHomeData!;
+
+      // 친구글 데이터 설정
+      _friendsPosts = List<PostData>.from(homeData.friendsPosts);
+      _friendsIsLoading = false;
+      _friendsHasMoreData = _friendsPosts.length == 10;
+      _friendsCurrentPage = _friendsPosts.isNotEmpty ? 1 : 0;
+
+      // 전체글 데이터 설정
+      _allPosts = List<PostData>.from(homeData.allPosts);
+      _allIsLoading = false;
+      _allHasMoreData = _allPosts.length == 10;
+      _allCurrentPage = _allPosts.isNotEmpty ? 1 : 0;
+
+      print(
+        '[HomeScreen] 스플래시에서 프리로드된 데이터: 친구글 ${_friendsPosts.length}개, 전체글 ${_allPosts.length}개',
+      );
     }
 
-    print('[HomeScreen] initState: ${widget.preloadedPosts?.length}');
+    print(
+      '[HomeScreen] initState: 친구글 ${_friendsPosts.length}개, 전체글 ${_allPosts.length}개',
+    );
+
+    // 네트워크 에러는 API 요청 시점에서만 처리
+
+    // 백그라운드에서 필요한 데이터 로드 (인스타그램 방식)
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      // 프로필 로드 (스플래시에서 하지 않음)
+      print('[HomeScreen] 프로필 백그라운드 로드 시작');
+      _loadProfileSafely();
+
+      // 친구글이 비어있으면 로드 (스플래시에서 로드되지 않은 경우)
+      if (_friendsPosts.isEmpty) {
+        print('[HomeScreen] 친구글 백그라운드 로드 시작');
+        _loadFriendsPosts();
+      }
+
+      // 전체글이 비어있으면 로드 (스플래시에서 로드되지 않은 경우)
+      if (_allPosts.isEmpty) {
+        print('[HomeScreen] 전체글 백그라운드 로드 시작');
+        _loadAllPosts();
+      }
+    });
 
     // 다음 프레임에서 검색 결과 확인
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      final searchResultProvider = context.read<SearchResultProvider>();
+      final searchResultProvider = context.read<SearchProvider>();
       if (searchResultProvider.hasSearchResults) {
         setState(() {
-          _posts = searchResultProvider.searchResults;
+          _friendsPosts = searchResultProvider.searchResults;
           _searchQuery = searchResultProvider.searchQuery;
           _isShowingSearchResults = true;
-          _isLoading = false;
-          _hasMoreData = false;
+          _friendsIsLoading = false;
+          _friendsHasMoreData = false;
         });
       }
 
@@ -84,14 +143,27 @@ class HomeScreenState extends State<HomeScreen> {
     });
   }
 
-  // 검색 결과 설정 (외부에서 호출)
+  @override
+  void dispose() {
+    _sectionPageController.dispose();
+    super.dispose();
+  }
+
+  // 검색 결과 설정 (외부에서 호출) - 현재 섹션에 설정
   void setSearchResults(List<PostData> results, String query) {
     if (mounted) {
       setState(() {
-        _posts = results;
+        if (_currentSectionIndex == 0) {
+          // 친구글 섹션
+          _friendsPosts = results;
+          _friendsCurrentPostIndex = 0;
+        } else {
+          // 전체글 섹션
+          _allPosts = results;
+          _allCurrentPostIndex = 0;
+        }
         _isShowingSearchResults = true;
         _searchQuery = query;
-        _currentPostIndex = 0;
       });
     }
   }
@@ -127,11 +199,14 @@ class HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  void _resetFeed({bool showLoading = true}) {
+  void _resetFriendsFeed({bool showLoading = true}) {
     // 새로고침 시 현재 배경 이미지를 이전 이미지로 저장
-    if (_posts.isNotEmpty) {
-      final safeIndex = _currentPostIndex.clamp(0, _posts.length - 1);
-      final currentPost = _posts[safeIndex];
+    if (_friendsPosts.isNotEmpty && _currentSectionIndex == 0) {
+      final safeIndex = _friendsCurrentPostIndex.clamp(
+        0,
+        _friendsPosts.length - 1,
+      );
+      final currentPost = _friendsPosts[safeIndex];
       final String imageUrl = currentPost.thumbnailImageUrl.trim();
       if (imageUrl.startsWith('http')) {
         _previousBackgroundImageUrl = imageUrl;
@@ -139,88 +214,250 @@ class HomeScreenState extends State<HomeScreen> {
     }
 
     setState(() {
-      _posts = [];
-      _currentPage = 0;
-      _hasMoreData = true;
-      _isLoading = showLoading;
-      _isLoadingMore = false;
-      _error = null;
-      _currentPostIndex = 0;
-      _isCardShimmering = false;
+      _friendsPosts = [];
+      _friendsCurrentPage = 0;
+      _friendsHasMoreData = true;
+      _friendsIsLoading = showLoading;
+      _friendsIsLoadingMore = false;
+      _friendsError = null;
+      _friendsCurrentPostIndex = 0;
+      _friendsIsCardShimmering = false;
       _isShowingSearchResults = false;
+      _friendsRefreshCount++; // 리프레시 카운터 증가
     });
   }
 
-  Future<void> _loadPosts({bool refresh = false}) async {
+  void _resetAllFeed({bool showLoading = true}) {
+    // 새로고침 시 현재 배경 이미지를 이전 이미지로 저장
+    if (_allPosts.isNotEmpty && _currentSectionIndex == 1) {
+      final safeIndex = _allCurrentPostIndex.clamp(0, _allPosts.length - 1);
+      final currentPost = _allPosts[safeIndex];
+      final String imageUrl = currentPost.thumbnailImageUrl.trim();
+      if (imageUrl.startsWith('http')) {
+        _previousBackgroundImageUrl = imageUrl;
+      }
+    }
+
+    setState(() {
+      _allPosts = [];
+      _allCurrentPage = 0;
+      _allHasMoreData = true;
+      _allIsLoading = showLoading;
+      _allIsLoadingMore = false;
+      _allError = null;
+      _allCurrentPostIndex = 0;
+      _allIsCardShimmering = false;
+      _isShowingSearchResults = false;
+      _allRefreshCount++; // 리프레시 카운터 증가
+    });
+  }
+
+  Future<void> _loadProfileSafely() async {
+    try {
+      await context.read<UserProvider>().fetchMyProfile();
+      print('[HomeScreen] 프로필 로드 성공');
+    } catch (e) {
+      print('[HomeScreen] 프로필 로드 실패: $e');
+      // 프로필 로드 실패해도 계속 진행 (UI에 영향 없음)
+    }
+  }
+
+  Future<void> _retryFriendsPosts() async {
+    setState(() {
+      _friendsIsRetrying = true;
+      _friendsError = null; // 에러 상태만 클리어 (데이터는 유지)
+    });
+
+    try {
+      // refresh=false로 호출해서 reset하지 않음
+      await _loadFriendsPosts(refresh: false);
+      // 재시도 후 0.5초 딜레이
+      await Future.delayed(const Duration(milliseconds: 500));
+    } finally {
+      setState(() {
+        _friendsIsRetrying = false;
+      });
+    }
+  }
+
+  Future<void> _retryAllPosts() async {
+    setState(() {
+      _allIsRetrying = true;
+      _allError = null; // 에러 상태만 클리어 (데이터는 유지)
+    });
+
+    try {
+      // refresh=false로 호출해서 reset하지 않음
+      await _loadAllPosts(refresh: false);
+      // 재시도 후 0.5초 딜레이
+      await Future.delayed(const Duration(milliseconds: 500));
+    } finally {
+      setState(() {
+        _allIsRetrying = false;
+      });
+    }
+  }
+
+  Future<void> _loadFriendsPosts({bool refresh = false}) async {
     // 검색 결과 표시 중에는 로드하지 않음
     if (_isShowingSearchResults && !refresh) return;
 
     try {
       if (refresh) {
-        _resetFeed(showLoading: true); // 완전 청소 후 로딩 표시
-      } else {
+        _resetFriendsFeed(showLoading: true);
+      } else if (!_friendsIsRetrying) {
+        // 재시도 중이 아닐 때만 로딩 상태 변경
         setState(() {
-          _isLoading = _posts.isEmpty; // 처음 진입 시 전체 로딩
-          _error = null;
+          _friendsIsLoading = _friendsPosts.isEmpty;
+          _friendsError = null;
         });
       }
 
-      final int token = ++_loadTick; // 응답 토큰 발급
+      final int token = ++_friendsLoadTick;
 
-      // 필터에 따라 다른 엔드포인트 호출
-      final serverData =
-          _isShowingFriendsOnly
-              ? await _blogService.getFriendsPosts(page: _currentPage, size: 10)
-              : await _blogService.getRecommendedPosts(
-                page: _currentPage,
-                size: 10,
-              );
-      final posts =
-          serverData.map((data) => PostData.fromServer(data)).toList();
+      // FeedDataService를 사용하여 캐시 우선 로드
+      final posts = await _homeDataService.loadFriendsPosts(
+        page: _friendsCurrentPage,
+        size: 10,
+        refresh: refresh,
+      );
 
-      // 전환 전에 썸네일 이미지 프리캐싱 (상위 몇 개)
-      await _precacheImages(posts.take(3).toList());
+      // 이미지 프리캐싱
+      if (posts.isNotEmpty) {
+        await _homeDataService.precacheImages(posts.take(3).toList(), context);
+      }
 
-      if (token != _loadTick) return; // 최신 요청이 아니면 무시
+      if (token != _friendsLoadTick) return;
 
       setState(() {
         if (refresh) {
-          _posts = posts;
-          // 새로고침 완료 후 이전 배경 이미지 정리
+          _friendsPosts = posts;
           _previousBackgroundImageUrl = null;
         } else {
-          _posts.addAll(posts);
+          _friendsPosts.addAll(posts);
         }
-        _isLoading = false;
-        _isLoadingMore = false;
-        _hasMoreData = posts.length == 10; // 10개 미만이면 더 이상 데이터 없음
-        _currentPage++;
-        _isCardShimmering = false; // 로드 완료 후 카드 쉬머 해제
+        _friendsIsLoading = false;
+        _friendsIsLoadingMore = false;
+        _friendsHasMoreData = posts.length == 10;
+        _friendsCurrentPage++;
+        _friendsIsCardShimmering = false;
+        _friendsError = null; // 성공 시 에러 클리어
       });
+
+      print(
+        '[HomeScreen] 친구글 로드 성공: ${posts.length}개 (페이지 ${_friendsCurrentPage - 1})',
+      );
     } catch (e) {
-      print('[HomeScreen] Error loading posts: $e');
+      final networkError = NetworkUtils.parseError(e);
+      print('[HomeScreen] 친구글 로드 실패: ${networkError.message}');
+
       setState(() {
-        _error = e.toString();
-        _isLoading = false;
-        _isLoadingMore = false;
-        // 서버 오류 시 빈 리스트 유지
+        _friendsError = networkError;
+        _friendsIsLoading = false;
+        _friendsIsLoadingMore = false;
       });
     }
   }
 
-  Future<void> _loadMorePosts() async {
-    if (_isLoadingMore || !_hasMoreData || _isShowingSearchResults) return;
+  Future<void> _loadMoreFriendsPosts() async {
+    if (_friendsIsLoadingMore ||
+        !_friendsHasMoreData ||
+        _isShowingSearchResults)
+      return;
 
     setState(() {
-      _isLoadingMore = true;
+      _friendsIsLoadingMore = true;
     });
 
-    await _loadPosts();
+    await _loadFriendsPosts();
+  }
+
+  Future<void> _loadAllPosts({bool refresh = false}) async {
+    print(
+      '[HomeScreen] _loadAllPosts 시작 - refresh: $refresh, 현재 데이터: ${_allPosts.length}개',
+    );
+
+    // 검색 결과 표시 중에는 로드하지 않음
+    if (_isShowingSearchResults && !refresh) return;
+
+    try {
+      if (refresh) {
+        _resetAllFeed(showLoading: true);
+      } else if (!_allIsRetrying) {
+        // 재시도 중이 아닐 때만 로딩 상태 변경
+        setState(() {
+          _allIsLoading = _allPosts.isEmpty;
+          _allError = null;
+        });
+      }
+
+      final int token = ++_allLoadTick;
+
+      // FeedDataService를 사용하여 캐시 우선 로드
+      final posts = await _homeDataService.loadAllPosts(
+        page: _allCurrentPage,
+        size: 10,
+        refresh: refresh,
+      );
+
+      // 이미지 프리캐싱
+      if (posts.isNotEmpty) {
+        await _homeDataService.precacheImages(posts.take(3).toList(), context);
+      }
+
+      if (token != _allLoadTick) return;
+
+      setState(() {
+        if (refresh) {
+          _allPosts = posts;
+          _previousBackgroundImageUrl = null;
+        } else {
+          _allPosts.addAll(posts);
+        }
+        _allIsLoading = false;
+        _allIsLoadingMore = false;
+        _allHasMoreData = posts.length == 10;
+        _allCurrentPage++;
+        _allIsCardShimmering = false;
+        _allError = null; // 성공 시 에러 클리어
+      });
+
+      print(
+        '[HomeScreen] 전체글 로드 성공: ${posts.length}개 (페이지 ${_allCurrentPage - 1})',
+      );
+    } catch (e) {
+      final networkError = NetworkUtils.parseError(e);
+      print('[HomeScreen] 전체글 로드 실패: ${networkError.message}');
+
+      setState(() {
+        _allError = networkError;
+        _allIsLoading = false;
+        _allIsLoadingMore = false;
+      });
+    }
+  }
+
+  Future<void> _loadMoreAllPosts() async {
+    if (_allIsLoadingMore || !_allHasMoreData || _isShowingSearchResults)
+      return;
+
+    setState(() {
+      _allIsLoadingMore = true;
+    });
+
+    await _loadAllPosts();
   }
 
   Widget _buildDynamicBackground() {
+    // 현재 섹션의 포스트 가져오기
+    final currentPosts = _currentSectionIndex == 0 ? _friendsPosts : _allPosts;
+    final currentPostIndex =
+        _currentSectionIndex == 0
+            ? _friendsCurrentPostIndex
+            : _allCurrentPostIndex;
+
     // 새로고침 중이고 이전 배경 이미지가 있으면 그것을 사용
-    if (_posts.isEmpty && _previousBackgroundImageUrl != null) {
+    if (currentPosts.isEmpty && _previousBackgroundImageUrl != null) {
       return Positioned.fill(
         child: Stack(
           children: [
@@ -267,11 +504,11 @@ class HomeScreenState extends State<HomeScreen> {
       );
     }
 
-    if (_posts.isEmpty) return const SizedBox.shrink();
+    if (currentPosts.isEmpty) return const SizedBox.shrink();
 
     // 안전한 인덱스 범위 체크
-    final safeIndex = _currentPostIndex.clamp(0, _posts.length - 1);
-    final currentPost = _posts[safeIndex];
+    final safeIndex = currentPostIndex.clamp(0, currentPosts.length - 1);
+    final currentPost = currentPosts[safeIndex];
     final String imageUrl = currentPost.thumbnailImageUrl.trim();
 
     final bool isNetwork = imageUrl.startsWith('http');
@@ -296,31 +533,37 @@ class HomeScreenState extends State<HomeScreen> {
                     )
                     : SizedBox.shrink(),
           ),
-          Positioned.fill(
-            child: BackdropFilter(
-              filter: ui.ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-              child: Container(
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                    colors: [
-                      Theme.of(
-                        context,
-                      ).colorScheme.background.withOpacity(0.75),
-                      Theme.of(
-                        context,
-                      ).colorScheme.background.withOpacity(0.75),
-                      Theme.of(
-                        context,
-                      ).colorScheme.background.withOpacity(0.75),
-                    ],
-                    stops: const [0.0, 0.7, 1.0],
+          Theme.of(context).brightness == Brightness.dark
+              ? Positioned.fill(
+                child: BackdropFilter(
+                  filter: ui.ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+                  child: Container(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [
+                          Theme.of(
+                            context,
+                          ).colorScheme.background.withOpacity(0.85),
+                          Theme.of(
+                            context,
+                          ).colorScheme.background.withOpacity(0.85),
+                          Theme.of(
+                            context,
+                          ).colorScheme.background.withOpacity(0.85),
+                        ],
+                        stops: const [0.0, 0.7, 1.0],
+                      ),
+                    ),
                   ),
                 ),
+              )
+              : Positioned.fill(
+                child: Container(
+                  color: Theme.of(context).colorScheme.background,
+                ),
               ),
-            ),
-          ),
         ],
       ),
     );
@@ -335,239 +578,196 @@ class HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _buildContent(double screenWidth) {
-    // 데이터가 준비되어 있다면 애니메이션 없이 즉시 렌더링
-    if (!_isLoading && _error == null && _posts.isNotEmpty) {
-      return PostList(
-        containerWidth: screenWidth,
-        posts: _posts,
-        onLoadMore:
-            (_hasMoreData && !_isShowingSearchResults) ? _loadMorePosts : null,
-        isLoadingMore: _isLoadingMore,
-        onRefresh: () => _loadPosts(refresh: true),
-        showCardShimmer: _isCardShimmering,
-        onPageChanged: (index) {
-          setState(() {
-            _currentPostIndex = index;
-          });
-        },
-        isShowingSearchResults: _isShowingSearchResults,
-        searchQuery: _searchQuery,
-        onSearchChipTap: () => openSearchOverlay(initialQuery: _searchQuery),
-        onClearSearch: () {
-          // Provider 클리어
-          context.read<SearchResultProvider>().clearSearchResults();
+  void _handleSectionSwitch() async {
+    // 현재 페이지에서 다음 페이지로 (무한 스크롤)
+    final currentPage = _sectionPageController.page?.round() ?? 0;
+    final nextPage = currentPage + 1;
 
-          setState(() {
-            _isShowingSearchResults = false;
-            _searchQuery = '';
-            _currentPostIndex = 0;
-          });
-          // 홈 포스트 다시 로드
-          _loadPosts(refresh: true);
-        },
-        isShowingFriendsOnly: _isShowingFriendsOnly,
-        onFilterTap: () {
-          FeedFilterDropdown.show(
-            context,
-            isShowingFriendsOnly: _isShowingFriendsOnly,
-            onFilterChanged: (showFriendsOnly) {
-              _resetFeed(showLoading: true);
-              _isShowingFriendsOnly = showFriendsOnly;
-              _loadPosts(refresh: true); // 완전 새로고침
-            },
-          );
-        },
+    print('[HomeScreen] 섹션 전환: 페이지 $currentPage → $nextPage');
+
+    // 다음 섹션 데이터가 비어있으면 미리 로드
+    final nextActualIndex = nextPage % 2;
+    if (nextActualIndex == 0 && _friendsPosts.isEmpty && !_friendsIsLoading) {
+      print('[HomeScreen] 친구글 미리 로드');
+      _loadFriendsPosts();
+    } else if (nextActualIndex == 1 && _allPosts.isEmpty && !_allIsLoading) {
+      print('[HomeScreen] 전체글 미리 로드');
+      _loadAllPosts();
+    }
+
+    // 앱바 페이드 아웃
+    setState(() {
+      _appBarOpacity = 0.0;
+    });
+
+    // 페이지 전환
+    await _sectionPageController.animateToPage(
+      nextPage,
+      duration: Duration(milliseconds: 400),
+      curve: Curves.easeInOut,
+    );
+
+    if (mounted) {
+      setState(() {
+        _appBarOpacity = 1.0;
+
+        // 배경 이미지를 새로운 섹션의 첫 번째 포스트로 변경
+        if (nextActualIndex == 0) {
+          // 친구글로 전환 - 첫 번째 포스트로 인덱스 설정
+          _friendsCurrentPostIndex = 0;
+        } else {
+          // 전체글로 전환 - 첫 번째 포스트로 인덱스 설정
+          _allCurrentPostIndex = 0;
+        }
+      });
+    }
+  }
+
+  Widget _buildContent(double screenWidth) {
+    // 무한 루프 PageView로 친구글/전체글 섹션 구성
+    // 위로만 스크롤 가능 (한 방향)
+    return PageView.builder(
+      controller: _sectionPageController,
+      scrollDirection: Axis.vertical,
+      physics: NeverScrollableScrollPhysics(), // 제스처 비활성화 (프로그래매틱하게만 전환)
+      onPageChanged: (index) {
+        final actualIndex = index % 2; // 0: 친구글, 1: 전체글
+        setState(() {
+          _currentSectionIndex = actualIndex;
+        });
+        print('[HomeScreen] 섹션 변경 완료: ${actualIndex == 0 ? "친구글" : "전체글"}');
+
+        // 섹션 전환 시 데이터가 비어있으면 자동 로드
+        if (actualIndex == 0 && _friendsPosts.isEmpty && !_friendsIsLoading) {
+          print('[HomeScreen] 친구글이 비어있음 - 자동 로드');
+          _loadFriendsPosts();
+        } else if (actualIndex == 1 && _allPosts.isEmpty && !_allIsLoading) {
+          print('[HomeScreen] 전체글이 비어있음 - 자동 로드');
+          _loadAllPosts();
+        }
+      },
+      itemBuilder: (context, index) {
+        final actualIndex = index % 2;
+        return actualIndex == 0
+            ? _buildFriendsSection(screenWidth)
+            : _buildAllPostsSection(screenWidth);
+      },
+    );
+  }
+
+  Widget _buildFriendsSection(double screenWidth) {
+    // 에러 상태 표시 (재시도 중이거나 에러가 있고 데이터가 비어있을 때)
+    if ((_friendsError != null || _friendsIsRetrying) &&
+        _friendsPosts.isEmpty &&
+        !_friendsIsLoading) {
+      return ErrorStateWidget(
+        error:
+            _friendsError ??
+            NetworkError(
+              type: NetworkErrorType.noConnection,
+              message: '오프라인 상태에요!',
+              userMessage: '오프라인 상태에요!',
+              isRetryable: true,
+            ),
+        onRetry: _retryFriendsPosts,
+        customTitle: '친구글을 불러올 수 없습니다',
+        isRetrying: _friendsIsRetrying,
       );
     }
 
-    final Widget child =
-        (_error != null)
-            ? _buildError()
-            : (_isLoading)
-            ? PostList(
-              containerWidth: screenWidth,
-              posts: _posts,
-              onLoadMore: null,
-              isLoadingMore: false,
-              onRefresh: () => _loadPosts(refresh: true),
-              showCardShimmer: true,
-              onPageChanged: (index) {
-                setState(() {
-                  _currentPostIndex = index;
-                });
-              },
-              isShowingSearchResults: _isShowingSearchResults,
-              searchQuery: _searchQuery,
-              onSearchChipTap:
-                  () => openSearchOverlay(initialQuery: _searchQuery),
-              onClearSearch: () {
-                // Provider 클리어
-                context.read<SearchResultProvider>().clearSearchResults();
-
-                setState(() {
-                  _isShowingSearchResults = false;
-                  _searchQuery = '';
-                  _currentPostIndex = 0;
-                });
-                // 홈 포스트 다시 로드
-                _loadPosts(refresh: true);
-              },
-              isShowingFriendsOnly: _isShowingFriendsOnly,
-              onFilterTap: () {
-                FeedFilterDropdown.show(
-                  context,
-                  isShowingFriendsOnly: _isShowingFriendsOnly,
-                  onFilterChanged: (showFriendsOnly) {
-                    _resetFeed(showLoading: true);
-                    _isShowingFriendsOnly = showFriendsOnly;
-                    _loadPosts(refresh: true); // 완전 새로고침
-                  },
-                );
-              },
-            )
-            : (_posts.isEmpty)
-            ? (() {
-              print('[HomeScreen._buildContent] 포스트 비어있음 → EmptyPostList 표시');
-              return _buildEmptyResult();
-            })()
-            : PostList(
-              containerWidth: screenWidth,
-              posts: _posts,
-              onLoadMore:
-                  (_hasMoreData && !_isShowingSearchResults)
-                      ? _loadMorePosts
-                      : null,
-              isLoadingMore: _isLoadingMore,
-              onRefresh: () => _loadPosts(refresh: true),
-              showCardShimmer: _isCardShimmering,
-              onPageChanged: (index) {
-                setState(() {
-                  _currentPostIndex = index;
-                });
-              },
-            );
-
-    return AnimatedSwitcher(
-      duration: const Duration(milliseconds: 1200),
-      switchInCurve: Curves.easeOutCubic,
-      switchOutCurve: Curves.easeInCubic,
-      transitionBuilder: (child, animation) {
-        final curved = CurvedAnimation(
-          parent: animation,
-          curve: Curves.easeInOutCubic,
-        );
-        final scale = Tween<double>(begin: 0.98, end: 1.0).animate(curved);
-        final fade = Tween<double>(begin: 0.0, end: 1.0).animate(curved);
-        return FadeTransition(
-          opacity: fade,
-          child: ScaleTransition(scale: scale, child: child),
-        );
+    return PostList(
+      key: ValueKey('friends-${_friendsRefreshCount}'),
+      containerWidth: screenWidth,
+      posts: _friendsPosts,
+      onLoadMore:
+          (_friendsHasMoreData && !_isShowingSearchResults)
+              ? _loadMoreFriendsPosts
+              : null,
+      isLoadingMore: _friendsIsLoadingMore,
+      onRefresh: () => _loadFriendsPosts(refresh: true),
+      showCardShimmer: _friendsIsCardShimmering,
+      onPageChanged: (index) {
+        setState(() {
+          _friendsCurrentPostIndex = index;
+        });
       },
-      child: KeyedSubtree(
-        key: ValueKey('${_isLoading}_${_error != null}_${_posts.length}'),
-        child: child,
-      ),
+      isShowingSearchResults: _isShowingSearchResults,
+      searchQuery: _searchQuery,
+      onSearchChipTap: () => openSearchOverlay(initialQuery: _searchQuery),
+      onClearSearch: () {
+        context.read<SearchProvider>().clearSearchResults();
+        setState(() {
+          _isShowingSearchResults = false;
+          _searchQuery = '';
+          _friendsCurrentPostIndex = 0;
+        });
+        _loadFriendsPosts(refresh: true);
+      },
+      isShowingFriendsOnly: true,
+      onFilterTap: _handleSectionSwitch,
+      showAppBar: true,
+      sectionLabel: '친구글',
+      appBarOpacity: _appBarOpacity, // 앱바 투명도 전달
+      networkError: _friendsError, // 에러 상태 전달
+      onRetryError: () => _loadFriendsPosts(refresh: true), // 에러 재시도 콜백
     );
   }
 
-  Future<void> _precacheImages(List<PostData> posts) async {
-    final List<Future<void>> futures = [];
-    for (final p in posts) {
-      final url = p.thumbnailImageUrl.trim();
-      if (url.isEmpty) continue;
-      futures.add(precacheImage(NetworkImage(url), context).catchError((_) {}));
+  Widget _buildAllPostsSection(double screenWidth) {
+    // 에러 상태 표시 (재시도 중이거나 에러가 있고 데이터가 비어있을 때)
+    if ((_allError != null || _allIsRetrying) &&
+        _allPosts.isEmpty &&
+        !_allIsLoading) {
+      return ErrorStateWidget(
+        error:
+            _allError ??
+            NetworkError(
+              type: NetworkErrorType.noConnection,
+              message: '오프라인 상태에요!',
+              userMessage: '오프라인 상태에요!',
+              isRetryable: true,
+            ),
+        onRetry: _retryAllPosts,
+        customTitle: '추천글을 불러올 수 없습니다',
+        isRetrying: _allIsRetrying,
+      );
     }
-    if (futures.isNotEmpty) {
-      try {
-        await Future.wait(futures);
-      } catch (_) {}
-    }
-  }
 
-  Widget _buildError() {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 24),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            // 커스텀 에러 아이콘 (원형 배경)
-            Container(
-              width: 80,
-              height: 80,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: Colors.red.withOpacity(0.1),
-              ),
-              child: const Center(
-                child: Icon(
-                  Icons.wifi_off_rounded,
-                  color: Colors.red,
-                  size: 40,
-                ),
-              ),
-            ),
-            const SizedBox(height: 24),
-            Text(
-              '연결 상태를 확인해주세요',
-              style: TextStyle(
-                color: Theme.of(context).colorScheme.onSurface,
-                fontSize: 20,
-                fontWeight: FontWeight.w600,
-                letterSpacing: -0.5,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              '네트워크 연결이 불안정하거나\n서버에 접속할 수 없습니다',
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
-                fontSize: 15,
-                height: 1.4,
-                letterSpacing: -0.3,
-              ),
-            ),
-            const SizedBox(height: 32),
-            // 세련된 재시도 버튼
-            SizedBox(
-              width: 160,
-              height: 48,
-              child: ElevatedButton(
-                onPressed: _loadPosts,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Theme.of(context).colorScheme.primary,
-                  foregroundColor: Colors.white,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(24),
-                  ),
-                  elevation: 0,
-                ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    const Icon(Icons.refresh_rounded, size: 20),
-                    const SizedBox(width: 8),
-                    Text(
-                      '다시 시도',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
-                        letterSpacing: -0.5,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
+    return PostList(
+      key: ValueKey('all-${_allRefreshCount}'),
+      containerWidth: screenWidth,
+      posts: _allPosts,
+      onLoadMore:
+          (_allHasMoreData && !_isShowingSearchResults)
+              ? _loadMoreAllPosts
+              : null,
+      isLoadingMore: _allIsLoadingMore,
+      onRefresh: () => _loadAllPosts(refresh: true),
+      showCardShimmer: _allIsCardShimmering,
+      onPageChanged: (index) {
+        setState(() {
+          _allCurrentPostIndex = index;
+        });
+      },
+      isShowingSearchResults: _isShowingSearchResults,
+      searchQuery: _searchQuery,
+      onSearchChipTap: () => openSearchOverlay(initialQuery: _searchQuery),
+      onClearSearch: () {
+        context.read<SearchProvider>().clearSearchResults();
+        setState(() {
+          _isShowingSearchResults = false;
+          _searchQuery = '';
+          _allCurrentPostIndex = 0;
+        });
+        _loadAllPosts(refresh: true);
+      },
+      isShowingFriendsOnly: false,
+      onFilterTap: _handleSectionSwitch,
+      showAppBar: true,
+      sectionLabel: '전체글',
+      appBarOpacity: _appBarOpacity, // 앱바 투명도 전달
+      networkError: _allError, // 에러 상태 전달
+      onRetryError: () => _loadAllPosts(refresh: true), // 에러 재시도 콜백
     );
-  }
-
-  Widget _buildEmptyResult() {
-    return EmptyPostList();
   }
 }
