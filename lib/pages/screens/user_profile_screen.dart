@@ -2,11 +2,11 @@ import 'package:doppy/pages/components/common_profile_avatar.dart';
 import 'package:doppy/pages/components/comps_for_profile/category_drop_down.dart';
 import 'package:doppy/pages/components/comps_for_profile/feed.dart';
 import 'package:doppy/pages/components/custom_refresh_indicator.dart';
-import 'package:doppy/pages/components/error_state_widget.dart';
 import 'package:doppy/providers/feed_provider/feed_ui_service.dart';
 import 'package:doppy/pages/screens/manage_group_screen.dart';
 import 'package:doppy/pages/user/setting_screen.dart';
 import 'package:doppy/providers/feed_provider/other_profile_feed_provider.dart';
+import 'package:doppy/utils/network_utils.dart';
 import 'package:doppy/utils/error_handler.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -19,6 +19,7 @@ import 'package:doppy/data/models/user_model.dart';
 import 'package:doppy/editor/image/profile_image_bottom_sheet.dart';
 import 'dart:io';
 import 'dart:ui';
+import 'dart:async';
 
 class UserProfileScreen extends StatefulWidget {
   final User? otherUser; // 다른 사용자 프로필을 볼 때 username 전달
@@ -47,8 +48,8 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
   final GlobalKey _categoryButtonKey = GlobalKey();
   static bool _prefetchedFriendsOnce = false; // 첫 진입 1회만 프리캐싱
   double _pullProgress = 0.0; // 당기는 진행률 (0.0 ~ 1.0)
-  bool _friendStatusChecked = false; // 친구 상태 1회 확인 완료 여부
   Future<void>? _friendStatusFuture; // 친구 상태 초기 확인 Future (빌드 내 로딩 제어)
+  VoidCallback? _disconnectHandler; // 코디네이터 해제용
 
   // 프로필 편집용 TextEditingController
   final TextEditingController _nameController = TextEditingController();
@@ -98,11 +99,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
         _friendStatusFuture = friendProvider
             .checkFriendStatus(widget.otherUser!.username)
             .whenComplete(() {
-              if (mounted) {
-                setState(() {
-                  _friendStatusChecked = true;
-                });
-              }
+              // 상태 플래그 제거: 더 이상 사용하지 않음
             });
       } catch (_) {}
     }
@@ -112,18 +109,58 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
 
     // 이 코드 하나로 모든 데이터 로딩이 시작됩니다.
     WidgetsBinding.instance.addPostFrameCallback((_) async {
-      if (_isOwnProfile) {
-        // 내 프로필에 필요한 데이터 로딩
-      } else {}
-      // 프로필 피드 초기 로드
+      // 시스템 네트워크 변화 구독 시작 (중복 호출 안전)
+      try {
+        NetworkManager.initConnectivityMonitor();
+      } catch (_) {}
+      // 오프라인 대비: 로컬 캐시된 사용자 정보 임시 로드
+      try {
+        await context.read<UserProvider>().loadCurrentUserFromPrefs();
+      } catch (_) {}
+
+      // 프로필 피드 초기 로드 (캐시가 있을 때는 요청 생략)
       try {
         final bool isOther = !_isOwnProfile;
-        await _feedProvider.loadInitial(
-          username: isOther ? widget.otherUser!.username : null,
-          force: false, // 스마트 캐시 전략 사용 (3분 TTL)
-        );
+        final bool hasCachedData =
+            _feedProvider.categories.isNotEmpty ||
+            _feedProvider.posts.isNotEmpty;
+        if (!hasCachedData) {
+          await _feedProvider.loadInitial(
+            username: isOther ? widget.otherUser!.username : null,
+            force: false, // 스마트 캐시 전략 사용 (3분 TTL)
+          );
+        }
       } catch (_) {}
     });
+
+    // 전역 코디네이터에 등록: 온라인 시 단발 갱신
+    _disconnectHandler = ConnectivityReloadCoordinator().registerHandler(
+      id: 'profile',
+      onOnline: () async {
+        if (!mounted) return;
+        // 캐시 사용자 정보가 비어있으면 먼저 프로필 정보를 로드
+        if (_isOwnProfile) {
+          final me = context.read<UserProvider>().currentUser;
+          final bool missing =
+              me == null ||
+              (((me.alias ?? '').isEmpty) &&
+                  ((me.profileImageUrl ?? '').isEmpty) &&
+                  ((me.selfIntroduction ?? '').isEmpty));
+          if (missing) {
+            try {
+              await context.read<UserProvider>().fetchMyProfile();
+            } catch (_) {}
+          }
+        }
+        // 자동 데이터 가져오기 시, 이미 내용이 있으면 추가 요청 보내지 않음
+        final bool hasFeedData =
+            _feedProvider.categories.isNotEmpty ||
+            _feedProvider.posts.isNotEmpty;
+        if (!hasFeedData) {
+          await _handleRefresh();
+        }
+      },
+    );
   }
 
   @override
@@ -135,6 +172,10 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
   Future<void> _handleRefresh() async {
     try {
       final bool isOther = !_isOwnProfile;
+      // 새로고침 시 프로바이더 캐시를 먼저 비운다 (강제 재로딩 보장)
+      try {
+        _feedProvider.clearInMemory();
+      } catch (_) {}
       await _feedProvider.loadInitial(
         username: isOther ? widget.otherUser!.username : null,
         force: true, // 강제로 새로 로드
@@ -157,6 +198,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     _scrollController.dispose();
     _nameController.dispose();
     _descriptionController.dispose();
+    _disconnectHandler?.call();
     if (_profileUploadTask != null && _profileTaskListener != null) {
       _profileUploadTask!.removeListener(_profileTaskListener!);
     }
@@ -237,30 +279,42 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                             title: Opacity(
                               opacity: 1.0 - _pullProgress,
                               child: Row(
+                                mainAxisAlignment: MainAxisAlignment.start,
                                 children: [
                                   if (isOther)
                                     GestureDetector(
-                                      child: Icon(
-                                        Icons.arrow_back_ios_new,
-                                        size: 20,
-                                        color: Theme.of(context)
-                                            .colorScheme
-                                            .onSurface
-                                            .withOpacity(0.8),
+                                      child: Padding(
+                                        padding: const EdgeInsets.only(top: 1),
+                                        child: Row(
+                                          children: [
+                                            Icon(
+                                              Icons.arrow_back_ios_new_rounded,
+                                              color:
+                                                  Theme.of(
+                                                            context,
+                                                          ).brightness ==
+                                                          Brightness.dark
+                                                      ? Colors.white
+                                                          .withOpacity(0.9)
+                                                      : Colors.black
+                                                          .withOpacity(0.9),
+                                              size: 20,
+                                            ),
+                                            SizedBox(width: 8),
+                                          ],
+                                        ),
                                       ),
+
                                       onTap: () => Navigator.of(context).pop(),
                                     ),
-                                  Padding(
-                                    padding: EdgeInsets.only(
-                                      left: isOther ? 20.0 : 5.0,
-                                      bottom: 3.0,
-                                    ),
-                                    child: Text(
-                                      _displayUsername,
-                                      style: TextStyle(
-                                        fontWeight: FontWeight.bold,
-                                        fontSize: 24,
-                                      ),
+                                  Text(
+                                    _displayUsername,
+                                    style: TextStyle(
+                                      fontSize: 21,
+                                      fontWeight: FontWeight.bold,
+                                      color: Theme.of(
+                                        context,
+                                      ).colorScheme.onSurface.withOpacity(1),
                                     ),
                                   ),
                                 ],
@@ -273,15 +327,16 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                                 child: Row(
                                   children: [
                                     if (_isOwnProfile) ...[
-                                      IconButton(
-                                        icon: Icon(
+                                      GestureDetector(
+                                        child: Icon(
                                           Icons.edit,
                                           color: Theme.of(context)
                                               .colorScheme
                                               .onSurface
-                                              .withOpacity(0.5),
+                                              .withOpacity(0.7),
+                                          size: 20,
                                         ),
-                                        onPressed: () {
+                                        onTap: () {
                                           me != null
                                               ? showProfileInfoEditBottomSheet(
                                                 me,
@@ -289,16 +344,18 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                                               : null;
                                         },
                                       ),
+                                      SizedBox(width: 12),
                                       // 설정 버튼
-                                      IconButton(
-                                        icon: Icon(
+                                      GestureDetector(
+                                        child: Icon(
                                           Icons.settings,
                                           color: Theme.of(context)
                                               .colorScheme
                                               .onSurface
-                                              .withOpacity(0.5),
+                                              .withOpacity(0.7),
+                                          size: 20,
                                         ),
-                                        onPressed: () {
+                                        onTap: () {
                                           Navigator.of(context).push(
                                             MaterialPageRoute(
                                               builder: (_) => SettingScreen(),
@@ -306,6 +363,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                                           );
                                         },
                                       ),
+                                      SizedBox(width: 12),
                                     ],
                                   ],
                                 ),
@@ -317,68 +375,76 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                               crossAxisAlignment: CrossAxisAlignment.center,
                               children: [
                                 const SizedBox(height: 50),
+
                                 // 원형 아바타 (텍스트 위에 위치)
-                                Column(
-                                  crossAxisAlignment: CrossAxisAlignment.center,
-                                  children: [
-                                    CommonProfileAvatar(
-                                      imageUrl: _displayImageUrl,
-                                      username: _displayUsername,
-                                      size: 150,
-                                      borderWidth: 2,
-                                      borderColor:
-                                          Theme.of(context).brightness ==
-                                                  Brightness.dark
-                                              ? Colors.grey.shade300
-                                              : Colors.grey.shade600,
-                                      isUploading: _isUploadingProfileImage,
-                                      onTap:
-                                          _isOwnProfile &&
-                                                  !_isUploadingProfileImage
-                                              ? _changeProfileImage
-                                              : null,
-                                    ),
-                                    const SizedBox(height: 30),
-                                    // 사용자 이름 (1차 스냅 이후 페이드아웃)
-                                    Text(
-                                      _displayAlias ?? _displayUsername,
-                                      style: TextStyle(
-                                        color:
-                                            Theme.of(
-                                              context,
-                                            ).colorScheme.onSurface,
-                                        fontSize: 36,
-                                        fontWeight: FontWeight.bold,
-                                        height: 1.1,
-                                      ),
-                                    ),
-                                  ],
+                                CommonProfileAvatar(
+                                  imageUrl: _displayImageUrl,
+                                  username: _displayUsername,
+                                  size: 150,
+                                  borderWidth: 2,
+                                  borderColor:
+                                      Theme.of(context).brightness ==
+                                              Brightness.dark
+                                          ? Colors.grey.shade300
+                                          : Colors.grey.shade600,
+                                  isUploading: _isUploadingProfileImage,
+                                  onTap:
+                                      _isOwnProfile && !_isUploadingProfileImage
+                                          ? _changeProfileImage
+                                          : null,
                                 ),
-                                const SizedBox(height: 4),
-                                Text(
-                                  isOther
-                                      ? (other?.selfIntroduction?.isNotEmpty ==
-                                              true
-                                          ? other!.selfIntroduction!
-                                          : _displayUsername)
-                                      : (me?.selfIntroduction?.isNotEmpty ==
-                                              true
-                                          ? me!.selfIntroduction!
-                                          : ''),
-                                  style: TextStyle(
-                                    color:
-                                        Theme.of(context).brightness ==
-                                                Brightness.dark
-                                            ? Theme.of(context)
-                                                .colorScheme
-                                                .onSurfaceVariant
-                                                .withOpacity(0.8)
-                                            : Colors.black,
-                                    fontSize: 14,
-                                    height: 1.3,
+
+                                const SizedBox(height: 20),
+                                GestureDetector(
+                                  onTap: () {
+                                    if (me != null) {
+                                      showProfileInfoEditBottomSheet(me);
+                                    }
+                                  },
+                                  child: Column(
+                                    children: [
+                                      Text(
+                                        _displayAlias ?? _displayUsername,
+                                        style: TextStyle(
+                                          color:
+                                              Theme.of(
+                                                context,
+                                              ).colorScheme.onSurface,
+                                          fontSize: 24,
+                                          fontWeight: FontWeight.bold,
+                                          height: 1.1,
+                                        ),
+                                      ),
+
+                                      const SizedBox(height: 5),
+                                      Text(
+                                        isOther
+                                            ? (other
+                                                        ?.selfIntroduction
+                                                        ?.isNotEmpty ==
+                                                    true
+                                                ? other!.selfIntroduction!
+                                                : _displayUsername)
+                                            : (me
+                                                        ?.selfIntroduction
+                                                        ?.isNotEmpty ==
+                                                    true
+                                                ? me!.selfIntroduction!
+                                                : ''),
+                                        style: TextStyle(
+                                          color: Theme.of(context)
+                                              .colorScheme
+                                              .onSurface
+                                              .withOpacity(0.8),
+
+                                          fontSize: 14,
+                                          height: 1.3,
+                                        ),
+                                        maxLines: 2,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ],
                                   ),
-                                  maxLines: 2,
-                                  overflow: TextOverflow.ellipsis,
                                 ),
 
                                 // 다른 사용자 프로필일 때만 친구 추가 버튼 표시
@@ -392,25 +458,25 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                           // Feed 컨텐츠 (네트워크 에러 처리 포함)
                           Consumer<BaseFeedProvider>(
                             builder: (context, feedProvider, _) {
-                              // 네트워크 에러가 있고 데이터가 없으면 에러 화면 표시
-                              if (feedProvider.networkError != null &&
-                                  feedProvider.categories.isEmpty) {
-                                return SliverFillRemaining(
-                                  hasScrollBody: false,
-                                  child: ErrorStateWidget(
-                                    error: feedProvider.networkError!,
-                                    onRetry: () {
-                                      _handleRefresh();
-                                    },
-                                    onPullProgress: (progress) {
-                                      setState(() {
-                                        _pullProgress = progress;
-                                      });
-                                    },
-                                  ),
-                                );
-                              }
+                              // 디버그 로그
+                              print('[UserProfileScreen] ==========');
+                              print(
+                                '[UserProfileScreen] networkError: ${feedProvider.networkError}',
+                              );
+                              print(
+                                '[UserProfileScreen] NetworkManager.isOnline: ${NetworkManager.isOnline}',
+                              );
+                              print(
+                                '[UserProfileScreen] categories: ${feedProvider.categories.length}',
+                              );
+                              print(
+                                '[UserProfileScreen] isLoading: ${feedProvider.isLoading}',
+                              );
 
+                              // 네트워크 에러 시에도 헤더는 유지하고,
+                              // 피드 영역 내부에서만 오프라인 메시지를 표시하도록 위임 (feed.dart에서 처리)
+
+                              print('[UserProfileScreen] 정상 상태 - Feed 표시');
                               // 정상 상태일 때 Feed 컨텐츠 표시
                               return _feed.buildFeedContent(
                                 scrollController: _scrollController,
@@ -452,7 +518,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
   SliverToBoxAdapter _buildFeedModeSwitcher() {
     return SliverToBoxAdapter(
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 10),
+        padding: const EdgeInsets.fromLTRB(12, 20, 12, 0),
         child: ValueListenableBuilder<FeedDisplayMode>(
           valueListenable: FeedDisplayModeManager(),
           builder: (context, displayMode, _) {
@@ -491,43 +557,55 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
 
         child: Container(
           margin: EdgeInsets.only(bottom: 8),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              _isOwnProfile
-                  ? Consumer<MyProfileFeedProvider>(
-                    builder:
-                        (context, provider, _) => Text(
-                          provider.selectedLabel,
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w300,
-                            color: Theme.of(
-                              context,
-                            ).colorScheme.onSurface.withOpacity(0.5),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(10),
+            color: Theme.of(context).colorScheme.onSurface.withOpacity(0.05),
+          ),
+
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                SizedBox(width: 8),
+                _isOwnProfile
+                    ? Consumer<MyProfileFeedProvider>(
+                      builder:
+                          (context, provider, _) => Text(
+                            provider.selectedLabel,
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w300,
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.onSurface.withOpacity(1),
+                            ),
                           ),
-                        ),
-                  )
-                  : Consumer<OtherProfileFeedProvider>(
-                    builder:
-                        (context, provider, _) => Text(
-                          provider.selectedLabel,
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w300,
-                            color: Theme.of(
-                              context,
-                            ).colorScheme.onSurface.withOpacity(0.5),
+                    )
+                    : Consumer<OtherProfileFeedProvider>(
+                      builder:
+                          (context, provider, _) => Text(
+                            provider.selectedLabel,
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w300,
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.onSurface.withOpacity(1),
+                            ),
                           ),
-                        ),
-                  ),
-              SizedBox(width: 4),
-              Icon(
-                Icons.keyboard_arrow_down,
-                size: 22,
-                color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
-              ),
-            ],
+                    ),
+                SizedBox(width: 4),
+                Icon(
+                  Icons.keyboard_arrow_down,
+                  size: 20,
+                  color: Theme.of(
+                    context,
+                  ).colorScheme.onSurface.withOpacity(0.8),
+                ),
+                SizedBox(width: 4),
+              ],
+            ),
           ),
         ),
       ),
@@ -551,10 +629,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
         padding: const EdgeInsets.all(8),
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(10),
-          color:
-              selected
-                  ? theme.colorScheme.onSurface.withOpacity(0.1)
-                  : theme.colorScheme.surfaceVariant.withOpacity(0.2),
+          color: Theme.of(context).colorScheme.onSurface.withOpacity(0.05),
         ),
         child: Icon(
           icon,
@@ -570,7 +645,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
 
   Widget _buildMyProfileButton() {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 20),
+      padding: const EdgeInsets.only(bottom: 4, left: 12, right: 12, top: 20),
       child: Row(
         children: [
           Expanded(
@@ -643,7 +718,8 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     return Consumer2<FriendProvider, BaseFeedProvider>(
       builder: (context, friendProvider, feedProvider, _) {
         // 네트워크 에러가 있으면 로딩 상태로 표시
-        if (feedProvider.networkError != null) {
+        // NetworkManager 상태도 확인
+        if (feedProvider.networkError != null || !NetworkManager.isOnline) {
           return SizedBox.shrink();
         }
 
@@ -693,32 +769,34 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
         return FutureBuilder<void>(
           future: _friendStatusFuture,
           builder: (context, snapshot) {
-            if (snapshot.connectionState == ConnectionState.waiting) {
-              return Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 20,
-                ),
-                child: Opacity(
-                  opacity: 0.0,
-                  child: _buildFilledButton(
-                    text: '로딩중',
-                    onTap: () {},
-                    isLoading: true,
-                    isFilled: false,
+            final isLoading =
+                snapshot.connectionState == ConnectionState.waiting;
+
+            return TweenAnimationBuilder<double>(
+              tween: Tween(begin: 0.0, end: isLoading ? 0.0 : 1.0),
+              duration: const Duration(milliseconds: 300),
+              curve: Curves.easeOut,
+              builder: (context, opacity, child) {
+                return Padding(
+                  padding: const EdgeInsets.only(
+                    bottom: 4,
+                    left: 12,
+                    right: 12,
+                    top: 20,
                   ),
-                ),
-              );
-            }
-            return Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
-              child: _buildFilledButton(
-                text: buttonText,
-                onTap: buttonAction,
-                isLoading: friendProvider.isLoading,
-                isFilled:
-                    friendProvider.friendStatus == FriendRequestStatus.none,
-              ),
+                  child: Opacity(
+                    opacity: opacity,
+                    child: _buildFilledButton(
+                      text: buttonText,
+                      onTap: buttonAction,
+                      isLoading: friendProvider.isLoading,
+                      isFilled:
+                          friendProvider.friendStatus ==
+                          FriendRequestStatus.none,
+                    ),
+                  ),
+                );
+              },
             );
           },
         );
@@ -735,20 +813,13 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     return GestureDetector(
       onTap: isLoading ? null : onTap,
       child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 24),
+        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 24),
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-            color:
-                isFilled
-                    ? Theme.of(context).colorScheme.primary.withOpacity(0.2)
-                    : Theme.of(context).colorScheme.onSurface.withOpacity(0.2),
-            width: 0.5,
-          ),
           color:
               isFilled
                   ? Theme.of(context).colorScheme.primary.withOpacity(1)
-                  : Theme.of(context).colorScheme.onSurface.withOpacity(0.05),
+                  : Theme.of(context).colorScheme.onSurface.withOpacity(0.1),
         ),
         child: Center(
           child:
@@ -766,9 +837,14 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                   : Text(
                     text,
                     style: TextStyle(
-                      color: Theme.of(context).colorScheme.onSurface,
+                      color:
+                          isFilled
+                              ? Colors.white
+                              : Theme.of(
+                                context,
+                              ).colorScheme.onSurface.withOpacity(0.5),
                       fontSize: 16,
-                      fontWeight: FontWeight.w600,
+                      fontWeight: FontWeight.bold,
                     ),
                   ),
         ),
@@ -781,24 +857,18 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     required VoidCallback onTap,
     bool isLoading = false,
   }) {
+    final isDarkMode = Theme.of(context).brightness == Brightness.dark;
     return GestureDetector(
       onTap: isLoading ? null : onTap,
       child: Container(
         padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 20),
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-            color: Theme.of(context).colorScheme.onSurface.withOpacity(0.1),
-            width: 0.5,
-          ),
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [
-              Theme.of(context).colorScheme.onSurface.withOpacity(0.01),
-              Theme.of(context).colorScheme.onSurface.withOpacity(0.01),
-            ],
-          ),
+
+          color:
+              isDarkMode
+                  ? const Color.fromARGB(255, 60, 60, 60)
+                  : Colors.grey.shade200,
         ),
         child: Center(
           child:
@@ -816,7 +886,10 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                   : Text(
                     text,
                     style: TextStyle(
-                      color: Theme.of(context).colorScheme.onSurface,
+                      color:
+                          isDarkMode
+                              ? Theme.of(context).colorScheme.onSurface
+                              : const Color.fromARGB(255, 61, 61, 61),
                       fontSize: 14,
                       fontWeight: FontWeight.w600,
                     ),

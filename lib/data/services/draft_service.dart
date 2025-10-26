@@ -1,14 +1,10 @@
 import 'dart:convert';
-import 'dart:ui' as ui;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:doppy/editor/service/editor_service.dart';
 import 'package:doppy/editor/service/sticker_service.dart';
+import 'package:doppy/editor/service/post_reader_service.dart';
 import 'package:doppy/editor/publish/post_exporter.dart';
 import 'package:super_editor/super_editor.dart';
-import 'package:doppy/editor/component/link_component.dart';
-import 'package:doppy/editor/component/mention_component.dart';
-import 'package:doppy/editor/component/row_image_component.dart';
-import 'package:doppy/editor/style/defualt_toolbar.dart';
 
 /// 임시저장 데이터 모델
 class DraftData {
@@ -181,23 +177,23 @@ class DraftService {
       final draft = await getDraft(draftId);
       if (draft == null) return false;
 
-      // PostReaderScreen의 복구 로직을 활용
+      // PostReaderService를 사용하여 문서 복원
       final exportedData = json.decode(draft.content) as Map<String, dynamic>;
-
-      // 문서 복원
-      final document = _rebuildDocument(exportedData);
+      final postReaderService = PostReaderService();
+      // 드래프트 복구시에는 제목 노드도 포함 (includeTitleNode: true)
+      final document = postReaderService.rebuildDocumentForRead(
+        exportedData,
+        includeTitleNode: true,
+      );
 
       // 안전한 문서 교체 방식
       await _replaceDocumentSafely(editorService, document);
 
       // 스티커 복원
-      stickerService.removeAll();
-      final stickers = (exportedData['stickers'] as List?) ?? [];
-      for (final stickerData in stickers) {
-        if (stickerData is Map<String, dynamic>) {
-          stickerService.addStickerFromData(stickerData);
-        }
-      }
+      postReaderService.restoreStickers(
+        exported: exportedData,
+        stickerService: stickerService,
+      );
 
       return true;
     } catch (e) {
@@ -287,152 +283,6 @@ class DraftService {
     } catch (e) {
       print('[DraftService] Error creating default document: $e');
     }
-  }
-
-  /// PostReaderScreen의 _rebuildDocument 로직을 활용
-  MutableDocument _rebuildDocument(Map<String, dynamic> data) {
-    // 저장 포맷(document | content 모두)과 과거 포맷까지 호환
-    final List nodes =
-        (data['document']?['nodes'] as List?) ??
-        (data['content']?['nodes'] as List?) ??
-        (data['content'] as List?) ??
-        const [];
-    final rebuilt = <DocumentNode>[];
-
-    for (final raw in nodes) {
-      final m = (raw as Map).cast<String, dynamic>();
-      final id = (m['id'] ?? '').toString();
-      final type = (m['type'] ?? '').toString();
-
-      switch (type) {
-        case 'paragraph':
-          final text = (m['text'] ?? '').toString();
-          final align = (m['align'] ?? 'center').toString();
-          final isTitle = m['isTitle'] == true;
-          final fontFamily = m['fontFamily'] as String?; // 폰트 정보 복원
-          final spans = (m['spans'] as List?) ?? const [];
-          final attributed = _buildAttributedText(text, spans);
-          final meta = <String, dynamic>{'textAlign': align};
-          if (isTitle) meta['isTitle'] = true;
-          if (fontFamily != null && fontFamily.isNotEmpty) {
-            meta['fontFamily'] = fontFamily; // 폰트 정보를 메타데이터에 복원
-          }
-          rebuilt.add(ParagraphNode(id: id, text: attributed, metadata: meta));
-          break;
-        case 'image':
-          rebuilt.add(
-            ImageNode(
-              id: id,
-              imageUrl: (m['url'] ?? '').toString(),
-              altText: (m['altText'] ?? '').toString(),
-            ),
-          );
-          break;
-        case 'imageRow':
-          rebuilt.add(
-            ImageRowNode(
-              id: id,
-              imageUrls:
-                  ((m['urls'] as List?) ?? const [])
-                      .map((e) => e.toString())
-                      .toList(),
-              spacing: (m['spacing'] as num?)?.toDouble() ?? 4.0,
-            ),
-          );
-          break;
-        case 'link':
-          rebuilt.add(
-            LinkNode(
-              id: id,
-              url: (m['url'] ?? '').toString(),
-              title: (m['title'] ?? '').toString(),
-              description: (m['description'] ?? '').toString(),
-              thumbnailUrl: (m['thumbnailUrl'] ?? '').toString(),
-            ),
-          );
-          break;
-        case 'mention':
-          rebuilt.add(
-            MentionNode(
-              id: id,
-              usernames:
-                  ((m['usernames'] as List?) ?? const [])
-                      .map((e) => e.toString())
-                      .toList(),
-            ),
-          );
-          break;
-        default:
-          // 알 수 없는 노드는 문단으로 폴백
-          rebuilt.add(ParagraphNode(id: id, text: AttributedText('[${type}]')));
-      }
-    }
-    return MutableDocument(nodes: rebuilt);
-  }
-
-  /// PostReaderScreen의 _buildAttributedText 로직을 활용
-  AttributedText _buildAttributedText(String text, List spans) {
-    final attributed = AttributedText(text);
-
-    // spans가 null이거나 비어있으면 기본 텍스트 반환
-    if (spans.isEmpty) {
-      return attributed;
-    }
-
-    try {
-      for (final s in spans) {
-        if (s == null) continue; // null 체크
-
-        final m = (s as Map).cast<String, dynamic>();
-        final start = (m['start'] as num?)?.toInt() ?? 0;
-        final end = (m['end'] as num?)?.toInt() ?? start;
-
-        // 텍스트 길이 범위 체크
-        if (start < 0 || end > text.length || start > end) {
-          print(
-            '[DraftService] Invalid span range: start=$start, end=$end, textLength=${text.length}',
-          );
-          continue;
-        }
-
-        final ann = (m['attrs'] as Map?)?.cast<String, dynamic>() ?? {};
-        final atts = <Attribution>{};
-        if (ann['bold'] == true) atts.add(boldAttribution);
-        if (ann['italic'] == true) atts.add(italicsAttribution);
-        if (ann['underline'] == true) atts.add(underlineAttribution);
-        if (ann['strikethrough'] == true) atts.add(strikethroughAttribution);
-        final fs = (ann['font_size'] as num?)?.toDouble();
-        if (fs != null) atts.add(FontSizeAttribution(fs));
-        final colorHex = ann['color'] as String?;
-        if (colorHex != null && colorHex.isNotEmpty) {
-          atts.add(ColorAttribution(_parseHexColor(colorHex)));
-        }
-        // 🎨 형광펜 속성 디코딩
-        final highlightHex = ann['highlight'] as String?;
-        if (highlightHex != null && highlightHex.isNotEmpty) {
-          print('DEBUG: DraftService 형광펜 디코딩 - HEX: $highlightHex');
-          final highlightColor = _parseHexColor(highlightHex);
-          print('DEBUG: DraftService 형광펜 디코딩 - 색상: $highlightColor');
-          atts.add(HighlightAttribution(highlightColor));
-        }
-
-        for (final a in atts) {
-          attributed.addAttribution(a, SpanRange(start, end - 1));
-        }
-      }
-    } catch (e) {
-      print('[DraftService] Error building attributed text: $e');
-      // 오류 발생 시 기본 텍스트 반환
-    }
-
-    return attributed;
-  }
-
-  /// PostReaderScreen의 _parseHexColor 로직을 활용
-  ui.Color _parseHexColor(String hex) {
-    var v = hex.replaceAll('#', '');
-    if (v.length == 6) v = 'FF$v';
-    return ui.Color(int.parse(v, radix: 16));
   }
 
   /// 임시저장 삭제

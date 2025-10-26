@@ -1,4 +1,5 @@
 import 'package:doppy/utils/error_handler.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/material.dart';
 import '../data/models/user_model.dart';
 import '../data/services/user_service.dart';
@@ -33,6 +34,7 @@ class UserProvider with ChangeNotifier {
   /// 현재 사용자 정보 업데이트
   void updateCurrentUser(User updatedUser) {
     _currentUser = updatedUser;
+    _persistCurrentUser();
     notifyListeners();
   }
 
@@ -76,6 +78,7 @@ class UserProvider with ChangeNotifier {
     try {
       final me = await _userService.getMyProfile();
       _currentUser = me;
+      await _persistCurrentUser();
       // 별도 필드가 오지 않으면 기존 API 유지 시도 (선택)
       try {
         _friendCount = await _userService.getFriendCount();
@@ -179,7 +182,71 @@ class UserProvider with ChangeNotifier {
     _viewedUser = null;
     _viewedUserSelfIntroduction = null;
     _isLoading = false;
+    _clearPersistedUser();
     notifyListeners();
     print('[UserProvider] 로그아웃 - 사용자 데이터 초기화 완료');
+  }
+
+  // ====== 로컬 퍼시스턴스 ======
+  static const _kUserId = 'user_id';
+  static const _kUsername = 'user_username';
+  static const _kAlias = 'user_alias';
+  static const _kProfileImageUrl = 'user_profileImageUrl';
+  static const _kSelfIntroduction = 'user_selfIntroduction';
+  static const _kFriendCount = 'user_friendCount';
+
+  Future<void> _persistCurrentUser() async {
+    try {
+      final u = _currentUser;
+      if (u == null) return;
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setInt(_kUserId, u.id);
+      await prefs.setString(_kUsername, u.username);
+      await prefs.setString(_kAlias, u.alias ?? '');
+      await prefs.setString(_kProfileImageUrl, u.profileImageUrl ?? '');
+      await prefs.setString(_kSelfIntroduction, u.selfIntroduction ?? '');
+      await prefs.setInt(_kFriendCount, u.friendCount ?? 0);
+      print('[UserProvider] 사용자 정보 로컬 저장 완료');
+    } catch (e) {
+      print('[UserProvider] 사용자 정보 저장 실패: $e');
+    }
+  }
+
+  Future<void> loadCurrentUserFromPrefs() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (!prefs.containsKey(_kUserId) || !prefs.containsKey(_kUsername)) {
+        return;
+      }
+      final user = User(
+        id: prefs.getInt(_kUserId) ?? 0,
+        username: prefs.getString(_kUsername) ?? '',
+        role: null,
+        alias: prefs.getString(_kAlias),
+        profileImageUrl: prefs.getString(_kProfileImageUrl),
+        selfIntroduction: prefs.getString(_kSelfIntroduction),
+        friendCount: prefs.getInt(_kFriendCount),
+      );
+      _currentUser = user;
+      notifyListeners();
+      print('[UserProvider] 로컬 사용자 정보 복구 완료');
+    } catch (e) {
+      print('[UserProvider] 사용자 정보 복구 실패: $e');
+    }
+  }
+
+  Future<void> _clearPersistedUser() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(_kUserId);
+      await prefs.remove(_kUsername);
+      await prefs.remove(_kAlias);
+      await prefs.remove(_kProfileImageUrl);
+      await prefs.remove(_kSelfIntroduction);
+      await prefs.remove(_kFriendCount);
+      print('[UserProvider] 로컬 사용자 정보 삭제 완료');
+    } catch (e) {
+      print('[UserProvider] 사용자 정보 삭제 실패: $e');
+    }
   }
 }

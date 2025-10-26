@@ -78,7 +78,8 @@ class OtherProfileFeedProvider extends BaseFeedProvider {
       final networkError = NetworkUtils.parseError(e);
       setNetworkError(networkError);
 
-      clearData();
+      // clearData()를 호출하지 않음 (networkError는 유지)
+      // 네트워크 오류 시에는 데이터를 유지하여 에러 상태 표시 가능
     } finally {
       _loading = false;
       notifyListeners();

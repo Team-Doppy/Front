@@ -92,12 +92,19 @@ class MyProfileFeedProvider extends BaseFeedProvider {
       }
     } catch (e) {
       print('[MyProfileFeedProvider] 서버 로드 실패: $e');
+      print('[MyProfileFeedProvider] 에러 타입: ${e.runtimeType}');
+      print('[MyProfileFeedProvider] 에러 내용: ${e.toString()}');
 
       // 네트워크 에러 처리
       final networkError = NetworkUtils.parseError(e);
+      print(
+        '[MyProfileFeedProvider] 변환된 NetworkError: ${networkError.type} - ${networkError.userMessage}',
+      );
       setNetworkError(networkError);
+      print('[MyProfileFeedProvider] networkError 설정 완료');
 
-      clearData();
+      // clearData()를 호출하지 않음 (networkError는 유지)
+      // 네트워크 오류 시에는 데이터를 유지하여 에러 상태 표시 가능
     } finally {
       _loading = false;
       notifyListeners();
@@ -347,34 +354,6 @@ class MyProfileFeedProvider extends BaseFeedProvider {
   }
 
   @override
-  void reorderCategoriesLocally(List<int> orderedIntIds) {
-    if (orderedIntIds.isEmpty) return;
-
-    final orderSet = orderedIntIds.toSet();
-
-    // 요청된 순서대로 먼저 배치
-    final ordered = <Map<String, dynamic>>[];
-    for (final id in orderedIntIds) {
-      final idx = categoriesInternal.indexWhere((c) => (c['id'] as int?) == id);
-      if (idx != -1) ordered.add(categoriesInternal[idx]);
-    }
-
-    // 나머지(요청에 없는 항목) 기존 순서 유지하여 뒤에 추가
-    for (final cat in categoriesInternal) {
-      final cid = cat['id'] as int?;
-      if (cid == null || !orderSet.contains(cid)) {
-        ordered.add(cat);
-      }
-    }
-
-    categoriesInternal
-      ..clear()
-      ..addAll(ordered);
-
-    notifyListeners();
-  }
-
-  @override
   Future<void> reorderPostsInCategory(
     int categoryId,
     List<String> postIds,
@@ -458,5 +437,33 @@ class MyProfileFeedProvider extends BaseFeedProvider {
       notifyListeners();
       rethrow;
     }
+  }
+
+  @override
+  void reorderCategoriesLocally(List<int> orderedIntIds) {
+    if (orderedIntIds.isEmpty) return;
+
+    final orderSet = orderedIntIds.toSet();
+
+    // 요청된 순서대로 먼저 배치
+    final ordered = <Map<String, dynamic>>[];
+    for (final id in orderedIntIds) {
+      final idx = categoriesInternal.indexWhere((c) => (c['id'] as int?) == id);
+      if (idx != -1) ordered.add(categoriesInternal[idx]);
+    }
+
+    // 나머지(요청에 없는 항목) 기존 순서 유지하여 뒤에 추가
+    for (final cat in categoriesInternal) {
+      final cid = cat['id'] as int?;
+      if (cid == null || !orderSet.contains(cid)) {
+        ordered.add(cat);
+      }
+    }
+
+    categoriesInternal
+      ..clear()
+      ..addAll(ordered);
+
+    notifyListeners();
   }
 }

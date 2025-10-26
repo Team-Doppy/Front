@@ -95,34 +95,18 @@ abstract class BaseFeedProvider extends ChangeNotifier {
 
   /// 네트워크 에러 설정
   void setNetworkError(NetworkError? error) {
+    print('[BaseFeedProvider] setNetworkError 호출: $error');
     _networkError = error;
-    notifyListeners();
-  }
-
-  /// 시스템 카테고리 생성 (공통 로직)
-  void _createSystemCategories() {
-    if (_systemCategoryMappings == null) return;
-
-    final systemCategories = [
-      {'id': -1, 'name': '전체', 'displayOrder': -3, 'isSystem': true},
-      {'id': -2, 'name': '공개', 'displayOrder': -2, 'isSystem': true},
-      {'id': -3, 'name': '나만보기', 'displayOrder': -1, 'isSystem': true},
-      {'id': -4, 'name': '친구공개', 'displayOrder': 0, 'isSystem': true},
-    ];
-
-    for (final sysCat in systemCategories) {
-      final existing = _categories.indexWhere((c) => c['id'] == sysCat['id']);
-      if (existing == -1) {
-        _categories.add(sysCat);
-      }
+    // NetworkManager에 네트워크 상태 업데이트
+    if (error != null) {
+      print('[BaseFeedProvider] NetworkManager.setNetworkError(true) 호출');
+      NetworkManager.setNetworkError(true);
+    } else {
+      print('[BaseFeedProvider] NetworkManager.setNetworkRecovered() 호출');
+      NetworkManager.setNetworkRecovered();
     }
-
-    // displayOrder 기준 정렬
-    _categories.sort((a, b) {
-      final ai = (a['displayOrder'] as int? ?? 0);
-      final bi = (b['displayOrder'] as int? ?? 0);
-      return ai.compareTo(bi);
-    });
+    print('[BaseFeedProvider] notifyListeners() 호출');
+    notifyListeners();
   }
 
   /// 서버 응답 처리 (공통 로직)
@@ -230,11 +214,6 @@ abstract class BaseFeedProvider extends ChangeNotifier {
     // 기본 선택 상태를 '전체'로 리셋
     _selectedCategoryId = null;
     _selectedBase = BaseFilter.all;
-
-    // 시스템 카테고리 생성 (내 프로필인 경우)
-    if (_userInfo?['isOwnProfile'] == true) {
-      _createSystemCategories();
-    }
   }
 
   // 카테고리 선택 메서드들
@@ -273,19 +252,25 @@ abstract class BaseFeedProvider extends ChangeNotifier {
   int get privatePostCount {
     if (_systemCategoryMappings == null) return 0;
     final postIds = _systemCategoryMappings!['나만보기'] as List?;
-    return postIds?.length ?? 0;
+    final count = postIds?.length ?? 0;
+    print('[BaseFeedProvider] privatePostCount: $count');
+    return count;
   }
 
   int get publicPostCount {
     if (_systemCategoryMappings == null) return 0;
-    final postIds = _systemCategoryMappings!['공개'] as List?;
-    return postIds?.length ?? 0;
+    final postIds = _systemCategoryMappings!['전체공개'] as List?;
+    final count = postIds?.length ?? 0;
+    print('[BaseFeedProvider] publicPostCount: $count');
+    return count;
   }
 
   int get groupsPostCount {
     if (_systemCategoryMappings == null) return 0;
-    final postIds = _systemCategoryMappings!['친구공개'] as List?;
-    return postIds?.length ?? 0;
+    final postIds = _systemCategoryMappings!['그룹공유'] as List?;
+    final count = postIds?.length ?? 0;
+    print('[BaseFeedProvider] groupsPostCount: $count');
+    return count;
   }
 
   String get selectedLabel {
@@ -303,9 +288,9 @@ abstract class BaseFeedProvider extends ChangeNotifier {
       case BaseFilter.private:
         return '나만보기';
       case BaseFilter.groups:
-        return '친구공개';
+        return '그룹공유';
       case BaseFilter.public:
-        return '공개';
+        return '전체공개';
     }
   }
 

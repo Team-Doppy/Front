@@ -1,10 +1,11 @@
 import 'package:doppy/data/models/post_data.dart';
-
 import 'package:doppy/providers/feed_provider/feed_ui_service.dart';
-import 'package:doppy/pages/components/comps_for_profile/sections/horizontal_category_section.dart';
+import 'package:doppy/pages/components/comps_for_profile/sections/vertical_category_section.dart';
+import 'package:doppy/pages/components/comps_for_profile/sections/grid_category_section.dart';
 import 'package:doppy/pages/components/comps_for_profile/sections/category_model.dart';
 import 'package:doppy/providers/feed_provider/base_feed_provider.dart';
-
+import 'package:doppy/utils/network_utils.dart';
+import 'package:doppy/pages/components/error_state_widget.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -92,95 +93,218 @@ class Feed {
         final filteredBase = feedProvider.selectedBase;
         final filteredCategoryId = feedProvider.selectedCategoryId;
 
+        // 디버그 로그 (오프라인이어도 데이터가 있으면 기존 컨텐츠 유지)
+        print('[Feed] networkError: ${feedProvider.networkError}');
+        print('[Feed] NetworkManager.isOnline: ${NetworkManager.isOnline}');
+        print('[Feed] categories.length: ${feedProvider.categories.length}');
+        print('[Feed] isLoading: ${feedProvider.isLoading}');
+        print('[Feed] posts.length: ${feedProvider.posts.length}');
+
         // 로딩 중이면 이전 컨텐츠 유지 (깜빡임 방지)
         // 단, 초기 로딩이고 데이터가 없을 때만 비워두기
         if (feedProvider.isLoading && feedProvider.categories.isEmpty) {
+          print('[Feed] ✅ 로딩 중 - 빈 위젯 반환');
           return const SliverToBoxAdapter(child: SizedBox.shrink());
         }
 
-        // 카테고리 → 섹션 메타 구성 (시스템 카테고리 포함)
+        // 카테고리 → 섹션 메타 구성
         final List<CategoryMetaData> categoryMetaDataList = [];
 
-        // 사용자 정의 카테고리만 표시 (시스템 카테고리는 숨김)
-        for (final cat in feedProvider.categories) {
-          final idStr = (cat['id'] ?? '').toString();
-          final title = (cat['name'] ?? '').toString();
-
-          print('[Feed] 카테고리 체크 - idStr: $idStr, title: $title');
-
-          // 특정 카테고리가 선택되었으면 해당 카테고리만 표시
-          if (filteredCategoryId != null && idStr != filteredCategoryId) {
-            continue;
-          }
-
-          print('[Feed] 선택됨 - $title (id: $idStr)');
-
-          // 원본 포스트 목록을 PostData로 변환 후 필터링
-          final rawPosts = feedProvider.postsByCategory[idStr] ?? const [];
-          List<PostData> posts = _applyBaseFilter(
-            _mapRawToPosts(rawPosts),
+        // 시스템 카테고리 처리 (나만보기, 그룹공개, 전체공개)
+        // BaseFilter를 직접 사용하여 필터링
+        // 단, filteredCategoryId가 있으면 커스텀 카테고리 상세보기이므로 시스템 필터를 무시
+        if (filteredBase != BaseFilter.all && filteredCategoryId == null) {
+          // BaseFilter에 따라 모든 포스트를 필터링
+          final allPosts = _applyBaseFilter(
+            _mapRawToPosts(feedProvider.posts),
             filteredBase,
           );
 
-          // 타인 프로필이면 빈 카테고리 숨김
-          if (posts.isEmpty && feedProvider.isReadOnly) continue;
+          if (allPosts.isNotEmpty) {
+            String systemTitle;
+            switch (filteredBase) {
+              case BaseFilter.private:
+                systemTitle = '나만보기';
+                break;
+              case BaseFilter.groups:
+                systemTitle = '그룹공유';
+                break;
+              case BaseFilter.public:
+                systemTitle = '전체공개';
+                break;
+              case BaseFilter.all:
+                systemTitle = '전체';
+                break;
+            }
 
-          // 전체 탭에서 시스템 카테고리 필터링 (미분류는 예외)
-          if (filteredBase == BaseFilter.all) {
-            if (!_includeCategoryInAll(cat, posts)) continue;
+            categoryMetaDataList.add(
+              CategoryMetaData(
+                title: systemTitle,
+                posts: allPosts,
+                categoryId: 'system_${filteredBase.name}',
+                isReadOnly: true,
+              ),
+            );
           }
+        } else {
+          // 카테고리 배열 순서대로 순회 (리오더 반영)
+          for (final cat in feedProvider.categories) {
+            final categoryKey = (cat['id'] ?? '').toString();
+            final rawPosts =
+                feedProvider.postsByCategory[categoryKey] ??
+                const <Map<String, dynamic>>[];
 
-          categoryMetaDataList.add(
-            CategoryMetaData(title: title, posts: posts, categoryId: idStr),
-          );
+            final title = (cat['name'] ?? '').toString();
+
+            print('[Feed] 카테고리 체크 - key: $categoryKey, title: $title');
+
+            // 특정 카테고리가 선택되었으면 해당 카테고리만 표시
+            if (filteredCategoryId != null &&
+                categoryKey != filteredCategoryId) {
+              continue;
+            }
+
+            print('[Feed] 선택됨 - $title (key: $categoryKey)');
+
+            // 원본 포스트 목록을 PostData로 변환 (전체 탭이므로 필터 없음)
+            final posts = _mapRawToPosts(rawPosts);
+
+            print('[Feed] 포스트 개수: ${posts.length}');
+
+            // 타인 프로필이면 빈 카테고리 숨김
+            if (posts.isEmpty && feedProvider.isReadOnly) continue;
+
+            // 전체 탭에서 시스템 카테고리 필터링 (미분류는 예외)
+            if (filteredBase == BaseFilter.all) {
+              if (!_includeCategoryInAll(cat, posts)) continue;
+            }
+
+            print('[Feed] 카테고리 추가: $title');
+            categoryMetaDataList.add(
+              CategoryMetaData(
+                title: title,
+                posts: posts,
+                categoryId: categoryKey,
+              ),
+            );
+          }
         }
+
         // 아무런 글도 없을 때,
         if (feedProvider.posts.isEmpty ||
             categoryMetaDataList.length == 1 &&
                 categoryMetaDataList[0].title == 'system_doppy_uncategorized' &&
                 categoryMetaDataList[0].posts.isEmpty) {
+          // 오프라인일 때만 오프라인 안내 노출 (데이터가 있으면 위에서 이미 컨텐츠 렌더)
+          if (feedProvider.networkError != null || !NetworkManager.isOnline) {
+            print('[Feed] 오프라인 + 컨텐츠 없음 → 피드 영역 오프라인 메시지 표시');
+            return ErrorStateSliver(
+              error:
+                  feedProvider.networkError ??
+                  NetworkError(
+                    type: NetworkErrorType.noConnection,
+                    message: 'No internet connection',
+                    userMessage: '오프라인 상태입니다',
+                    isRetryable: true,
+                  ),
+            );
+          }
           return SliverToBoxAdapter(
             child: Column(
               children: [
                 SizedBox(height: 100),
-                Text('아직은 포스트가 없어요!'),
+                Icon(
+                  Icons.search,
+                  size: 100,
+                  color: Theme.of(
+                    context,
+                  ).colorScheme.onSurface.withOpacity(0.3),
+                ),
+                SizedBox(height: 10),
+                Text(
+                  '아직은 포스트가 없어요!',
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: Theme.of(
+                      context,
+                    ).colorScheme.onSurface.withOpacity(0.5),
+                  ),
+                ),
                 SizedBox(height: 300),
               ],
             ),
           );
         }
 
-        //글이 있을 때,
-        return SliverToBoxAdapter(
-          child: Column(
-            children: [
-              for (int i = 0; i < categoryMetaDataList.length; i++)
-                Padding(
-                  padding: EdgeInsets.only(
-                    top: i == 0 ? 0 : 10,
-                    bottom: i == categoryMetaDataList.length - 1 ? 50 : 0,
-                  ),
-                  child: HorizontalCategorySection(
-                    // 전체에서,
-                    showHeader: filteredCategoryId == null,
-                    title: categoryMetaDataList[i].title,
-                    categoryId: categoryMetaDataList[i].categoryId,
-                    posts: categoryMetaDataList[i].posts,
-                    sectionIndex: i,
-                    displayMode: FeedDisplayMode.imageOnly,
-                    isLastSection: i == categoryMetaDataList.length - 1,
-                    categoryDropTargetIndex: _categoryDropTargetIndex,
-                    draggingSectionIndex: _draggingSectionIndex,
-                    isDraggingCategory: _isDraggingCategory,
-                    mainScrollController: _mainScrollController,
-                    onDragStateChanged: onDragStateChanged,
-                  ),
+        // 글이 있을 때
+        final displayModeManager = FeedDisplayModeManager();
+
+        return ValueListenableBuilder<FeedDisplayMode>(
+          valueListenable: displayModeManager,
+          builder:
+              (context, displayMode, _) => SliverToBoxAdapter(
+                child: Column(
+                  children: [
+                    for (int i = 0; i < categoryMetaDataList.length; i++)
+                      Padding(
+                        padding: EdgeInsets.only(
+                          top: i == 0 ? 0 : 10,
+                          bottom: i == categoryMetaDataList.length - 1 ? 50 : 0,
+                        ),
+                        child: _buildCategorySection(
+                          categoryMetaDataList[i],
+                          i,
+                          categoryMetaDataList.length,
+                          displayMode,
+                          filteredCategoryId,
+                        ),
+                      ),
+                    SizedBox(height: 100),
+                  ],
                 ),
-              SizedBox(height: 200),
-            ],
-          ),
+              ),
         );
       },
+    );
+  }
+
+  Widget _buildCategorySection(
+    CategoryMetaData categoryMetaData,
+    int sectionIndex,
+    int totalSections,
+    FeedDisplayMode displayMode,
+    String? filteredCategoryId,
+  ) {
+    if (displayMode == FeedDisplayMode.card) {
+      return VerticalCategorySection(
+        showHeader: filteredCategoryId == null && !categoryMetaData.isReadOnly,
+        title: categoryMetaData.title,
+        categoryId: categoryMetaData.categoryId,
+        posts: categoryMetaData.posts,
+        sectionIndex: sectionIndex,
+        displayMode: displayMode,
+        isLastSection: sectionIndex == totalSections - 1,
+        categoryDropTargetIndex: _categoryDropTargetIndex,
+        draggingSectionIndex: _draggingSectionIndex,
+        isDraggingCategory: _isDraggingCategory,
+        mainScrollController: _mainScrollController,
+        onDragStateChanged: onDragStateChanged,
+      );
+    }
+
+    return GridCategorySection(
+      showHeader: filteredCategoryId == null && !categoryMetaData.isReadOnly,
+      title: categoryMetaData.title,
+      categoryId: categoryMetaData.categoryId,
+      posts: categoryMetaData.posts,
+      sectionIndex: sectionIndex,
+      displayMode: displayMode,
+      isLastSection: sectionIndex == totalSections - 1,
+      categoryDropTargetIndex: _categoryDropTargetIndex,
+      draggingSectionIndex: _draggingSectionIndex,
+      isDraggingCategory: _isDraggingCategory,
+      mainScrollController: _mainScrollController,
+      onDragStateChanged: onDragStateChanged,
     );
   }
 }

@@ -55,9 +55,9 @@ class CustomBottomNavigationBar extends StatelessWidget {
                 }
 
                 return Expanded(
-                  child: InkWell(
+                  child: GestureDetector(
                     onTap: () => onTap(index),
-                    borderRadius: BorderRadius.circular(20),
+                    behavior: HitTestBehavior.translucent,
                     child: Center(
                       child: SvgPicture.asset(
                         iconAssets[index],

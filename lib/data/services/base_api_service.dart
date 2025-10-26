@@ -118,12 +118,12 @@ class BaseApiService {
       } else {
         print('❌ [DioClient] 토큰 갱신 실패: ${response.statusCode}');
         print('❌ [DioClient] 응답 내용: ${response.body}');
-        await _authService.logout();
+        // 네트워크/서버 이슈 등으로 실패 시에는 여기서 로그아웃하지 않고 false만 반환
         return false;
       }
     } catch (e) {
       print('❌ [DioClient] 토큰 갱신 오류: $e');
-      await _authService.logout();
+      // 네트워크 오류 등 일시적 실패도 false만 반환
       return false;
     }
   }

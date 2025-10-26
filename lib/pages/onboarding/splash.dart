@@ -106,12 +106,8 @@ class _SplashScreenState extends State<SplashScreen>
         setState(() {
           _loadingStatus = '데이터를 불러오는 중...';
         });
-        // 인스타그램 방식: 일단 홈화면으로 진입, 네트워크 에러는 홈에서 처리
-        setState(() {
-          _preloadedHomeData = HomeData(friendsPosts: [], allPosts: []);
-          _isDataLoaded = true;
-          _loadingStatus = '홈화면 준비 완료';
-        });
+        // 실제 데이터 로드
+        await _loadHomeData();
       } else {
         // 토큰이 없거나 유효하지 않은 경우 빈 데이터로 설정
         setState(() {

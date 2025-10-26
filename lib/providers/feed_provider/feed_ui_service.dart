@@ -82,10 +82,6 @@ class CategoryOverlayProvider extends ChangeNotifier {
     _categoryTitle = title;
     _categoryPosts = posts;
 
-    _overlayEntry = OverlayEntry(
-      builder: (context) => const CategoryFullscreenOverlay(),
-    );
-
     Overlay.of(context).insert(_overlayEntry!);
     notifyListeners();
   }
@@ -104,14 +100,13 @@ class PostDragDropService extends ChangeNotifier {
   PostData? _draggedPost;
   Offset _dragPosition = Offset.zero;
   String? _targetCategory;
+  String? _hoverSectionKey; // 현재 손가락이 위치한 섹션(행)의 키
+  String? _activeControllerKey; // 현재 활성화된 스크롤 컨트롤러 키 (배타적)
   OverlayEntry? _overlayEntry;
   ScrollController? _verticalController;
   final Map<String, ScrollController> _horizontalControllers =
       <String, ScrollController>{};
   Timer? _autoScrollTimer;
-  // 가장자리 호버 딜레이(자동 스크롤 시작 전 대기)
-  DateTime? _edgeEnteredAt;
-  static const Duration _edgeDwell = Duration(milliseconds: 500);
 
   // 자동 스크롤 동작 중 여부 (그리드 내 재배치 감지 일시 중지를 위해 노출)
   bool get isAutoScrolling => _autoScrollTimer != null;
@@ -129,19 +124,7 @@ class PostDragDropService extends ChangeNotifier {
   String? get targetCategory => _targetCategory;
 
   // 드래그 시작
-  void startDrag(PostData post, Offset globalPosition, BuildContext context) {
-    print('🚀 [PostDragDropService] 드래그 시작: ${post.title}');
-    _isDragging = true;
-    _draggedPost = post;
-    _dragPosition = globalPosition;
-    _targetCategory = null;
-    // NOTE: Draggable의 feedback을 사용할 것이므로 커스텀 오버레이는 사용하지 않음
-    notifyListeners();
-  }
-
-  // Draggable(onDragStarted) 용 간소화된 시작 메서드
   void beginDrag(PostData post) {
-    print('🚀 [PostDragDropService] beginDrag: ${post.title}');
     _isDragging = true;
     _draggedPost = post;
     _targetCategory = null;
@@ -153,8 +136,21 @@ class PostDragDropService extends ChangeNotifier {
   void updateDragPosition(Offset globalPosition) {
     _dragPosition = globalPosition;
     _maybeAutoScrollVertical();
-    _ensureAutoScroll();
+    _maybeAutoScrollHorizontal();
     notifyListeners();
+  }
+
+  // 현재 드래그 위치에서 활성화되어야 할 컨트롤러 찾기
+  String? _getActiveControllerKey() {
+    if (!_isDragging) return null;
+
+    // hoverSectionKey에서 category ID만 추출
+    if (_hoverSectionKey != null) {
+      return _hoverSectionKey!.split('_row').first;
+    }
+
+    // 기본 카테고리만 있는 경우
+    return _targetCategory;
   }
 
   // 가로 재정렬 타겟 인덱스
@@ -184,6 +180,8 @@ class PostDragDropService extends ChangeNotifier {
     _draggedPost = null;
     _dragPosition = Offset.zero;
     _targetCategory = null;
+    _hoverSectionKey = null;
+    _activeControllerKey = null; // 배타적 스크롤 리셋
     _reorderTargetIndex = null;
     // 드래그 직후 짧은 그레이스 기간: 스냅 로직 비활성화(프로필 스크롤 가드에서 사용)
     _snapGraceUntil = DateTime.now().add(const Duration(milliseconds: 250));
@@ -204,6 +202,13 @@ class PostDragDropService extends ChangeNotifier {
       print('🎯 [PostDragDropService] 드롭 타겟 변경: $_targetCategory -> $category');
       _targetCategory = category;
       notifyListeners();
+    }
+  }
+
+  // 현재 손가락이 위치한 섹션(행) 키를 등록
+  void setHoverSectionKey(String sectionKey) {
+    if (_hoverSectionKey != sectionKey) {
+      _hoverSectionKey = sectionKey;
     }
   }
 
@@ -250,67 +255,46 @@ class PostDragDropService extends ChangeNotifier {
     } catch (_) {}
   }
 
-  void _ensureAutoScroll() {
-    // 가장자리 영역에 머무른 뒤(0.5s) 자동 스크롤 시작 → 재배치와의 충돌 최소화
-    if (!_isDragging || _verticalController == null) {
-      _edgeEnteredAt = null;
-      _stopAutoScroll();
-      return;
+  void _maybeAutoScrollHorizontal() {
+    if (!_isDragging) return;
+
+    final String? requestedKey = _getActiveControllerKey();
+    if (requestedKey == null) return;
+
+    // 배타적 스크롤: 새로운 키가 요청되면 활성 키 업데이트
+    if (_activeControllerKey != requestedKey) {
+      _activeControllerKey = requestedKey;
     }
+
+    final sc = _horizontalControllers[_activeControllerKey];
+    if (sc == null || !sc.hasClients) return;
 
     try {
       final view = WidgetsBinding.instance.platformDispatcher.views.first;
-      final screenHeight = view.physicalSize.height / view.devicePixelRatio;
+      final screenWidth = view.physicalSize.width / view.devicePixelRatio;
       const edge = 80.0;
-      final inEdge =
-          _dragPosition.dy < edge || _dragPosition.dy > screenHeight - edge;
+      const minSpeed = 8.0;
+      const maxSpeed = 18.0;
 
-      if (inEdge) {
-        // 엣지에 진입하면 즉시 리오더 억제 래치 활성화
-        if (!_reorderSuppressed) {
-          _reorderSuppressed = true;
-          notifyListeners();
-        }
-        final now = DateTime.now();
-        _edgeEnteredAt ??= now;
-        final dwellEnough = now.difference(_edgeEnteredAt!) >= _edgeDwell;
-        if (dwellEnough) {
-          // dwell 시간이 만족된 경우에만 주기 스크롤 시작
-          _autoScrollTimer ??= Timer.periodic(
-            const Duration(milliseconds: 16),
-            (_) {
-              // 주기적으로 전역 스크롤 수행
-              _maybeAutoScrollVertical();
-              // 가장자리 유지 여부를 주기적으로 재평가하여 끊김 없이 계속/해제
-              try {
-                final view =
-                    WidgetsBinding.instance.platformDispatcher.views.first;
-                final screenHeight =
-                    view.physicalSize.height / view.devicePixelRatio;
-                const edge = 80.0;
-                final stillInEdge =
-                    _dragPosition.dy < edge ||
-                    _dragPosition.dy > screenHeight - edge;
-                if (!stillInEdge) {
-                  _edgeEnteredAt = null;
-                  _stopAutoScroll();
-                  if (_reorderSuppressed) {
-                    _reorderSuppressed = false;
-                    notifyListeners();
-                  }
-                }
-              } catch (_) {}
-            },
-          );
-        }
-      } else {
-        // 가장자리에서 벗어나면 타이머/상태 초기화
-        _edgeEnteredAt = null;
-        _stopAutoScroll();
-        if (_reorderSuppressed) {
-          _reorderSuppressed = false;
-          notifyListeners();
-        }
+      if (_dragPosition.dx < edge) {
+        final ratio = (1.0 - (_dragPosition.dx / edge)).clamp(0.0, 1.0);
+        final speed = minSpeed + (maxSpeed - minSpeed) * ratio;
+        final next = (sc.offset - speed).clamp(
+          0.0,
+          sc.position.maxScrollExtent,
+        );
+        if (next != sc.offset) sc.jumpTo(next);
+      } else if (_dragPosition.dx > screenWidth - edge) {
+        final ratio = (1.0 - ((screenWidth - _dragPosition.dx) / edge)).clamp(
+          0.0,
+          1.0,
+        );
+        final speed = minSpeed + (maxSpeed - minSpeed) * ratio;
+        final next = (sc.offset + speed).clamp(
+          0.0,
+          sc.position.maxScrollExtent,
+        );
+        if (next != sc.offset) sc.jumpTo(next);
       }
     } catch (_) {}
   }
@@ -327,9 +311,10 @@ class PostDragDropService extends ChangeNotifier {
   }
 
   // 섹션(가로 리스트)별 스크롤 컨트롤러 제공
-  ScrollController horizontalControllerFor(String sectionId) {
+  // category ID만 사용하여 키로 저장 (row 정보 없음)
+  ScrollController horizontalControllerFor(String categoryId) {
     return _horizontalControllers.putIfAbsent(
-      sectionId,
+      categoryId,
       () => ScrollController(),
     );
   }
@@ -385,6 +370,12 @@ class PostDragDropService extends ChangeNotifier {
         backupPost = Map<String, dynamic>.from(posts[idx]);
         break;
       }
+    }
+
+    // 동일한 위치에 드롭하는 경우 서버 요청하지 않음
+    if (sourceCategoryId == targetCategoryId.toString() &&
+        sourcePosition == targetPosition) {
+      return;
     }
 
     print(

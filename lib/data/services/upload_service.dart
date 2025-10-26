@@ -1,12 +1,14 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:collection';
+import 'dart:convert';
 import 'package:doppy/data/services/base_api_service.dart';
 import 'package:doppy/data/services/auth_service.dart';
 import 'package:flutter/foundation.dart';
-import 'dart:collection';
 import 'package:dio/dio.dart';
 import 'package:http_parser/http_parser.dart';
 import 'package:image/image.dart' as img;
+import 'package:http/http.dart' as http;
 
 enum UploadState { pending, uploading, success, failed, cancelled }
 
@@ -143,6 +145,23 @@ class UploadService with ChangeNotifier {
     task.attempt++;
     task._setState(UploadState.uploading);
     try {
+      // 업로드 시작 전 토큰 유효성 검사 및 갱신
+      print('[Upload] Validating token before upload id=${task.id}');
+      final isValid = await _authService.validateAndRefreshToken();
+      if (!isValid) {
+        print('[Upload] Token expired or invalid, attempting refresh...');
+        final refreshed = await _refreshToken();
+        if (!refreshed) {
+          print('[Upload] Token refresh failed, upload aborted');
+          task.error = Exception('Token refresh failed');
+          task._setState(UploadState.failed);
+          return;
+        }
+        print('[Upload] Token refreshed successfully');
+      } else {
+        print('[Upload] Token is valid');
+      }
+
       final started = DateTime.now();
       print('[Upload] start id=${task.id} attempt=${task.attempt}');
       final Map<String, dynamic> result =
@@ -367,6 +386,7 @@ class UploadService with ChangeNotifier {
             (decoded['videoId'] ?? decoded['id'])?.toString();
         final String? accessUrl =
             decoded['accessUrl']?.toString() ?? decoded['url']?.toString();
+        print('[UploadVideo] 정규화된 필드: videoId=$videoId, accessUrl=$accessUrl');
         return {...decoded, 'imageId': videoId, 'accessUrl': accessUrl};
       } else {
         print(
@@ -628,6 +648,44 @@ class UploadService with ChangeNotifier {
         );
       }
       rethrow;
+    }
+  }
+
+  /// 토큰 갱신
+  Future<bool> _refreshToken() async {
+    final refreshToken = await _authService.getRefreshToken();
+    if (refreshToken == null) {
+      print('❌ [UploadService] 리프레시 토큰이 없습니다');
+      return false;
+    }
+
+    try {
+      final url = Uri.parse('https://api.doppy.me/api/auth/refresh');
+      final response = await http.post(
+        url,
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'refreshToken': refreshToken}),
+      );
+
+      if (response.statusCode == 200) {
+        final responseData = jsonDecode(utf8.decode(response.bodyBytes));
+        final newToken = responseData['token'];
+        final newRefreshToken = responseData['refreshToken'];
+
+        // AuthService를 통해 새로운 토큰들 저장
+        await _authService.saveToken(newToken);
+        await _authService.saveRefreshToken(newRefreshToken);
+
+        print('✅ [UploadService] 토큰 갱신 성공');
+        return true;
+      } else {
+        print('❌ [UploadService] 토큰 갱신 실패: ${response.statusCode}');
+        print('❌ [UploadService] 응답 내용: ${response.body}');
+        return false;
+      }
+    } catch (e) {
+      print('❌ [UploadService] 토큰 갱신 오류: $e');
+      return false;
     }
   }
 }

@@ -8,12 +8,14 @@ class SelectedToolbar extends StatelessWidget {
     required this.node,
     required this.onEdit,
     required this.onDelete,
+    this.onChangeAlignment,
   });
 
   final String? selectedId;
   final DocumentNode? node;
   final VoidCallback onEdit;
   final void Function(DocumentNode node, String selectedId) onDelete;
+  final void Function(DocumentNode node, String selectedId)? onChangeAlignment;
 
   @override
   Widget build(BuildContext context) {
@@ -40,7 +42,7 @@ class SelectedToolbar extends StatelessWidget {
           ),
          */
           const Spacer(),
-          if (node is ImageNode)
+          if (node is ImageNode) ...[
             IconButton(
               tooltip: '수정',
               onPressed: onEdit,
@@ -50,6 +52,19 @@ class SelectedToolbar extends StatelessWidget {
                 color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
               ),
             ),
+            IconButton(
+              tooltip: '좌우 패딩',
+              onPressed:
+                  onChangeAlignment != null && selectedId != null
+                      ? () => onChangeAlignment!(node!, selectedId!)
+                      : null,
+              icon: Icon(
+                Icons.format_align_center,
+                size: 20,
+                color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
+              ),
+            ),
+          ],
 
           IconButton(
             tooltip: '삭제',

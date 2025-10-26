@@ -6,6 +6,8 @@ import '../../data/services/blog_service.dart';
 import 'user_provider.dart';
 import 'friend_provider.dart';
 import 'group_provider.dart';
+import 'package:doppy/data/models/user_model.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class AuthProvider extends ChangeNotifier {
   static final AuthProvider _instance = AuthProvider._internal();
@@ -60,6 +62,35 @@ class AuthProvider extends ChangeNotifier {
       _token = result.token;
       _username = result.username;
       print('로그인 성공 : token: $_token, username: $_username');
+
+      // 로그인 직후 사용자 프로필 최소 정보 저장 (오프라인 대비)
+      try {
+        // 1) Provider 경유 저장 (있으면 즉시 반영)
+        final userProv = UserProvider();
+        userProv.updateCurrentUser(
+          User(
+            id: 0,
+            username: _username ?? username,
+            role: null,
+            alias: '',
+            profileImageUrl: '',
+            selfIntroduction: '',
+            friendCount: 0,
+          ),
+        );
+
+        // 2) SharedPreferences 직접 저장 (Provider 컨텍스트가 없을 경우 보강)
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setInt('user_id', 0);
+        await prefs.setString('user_username', _username ?? username);
+        await prefs.setString('user_alias', '');
+        await prefs.setString('user_profileImageUrl', '');
+        await prefs.setString('user_selfIntroduction', '');
+        await prefs.setInt('user_friendCount', 0);
+        print('[AuthProvider] SharedPreferences에 최소 사용자 정보 저장 완료');
+      } catch (e) {
+        print('[AuthProvider] 로그인 직후 사용자 저장 실패: $e');
+      }
     }
     return result != null;
   }

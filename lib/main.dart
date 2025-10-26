@@ -21,6 +21,7 @@ import 'package:doppy/providers/user_provider.dart';
 import 'package:doppy/providers/feed_provider/my_profile_feed_provider.dart';
 import 'package:doppy/providers/search_provider.dart';
 import 'package:doppy/data/services/search_service.dart';
+import 'package:doppy/utils/network_utils.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -67,6 +68,12 @@ Future<void> main() async {
       ), // MyApp 위젯을 child로 감싸줍니다.
     ),
   );
+
+  // 전역 1회: 네트워크 모니터/재로딩 코디네이터 시작
+  try {
+    NetworkManager.initConnectivityMonitor();
+  } catch (_) {}
+  ConnectivityReloadCoordinator().start();
 }
 
 class MyApp extends StatelessWidget {

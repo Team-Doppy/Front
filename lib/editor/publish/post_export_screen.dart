@@ -8,7 +8,6 @@ import 'package:doppy/pages/screens/post_reader_screen.dart';
 import 'package:doppy/providers/feed_provider/my_profile_feed_provider.dart';
 import 'package:doppy/providers/user_provider.dart';
 import 'package:flutter/foundation.dart';
-import 'package:doppy/theme/app_colors.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:doppy/providers/group_provider.dart';
@@ -57,7 +56,7 @@ class _PostExportScreenState extends State<PostExportScreen>
 
   // Step 2: 공개 범위 선택
   final Set<int> _selectedAudienceGroupIds = {};
-  bool _audienceSelectAll = true;
+  bool _audienceSelectAll = false;
   bool _audiencePrivateOnly = false;
 
   // Step 3: 카테고리 선택
@@ -562,10 +561,11 @@ class _PostExportScreenState extends State<PostExportScreen>
                       _exportedThumbnailImageUrl,
                       fit: BoxFit.cover,
                       errorBuilder:
-                          (context, error, stackTrace) =>
-                              Container(color: AppColors.darkSurface),
+                          (context, error, stackTrace) => Container(
+                            color: Theme.of(context).colorScheme.surface,
+                          ),
                     )
-                    : Container(color: AppColors.darkSurface),
+                    : Container(color: Theme.of(context).colorScheme.surface),
           ),
           // 블러 오버레이 (썸네일이 있을 때만)
           if (_exportedThumbnailImageUrl.isNotEmpty)
@@ -584,7 +584,7 @@ class _PostExportScreenState extends State<PostExportScreen>
                             ).colorScheme.background.withOpacity(0.8)
                             : Theme.of(
                               context,
-                            ).colorScheme.background.withOpacity(0.6),
+                            ).colorScheme.background.withOpacity(0.8),
                         isDark
                             ? Theme.of(
                               context,
@@ -598,7 +598,7 @@ class _PostExportScreenState extends State<PostExportScreen>
                             ).colorScheme.background.withOpacity(0.8)
                             : Theme.of(
                               context,
-                            ).colorScheme.background.withOpacity(0.6),
+                            ).colorScheme.background.withOpacity(0.5),
                       ],
                       stops: const [0.0, 0.7, 1.0],
                     ),
@@ -806,10 +806,10 @@ class _PostExportScreenState extends State<PostExportScreen>
               });
               FocusScope.of(context).unfocus();
             },
-            child: const Text(
+            child: Text(
               '수정완료',
               style: TextStyle(
-                color: Colors.white,
+                color: Theme.of(context).colorScheme.onSurface,
                 fontWeight: FontWeight.w500,
               ),
             ),
@@ -841,7 +841,7 @@ class _PostExportScreenState extends State<PostExportScreen>
           child: Text(
             '이전',
             style: TextStyle(
-              color: Colors.white.withOpacity(0.9),
+              color: Theme.of(context).colorScheme.onSurface.withOpacity(0.9),
 
               fontWeight: FontWeight.w500,
             ),
@@ -907,7 +907,9 @@ class _PostExportScreenState extends State<PostExportScreen>
                           '업로드',
                           key: const ValueKey('text'),
                           style: TextStyle(
-                            color: Colors.white,
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.onSurface.withOpacity(0.9),
                             fontWeight: FontWeight.w600,
                             fontSize: 16,
                           ),
@@ -922,8 +924,12 @@ class _PostExportScreenState extends State<PostExportScreen>
           padding: const EdgeInsets.symmetric(horizontal: 12),
           child: LinearProgressIndicator(
             value: (_currentStep + 1) / _totalSteps,
-            backgroundColor: Colors.white.withOpacity(0.2),
-            valueColor: const AlwaysStoppedAnimation<Color>(Colors.white),
+            backgroundColor: Theme.of(
+              context,
+            ).colorScheme.onSurface.withOpacity(0.1),
+            valueColor: AlwaysStoppedAnimation<Color>(
+              Theme.of(context).colorScheme.onSurface,
+            ),
           ),
         ),
       ),
@@ -976,11 +982,10 @@ class _PostExportScreenState extends State<PostExportScreen>
                                       cardRadius,
                                     ),
                                     border: Border.all(
-                                      color:
-                                          Theme.of(
-                                            context,
-                                          ).colorScheme.surfaceVariant,
-                                      width: 1.5,
+                                      color: Theme.of(
+                                        context,
+                                      ).colorScheme.onSurface.withOpacity(0.1),
+                                      width: 2,
                                     ),
                                   ),
                                   child: ClipRRect(
@@ -1005,7 +1010,7 @@ class _PostExportScreenState extends State<PostExportScreen>
                                                                 const _EmptyImagePlaceholder(),
                                                       )),
                                         ),
-                                        // 좌하단 작성자 정보 (PostCard와 동일)
+
                                         Positioned(
                                           left: 6,
                                           bottom: 6,
@@ -1140,6 +1145,8 @@ class _PostExportScreenState extends State<PostExportScreen>
 
   // Step 2: 공개 범위 선택
   Widget _buildStep2AudienceSelection() {
+    final isDarkMode =
+        Theme.of(context).colorScheme.brightness == Brightness.dark;
     return Consumer<GroupProvider>(
       builder: (context, groupProvider, child) {
         // 그룹 목록 로드
@@ -1174,7 +1181,7 @@ class _PostExportScreenState extends State<PostExportScreen>
                 style: Theme.of(context).textTheme.headlineSmall?.copyWith(
                   fontWeight: FontWeight.bold,
                   fontSize: 22,
-                  color: Colors.white,
+                  color: Theme.of(context).colorScheme.onSurface,
                 ),
               ),
               const SizedBox(height: 20),
@@ -1190,9 +1197,13 @@ class _PostExportScreenState extends State<PostExportScreen>
                       margin: const EdgeInsets.only(bottom: 12),
                       decoration: BoxDecoration(
                         color:
-                            _audienceSelectAll
-                                ? Colors.white.withOpacity(0.4)
-                                : Colors.white.withOpacity(0.1),
+                            isDarkMode
+                                ? (_audienceSelectAll
+                                    ? Colors.white.withOpacity(0.4)
+                                    : Colors.white.withOpacity(0.1))
+                                : (_audienceSelectAll
+                                    ? Theme.of(context).colorScheme.onPrimary
+                                    : Colors.grey.shade200.withOpacity(0.3)),
                         borderRadius: BorderRadius.circular(16),
                       ),
                       child: Material(
@@ -1219,14 +1230,25 @@ class _PostExportScreenState extends State<PostExportScreen>
                                         style: TextStyle(
                                           fontSize: 16,
                                           fontWeight: FontWeight.w600,
-                                          color: Colors.white,
+                                          color:
+                                              isDarkMode
+                                                  ? Colors.white
+                                                  : Theme.of(context)
+                                                      .colorScheme
+                                                      .onSurface
+                                                      .withOpacity(0.9),
                                         ),
                                       ),
                                     ),
                                     if (_audienceSelectAll)
                                       Icon(
                                         Icons.check,
-                                        color: Colors.white,
+                                        color:
+                                            isDarkMode
+                                                ? Colors.white
+                                                : Theme.of(
+                                                  context,
+                                                ).colorScheme.onSurface,
                                         size: 20,
                                       ),
                                   ],
@@ -1242,9 +1264,13 @@ class _PostExportScreenState extends State<PostExportScreen>
                       width: double.infinity,
                       decoration: BoxDecoration(
                         color:
-                            _audiencePrivateOnly
-                                ? Colors.white.withOpacity(0.4)
-                                : Colors.white.withOpacity(0.1),
+                            isDarkMode
+                                ? (_audiencePrivateOnly
+                                    ? Colors.white.withOpacity(0.4)
+                                    : Colors.white.withOpacity(0.1))
+                                : (_audiencePrivateOnly
+                                    ? Theme.of(context).colorScheme.onPrimary
+                                    : Colors.grey.shade200.withOpacity(0.3)),
                         borderRadius: BorderRadius.circular(16),
                       ),
                       child: Material(
@@ -1271,14 +1297,25 @@ class _PostExportScreenState extends State<PostExportScreen>
                                         style: TextStyle(
                                           fontSize: 16,
                                           fontWeight: FontWeight.w600,
-                                          color: Colors.white,
+                                          color:
+                                              isDarkMode
+                                                  ? Colors.white
+                                                  : Theme.of(context)
+                                                      .colorScheme
+                                                      .onSurface
+                                                      .withOpacity(0.9),
                                         ),
                                       ),
                                     ),
                                     if (_audiencePrivateOnly)
                                       Icon(
                                         Icons.check,
-                                        color: Colors.white,
+                                        color:
+                                            isDarkMode
+                                                ? Colors.white
+                                                : Theme.of(
+                                                  context,
+                                                ).colorScheme.onSurface,
                                         size: 20,
                                       ),
                                   ],
@@ -1297,11 +1334,16 @@ class _PostExportScreenState extends State<PostExportScreen>
               Padding(
                 padding: const EdgeInsets.only(top: 16, bottom: 8),
                 child: Text(
-                  '그룹 선택',
+                  '그룹',
                   style: TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.w600,
-                    color: Colors.white.withOpacity(0.6),
+                    color:
+                        isDarkMode
+                            ? Colors.white.withOpacity(0.6)
+                            : Theme.of(
+                              context,
+                            ).colorScheme.onSurface.withOpacity(0.6),
                   ),
                 ),
               ),
@@ -1313,7 +1355,7 @@ class _PostExportScreenState extends State<PostExportScreen>
                         ? (_showGroupLoading
                             ? Center(
                               child: CircularProgressIndicator(
-                                valueColor: AlwaysStoppedAnimation<Color>(
+                                valueColor: const AlwaysStoppedAnimation<Color>(
                                   Colors.white,
                                 ),
                               ),
@@ -1330,9 +1372,17 @@ class _PostExportScreenState extends State<PostExportScreen>
                               margin: const EdgeInsets.only(bottom: 8),
                               decoration: BoxDecoration(
                                 color:
-                                    isSelected
-                                        ? Colors.white.withOpacity(0.4)
-                                        : Colors.white.withOpacity(0.1),
+                                    isDarkMode
+                                        ? (isSelected
+                                            ? Colors.white.withOpacity(0.4)
+                                            : Colors.white.withOpacity(0.1))
+                                        : (isSelected
+                                            ? Theme.of(
+                                              context,
+                                            ).colorScheme.onPrimary
+                                            : Colors.grey.shade200.withOpacity(
+                                              0.3,
+                                            )),
                                 borderRadius: BorderRadius.circular(12),
                               ),
                               child: Material(
@@ -1346,14 +1396,10 @@ class _PostExportScreenState extends State<PostExportScreen>
                                           group.id,
                                         );
                                       } else {
-                                        _selectedAudienceGroupIds.add(group.id);
-                                      }
-
-                                      // 그룹 선택 시 전체공개/나만보기 해제
-                                      if (_selectedAudienceGroupIds
-                                          .isNotEmpty) {
+                                        // 그룹 선택 시 전체공개/나만보기 먼저 해제
                                         _audienceSelectAll = false;
                                         _audiencePrivateOnly = false;
+                                        _selectedAudienceGroupIds.add(group.id);
                                       }
                                     });
                                   },
@@ -1364,17 +1410,28 @@ class _PostExportScreenState extends State<PostExportScreen>
                                         Expanded(
                                           child: Text(
                                             group.name,
-                                            style: const TextStyle(
-                                              color: Colors.white,
+                                            style: TextStyle(
+                                              color:
+                                                  isDarkMode
+                                                      ? Colors.white
+                                                      : Theme.of(context)
+                                                          .colorScheme
+                                                          .onSurface
+                                                          .withOpacity(0.9),
                                               fontSize: 16,
                                               fontWeight: FontWeight.w600,
                                             ),
                                           ),
                                         ),
                                         if (isSelected)
-                                          const Icon(
+                                          Icon(
                                             Icons.check,
-                                            color: Colors.white,
+                                            color:
+                                                isDarkMode
+                                                    ? Colors.white
+                                                    : Theme.of(
+                                                      context,
+                                                    ).colorScheme.onSurface,
                                             size: 22,
                                           ),
                                       ],
@@ -1395,6 +1452,8 @@ class _PostExportScreenState extends State<PostExportScreen>
 
   // Step 3: 카테고리 선택
   Widget _buildStep3CategorySelection() {
+    final isDarkMode =
+        Theme.of(context).colorScheme.brightness == Brightness.dark;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 10),
       child: Column(
@@ -1406,7 +1465,10 @@ class _PostExportScreenState extends State<PostExportScreen>
             style: Theme.of(context).textTheme.headlineSmall?.copyWith(
               fontWeight: FontWeight.bold,
               fontSize: 22,
-              color: Colors.white,
+              color:
+                  isDarkMode
+                      ? Colors.white
+                      : Theme.of(context).colorScheme.onSurface,
             ),
           ),
 
@@ -1426,7 +1488,7 @@ class _PostExportScreenState extends State<PostExportScreen>
                     : ListView(
                       children: [
                         // 새 카테고리 만들기 버튼
-                        _buildCreateCategoryButton(),
+                        _buildCreateCategoryButton(isDarkMode: isDarkMode),
                         const SizedBox(height: 12),
                         // 실제 카테고리 목록
                         ..._cachedCategories!.map((category) {
@@ -1440,6 +1502,7 @@ class _PostExportScreenState extends State<PostExportScreen>
                           return _buildCategoryOption(
                             title: name,
                             isSelected: _selectedCategoryId == id,
+                            isDarkMode: isDarkMode,
                             onTap: () {
                               setState(() {
                                 _selectedCategoryId = id;
@@ -1503,26 +1566,43 @@ class _PostExportScreenState extends State<PostExportScreen>
     }
   }
 
-  Widget _buildCreateCategoryButton() {
+  Widget _buildCreateCategoryButton({required bool isDarkMode}) {
     if (_isCreatingCategory) {
       // 인라인 텍스트 필드 표시
       return Container(
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
-          color: Colors.grey.withOpacity(0.15),
+          color:
+              isDarkMode
+                  ? Colors.grey.withOpacity(0.15)
+                  : Colors.grey.shade200.withOpacity(0.3),
           borderRadius: BorderRadius.circular(12),
         ),
         child: Column(
           children: [
             TextField(
-              cursorColor: Theme.of(context).colorScheme.onSurface,
+              cursorColor:
+                  isDarkMode
+                      ? Colors.white
+                      : Theme.of(context).colorScheme.primary,
               controller: _newCategoryController,
               autofocus: true,
-              style: const TextStyle(color: Colors.white, fontSize: 16),
+              style: TextStyle(
+                color:
+                    isDarkMode
+                        ? Colors.white
+                        : Theme.of(context).colorScheme.onSurface,
+                fontSize: 16,
+              ),
               decoration: InputDecoration(
                 hintText: '카테고리 이름 입력',
                 hintStyle: TextStyle(
-                  color: Colors.white.withOpacity(0.5),
+                  color:
+                      isDarkMode
+                          ? Colors.white.withOpacity(0.5)
+                          : Theme.of(
+                            context,
+                          ).colorScheme.onSurface.withOpacity(0.5),
                   fontSize: 16,
                 ),
                 border: InputBorder.none,
@@ -1543,7 +1623,12 @@ class _PostExportScreenState extends State<PostExportScreen>
                   child: Text(
                     '취소',
                     style: TextStyle(
-                      color: Colors.white.withOpacity(0.7),
+                      color:
+                          isDarkMode
+                              ? Colors.white.withOpacity(0.7)
+                              : Theme.of(
+                                context,
+                              ).colorScheme.onSurface.withOpacity(0.7),
                       fontSize: 14,
                     ),
                   ),
@@ -1552,8 +1637,14 @@ class _PostExportScreenState extends State<PostExportScreen>
                 ElevatedButton(
                   onPressed: _createNewCategory,
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.white.withOpacity(0.9),
-                    foregroundColor: Colors.black,
+                    backgroundColor:
+                        isDarkMode
+                            ? Colors.white.withOpacity(0.9)
+                            : Theme.of(context).colorScheme.primary,
+                    foregroundColor:
+                        isDarkMode
+                            ? Colors.black
+                            : Theme.of(context).colorScheme.onPrimary,
                     padding: const EdgeInsets.symmetric(
                       horizontal: 20,
                       vertical: 10,
@@ -1578,7 +1669,7 @@ class _PostExportScreenState extends State<PostExportScreen>
       child: Container(
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
-          color: Colors.white.withOpacity(0.1),
+          color: Colors.grey.shade200.withOpacity(0.3),
           borderRadius: BorderRadius.circular(12),
         ),
         child: Row(
@@ -1586,8 +1677,13 @@ class _PostExportScreenState extends State<PostExportScreen>
             Expanded(
               child: Text(
                 '새 카테고리 만들기',
-                style: const TextStyle(
-                  color: Colors.white,
+                style: TextStyle(
+                  color:
+                      isDarkMode
+                          ? Colors.white
+                          : Theme.of(
+                            context,
+                          ).colorScheme.onSurface.withOpacity(0.9),
                   fontSize: 16,
                   fontWeight: FontWeight.w600,
                 ),
@@ -1635,6 +1731,7 @@ class _PostExportScreenState extends State<PostExportScreen>
   Widget _buildCategoryOption({
     required String title,
     required bool isSelected,
+    required bool isDarkMode,
     required VoidCallback onTap,
   }) {
     return GestureDetector(
@@ -1644,9 +1741,13 @@ class _PostExportScreenState extends State<PostExportScreen>
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
           color:
-              isSelected
-                  ? Colors.white.withOpacity(0.4)
-                  : Colors.white.withOpacity(0.1),
+              isDarkMode
+                  ? (isSelected
+                      ? Colors.white.withOpacity(0.4)
+                      : Colors.white.withOpacity(0.1))
+                  : (isSelected
+                      ? Theme.of(context).colorScheme.onPrimary
+                      : Colors.grey.shade200.withOpacity(0.3)),
           borderRadius: BorderRadius.circular(12),
         ),
         child: Row(
@@ -1655,16 +1756,28 @@ class _PostExportScreenState extends State<PostExportScreen>
               child: Text(
                 title,
                 style: TextStyle(
-                  color: Theme.of(
-                    context,
-                  ).colorScheme.onSurface.withOpacity(0.8),
+                  color:
+                      isDarkMode
+                          ? Colors.white
+                          : (isSelected
+                              ? Theme.of(context).colorScheme.onSurface
+                              : Theme.of(
+                                context,
+                              ).colorScheme.onSurface.withOpacity(0.9)),
                   fontSize: 16,
                   fontWeight: FontWeight.w600,
                 ),
               ),
             ),
             if (isSelected)
-              const Icon(Icons.check, color: Colors.white, size: 22),
+              Icon(
+                Icons.check,
+                color:
+                    isDarkMode
+                        ? Colors.white
+                        : Theme.of(context).colorScheme.onSurface,
+                size: 22,
+              ),
           ],
         ),
       ),
@@ -2240,7 +2353,7 @@ class _EmptyImagePlaceholder extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      color: Theme.of(context).colorScheme.background,
+      color: Theme.of(context).colorScheme.surface,
       child: Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,

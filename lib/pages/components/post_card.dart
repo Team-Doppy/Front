@@ -97,6 +97,7 @@ class _PostCardState extends State<PostCard> {
                 ),
               );
             },
+            behavior: HitTestBehavior.opaque,
             child: CachedNetworkImage(
               imageUrl: widget.thumbnailImageUrl,
               fit: BoxFit.cover,
@@ -199,7 +200,7 @@ class _PostCardState extends State<PostCard> {
                 child: Container(
                   padding: const EdgeInsets.only(right: 6),
                   decoration: BoxDecoration(
-                    color: Colors.black.withOpacity(0.15),
+                    color: Colors.black.withOpacity(0.0),
                     borderRadius: BorderRadius.circular(35),
                   ),
                   child: Row(
@@ -207,15 +208,15 @@ class _PostCardState extends State<PostCard> {
                       CommonProfileAvatar(
                         imageUrl: widget.authorProfileImageUrl ?? "",
                         username: widget.author,
-                        size: 35,
+                        size: 30,
                         borderWidth: 1,
                       ),
                       const SizedBox(width: 4),
                       Text(
                         widget.author,
                         style: TextStyle(
-                          color: Theme.of(context).colorScheme.onSurface,
-                          fontSize: 14,
+                          color: Theme.of(context).colorScheme.surface,
+                          fontSize: 13,
                           fontWeight: FontWeight.w500,
                         ),
                       ),

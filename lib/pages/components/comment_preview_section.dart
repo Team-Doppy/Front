@@ -44,6 +44,7 @@ class CommentPreviewSection extends StatelessWidget {
         children: [
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
+
             children: [
               Row(
                 mainAxisAlignment: MainAxisAlignment.start,
@@ -484,31 +485,11 @@ class CommentPreviewSection extends StatelessWidget {
                       }).toList();
                     }(),
                   ),
-            ],
-          ),
-          if (commentService.getAllComments().length >= 5)
-            Positioned(
-              left: 0,
-              right: 0,
-              bottom: 0,
-              child: Container(
-                height: 80,
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                    colors: [
-                      Colors.transparent,
-                      Theme.of(context).colorScheme.surface.withOpacity(0.2),
-                      Theme.of(context).colorScheme.surface.withOpacity(0.5),
-                      Theme.of(context).colorScheme.surface,
-                    ],
-                    stops: const [0.0, 0.4, 0.7, 1.0],
-                  ),
-                ),
-                child: Column(
+              SizedBox(height: 50),
+              if (commentService.getAllComments().length > 5)
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    const Spacer(),
                     GestureDetector(
                       onTap: onShowComments,
                       child: Container(
@@ -555,11 +536,10 @@ class CommentPreviewSection extends StatelessWidget {
                         ),
                       ),
                     ),
-                    const SizedBox(height: 20),
                   ],
                 ),
-              ),
-            ),
+            ],
+          ),
         ],
       ),
     );

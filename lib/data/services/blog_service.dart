@@ -107,12 +107,20 @@ class BlogService {
       print('[BlogService] 프로필 스키마 로드 실패: $e');
 
       if (e is DioException) {
+        // 네트워크 연결 오류는 DioException을 그대로 전달
+        if (e.type == DioExceptionType.connectionError ||
+            e.type == DioExceptionType.connectionTimeout ||
+            e.type == DioExceptionType.sendTimeout ||
+            e.type == DioExceptionType.receiveTimeout) {
+          rethrow; // DioException 그대로 전달
+        }
+        // HTTP 상태 코드가 있는 경우에만 Exception 변환
         if (e.response?.statusCode == 404) {
           throw Exception('사용자를 찾을 수 없습니다.');
         } else if (e.response?.statusCode == 401) {
           throw Exception('인증이 필요합니다.');
         } else {
-          throw Exception('서버 오류가 발생했습니다. (${e.response?.statusCode})');
+          rethrow; // 기타 네트워크 에러도 그대로 전달
         }
       }
       rethrow;
@@ -155,12 +163,20 @@ class BlogService {
       print('[BlogService] 프로필 포스트 로드 실패: $e');
 
       if (e is DioException) {
+        // 네트워크 연결 오류는 DioException을 그대로 전달
+        if (e.type == DioExceptionType.connectionError ||
+            e.type == DioExceptionType.connectionTimeout ||
+            e.type == DioExceptionType.sendTimeout ||
+            e.type == DioExceptionType.receiveTimeout) {
+          rethrow; // DioException 그대로 전달
+        }
+        // HTTP 상태 코드가 있는 경우에만 Exception 변환
         if (e.response?.statusCode == 404) {
           throw Exception('사용자를 찾을 수 없습니다.');
         } else if (e.response?.statusCode == 401) {
           throw Exception('인증이 필요합니다.');
         } else {
-          throw Exception('서버 오류가 발생했습니다. (${e.response?.statusCode})');
+          rethrow; // 기타 네트워크 에러도 그대로 전달
         }
       }
       rethrow;
@@ -265,7 +281,7 @@ class BlogService {
     try {
       final response = await _dio.put(
         '/api/categories/reorder',
-        data: {'orderedIds': orderedIds},
+        data: json.encode({'orderedIds': orderedIds}),
       );
 
       print('[BlogService] 카테고리 순서 변경 성공');

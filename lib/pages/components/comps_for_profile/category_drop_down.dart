@@ -26,6 +26,152 @@ class CategoryFilterManager extends ValueNotifier<String?> {
   bool get isFiltered => value != null;
 }
 
+// 카테고리 아이템 (스와이프 액션 포함)
+class _CategoryItemWithActions extends StatefulWidget {
+  final Map<String, dynamic> category;
+  final bool isOwnProfile;
+  final BaseFeedProvider feedProvider;
+  final bool isSelected;
+  final VoidCallback onTap;
+  final VoidCallback onEdit;
+  final VoidCallback onDelete;
+
+  const _CategoryItemWithActions({
+    required this.category,
+    required this.isOwnProfile,
+    required this.feedProvider,
+    required this.isSelected,
+    required this.onTap,
+    required this.onEdit,
+    required this.onDelete,
+  });
+
+  @override
+  State<_CategoryItemWithActions> createState() =>
+      _CategoryItemWithActionsState();
+}
+
+class _CategoryItemWithActionsState extends State<_CategoryItemWithActions> {
+  void _showMenu(BuildContext context) async {
+    await showDialog<String>(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          contentPadding: const EdgeInsets.only(top: 12, bottom: 12),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: Icon(
+                  Icons.edit,
+                  color: Theme.of(context).colorScheme.primary,
+                ),
+                title: Text(
+                  '수정',
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.onSurface,
+                  ),
+                ),
+                onTap: () {
+                  Navigator.of(context).pop('edit');
+                  widget.onEdit();
+                },
+              ),
+              const Divider(height: 1),
+              ListTile(
+                leading: Icon(
+                  Icons.delete,
+                  color: Theme.of(context).colorScheme.error,
+                ),
+                title: Text(
+                  '삭제',
+                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                ),
+                onTap: () {
+                  Navigator.of(context).pop('delete');
+                  widget.onDelete();
+                },
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color:
+          widget.isSelected
+              ? Theme.of(context).colorScheme.primary.withOpacity(0.1)
+              : Colors.transparent,
+      child: InkWell(
+        onTap: widget.onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  widget.category['name'],
+                  style: TextStyle(
+                    fontWeight:
+                        widget.isSelected ? FontWeight.w600 : FontWeight.w400,
+                    fontSize: 16,
+                    color: Theme.of(context).colorScheme.onSurface,
+                  ),
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 4,
+                ),
+                decoration: BoxDecoration(
+                  color: Theme.of(
+                    context,
+                  ).colorScheme.primary.withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Text(
+                  '${widget.category['postCount'] ?? 0}',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: Theme.of(context).colorScheme.primary,
+                  ),
+                ),
+              ),
+              // 본인 프로필일 때만 more_vert 아이콘 표시
+              if (widget.isOwnProfile) ...[
+                const SizedBox(width: 8),
+                InkWell(
+                  onTap: () => _showMenu(context),
+                  borderRadius: BorderRadius.circular(20),
+                  child: Padding(
+                    padding: const EdgeInsets.all(8),
+                    child: Icon(
+                      Icons.more_vert,
+                      size: 20,
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.onSurface.withOpacity(0.5),
+                    ),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class CategoryDropDown {
   VoidCallback? _onCategoryChanged;
 
@@ -34,85 +180,145 @@ class CategoryDropDown {
     _onCategoryChanged = callback;
   }
 
-  /// 카테고리 드롭다운 표시
+  /// 카테고리 드롭다운 표시 (BottomSheet)
   void showCategoryDropdown(
     BuildContext context,
     GlobalKey buttonKey,
     BaseFeedProvider feedProvider,
   ) async {
-    // 버튼 위치 계산
-    final RenderBox? renderBox =
-        buttonKey.currentContext?.findRenderObject() as RenderBox?;
-    final buttonPosition = renderBox?.localToGlobal(Offset.zero);
-    // final buttonSize = renderBox?.size; // 현재는 사용하지 않음
-
-    showDialog(
+    await showModalBottomSheet(
       context: context,
-      barrierDismissible: true,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
       builder: (BuildContext context) {
-        return Stack(
-          children: [
-            // 배경 터치로 닫기
-            Positioned.fill(
-              child: GestureDetector(
-                onTap: () => Navigator.of(context).pop(),
-                child: Container(color: Colors.transparent),
+        return DraggableScrollableSheet(
+          initialChildSize: 0.6,
+          minChildSize: 0.4,
+          maxChildSize: 0.9,
+          builder: (context, scrollController) {
+            return ClipRRect(
+              borderRadius: const BorderRadius.vertical(
+                top: Radius.circular(24),
               ),
-            ),
-            // 드롭다운 컨텐츠 - 버튼 아래에 정확히 위치
-            Positioned(
-              top: (buttonPosition?.dy ?? 100) - 80,
-              left: buttonPosition?.dx ?? 20 - 15,
-              child: Material(
-                color: Colors.transparent,
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(16),
-                  child: BackdropFilter(
-                    filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-                    child: Container(
-                      width: 280,
-                      constraints: const BoxConstraints(maxHeight: 320),
-                      decoration: BoxDecoration(
-                        color: Theme.of(
-                          context,
-                        ).colorScheme.surface.withOpacity(0.45),
-                        borderRadius: BorderRadius.circular(16),
-                        border: Border.all(
-                          color: Theme.of(
-                            context,
-                          ).colorScheme.surface.withOpacity(0.6),
-                          width: 0.5,
-                        ),
-                      ),
-                      child: ScrollbarTheme(
-                        data: ScrollbarThemeData(
-                          thumbVisibility: WidgetStateProperty.all(true),
-                          trackVisibility: WidgetStateProperty.all(false),
-                          thumbColor: WidgetStateProperty.all(
-                            Colors.white.withOpacity(0.4),
-                          ),
-                          trackColor: WidgetStateProperty.all(
-                            Colors.white.withOpacity(0.1),
-                          ),
-                          thickness: WidgetStateProperty.all(3.0),
-                          radius: const Radius.circular(1.5),
-                          crossAxisMargin: 3,
-                          mainAxisMargin: 20,
-                        ),
-                        child: Scrollbar(
-                          child: SingleChildScrollView(
-                            child: _buildCategoryContent(context, feedProvider),
-                          ),
-                        ),
-                      ),
+              child: BackdropFilter(
+                filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: Theme.of(
+                      context,
+                    ).colorScheme.surface.withOpacity(0.95),
+                    borderRadius: const BorderRadius.vertical(
+                      top: Radius.circular(24),
                     ),
+                    border: Border.all(
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.surface.withOpacity(0.6),
+                      width: 0.5,
+                    ),
+                  ),
+                  child: Column(
+                    children: [
+                      // 핸들 바
+                      Container(
+                        margin: const EdgeInsets.only(top: 12, bottom: 8),
+                        width: 40,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: Colors.grey.withOpacity(0.3),
+                          borderRadius: BorderRadius.circular(2),
+                        ),
+                      ),
+
+                      // 타이틀
+                      Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 20,
+                          vertical: 8,
+                        ),
+                        child: Text(
+                          '카테고리',
+                          style: TextStyle(
+                            fontSize: 20,
+                            fontWeight: FontWeight.w700,
+                            color: Theme.of(context).colorScheme.onSurface,
+                          ),
+                        ),
+                      ),
+
+                      const Divider(height: 1),
+
+                      // 카테고리 리스트
+                      Expanded(
+                        child: SingleChildScrollView(
+                          controller: scrollController,
+                          child: _buildCategoryContent(context, feedProvider),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ),
-            ),
-          ],
+            );
+          },
         );
       },
+    );
+  }
+
+  /// 카테고리 아이템 빌드
+  Widget _buildCategoryItem({
+    required String title,
+    required int count,
+    required bool isSelected,
+    required BuildContext context,
+    required VoidCallback onTap,
+  }) {
+    return Material(
+      color:
+          isSelected
+              ? Theme.of(context).colorScheme.primary.withOpacity(0.1)
+              : Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  title,
+                  style: TextStyle(
+                    fontWeight: isSelected ? FontWeight.w600 : FontWeight.w400,
+                    fontSize: 16,
+                    color: Theme.of(context).colorScheme.onSurface,
+                  ),
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 4,
+                ),
+                decoration: BoxDecoration(
+                  color: Theme.of(
+                    context,
+                  ).colorScheme.primary.withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Text(
+                  count.toString(),
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: Theme.of(context).colorScheme.primary,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 
@@ -136,6 +342,24 @@ class CategoryDropDown {
       (sum, posts) => sum + posts.length,
     );
 
+    // 시스템 카테고리 포스트 수 계산
+    final privatePosts = feedProvider.privatePostCount;
+    final groupPosts = feedProvider.groupsPostCount;
+    final publicPosts = feedProvider.publicPostCount;
+
+    print(
+      '[CategoryDropDown] 시스템 카테고리 포스트 수 - 나만보기: $privatePosts, 그룹공개: $groupPosts, 공개: $publicPosts',
+    );
+    print('[CategoryDropDown] isOwnProfile: $isOwnProfile');
+    print(
+      '[CategoryDropDown] shouldShowSystemCategories: ${isOwnProfile && (privatePosts > 0 || groupPosts > 0 || publicPosts > 0)}',
+    );
+    if (feedProvider.systemCategoryMappings != null) {
+      print(
+        '[CategoryDropDown] systemCategoryMappings 키들: ${feedProvider.systemCategoryMappings!.keys.toList()}',
+      );
+    }
+
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -157,27 +381,49 @@ class CategoryDropDown {
           },
         ),
 
-        // 시스템 카테고리들은 본인 프로필일 때만 표시
-        if (isOwnProfile) ...[
-          if (_getSystemCategoryCount(feedProvider, '나만보기') > 0) ...[
-            _buildCategoryItem(
-              title: '나만보기',
-              count: _getSystemCategoryCount(feedProvider, '나만보기'),
-              isSelected:
-                  feedProvider.selectedBase == BaseFilter.private &&
-                  feedProvider.selectedCategoryId == null,
-              context: context,
-              onTap: () {
-                feedProvider.selectBase(BaseFilter.private);
-                Navigator.of(context).pop();
-                _onCategoryChanged?.call();
-              },
-            ),
-          ],
-          if (_getSystemCategoryCount(feedProvider, '그룹공유') > 0) ...[
+        // 시스템 카테고리 구분선
+        if (isOwnProfile &&
+            (privatePosts > 0 || groupPosts > 0 || publicPosts > 0)) ...[
+          const SizedBox(height: 12),
+          Divider(
+            height: 1,
+            thickness: 1,
+            indent: 20,
+            endIndent: 20,
+            color: Theme.of(context).colorScheme.onSurface.withOpacity(0.1),
+          ),
+          const SizedBox(height: 8),
+
+          // 나만보기
+          Builder(
+            builder: (_) {
+              print(
+                '[CategoryDropDown] 나만보기 렌더링 - privatePosts: $privatePosts',
+              );
+              if (privatePosts > 0) {
+                return _buildCategoryItem(
+                  title: '나만보기',
+                  count: privatePosts,
+                  isSelected:
+                      feedProvider.selectedBase == BaseFilter.private &&
+                      feedProvider.selectedCategoryId == null,
+                  context: context,
+                  onTap: () {
+                    feedProvider.selectBase(BaseFilter.private);
+                    Navigator.of(context).pop();
+                    _onCategoryChanged?.call();
+                  },
+                );
+              }
+              return const SizedBox.shrink();
+            },
+          ),
+
+          // 그룹공유
+          if (groupPosts > 0)
             _buildCategoryItem(
               title: '그룹공유',
-              count: _getSystemCategoryCount(feedProvider, '그룹공유'),
+              count: groupPosts,
               isSelected:
                   feedProvider.selectedBase == BaseFilter.groups &&
                   feedProvider.selectedCategoryId == null,
@@ -188,11 +434,12 @@ class CategoryDropDown {
                 _onCategoryChanged?.call();
               },
             ),
-          ],
-          if (_getSystemCategoryCount(feedProvider, '전체공개') > 0) ...[
+
+          // 전체공개
+          if (publicPosts > 0)
             _buildCategoryItem(
               title: '전체공개',
-              count: _getSystemCategoryCount(feedProvider, '전체공개'),
+              count: publicPosts,
               isSelected:
                   feedProvider.selectedBase == BaseFilter.public &&
                   feedProvider.selectedCategoryId == null,
@@ -203,51 +450,47 @@ class CategoryDropDown {
                 _onCategoryChanged?.call();
               },
             ),
-          ],
-        ],
 
-        Container(
-          height: 1,
-          margin: EdgeInsets.symmetric(horizontal: 16),
-          color: Colors.white.withOpacity(0.1),
-        ),
+          const SizedBox(height: 12),
+          Divider(
+            height: 1,
+            thickness: 1,
+            indent: 20,
+            endIndent: 20,
+            color: Theme.of(context).colorScheme.onSurface.withOpacity(0.1),
+          ),
+          const SizedBox(height: 8),
+        ],
 
         // 사용자가 만든 카테고리
         ...categories
             .where((c) => !(c['isSystem'] == true))
             .map(
-              (c) => Dismissible(
-                key: ValueKey('cat-${c['id']}'),
-                direction:
-                    isOwnProfile
-                        ? DismissDirection.endToStart
-                        : DismissDirection.none,
-                background: Container(
-                  alignment: Alignment.centerRight,
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  color: Colors.red.withOpacity(0.6),
-                  child: const Icon(Icons.delete, color: Colors.white),
-                ),
-                confirmDismiss: (_) async => isOwnProfile,
-                onDismissed: (_) {
-                  if (isOwnProfile && feedProvider is MyProfileFeedProvider) {
+              (c) => _CategoryItemWithActions(
+                category: c,
+                isOwnProfile: isOwnProfile,
+                feedProvider: feedProvider,
+                isSelected:
+                    feedProvider.selectedCategoryId == c['id'].toString(),
+                onTap: () {
+                  feedProvider.selectCategory(c['id'].toString());
+                  Navigator.of(context).pop();
+                  _onCategoryChanged?.call();
+                },
+                onEdit: () async {
+                  // 카테고리 수정 로직
+                  // TODO: 수정 다이얼로그 구현
+                },
+                onDelete: () {
+                  if (feedProvider is MyProfileFeedProvider) {
                     _deleteCategory(context, feedProvider, c['id']);
                   }
                 },
-                child: _buildCategoryItem(
-                  title: c['name'],
-                  count: c['postCount'] ?? 0,
-                  isSelected:
-                      feedProvider.selectedCategoryId == c['id'].toString(),
-                  context: context,
-                  onTap: () {
-                    feedProvider.selectCategory(c['id'].toString());
-                    Navigator.of(context).pop();
-                    _onCategoryChanged?.call();
-                  },
-                ),
               ),
             ),
+
+        // BottomSheet 하단 여백
+        const SizedBox(height: 20),
       ],
     );
   }
@@ -277,79 +520,22 @@ class CategoryDropDown {
           }
         },
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
           child: Row(
             children: [
+              Icon(
+                Icons.add_circle_outline,
+                size: 22,
+                color: Theme.of(context).colorScheme.primary,
+              ),
+              const SizedBox(width: 12),
               Expanded(
                 child: Text(
                   '새 카테고리 만들기',
                   style: TextStyle(
-                    fontSize: 14,
+                    fontSize: 16,
                     fontWeight: FontWeight.w500,
-                    color: Colors.white.withOpacity(0.95),
-                  ),
-                ),
-              ),
-
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
-                decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.2),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Icon(
-                  Icons.add,
-                  color: Colors.white.withOpacity(0.9),
-                  size: 20,
-                ),
-              ),
-              SizedBox(width: 2),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  /// 카테고리 아이템 빌드
-  Widget _buildCategoryItem({
-    required String title,
-    required int count,
-    required bool isSelected,
-    required BuildContext context,
-    required VoidCallback onTap,
-  }) {
-    return Material(
-      color: isSelected ? Colors.white.withOpacity(0.1) : Colors.transparent,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(12),
-        child: Container(
-          padding: const EdgeInsets.all(16),
-          child: Row(
-            children: [
-              Expanded(
-                child: Text(
-                  title,
-                  style: TextStyle(
-                    fontWeight: isSelected ? FontWeight.w600 : FontWeight.w400,
-                    fontSize: 14,
-                    color: Colors.white.withOpacity(0.9),
-                  ),
-                ),
-              ),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.2),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Text(
-                  count.toString(),
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w500,
-                    color: Colors.white.withOpacity(0.9),
+                    color: Theme.of(context).colorScheme.primary,
                   ),
                 ),
               ),
@@ -358,34 +544,6 @@ class CategoryDropDown {
         ),
       ),
     );
-  }
-
-  /// 시스템 카테고리별 포스트 수 계산
-  int _getSystemCategoryCount(
-    BaseFeedProvider feedProvider,
-    String categoryName,
-  ) {
-    // 실제 포스트 데이터의 accessLevel을 기준으로 계산
-    int count;
-    switch (categoryName) {
-      case '전체':
-        count = feedProvider.totalPostCount;
-        break;
-      case '나만보기':
-        count = feedProvider.privatePostCount;
-        break;
-      case '그룹공유':
-        count = feedProvider.groupsPostCount;
-        break;
-      case '전체공개':
-        count = feedProvider.publicPostCount;
-        break;
-      default:
-        count = 0;
-    }
-
-    print('[CategoryDropDown] _getSystemCategoryCount($categoryName): $count');
-    return count;
   }
 
   /// 카테고리 생성 (서버 API 호출)

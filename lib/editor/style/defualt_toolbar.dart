@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'dart:typed_data';
 import 'package:doppy/data/services/upload_service.dart';
 import 'package:doppy/editor/overlay/sticker_overlay.dart';
@@ -14,6 +15,8 @@ import 'package:doppy/editor/overlay/mention_overlay.dart';
 import 'package:provider/provider.dart';
 import 'package:doppy/editor/service/sticker_service.dart';
 import 'package:doppy/editor/component/divider_component.dart';
+import 'package:doppy/utils/error_handler.dart';
+import 'package:video_compress/video_compress.dart';
 import 'dart:ui';
 
 /// 형광펜 효과 Attribution 정의
@@ -1192,7 +1195,7 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
                         decoration: BoxDecoration(
                           color: Theme.of(
                             context,
-                          ).colorScheme.onSurface.withOpacity(0.1),
+                          ).colorScheme.surface.withOpacity(0.6),
                           borderRadius: BorderRadius.circular(12),
                         ),
                         height: 180,
@@ -1208,7 +1211,7 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
                               decoration: BoxDecoration(
                                 color: Theme.of(
                                   context,
-                                ).colorScheme.onSurface.withOpacity(0.15),
+                                ).colorScheme.onSurface.withOpacity(0.3),
                                 borderRadius: BorderRadius.circular(10),
                               ),
                             ),
@@ -1291,6 +1294,11 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
             }
             if (mode == 'short clip') {
               try {
+                // 바텀시트가 완전히 닫힐 때까지 대기
+                await Future.delayed(const Duration(milliseconds: 300));
+
+                if (!mounted) return;
+
                 // 시스템 비디오 피커(1개)
                 final picker = NativeImagePicker();
                 final file = await picker.pickSingleVideo();
@@ -1302,19 +1310,63 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
                 // TODO: 필요 시 video_player로 duration 체크, 파일 크기 200MB 이하 확인
 
                 final upload = context.read<UploadService>();
+
+                // 먼저 placeholder 노드 추가 (원본 파일 경로로 즉시 표시)
+                print('[VideoUpload] 원본 파일: ${file.path}');
+                final originalFileName = file.path.split('/').last;
+
+                // 원본 파일로 썸네일 생성
+                print('[VideoUpload] 썸네일 생성 시작...');
+                final thumbnail = await VideoCompress.getFileThumbnail(
+                  file.path,
+                  quality: 50,
+                  position: 1000, // 1초 위치
+                );
+                print('[VideoUpload] 썸네일 생성 완료: ${thumbnail.path}');
+
+                // 압축 전에 즉시 placeholder 추가
+                final placeholderId = widget.editorService
+                    .addVideoClipPlaceholderNode(
+                      file.path,
+                      originalFileName,
+                      thumbnailPath: thumbnail.path,
+                    );
+
+                print('[VideoUpload] Placeholder 추가 완료');
+
+                // MOV 파일을 MP4로 변환 (원본 화질 유지)
+                final compressed = await VideoCompress.compressVideo(
+                  file.path,
+                  quality: VideoQuality.HighestQuality, // 원본 화질 유지
+                  deleteOrigin: false,
+                );
+
+                if (compressed == null) {
+                  throw Exception('비디오 압축 실패');
+                }
+
+                final mp4Path = compressed.path!;
+                final mp4FileName = mp4Path.split('/').last;
+                print('[VideoUpload] MP4 변환 완료: $mp4Path');
+
+                // 압축된 MP4 파일 업로드
                 final task = upload.enqueueFile(
-                  file,
+                  File(mp4Path),
                   kind: UploadKind.video,
-                  overrideName: file.path.split('/').last,
+                  overrideName: mp4FileName,
                 );
 
                 // 완료 대기(간단 버전)
                 task.addListener(() async {
+                  print(
+                    '[VideoUpload] task.state=${task.state}, task.url=${task.url}',
+                  );
                   if (task.state == UploadState.success && task.url != null) {
-                    // 에디터에 clip 노드 삽입 (label은 파일명으로 기본)
-                    widget.editorService.addClipNode(
-                      label: file.path.split('/').last,
-                      url: task.url!,
+                    print('[VideoUpload] 성공! URL: ${task.url}');
+                    // placeholder를 실제 URL로 교체
+                    await widget.editorService.replaceVideoPlaceholderWithUrl(
+                      placeholderId,
+                      task.url!,
                     );
                     _forceCloseToolbar();
 
@@ -1323,8 +1375,12 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
                       FocusManager.instance.primaryFocus?.unfocus();
                     }
                   } else if (task.state == UploadState.failed) {
-                    // 영상 업로드 실패 후 키보드 내리기 보장
+                    // 영상 업로드 실패 시 에러 표시
                     if (context.mounted) {
+                      ErrorHandler.showError(context, '영상 업로드에 실패했습니다.');
+                      widget.editorService.deleteVideoPlaceholderNode(
+                        placeholderId,
+                      );
                       FocusManager.instance.primaryFocus?.unfocus();
                     }
                   }

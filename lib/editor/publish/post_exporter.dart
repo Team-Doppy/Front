@@ -2,6 +2,7 @@ import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:doppy/editor/component/row_image_component.dart';
 import 'package:doppy/editor/component/mention_component.dart';
+import 'package:doppy/editor/component/divider_component.dart';
 import 'package:doppy/providers/auth_provider.dart';
 import 'package:flutter/material.dart';
 
@@ -161,7 +162,14 @@ class PostExporter {
           'type': 'clip',
           'label': node.label,
           'color': node.colorHex,
+          'url': node.url,
         });
+        continue;
+      }
+
+      // DividerNode
+      if (node is DividerNode) {
+        nodes.add({'id': node.id, 'type': 'divider'});
         continue;
       }
 
@@ -285,8 +293,7 @@ class PostExporter {
     final Map<String, dynamic> result = {
       'title': title,
       'author': author,
-      'content': {'nodes': nodes},
-      'stickers': stickers,
+      'content': {'nodes': nodes, 'stickers': stickers},
     };
 
     return result;

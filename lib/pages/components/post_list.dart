@@ -15,6 +15,7 @@ class PostList extends StatefulWidget {
   final List<PostData> posts;
   final VoidCallback? onLoadMore;
   final bool isLoadingMore;
+  final bool isLoading; // 초기 로딩 상태
   final Future<void> Function()? onRefresh;
   final Function(int)? onPageChanged;
   final bool showCardShimmer;
@@ -38,6 +39,7 @@ class PostList extends StatefulWidget {
     required this.posts,
     this.onLoadMore,
     this.isLoadingMore = false,
+    this.isLoading = false, // 기본값은 false
     this.onRefresh,
     this.onPageChanged,
     this.showCardShimmer = false,
@@ -299,7 +301,7 @@ class _PostListState extends State<PostList> {
           ),
         SliverToBoxAdapter(
           child: Container(
-            height: 30,
+            height: 35,
             decoration: BoxDecoration(color: Colors.transparent),
           ),
         ),
@@ -310,7 +312,7 @@ class _PostListState extends State<PostList> {
             height: 400,
             decoration: BoxDecoration(color: Colors.transparent),
             child:
-                _items.isEmpty && !widget.showCardShimmer
+                _items.isEmpty && !widget.showCardShimmer && !widget.isLoading
                     ? _buildEmptyState(context)
                     : PageView.builder(
                       scrollDirection: Axis.horizontal,
@@ -451,19 +453,19 @@ class _PostListState extends State<PostList> {
                 final screenWidth = MediaQuery.of(context).size.width;
                 final tapX = details.globalPosition.dx;
 
-                if (tapX < screenWidth * 0.3) {
+                if (tapX < screenWidth * 0.2) {
                   // 왼쪽 30% - 이전 페이지
                   if (_currentIndex > 0) {
                     _pageController.previousPage(
-                      duration: const Duration(milliseconds: 300),
+                      duration: const Duration(milliseconds: 200),
                       curve: Curves.easeOutCubic,
                     );
                   }
-                } else if (tapX > screenWidth * 0.7) {
+                } else if (tapX > screenWidth * 0.8) {
                   // 오른쪽 30% - 다음 페이지
                   if (_currentIndex < _items.length - 1) {
                     _pageController.nextPage(
-                      duration: const Duration(milliseconds: 300),
+                      duration: const Duration(milliseconds: 200),
                       curve: Curves.easeOutCubic,
                     );
                   }
@@ -560,16 +562,16 @@ class _PostListState extends State<PostList> {
           // 왼쪽 30% - 이전 페이지
           if (_currentIndex > 0) {
             _pageController.previousPage(
-              duration: const Duration(milliseconds: 300),
-              curve: Curves.easeOutCubic,
+              duration: const Duration(milliseconds: 150),
+              curve: Curves.easeOut,
             );
           }
         } else if (tapX > screenWidth * 0.7) {
           // 오른쪽 30% - 다음 페이지
           if (_currentIndex < _items.length - 1) {
             _pageController.nextPage(
-              duration: const Duration(milliseconds: 300),
-              curve: Curves.easeOutCubic,
+              duration: const Duration(milliseconds: 150),
+              curve: Curves.easeOut,
             );
           }
         } else {
@@ -707,8 +709,8 @@ class _PostListState extends State<PostList> {
     bool showRecommendButton = false;
 
     if (widget.isShowingFriendsOnly) {
-      message = "친구들의 글이 아직 없어요";
-      subtitle = "친구들이 첫 번째 글을 올릴 때까지 기다려보세요!";
+      message = "친구포스트가 없어요";
+      subtitle = "오늘은 내가 먼저 포스트를 올려볼까요?";
       icon = Icons.people_outline;
       showRecommendButton = true; // 친구글 탭에서만 추천글 버튼 표시
     } else {
@@ -721,20 +723,7 @@ class _PostListState extends State<PostList> {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Container(
-            width: 80,
-            height: 80,
-            decoration: BoxDecoration(
-              color: Theme.of(context).colorScheme.primary.withOpacity(0.1),
-              borderRadius: BorderRadius.circular(40),
-            ),
-            child: Icon(
-              icon,
-              size: 40,
-              color: Theme.of(context).colorScheme.primary.withOpacity(0.6),
-            ),
-          ),
-          const SizedBox(height: 24),
+          SizedBox(height: 200),
           Text(
             message,
             style: TextStyle(
@@ -759,7 +748,7 @@ class _PostListState extends State<PostList> {
 
           // 추천글 보러가기 버튼 (친구글 탭에서만 표시)
           if (showRecommendButton) ...[
-            const SizedBox(height: 32),
+            const SizedBox(height: 20),
             GestureDetector(
               onTap: () {
                 // 전체글 탭으로 전환 (위로 스와이프와 동일한 동작)
@@ -769,7 +758,7 @@ class _PostListState extends State<PostList> {
               },
               child: Container(
                 padding: const EdgeInsets.symmetric(
-                  horizontal: 24,
+                  horizontal: 40,
                   vertical: 12,
                 ),
                 decoration: BoxDecoration(
@@ -788,25 +777,13 @@ class _PostListState extends State<PostList> {
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(
-                      Icons.explore_outlined,
-                      size: 18,
-                      color: Theme.of(context).colorScheme.onPrimary,
-                    ),
-                    const SizedBox(width: 8),
                     Text(
                       '추천글 보러가기',
                       style: TextStyle(
                         color: Theme.of(context).colorScheme.onPrimary,
                         fontSize: 14,
-                        fontWeight: FontWeight.w600,
+                        fontWeight: FontWeight.bold,
                       ),
-                    ),
-                    const SizedBox(width: 4),
-                    Icon(
-                      Icons.arrow_upward_rounded,
-                      size: 16,
-                      color: Theme.of(context).colorScheme.onPrimary,
                     ),
                   ],
                 ),

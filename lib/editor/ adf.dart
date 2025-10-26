@@ -5,6 +5,7 @@ import 'package:doppy/editor/publish/post_exporter.dart';
 import 'package:doppy/editor/service/editor_service.dart';
 import 'package:doppy/editor/service/node_component_service.dart';
 import 'package:doppy/editor/service/sticker_service.dart';
+import 'package:doppy/editor/component/clip_component.dart';
 import 'package:flutter/material.dart';
 
 class EditModeAppBar extends StatelessWidget {
@@ -124,6 +125,9 @@ class EditorAppBar extends StatelessWidget {
                     onTap:
                         editorService.canProceedToPublish()
                             ? () {
+                              // 모든 비디오 플레이어 정리
+                              cleanupAllVideoPlayers();
+
                               NodeComponentService().selectNode(null);
                               final json = exportToJsonString(context);
 

@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'package:doppy/editor/%20adf.dart';
-import 'package:doppy/editor/component/clip_component.dart';
+import 'package:doppy/editor/component/clip_component.dart'
+    show ClipNode, videoPlayerControllers, PinComponentBuilder;
 
 import 'package:doppy/editor/style/selected_toolbar.dart';
 import 'package:doppy/utils/error_handler.dart';
@@ -23,7 +24,7 @@ import 'package:doppy/editor/service/sticker_service.dart';
 import 'package:doppy/utils/dialog_utils.dart';
 import 'package:doppy/editor/style/style_sheet.dart';
 import 'package:doppy/editor/style/defualt_toolbar.dart';
-import 'package:doppy/editor/sticker_canvas.dart';
+import 'package:doppy/editor/writer_sticker_canvas.dart';
 import 'package:doppy/theme/app_colors.dart';
 import 'package:doppy/theme/app_theme.dart';
 import 'package:flutter/material.dart';
@@ -215,18 +216,45 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
         scrollController.hasClients ? scrollController.offset : 0.0;
     final delta = currentOffset - _lastOffset;
 
+    // 상수 정의
+    const scrollThreshold = 3.0;
+    const topThreshold = 15.0;
+
     // 키보드 상태에 따른 스크롤 가능 여부 판단
     final isKeyboardUp = keyboardHeight > 200;
     final isKeyboardDown = keyboardHeight <= 30;
 
-    // 키보드가 완전히 내려갔을 때는 항상 앱바 표시
+    // 키보드가 완전히 내려갔을 때도 스크롤 방향에 따라 앱바 제어
     if (isKeyboardDown) {
-      if (!_showAppBar) {
-        setState(() {
-          _showAppBar = true;
-          _isScrollingUp = true;
-        });
+      // 스크롤 방향 감지
+      if (delta < -scrollThreshold) {
+        // 위로 스크롤 (앱바 표시)
+        if (!_isScrollingUp || !_showAppBar) {
+          setState(() {
+            _isScrollingUp = true;
+            _showAppBar = true;
+          });
+        }
+      } else if (delta > scrollThreshold) {
+        // 아래로 스크롤 (앱바 숨김)
+        if (_isScrollingUp && _showAppBar) {
+          setState(() {
+            _isScrollingUp = false;
+            _showAppBar = false;
+          });
+        }
       }
+      // 맨 위에 있을 때는 항상 앱바 표시
+      if (currentOffset <= topThreshold) {
+        if (!_showAppBar) {
+          setState(() {
+            _showAppBar = true;
+            _isScrollingUp = true;
+          });
+        }
+      }
+
+      _lastOffset = currentOffset;
       return;
     }
 
@@ -247,7 +275,6 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     }
 
     // 3. 맨 위에 있을 때는 항상 앱바 표시
-    const topThreshold = 15.0;
     if (currentOffset <= topThreshold) {
       if (!_showAppBar) {
         setState(() {
@@ -260,7 +287,6 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     }
 
     // 4. 스크롤 방향에 따른 앱바 표시/숨김
-    const scrollThreshold = 3.0;
     if (delta.abs() > scrollThreshold) {
       if (delta < 0) {
         // 위로 스크롤 (앱바 표시)
@@ -324,9 +350,39 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     if (mounted) Navigator.of(context).pop();
   }
 
+  // ClipNode 액션 트리거
+  void _triggerClipNodeAction(String nodeId, String action) {
+    print('[ClipNode] Action triggered: $action for node: $nodeId');
+
+    // 문서에서 ClipNode 찾기
+    final node = document.getNodeById(nodeId);
+    if (node is! ClipNode || node.url.isEmpty) {
+      print('[ClipNode] ClipNode를 찾을 수 없거나 URL이 비어있습니다');
+      return;
+    }
+
+    // 컨트롤러 찾기
+    final key = 'video_${node.url.hashCode}';
+    final controller = videoPlayerControllers[key];
+
+    if (controller == null) {
+      print('[ClipNode] 컨트롤러를 찾을 수 없습니다: $key');
+      return;
+    }
+
+    // 액션 실행
+    if (action == 'toggleMute') {
+      controller.toggleMute?.call();
+      print('[ClipNode] toggleMute() 호출됨');
+    } else if (action == 'restartVideo') {
+      controller.restartVideo?.call();
+      print('[ClipNode] restartVideo() 호출됨');
+    }
+  }
+
   void _handleTap() {
     if (_lastTapPosition == null) return;
-    // 1) 세로 노드 사이 클릭 감지 → (이미지-이미지 사이에서만) 빈 문단 삽입
+    // 1) 세로 노드 사이 클릭 감지 → 특수 노드(텍스트가 아닌) 사이에서 빈 문단 삽입
     final verticalGapIndex = _detectVerticalGapAt(_lastTapPosition!);
     if (verticalGapIndex != null) {
       final before =
@@ -337,10 +393,41 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
           verticalGapIndex < document.nodeCount
               ? document.getNodeAt(verticalGapIndex)
               : null;
-      final bool isImageBefore = before is ImageNode || before is ImageRowNode;
-      final bool isImageAfter = after is ImageNode || after is ImageRowNode;
-      if (isImageBefore && isImageAfter) {
+
+      // 텍스트 노드가 아닌 특수 노드인지 확인
+      bool isSpecialNode(DocumentNode node) {
+        return node is ImageNode ||
+            node is ImageRowNode ||
+            node is ClipNode ||
+            node is LinkNode ||
+            node is MentionNode;
+      }
+
+      final bool isSpecialBefore = before != null && isSpecialNode(before);
+      final bool isSpecialAfter = after != null && isSpecialNode(after);
+
+      if (isSpecialBefore && isSpecialAfter) {
+        // 현재 스크롤 위치 저장
+        final currentScrollOffset =
+            scrollController.hasClients ? scrollController.offset : 0.0;
+
         editorService.insertEmptyParagraphAtIndex(verticalGapIndex);
+
+        // 키보드가 올라가 있으면 스크롤 위치 유지
+        if (isKeyboardVisible) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (scrollController.hasClients) {
+              scrollController.jumpTo(currentScrollOffset);
+            }
+          });
+        } else {
+          // 키보드가 내려가 있을 때만 포커스 요청
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!_editorFocusNode.hasFocus) {
+              _editorFocusNode.requestFocus();
+            }
+          });
+        }
       }
       nodeComponentService.selectNode(null);
       return;
@@ -359,6 +446,16 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
         if (rowIndex != -1) {
           editorService.insertEmptyParagraphAtIndex(rowIndex + 1);
         }
+        nodeComponentService.selectNode(null);
+        return;
+      }
+    }
+
+    // 3) ClipNode 클릭 시 위치에 따라 분기 처리
+    if (node is ClipNode) {
+      final action = dragService.handleClipNodeTap(nodeId, _lastTapPosition!);
+      if (action != null) {
+        _triggerClipNodeAction(nodeId, action);
         nodeComponentService.selectNode(null);
         return;
       }
@@ -792,7 +889,49 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
       selectedId: selectedId,
       onEdit: () => _editImage(selectedId, node as ImageNode),
       onDelete: (node, selectedId) => _deleteNode(node, selectedId),
+      onChangeAlignment:
+          (node, selectedId) => _changeImageAlignment(node, selectedId),
     );
+  }
+
+  /// 이미지 정렬 변경
+  Future<void> _changeImageAlignment(
+    DocumentNode node,
+    String selectedId,
+  ) async {
+    if (node is! ImageNode) return;
+
+    // 메타데이터에서 현재 패딩 정보 가져오기
+    final currentPadding = node.metadata['padding'] as String? ?? 'center';
+
+    // 다음 패딩 모드로 전환
+    final nextPadding = _getNextPaddingMode(currentPadding);
+
+    // 메타데이터 업데이트
+    final updatedMetadata = Map<String, dynamic>.from(node.metadata);
+    updatedMetadata['padding'] = nextPadding;
+
+    final newNode = ImageNode(
+      id: node.id,
+      imageUrl: node.imageUrl,
+      altText: node.altText,
+      metadata: updatedMetadata,
+    );
+
+    // editor.execute를 사용하여 노드 교체
+    editor.execute([
+      ReplaceNodeRequest(existingNodeId: selectedId, newNode: newNode),
+    ]);
+  }
+
+  String _getNextPaddingMode(String current) {
+    switch (current) {
+      case 'full':
+        return 'center';
+      case 'center':
+      default:
+        return 'full';
+    }
   }
 
   /// 이미지 편집

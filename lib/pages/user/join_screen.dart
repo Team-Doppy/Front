@@ -268,7 +268,7 @@ class _JoinScreenState extends State<JoinScreen> {
           TextField(
             cursorColor: Theme.of(context).colorScheme.onSurface,
             style: TextStyle(
-              color: Colors.white,
+              color: Theme.of(context).colorScheme.onSurface,
               fontSize: 18,
               fontWeight: FontWeight.w500,
             ),
@@ -329,7 +329,7 @@ class _JoinScreenState extends State<JoinScreen> {
             obscureText: _obscurePassword,
             cursorColor: Theme.of(context).colorScheme.onSurface,
             style: TextStyle(
-              color: Colors.white,
+              color: Theme.of(context).colorScheme.onSurface,
               fontSize: 18,
               fontWeight: FontWeight.w500,
             ),

@@ -102,10 +102,19 @@ Stylesheet buildCustomStylesheet(BuildContext context) {
           };
         }
         if (docNode is ImageNode) {
+          // 메타데이터에서 패딩 모드 확인
+          final paddingMode =
+              docNode.metadata['padding'] as String? ?? 'center';
+
+          // 'full' 모드면 좌우 패딩 없음, 'center' 모드면 기본 패딩
+          final horizontalPadding = paddingMode == 'full' ? 0.0 : 20.0;
+
           return {
-            Styles.padding: CascadingPadding.symmetric(
-              vertical: EditorConfig.imagePadding,
-              horizontal: 0,
+            Styles.padding: CascadingPadding.only(
+              top: EditorConfig.imagePadding,
+              bottom: EditorConfig.imagePadding,
+              left: horizontalPadding,
+              right: horizontalPadding,
             ),
           };
         }

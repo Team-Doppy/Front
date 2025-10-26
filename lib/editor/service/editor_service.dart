@@ -510,6 +510,53 @@ class EditorService extends ChangeNotifier {
     _insertComponentNodeAtNextLine(node);
   }
 
+  /// Video clip placeholder 노드 추가
+  String addVideoClipPlaceholderNode(
+    String localPath,
+    String label, {
+    String? thumbnailPath,
+  }) {
+    final id = 'clip_${DateTime.now().millisecondsSinceEpoch}';
+    final node = ClipNode(
+      id: id,
+      label: label,
+      colorHex: '#FF5252',
+      url: '',
+      localPath: localPath,
+      thumbnailPath: thumbnailPath ?? '',
+    );
+    final int safeIndex = _getCaretNodeIndexSafe();
+    editor.execute([
+      InsertNodeAtIndexRequest(nodeIndex: safeIndex, newNode: node),
+    ]);
+    return id;
+  }
+
+  /// Video placeholder를 실제 URL로 교체
+  Future<void> replaceVideoPlaceholderWithUrl(String id, String url) async {
+    try {
+      final existing = editor.document.getNodeById(id);
+      if (existing is! ClipNode) return;
+
+      final newNode = ClipNode(
+        id: existing.id,
+        label: existing.label,
+        colorHex: existing.colorHex,
+        url: url,
+        localPath: '', // placeholder 해제
+        thumbnailPath: existing.thumbnailPath, // 썸네일 경로 유지
+      );
+
+      editor.execute([
+        ReplaceNodeRequest(existingNodeId: id, newNode: newNode),
+      ]);
+
+      notifyListeners();
+    } catch (e) {
+      debugPrint('replaceVideoPlaceholderWithUrl error: $e');
+    }
+  }
+
   ///  노드 추가: 현재 캐럿 다음 슬롯에  삽입
   void addClipNode({
     String label = '',
@@ -521,6 +568,7 @@ class EditorService extends ChangeNotifier {
       id: 'clip_${DateTime.now().millisecondsSinceEpoch}',
       label: label,
       colorHex: colorHex,
+      url: url,
     );
     editor.execute([
       InsertNodeAtIndexRequest(nodeIndex: safeIndex, newNode: node),
@@ -761,6 +809,13 @@ class EditorService extends ChangeNotifier {
   void deleteImagePlaceholderNode(String id) {
     try {
       document.deleteNode(id);
+    } catch (_) {}
+  }
+
+  void deleteVideoPlaceholderNode(String id) {
+    try {
+      document.deleteNode(id);
+      notifyListeners();
     } catch (_) {}
   }
 

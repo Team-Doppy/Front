@@ -1,6 +1,10 @@
 import 'dart:io';
 import 'dart:math';
+import 'dart:async';
 import 'package:dio/dio.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:doppy/data/services/base_api_service.dart';
+import 'dart:ui';
 
 /// 네트워크 에러 타입 분류
 enum NetworkErrorType {
@@ -11,6 +15,54 @@ enum NetworkErrorType {
   notFound, // 리소스 없음 (404)
   badRequest, // 잘못된 요청 (400)
   unknown, // 기타 에러
+}
+
+class ConnectivityReloadCoordinator {
+  static final ConnectivityReloadCoordinator _instance =
+      ConnectivityReloadCoordinator._internal();
+  factory ConnectivityReloadCoordinator() => _instance;
+  ConnectivityReloadCoordinator._internal();
+
+  StreamSubscription<dynamic>? _subscription;
+  final Map<String, _Handler> _handlers = {};
+  Timer? _debounce;
+
+  void start() {
+    _subscription ??= NetworkManager.onConnectivityChanged.listen((
+      dynamic isOnlineDyn,
+    ) {
+      final bool isOnline = isOnlineDyn == true;
+      if (!isOnline) return;
+      _debounce?.cancel();
+      _debounce = Timer(const Duration(milliseconds: 500), _notifyHandlers);
+    });
+  }
+
+  /// 핸들러 등록. 반환된 콜백을 호출하면 등록 해제됩니다.
+  VoidCallback registerHandler({
+    required String id,
+    required Future<void> Function() onOnline,
+  }) {
+    _handlers[id] = _Handler(onOnline: onOnline);
+    return () => _handlers.remove(id);
+  }
+
+  void _notifyHandlers() {
+    for (final entry in _handlers.entries) {
+      final handler = entry.value;
+      if (handler.inProgress) continue;
+      handler.inProgress = true;
+      handler.onOnline().catchError((_) {}).whenComplete(() {
+        handler.inProgress = false;
+      });
+    }
+  }
+}
+
+class _Handler {
+  final Future<void> Function() onOnline;
+  bool inProgress;
+  _Handler({required this.onOnline}) : inProgress = false;
 }
 
 /// 네트워크 에러 클래스
@@ -56,17 +108,31 @@ class RetryConfig {
 class NetworkManager {
   static bool _isOnline = true;
   static bool _hasRecentError = false;
+  static final StreamController<bool> _connectivityController =
+      StreamController<bool>.broadcast();
+  static StreamSubscription<dynamic>? _connSub;
 
   /// 네트워크 에러 발생 시 호출
   static void setNetworkError(bool hasError) {
     _hasRecentError = hasError;
-    _isOnline = !hasError;
+    final newOnline = !hasError;
+    if (_isOnline != newOnline) {
+      _isOnline = newOnline;
+      try {
+        _connectivityController.add(_isOnline);
+      } catch (_) {}
+    }
   }
 
   /// 네트워크 연결 복구 시 호출
   static void setNetworkRecovered() {
     _hasRecentError = false;
-    _isOnline = true;
+    if (!_isOnline) {
+      _isOnline = true;
+      try {
+        _connectivityController.add(true);
+      } catch (_) {}
+    }
   }
 
   /// 간단한 연결 상태 확인
@@ -76,10 +142,50 @@ class NetworkManager {
   }
 
   /// 빈 스트림 (연결 상태 모니터링 안함)
-  static Stream<bool> get onConnectivityChanged => Stream.empty();
+  static Stream<bool> get onConnectivityChanged =>
+      _connectivityController.stream;
 
   /// 현재 연결 상태
   static bool get isOnline => _isOnline;
+
+  /// connectivity_plus로 시스템 네트워크 변화를 구독하고, 온라인 징후 시 핑 체크 후 복구 신호 발행
+  static void initConnectivityMonitor({
+    String pingUrl = BaseApiService.baseUrl,
+  }) {
+    // 중복 구독 방지
+    _connSub?.cancel();
+    _connSub = Connectivity().onConnectivityChanged.listen((result) async {
+      // 오프라인 신호
+      if (result == ConnectivityResult.none) {
+        setNetworkError(true);
+        return;
+      }
+      // 와이파이/모바일 등 온라인 징후 → 실제 핑으로 검증
+      try {
+        final ok = await _ping(pingUrl);
+        if (ok) {
+          setNetworkRecovered();
+        } else {
+          setNetworkError(true);
+        }
+      } catch (_) {
+        setNetworkError(true);
+      }
+    });
+  }
+
+  static Future<bool> _ping(String url) async {
+    try {
+      final client =
+          HttpClient()..connectionTimeout = const Duration(seconds: 2);
+      final req = await client.getUrl(Uri.parse(url));
+      final res = await req.close();
+      client.close(force: true);
+      return res.statusCode >= 200 && res.statusCode < 500;
+    } catch (_) {
+      return false;
+    }
+  }
 }
 
 /// 네트워크 유틸리티 클래스

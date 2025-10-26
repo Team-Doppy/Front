@@ -141,6 +141,7 @@ class CommentService extends ChangeNotifier {
   String? _currentPostId;
   bool _isLoading = false;
   bool _hasMoreComments = true;
+  int _currentPage = 0;
 
   // 타이밍 시어 관련
   bool _isTimingSheerActive = false;
@@ -159,6 +160,7 @@ class CommentService extends ChangeNotifier {
       _comments.clear();
       _hasMoreComments = true;
       _isTimingSheerActive = false;
+      _currentPage = 0;
 
       notifyListeners();
     }
@@ -331,7 +333,7 @@ class CommentService extends ChangeNotifier {
   }
 
   /// 댓글 로드 (API 호출)
-  Future<void> loadComments({bool refresh = false}) async {
+  Future<void> loadComments({bool refresh = false, int? size}) async {
     if (_currentPostId == null ||
         _currentPostId!.isEmpty ||
         _isLoading ||
@@ -349,8 +351,9 @@ class CommentService extends ChangeNotifier {
       print('[CommentService] API 호출 시작');
       print('[CommentService] PostId: $_currentPostId');
 
+      final pageSize = size ?? 20;
       final response = await _dio.get(
-        '/api/comments/post/$_currentPostId?page=0&size=20',
+        '/api/comments/post/$_currentPostId?page=$_currentPage&size=$pageSize',
         options: Options(receiveTimeout: const Duration(seconds: 10)),
       );
 
@@ -382,10 +385,16 @@ class CommentService extends ChangeNotifier {
 
         if (refresh) {
           _comments.clear();
+          _currentPage = 0;
         }
 
         _comments.addAll(newComments);
         _hasMoreComments = !(data['last'] ?? true);
+
+        // 다음 페이지를 위해 증가
+        if (!refresh && _hasMoreComments) {
+          _currentPage++;
+        }
 
         print('[CommentService] 댓글 로드 완료: ${newComments.length}개');
       } else {

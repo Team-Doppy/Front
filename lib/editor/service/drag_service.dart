@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:doppy/editor/postwrite_screen.dart';
 import 'package:doppy/editor/component/row_image_component.dart';
+import 'package:doppy/editor/component/clip_component.dart';
 import 'package:doppy/editor/service/editor_service.dart';
 import 'package:doppy/editor/service/node_component_service.dart';
 import 'package:flutter/material.dart';
@@ -173,6 +174,12 @@ class DragService extends ChangeNotifier {
     final dropInfo = computeDropInfo(globalPosition);
     if (dropInfo != null) {
       dropIndex = dropInfo['dropIndex'] as int?;
+    }
+
+    // ClipNode 드래그 시작 시 모든 비디오 일시정지
+    final node = editorService.document.getNodeById(nodeId);
+    if (node is ClipNode) {
+      _pauseAllVideos();
     }
 
     notifyListeners();
@@ -460,8 +467,6 @@ class DragService extends ChangeNotifier {
 
     // 문서 끝 부분 감지를 위한 추가 처리
     final documentLength = editorService.document.length;
-    final isNearDocumentEnd =
-        localPosition.dy > renderBox.size.height - 50; // 문서 끝에서 50px 이내
 
     // SuperEditor의 정확한 위치 계산 (로컬 좌표 사용)
     DocumentPosition? position;
@@ -647,5 +652,91 @@ class DragService extends ChangeNotifier {
   /// 노드 ID로 현재 노드의 인덱스 찾기
   int getNodeIndex(String nodeId) {
     return editorService.document.getNodeIndexById(nodeId);
+  }
+
+  /// ClipNode 클릭 처리 - 버튼 영역 판단 및 액션 반환
+  String? handleClipNodeTap(String nodeId, Offset globalTapPosition) {
+    final nodeRect = getNodeGlobalRect(nodeId);
+    if (nodeRect == null) {
+      print('[DragService] ClipNode: nodeRect가 null입니다');
+      return null;
+    }
+
+    final localTap = Offset(
+      globalTapPosition.dx - nodeRect.left,
+      globalTapPosition.dy - nodeRect.top,
+    );
+
+    // 화면 가로 너비 (SuperEditor context 필요)
+    final screenWidth = 400.0; // TODO: 실제 화면 너비 전달
+
+    // 우측 하단 음소거 버튼 영역 확대 (하단 모서리까지)
+    final muteButtonSize = 66.0; // 버튼 영역을 더 크게
+    final buttonRight = screenWidth;
+    final buttonLeft = buttonRight - muteButtonSize;
+    final buttonBottom = nodeRect.height;
+    final buttonTop = buttonBottom - muteButtonSize;
+
+    print('[DragService] ClipNode: nodeRect=$nodeRect, localTap=$localTap');
+    print(
+      '[DragService] ClipNode: Button area: left=$buttonLeft, right=$buttonRight, top=$buttonTop, bottom=$buttonBottom',
+    );
+
+    final isMuteButtonArea =
+        localTap.dx > buttonLeft &&
+        localTap.dx < buttonRight &&
+        localTap.dy > buttonTop &&
+        localTap.dy < buttonBottom;
+
+    print('[DragService] ClipNode: isMuteButtonArea=$isMuteButtonArea');
+
+    if (isMuteButtonArea) {
+      print('[DragService] ClipNode: 음소거 버튼 클릭!');
+      return 'toggleMute';
+    }
+
+    // 중앙 다시보기 버튼 영역 체크
+    final isCenterArea =
+        localTap.dx > (screenWidth / 2 - 100) &&
+        localTap.dx < (screenWidth / 2 + 100) &&
+        localTap.dy > (nodeRect.height / 2 - 25) &&
+        localTap.dy < (nodeRect.height / 2 + 25);
+
+    print('[DragService] ClipNode: isCenterArea=$isCenterArea');
+
+    if (isCenterArea) {
+      // 비디오가 끝났는지 확인
+      final clipNode = editorService.document.getNodeById(nodeId);
+      if (clipNode is ClipNode) {
+        final key = 'video_${clipNode.url.hashCode}';
+        final controller = videoPlayerControllers[key];
+
+        // 비디오가 완전히 끝났을 때만 다시보기 버튼 반응
+        if (controller?.hasPlayedOnce != null && controller!.hasPlayedOnce!()) {
+          print('[DragService] ClipNode: 다시보기 버튼 클릭!');
+          return 'restartVideo';
+        } else {
+          print('[DragService] ClipNode: 비디오가 아직 끝나지 않음');
+          return null;
+        }
+      }
+
+      print('[DragService] ClipNode: 다시보기 버튼 클릭!');
+      return 'restartVideo';
+    }
+
+    print('[DragService] ClipNode: 일반 영역 클릭');
+    return null;
+  }
+
+  /// 모든 비디오 일시정지
+  void _pauseAllVideos() {
+    for (final entry in videoPlayerControllers.entries) {
+      final controller = entry.value;
+      if (controller.pause != null) {
+        controller.pause!();
+        print('[DragService] 비디오 일시정지: ${entry.key}');
+      }
+    }
   }
 }

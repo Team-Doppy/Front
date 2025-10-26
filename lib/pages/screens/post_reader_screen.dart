@@ -1,29 +1,34 @@
-import 'dart:typed_data';
 import 'dart:ui' as ui;
-import 'dart:convert';
 import 'package:doppy/editor/component/single_image_component.dart';
 import 'package:doppy/pages/components/common_profile_avatar.dart';
+import 'package:doppy/pages/screens/user_profile_screen.dart';
 import 'package:doppy/utils/error_handler.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:super_editor/super_editor.dart';
 import 'package:doppy/editor/style/style_sheet.dart';
-import 'package:doppy/editor/style/defualt_toolbar.dart';
 import 'package:doppy/editor/component/row_image_component.dart'
-    show ImageRowNode, RowImageComponentBuilder;
+    show RowImageComponentBuilder, ImageRowNode;
 import 'package:doppy/editor/postwrite_screen.dart';
 import 'package:doppy/providers/user_provider.dart';
+import 'package:doppy/data/models/user_model.dart';
 import 'package:doppy/data/services/comment_service.dart';
 import 'package:doppy/data/services/blog_service.dart';
 import 'package:doppy/data/services/like_service.dart';
 import 'package:doppy/pages/components/comment_bottom_sheet.dart';
 import 'package:doppy/pages/components/comment_preview_section.dart';
+import 'package:doppy/pages/components/doppy_loading_logo.dart';
 
 // 읽기 전용에서는 에디터 전용 컴포넌트를 사용하지 않음
 import 'package:doppy/editor/component/link_component.dart';
 import 'package:doppy/editor/component/mention_component.dart';
+import 'package:doppy/editor/component/divider_component.dart';
+import 'package:doppy/editor/component/clip_component.dart'
+    show ClipNode, videoPlayerControllers, PinComponentBuilder;
 import 'package:doppy/editor/service/editor_service.dart';
 import 'package:doppy/editor/service/drag_service.dart';
+import 'package:doppy/editor/service/post_reader_service.dart';
+import 'package:doppy/editor/service/post_reader_stickers.dart';
 
 /// 읽기 전용: 작성 화면에서 Export된 Map을 받아 그대로 복원하여 보여준다.
 class PostReaderScreen extends StatefulWidget {
@@ -47,6 +52,7 @@ class _PostReaderScreenState extends State<PostReaderScreen>
   final GlobalKey _layoutKey = GlobalKey();
   static final GlobalKey _stackKey = GlobalKey();
   final BlogService _blogService = BlogService();
+  final PostReaderService _postReaderService = PostReaderService();
   Future<Map<String, dynamic>>? _contentFuture;
   Map<String, dynamic>? _currentExportedData; // 최신 컨텐츠를 저장
   bool _showLoadingLogo = false; // 로딩 로고 표시 여부
@@ -71,6 +77,93 @@ class _PostReaderScreenState extends State<PostReaderScreen>
   // 좋아요/댓글 데이터
   final CommentService _commentService = CommentService();
   final LikeService _likeService = LikeService();
+
+  // 마지막 탭 위치 저장
+  Offset? _lastTapPosition;
+
+  void _handleTap() {
+    if (_lastTapPosition == null) return;
+
+    print('[PostReader] 탭 위치: $_lastTapPosition');
+    print(
+      '[PostReader] DocumentLayoutKey 설정됨: ${_editorService.documentLayoutKey != null}',
+    );
+
+    final node = _editorService.findNodeAtPosition(_lastTapPosition!);
+    if (node == null) {
+      print(
+        '[PostReader] 클릭한 노드 없음 - Key: ${_editorService.documentLayoutKey}',
+      );
+      return;
+    }
+
+    // 클릭한 노드 정보 출력
+    print('[PostReader] 클릭한 노드:');
+    // ClipNode 클릭 시 위치에 따라 분기 처리
+    if (node is ClipNode) {
+      final action = _dragService.handleClipNodeTap(node.id, _lastTapPosition!);
+      print('  - Action: $action');
+      if (action != null) {
+        _triggerClipNodeAction(node.id, action);
+        return;
+      }
+    }
+
+    if (node is MentionNode) {
+      print('  - Mention: ${node.usernames}');
+      return;
+    }
+    if (node is LinkNode) {
+      print('  - Link: ${node.url}');
+      return;
+    }
+    if (node is ImageNode) {
+      print('  - Image: ${node.imageUrl}');
+      return;
+    }
+    if (node is ImageRowNode) {
+      print('  - ImageRow: ${node.imageUrls}');
+      return;
+    }
+    if (node is DividerNode) {
+      print('  - Divider');
+      return;
+    }
+
+    if (node is ParagraphNode) {
+      print('  - Paragraph: ${node.text}');
+      return;
+    }
+  }
+
+  void _triggerClipNodeAction(String nodeId, String action) {
+    print('[ClipNode] Action triggered: $action for node: $nodeId');
+
+    // 문서에서 ClipNode 찾기
+    final node = _document.getNodeById(nodeId);
+    if (node is! ClipNode || node.url.isEmpty) {
+      print('[ClipNode] ClipNode를 찾을 수 없거나 URL이 비어있습니다');
+      return;
+    }
+
+    // 컨트롤러 찾기
+    final key = 'video_${node.url.hashCode}';
+    final controller = videoPlayerControllers[key];
+
+    if (controller == null) {
+      print('[ClipNode] 컨트롤러를 찾을 수 없습니다: $key');
+      return;
+    }
+
+    // 액션 실행
+    if (action == 'toggleMute') {
+      controller.toggleMute?.call();
+      print('[ClipNode] toggleMute() 호출됨');
+    } else if (action == 'restartVideo') {
+      controller.restartVideo?.call();
+      print('[ClipNode] restartVideo() 호출됨');
+    }
+  }
 
   void _toggleLike() async {
     final postId = widget.exported['id']?.toString();
@@ -129,7 +222,9 @@ class _PostReaderScreenState extends State<PostReaderScreen>
 
       if (mounted) {
         ErrorHandler.showInfo(context, '게시물이 삭제되었습니다');
-        Navigator.of(context).pop();
+
+        // 뒤로가기 전에 결과 전달하여 프로필 화면이 다시 빌드되도록 함
+        Navigator.of(context).pop({'deleted': true});
       }
     } catch (e) {
       if (mounted) {
@@ -143,6 +238,10 @@ class _PostReaderScreenState extends State<PostReaderScreen>
     final id = widget.exported['id']?.toString() ?? '';
     _commentService.setPostId(id);
     _commentService.connectWebSocketForCurrentPost();
+
+    // 남은 댓글 로드 (페이지네이션)
+    _commentService.loadComments();
+
     setState(() {
       _showCommentsOverlay = true;
     });
@@ -171,49 +270,17 @@ class _PostReaderScreenState extends State<PostReaderScreen>
     }
   }
 
-  // 본문 로드 + 상위 6개 이미지 미리 디코딩
+  // 본문 로드 + 상위 6개 이미지 + 최대 2개 클립 미리 디코딩
   Future<Map<String, dynamic>> _loadContentWithImages(String postId) async {
     final content = await _blogService.getPostContent(postId);
 
-    // 이미지 URL 추출
-    final List<String> imageUrls = [];
-    final nodes = (content['nodes'] as List?) ?? [];
+    // 이미지와 클립 URL 추출 및 미리 로드
+    if (mounted) {
+      final imageUrls = _postReaderService.extractImageUrls(content);
+      await _postReaderService.preloadImages(context, imageUrls);
 
-    for (final raw in nodes) {
-      if (imageUrls.length >= 6) break;
-
-      final m = (raw as Map).cast<String, dynamic>();
-      final type = (m['type'] ?? '').toString();
-
-      if (type == 'image') {
-        final url = (m['url'] ?? '').toString();
-        if (url.isNotEmpty) imageUrls.add(url);
-      } else if (type == 'imageRow') {
-        final urls =
-            ((m['urls'] as List?) ?? const [])
-                .map((e) => e.toString())
-                .where((u) => u.isNotEmpty)
-                .toList();
-        imageUrls.addAll(urls);
-      }
-    }
-
-    // 상위 6개 이미지만 미리 캐싱
-    final imagesToPreload = imageUrls.take(6).toList();
-    if (imagesToPreload.isNotEmpty && mounted) {
-      print('[PostReader] 이미지 ${imagesToPreload.length}개 미리 로드 시작');
-      await Future.wait(
-        imagesToPreload.map((url) {
-          return precacheImage(
-            NetworkImage(url),
-            context,
-            onError: (e, stack) {
-              print('[PostReader] 이미지 프리캐싱 실패: $url - $e');
-            },
-          );
-        }),
-      );
-      print('[PostReader] 이미지 프리캐싱 완료');
+      final clipUrls = _postReaderService.extractClipUrls(content);
+      await _postReaderService.preloadClips(context, clipUrls);
     }
 
     return content;
@@ -222,16 +289,37 @@ class _PostReaderScreenState extends State<PostReaderScreen>
   @override
   void initState() {
     super.initState();
-    _document = _rebuildDocument(widget.exported);
+    _document = _postReaderService.rebuildDocumentForRead(widget.exported);
     _composer = MutableDocumentComposer();
     _editor = createDefaultDocumentEditor(
       document: _document,
       composer: _composer,
     );
     _editorService = EditorService(editor: _editor, document: _document);
+    _editorService.setDocumentLayoutKey(_layoutKey);
     _dragService = DragService(editorService: _editorService);
     _readOnlyFocus = FocusNode(canRequestFocus: false);
     _scrollCtrl.addListener(_onScroll);
+
+    // 이미지 프리캐싱 (async로 처리)
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _contentFuture != null) {
+        _contentFuture!.then((content) {
+          if (mounted) {
+            final imageUrls = _postReaderService.extractImageUrls(content);
+            print('[PostReaderScreen] 이미지 프리캐싱 시작: ${imageUrls.length}개');
+            _postReaderService.preloadImages(context, imageUrls);
+
+            final clipUrls = _postReaderService.extractClipUrls(content);
+            print('[PostReaderScreen] 클립 프리캐싱 시작: ${clipUrls.length}개');
+            _postReaderService.preloadClips(context, clipUrls);
+          }
+        });
+      }
+    });
+
+    // PostReaderScreen은 StickerService를 사용하지 않고
+    // widget.exported에서 stickers를 직접 읽어 PostReaderStickers에 전달
 
     _commentsAnimCtrl = AnimationController(
       vsync: this,
@@ -256,6 +344,9 @@ class _PostReaderScreenState extends State<PostReaderScreen>
       print('[PostReaderScreen] 포스트 ID: $postId');
       _commentService.setPostId(postId);
 
+      // 초기 댓글 로드 (미리보기용으로 소량만)
+      _commentService.loadComments(size: 10);
+
       // 초기 좋아요 상태와 수 설정
       final initialLikeCount = widget.exported['likeCount'] ?? 0;
       final initialIsLiked = widget.exported['isLiked'] == true;
@@ -268,7 +359,7 @@ class _PostReaderScreenState extends State<PostReaderScreen>
       _contentFuture = _loadContentWithImages(postId);
 
       // 0.5초 후 로딩 로고 표시
-      Future.delayed(const Duration(milliseconds: 1000), () {
+      Future.delayed(const Duration(milliseconds: 600), () {
         if (mounted) {
           setState(() {
             _showLoadingLogo = true;
@@ -338,7 +429,7 @@ class _PostReaderScreenState extends State<PostReaderScreen>
 
   @override
   Widget build(BuildContext context) {
-    final stickers = (widget.exported['stickers'] as List?) ?? const [];
+    // 스티커는 아래 FutureBuilder에서 최신 content 기준으로 추출
 
     final currentUser = context.read<UserProvider>().currentUser;
     final String postAuthor = (widget.exported['author'] ?? '').toString();
@@ -368,48 +459,10 @@ class _PostReaderScreenState extends State<PostReaderScreen>
           future: _contentFuture,
           builder: (context, snap) {
             if (snap.connectionState == ConnectionState.waiting) {
-              return Center(
-                child: AnimatedOpacity(
-                  opacity: _showLoadingLogo ? 1.0 : 0.0,
-                  duration: const Duration(milliseconds: 400),
-                  curve: Curves.easeIn,
-                  child: const Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Text(
-                        "d",
-                        style: TextStyle(
-                          fontSize: 32,
-                          fontWeight: FontWeight.w800,
-                          color: Colors.white,
-                          letterSpacing: 1.2,
-                        ),
-                      ),
-                      Padding(
-                        padding: EdgeInsets.only(top: 2),
-                        child: SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 3,
-                            valueColor: AlwaysStoppedAnimation<Color>(
-                              Colors.white,
-                            ),
-                          ),
-                        ),
-                      ),
-                      Text(
-                        "ppy",
-                        style: TextStyle(
-                          fontSize: 32,
-                          fontWeight: FontWeight.w800,
-                          color: Colors.white,
-                          letterSpacing: 1.2,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
+              return DoppyLoadingLogo(
+                opacity: _showLoadingLogo ? 1.0 : 0.0,
+                showBackButton: true,
+                onBack: () => Navigator.of(context).pop(),
               );
             }
             if (snap.hasError) {
@@ -453,7 +506,7 @@ class _PostReaderScreenState extends State<PostReaderScreen>
               _currentExportedData = merged;
 
               // 최신 본문으로 문서 재구성
-              _document = _rebuildDocument(merged);
+              _document = _postReaderService.rebuildDocumentForRead(merged);
               _editor = createDefaultDocumentEditor(
                 document: _document,
                 composer: _composer,
@@ -462,14 +515,29 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                 editor: _editor,
                 document: _document,
               );
+              _editorService.setDocumentLayoutKey(_layoutKey);
               _dragService = DragService(editorService: _editorService);
             }
+
+            // 스티커 추출: 서버에서 최신 본문(snap.data)이 있으면 그쪽에서,
+            // 아니면 최초 exported의 content에서 읽는다
+            final Map<String, dynamic> stickersContent =
+                (snap.hasData && (snap.data?.isNotEmpty ?? false))
+                    ? (snap.data as Map<String, dynamic>)
+                    : ((widget.exported['content'] as Map<String, dynamic>?) ??
+                        {});
+            final List stickers =
+                (stickersContent['stickers'] as List?) ?? const [];
 
             return Stack(
               children: [
                 // 전체 스크롤
                 GestureDetector(
                   behavior: HitTestBehavior.translucent,
+                  onTapDown: (details) {
+                    _lastTapPosition = details.globalPosition;
+                    _handleTap();
+                  },
                   child: NotificationListener<ScrollNotification>(
                     onNotification: (n) {
                       // 상단에서 아래로 당길 때 누적
@@ -497,16 +565,13 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                           bottom: false,
                           sliver: SliverToBoxAdapter(
                             child: Padding(
-                              padding: const EdgeInsets.fromLTRB(
-                                20,
-                                40,
-                                20,
-                                30,
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 20,
                               ),
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  SizedBox(height: 300),
+                                  SizedBox(height: 100),
                                   Text(
                                     widget.exported['title'] ?? '포스트',
                                     style: TextStyle(
@@ -520,55 +585,64 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                                     ),
                                   ),
                                   const SizedBox(height: 12),
-                                  Row(
-                                    children: [
-                                      Container(
-                                        width: 30,
-                                        height: 30,
-                                        decoration: BoxDecoration(
-                                          color:
-                                              Theme.of(
-                                                context,
-                                              ).colorScheme.surfaceVariant,
-                                          shape: BoxShape.circle,
-                                          border: Border.all(
-                                            color: Theme.of(context)
-                                                .colorScheme
-                                                .onSurfaceVariant
-                                                .withOpacity(0.3),
-                                            width: 1,
-                                          ),
+                                  GestureDetector(
+                                    onTap: () {
+                                      if (isMyPost ||
+                                          widget.exported['authorId'] == null) {
+                                        return;
+                                      }
+                                      // exported 데이터에서 author 정보 가져오기
+                                      final authorId =
+                                          widget.exported['authorId'];
+                                      final authorProfileImageUrl =
+                                          widget.exported['authorProfileImageUrl']
+                                              as String?;
+
+                                      Navigator.of(context).push(
+                                        MaterialPageRoute(
+                                          builder:
+                                              (_) => UserProfileScreen(
+                                                otherUser: User(
+                                                  id: authorId,
+                                                  username: postAuthor,
+                                                  profileImageUrl:
+                                                      authorProfileImageUrl,
+                                                ),
+                                              ),
                                         ),
-                                        clipBehavior: Clip.antiAlias,
-                                        child: CommonProfileAvatar(
+                                      );
+                                    },
+                                    child: Row(
+                                      children: [
+                                        CommonProfileAvatar(
                                           username: postAuthor,
                                           imageUrl:
                                               widget
-                                                  .exported['authorProfileImageUrl'] ??
-                                              '',
+                                                  .exported['authorProfileImageUrl'],
                                           size: 30,
                                           borderWidth: 1,
                                         ),
-                                      ),
-                                      const SizedBox(width: 5),
-                                      Expanded(
-                                        child: Text(
-                                          (widget.exported['author'] ?? '')
-                                              .toString(),
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                          style: TextStyle(
-                                            color: Theme.of(context)
-                                                .colorScheme
-                                                .onSurface
-                                                .withOpacity(0.8),
-                                            fontSize: 18,
-                                            fontWeight: FontWeight.w300,
+                                        const SizedBox(width: 5),
+                                        Expanded(
+                                          child: Text(
+                                            (widget.exported['author'] ?? '')
+                                                .toString(),
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: TextStyle(
+                                              color:
+                                                  Theme.of(
+                                                    context,
+                                                  ).colorScheme.onSurface,
+                                              fontSize: 18,
+                                              fontWeight: FontWeight.w400,
+                                            ),
                                           ),
                                         ),
-                                      ),
-                                    ],
+                                      ],
+                                    ),
                                   ),
+                                  const SizedBox(height: 32),
                                 ],
                               ),
                             ),
@@ -589,6 +663,8 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                             RowImageComponentBuilder(dragService: _dragService),
                             LinkComponentBuilder(),
                             MentionComponentBuilder(dragService: _dragService),
+                            DividerComponentBuilder(),
+                            PinComponentBuilder(dragService: _dragService),
                             ...defaultComponentBuilders,
                           ],
                           documentLayoutKey: _layoutKey,
@@ -607,6 +683,8 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                             onShowComments: _showCommentBottomSheet,
                           ),
                         ),
+                        if (_commentService.comments.isNotEmpty)
+                          SliverToBoxAdapter(child: SizedBox(height: 100)),
                       ],
                     ),
                   ),
@@ -616,7 +694,7 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                 Positioned.fill(
                   child: IgnorePointer(
                     ignoring: true,
-                    child: _ReadOnlyStickers(
+                    child: PostReaderStickers(
                       stickers: stickers,
                       layoutKey: _layoutKey,
                       stackKey: _stackKey,
@@ -800,320 +878,5 @@ class _PostReaderScreenState extends State<PostReaderScreen>
         ),
       ),
     );
-  }
-
-  // 프리캐싱 제거
-
-  MutableDocument _rebuildDocument(Map<String, dynamic> data) {
-    dynamic content = data['content'];
-    if (content is String) {
-      try {
-        content = json.decode(content);
-      } catch (_) {
-        content = const {'nodes': []};
-      }
-    }
-    if (content is! Map) {
-      content = const {'nodes': []};
-    }
-    final nodes = (content['nodes'] as List?) ?? const [];
-    final rebuilt = <DocumentNode>[];
-    for (final raw in nodes) {
-      final m = (raw as Map).cast<String, dynamic>();
-      final id = (m['id'] ?? '').toString();
-      final type = (m['type'] ?? '').toString();
-      switch (type) {
-        case 'paragraph':
-          final text = (m['text'] ?? '').toString();
-          final align = (m['align'] ?? 'center').toString();
-          final isTitle = m['isTitle'] == true;
-          // 제목 문단은 화면 상단 이미지 오버레이로 별도 표시되므로 본문에서는 제외
-          if (isTitle) break;
-          final spans = (m['spans'] as List?) ?? const [];
-          final attributed = _buildAttributedText(text, spans);
-          final meta = <String, dynamic>{'textAlign': align};
-          rebuilt.add(ParagraphNode(id: id, text: attributed, metadata: meta));
-          break;
-        case 'image':
-          rebuilt.add(
-            ImageNode(
-              id: id,
-              imageUrl: (m['url'] ?? '').toString(),
-              altText: (m['altText'] ?? '').toString(),
-            ),
-          );
-          break;
-        case 'imageRow':
-          rebuilt.add(
-            ImageRowNode(
-              id: id,
-              imageUrls:
-                  ((m['urls'] as List?) ?? const [])
-                      .map((e) => e.toString())
-                      .toList(),
-              spacing: (m['spacing'] as num?)?.toDouble() ?? 4.0,
-            ),
-          );
-          break;
-        case 'link':
-          rebuilt.add(
-            LinkNode(
-              id: id,
-              url: (m['url'] ?? '').toString(),
-              title: (m['title'] ?? '').toString(),
-              description: (m['description'] ?? '').toString(),
-              thumbnailUrl: (m['thumbnailUrl'] ?? '').toString(),
-            ),
-          );
-          break;
-
-        case 'mention':
-          rebuilt.add(
-            MentionNode(
-              id: id,
-              usernames:
-                  ((m['usernames'] as List?) ?? const [])
-                      .map((e) => e.toString())
-                      .toList(),
-            ),
-          );
-          break;
-        default:
-          // 알 수 없는 노드는 문단으로 폴백
-          rebuilt.add(ParagraphNode(id: id, text: AttributedText('[${type}]')));
-      }
-    }
-    return MutableDocument(nodes: rebuilt);
-  }
-
-  AttributedText _buildAttributedText(String text, List spans) {
-    final attributed = AttributedText(text);
-    for (final s in spans) {
-      final m = (s as Map).cast<String, dynamic>();
-      final start = (m['start'] as num?)?.toInt() ?? 0;
-      final end = (m['end'] as num?)?.toInt() ?? start;
-      final ann = (m['attrs'] as Map?)?.cast<String, dynamic>() ?? {};
-      final atts = <Attribution>{};
-      if (ann['bold'] == true) atts.add(boldAttribution);
-      if (ann['italic'] == true) atts.add(italicsAttribution);
-      if (ann['underline'] == true) atts.add(underlineAttribution);
-      if (ann['strikethrough'] == true) atts.add(strikethroughAttribution);
-      final fs = (ann['font_size'] as num?)?.toDouble();
-      if (fs != null) atts.add(FontSizeAttribution(fs));
-      final colorHex = ann['color'] as String?;
-      if (colorHex != null && colorHex.isNotEmpty) {
-        atts.add(ColorAttribution(_parseHexColor(colorHex)));
-      }
-      // 🎨 형광펜 속성 디코딩
-      final highlightHex = ann['highlight'] as String?;
-      if (highlightHex != null && highlightHex.isNotEmpty) {
-        print('DEBUG: 형광펜 디코딩 - HEX: $highlightHex');
-        final highlightColor = _parseHexColor(highlightHex);
-        print('DEBUG: 형광펜 디코딩 - 색상: $highlightColor');
-        atts.add(HighlightAttribution(highlightColor));
-      }
-      // 🎨 폰트 패밀리 속성 디코딩
-      final fontFamily = ann['fontFamily'] as String?;
-      if (fontFamily != null && fontFamily.isNotEmpty) {
-        atts.add(FontFamilyAttribution(fontFamily));
-      }
-      for (final a in atts) {
-        attributed.addAttribution(a, SpanRange(start, end - 1));
-      }
-    }
-    return attributed;
-  }
-
-  ui.Color _parseHexColor(String hex) {
-    var v = hex.replaceAll('#', '');
-    if (v.length == 6) v = 'FF$v';
-    return ui.Color(int.parse(v, radix: 16));
-  }
-}
-
-class _ReadOnlyStickers extends StatelessWidget {
-  const _ReadOnlyStickers({
-    required this.stickers,
-    required this.layoutKey,
-    required this.stackKey,
-    required this.scrollController,
-  });
-  final List stickers;
-  final GlobalKey layoutKey;
-  final GlobalKey stackKey;
-  final ScrollController scrollController;
-
-  @override
-  Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final children = <Widget>[];
-        final double scrollY =
-            scrollController.hasClients ? scrollController.offset : 0.0;
-        for (final s in stickers) {
-          final m = (s as Map).cast<String, dynamic>();
-          final type = (m['type'] ?? '').toString();
-          final z = (m['zIndex'] as num?)?.toInt() ?? 0;
-          final rot = (m['rotation'] as num?)?.toDouble() ?? 0.0;
-          final scale = (m['scale'] as num?)?.toDouble() ?? 1.0;
-          final anchor = (m['anchor'] as Map?)?.cast<String, dynamic>();
-          late final Offset absPos;
-          late final bool needsScrollCompensation;
-          if (anchor != null) {
-            absPos = _resolveAnchor(anchor);
-            // anchor는 DocumentLayout 기준으로 이미 스크롤을 포함한 스택 로컬 좌표이므로 보정 불필요
-            needsScrollCompensation = false;
-          } else {
-            final pf =
-                (m['positionFallback'] as Map?)?.cast<String, dynamic>() ?? {};
-            absPos = Offset(
-              (pf['xPx'] as num?)?.toDouble() ?? 0.0,
-              (pf['yPx'] as num?)?.toDouble() ?? 0.0,
-            );
-            // 절대좌표 fallback은 문서 좌표(스크롤 포함)로 저장되었으므로 화면 배치 시 스크롤 보정 필요
-            needsScrollCompensation = true;
-          }
-
-          Widget body;
-          if (type == 'text') {
-            final content =
-                (m['content'] as Map?)?.cast<String, dynamic>() ?? {};
-            final text = (content['text'] ?? '').toString();
-            final style =
-                (content['style'] as Map?)?.cast<String, dynamic>() ?? {};
-            body = Text(
-              text,
-              style: TextStyle(
-                color: _toColor(style['color']) ?? Colors.white,
-                fontSize: (style['fontSize'] as num?)?.toDouble() ?? 32,
-                fontWeight:
-                    (style['bold'] == true) ? FontWeight.w800 : FontWeight.w500,
-                fontStyle:
-                    (style['italic'] == true)
-                        ? FontStyle.italic
-                        : FontStyle.normal,
-                decoration:
-                    (style['underline'] == true)
-                        ? TextDecoration.underline
-                        : TextDecoration.none,
-                letterSpacing:
-                    (style['letterSpacing'] as num?)?.toDouble() ?? 0,
-              ),
-            );
-          } else if (type == 'emoji') {
-            final content = (m['content'] ?? '').toString();
-            body = Text(content, style: const TextStyle(fontSize: 40));
-          } else if (type == 'image') {
-            final content =
-                (m['content'] as Map?)?.cast<String, dynamic>() ?? {};
-            final dynamic raw = content['bytes'];
-            if (raw != null) {
-              try {
-                final bytes =
-                    raw is String ? base64Decode(raw) : raw as Uint8List;
-                body = ClipRRect(
-                  borderRadius: BorderRadius.circular(4),
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(
-                      maxWidth: 200,
-                      maxHeight: 200,
-                    ),
-                    child: Image.memory(bytes, fit: BoxFit.contain),
-                  ),
-                );
-              } catch (_) {
-                body = Container(
-                  width: 140,
-                  height: 140,
-                  color: Colors.grey[700],
-                );
-              }
-            } else if ((content['url'] ?? '').toString().isNotEmpty) {
-              final url = (content['url'] ?? '').toString();
-              body = ClipRRect(
-                borderRadius: BorderRadius.circular(4),
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(
-                    maxWidth: 200,
-                    maxHeight: 200,
-                  ),
-                  child: Image.network(
-                    url,
-                    fit: BoxFit.contain,
-                    cacheWidth: 300,
-                    cacheHeight: 300,
-                    filterQuality: FilterQuality.medium,
-                  ),
-                ),
-              );
-            } else {
-              body = Container(
-                width: 140,
-                height: 140,
-                color: Colors.grey[700],
-              );
-            }
-          } else {
-            body = const SizedBox.shrink();
-          }
-
-          final double topPos =
-              needsScrollCompensation ? (absPos.dy - scrollY) : absPos.dy;
-
-          final w = Positioned(
-            left: absPos.dx,
-            top: topPos,
-            child: Transform(
-              alignment: Alignment.center,
-              transform:
-                  Matrix4.identity()
-                    ..rotateZ(rot)
-                    ..scale(scale),
-              child: body,
-            ),
-          );
-          children.add(Stack(key: ValueKey('z_$z'), children: [w]));
-        }
-        return Stack(children: children);
-      },
-    );
-  }
-
-  Offset _resolveAnchor(Map<String, dynamic> anchor) {
-    final nodeId = (anchor['nodeId'] ?? '').toString();
-    final relX = (anchor['relX'] as num?)?.toDouble() ?? 0.5;
-    final relY = (anchor['relY'] as num?)?.toDouble() ?? 0.0;
-
-    final layout = layoutKey.currentState as DocumentLayout?;
-    final stackBox = stackKey.currentContext?.findRenderObject() as RenderBox?;
-    if (layout == null || stackBox == null) return const Offset(0, 0);
-    try {
-      final rect = layout.getRectForSelection(
-        DocumentPosition(
-          nodeId: nodeId,
-          nodePosition: const UpstreamDownstreamNodePosition.upstream(),
-        ),
-        DocumentPosition(
-          nodeId: nodeId,
-          nodePosition: const UpstreamDownstreamNodePosition.downstream(),
-        ),
-      );
-      if (rect == null) return const Offset(0, 0);
-      final topLeftInStack = stackBox.globalToLocal(rect.topLeft);
-      final x = topLeftInStack.dx + relX * rect.width;
-      final y = topLeftInStack.dy + relY * rect.height;
-      return Offset(x, y);
-    } catch (_) {
-      return const Offset(0, 0);
-    }
-  }
-
-  Color? _toColor(dynamic v) {
-    if (v is String && v.startsWith('#')) {
-      var hex = v.substring(1);
-      if (hex.length == 6) hex = 'FF$hex';
-      return Color(int.parse(hex, radix: 16));
-    }
-    return null;
   }
 }

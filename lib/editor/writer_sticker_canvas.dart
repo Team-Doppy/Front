@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'dart:typed_data';
 import 'package:provider/provider.dart';
 import 'package:doppy/editor/service/sticker_service.dart';
+import 'package:doppy/editor/service/post_reader_stickers.dart';
 import 'package:doppy/theme/app_colors.dart';
 
 class StickerCanvas extends StatelessWidget {
@@ -571,7 +572,7 @@ class _StickerViewState extends State<_StickerView> {
         final content = widget.sticker.content as Map<String, dynamic>;
         final strokes =
             (content['strokes'] as List).cast<Map<String, dynamic>>();
-        body = _DrawingRenderer(strokes: strokes);
+        body = DrawingStickerRenderer(strokes: strokes);
         break;
       case StickerType.image:
         final content = widget.sticker.content;
@@ -640,119 +641,5 @@ class _StickerViewState extends State<_StickerView> {
         ),
       ],
     );
-  }
-}
-
-/// 벡터 기반 그리기 렌더러
-class _DrawingRenderer extends StatelessWidget {
-  final List<Map<String, dynamic>> strokes;
-
-  const _DrawingRenderer({required this.strokes});
-
-  @override
-  Widget build(BuildContext context) {
-    // 스트로크 경계 계산
-    final bounds = _computeBounds();
-    if (bounds == null) {
-      return const SizedBox.shrink();
-    }
-
-    return RepaintBoundary(
-      child: CustomPaint(
-        painter: _VectorDrawingPainter(strokes: strokes),
-        size: Size(bounds.width, bounds.height),
-        isComplex: true,
-        willChange: false,
-      ),
-    );
-  }
-
-  Rect? _computeBounds() {
-    if (strokes.isEmpty) return null;
-    double? minX, minY, maxX, maxY;
-
-    for (final strokeData in strokes) {
-      final points =
-          (strokeData['points'] as List).cast<Map<String, dynamic>>();
-      final width = (strokeData['width'] as num?)?.toDouble() ?? 8.0;
-      final half = width / 2;
-
-      for (final p in points) {
-        final x = (p['x'] as num).toDouble();
-        final y = (p['y'] as num).toDouble();
-
-        final x1 = x - half;
-        final y1 = y - half;
-        final x2 = x + half;
-        final y2 = y + half;
-
-        minX = (minX == null) ? x1 : (x1 < minX ? x1 : minX);
-        minY = (minY == null) ? y1 : (y1 < minY ? y1 : minY);
-        maxX = (maxX == null) ? x2 : (x2 > maxX ? x2 : maxX);
-        maxY = (maxY == null) ? y2 : (y2 > maxY ? y2 : maxY);
-      }
-    }
-
-    if (minX == null || minY == null || maxX == null || maxY == null) {
-      return null;
-    }
-
-    // 패딩 최소화 (선 두께가 이미 반영되어 있음)
-    const double pad = 0.5;
-    return Rect.fromLTRB(minX - pad, minY - pad, maxX + pad, maxY + pad);
-  }
-}
-
-/// 벡터 그리기 페인터
-class _VectorDrawingPainter extends CustomPainter {
-  final List<Map<String, dynamic>> strokes;
-
-  _VectorDrawingPainter({required this.strokes});
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    for (final strokeData in strokes) {
-      final points =
-          (strokeData['points'] as List).cast<Map<String, dynamic>>();
-      if (points.isEmpty) continue;
-
-      final colorHex = strokeData['color'] as String? ?? '#FFFFFFFF';
-      final width = (strokeData['width'] as num?)?.toDouble() ?? 8.0;
-      final erase = strokeData['erase'] as bool? ?? false;
-
-      // Hex 색상 파싱
-      final colorValue = int.parse(colorHex.replaceAll('#', ''), radix: 16);
-      final color = Color(colorValue);
-
-      final paint =
-          Paint()
-            ..color = erase ? Colors.transparent : color
-            ..blendMode = erase ? BlendMode.clear : BlendMode.srcOver
-            ..strokeWidth = width
-            ..style = PaintingStyle.stroke
-            ..strokeCap = StrokeCap.round
-            ..strokeJoin = StrokeJoin.round
-            ..isAntiAlias = true;
-
-      final path = Path();
-      final firstPoint = points.first;
-      path.moveTo(
-        (firstPoint['x'] as num).toDouble(),
-        (firstPoint['y'] as num).toDouble(),
-      );
-
-      for (int i = 1; i < points.length; i++) {
-        final p = points[i];
-        path.lineTo((p['x'] as num).toDouble(), (p['y'] as num).toDouble());
-      }
-
-      canvas.drawPath(path, paint);
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant _VectorDrawingPainter oldDelegate) {
-    // 스트로크 리스트의 참조가 바뀌었을 때만 다시 그림
-    return strokes != oldDelegate.strokes;
   }
 }

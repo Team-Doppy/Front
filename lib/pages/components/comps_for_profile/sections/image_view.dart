@@ -5,8 +5,15 @@ import 'package:doppy/pages/components/shimmer_box.dart';
 import 'package:flutter/material.dart';
 
 class ImageView extends StatelessWidget {
-  const ImageView({super.key, required this.post});
+  const ImageView({
+    super.key,
+    required this.post,
+    this.isFirst = false,
+    this.isLast = false,
+  });
   final PostData post;
+  final bool isFirst;
+  final bool isLast;
 
   @override
   Widget build(BuildContext context) {
@@ -15,13 +22,23 @@ class ImageView extends StatelessWidget {
         ? Container(width: 80, height: 180, color: theme.colorScheme.background)
         : Container(
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: BorderRadius.only(
+              topLeft: isFirst ? const Radius.circular(12) : Radius.zero,
+              bottomLeft: isFirst ? const Radius.circular(12) : Radius.zero,
+              topRight: isLast ? const Radius.circular(12) : Radius.zero,
+              bottomRight: isLast ? const Radius.circular(12) : Radius.zero,
+            ),
             border: Border.all(
-              color: theme.colorScheme.onSurface.withOpacity(0.3),
+              color: theme.colorScheme.onSurface.withOpacity(0.2),
             ),
           ),
           child: ClipRRect(
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: BorderRadius.only(
+              topLeft: isFirst ? const Radius.circular(12) : Radius.zero,
+              bottomLeft: isFirst ? const Radius.circular(12) : Radius.zero,
+              topRight: isLast ? const Radius.circular(12) : Radius.zero,
+              bottomRight: isLast ? const Radius.circular(12) : Radius.zero,
+            ),
             child: AspectRatio(
               aspectRatio: 4 / 5,
               child: CachedNetworkImage(

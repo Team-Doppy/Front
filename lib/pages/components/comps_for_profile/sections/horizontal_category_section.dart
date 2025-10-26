@@ -59,9 +59,11 @@ class _HorizontalCategorySectionState extends State<HorizontalCategorySection> {
     final username = context.read<UserProvider>().currentUser?.username;
     final isReadOnly = context.read<BaseFeedProvider>().isReadOnly;
     final height = 200.0;
+    // category ID만 사용하여 컨트롤러 가져오기 (row 정보 없음)
+    final categoryId = widget.categoryId ?? widget.title;
     final hController = context
         .read<PostDragDropService>()
-        .horizontalControllerFor(widget.title);
+        .horizontalControllerFor(categoryId);
 
     // 미분류 카테고리가 비어있으면 숨김
     final isSystemCategoryEmpty =
@@ -86,6 +88,11 @@ class _HorizontalCategorySectionState extends State<HorizontalCategorySection> {
                       topLeft.dy,
                       box.size.width,
                       box.size.height,
+                    );
+                    final String sectionKey =
+                        '${widget.categoryId ?? widget.title}_row${currentSectionIndex}';
+                    context.read<PostDragDropService>().setHoverSectionKey(
+                      sectionKey,
                     );
                     final localY = dy - rect.top;
                     final h = rect.height;
@@ -141,10 +148,20 @@ class _HorizontalCategorySectionState extends State<HorizontalCategorySection> {
               onAccept: (draggedMeta) async {
                 if (isReadOnly) return;
                 final pf = context.read<MyProfileFeedProvider>();
+
                 final prev =
-                    pf.categories.map((c) => c['id'].toString()).toList();
+                    pf.categories
+                        .where((c) {
+                          final id = int.tryParse(c['id'].toString());
+                          // 음수 ID는 전체공개, 공개, 나만보기 등 시스템 카테고리
+                          return id != null && id > 0;
+                        })
+                        .map((c) => c['id'].toString())
+                        .toList();
+
                 final draggedId = draggedMeta.categoryId ?? '';
                 if (draggedId.isEmpty) return;
+
                 final targetRaw =
                     (widget.categoryDropTargetIndex.value ??
                         currentSectionIndex);
@@ -208,17 +225,29 @@ class _HorizontalCategorySectionState extends State<HorizontalCategorySection> {
                                     ),
                                     dragAnchorStrategy:
                                         pointerDragAnchorStrategy,
-                                    feedback: _buildCategoryFeedback(
-                                      context,
-                                      theme,
-                                      CategoryMetaData(
-                                        title: widget.title,
-                                        posts: widget.posts,
-                                        categoryId: widget.categoryId,
-                                      ),
-                                      widget.displayMode,
-                                    ),
+                                    feedback:
+                                        context
+                                                .read<BaseFeedProvider>()
+                                                .isReadOnly
+                                            ? const SizedBox.shrink()
+                                            : _buildCategoryFeedback(
+                                              context,
+                                              theme,
+                                              CategoryMetaData(
+                                                title: widget.title,
+                                                posts: widget.posts,
+                                                categoryId: widget.categoryId,
+                                              ),
+                                              widget.displayMode,
+                                            ),
                                     onDragStarted: () {
+                                      // readonly일 때는 드래그 시작하지 않음
+                                      final isReadOnly =
+                                          context
+                                              .read<BaseFeedProvider>()
+                                              .isReadOnly;
+                                      if (isReadOnly) return;
+
                                       (widget.isDraggingCategory
                                               as ValueNotifier<bool>)
                                           .value = true;
@@ -285,7 +314,7 @@ class _HorizontalCategorySectionState extends State<HorizontalCategorySection> {
                                                           ?.copyWith(
                                                             fontWeight:
                                                                 FontWeight.w700,
-                                                            fontSize: 18,
+                                                            fontSize: 16,
                                                             color: theme
                                                                 .colorScheme
                                                                 .onSurface
@@ -295,6 +324,16 @@ class _HorizontalCategorySectionState extends State<HorizontalCategorySection> {
                                                           ),
                                                     ),
                                                   ),
+                                                  if (!context
+                                                      .read<BaseFeedProvider>()
+                                                      .isReadOnly)
+                                                    Icon(
+                                                      Icons.drag_indicator,
+                                                      color: theme
+                                                          .colorScheme
+                                                          .onSurface
+                                                          .withOpacity(0.4),
+                                                    ),
                                                 ],
                                               )
                                               : SizedBox.shrink(),
@@ -371,7 +410,16 @@ class _HorizontalCategorySectionState extends State<HorizontalCategorySection> {
                                               if (i == widget.posts.length) {
                                                 return DragTarget<PostData>(
                                                   onWillAccept: (_) => true,
-                                                  onMove: (_) {
+                                                  onMove: (details) {
+                                                    final String sectionKey =
+                                                        '${widget.categoryId ?? widget.title}_row$currentSectionIndex';
+                                                    context
+                                                        .read<
+                                                          PostDragDropService
+                                                        >()
+                                                        .setHoverSectionKey(
+                                                          sectionKey,
+                                                        );
                                                     setState(
                                                       () =>
                                                           _imageDropTargetIndex =
@@ -503,6 +551,9 @@ class _HorizontalCategorySectionState extends State<HorizontalCategorySection> {
 
                                               // 일반 아이템
                                               final post = widget.posts[i];
+                                              final isFirstPost = i == 0;
+                                              final isLastPost =
+                                                  i == widget.posts.length - 1;
 
                                               if (isReadOnly ||
                                                   categoryId == null) {
@@ -517,6 +568,8 @@ class _HorizontalCategorySectionState extends State<HorizontalCategorySection> {
                                                         ),
                                                     child: ImageView(
                                                       post: post,
+                                                      isFirst: isFirstPost,
+                                                      isLast: isLastPost,
                                                     ),
                                                   ),
                                                 );
@@ -527,6 +580,15 @@ class _HorizontalCategorySectionState extends State<HorizontalCategorySection> {
                                                   return true;
                                                 },
                                                 onMove: (details) {
+                                                  final String sectionKey =
+                                                      '${widget.categoryId ?? widget.title}_row$currentSectionIndex';
+                                                  context
+                                                      .read<
+                                                        PostDragDropService
+                                                      >()
+                                                      .setHoverSectionKey(
+                                                        sectionKey,
+                                                      );
                                                   // 기본적으로 현재 인덱스 타겟
                                                   setState(
                                                     () =>
@@ -654,9 +716,13 @@ class _HorizontalCategorySectionState extends State<HorizontalCategorySection> {
                                                             );
                                                           },
                                                           onDragStarted: () {
-                                                            print(
-                                                              '[ImageOnly] 포스트 드래그 시작: ${post.title}, index: $i',
-                                                            );
+                                                            context
+                                                                .read<
+                                                                  PostDragDropService
+                                                                >()
+                                                                .beginDrag(
+                                                                  post,
+                                                                );
                                                             setState(
                                                               () =>
                                                                   _draggingImageIndex =
@@ -666,58 +732,14 @@ class _HorizontalCategorySectionState extends State<HorizontalCategorySection> {
                                                           onDragUpdate: (
                                                             details,
                                                           ) {
-                                                            // 가로 스크롤 엣지 감지
-                                                            if (hController
-                                                                .hasClients) {
-                                                              final screenWidth =
-                                                                  MediaQuery.of(
-                                                                    context,
-                                                                  ).size.width;
-                                                              final globalX =
+                                                            context
+                                                                .read<
+                                                                  PostDragDropService
+                                                                >()
+                                                                .updateDragPosition(
                                                                   details
-                                                                      .globalPosition
-                                                                      .dx;
-                                                              const edge = 80.0;
-                                                              const speed =
-                                                                  12.0;
-                                                              final pos =
-                                                                  hController
-                                                                      .position;
-                                                              if (globalX <
-                                                                  edge) {
-                                                                final next = (pos
-                                                                            .pixels -
-                                                                        speed)
-                                                                    .clamp(
-                                                                      0.0,
-                                                                      pos.maxScrollExtent,
-                                                                    );
-                                                                if (next !=
-                                                                    pos.pixels) {
-                                                                  hController
-                                                                      .jumpTo(
-                                                                        next,
-                                                                      );
-                                                                }
-                                                              } else if (globalX >
-                                                                  screenWidth -
-                                                                      edge) {
-                                                                final next = (pos
-                                                                            .pixels +
-                                                                        speed)
-                                                                    .clamp(
-                                                                      0.0,
-                                                                      pos.maxScrollExtent,
-                                                                    );
-                                                                if (next !=
-                                                                    pos.pixels) {
-                                                                  hController
-                                                                      .jumpTo(
-                                                                        next,
-                                                                      );
-                                                                }
-                                                              }
-                                                            }
+                                                                      .globalPosition,
+                                                                );
 
                                                             // 메인 스크롤 컨트롤러 연동 (세로)
                                                             final sc =
@@ -774,9 +796,6 @@ class _HorizontalCategorySectionState extends State<HorizontalCategorySection> {
                                                             }
                                                           },
                                                           onDragEnd: (_) {
-                                                            print(
-                                                              '[ImageOnly] 포스트 드래그 종료',
-                                                            );
                                                             setState(() {
                                                               _imageDropTargetIndex =
                                                                   null;
@@ -800,11 +819,13 @@ class _HorizontalCategorySectionState extends State<HorizontalCategorySection> {
                                                                 child: SizedBox(
                                                                   width:
                                                                       cardWidth,
-                                                                  child:
-                                                                      ImageView(
-                                                                        post:
-                                                                            post,
-                                                                      ),
+                                                                  child: ImageView(
+                                                                    post: post,
+                                                                    isFirst:
+                                                                        isFirstPost,
+                                                                    isLast:
+                                                                        isLastPost,
+                                                                  ),
                                                                 ),
                                                               ),
                                                             ),
@@ -812,11 +833,13 @@ class _HorizontalCategorySectionState extends State<HorizontalCategorySection> {
                                                           childWhenDragging:
                                                               Opacity(
                                                                 opacity: 0.3,
-                                                                child:
-                                                                    ImageView(
-                                                                      post:
-                                                                          post,
-                                                                    ),
+                                                                child: ImageView(
+                                                                  post: post,
+                                                                  isFirst:
+                                                                      isFirstPost,
+                                                                  isLast:
+                                                                      isLastPost,
+                                                                ),
                                                               ),
                                                           child: GestureDetector(
                                                             onTap:
@@ -827,6 +850,10 @@ class _HorizontalCategorySectionState extends State<HorizontalCategorySection> {
                                                                 ),
                                                             child: ImageView(
                                                               post: post,
+                                                              isFirst:
+                                                                  isFirstPost,
+                                                              isLast:
+                                                                  isLastPost,
                                                             ),
                                                           ),
                                                         ),
@@ -1030,40 +1057,45 @@ class _HorizontalCategorySectionState extends State<HorizontalCategorySection> {
     CategoryMetaData categoryMetaData,
     FeedDisplayMode displayMode,
   ) {
-    return Transform.scale(
-      scale: 0.8,
-      child: Container(
-        width: MediaQuery.of(context).size.width - 40,
-        decoration: BoxDecoration(
-          color: theme.colorScheme.surface,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-            color: theme.colorScheme.primary.withOpacity(0.3),
-            width: 1,
-          ),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.15),
-              blurRadius: 12,
-              offset: const Offset(0, 6),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // 텍스트의 예상 너비 계산
+        final text = categoryMetaData.title;
+        final textStyle = theme.textTheme.titleLarge?.copyWith(
+          fontWeight: FontWeight.w700,
+          fontSize: 16,
+        );
+        final textPainter = TextPainter(
+          text: TextSpan(text: text, style: textStyle),
+          textDirection: TextDirection.ltr,
+        );
+        textPainter.layout();
+        final textWidth = textPainter.size.width;
+
+        return Transform.translate(
+          offset: Offset(-textWidth / 2, -20), // 왼쪽으로 텍스트 중앙만큼 이동
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(
+              color: theme.colorScheme.onSurface.withOpacity(0.8),
+              borderRadius: BorderRadius.circular(8),
             ),
-          ],
-        ),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(12),
-          child: _buildSectionFeedback(
-            context,
-            theme,
-            categoryMetaData,
-            displayMode,
+            child: Text(
+              categoryMetaData.title,
+              style: theme.textTheme.titleLarge?.copyWith(
+                fontWeight: FontWeight.w700,
+                fontSize: 16,
+                color: theme.colorScheme.surface,
+              ),
+            ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 
-  void _openPost(BuildContext context, PostData post, int index) {
-    Navigator.of(context).push(
+  void _openPost(BuildContext context, PostData post, int index) async {
+    final result = await Navigator.of(context).push(
       PageRouteBuilder(
         pageBuilder:
             (context, animation, secondaryAnimation) => PostReaderScreen(
@@ -1076,6 +1108,17 @@ class _HorizontalCategorySectionState extends State<HorizontalCategorySection> {
         transitionDuration: const Duration(milliseconds: 200),
       ),
     );
+
+    print('[HorizontalCategorySection] PostReaderScreen 결과: $result');
+    // 포스트가 삭제된 경우 피드를 다시 로드
+    if (result != null && result['deleted'] == true) {
+      print('[HorizontalCategorySection] 포스트 삭제 감지 - 피드 새로고침 시작');
+      final provider = context.read<BaseFeedProvider>();
+      provider.clearInMemory();
+      provider.setNetworkError(null);
+      await provider.loadInitial(force: true);
+      print('[HorizontalCategorySection] 피드 새로고침 완료');
+    }
   }
 
   /// 카테고리 내부 포스트 순서 변경을 서버에 저장하는 헬퍼 메서드
@@ -1121,56 +1164,3 @@ class _HorizontalCategorySectionState extends State<HorizontalCategorySection> {
 }
 
 // 섹션 미리보기 (헤더 + 콘텐츠)
-Widget _buildSectionFeedback(
-  BuildContext context,
-  ThemeData theme,
-  CategoryMetaData categoryMetaData,
-  FeedDisplayMode displayMode,
-) {
-  return Column(
-    mainAxisSize: MainAxisSize.min,
-    children: [
-      // 헤더
-      Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        child: Row(
-          children: [
-            Expanded(
-              child: Text(
-                categoryMetaData.title,
-                style: theme.textTheme.titleLarge?.copyWith(
-                  fontWeight: FontWeight.w700,
-                  fontSize: 16,
-                  color: theme.colorScheme.onSurface.withOpacity(0.8),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-      // 콘텐츠 미리보기
-      _buildContentPreview(context, theme, categoryMetaData, displayMode),
-    ],
-  );
-}
-
-// 콘텐츠 미리보기
-Widget _buildContentPreview(
-  BuildContext context,
-  ThemeData theme,
-  CategoryMetaData categoryMetaData,
-  FeedDisplayMode displayMode,
-) {
-  return SizedBox(
-    height: 100,
-    child: Center(
-      child: Text(
-        '',
-        style: TextStyle(
-          color: theme.colorScheme.onSurface.withOpacity(0.5),
-          fontSize: 12,
-        ),
-      ),
-    ),
-  );
-}

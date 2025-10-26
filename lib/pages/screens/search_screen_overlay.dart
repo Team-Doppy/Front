@@ -510,10 +510,12 @@ class _SearchTopBar extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
       child: Row(
         children: [
+          SizedBox(width: 8),
           // 닫기 버튼
           if (onClose != null)
-            SizedBox(
+            Container(
               width: 28,
+              padding: const EdgeInsets.only(bottom: 1),
               child: GestureDetector(
                 onTap: onClose,
                 child: Icon(

@@ -8,6 +8,7 @@ class PostData {
   final String title;
   final String summary;
   final String author;
+  final int? authorId;
   final String authorProfileImageUrl;
   final String content;
   final String createdAt;
@@ -23,6 +24,7 @@ class PostData {
     required this.title,
     required this.summary,
     required this.author,
+    this.authorId,
     required this.authorProfileImageUrl,
     required this.content,
     required this.accessLevel,
@@ -62,6 +64,15 @@ class PostData {
         data['authorUsername']?.toString() ??
         '';
 
+    // authorId 파싱 (없을 수 있음)
+    int? authorId;
+    if (data['authorId'] != null) {
+      authorId =
+          (data['authorId'] is int)
+              ? (data['authorId'] as int)
+              : int.tryParse('${data['authorId']}');
+    }
+
     return PostData(
       id: data['id']?.toString() ?? '',
       thumbnailImageUrl:
@@ -70,6 +81,7 @@ class PostData {
           'assets/images/feed2.png',
       title: data['title'] ?? '',
       author: author,
+      authorId: authorId,
       authorProfileImageUrl: data['authorProfileImageUrl'] ?? '',
       content: content,
       summary: data['summary'] ?? '',
@@ -185,6 +197,7 @@ class PostData {
         'thumbnailImageUrl': thumbnailImageUrl,
         'title': title,
         'author': author,
+        'authorId': authorId,
         'authorProfileImageUrl': authorProfileImageUrl,
         'content': contentData,
         'likeCount': likeCount,
@@ -199,6 +212,7 @@ class PostData {
         'thumbnailImageUrl': thumbnailImageUrl,
         'title': title,
         'author': author,
+        'authorId': authorId,
         'authorProfileImageUrl': authorProfileImageUrl,
         'content': {'nodes': []},
         'likeCount': likeCount,

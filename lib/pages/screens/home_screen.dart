@@ -12,6 +12,7 @@ import 'package:doppy/utils/network_utils.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'dart:ui' as ui;
+import 'dart:async';
 
 class HomeScreen extends StatefulWidget {
   final HomeData? preloadedHomeData;
@@ -55,6 +56,8 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   bool _allIsCardShimmering = false;
   int _allLoadTick = 0;
   int _allRefreshCount = 0; // 리프레시 카운터
+  StreamSubscription<dynamic>? _networkSub;
+  bool _refreshInProgress = false;
 
   // 검색 오버레이 상태
   bool _isSearchOverlayVisible = false;
@@ -100,20 +103,48 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
     // 백그라운드에서 필요한 데이터 로드 (인스타그램 방식)
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      // 네트워크 복구 시 자동 새로고침 (단발 락)
+      _networkSub?.cancel();
+      _networkSub = NetworkManager.onConnectivityChanged.listen((
+        dynamic v,
+      ) async {
+        final bool isOnline = v == true;
+        if (!mounted || !isOnline) return;
+        if (_refreshInProgress) return;
+        _refreshInProgress = true;
+        try {
+          if (_friendsPosts.isEmpty) {
+            await _loadFriendsPosts(refresh: true);
+          }
+          if (_allPosts.isEmpty) {
+            await _loadAllPosts(refresh: true);
+          }
+        } catch (_) {
+        } finally {
+          _refreshInProgress = false;
+        }
+      });
       // 프로필 로드 (스플래시에서 하지 않음)
       print('[HomeScreen] 프로필 백그라운드 로드 시작');
       _loadProfileSafely();
 
-      // 친구글이 비어있으면 로드 (스플래시에서 로드되지 않은 경우)
-      if (_friendsPosts.isEmpty) {
-        print('[HomeScreen] 친구글 백그라운드 로드 시작');
-        _loadFriendsPosts();
+      // 친구글이 비어있으면 로드
+      // 스플래시에서 데이터를 로드했다면 _friendsPosts가 채워져 있음
+      // 스플래시에서 에러가 났다면 _friendsPosts가 비어있고, 서버에서 로드 필요
+      // refresh=false로 설정하면 캐시를 먼저 확인하고, 캐시가 없을 때만 서버에서 로드
+      if (_friendsPosts.isEmpty && !_friendsIsLoading) {
+        print('[HomeScreen] 친구글 로드되지 않음 - 캐시 또는 서버에서 로드 시작');
+        _loadFriendsPosts(refresh: false); // 캐시 우선 확인
+      } else if (!_friendsPosts.isEmpty) {
+        print('[HomeScreen] 스플래시에서 친구글 로드됨: ${_friendsPosts.length}개');
       }
 
-      // 전체글이 비어있으면 로드 (스플래시에서 로드되지 않은 경우)
-      if (_allPosts.isEmpty) {
-        print('[HomeScreen] 전체글 백그라운드 로드 시작');
-        _loadAllPosts();
+      // 전체글이 비어있으면 로드
+      if (_allPosts.isEmpty && !_allIsLoading) {
+        print('[HomeScreen] 전체글 로드되지 않음 - 캐시 또는 서버에서 로드 시작');
+        _loadAllPosts(refresh: false); // 캐시 우선 확인
+      } else if (!_allPosts.isEmpty) {
+        print('[HomeScreen] 스플래시에서 전체글 로드됨: ${_allPosts.length}개');
       }
     });
 
@@ -145,6 +176,7 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
   @override
   void dispose() {
+    _networkSub?.cancel();
     _sectionPageController.dispose();
     super.dispose();
   }
@@ -684,6 +716,7 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               ? _loadMoreFriendsPosts
               : null,
       isLoadingMore: _friendsIsLoadingMore,
+      isLoading: _friendsIsLoading,
       onRefresh: () => _loadFriendsPosts(refresh: true),
       showCardShimmer: _friendsIsCardShimmering,
       onPageChanged: (index) {
@@ -742,6 +775,7 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               ? _loadMoreAllPosts
               : null,
       isLoadingMore: _allIsLoadingMore,
+      isLoading: _allIsLoading,
       onRefresh: () => _loadAllPosts(refresh: true),
       showCardShimmer: _allIsCardShimmering,
       onPageChanged: (index) {
