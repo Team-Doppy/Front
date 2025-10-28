@@ -303,6 +303,11 @@ class PostReaderService {
     return _preloadedControllers.remove(url);
   }
 
+  /// 프리로드된 컨트롤러를 가져오기만 함 (캐시에 유지)
+  static VideoPlayerController? getPreloadedController(String url) {
+    return _preloadedControllers[url];
+  }
+
   /// 남아있는 프리로드 컨트롤러 정리
   static void disposeAllPreloaded() {
     for (final c in _preloadedControllers.values) {
@@ -311,33 +316,44 @@ class PostReaderService {
     _preloadedControllers.clear();
   }
 
-  /// 클립(영상)을 미리 로드한다
-  Future<void> preloadClips(BuildContext context, List<String> clipUrls) async {
+  /// 클립(영상)을 미리 로드한다 - 병렬 초기화 지원
+  Future<void> preloadClips(
+    BuildContext context,
+    List<String> clipUrls, {
+    int maxCount = 4,
+  }) async {
     if (clipUrls.isEmpty) {
       return;
     }
 
-    print('[PostReaderService] 클립 ${clipUrls.length}개 미리 로드 시작');
+    final urlsToPreload =
+        clipUrls
+            .where((url) => !_preloadedControllers.containsKey(url))
+            .take(maxCount)
+            .toList();
+
+    if (urlsToPreload.isEmpty) {
+      print('[PostReaderService] 프리로드할 클립 없음');
+      return;
+    }
+
+    print('[PostReaderService] 클립 ${urlsToPreload.length}개 병렬 프리로드 시작');
 
     try {
-      // 컨트롤러를 초기화하여 캐시에 저장 (나중에 위젯이 재사용)
-      for (final url in clipUrls) {
-        if (_preloadedControllers.containsKey(url)) {
-          print('[PostReaderService] 이미 프리로드됨: $url');
-          continue;
-        }
-        final controller = VideoPlayerController.networkUrl(Uri.parse(url));
-        try {
-          await controller.initialize();
-          // 음소거 기본값 유지(소리는 위젯에서 제어)
-          _preloadedControllers[url] = controller;
-          print('[PostReaderService] 클립 프리캐싱 완료: $url');
-        } catch (e) {
-          print('[PostReaderService] 클립 프리캐싱 실패: $url - $e');
-          await controller.dispose();
-        }
-      }
-      print('[PostReaderService] 클립 프리캐싱 완료');
+      await Future.wait(
+        urlsToPreload.map((url) async {
+          final controller = VideoPlayerController.networkUrl(Uri.parse(url));
+          try {
+            await controller.initialize();
+            _preloadedControllers[url] = controller;
+            print('[PostReaderService] 클립 프리캐싱 완료: $url');
+          } catch (e) {
+            print('[PostReaderService] 클립 프리캐싱 실패: $url - $e');
+            await controller.dispose();
+          }
+        }),
+      );
+      print('[PostReaderService] 클립 병렬 프리캐싱 완료');
     } catch (e) {
       print('[PostReaderService] 클립 프리캐싱 중 오류: $e');
     }

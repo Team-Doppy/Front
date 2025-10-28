@@ -345,74 +345,61 @@ class _ImageRowComponentState extends State<ImageRowComponent>
               padding: EdgeInsets.only(top: marginTop, bottom: marginBottom),
               child: Stack(
                 children: [
-                  GestureDetector(
-                    onTap: () {
-                      // 이미지 행 선택
-                    },
-                    child: LayoutBuilder(
-                      builder: (context, constraints) {
-                        return Row(
-                          children: [
-                            // 이미지들
-                            ...widget.imageUrls.asMap().entries.map((entry) {
-                              final imageUrl = entry.value;
-                              return Expanded(
-                                child: Container(
-                                  margin:
-                                      imageUrl == widget.imageUrls.last
-                                          ? EdgeInsets.zero
-                                          : EdgeInsets.only(right: 1),
-                                  child: SizedBox(
-                                    height: _unifiedHeight ?? 150,
-                                    child: Image.network(
-                                      imageUrl,
-                                      fit: BoxFit.cover,
-                                      loadingBuilder: (
-                                        context,
-                                        child,
-                                        loading,
-                                      ) {
-                                        if (loading == null) return child;
-                                        return ShimmerBox(
-                                          width: double.infinity,
-                                          height: _unifiedHeight ?? 150,
-                                          borderRadius: BorderRadius.circular(
-                                            0,
-                                          ),
-                                        );
-                                      },
-                                      errorBuilder: (context, error, stack) {
-                                        print('Image error: $error');
-                                        return ImageErrorPlaceholder(
-                                          width: 200,
-                                        );
-                                      },
-                                      frameBuilder: (
-                                        context,
-                                        child,
-                                        frame,
-                                        sync,
-                                      ) {
-                                        if (frame != null) {
-                                          WidgetsBinding.instance
-                                              .addPostFrameCallback((_) {
-                                                _measureAndUnifyHeight(
-                                                  imageUrl,
-                                                  constraints.maxWidth,
-                                                );
-                                              });
-                                        }
-                                        return child;
-                                      },
-                                    ),
+                  LayoutBuilder(
+                    builder: (context, constraints) {
+                      return Row(
+                        children: [
+                          // 이미지들
+                          ...widget.imageUrls.asMap().entries.map((entry) {
+                            final imageUrl = entry.value;
+                            return Expanded(
+                              child: Container(
+                                margin:
+                                    imageUrl == widget.imageUrls.last
+                                        ? EdgeInsets.zero
+                                        : EdgeInsets.only(right: 1),
+                                child: SizedBox(
+                                  height: _unifiedHeight ?? 150,
+                                  child: Image.network(
+                                    imageUrl,
+                                    fit: BoxFit.cover,
+                                    loadingBuilder: (context, child, loading) {
+                                      if (loading == null) return child;
+                                      return ShimmerBox(
+                                        width: double.infinity,
+                                        height: _unifiedHeight ?? 150,
+                                        borderRadius: BorderRadius.circular(0),
+                                      );
+                                    },
+                                    errorBuilder: (context, error, stack) {
+                                      print('Image error: $error');
+                                      return ImageErrorPlaceholder(width: 200);
+                                    },
+                                    frameBuilder: (
+                                      context,
+                                      child,
+                                      frame,
+                                      sync,
+                                    ) {
+                                      if (frame != null) {
+                                        WidgetsBinding.instance
+                                            .addPostFrameCallback((_) {
+                                              _measureAndUnifyHeight(
+                                                imageUrl,
+                                                constraints.maxWidth,
+                                              );
+                                            });
+                                      }
+                                      return child;
+                                    },
                                   ),
                                 ),
-                              );
-                            }),
-                          ],
-                        );
-                      },
-                    ),
+                              ),
+                            );
+                          }),
+                        ],
+                      );
+                    },
                   ),
                   if (isSelectionHighlighted)
                     Positioned.fill(

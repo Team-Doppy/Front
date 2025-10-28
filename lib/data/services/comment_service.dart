@@ -12,6 +12,7 @@ class Comment {
   final String authorProfileImageUrl;
   final String postId;
   final String? parentId; // 대댓글인 경우 부모 댓글 ID
+  final String? imageUrl; // 이미지별 댓글인 경우 이미지 URL
   final String visibility; // PUBLIC, FRIENDS, PRIVATE
   final Map<String, String> emotionCounts; // emoji -> count
   final Map<String, String> myEmotions; // 내가 누른 이모지
@@ -26,6 +27,7 @@ class Comment {
     required this.authorProfileImageUrl,
     required this.postId,
     this.parentId,
+    this.imageUrl,
     this.visibility = 'PUBLIC',
     this.emotionCounts = const {},
     this.myEmotions = const {},
@@ -41,6 +43,7 @@ class Comment {
     String? authorProfileImageUrl,
     String? postId,
     String? parentId,
+    String? imageUrl,
     String? visibility,
     Map<String, String>? emotionCounts,
     Map<String, String>? myEmotions,
@@ -56,6 +59,7 @@ class Comment {
           authorProfileImageUrl ?? this.authorProfileImageUrl,
       postId: postId ?? this.postId,
       parentId: parentId ?? this.parentId,
+      imageUrl: imageUrl ?? this.imageUrl,
       visibility: visibility ?? this.visibility,
       emotionCounts: emotionCounts ?? this.emotionCounts,
       myEmotions: myEmotions ?? this.myEmotions,
@@ -73,6 +77,7 @@ class Comment {
       'authorProfileImageUrl': authorProfileImageUrl,
       'postId': postId,
       'parentId': parentId,
+      'imageUrl': imageUrl,
       'visibility': visibility,
       'emotionCounts': emotionCounts,
       'myEmotions': myEmotions,
@@ -110,6 +115,7 @@ class Comment {
       authorProfileImageUrl: json['authorProfileImageUrl']?.toString() ?? '',
       postId: json['postId']?.toString() ?? '',
       parentId: json['parentId']?.toString(),
+      imageUrl: json['imageUrl']?.toString(),
       visibility: json['visibility']?.toString() ?? 'PUBLIC',
       emotionCounts: emotionCountsMap,
       myEmotions: myEmotionsMap,
@@ -443,6 +449,7 @@ class CommentService extends ChangeNotifier {
     required String username,
     required String content,
     String? parentId,
+    String? imageUrl,
   }) async {
     if (_currentPostId == null) return;
 
@@ -451,6 +458,7 @@ class CommentService extends ChangeNotifier {
         'content': content,
         'postId': int.parse(_currentPostId!),
         'parentId': parentId != null ? int.parse(parentId) : null,
+        'imageUrl': imageUrl,
         'visibility': 'PUBLIC',
       };
 

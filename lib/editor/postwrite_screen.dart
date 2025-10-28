@@ -574,6 +574,12 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     }
   }
 
+  Stylesheet _buildStylesheet(BuildContext context) {
+    return buildCustomStylesheet(context).copyWith(
+      documentPadding: EdgeInsets.only(top: 0, left: 0, right: 0, bottom: 100),
+    );
+  }
+
   @override
   void dispose() {
     // 이미지 선택 상태 초기화
@@ -677,7 +683,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                                             : DocumentGestureMode.android,
                                     editor: editor,
                                     focusNode: _editorFocusNode,
-                                    stylesheet: buildCustomStylesheet(context),
+                                    stylesheet: _buildStylesheet(context),
                                     selectionStyle: SelectionStyles(
                                       selectionColor: AppColors.primary
                                           .withValues(alpha: 0.3),
@@ -797,7 +803,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
         ),
 
         bottomNavigationBar: AnimatedContainer(
-          duration: const Duration(milliseconds: 50),
+          duration: const Duration(milliseconds: 20),
           curve: Curves.easeInOut,
           padding: EdgeInsets.only(
             bottom:

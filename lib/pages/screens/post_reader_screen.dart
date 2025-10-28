@@ -18,6 +18,7 @@ import 'package:doppy/data/services/like_service.dart';
 import 'package:doppy/pages/components/comment_bottom_sheet.dart';
 import 'package:doppy/pages/components/comment_preview_section.dart';
 import 'package:doppy/pages/components/doppy_loading_logo.dart';
+import 'package:doppy/pages/components/fullscreen_image_viewer.dart';
 
 // 읽기 전용에서는 에디터 전용 컴포넌트를 사용하지 않음
 import 'package:doppy/editor/component/link_component.dart';
@@ -61,6 +62,7 @@ class _PostReaderScreenState extends State<PostReaderScreen>
   static const double _appBarHeight = 52.0; // AppBar 높이
   double _lastScrollOffset = 0.0;
   double _pullAccum = 0.0; // 상단에서 아래로 당겨 닫기 누적 거리
+  double _horizontalDragDistance = 0.0; // 오른쪽으로 밀어 닫기 누적 거리
 
   // 앱바 표시/숨김을 위한 변수들
   bool _showAppBar = true; // 상단 이미지 제거 → 기본 표시
@@ -81,58 +83,109 @@ class _PostReaderScreenState extends State<PostReaderScreen>
   // 마지막 탭 위치 저장
   Offset? _lastTapPosition;
 
-  void _handleTap() {
-    if (_lastTapPosition == null) return;
+  // 전체화면 이미지 뷰어 상태
+  bool _showImageViewer = false;
+  bool _isVideoViewer = false;
+  String? _currentImageUrl;
+  List<String> _allImageUrls = [];
 
-    print('[PostReader] 탭 위치: $_lastTapPosition');
-    print(
-      '[PostReader] DocumentLayoutKey 설정됨: ${_editorService.documentLayoutKey != null}',
-    );
+  void _handleTap() async {
+    if (_lastTapPosition == null) return;
 
     final node = _editorService.findNodeAtPosition(_lastTapPosition!);
     if (node == null) {
-      print(
-        '[PostReader] 클릭한 노드 없음 - Key: ${_editorService.documentLayoutKey}',
-      );
       return;
     }
 
-    // 클릭한 노드 정보 출력
-    print('[PostReader] 클릭한 노드:');
-    // ClipNode 클릭 시 위치에 따라 분기 처리
-    if (node is ClipNode) {
-      final action = _dragService.handleClipNodeTap(node.id, _lastTapPosition!);
-      print('  - Action: $action');
-      if (action != null) {
-        _triggerClipNodeAction(node.id, action);
-        return;
-      }
-    }
+    // 노드 타입에 따른 분기 처리
+    switch (node.runtimeType) {
+      case ClipNode:
+        final clipNode = node as ClipNode;
+        print('  - Clip: ${clipNode.url}');
 
-    if (node is MentionNode) {
-      print('  - Mention: ${node.usernames}');
-      return;
-    }
-    if (node is LinkNode) {
-      print('  - Link: ${node.url}');
-      return;
-    }
-    if (node is ImageNode) {
-      print('  - Image: ${node.imageUrl}');
-      return;
-    }
-    if (node is ImageRowNode) {
-      print('  - ImageRow: ${node.imageUrls}');
-      return;
-    }
-    if (node is DividerNode) {
-      print('  - Divider');
-      return;
-    }
+        // 1) 읽기모드: 빈 영역 탭이면 fullscreen, 특정 영역(중앙/모서리) 탭이면 액션
+        final action = _dragService.handleClipNodeTap(
+          clipNode.id,
+          _lastTapPosition!,
+        );
+        if (action != null) {
+          _triggerClipNodeAction(clipNode.id, action);
+          break;
+        }
 
-    if (node is ParagraphNode) {
-      print('  - Paragraph: ${node.text}');
-      return;
+        // 2) 액션이 없으면 전체화면으로 열기 (프리로드 보장)
+        if (clipNode.url.isNotEmpty) {
+          try {
+            final cached = PostReaderService.getPreloadedController(
+              clipNode.url,
+            );
+            if (cached == null) {
+              await _postReaderService.preloadClips(context, [
+                clipNode.url,
+              ], maxCount: 1);
+            }
+          } catch (_) {}
+
+          setState(() {
+            _currentImageUrl = clipNode.url;
+            _allImageUrls = [clipNode.url];
+            _isVideoViewer = true;
+            _showImageViewer = true;
+          });
+        }
+        break;
+
+      case MentionNode:
+        final mentionNode = node as MentionNode;
+        print('  - Mention: ${mentionNode.usernames}');
+        break;
+
+      case LinkNode:
+        final linkNode = node as LinkNode;
+        print('  - Link: ${linkNode.url}');
+        break;
+
+      case ImageNode:
+        final imageNode = node as ImageNode;
+        print('  - Image: ${imageNode.imageUrl}');
+        _showFullscreenImage(imageNode.imageUrl);
+        break;
+
+      case ImageRowNode:
+        final imageRowNode = node as ImageRowNode;
+        print('  - ImageRow: ${imageRowNode.imageUrls}');
+
+        // 클릭한 위치의 이미지 인덱스 계산
+        final nodeRect = _dragService.getNodeGlobalRect(imageRowNode.id);
+        if (nodeRect != null) {
+          final localX = _lastTapPosition!.dx - nodeRect.left;
+          final imageCount = imageRowNode.imageUrls.length;
+          final imageWidth = nodeRect.width / imageCount;
+          final clickedIndex = (localX / imageWidth).floor().clamp(
+            0,
+            imageCount - 1,
+          );
+
+          setState(() {
+            _allImageUrls = imageRowNode.imageUrls;
+            _currentImageUrl = imageRowNode.imageUrls[clickedIndex];
+            _showImageViewer = true;
+          });
+        }
+        break;
+
+      case DividerNode:
+        print('  - Divider');
+        break;
+
+      case ParagraphNode:
+        final paragraphNode = node as ParagraphNode;
+        print('  - Paragraph: ${paragraphNode.text}');
+        break;
+
+      default:
+        // 알 수 없는 노드 타입
+        break;
     }
   }
 
@@ -163,6 +216,20 @@ class _PostReaderScreenState extends State<PostReaderScreen>
       controller.restartVideo?.call();
       print('[ClipNode] restartVideo() 호출됨');
     }
+  }
+
+  void _showFullscreenImage(String imageUrl) {
+    setState(() {
+      _currentImageUrl = imageUrl;
+      _showImageViewer = true;
+    });
+  }
+
+  void _closeImageViewer() {
+    setState(() {
+      _showImageViewer = false;
+      _currentImageUrl = null;
+    });
   }
 
   void _toggleLike() async {
@@ -310,6 +377,11 @@ class _PostReaderScreenState extends State<PostReaderScreen>
             print('[PostReaderScreen] 이미지 프리캐싱 시작: ${imageUrls.length}개');
             _postReaderService.preloadImages(context, imageUrls);
 
+            // 전체 이미지 URL 저장
+            setState(() {
+              _allImageUrls = imageUrls;
+            });
+
             final clipUrls = _postReaderService.extractClipUrls(content);
             print('[PostReaderScreen] 클립 프리캐싱 시작: ${clipUrls.length}개');
             _postReaderService.preloadClips(context, clipUrls);
@@ -436,15 +508,6 @@ class _PostReaderScreenState extends State<PostReaderScreen>
     final bool isMyPost =
         currentUser != null && currentUser.username == postAuthor;
 
-    // 권한 디버깅 로그
-    print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-    print('🔐 [PostReader 권한 체크]');
-    print('현재 사용자: ${currentUser?.username ?? "null"}');
-    print('포스트 작성자: $postAuthor');
-    print('내 글인가? $isMyPost');
-    print('exported 키: ${widget.exported.keys.toList()}');
-    print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-
     return WillPopScope(
       onWillPop: () async {
         if (_showCommentsOverlay) {
@@ -532,29 +595,41 @@ class _PostReaderScreenState extends State<PostReaderScreen>
             return Stack(
               children: [
                 // 전체 스크롤
-                GestureDetector(
-                  behavior: HitTestBehavior.translucent,
-                  onTapDown: (details) {
-                    _lastTapPosition = details.globalPosition;
-                    _handleTap();
+                NotificationListener<ScrollNotification>(
+                  onNotification: (n) {
+                    // 상단에서 아래로 당길 때 누적
+                    if (n is OverscrollNotification &&
+                        n.overscroll < 0 &&
+                        _scrollCtrl.hasClients &&
+                        _scrollCtrl.offset <= 0.0) {
+                      _pullAccum += (-n.overscroll);
+                    }
+                    // 드래그 종료 시 닫기 판단
+                    if (n is ScrollEndNotification) {
+                      if (_pullAccum >= 80.0) {
+                        Navigator.of(context).maybePop();
+                      }
+                      _pullAccum = 0.0;
+                    }
+                    return false;
                   },
-                  child: NotificationListener<ScrollNotification>(
-                    onNotification: (n) {
-                      // 상단에서 아래로 당길 때 누적
-                      if (n is OverscrollNotification &&
-                          n.overscroll < 0 &&
-                          _scrollCtrl.hasClients &&
-                          _scrollCtrl.offset <= 0.0) {
-                        _pullAccum += (-n.overscroll);
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.translucent,
+                    onTapDown: (details) {
+                      _lastTapPosition = details.globalPosition;
+                    },
+                    onTap: _handleTap,
+                    onHorizontalDragUpdate: (details) {
+                      // 오른쪽으로 스와이프 (positive delta)
+                      if (details.primaryDelta! > 0) {
+                        _horizontalDragDistance += details.primaryDelta!;
                       }
-                      // 드래그 종료 시 닫기 판단
-                      if (n is ScrollEndNotification) {
-                        if (_pullAccum >= 80.0) {
-                          Navigator.of(context).maybePop();
-                        }
-                        _pullAccum = 0.0;
+                    },
+                    onHorizontalDragEnd: (details) {
+                      if (_horizontalDragDistance > 100) {
+                        Navigator.of(context).pop();
                       }
-                      return false;
+                      _horizontalDragDistance = 0.0;
                     },
                     child: CustomScrollView(
                       controller: _scrollCtrl,
@@ -747,7 +822,7 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                               decoration: BoxDecoration(
                                 color: Theme.of(
                                   context,
-                                ).colorScheme.background.withOpacity(0.8),
+                                ).colorScheme.background.withOpacity(1),
                               ),
 
                               child: Padding(
@@ -870,6 +945,26 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                           title: widget.exported['title'] ?? '',
                         );
                       },
+                    ),
+                  ),
+                // 전체화면 이미지/영상 뷰어
+                if (_showImageViewer && _currentImageUrl != null)
+                  Positioned.fill(
+                    child: FullscreenImageViewer(
+                      imageUrl: _currentImageUrl!,
+                      allImageUrls: _allImageUrls,
+                      initialIndex:
+                          _currentImageUrl != null && _allImageUrls.isNotEmpty
+                              ? _allImageUrls.indexOf(_currentImageUrl!)
+                              : 0,
+                      isVideo: _isVideoViewer,
+                      preloadedController:
+                          _isVideoViewer
+                              ? PostReaderService.getPreloadedController(
+                                _currentImageUrl!,
+                              )
+                              : null,
+                      onClose: _closeImageViewer,
                     ),
                   ),
               ],

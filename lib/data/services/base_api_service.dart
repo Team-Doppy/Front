@@ -7,6 +7,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'auth_service.dart';
 import '../../main.dart';
+import 'dart:async'; // Added for Completer
 
 /// 토큰 갱신을 자동으로 처리하는 Dio 클라이언트
 class BaseApiService {
@@ -29,15 +30,15 @@ class BaseApiService {
   );
 
   Dio get dio => _dio;
+  bool _isRefreshing = false;
+  Completer<bool>? _refreshCompleter;
 
   void _setupInterceptors() {
     // 요청 인터셉터: 모든 요청에 토큰 추가
     _dio.interceptors.add(
       InterceptorsWrapper(
         onRequest: (options, handler) async {
-          // 요청 전 토큰 검증/갱신
-          await _authService.validateAndRefreshToken();
-
+          // 요청 시에는 토큰만 주입 (검증/갱신은 onError에서 단일 비행 처리)
           final token = await _authService.getToken();
           if (token != null && token.isNotEmpty) {
             options.headers['Authorization'] = 'Bearer $token';
@@ -48,37 +49,70 @@ class BaseApiService {
         },
 
         onError: (error, handler) async {
-          // 401 에러 시 토큰 갱신 후 재시도
-          if (error.response?.statusCode == 401 ||
-              (error.response?.statusCode == 500 &&
-                  error.response?.data?.toString().contains(
-                        'ExpiredJwtException',
-                      ) ==
-                      true)) {
+          // 인증/리프레시 엔드포인트에는 개입하지 않음
+          final path = error.requestOptions.path;
+          final isAuthEndpoint =
+              path.contains('/api/auth/login') ||
+              path.contains('/api/auth/refresh');
+
+          // 401 또는 만료 표시가 있는 500만 리프레시 시도
+          final status = error.response?.statusCode;
+          final bodyStr = error.response?.data?.toString() ?? '';
+          final shouldRefresh =
+              (status == 401) ||
+              (status == 500 && bodyStr.contains('ExpiredJwtException'));
+
+          if (!isAuthEndpoint && shouldRefresh) {
             print('[DioClient] Token expired, attempting refresh...');
 
             try {
+              // 이미 리프레시 중이면 완료까지 대기
+              if (_isRefreshing && _refreshCompleter != null) {
+                final ok = await _refreshCompleter!.future;
+                if (ok) {
+                  final newToken = await _authService.getToken();
+                  if (newToken != null && newToken.isNotEmpty) {
+                    error.requestOptions.headers['Authorization'] =
+                        'Bearer $newToken';
+                  }
+                  final response = await _dio.fetch(error.requestOptions);
+                  handler.resolve(response);
+                  return;
+                } else {
+                  _handleTokenRefreshFailure();
+                  return;
+                }
+              }
+
+              // 최초 1회만 리프레시 시도 (단일 비행)
+              _isRefreshing = true;
+              _refreshCompleter = Completer<bool>();
               final refreshed = await _refreshToken();
+              _isRefreshing = false;
+              _refreshCompleter?.complete(refreshed);
+              _refreshCompleter = null;
+
               if (refreshed) {
                 print('[DioClient] Token refreshed, retrying request...');
-
-                // 새로운 토큰으로 원본 요청 재시도
                 final newToken = await _authService.getToken();
                 if (newToken != null && newToken.isNotEmpty) {
                   error.requestOptions.headers['Authorization'] =
                       'Bearer $newToken';
                 }
-
                 final response = await _dio.fetch(error.requestOptions);
                 handler.resolve(response);
                 return;
               } else {
-                // 토큰 갱신 실패 시 로그인 화면으로 이동
                 _handleTokenRefreshFailure();
+                return;
               }
             } catch (e) {
               print('[DioClient] Token refresh failed: $e');
+              _isRefreshing = false;
+              _refreshCompleter?.complete(false);
+              _refreshCompleter = null;
               _handleTokenRefreshFailure();
+              return;
             }
           }
 
@@ -130,6 +164,7 @@ class BaseApiService {
 
   /// 토큰 갱신 실패 시 로그인 화면으로 이동
   void _handleTokenRefreshFailure() {
+    print('❌ [DioClient] 토큰 갱신 실패 - 로그인 화면으로 이동');
     final context = navigatorKey.currentContext;
     if (context != null) {
       // 모든 화면을 pop하고 로그인 화면으로 이동

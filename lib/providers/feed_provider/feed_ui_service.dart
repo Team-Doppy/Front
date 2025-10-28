@@ -1,6 +1,5 @@
 import 'package:doppy/data/services/blog_service.dart';
 import 'dart:async';
-import 'package:doppy/pages/components/comps_for_profile/category_fullscreen_overlay.dart';
 import 'package:doppy/data/models/post_data.dart';
 import 'package:doppy/providers/feed_provider/base_feed_provider.dart';
 import 'package:flutter/material.dart';

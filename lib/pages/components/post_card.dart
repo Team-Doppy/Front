@@ -92,7 +92,6 @@ class _PostCardState extends State<PostCard> {
                       (context, animation, secondaryAnimation) =>
                           FullscreenImageViewer(
                             imageUrl: widget.thumbnailImageUrl,
-                            heroTag: widget.heroTag,
                           ),
                 ),
               );

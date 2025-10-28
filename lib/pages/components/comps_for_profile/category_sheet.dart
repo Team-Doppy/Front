@@ -4,8 +4,6 @@ import 'package:doppy/providers/feed_provider/base_feed_provider.dart';
 import 'package:doppy/providers/feed_provider/my_profile_feed_provider.dart';
 import 'package:doppy/utils/error_handler.dart';
 import 'package:flutter/material.dart';
-import 'package:doppy/pages/components/comps_for_profile/category_create_dialog.dart';
-import 'package:doppy/providers/feed_provider/feed_ui_service.dart';
 import 'package:doppy/data/services/blog_service.dart';
 
 // 카테고리 필터 관리
@@ -51,7 +49,31 @@ class _CategoryItemWithActions extends StatefulWidget {
       _CategoryItemWithActionsState();
 }
 
-class _CategoryItemWithActionsState extends State<_CategoryItemWithActions> {
+class _CategoryItemWithActionsState extends State<_CategoryItemWithActions>
+    with SingleTickerProviderStateMixin {
+  double _dragOffset = 0.0;
+  late AnimationController _animationController;
+  late Animation<double> _animation;
+
+  @override
+  void initState() {
+    super.initState();
+    _animationController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 300),
+    );
+    _animation = CurvedAnimation(
+      parent: _animationController,
+      curve: Curves.easeOut,
+    );
+  }
+
+  @override
+  void dispose() {
+    _animationController.dispose();
+    super.dispose();
+  }
+
   void _showMenu(BuildContext context) async {
     await showDialog<String>(
       context: context,
@@ -80,7 +102,6 @@ class _CategoryItemWithActionsState extends State<_CategoryItemWithActions> {
                   widget.onEdit();
                 },
               ),
-              const Divider(height: 1),
               ListTile(
                 leading: Icon(
                   Icons.delete,
@@ -104,69 +125,193 @@ class _CategoryItemWithActionsState extends State<_CategoryItemWithActions> {
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color:
-          widget.isSelected
-              ? Theme.of(context).colorScheme.primary.withOpacity(0.1)
-              : Colors.transparent,
-      child: InkWell(
-        onTap: widget.onTap,
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-          child: Row(
-            children: [
-              Expanded(
-                child: Text(
-                  widget.category['name'],
-                  style: TextStyle(
-                    fontWeight:
-                        widget.isSelected ? FontWeight.w600 : FontWeight.w400,
-                    fontSize: 16,
-                    color: Theme.of(context).colorScheme.onSurface,
-                  ),
-                ),
-              ),
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 10,
-                  vertical: 4,
-                ),
-                decoration: BoxDecoration(
-                  color: Theme.of(
-                    context,
-                  ).colorScheme.primary.withOpacity(0.15),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Text(
-                  '${widget.category['postCount'] ?? 0}',
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    color: Theme.of(context).colorScheme.primary,
-                  ),
-                ),
-              ),
-              // 본인 프로필일 때만 more_vert 아이콘 표시
-              if (widget.isOwnProfile) ...[
-                const SizedBox(width: 8),
-                InkWell(
-                  onTap: () => _showMenu(context),
-                  borderRadius: BorderRadius.circular(20),
-                  child: Padding(
-                    padding: const EdgeInsets.all(8),
-                    child: Icon(
-                      Icons.more_vert,
-                      size: 20,
+    return GestureDetector(
+      onHorizontalDragUpdate: (details) {
+        setState(() {
+          // 왼쪽으로만 밀기 지원 (primaryDelta가 음수)
+          _dragOffset += details.primaryDelta!;
+          // 오른쪽으로 밀리는 것 방지 및 왼쪽으로 제한
+          if (_dragOffset > 0) _dragOffset = 0;
+          if (_dragOffset < -200) _dragOffset = -200;
+        });
+      },
+      onHorizontalDragEnd: (details) {
+        setState(() {
+          // 버튼이 충분히 드러난 상태가 아닐 때만 원래 위치로 복원
+          if (_dragOffset.abs() < 100) {
+            _dragOffset = 0.0;
+            _animationController.reverse();
+          } else {
+            _animationController.forward();
+          }
+        });
+      },
+      onTap: () {
+        // 탭은 항목 선택으로 처리
+        widget.onTap();
+        // 그리고 오프셋 리셋
+        if (_dragOffset != 0) {
+          setState(() {
+            _dragOffset = 0.0;
+          });
+        }
+      },
+      child: Stack(
+        children: [
+          // 수정 버튼 (왼쪽, 파란색)
+          if (_dragOffset < 0)
+            Positioned(
+              left: 0,
+              top: 0,
+              bottom: 0,
+              width: 70,
+              child: AnimatedBuilder(
+                animation: _animation,
+                builder: (context, child) {
+                  return Transform.scale(
+                    scale: 0.9 + (_animation.value * 0.1),
+                    child: child,
+                  );
+                },
+                child: GestureDetector(
+                  onTap: () {
+                    widget.onEdit();
+                    setState(() {
+                      _dragOffset = 0.0;
+                      _animationController.reverse();
+                    });
+                  },
+                  child: Container(
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
                       color: Theme.of(
                         context,
-                      ).colorScheme.onSurface.withOpacity(0.5),
+                      ).colorScheme.primary.withOpacity(0.12),
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    child: Icon(
+                      Icons.edit,
+                      color: Theme.of(context).colorScheme.primary,
                     ),
                   ),
                 ),
-              ],
-            ],
+              ),
+            ),
+
+          // 삭제 버튼 (오른쪽 끝, 빨간색)
+          if (_dragOffset < -70)
+            Positioned(
+              left: 70,
+              top: 0,
+              bottom: 0,
+              width: 70,
+              child: AnimatedBuilder(
+                animation: _animation,
+                builder: (context, child) {
+                  return Transform.scale(
+                    scale: 0.9 + (_animation.value * 0.1),
+                    child: child,
+                  );
+                },
+                child: GestureDetector(
+                  onTap: () {
+                    widget.onDelete();
+                    setState(() {
+                      _dragOffset = 0.0;
+                      _animationController.reverse();
+                    });
+                  },
+                  child: Container(
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.error.withOpacity(0.12),
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    child: Icon(
+                      Icons.delete,
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+
+          // 메인 컨텐츠
+          Transform.translate(
+            offset: Offset(_dragOffset, 0),
+            child: Material(
+              color:
+                  widget.isSelected
+                      ? Theme.of(context).colorScheme.primary.withOpacity(0.1)
+                      : Colors.transparent,
+              child: InkWell(
+                onTap: widget.onTap,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 20,
+                    vertical: 12,
+                  ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          widget.category['name'],
+                          style: TextStyle(
+                            fontWeight:
+                                widget.isSelected
+                                    ? FontWeight.w600
+                                    : FontWeight.w400,
+                            fontSize: 16,
+                            color: Theme.of(context).colorScheme.onSurface,
+                          ),
+                        ),
+                      ),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.primary.withOpacity(0.15),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Text(
+                          '${widget.category['postCount'] ?? 0}',
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                            color: Theme.of(context).colorScheme.primary,
+                          ),
+                        ),
+                      ),
+                      if (widget.isOwnProfile) ...[
+                        const SizedBox(width: 8),
+                        InkWell(
+                          onTap: () => _showMenu(context),
+                          borderRadius: BorderRadius.circular(20),
+                          child: Padding(
+                            padding: const EdgeInsets.all(8),
+                            child: Icon(
+                              Icons.more_vert,
+                              size: 20,
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.onSurface.withOpacity(0.5),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+            ),
           ),
-        ),
+        ],
       ),
     );
   }
@@ -229,24 +374,7 @@ class CategoryDropDown {
                           borderRadius: BorderRadius.circular(2),
                         ),
                       ),
-
-                      // 타이틀
-                      Padding(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 20,
-                          vertical: 8,
-                        ),
-                        child: Text(
-                          '카테고리',
-                          style: TextStyle(
-                            fontSize: 20,
-                            fontWeight: FontWeight.w700,
-                            color: Theme.of(context).colorScheme.onSurface,
-                          ),
-                        ),
-                      ),
-
-                      const Divider(height: 1),
+                      SizedBox(height: 12),
 
                       // 카테고리 리스트
                       Expanded(
@@ -384,16 +512,6 @@ class CategoryDropDown {
         // 시스템 카테고리 구분선
         if (isOwnProfile &&
             (privatePosts > 0 || groupPosts > 0 || publicPosts > 0)) ...[
-          const SizedBox(height: 12),
-          Divider(
-            height: 1,
-            thickness: 1,
-            indent: 20,
-            endIndent: 20,
-            color: Theme.of(context).colorScheme.onSurface.withOpacity(0.1),
-          ),
-          const SizedBox(height: 8),
-
           // 나만보기
           Builder(
             builder: (_) {
@@ -450,16 +568,6 @@ class CategoryDropDown {
                 _onCategoryChanged?.call();
               },
             ),
-
-          const SizedBox(height: 12),
-          Divider(
-            height: 1,
-            thickness: 1,
-            indent: 20,
-            endIndent: 20,
-            color: Theme.of(context).colorScheme.onSurface.withOpacity(0.1),
-          ),
-          const SizedBox(height: 8),
         ],
 
         // 사용자가 만든 카테고리
@@ -499,11 +607,6 @@ class CategoryDropDown {
     BuildContext context,
     BaseFeedProvider feedProvider,
   ) {
-    final feedModeManager = FeedDisplayModeManager();
-    final isImageOnlyMode = feedModeManager.isImageOnly;
-
-    // 이미지 전용 모드가 아니면 숨김
-    if (!isImageOnlyMode) return const SizedBox.shrink();
     return Material(
       color: Colors.transparent,
       child: InkWell(
@@ -513,7 +616,7 @@ class CategoryDropDown {
             context: context,
             builder: (_) => const CategoryCreateDialog(),
           );
-          print('[CategoryDropDown] 다이얼로그 결과: $name');
+
           if (name != null && name.trim().isNotEmpty) {
             await _createCategory(context, feedProvider, name.trim());
             _onCategoryChanged?.call();
@@ -523,18 +626,12 @@ class CategoryDropDown {
           padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
           child: Row(
             children: [
-              Icon(
-                Icons.add_circle_outline,
-                size: 22,
-                color: Theme.of(context).colorScheme.primary,
-              ),
-              const SizedBox(width: 12),
               Expanded(
                 child: Text(
                   '새 카테고리 만들기',
                   style: TextStyle(
                     fontSize: 16,
-                    fontWeight: FontWeight.w500,
+                    fontWeight: FontWeight.w600,
                     color: Theme.of(context).colorScheme.primary,
                   ),
                 ),
@@ -667,5 +764,62 @@ class CategoryDropDown {
       // 오류 발생 시 콘솔에만 출력
       print('[CategoryDropDown] SnackBar 표시 오류: $e - 메시지: $message');
     }
+  }
+}
+
+class CategoryCreateDialog extends StatefulWidget {
+  const CategoryCreateDialog({super.key});
+
+  @override
+  State<CategoryCreateDialog> createState() => _CategoryCreateDialogState();
+}
+
+class _CategoryCreateDialogState extends State<CategoryCreateDialog> {
+  final TextEditingController _controller = TextEditingController();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(
+        '',
+        style: TextStyle(
+          fontSize: 16,
+          fontWeight: FontWeight.w600,
+          color: Theme.of(context).colorScheme.onSurface,
+        ),
+      ),
+      content: TextField(
+        controller: _controller,
+        autofocus: true,
+        decoration: InputDecoration(
+          hintText: '카테고리 이름',
+          hintStyle: TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.w400,
+            color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop<String?>(null),
+          child: Text('취소'),
+        ),
+        ElevatedButton(
+          onPressed: () {
+            final name = _controller.text.trim();
+            if (name.isEmpty) return;
+            Navigator.of(context).pop<String?>(name);
+          },
+          child: const Text('생성'),
+        ),
+      ],
+    );
   }
 }

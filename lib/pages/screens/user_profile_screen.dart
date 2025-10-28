@@ -1,5 +1,5 @@
 import 'package:doppy/pages/components/common_profile_avatar.dart';
-import 'package:doppy/pages/components/comps_for_profile/category_drop_down.dart';
+import 'package:doppy/pages/components/comps_for_profile/category_sheet.dart';
 import 'package:doppy/pages/components/comps_for_profile/feed.dart';
 import 'package:doppy/pages/components/custom_refresh_indicator.dart';
 import 'package:doppy/providers/feed_provider/feed_ui_service.dart';

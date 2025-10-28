@@ -705,18 +705,16 @@ class _PostListState extends State<PostList> {
     // 현재 탭에 따른 메시지 결정
     String message;
     String subtitle;
-    IconData icon;
     bool showRecommendButton = false;
 
     if (widget.isShowingFriendsOnly) {
       message = "친구포스트가 없어요";
       subtitle = "오늘은 내가 먼저 포스트를 올려볼까요?";
-      icon = Icons.people_outline;
+
       showRecommendButton = true; // 친구글 탭에서만 추천글 버튼 표시
     } else {
       message = "아직 글이 없어요";
       subtitle = "새로운 글들이 곧 올라올 거예요!";
-      icon = Icons.article_outlined;
     }
 
     return Center(
