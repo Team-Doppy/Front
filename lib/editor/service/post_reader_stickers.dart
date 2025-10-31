@@ -23,208 +23,243 @@ class PostReaderStickers extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final children = <Widget>[];
-        final double scrollY =
-            scrollController.hasClients ? scrollController.offset : 0.0;
+    return AnimatedBuilder(
+      animation: scrollController,
+      builder: (context, _) {
+        return LayoutBuilder(
+          builder: (context, constraints) {
+            final children = <Widget>[];
+            final double scrollY =
+                scrollController.hasClients ? scrollController.offset : 0.0;
 
-        // zIndex 기준으로 정렬하여 안정적인 레이어링 보장
-        final sorted = List.from(stickers);
-        sorted.sort((a, b) {
-          final ma = (a as Map).cast<String, dynamic>();
-          final mb = (b as Map).cast<String, dynamic>();
-          final za = (ma['zIndex'] as num?)?.toInt() ?? 0;
-          final zb = (mb['zIndex'] as num?)?.toInt() ?? 0;
-          return za.compareTo(zb);
-        });
+            // zIndex 기준으로 정렬하여 안정적인 레이어링 보장
+            final sorted = List.from(stickers);
+            sorted.sort((a, b) {
+              final ma = (a as Map).cast<String, dynamic>();
+              final mb = (b as Map).cast<String, dynamic>();
+              final za = (ma['zIndex'] as num?)?.toInt() ?? 0;
+              final zb = (mb['zIndex'] as num?)?.toInt() ?? 0;
+              return za.compareTo(zb);
+            });
 
-        for (final s in sorted) {
-          final m = (s as Map).cast<String, dynamic>();
-          final type = (m['type'] ?? '').toString();
-          // zIndex는 정렬에만 사용되었으며 여기선 미사용
-          final rot = (m['rotation'] as num?)?.toDouble() ?? 0.0;
-          double baseScale = (m['scale'] as num?)?.toDouble() ?? 1.0;
-          final anchor = (m['anchor'] as Map?)?.cast<String, dynamic>();
-          late final Offset absPos;
-          late final bool needsScrollCompensation;
-          double anchorScale = 1.0; // 앵커 기준 스케일 보정 (refW 대비 현재 width)
+            for (final s in sorted) {
+              final m = (s as Map).cast<String, dynamic>();
+              final type = (m['type'] ?? '').toString();
+              // zIndex는 정렬에만 사용되었으며 여기선 미사용
+              final rot = (m['rotation'] as num?)?.toDouble() ?? 0.0;
+              double baseScale = (m['scale'] as num?)?.toDouble() ?? 1.0;
+              final anchor = (m['anchor'] as Map?)?.cast<String, dynamic>();
+              late final Offset absPos;
+              late final bool needsScrollCompensation;
+              double anchorScale = 1.0; // 앵커 기준 스케일 보정 (refW 대비 현재 width)
 
-          Rect? nodeRectForAnchor;
+              Rect? nodeRectForAnchor;
 
-          bool anchorHasRefW = false;
-          if (anchor != null) {
-            absPos = _resolveAnchor(anchor);
-            // refW/refH가 있으면 현재 노드 크기 대비 스케일 보정
-            final nodeId = (anchor['nodeId'] ?? '').toString();
-            nodeRectForAnchor = _getNodeRect(nodeId);
-            final refW = (anchor['refW'] as num?)?.toDouble();
-            if (nodeRectForAnchor != null && refW != null && refW > 0) {
-              anchorScale = nodeRectForAnchor.width / refW;
-              anchorHasRefW = true;
-            }
-            needsScrollCompensation = false;
-          } else {
-            final pf =
-                (m['positionFallback'] as Map?)?.cast<String, dynamic>() ?? {};
-            // 문서 기준 폭이 제공되면 현재 폭 대비 보정
-            final docWidth = (pf['docWidth'] as num?)?.toDouble();
-            final currentWidth = constraints.maxWidth;
-            final scale =
-                (docWidth != null && docWidth > 0)
-                    ? (currentWidth / docWidth)
-                    : 1.0;
-            absPos = Offset(
-              ((pf['xPx'] as num?)?.toDouble() ?? 0.0) * scale,
-              ((pf['yPx'] as num?)?.toDouble() ?? 0.0) * scale,
-            );
-            needsScrollCompensation = true;
-          }
-
-          Widget body;
-          Size? bodySize; // 드로잉 등 크기 중심 보정용
-          if (type == 'text') {
-            final content =
-                (m['content'] as Map?)?.cast<String, dynamic>() ?? {};
-            final text = (content['text'] ?? '').toString();
-            final style =
-                (content['style'] as Map?)?.cast<String, dynamic>() ?? {};
-            body = RepaintBoundary(
-              child: Text(
-                text,
-                style: TextStyle(
-                  color: _toColor(style['color']) ?? Colors.white,
-                  fontSize: (style['fontSize'] as num?)?.toDouble() ?? 32,
-                  fontWeight:
-                      (style['bold'] == true)
-                          ? FontWeight.w800
-                          : FontWeight.w500,
-                  fontStyle:
-                      (style['italic'] == true)
-                          ? FontStyle.italic
-                          : FontStyle.normal,
-                  decoration:
-                      (style['underline'] == true)
-                          ? TextDecoration.underline
-                          : TextDecoration.none,
-                  letterSpacing:
-                      (style['letterSpacing'] as num?)?.toDouble() ?? 0,
-                ),
-              ),
-            );
-          } else if (type == 'emoji') {
-            final content = (m['content'] ?? '').toString();
-            body = const RepaintBoundary(
-              child: Text('🙂', style: TextStyle(fontSize: 40)),
-            );
-            // 실제 이모지 표시
-            body = RepaintBoundary(
-              child: Text(content, style: const TextStyle(fontSize: 40)),
-            );
-          } else if (type == 'image') {
-            final content =
-                (m['content'] as Map?)?.cast<String, dynamic>() ?? {};
-            final dynamic raw = content['bytes'];
-            if (raw != null) {
-              try {
-                final bytes =
-                    raw is String ? base64Decode(raw) : raw as Uint8List;
-                body = RepaintBoundary(
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(4),
-                    child: ConstrainedBox(
-                      constraints: const BoxConstraints(
-                        maxWidth: 200,
-                        maxHeight: 200,
-                      ),
-                      child: Image.memory(bytes, fit: BoxFit.contain),
-                    ),
-                  ),
+              bool anchorHasRefW = false;
+              bool anchorHasLocal = false;
+              if (anchor != null) {
+                final resolved = _resolveAnchor(anchor);
+                if (resolved != null) {
+                  absPos = resolved;
+                } else {
+                  // 앵커 좌표를 얻지 못하면 안전 폴백
+                  final pf =
+                      (m['positionFallback'] as Map?)
+                          ?.cast<String, dynamic>() ??
+                      {};
+                  final docWidth = (pf['docWidth'] as num?)?.toDouble();
+                  final currentWidth = constraints.maxWidth;
+                  final scale =
+                      (docWidth != null && docWidth > 0)
+                          ? (currentWidth / docWidth)
+                          : 1.0;
+                  absPos = Offset(
+                    ((pf['xPx'] as num?)?.toDouble() ?? 0.0) * scale,
+                    ((pf['yPx'] as num?)?.toDouble() ?? 0.0) * scale,
+                  );
+                  needsScrollCompensation = true;
+                  // refW 기반 보정은 불가
+                }
+                // refW/refH가 있으면 현재 노드 크기 대비 스케일 보정
+                final nodeId = (anchor['nodeId'] ?? '').toString();
+                nodeRectForAnchor = _getNodeRect(nodeId);
+                final refW = (anchor['refW'] as num?)?.toDouble();
+                if (nodeRectForAnchor != null && refW != null && refW > 0) {
+                  anchorScale = nodeRectForAnchor.width / refW;
+                  anchorHasRefW = true;
+                }
+                // localX/localY를 사용한 앵커인지 체크 → 이 경우에는 중심 보정 금지
+                if (anchor.containsKey('localX') ||
+                    anchor.containsKey('localY')) {
+                  anchorHasLocal = true;
+                }
+                if (resolved != null) {
+                  needsScrollCompensation = false;
+                }
+              } else {
+                final pf =
+                    (m['positionFallback'] as Map?)?.cast<String, dynamic>() ??
+                    {};
+                // 문서 기준 폭이 제공되면 현재 폭 대비 보정
+                final docWidth = (pf['docWidth'] as num?)?.toDouble();
+                final currentWidth = constraints.maxWidth;
+                final scale =
+                    (docWidth != null && docWidth > 0)
+                        ? (currentWidth / docWidth)
+                        : 1.0;
+                absPos = Offset(
+                  ((pf['xPx'] as num?)?.toDouble() ?? 0.0) * scale,
+                  ((pf['yPx'] as num?)?.toDouble() ?? 0.0) * scale,
                 );
-              } catch (_) {
-                body = Container(
-                  width: 140,
-                  height: 140,
-                  color: Colors.grey[700],
-                );
+                needsScrollCompensation = true;
               }
-            } else if ((content['url'] ?? '').toString().isNotEmpty) {
-              final url = (content['url'] ?? '').toString();
-              body = RepaintBoundary(
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(4),
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(
-                      maxWidth: 200,
-                      maxHeight: 200,
+
+              Widget body;
+              Size? bodySize; // 드로잉 등 크기 중심 보정용
+              if (type == 'text') {
+                final content =
+                    (m['content'] as Map?)?.cast<String, dynamic>() ?? {};
+                final text = (content['text'] ?? '').toString();
+                final style =
+                    (content['style'] as Map?)?.cast<String, dynamic>() ?? {};
+                body = RepaintBoundary(
+                  child: Text(
+                    text,
+                    style: TextStyle(
+                      color: _toColor(style['color']) ?? Colors.white,
+                      fontSize: (style['fontSize'] as num?)?.toDouble() ?? 32,
+                      fontWeight:
+                          (style['bold'] == true)
+                              ? FontWeight.w800
+                              : FontWeight.w500,
+                      fontStyle:
+                          (style['italic'] == true)
+                              ? FontStyle.italic
+                              : FontStyle.normal,
+                      decoration:
+                          (style['underline'] == true)
+                              ? TextDecoration.underline
+                              : TextDecoration.none,
+                      letterSpacing:
+                          (style['letterSpacing'] as num?)?.toDouble() ?? 0,
                     ),
-                    child: Image.network(
-                      url,
-                      fit: BoxFit.contain,
-                      cacheWidth: 300,
-                      cacheHeight: 300,
-                      filterQuality: FilterQuality.medium,
+                  ),
+                );
+              } else if (type == 'emoji') {
+                final content = (m['content'] ?? '').toString();
+                body = const RepaintBoundary(
+                  child: Text('🙂', style: TextStyle(fontSize: 40)),
+                );
+                // 실제 이모지 표시
+                body = RepaintBoundary(
+                  child: Text(content, style: const TextStyle(fontSize: 40)),
+                );
+              } else if (type == 'image') {
+                final content =
+                    (m['content'] as Map?)?.cast<String, dynamic>() ?? {};
+                final dynamic raw = content['bytes'];
+                if (raw != null) {
+                  try {
+                    final bytes =
+                        raw is String ? base64Decode(raw) : raw as Uint8List;
+                    body = RepaintBoundary(
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(4),
+                        child: ConstrainedBox(
+                          constraints: const BoxConstraints(
+                            maxWidth: 200,
+                            maxHeight: 200,
+                          ),
+                          child: Image.memory(bytes, fit: BoxFit.contain),
+                        ),
+                      ),
+                    );
+                  } catch (_) {
+                    body = Container(
+                      width: 140,
+                      height: 140,
+                      color: Colors.grey[700],
+                    );
+                  }
+                } else if ((content['url'] ?? '').toString().isNotEmpty) {
+                  final url = (content['url'] ?? '').toString();
+                  body = RepaintBoundary(
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(4),
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(
+                          maxWidth: 200,
+                          maxHeight: 200,
+                        ),
+                        child: Image.network(
+                          url,
+                          fit: BoxFit.contain,
+                          cacheWidth: 300,
+                          cacheHeight: 300,
+                          filterQuality: FilterQuality.medium,
+                        ),
+                      ),
                     ),
+                  );
+                } else {
+                  body = Container(
+                    width: 140,
+                    height: 140,
+                    color: Colors.grey[700],
+                  );
+                }
+              } else if (type == 'drawing') {
+                // drawing 타입 스티커 렌더링
+                final content =
+                    (m['content'] as Map?)?.cast<String, dynamic>() ?? {};
+                final strokes = (content['strokes'] as List?) ?? [];
+                // 드로잉 바운딩 박스 계산하여 중심 보정에 사용
+                final bounds = _computeDrawingBounds(strokes);
+                if (bounds != null) {
+                  bodySize = Size(bounds.width, bounds.height);
+                }
+                body = RepaintBoundary(
+                  child: DrawingStickerRenderer(
+                    strokes: strokes.cast<Map<String, dynamic>>(),
+                  ),
+                );
+              } else {
+                body = const SizedBox.shrink();
+              }
+
+              final double topPos =
+                  needsScrollCompensation ? (absPos.dy - scrollY) : absPos.dy;
+
+              // 최종 스케일: 저장된 스케일 * 앵커 스케일 보정
+              final double finalScale = baseScale * anchorScale;
+
+              // 드로잉 등은 앵커 지점이 중앙이 되도록 보정 (local 앵커가 아닐 때만)
+              double left = absPos.dx;
+              double top = topPos + topInset;
+              // 구버전(anchor에 refW가 없는) 데이터는 좌상단 기준으로 저장됨 → 중심 보정 금지
+              if (bodySize != null && anchorHasRefW && !anchorHasLocal) {
+                left = absPos.dx - (bodySize.width * finalScale) / 2;
+                top = topPos - (bodySize.height * finalScale) / 2 + topInset;
+              }
+
+              children.add(
+                Positioned(
+                  left: left,
+                  top: top,
+                  child: Transform(
+                    alignment: Alignment.center,
+                    transform:
+                        Matrix4.identity()
+                          ..rotateZ(rot)
+                          ..scale(finalScale),
+                    child: body,
                   ),
                 ),
               );
-            } else {
-              body = Container(
-                width: 140,
-                height: 140,
-                color: Colors.grey[700],
-              );
             }
-          } else if (type == 'drawing') {
-            // drawing 타입 스티커 렌더링
-            final content =
-                (m['content'] as Map?)?.cast<String, dynamic>() ?? {};
-            final strokes = (content['strokes'] as List?) ?? [];
-            // 드로잉 바운딩 박스 계산하여 중심 보정에 사용
-            final bounds = _computeDrawingBounds(strokes);
-            if (bounds != null) {
-              bodySize = Size(bounds.width, bounds.height);
-            }
-            body = RepaintBoundary(
-              child: DrawingStickerRenderer(
-                strokes: strokes.cast<Map<String, dynamic>>(),
-              ),
-            );
-          } else {
-            body = const SizedBox.shrink();
-          }
-
-          final double topPos =
-              needsScrollCompensation ? (absPos.dy - scrollY) : absPos.dy;
-
-          // 최종 스케일: 저장된 스케일 * 앵커 스케일 보정
-          final double finalScale = baseScale * anchorScale;
-
-          // 드로잉 등은 앵커 지점이 중앙이 되도록 보정
-          double left = absPos.dx;
-          double top = topPos + topInset;
-          // 구버전(anchor에 refW가 없는) 데이터는 좌상단 기준으로 저장됨 → 중심 보정 금지
-          if (bodySize != null && anchorHasRefW) {
-            left = absPos.dx - (bodySize.width * finalScale) / 2;
-            top = topPos - (bodySize.height * finalScale) / 2 + topInset;
-          }
-
-          children.add(
-            Positioned(
-              left: left,
-              top: top,
-              child: Transform(
-                alignment: Alignment.center,
-                transform:
-                    Matrix4.identity()
-                      ..rotateZ(rot)
-                      ..scale(finalScale),
-                child: body,
-              ),
-            ),
-          );
-        }
-        return Stack(children: children);
+            return Stack(children: children);
+          },
+        );
       },
     );
   }
@@ -278,41 +313,36 @@ class PostReaderStickers extends StatelessWidget {
     return Rect.fromLTRB(minX - pad, minY - pad, maxX + pad, maxY + pad);
   }
 
-  Offset _resolveAnchor(Map<String, dynamic> anchor) {
+  Offset? _resolveAnchor(Map<String, dynamic> anchor) {
     final nodeId = (anchor['nodeId'] ?? '').toString();
-    final relX = (anchor['relX'] as num?)?.toDouble() ?? 0.5;
-    final relY = (anchor['relY'] as num?)?.toDouble() ?? 0.0;
+    final hasLocal =
+        anchor.containsKey('localX') || anchor.containsKey('localY');
+    final double? localX = (anchor['localX'] as num?)?.toDouble();
+    final double? localY = (anchor['localY'] as num?)?.toDouble();
+    final double relX = (anchor['relX'] as num?)?.toDouble() ?? 0.5;
+    final double relY = (anchor['relY'] as num?)?.toDouble() ?? 0.0;
 
-    final layout = layoutKey.currentState as DocumentLayout?;
     final stackBox = stackKey.currentContext?.findRenderObject() as RenderBox?;
-    if (layout == null || stackBox == null) return const Offset(0, 0);
+    if (stackBox == null) return null;
     try {
-      final rect = layout.getRectForSelection(
-        DocumentPosition(
-          nodeId: nodeId,
-          nodePosition: const UpstreamDownstreamNodePosition.upstream(),
-        ),
-        DocumentPosition(
-          nodeId: nodeId,
-          nodePosition: const UpstreamDownstreamNodePosition.downstream(),
-        ),
-      );
-      if (rect == null) return const Offset(0, 0);
-      // getRectForSelection은 DocumentLayout의 로컬 좌표계 기준이므로
-      // 먼저 DocumentLayout RenderBox를 통해 전역 좌표로 변환한 뒤,
-      // Stack 로컬 좌표로 다시 변환한다.
-      final layoutBox =
-          layoutKey.currentContext?.findRenderObject() as RenderBox?;
-      final rectTopLeftGlobal =
-          layoutBox != null
-              ? layoutBox.localToGlobal(rect.topLeft)
-              : rect.topLeft;
-      final topLeftInStack = stackBox.globalToLocal(rectTopLeftGlobal);
-      final x = topLeftInStack.dx + relX * rect.width;
-      final y = topLeftInStack.dy + relY * rect.height;
-      return Offset(x, y);
+      final rect = _getNodeRect(nodeId);
+      if (rect == null) return null;
+      // _getNodeRect는 전역 좌표. Stack 로컬로 변환
+      final topLeftInStack = stackBox.globalToLocal(rect.topLeft);
+      // 로컬(px)+스케일(refW) 기반을 우선 사용
+      if (hasLocal && localX != null && localY != null) {
+        final double refW = (anchor['refW'] as num?)?.toDouble() ?? rect.width;
+        final double scale = refW > 0 ? (rect.width / refW) : 1.0;
+        final double x = topLeftInStack.dx + (localX * scale);
+        final double y = topLeftInStack.dy + (localY * scale);
+        return Offset(x, y);
+      }
+      // 호환: 비율(relX/relY) 기반 해석
+      final double xr = topLeftInStack.dx + relX * rect.width;
+      final double yr = topLeftInStack.dy + relY * rect.height;
+      return Offset(xr, yr);
     } catch (_) {
-      return const Offset(0, 0);
+      return null;
     }
   }
 

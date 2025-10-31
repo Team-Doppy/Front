@@ -1,10 +1,11 @@
 import 'dart:ui' as ui;
 import 'package:doppy/editor/component/single_image_component.dart';
-import 'package:doppy/pages/components/common_profile_avatar.dart';
+import 'package:doppy/pages/components/post_reader_header.dart';
 import 'package:doppy/pages/screens/user_profile_screen.dart';
 import 'package:doppy/utils/error_handler.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+// google_fonts 사용은 헤더 컴포넌트 내부로 이동
 import 'package:super_editor/super_editor.dart';
 import 'package:doppy/editor/style/style_sheet.dart';
 import 'package:doppy/editor/component/row_image_component.dart'
@@ -20,6 +21,7 @@ import 'package:doppy/pages/components/comment_preview_section.dart';
 import 'package:doppy/pages/components/doppy_loading_logo.dart';
 import 'package:doppy/pages/components/fullscreen_image_viewer.dart';
 import 'package:doppy/utils/dialog_utils.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 // 읽기 전용에서는 에디터 전용 컴포넌트를 사용하지 않음
 import 'package:doppy/editor/component/link_component.dart';
@@ -93,6 +95,8 @@ class _PostReaderScreenState extends State<PostReaderScreen>
   String? _currentMediaId;
   List<String> _allMediaIds = [];
 
+  // 제목 정렬/폰트 파싱은 헤더 컴포넌트 내부에서 처리
+
   void _handleTap() async {
     if (_lastTapPosition == null) return;
 
@@ -142,6 +146,32 @@ class _PostReaderScreenState extends State<PostReaderScreen>
       case LinkNode:
         final linkNode = node as LinkNode;
         print('  - Link: ${linkNode.url}');
+        final raw = linkNode.url.trim();
+        if (raw.isEmpty) break;
+        final String normalized =
+            raw.startsWith('http://') || raw.startsWith('https://')
+                ? raw
+                : 'https://$raw';
+        final uri = Uri.tryParse(normalized);
+        if (uri == null) {
+          if (mounted) ErrorHandler.showError(context, '유효하지 않은 링크예요');
+          break;
+        }
+        try {
+          final ok = await launchUrl(
+            uri,
+            mode: LaunchMode.inAppWebView,
+            webViewConfiguration: const WebViewConfiguration(
+              enableJavaScript: true,
+              enableDomStorage: true,
+            ),
+          );
+          if (!ok && mounted) {
+            ErrorHandler.showError(context, '링크를 열 수 없어요');
+          }
+        } catch (_) {
+          if (mounted) ErrorHandler.showError(context, '링크를 열 수 없어요');
+        }
         break;
 
       case ImageNode:
@@ -241,7 +271,77 @@ class _PostReaderScreenState extends State<PostReaderScreen>
 
       case ParagraphNode:
         final paragraphNode = node as ParagraphNode;
-        print('  - Paragraph: ${paragraphNode.text}');
+
+        // 멘션 노드 처리: 탭 시 프로필로 이동
+        final isMention = (paragraphNode.metadata['mention'] == true);
+        if (isMention) {
+          // 우선 메타의 usernames 사용; 없으면 텍스트에서 파싱
+          final List<String> names =
+              ((paragraphNode.metadata['usernames'] as List?)
+                  ?.map((e) => e.toString())
+                  .toList()) ??
+              _extractUsernamesFromText(paragraphNode.text.text);
+
+          if (names.isEmpty) return;
+          if (names.length == 1) {
+            _openUserProfile(names.first);
+            return;
+          }
+
+          if (!mounted) return;
+          // 여러 명이면 선택 바텀시트
+          showModalBottomSheet(
+            context: context,
+            backgroundColor: Colors.transparent,
+            builder: (_) {
+              return Container(
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.surface,
+                  borderRadius: const BorderRadius.vertical(
+                    top: Radius.circular(16),
+                  ),
+                ),
+                child: SafeArea(
+                  top: false,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const SizedBox(height: 8),
+                      Container(
+                        width: 40,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.onSurface.withOpacity(0.2),
+                          borderRadius: BorderRadius.circular(2),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      ...names.map(
+                        (u) => ListTile(
+                          title: Text(
+                            '@$u',
+                            style: TextStyle(
+                              color: Theme.of(context).colorScheme.onSurface,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          onTap: () {
+                            Navigator.of(context).pop();
+                            _openUserProfile(u);
+                          },
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                    ],
+                  ),
+                ),
+              );
+            },
+          );
+          return;
+        }
 
         // 스포일러 확인: 텍스트에 spoiler attribution이 있는지 확인
         final text = paragraphNode.text;
@@ -260,22 +360,12 @@ class _PostReaderScreenState extends State<PostReaderScreen>
         // 스포일러가 있으면 NodeComponentService를 통해 해제하고 문서에서도 제거
         if (hasSpoiler) {
           final nodeService = NodeComponentService();
-          print(
-            '[PostReaderScreen] Paragraph 스포일러 발견: ${paragraphNode.id}, 해제 전 isSpoilerDisabled=${nodeService.isSpoilerDisabled(paragraphNode.id)}',
-          );
 
           // NodeComponentService에 "스포일러 해제됨" 상태 저장
           // 문서는 수정하지 않고 UI에서만 일시적으로 해제
           nodeService.setSpoiler(paragraphNode.id, false);
-
           // setState를 호출하여 UI 업데이트 (NodeComponentService 변경 감지)
           setState(() {});
-
-          print(
-            '[PostReaderScreen] Paragraph 스포일러 해제 완료: ${paragraphNode.id}, 해제 후 isSpoilerDisabled=${nodeService.isSpoilerDisabled(paragraphNode.id)}',
-          );
-        } else {
-          print('[PostReaderScreen] Paragraph 스포일러 없음: ${paragraphNode.id}');
         }
         break;
 
@@ -300,17 +390,14 @@ class _PostReaderScreenState extends State<PostReaderScreen>
     final controller = videoPlayerControllers[key];
 
     if (controller == null) {
-      print('[ClipNode] 컨트롤러를 찾을 수 없습니다: $key');
       return;
     }
 
     // 액션 실행
     if (action == 'toggleMute') {
       controller.toggleMute?.call();
-      print('[ClipNode] toggleMute() 호출됨');
     } else if (action == 'restartVideo') {
       controller.restartVideo?.call();
-      print('[ClipNode] restartVideo() 호출됨');
     }
   }
 
@@ -324,7 +411,6 @@ class _PostReaderScreenState extends State<PostReaderScreen>
   void _toggleLike() async {
     final postId = widget.exported['id']?.toString();
     if (postId == null || postId.isEmpty) {
-      print('[PostReaderScreen] 유효하지 않은 포스트 ID: $postId');
       return;
     }
 
@@ -332,7 +418,6 @@ class _PostReaderScreenState extends State<PostReaderScreen>
       await _likeService.togglePostLike(postId);
       // setState() 제거 - LikeService 리스너가 자동으로 UI 업데이트
     } catch (e) {
-      print('[PostReaderScreen] 좋아요 토글 오류: $e');
       // 오류 발생 시 사용자에게 알림
       if (mounted) {
         ErrorHandler.showError(context, '좋아요 처리 중 오류가 발생했습니다');
@@ -350,9 +435,8 @@ class _PostReaderScreenState extends State<PostReaderScreen>
     // 삭제 확인 다이얼로그 (공통 다이얼로그 사용)
     final bool? shouldDelete = await DialogUtils.showConfirmDialog(
       context,
-      title: '게시물 삭제',
-      message:
-          '정말로 이 게시물을 삭제하시겠습니까?\n30일 이후 자동 영구 삭제됩니다.\n삭제된 게시물의 조회수, 댓글, 좋아요 등의 데이터는 복구할 수 없습니다.',
+      title: '게시물을 삭제하시겠습니까?',
+      message: '30일 이후 자동 영구 삭제됩니다.\n삭제된 게시물의 조회수, 댓글, 좋아요 등의 데이터는 복구할 수 없습니다.',
       confirmText: '삭제',
       cancelText: '취소',
       isDestructive: true,
@@ -543,9 +627,9 @@ class _PostReaderScreenState extends State<PostReaderScreen>
     _scrollCtrl.removeListener(_onScroll);
     _commentsAnimCtrl.dispose();
     _commentOverlayCtrl.dispose();
-    // 화면 종료 시 스포일러 세션 상태 초기화
+    // 화면 종료 시 스포일러 세션 상태 초기화 (프레임 잠금 중 알림 방지)
     try {
-      NodeComponentService().clearSpoilers();
+      NodeComponentService().clearSpoilers(notify: false);
     } catch (_) {}
     super.dispose();
   }
@@ -675,6 +759,8 @@ class _PostReaderScreenState extends State<PostReaderScreen>
             final List stickers =
                 (stickersContent['stickers'] as List?) ?? const [];
 
+            const double gapHeight = 50;
+
             return Stack(
               children: [
                 // 전체 스크롤
@@ -698,10 +784,10 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                   },
                   child: GestureDetector(
                     behavior: HitTestBehavior.translucent,
-                    onTapDown: (details) {
+                    onTapUp: (details) {
                       _lastTapPosition = details.globalPosition;
+                      _handleTap();
                     },
-                    onTap: _handleTap,
                     onHorizontalDragUpdate: (details) {
                       // 오른쪽으로 스와이프 (positive delta)
                       if (details.primaryDelta! > 0) {
@@ -722,87 +808,42 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                           top: true,
                           bottom: false,
                           sliver: SliverToBoxAdapter(
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 20,
-                              ),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  SizedBox(height: 100),
-                                  Text(
-                                    widget.exported['title'] ?? '포스트',
-                                    style: TextStyle(
-                                      color:
-                                          Theme.of(
-                                            context,
-                                          ).colorScheme.onSurface,
-                                      fontSize: 30,
-                                      fontWeight: FontWeight.w800,
-                                      height: 1.15,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 12),
-                                  GestureDetector(
-                                    onTap: () {
-                                      if (isMyPost ||
-                                          widget.exported['authorId'] == null) {
-                                        return;
-                                      }
-                                      // exported 데이터에서 author 정보 가져오기
-                                      final authorId =
-                                          widget.exported['authorId'];
-                                      final authorProfileImageUrl =
-                                          widget.exported['authorProfileImageUrl']
-                                              as String?;
-
-                                      Navigator.of(context).push(
-                                        MaterialPageRoute(
-                                          builder:
-                                              (_) => UserProfileScreen(
-                                                otherUser: User(
-                                                  id: authorId,
-                                                  username: postAuthor,
-                                                  profileImageUrl:
-                                                      authorProfileImageUrl,
-                                                ),
-                                              ),
-                                        ),
-                                      );
-                                    },
-                                    child: Row(
-                                      children: [
-                                        CommonProfileAvatar(
-                                          username: postAuthor,
-                                          imageUrl:
-                                              widget
-                                                  .exported['authorProfileImageUrl'],
-                                          size: 30,
-                                          borderWidth: 1,
-                                        ),
-                                        const SizedBox(width: 5),
-                                        Expanded(
-                                          child: Text(
-                                            (widget.exported['author'] ?? '')
-                                                .toString(),
-                                            maxLines: 1,
-                                            overflow: TextOverflow.ellipsis,
-                                            style: TextStyle(
-                                              color:
-                                                  Theme.of(
-                                                    context,
-                                                  ).colorScheme.onSurface,
-                                              fontSize: 18,
-                                              fontWeight: FontWeight.w400,
-                                            ),
+                            child: PostReaderHeader(
+                              exportedRoot: widget.exported,
+                              currentExportedData: _currentExportedData,
+                              postAuthor: postAuthor,
+                              authorProfileImageUrl:
+                                  widget.exported['authorProfileImageUrl']
+                                      as String?,
+                              enableAuthorTap:
+                                  !isMyPost &&
+                                  widget.exported['authorId'] != null,
+                              onAuthorTap: () {
+                                if (isMyPost ||
+                                    widget.exported['authorId'] == null) {
+                                  return;
+                                }
+                                final authorId = widget.exported['authorId'];
+                                final authorProfileImageUrl =
+                                    widget.exported['authorProfileImageUrl']
+                                        as String?;
+                                Navigator.of(context).push(
+                                  MaterialPageRoute(
+                                    builder:
+                                        (_) => UserProfileScreen(
+                                          otherUser: User(
+                                            id: authorId,
+                                            username: postAuthor,
+                                            profileImageUrl:
+                                                authorProfileImageUrl,
                                           ),
                                         ),
-                                      ],
-                                    ),
                                   ),
-                                  const SizedBox(height: 32),
-                                ],
-                              ),
+                                );
+                              },
+                              horizontalPadding: 20,
+                              topSpacing: 90,
+                              gapHeight: gapHeight,
                             ),
                           ),
                         ),
@@ -823,13 +864,79 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                               dragService: _dragService,
                               isEditing: false, // 읽기 모드
                             ),
-                            LinkComponentBuilder(),
+                            LinkComponentBuilder(isEditing: false),
                             DividerComponentBuilder(),
                             PinComponentBuilder(dragService: _dragService),
                             CustomParagraphComponentBuilder(
                               dragService: _dragService,
                               editorService: _editorService,
                               isEditing: false, // 읽기 모드
+                              onMentionTap: (names) {
+                                if (names.isEmpty) return;
+                                if (names.length == 1) {
+                                  _openUserProfile(names.first);
+                                  return;
+                                }
+                                showModalBottomSheet(
+                                  context: context,
+                                  backgroundColor: Colors.transparent,
+                                  builder: (_) {
+                                    return Container(
+                                      decoration: BoxDecoration(
+                                        color:
+                                            Theme.of(
+                                              context,
+                                            ).colorScheme.surface,
+                                        borderRadius:
+                                            const BorderRadius.vertical(
+                                              top: Radius.circular(16),
+                                            ),
+                                      ),
+                                      child: SafeArea(
+                                        top: false,
+                                        child: Column(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            const SizedBox(height: 8),
+                                            Container(
+                                              width: 40,
+                                              height: 4,
+                                              decoration: BoxDecoration(
+                                                color: Theme.of(context)
+                                                    .colorScheme
+                                                    .onSurface
+                                                    .withOpacity(0.2),
+                                                borderRadius:
+                                                    BorderRadius.circular(2),
+                                              ),
+                                            ),
+                                            const SizedBox(height: 8),
+                                            ...names.map(
+                                              (u) => ListTile(
+                                                title: Text(
+                                                  '@$u',
+                                                  style: TextStyle(
+                                                    color:
+                                                        Theme.of(
+                                                          context,
+                                                        ).colorScheme.onSurface,
+                                                    fontWeight: FontWeight.w600,
+                                                  ),
+                                                ),
+                                                onTap: () {
+                                                  Navigator.of(context).pop();
+                                                  _openUserProfile(u);
+                                                },
+                                              ),
+                                            ),
+                                            const SizedBox(height: 8),
+                                          ],
+                                        ),
+                                      ),
+                                    );
+                                  },
+                                );
+                              },
                             ),
                             ...defaultComponentBuilders,
                           ],
@@ -864,7 +971,7 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                       stackKey: _stackKey,
                       scrollController: _scrollCtrl,
 
-                      topInset: _showAppBar ? (_appBarHeight + 45) : 0.0,
+                      topInset: (_appBarHeight + gapHeight),
                     ),
                   ),
                 ),
@@ -892,135 +999,33 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                   ),
                 ),
 
-                // 동적 AppBar (완전 숨김: 음수 높이만큼 이동 + 터치 차단)
+                // 동적 AppBar 컴포넌트로 분리
                 Builder(
                   builder: (context) {
-                    final double barHeight =
+                    final double computedBarHeight =
                         _appBarHeight + MediaQuery.of(context).padding.top;
-                    return AnimatedPositioned(
-                      duration: const Duration(milliseconds: 180),
-                      curve: Curves.easeInOut,
-                      top: _showAppBar ? 0 : -barHeight,
-                      left: 0,
-                      right: 0,
-                      child: IgnorePointer(
-                        ignoring: !_showAppBar,
-                        child: ClipRect(
-                          child: BackdropFilter(
-                            filter: ui.ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-                            child: Container(
-                              height: barHeight,
-                              decoration: BoxDecoration(
-                                color: Theme.of(
-                                  context,
-                                ).colorScheme.background.withOpacity(1),
-                              ),
-
-                              child: Padding(
-                                padding: EdgeInsets.only(
-                                  top: MediaQuery.of(context).padding.top,
-
-                                  bottom: 5.0,
-                                ),
-                                child: Row(
-                                  crossAxisAlignment: CrossAxisAlignment.center,
-                                  children: [
-                                    SizedBox(width: 17),
-                                    GestureDetector(
-                                      onTap: () => Navigator.of(context).pop(),
-                                      child: Icon(
-                                        Icons.arrow_back_ios_new_rounded,
-                                        color:
-                                            Theme.of(
-                                              context,
-                                            ).colorScheme.onSurface,
-                                        size: 22,
-                                      ),
-                                    ),
-
-                                    Spacer(),
-                                    if (isMyPost) ...[
-                                      GestureDetector(
-                                        onTap: () {
-                                          final dataToEdit =
-                                              _currentExportedData ??
-                                              widget.exported;
-                                          if (dataToEdit['id'] != null) {
-                                            Navigator.of(context).push(
-                                              MaterialPageRoute(
-                                                builder:
-                                                    (_) => PostwriteScreen(
-                                                      isEditingMode: true,
-                                                      exportedDataForEdit:
-                                                          dataToEdit,
-                                                    ),
-                                              ),
-                                            );
-                                          }
-                                        },
-                                        child: Container(
-                                          padding: const EdgeInsets.symmetric(
-                                            horizontal: 8,
-                                            vertical: 4,
-                                          ),
-                                          child: Text(
-                                            '수정',
-                                            style: TextStyle(
-                                              color:
-                                                  Theme.of(
-                                                    context,
-                                                  ).colorScheme.onSurface,
-                                            ),
-                                          ),
-                                        ),
-                                      ),
-                                      SizedBox(width: 12),
-                                      GestureDetector(
-                                        onTap: _deletePost,
-                                        child: Container(
-                                          padding: const EdgeInsets.symmetric(
-                                            horizontal: 8,
-                                            vertical: 4,
-                                          ),
-                                          child: Text(
-                                            '삭제',
-                                            style: TextStyle(
-                                              color:
-                                                  Theme.of(
-                                                    context,
-                                                  ).colorScheme.onSurface,
-                                            ),
-                                          ),
-                                        ),
-                                      ),
-                                      SizedBox(width: 15),
-                                    ] else ...[
-                                      GestureDetector(
-                                        onTap: _showCommentBottomSheet,
-                                        child: Row(
-                                          mainAxisSize: MainAxisSize.min,
-                                          children: [
-                                            Icon(
-                                              Icons.chat_bubble_outline_rounded,
-                                              color: Theme.of(context)
-                                                  .colorScheme
-                                                  .onSurface
-                                                  .withOpacity(0.7),
-                                              size: 24,
-                                            ),
-
-                                            SizedBox(width: 15),
-                                          ],
-                                        ),
-                                      ),
-                                    ],
-                                  ],
-                                ),
-                              ),
+                    return PostReaderAppBar(
+                      showAppBar: _showAppBar,
+                      barHeight: computedBarHeight,
+                      isMyPost: isMyPost,
+                      onBack: () => Navigator.of(context).pop(),
+                      onEdit: () {
+                        final dataToEdit =
+                            _currentExportedData ?? widget.exported;
+                        if (dataToEdit['id'] != null) {
+                          Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder:
+                                  (_) => PostwriteScreen(
+                                    isEditingMode: true,
+                                    exportedDataForEdit: dataToEdit,
+                                  ),
                             ),
-                          ),
-                        ),
-                      ),
+                          );
+                        }
+                      },
+                      onDelete: _deletePost,
+                      onShowComments: _showCommentBottomSheet,
                     );
                   },
                 ),
@@ -1063,6 +1068,27 @@ class _PostReaderScreenState extends State<PostReaderScreen>
             );
           },
         ),
+      ),
+    );
+  }
+
+  List<String> _extractUsernamesFromText(String text) {
+    if (text.isEmpty) return const [];
+    return text
+        .split('\n')
+        .map((e) => e.trim())
+        .where((e) => e.startsWith('@') && e.length > 1)
+        .map((e) => e.substring(1))
+        .toList();
+  }
+
+  void _openUserProfile(String username) {
+    if (username.isEmpty) return;
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder:
+            (_) =>
+                UserProfileScreen(otherUser: User(id: 0, username: username)),
       ),
     );
   }

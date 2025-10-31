@@ -17,11 +17,13 @@ class CustomParagraphComponentBuilder implements ComponentBuilder {
     required this.dragService,
     required this.editorService,
     this.isEditing = true,
+    this.onMentionTap,
   });
 
   final DragService dragService;
   final EditorService editorService;
   final bool isEditing;
+  final void Function(List<String> usernames)? onMentionTap;
   static const ParagraphComponentBuilder _defaultBuilder =
       ParagraphComponentBuilder();
 
@@ -74,6 +76,7 @@ class CustomParagraphComponentBuilder implements ComponentBuilder {
       dragService: dragService,
       editorService: editorService,
       isEditing: isEditing,
+      onMentionTap: onMentionTap,
       child: child,
     );
   }
@@ -86,6 +89,7 @@ class _ParagraphWithDropLines extends StatefulWidget {
     required this.editorService,
     required this.isEditing,
     required this.child,
+    this.onMentionTap,
   });
 
   final String nodeId;
@@ -93,6 +97,7 @@ class _ParagraphWithDropLines extends StatefulWidget {
   final EditorService editorService;
   final bool isEditing;
   final Widget child;
+  final void Function(List<String> usernames)? onMentionTap;
 
   @override
   State<_ParagraphWithDropLines> createState() =>
@@ -100,23 +105,37 @@ class _ParagraphWithDropLines extends StatefulWidget {
 }
 
 class _ParagraphWithDropLinesState extends State<_ParagraphWithDropLines>
-    with SingleTickerProviderStateMixin {
+    with TickerProviderStateMixin {
   late final AnimationController _controller;
   final GlobalKey _subtreeKey = GlobalKey();
-  // 스포일러 범위 캐싱 (텍스트가 바뀔 때만 재계산)
-  String? _lastTextSnapshot;
-  List<TextRange>? _cachedSpoilerRanges;
+  // 캐시 사용 제거: attribution 변경에 즉시 반응하도록 항상 재계산
+  // 스포일러 해제(리빌) 파티클 이펙트
+  late final AnimationController _scatterCtrl;
+  bool _scatterActive = false;
+  List<Rect> _scatterBoxes = const [];
+  bool _wasMaskVisible = false;
+  List<Rect> _prevBoxes = const [];
 
   @override
   void initState() {
     super.initState();
     _controller = AnimationController.unbounded(vsync: this)
       ..repeat(min: 0, max: 1, period: const Duration(milliseconds: 1500));
+    _scatterCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 520),
+    )..addStatusListener((status) {
+      if (status == AnimationStatus.completed ||
+          status == AnimationStatus.dismissed) {
+        if (mounted) setState(() => _scatterActive = false);
+      }
+    });
   }
 
   @override
   void dispose() {
     _controller.dispose();
+    _scatterCtrl.dispose();
     super.dispose();
   }
 
@@ -168,13 +187,31 @@ class _ParagraphWithDropLinesState extends State<_ParagraphWithDropLines>
 
         // 문단 내부 스포일러 박스 계산 (문단 로컬 좌표)
         final boxes = _collectSpoilerBoxes(context, nodeService);
+        final bool maskVisible = boxes.isNotEmpty;
+        // 현재 마스크가 보이는 동안엔 다음 전환을 대비해 최근 박스를 보관
+        if (maskVisible) {
+          _prevBoxes = boxes;
+        }
+        // 방금 해제되면 일회성 스캐터 실행 (이전 프레임 박스를 사용)
+        if (_wasMaskVisible &&
+            !maskVisible &&
+            _scatterCtrl.status != AnimationStatus.forward) {
+          _scatterBoxes = _prevBoxes;
+          if (_scatterBoxes.isNotEmpty) {
+            _scatterActive = true;
+            _scatterCtrl
+              ..reset()
+              ..forward();
+          }
+        }
+        _wasMaskVisible = maskVisible;
 
         Widget content = DefaultTextStyle.merge(
           textAlign: _resolveTextAlign(),
           child: KeyedSubtree(key: _subtreeKey, child: widget.child),
         );
 
-        return Stack(
+        Widget stack = Stack(
           children: [
             Container(margin: const EdgeInsets.only(top: 4), child: content),
             // 문단 위에 직접 글리터 렌더링 (로컬 좌표기준이라 오프셋 불필요)
@@ -210,6 +247,34 @@ class _ParagraphWithDropLinesState extends State<_ParagraphWithDropLines>
                   );
                 },
               ),
+            // 해제 시 점들이 흩어지는 스캐터 이펙트 (일회성)
+            if (_scatterActive)
+              Builder(
+                builder: (context) {
+                  final theme = Theme.of(context).colorScheme;
+                  final brightness = Theme.of(context).brightness;
+                  final dotColor = theme.onSurface;
+                  final isLightTheme = brightness == Brightness.light;
+                  return Positioned.fill(
+                    child: IgnorePointer(
+                      ignoring: true,
+                      child: AnimatedBuilder(
+                        animation: _scatterCtrl,
+                        builder: (context, __) {
+                          return CustomPaint(
+                            painter: _ParagraphSpoilerScatterPainter(
+                              boxes: _scatterBoxes,
+                              t: _scatterCtrl.value,
+                              dotColor: dotColor,
+                              isLightTheme: isLightTheme,
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                  );
+                },
+              ),
             if (showTop)
               const Positioned(
                 top: 0,
@@ -232,6 +297,30 @@ class _ParagraphWithDropLinesState extends State<_ParagraphWithDropLines>
               ),
           ],
         );
+
+        // 읽기 모드에서 멘션 문단이면 탭 콜백 연결
+        try {
+          final node = widget.editorService.editor.document.getNodeById(
+            widget.nodeId,
+          );
+          if (!widget.isEditing &&
+              node is ParagraphNode &&
+              node.metadata['mention'] == true &&
+              widget.onMentionTap != null) {
+            final List<String> names =
+                ((node.metadata['usernames'] as List?)
+                    ?.map((e) => e.toString())
+                    .toList()) ??
+                _extractUsernamesFromText(node.text.text);
+            return GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () => widget.onMentionTap!(names),
+              child: stack,
+            );
+          }
+        } catch (_) {}
+
+        return stack;
       },
     );
   }
@@ -270,54 +359,36 @@ class _ParagraphWithDropLinesState extends State<_ParagraphWithDropLines>
       // NodeComponentService에서 스포일러가 명시적으로 해제되었는지 먼저 확인
       // false가 저장되어 있으면 스포일러를 표시하지 않음
       final isDisabled = nodeService.isSpoilerDisabled(widget.nodeId);
-      print(
-        '[ParagraphComponent] _collectSpoilerBoxes: nodeId=${widget.nodeId}, isSpoilerDisabled=$isDisabled',
-      );
+
       if (isDisabled) {
-        print('[ParagraphComponent] 스포일러 해제됨 - 빈 리스트 반환');
         return const []; // 스포일러가 해제되었으므로 표시하지 않음
       }
 
-      // 스포일러 구간 수집 (텍스트 스냅샷이 변할 때만 재계산)
-      List<TextRange> spans;
-      final snapshot = text.text;
-      if (_lastTextSnapshot != snapshot || _cachedSpoilerRanges == null) {
-        final calc = <TextRange>[];
-        bool inSpoiler = false;
-        int start = 0;
-        for (int i = 0; i <= text.text.length; i++) {
-          final attrs =
-              i < text.text.length
-                  ? text.getAllAttributionsAt(i)
-                  : const <Attribution>{};
-          final has = attrs.any(
-            (a) => a is NamedAttribution && a.id == 'spoiler',
-          );
-          if (has && !inSpoiler) {
-            inSpoiler = true;
-            start = i;
-          } else if (!has && inSpoiler) {
-            inSpoiler = false;
-            calc.add(TextRange(start: start, end: i));
-          }
+      // 스포일러 구간 수집: 텍스트는 같아도 attribution 변경에 즉시 반응해야 하므로 항상 재계산
+      final calc = <TextRange>[];
+      bool inSpoiler = false;
+      int start = 0;
+      for (int i = 0; i <= text.text.length; i++) {
+        final attrs =
+            i < text.text.length
+                ? text.getAllAttributionsAt(i)
+                : const <Attribution>{};
+        final has = attrs.any(
+          (a) => a is NamedAttribution && a.id == 'spoiler',
+        );
+        if (has && !inSpoiler) {
+          inSpoiler = true;
+          start = i;
+        } else if (!has && inSpoiler) {
+          inSpoiler = false;
+          calc.add(TextRange(start: start, end: i));
         }
-        _lastTextSnapshot = snapshot;
-        _cachedSpoilerRanges = calc;
-        spans = calc;
-      } else {
-        spans = _cachedSpoilerRanges!;
       }
+      final List<TextRange> spans = calc;
 
       if (spans.isEmpty) {
-        // 디버깅: 스포일러가 없는지 확인
-        print(
-          '[ParagraphComponent] 스포일러 구간 없음: nodeId=${widget.nodeId}, 텍스트 길이=${text.text.length}',
-        );
         return const [];
       }
-      print(
-        '[ParagraphComponent] 스포일러 구간 발견: nodeId=${widget.nodeId}, 구간 수=${spans.length}',
-      );
 
       // RenderParagraph 찾기
       final ctx = _subtreeKey.currentContext;
@@ -347,6 +418,16 @@ class _ParagraphWithDropLinesState extends State<_ParagraphWithDropLines>
     } catch (_) {
       return const [];
     }
+  }
+
+  List<String> _extractUsernamesFromText(String text) {
+    if (text.isEmpty) return const [];
+    return text
+        .split('\n')
+        .map((e) => e.trim())
+        .where((e) => e.startsWith('@') && e.length > 1)
+        .map((e) => e.substring(1))
+        .toList();
   }
 }
 
@@ -425,6 +506,65 @@ class _ParagraphSpoilerPainter extends CustomPainter {
     return oldDelegate.phase != phase ||
         oldDelegate.boxes != boxes ||
         oldDelegate.isEditing != isEditing;
+  }
+}
+
+// 스포일러 해제 시 파티클 흩어짐 이펙트
+class _ParagraphSpoilerScatterPainter extends CustomPainter {
+  final List<Rect> boxes;
+  final double t; // 0..1 진행도
+  final Color dotColor;
+  final bool isLightTheme;
+  _ParagraphSpoilerScatterPainter({
+    required this.boxes,
+    required this.t,
+    required this.dotColor,
+    required this.isLightTheme,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (boxes.isEmpty) return;
+    final baseOpacity = isLightTheme ? 0.5 : 0.7;
+    final fade = (1.0 - Curves.easeOut.transform(t)).clamp(0.0, 1.0);
+    final paint =
+        Paint()
+          ..style = PaintingStyle.fill
+          ..color = dotColor.withOpacity(baseOpacity * fade);
+
+    for (final rect in boxes) {
+      // 박스당 점 개수: 면적 기준 적당히
+      final area = rect.width * rect.height;
+      final count = max(50, (area / 220).floor());
+      final cx = rect.center.dx;
+      final cy = rect.center.dy;
+      for (int i = 0; i < count; i++) {
+        final seed = rect.hashCode ^ (i * 1009);
+        final r = Random(seed);
+        final rx = r.nextDouble() * rect.width;
+        final ry = r.nextDouble() * rect.height;
+        final startX = rect.left + rx;
+        final startY = rect.top + ry;
+        // 중심에서 방사형으로 퍼지는 속도/방향
+        final dirX = (startX - cx);
+        final dirY = (startY - cy);
+        final dirLen = sqrt(dirX * dirX + dirY * dirY) + 0.001;
+        final nx = dirX / dirLen;
+        final ny = dirY / dirLen;
+        final speed = 24 + r.nextDouble() * 36; // px
+        final move = Curves.easeOutQuad.transform(t) * speed;
+        final x = startX + nx * move;
+        final y = startY + ny * move;
+        // 크기/회전 랜덤, 점 크기 약간 확대 후 축소
+        final sz = 1.0 + (1.6 * (1.0 - t));
+        canvas.drawRect(Rect.fromLTWH(x, y, sz, sz), paint);
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _ParagraphSpoilerScatterPainter oldDelegate) {
+    return oldDelegate.t != t || oldDelegate.boxes != boxes;
   }
 }
 

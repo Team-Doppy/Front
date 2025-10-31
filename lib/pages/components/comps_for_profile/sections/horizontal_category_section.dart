@@ -461,9 +461,7 @@ class _HorizontalCategorySectionState extends State<HorizontalCategorySection> {
                                                       );
                                                     } else {
                                                       // 다른 카테고리에서 이동 (카테고리 이동 + 맨 끝에 배치)
-                                                      print(
-                                                        '[ImageOnly] 다른 카테고리에서 끝 위치로 이동: ${draggedPost.title} -> 카테고리 $categoryId, 위치 $targetIndex',
-                                                      );
+
                                                       await context
                                                           .read<
                                                             PostDragDropService

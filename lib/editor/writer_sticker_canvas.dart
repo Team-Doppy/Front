@@ -177,9 +177,8 @@ class _StickerViewState extends State<_StickerView> {
   Offset _lastFocalPoint = Offset.zero;
   bool _pressing = false;
   Size _stickerSize = const Size(140, 140);
-  double _dragStartScale = 1.0;
-  double _dragStartRotation = 0.0;
-  double _lastValidScale = 1.0; // 경계 내 마지막 유효 스케일
+  // 롱프레스 중 핀치 스케일 시작 기준 스케일
+  double _pinchStartScale = 1.0;
 
   @override
   void initState() {
@@ -227,312 +226,157 @@ class _StickerViewState extends State<_StickerView> {
     return Positioned(
       left: pos.dx,
       top: pos.dy - scrollY,
-      child: GestureDetector(
-        behavior: HitTestBehavior.translucent,
-        onTap: () {
-          // 그리기 스티커는 편집 불가, 선택만 처리
-          if (widget.sticker.type == StickerType.drawing ||
-              widget.sticker.type == StickerType.image) {
-            svc.select(widget.sticker.id);
-            return;
-          }
-
-          // 선택 처리
-          //svc.select(widget.sticker.id);
-        },
-
-        onScaleStart: (d) {
-          // 두 손가락 핀치 전용 (스케일/회전)
-          if (d.pointerCount < 2) return;
-
-          _lastFocalPoint = d.focalPoint;
-          setState(() => _pressing = true);
-          FocusManager.instance.primaryFocus?.unfocus();
-          svc.beginDrag(widget.sticker.id);
-          svc.bringToFront(widget.sticker.id);
-          _dragStartScale = widget.sticker.scale;
-          _lastValidScale = widget.sticker.scale;
-          _dragStartRotation =
-              context.read<StickerService>().dragPreviewRotation;
-        },
-        onScaleUpdate: (d) {
-          // 두 손가락 핀치 전용
-          if (d.pointerCount < 2) return;
-          try {
-            // 입력값 검증
-            if (!d.scale.isFinite || d.scale <= 0) return;
-            if (!d.rotation.isFinite) return;
-
-            final delta = d.focalPoint - _lastFocalPoint;
-            _lastFocalPoint = d.focalPoint;
-
-            // 뷰포트 정보
-            final double scrollY =
-                widget.scrollController.hasClients
-                    ? widget.scrollController.offset
-                    : 0.0;
-            final Size vs = MediaQuery.of(context).size;
-
-            // 현재 및 목표 위치
-            final Offset cur = context.read<StickerService>().dragPreviewPos;
-            final Offset want = cur + delta;
-
-            // 레이아웃(히트박스) 베이스 크기 - Transform은 레이아웃 크기를 바꾸지 않음
-            final double baseW = _stickerSize.width;
-            final double baseH = _stickerSize.height;
-
-            // 컨텐츠 크기(히트패딩 제외) 기준으로 실제 그려지는 크기 계산
-            // 그리기/이미지 스티커는 패딩 없음
-            final double hitboxPadding =
-                (widget.sticker.type == StickerType.drawing ||
-                        widget.sticker.type == StickerType.image)
-                    ? 0.0
-                    : 10.0;
-            final double contentW = (baseW - hitboxPadding * 2).clamp(
-              1.0,
-              double.infinity,
-            );
-            final double contentH = (baseH - hitboxPadding * 2).clamp(
-              1.0,
-              double.infinity,
-            );
-
-            // 안전한 스케일 계산
-            final double rawScale = d.scale.clamp(0.1, 10.0);
-            final double wantedScale = (_dragStartScale * rawScale).clamp(
-              StickerService.minScale,
-              StickerService.maxScale,
-            );
-
-            // 실제 렌더 스케일 (등장 애니메이션 포함)
-            // 등장 애니메이션 완전 제거
-            final double appearFactor = 1.0;
-
-            // 회전 계산
-            final double rotation =
-                (_dragStartRotation + d.rotation) % (2 * math.pi);
-            final double cosR = math.cos(rotation).abs().clamp(0.0, 1.0);
-            final double sinR = math.sin(rotation).abs().clamp(0.0, 1.0);
-
-            // 경계 체크를 위한 테스트 계산
-            final double testScale = wantedScale * appearFactor;
-            final double testContentW = contentW * testScale;
-            final double testContentH = contentH * testScale;
-            final double testAabbW = (testContentW * cosR + testContentH * sinR)
-                .clamp(1.0, vs.width * 3);
-            final double testAabbH = (testContentW * sinR + testContentH * cosR)
-                .clamp(1.0, vs.height * 3);
-
-            // 테스트 중심점
-            final double testCenterX = want.dx + baseW / 2;
-            final double testCenterY = want.dy + baseH / 2;
-            final double testHalfW = testAabbW / 2;
-            final double testHalfH = testAabbH / 2;
-
-            // 경계 체크 (좌/우/상만)
-            final double testLeft = testCenterX - testHalfW;
-            final double testRight = testCenterX + testHalfW;
-            final double testTop = testCenterY - testHalfH;
-
-            // 경계 체크: 확대만 제한, 축소는 항상 허용
-            double effectiveScale = wantedScale;
-            final bool outOfBounds =
-                testLeft < 0 || testRight > vs.width || testTop < scrollY;
-
-            if (outOfBounds) {
-              // rawScale로 확대/축소 방향 판단 (1.0 기준)
-              final bool isExpanding = rawScale > 1.0;
-
-              if (isExpanding && wantedScale > _lastValidScale) {
-                // 확대 중이고 경계를 벗어나면 마지막 유효 스케일 유지
-                effectiveScale = _lastValidScale;
-              } else {
-                // 축소 중이거나 이미 작아진 경우 자유롭게 허용
-                effectiveScale = wantedScale;
-                if (!isExpanding) {
-                  // 축소 시에만 유효 스케일 갱신
-                  _lastValidScale = wantedScale;
-                }
-              }
-            } else {
-              // 경계 내에 있으면 항상 유효 스케일 갱신
-              _lastValidScale = wantedScale;
-            }
-
-            // 최종 스케일 적용하여 AABB 재계산
-            final double finalTestScale = effectiveScale * appearFactor;
-            final double finalContentW = contentW * finalTestScale;
-            final double finalContentH = contentH * finalTestScale;
-            final double aabbW = (finalContentW * cosR + finalContentH * sinR)
-                .clamp(1.0, vs.width * 3);
-            final double aabbH = (finalContentW * sinR + finalContentH * cosR)
-                .clamp(1.0, vs.height * 3);
-
-            // scaleDelta 계산
-            final double scaleDelta = (effectiveScale / _dragStartScale).clamp(
-              0.1,
-              10.0,
-            );
-
-            // Stack 크기
-            final RenderBox? stackBox =
-                widget.stackKey.currentContext?.findRenderObject()
-                    as RenderBox?;
-            final double viewportW = (stackBox?.size.width ?? vs.width).clamp(
-              1.0,
-              double.infinity,
-            );
-
-            // 위치 클램핑 (최종 AABB 기준)
-            final double halfAabbW = aabbW / 2;
-            final double halfAabbH = aabbH / 2;
-            final double wantCenterX = want.dx + baseW / 2;
-            final double wantCenterY = want.dy + baseH / 2;
-
-            // 중심점 클램프 (좌/우/상만, 하단 자유)
-            final double clampedCenterX = wantCenterX.clamp(
-              halfAabbW,
-              math.max(halfAabbW, viewportW - halfAabbW),
-            );
-            final double clampedCenterY = wantCenterY.clamp(
-              scrollY + halfAabbH,
-              double.infinity,
-            );
-
-            // 최종 레이아웃 좌상단 (베이스 크기 기준)
-            final double finalX = clampedCenterX - baseW / 2;
-            final double finalY = clampedCenterY - baseH / 2;
-            final Offset clampedDelta = Offset(
-              finalX - cur.dx,
-              finalY - cur.dy,
-            );
-
-            // 휴지통 hover 판정 (레이아웃 중심 → 스택 로컬 Y는 scroll 보정)
-            final Offset centerLocal = Offset(
-              finalX + baseW / 2,
-              finalY - scrollY + baseH / 2,
-            );
-            final bool overTrash = _TrashBinState.isOverTrashLocal(
-              context,
-              centerLocal,
-            );
-            if (context.read<StickerService>().dragOverDelete != overTrash) {
-              context.read<StickerService>().setDragOverDelete(overTrash);
-            }
-
-            svc.updateDrag(
-              clampedDelta,
-              scaleDelta: scaleDelta,
-              rotationDelta: d.rotation,
-            );
-          } catch (e) {
-            // 수학적 오류 발생 시 안전하게 무시
-            debugPrint('Sticker boundary calculation error: $e');
-          }
-        },
-        onScaleEnd: (_) {
-          // 핀치 종료
-          svc.endDrag();
-          if (mounted) setState(() => _pressing = false);
-        },
-        onLongPressStart: (details) {
-          _lastFocalPoint = details.globalPosition;
-          setState(() => _pressing = true);
-          svc.beginDrag(widget.sticker.id);
-          svc.bringToFront(widget.sticker.id);
-        },
-        onLongPressMoveUpdate: (details) {
-          print('롱프레스 드래그 이동');
-          // 롱프레스 후 이동 중
-          try {
-            final delta = details.globalPosition - _lastFocalPoint;
-            _lastFocalPoint = details.globalPosition;
-
-            final double scrollY =
-                widget.scrollController.hasClients
-                    ? widget.scrollController.offset
-                    : 0.0;
-            final Size vs = MediaQuery.of(context).size;
-
-            final Offset cur = context.read<StickerService>().dragPreviewPos;
-            final Offset want = cur + delta;
-
-            final double baseW = _stickerSize.width;
-            final double baseH = _stickerSize.height;
-
-            final RenderBox? stackBox =
-                widget.stackKey.currentContext?.findRenderObject()
-                    as RenderBox?;
-            final double viewportW = (stackBox?.size.width ?? vs.width).clamp(
-              1.0,
-              double.infinity,
-            );
-
-            final double wantCenterX = want.dx + baseW / 2;
-            final double wantCenterY = want.dy + baseH / 2;
-
-            // 중심점 클램프 (좌/우/상만, 하단 자유)
-            final double clampedCenterX = wantCenterX.clamp(
-              baseW / 2,
-              math.max(baseW / 2, viewportW - baseW / 2),
-            );
-            final double clampedCenterY = wantCenterY.clamp(
-              scrollY + baseH / 2,
-              double.infinity,
-            );
-
-            final double finalX = clampedCenterX - baseW / 2;
-            final double finalY = clampedCenterY - baseH / 2;
-            final Offset clampedDelta = Offset(
-              finalX - cur.dx,
-              finalY - cur.dy,
-            );
-
-            // 휴지통 hover 판정
-            final Offset centerLocal = Offset(
-              finalX + baseW / 2,
-              finalY - scrollY + baseH / 2,
-            );
-            final bool overTrash = _TrashBinState.isOverTrashLocal(
-              context,
-              centerLocal,
-            );
-            if (context.read<StickerService>().dragOverDelete != overTrash) {
-              context.read<StickerService>().setDragOverDelete(overTrash);
-            }
-
-            svc.updateDrag(clampedDelta);
-          } catch (e) {
-            debugPrint('Long press move error: $e');
-          }
-        },
-        onLongPressEnd: (_) {
-          // 롱프레스 드래그 종료
-          svc.endDrag();
-          if (mounted) setState(() => _pressing = false);
-        },
-        child: RepaintBoundary(
-          child: Transform(
-            transform:
-                Matrix4.identity()
-                  ..rotateZ(rot)
-                  ..scale(scale),
-            alignment: Alignment.center,
-            child: Opacity(
-              opacity: widget.sticker.opacity,
-              child: _Measure(
-                onUpdate: (size, _global) {
-                  _stickerSize = size;
-                },
-                child: _buildStickerBody(
-                  selected: selected,
-                  isDragging: isDragging,
-                  pressing: _pressing,
+      child: Stack(
+        children: [
+          // 시각 렌더만, 포인터 완전 통과
+          IgnorePointer(
+            ignoring: true,
+            child: RepaintBoundary(
+              child: Transform(
+                transform:
+                    Matrix4.identity()
+                      ..rotateZ(rot)
+                      ..scale(scale),
+                alignment: Alignment.center,
+                child: Opacity(
+                  opacity: widget.sticker.opacity,
+                  child: _Measure(
+                    onUpdate: (size, _global) {
+                      _stickerSize = size;
+                    },
+                    child: _buildStickerBody(
+                      selected: selected,
+                      isDragging: isDragging,
+                      pressing: _pressing,
+                    ),
+                  ),
                 ),
               ),
             ),
           ),
-        ),
+
+          // 확장 롱프레스 존: 스티커 주변 여유(24px) 포함
+          Builder(
+            builder: (context) {
+              const double grabPadding = 24.0;
+              final double zoneW = _stickerSize.width + grabPadding * 2;
+              final double zoneH = _stickerSize.height + grabPadding * 2;
+              return Positioned(
+                left: -grabPadding,
+                top: -grabPadding,
+                width: zoneW,
+                height: zoneH,
+                child: GestureDetector(
+                  behavior: HitTestBehavior.translucent,
+                  onLongPressStart: (details) {
+                    _lastFocalPoint = details.globalPosition;
+                    setState(() => _pressing = true);
+                    svc.beginDrag(widget.sticker.id);
+                    svc.bringToFront(widget.sticker.id);
+                    _pinchStartScale = widget.sticker.scale;
+                  },
+                  onLongPressMoveUpdate: (details) {
+                    try {
+                      final delta = details.globalPosition - _lastFocalPoint;
+                      _lastFocalPoint = details.globalPosition;
+
+                      final double scrollY =
+                          widget.scrollController.hasClients
+                              ? widget.scrollController.offset
+                              : 0.0;
+                      final Size vs = MediaQuery.of(context).size;
+
+                      final Offset cur =
+                          context.read<StickerService>().dragPreviewPos;
+                      final Offset want = cur + delta;
+
+                      final double baseW = _stickerSize.width;
+                      final double baseH = _stickerSize.height;
+
+                      final RenderBox? stackBox =
+                          widget.stackKey.currentContext?.findRenderObject()
+                              as RenderBox?;
+                      final double viewportW = (stackBox?.size.width ??
+                              vs.width)
+                          .clamp(1.0, double.infinity);
+
+                      final double wantCenterX = want.dx + baseW / 2;
+                      final double wantCenterY = want.dy + baseH / 2;
+
+                      final double clampedCenterX = wantCenterX.clamp(
+                        baseW / 2,
+                        math.max(baseW / 2, viewportW - baseW / 2),
+                      );
+                      final double clampedCenterY = wantCenterY.clamp(
+                        scrollY + baseH / 2,
+                        double.infinity,
+                      );
+
+                      final double finalX = clampedCenterX - baseW / 2;
+                      final double finalY = clampedCenterY - baseH / 2;
+                      final Offset clampedDelta = Offset(
+                        finalX - cur.dx,
+                        finalY - cur.dy,
+                      );
+
+                      final Offset centerLocal = Offset(
+                        finalX + baseW / 2,
+                        finalY - scrollY + baseH / 2,
+                      );
+                      final bool overTrash = _TrashBinState.isOverTrashLocal(
+                        context,
+                        centerLocal,
+                      );
+                      if (context.read<StickerService>().dragOverDelete !=
+                          overTrash) {
+                        context.read<StickerService>().setDragOverDelete(
+                          overTrash,
+                        );
+                      }
+
+                      svc.updateDrag(clampedDelta);
+                    } catch (e) {
+                      debugPrint('Long press move error: $e');
+                    }
+                  },
+                  onLongPressEnd: (_) {
+                    svc.endDrag();
+                    if (mounted) setState(() => _pressing = false);
+                  },
+                  child: const SizedBox.expand(),
+                ),
+              );
+            },
+          ),
+
+          // 롱프레스 중에만 스티커 영역 전체에서 핀치 스케일 허용
+          if (_pressing)
+            Positioned.fill(
+              child: GestureDetector(
+                behavior: HitTestBehavior.translucent,
+                onScaleStart: (d) {
+                  _pinchStartScale =
+                      context.read<StickerService>().dragPreviewScale;
+                },
+                onScaleUpdate: (d) {
+                  if (d.pointerCount < 2) return;
+                  final double wanted = (_pinchStartScale * d.scale).clamp(
+                    StickerService.minScale,
+                    StickerService.maxScale,
+                  );
+                  final double delta = (wanted / _pinchStartScale).clamp(
+                    0.1,
+                    10.0,
+                  );
+                  context.read<StickerService>().updateDrag(
+                    Offset.zero,
+                    scaleDelta: delta,
+                    rotationDelta: 0.0,
+                  );
+                },
+              ),
+            ),
+        ],
       ),
     );
   }

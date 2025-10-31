@@ -376,32 +376,13 @@ class PostExporter {
           if (nearest != null) {
             final nodeId = nearest.nodeId;
             final rect = nearest.rect;
-            // 기본(좌상단) 기준 위치
-            Offset anchorPos = s.position;
-            // 드로잉 스티커는 중심(anchor) 기준으로 저장 → 리더에서 중앙 정렬과 일치
-            if (s.type == StickerType.drawing) {
-              final contentData = s.content as Map<String, dynamic>;
-              final strokes = (contentData['strokes'] as List?) ?? const [];
-              final bounds = _computeDrawingBoundsForExport(strokes);
-              if (bounds != null) {
-                final double w = bounds.width * s.scale;
-                final double h = bounds.height * s.scale;
-                anchorPos = s.position + Offset(w / 2, h / 2);
-              }
-            }
-
-            final relX =
-                rect.width == 0
-                    ? 0.5
-                    : ((anchorPos.dx - rect.left) / rect.width).clamp(0.0, 1.0);
-            final relY =
-                rect.height == 0
-                    ? 0.0
-                    : ((anchorPos.dy - rect.top) / rect.height).clamp(0.0, 1.0);
+            // 로컬 오프셋(px) 기준 앵커: 문서 좌표(top-left)에서 노드 좌상단을 뺀 값
+            final double localX = (s.position.dx - rect.left);
+            final double localY = (s.position.dy - rect.top);
             anchor = {
               'nodeId': nodeId,
-              'relX': relX,
-              'relY': relY,
+              'localX': localX,
+              'localY': localY,
               'refW': rect.width,
             };
           }
@@ -425,35 +406,6 @@ class PostExporter {
     };
 
     return result;
-  }
-
-  /// 드로잉 바운딩 박스 계산 (export 시 전용)
-  static Rect? _computeDrawingBoundsForExport(List strokes) {
-    if (strokes.isEmpty) return null;
-    double? minX, minY, maxX, maxY;
-    for (final strokeData in strokes) {
-      final points =
-          (strokeData['points'] as List?)?.cast<Map<String, dynamic>>() ??
-          const [];
-      final width = (strokeData['width'] as num?)?.toDouble() ?? 8.0;
-      final half = width / 2;
-      for (final p in points) {
-        final double x = (p['x'] as num).toDouble();
-        final double y = (p['y'] as num).toDouble();
-        final double x1 = x - half;
-        final double y1 = y - half;
-        final double x2 = x + half;
-        final double y2 = y + half;
-        minX = (minX == null) ? x1 : (x1 < minX ? x1 : minX);
-        minY = (minY == null) ? y1 : (y1 < minY ? y1 : minY);
-        maxX = (maxX == null) ? x2 : (x2 > maxX ? x2 : maxX);
-        maxY = (maxY == null) ? y2 : (y2 > maxY ? y2 : maxY);
-      }
-    }
-    if (minX == null || minY == null || maxX == null || maxY == null)
-      return null;
-    const double pad = 0.5;
-    return Rect.fromLTRB(minX - pad, minY - pad, maxX + pad, maxY + pad);
   }
 
   /// 리치 텍스트(AttributedText)에서 spans를 추출한다.

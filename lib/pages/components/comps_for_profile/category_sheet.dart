@@ -218,7 +218,9 @@ class _CategoryItemWithActionsState extends State<_CategoryItemWithActions>
                 borderRadius: BorderRadius.circular(12),
                 color:
                     widget.isSelected
-                        ? Theme.of(context).colorScheme.primary.withOpacity(0.8)
+                        ? Theme.of(
+                          context,
+                        ).colorScheme.onSurface.withOpacity(0.8)
                         : Colors.transparent,
                 child: InkWell(
                   onTap: () {
@@ -269,7 +271,7 @@ class _CategoryItemWithActionsState extends State<_CategoryItemWithActions>
                               color:
                                   widget.isSelected
                                       ? Colors.white
-                                      : Theme.of(context).colorScheme.primary,
+                                      : Theme.of(context).colorScheme.onSurface,
                             ),
                           ),
                         ),
@@ -424,7 +426,7 @@ class CategoryDropDown {
         borderRadius: BorderRadius.circular(12),
         color:
             isSelected
-                ? Theme.of(context).colorScheme.primary.withOpacity(0.8)
+                ? Theme.of(context).colorScheme.onSurface.withOpacity(0.9)
                 : Colors.transparent,
         child: InkWell(
           onTap: onTap,
@@ -460,7 +462,7 @@ class CategoryDropDown {
                       color:
                           isSelected
                               ? Colors.white
-                              : Theme.of(context).colorScheme.primary,
+                              : Theme.of(context).colorScheme.onSurface,
                     ),
                   ),
                 ),
@@ -661,7 +663,7 @@ class CategoryDropDown {
                   style: TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.w600,
-                    color: Theme.of(context).colorScheme.primary,
+                    color: Theme.of(context).colorScheme.onSurface,
                   ),
                 ),
               ),

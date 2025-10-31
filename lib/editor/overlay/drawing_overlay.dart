@@ -1,5 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/svg.dart';
+import 'package:flutter_drawing_board/flutter_drawing_board.dart';
+import 'package:flutter_drawing_board/paint_contents.dart';
+
+// 확장 메뉴 종류(전역)
+enum _Menu { none, pen, eraser, color }
 
 class DrawingOverlay extends StatefulWidget {
   final void Function(List<Map<String, dynamic>> strokes, Offset position)
@@ -20,9 +25,7 @@ class DrawingOverlay extends StatefulWidget {
 class _DrawingOverlayState extends State<DrawingOverlay>
     with SingleTickerProviderStateMixin {
   final GlobalKey _canvasKey = GlobalKey();
-  final List<_Stroke> _strokes = <_Stroke>[];
-  final List<_Stroke> _redo = <_Stroke>[];
-  Color _color = Colors.white;
+  Color _color = Colors.red; // 초기 펜 컬러를 눈에 띄는 빨강으로 설정
   double _width = 8;
   bool _eraser = false;
   bool _isAdjustingWidth = false; // 펜 두께 조절 중 여부
@@ -30,58 +33,84 @@ class _DrawingOverlayState extends State<DrawingOverlay>
   late AnimationController _animationController;
   late Animation<double> _fadeAnimation;
 
+  // flutter_drawing_board
+  final DrawingController _drawingController = DrawingController();
+
+  // 확장 메뉴 상태
+  _Menu _menu = _Menu.none;
+
+  final List<Color> _palette = const [
+    Colors.red,
+    Colors.black,
+    Colors.white,
+    Color(0xFFFF6B6B),
+    Color(0xFFFFD93D),
+    Color(0xFF6BCB77),
+    Color(0xFF4D96FF),
+    Color(0xFFB565D8),
+    Color(0xFFFF8ED4),
+    Color(0xFFFF9F45),
+  ];
+
+  void _toggleMenu(_Menu m) {
+    setState(() {
+      _menu = (_menu == m) ? _Menu.none : m;
+    });
+  }
+
   @override
   void initState() {
     super.initState();
 
-    // 애니메이션 컨트롤러 초기화
     _animationController = AnimationController(
       duration: const Duration(milliseconds: 400),
       vsync: this,
     );
-
     _fadeAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
       CurvedAnimation(parent: _animationController, curve: Curves.easeOut),
     );
 
-    // 초기 스트로크 데이터가 있으면 로드
-    if (widget.initialStrokes != null && widget.initialStrokes!.isNotEmpty) {
-      _loadInitialStrokes(widget.initialStrokes!);
-    }
+    // 초기 도구/스타일 세팅 (펜)
+    _eraser = false;
+    try {
+      _drawingController.setPaintContent(SimpleLine());
+    } catch (_) {}
+    _applyStyle();
 
-    // 애니메이션 시작
     _animationController.forward();
   }
 
   @override
   void dispose() {
     _animationController.dispose();
+    _drawingController.dispose();
     super.dispose();
   }
 
-  void _loadInitialStrokes(List<Map<String, dynamic>> strokesData) {
-    for (final strokeData in strokesData) {
-      final points =
-          (strokeData['points'] as List).cast<Map<String, dynamic>>();
-      final colorHex = strokeData['color'] as String? ?? '#FFFFFFFF';
-      final width = (strokeData['width'] as num?)?.toDouble() ?? 8.0;
-      final erase = strokeData['erase'] as bool? ?? false;
+  void _applyStyle() {
+    _drawingController.setStyle(
+      color: _color,
+      strokeWidth: _width,
+      isAntiAlias: true,
+      strokeCap: StrokeCap.round,
+      strokeJoin: StrokeJoin.round,
+      style: PaintingStyle.stroke,
+      blendMode: _eraser ? BlendMode.clear : BlendMode.srcOver,
+    );
+  }
 
-      // Hex 색상 파싱
-      final colorValue = int.parse(colorHex.replaceAll('#', ''), radix: 16);
-      final color = Color(colorValue);
+  void _applyPenTool() {
+    _eraser = false;
+    try {
+      _drawingController.setPaintContent(SimpleLine());
+    } catch (_) {}
+  }
 
-      final stroke = _Stroke(color: color, width: width, erase: erase);
-
-      // 포인트를 글로벌 좌표로 변환 (상대 좌표 → 절대 좌표)
-      for (final p in points) {
-        final x = (p['x'] as num).toDouble();
-        final y = (p['y'] as num).toDouble();
-        stroke.points.add(Offset(x, y));
-      }
-
-      _strokes.add(stroke);
-    }
+  void _applyEraserTool() {
+    _eraser = true;
+    try {
+      _drawingController.setPaintContent(Eraser());
+    } catch (_) {}
   }
 
   @override
@@ -91,69 +120,23 @@ class _DrawingOverlayState extends State<DrawingOverlay>
 
       body: Stack(
         children: [
-          // 전체 화면 투명 캔버스
+          // 드로잉 보드
           Positioned.fill(
-            child: Listener(
-              behavior: HitTestBehavior.translucent,
-              onPointerDown: (d) {
-                _redo.clear();
-
-                // 스크롤 오프셋 계산
-                final scrollY =
-                    widget.scrollController?.hasClients == true
-                        ? widget.scrollController!.offset
-                        : 0.0;
-
-                // 앱바 높이 (50px) 제거 후 스크롤 오프셋 추가
-                final adjustedPos = Offset(
-                  d.position.dx,
-                  d.position.dy - 50 + scrollY,
-                );
-
-                setState(() {
-                  _strokes.add(
-                    _Stroke(
-                      color: _eraser ? Colors.black : _color,
-                      width: _width,
-                      erase: _eraser,
-                    )..points.add(adjustedPos),
+            child: RepaintBoundary(
+              key: _canvasKey,
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  return DrawingBoard(
+                    controller: _drawingController,
+                    background: Container(
+                      width: constraints.maxWidth,
+                      height: constraints.maxHeight,
+                      color: Colors.transparent,
+                    ),
+                    showDefaultActions: false,
+                    showDefaultTools: false,
                   );
-                });
-              },
-              onPointerMove: (d) {
-                if (_strokes.isEmpty) return;
-
-                // 스크롤 오프셋 계산
-                final scrollY =
-                    widget.scrollController?.hasClients == true
-                        ? widget.scrollController!.offset
-                        : 0.0;
-
-                // 앱바 높이 (50px) 제거 후 스크롤 오프셋 추가
-                final adjustedPos = Offset(
-                  d.position.dx,
-                  d.position.dy - 50 + scrollY,
-                );
-
-                setState(() {
-                  _strokes.last.points.add(adjustedPos);
-                });
-              },
-              child: RepaintBoundary(
-                key: _canvasKey,
-                child: CustomPaint(
-                  painter: _DrawingPainter(
-                    strokes: _strokes,
-                    scale: 1.0,
-                    pan: Offset.zero,
-                    scrollY:
-                        widget.scrollController?.hasClients == true
-                            ? widget.scrollController!.offset
-                            : 0.0,
-                    appBarHeight: 50,
-                  ),
-                  size: Size.infinite,
-                ),
+                },
               ),
             ),
           ),
@@ -186,45 +169,37 @@ class _DrawingOverlayState extends State<DrawingOverlay>
                     const SizedBox(width: 5),
 
                     GestureDetector(
-                      onTap: _strokes.isNotEmpty ? _undo : null,
+                      onTap: _undo,
                       child: SvgPicture.asset(
                         'assets/icons/editor_undo.svg',
                         width: 24,
                         height: 24,
                         colorFilter: ColorFilter.mode(
-                          _strokes.isNotEmpty
-                              ? Theme.of(
-                                context,
-                              ).colorScheme.onSurface.withOpacity(0.9)
-                              : Theme.of(
-                                context,
-                              ).colorScheme.onSurface.withOpacity(0.4),
+                          Theme.of(
+                            context,
+                          ).colorScheme.onSurface.withOpacity(0.9),
                           BlendMode.srcIn,
                         ),
                       ),
                     ),
                     const SizedBox(width: 15),
                     GestureDetector(
-                      onTap: _redo.isNotEmpty ? _redoAct : null,
+                      onTap: _redo,
                       child: SvgPicture.asset(
                         'assets/icons/editor_redo.svg',
                         width: 24,
                         height: 24,
                         colorFilter: ColorFilter.mode(
-                          _redo.isNotEmpty
-                              ? Theme.of(
-                                context,
-                              ).colorScheme.onSurface.withOpacity(0.9)
-                              : Theme.of(
-                                context,
-                              ).colorScheme.onSurface.withOpacity(0.3),
+                          Theme.of(
+                            context,
+                          ).colorScheme.onSurface.withOpacity(0.9),
                           BlendMode.srcIn,
                         ),
                       ),
                     ),
                     const Spacer(),
                     TextButton(
-                      onPressed: _hasValidContent() ? _export : null,
+                      onPressed: _export,
                       style: TextButton.styleFrom(
                         padding: const EdgeInsets.symmetric(
                           horizontal: 16,
@@ -234,14 +209,9 @@ class _DrawingOverlayState extends State<DrawingOverlay>
                       child: Text(
                         '완료',
                         style: TextStyle(
-                          color:
-                              _hasValidContent()
-                                  ? Theme.of(
-                                    context,
-                                  ).colorScheme.onSurface.withOpacity(0.9)
-                                  : Theme.of(
-                                    context,
-                                  ).colorScheme.onSurface.withOpacity(0.3),
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.onSurface.withOpacity(0.9),
                           fontWeight: FontWeight.w700,
                           fontSize: 16,
                         ),
@@ -253,11 +223,11 @@ class _DrawingOverlayState extends State<DrawingOverlay>
             ),
           ),
 
-          // 좌측 세로 펜 두께 슬라이더 (약간 보이다가 터치 시 완전히 튀어나옴)
+          // 좌측 세로 펜 두께 슬라이더
           Positioned(
             left: 0,
             top: MediaQuery.of(context).size.height * 0.25,
-            bottom: MediaQuery.of(context).size.height * 0.25, // 키보드 높이 고려
+            bottom: MediaQuery.of(context).size.height * 0.25,
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 250),
               curve: Curves.easeOut,
@@ -268,14 +238,11 @@ class _DrawingOverlayState extends State<DrawingOverlay>
               ),
               child: Row(
                 children: [
-                  // 슬라이더 영역
                   SizedBox(
                     width: _isAdjustingWidth ? 60 : 54,
-
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        // 현재 펜 두께 표시
                         if (_isAdjustingWidth)
                           Text(
                             '${_width.round()}',
@@ -288,7 +255,6 @@ class _DrawingOverlayState extends State<DrawingOverlay>
                             ),
                           ),
                         const SizedBox(height: 12),
-                        // 세로 슬라이더
                         Expanded(
                           child: RotatedBox(
                             quarterTurns: -1,
@@ -318,12 +284,14 @@ class _DrawingOverlayState extends State<DrawingOverlay>
                                 onChanged: (v) {
                                   setState(() {
                                     _width = v.clamp(1.0, 30.0);
+                                    _applyStyle();
                                   });
                                 },
                                 onChangeEnd: (v) {
                                   setState(() {
                                     _width = v.clamp(1.0, 30.0);
                                     _isAdjustingWidth = false;
+                                    _applyStyle();
                                   });
                                 },
                               ),
@@ -337,17 +305,8 @@ class _DrawingOverlayState extends State<DrawingOverlay>
               ),
             ),
           ),
-          Positioned(
-            left: 0,
-            right: 0,
-            bottom: 0,
-            child: Container(
-              height: 80,
-              width: double.infinity,
-              color: Theme.of(context).colorScheme.background,
-            ),
-          ),
-          // 하단 툴바 - SingleChildScrollView로 오버플로우 방지
+
+          // 하단 툴바
           Positioned(
             bottom: 12,
             left: 0,
@@ -366,30 +325,64 @@ class _DrawingOverlayState extends State<DrawingOverlay>
                     color: Theme.of(context).colorScheme.background,
                     borderRadius: BorderRadius.circular(16),
                   ),
-                  child: Row(
+                  child: Column(
                     mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      _toolButton(
-                        Icons.brush,
-                        active: !_eraser,
-                        onTap: () => setState(() => _eraser = false),
+                      // 확장 영역
+                      AnimatedSize(
+                        duration: const Duration(milliseconds: 160),
+                        curve: Curves.easeOut,
+                        child:
+                            (_menu == _Menu.none)
+                                ? const SizedBox.shrink()
+                                : Padding(
+                                  padding: const EdgeInsets.only(bottom: 8.0),
+                                  child: _buildExpandedRow(),
+                                ),
                       ),
-                      const SizedBox(width: 10),
-                      _toolButton(
-                        Icons.cleaning_services_outlined,
-                        active: _eraser,
-                        onTap: () => setState(() => _eraser = true),
+                      // 메인 툴바
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          _toolButton(
+                            Icons.brush,
+                            active: !_eraser && _menu == _Menu.pen,
+                            onTap: () {
+                              setState(() {
+                                _applyPenTool();
+                                _applyStyle();
+                              });
+                              _toggleMenu(_Menu.pen);
+                            },
+                          ),
+                          const SizedBox(width: 10),
+                          _toolButton(
+                            Icons.cleaning_services_outlined,
+                            active: _eraser || _menu == _Menu.eraser,
+                            onTap: () {
+                              setState(() {
+                                _applyEraserTool();
+                                _applyStyle();
+                              });
+                              _toggleMenu(_Menu.eraser);
+                            },
+                          ),
+                          const SizedBox(width: 10),
+                          _toolButton(
+                            Icons.color_lens_outlined,
+                            active: _menu == _Menu.color,
+                            onTap: () => _toggleMenu(_Menu.color),
+                          ),
+                          const SizedBox(width: 10),
+                          const SizedBox(width: 12),
+                          _toolButton(
+                            Icons.delete_outline,
+                            active: false,
+                            onTap: _clear,
+                          ),
+                        ],
                       ),
-                      const SizedBox(width: 16),
-                      _colorDot(Colors.white),
-                      _colorDot(Colors.black),
-                      _colorDot(const Color(0xFFFF6B6B)), // 빨강
-                      _colorDot(const Color(0xFFFFD93D)), // 노랑
-                      _colorDot(const Color(0xFF6BCB77)), // 초록
-                      _colorDot(const Color(0xFF4D96FF)), // 파랑
-                      _colorDot(const Color(0xFFB565D8)), // 보라
-                      _colorDot(const Color(0xFFFF8ED4)), // 핑크
-                      _colorDot(const Color(0xFFFF9F45)), // 주황
                     ],
                   ),
                 ),
@@ -401,17 +394,131 @@ class _DrawingOverlayState extends State<DrawingOverlay>
     );
   }
 
-  void _undo() {
-    if (_strokes.isEmpty) return;
-    _redo.add(_strokes.removeLast());
-    setState(() {});
+  Widget _buildExpandedRow() {
+    switch (_menu) {
+      case _Menu.color:
+        return Row(
+          mainAxisSize: MainAxisSize.min,
+          children: _palette
+              .map(
+                (c) => GestureDetector(
+                  onTap: () {
+                    setState(() {
+                      _color = c;
+                      _eraser = false;
+                      _applyStyle();
+                    });
+                  },
+                  child: Container(
+                    margin: const EdgeInsets.symmetric(horizontal: 4),
+                    width: 28,
+                    height: 28,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.onSurface.withOpacity(0.2),
+                      ),
+                      color: c,
+                    ),
+                  ),
+                ),
+              )
+              .toList(growable: false),
+        );
+      case _Menu.pen:
+        return Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _chip('Simple', () {
+              setState(() {
+                _applyPenTool();
+                try {
+                  _drawingController.setPaintContent(SimpleLine());
+                } catch (_) {}
+                _applyStyle();
+              });
+            }),
+            const SizedBox(width: 6),
+            _chip('Smooth', () {
+              setState(() {
+                _applyPenTool();
+                try {
+                  _drawingController.setPaintContent(SmoothLine());
+                } catch (_) {}
+                _applyStyle();
+              });
+            }),
+            const SizedBox(width: 6),
+            _chip('Straight', () {
+              setState(() {
+                _applyPenTool();
+                try {
+                  _drawingController.setPaintContent(StraightLine());
+                } catch (_) {}
+                _applyStyle();
+              });
+            }),
+          ],
+        );
+      case _Menu.eraser:
+        return Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _chip('Thin', () {
+              setState(() {
+                _width = 6;
+                _applyEraserTool();
+                _applyStyle();
+              });
+            }),
+            const SizedBox(width: 6),
+            _chip('Medium', () {
+              setState(() {
+                _width = 12;
+                _applyEraserTool();
+                _applyStyle();
+              });
+            }),
+            const SizedBox(width: 6),
+            _chip('Thick', () {
+              setState(() {
+                _width = 18;
+                _applyEraserTool();
+                _applyStyle();
+              });
+            }),
+          ],
+        );
+      case _Menu.none:
+        return const SizedBox.shrink();
+    }
   }
 
-  void _redoAct() {
-    if (_redo.isEmpty) return;
-    _strokes.add(_redo.removeLast());
-    setState(() {});
+  Widget _chip(String label, VoidCallback onTap) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.onSurface.withOpacity(0.12),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: Theme.of(context).colorScheme.onSurface.withOpacity(0.15),
+          ),
+        ),
+        child: Text(
+          label,
+          style: const TextStyle(color: Colors.white, fontSize: 12),
+        ),
+      ),
+    );
   }
+
+  void _undo() => _drawingController.undo();
+  void _redo() => _drawingController.redo();
+  void _clear() => _drawingController.clear();
 
   Widget _toolButton(
     IconData icon, {
@@ -435,196 +542,256 @@ class _DrawingOverlayState extends State<DrawingOverlay>
     );
   }
 
-  Widget _colorDot(Color c) {
-    final bool sel = _color.value == c.value;
-    return GestureDetector(
-      onTap: () => setState(() => _color = c),
-      child: Container(
-        margin: const EdgeInsets.symmetric(horizontal: 4),
-        width: 30,
-        height: 30,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          border: Border.all(
-            color:
-                sel
-                    ? Theme.of(context).colorScheme.onSurface.withOpacity(0.7)
-                    : Theme.of(context).colorScheme.onSurface.withOpacity(0.10),
-            width: sel ? 3 : 1,
-          ),
-        ),
-        child: Container(
-          margin: const EdgeInsets.all(3),
-          decoration: BoxDecoration(color: c, shape: BoxShape.circle),
-        ),
-      ),
-    );
-  }
-
-  bool _hasValidContent() {
-    // 지우개가 아닌 실제 그린 스트로크가 있는지 확인
-    for (final stroke in _strokes) {
-      if (!stroke.erase && stroke.points.isNotEmpty) {
-        return true;
-      }
-    }
-    return false;
-  }
-
   Future<void> _export() async {
-    if (_strokes.isEmpty) return;
+    // 1) JSON 추출 (벡터)
+    final jsonList = _drawingController.getJsonList();
+    final strokesData = _convertJsonToStrokes(jsonList);
+    debugPrint(
+      '[DrawingOverlay] export: json=${jsonList.length}, strokes=${strokesData.length}',
+    );
 
-    // 1) 스트로크 경계 계산 (글로벌 좌표계)
-    final Rect? bounds = _computeStrokeBounds();
-    if (bounds == null || bounds.width <= 1 || bounds.height <= 1) return;
+    // 2) 바운딩 박스 계산
+    Rect? bounds = _computeStrokeBoundsFromStrokes(strokesData);
 
-    // 2) 스트로크 데이터를 JSON으로 직렬화 (bounds 좌상단을 원점으로 한 상대 좌표)
-    final List<Map<String, dynamic>> strokesData = [];
-    for (final stroke in _strokes) {
-      if (stroke.points.isEmpty) continue;
-
-      // bounds.left, bounds.top을 빼서 (0,0) 기준 상대 좌표로 변환
-      final List<Map<String, double>> relativePoints =
-          stroke.points.map((p) {
-            return {'x': p.dx - bounds.left, 'y': p.dy - bounds.top};
-          }).toList();
-
-      strokesData.add({
-        'points': relativePoints,
-        'color': '#${stroke.color.value.toRadixString(16).padLeft(8, '0')}',
-        'width': stroke.width,
-        'erase': stroke.erase,
-      });
+    // 3) 바운드가 없으면 PNG로 폴백
+    if (bounds == null) {
+      try {
+        final data = await _drawingController.getImageData();
+        if (data != null) {
+          // 보드 전체를 하나의 이미지 스티커로 등록 (좌표는 (0,0) 가정)
+          bounds = Rect.fromLTWH(
+            0,
+            0,
+            MediaQuery.of(context).size.width,
+            MediaQuery.of(context).size.height,
+          );
+        }
+      } catch (_) {}
     }
 
-    // 3) 경계의 좌상단 위치를 전달 (스티커가 이 위치에 배치됨)
-    // bounds는 문서 좌표이므로, 스티커 배치를 위해 앱바 높이를 다시 더해줌
-    final position = Offset(bounds.left, bounds.top + 50);
-    widget.onSubmitDrawing(strokesData, position);
+    if (bounds == null) return;
 
+    final double scrollY = widget.scrollController?.offset ?? 0.0;
+    final position = Offset(bounds.left, bounds.top + scrollY);
+    debugPrint(
+      '[DrawingOverlay] export: bounds=$bounds, scrollY=$scrollY, docPos=$position',
+    );
+    if (strokesData.isEmpty) {
+      debugPrint('[DrawingOverlay] export: skip (empty strokes)');
+      return;
+    }
+    widget.onSubmitDrawing(strokesData, position);
     if (mounted) Navigator.of(context).pop();
   }
 
-  Rect? _computeStrokeBounds() {
-    if (_strokes.isEmpty) return null;
-    double? minX, minY, maxX, maxY;
+  List<Map<String, dynamic>> _convertJsonToStrokes(List<dynamic> jsonList) {
+    final List<Map<String, dynamic>> out = [];
+    for (final item in jsonList) {
+      try {
+        final map = (item as Map).cast<String, dynamic>();
+        final type = (map['type'] ?? '').toString();
+        final paint = (map['paint'] as Map?)?.cast<String, dynamic>() ?? {};
+        final double width = (paint['strokeWidth'] as num?)?.toDouble() ?? 8.0;
+        final int colorVal = (paint['color'] as int?) ?? 0xFFFFFFFF;
+        final String colorHex =
+            '#${colorVal.toRadixString(16).padLeft(8, '0').toUpperCase()}';
+        final bool isEraser =
+            type == 'Eraser' ||
+            (paint['blendMode'] != null &&
+                paint['blendMode'] == BlendMode.clear.index);
 
-    for (final s in _strokes) {
-      if (s.points.isEmpty || s.erase) continue; // 지우개 스트로크는 경계 계산에서 제외
-      final double half = s.width / 2;
-      for (final p in s.points) {
-        final double x1 = p.dx - half;
-        final double y1 = p.dy - half;
-        final double x2 = p.dx + half;
-        final double y2 = p.dy + half;
+        List<Offset> points = [];
+        // 1) flutter_drawing_board 포맷: path(List|Map) 우선 파싱
+        final dynamic pathData = map['path'];
+        if (pathData is List) {
+          for (final p in pathData) {
+            if (p is Map) {
+              final mp = p.cast<String, dynamic>();
+              final double? dx =
+                  (mp['dx'] as num?)?.toDouble() ??
+                  (mp['x'] as num?)?.toDouble();
+              final double? dy =
+                  (mp['dy'] as num?)?.toDouble() ??
+                  (mp['y'] as num?)?.toDouble();
+              if (dx != null && dy != null) points.add(Offset(dx, dy));
+            } else if (p is List) {
+              if (p.length >= 2 && p[0] is num && p[1] is num) {
+                points.add(
+                  Offset((p[0] as num).toDouble(), (p[1] as num).toDouble()),
+                );
+              }
+            }
+          }
+        } else if (pathData is Map && pathData['points'] is List) {
+          for (final p in (pathData['points'] as List)) {
+            if (p is Map) {
+              final mp = p.cast<String, dynamic>();
+              final double? dx =
+                  (mp['dx'] as num?)?.toDouble() ??
+                  (mp['x'] as num?)?.toDouble();
+              final double? dy =
+                  (mp['dy'] as num?)?.toDouble() ??
+                  (mp['y'] as num?)?.toDouble();
+              if (dx != null && dy != null) points.add(Offset(dx, dy));
+            }
+          }
+        } else if (pathData is Map && pathData['steps'] is List) {
+          // flutter_drawing_board Path 직렬화: steps 기반 (moveTo/lineTo/relative*)
+          Offset current = Offset.zero;
+          bool hasCurrent = false;
+          for (final step in (pathData['steps'] as List)) {
+            if (step is! Map) continue;
+            final m = step.cast<String, dynamic>();
+            final String op =
+                (m['type'] ?? m['op'] ?? m['name'] ?? '').toString();
+            double? x = (m['x'] as num?)?.toDouble();
+            double? y = (m['y'] as num?)?.toDouble();
+            final double? dx = (m['dx'] as num?)?.toDouble();
+            final double? dy = (m['dy'] as num?)?.toDouble();
+
+            if (op == 'moveTo' || op == 'M') {
+              if (x != null && y != null) {
+                current = Offset(x, y);
+                points.add(current);
+                hasCurrent = true;
+              }
+              continue;
+            }
+            if (op == 'relativeMoveTo' || op == 'm') {
+              if (dx != null && dy != null) {
+                current =
+                    hasCurrent ? current + Offset(dx, dy) : Offset(dx, dy);
+                points.add(current);
+                hasCurrent = true;
+              }
+              continue;
+            }
+            if (op == 'lineTo' || op == 'L') {
+              if (x != null && y != null) {
+                current = Offset(x, y);
+                points.add(current);
+                hasCurrent = true;
+              }
+              continue;
+            }
+            if (op == 'relativeLineTo' || op == 'l') {
+              if (dx != null && dy != null) {
+                current =
+                    hasCurrent ? current + Offset(dx, dy) : Offset(dx, dy);
+                points.add(current);
+                hasCurrent = true;
+              }
+              continue;
+            }
+            // 기타 곡선류: 종점(x,y) 또는 상대(dx,dy)만 취득
+            if (x != null && y != null) {
+              current = Offset(x, y);
+              points.add(current);
+              hasCurrent = true;
+            } else if (dx != null && dy != null) {
+              current = hasCurrent ? current + Offset(dx, dy) : Offset(dx, dy);
+              points.add(current);
+              hasCurrent = true;
+            }
+          }
+        }
+
+        // 2) 과거 포맷: points(List)
+        if (points.isEmpty && map['points'] is List) {
+          for (final p in (map['points'] as List)) {
+            final mp = (p as Map).cast<String, dynamic>();
+            final double? dx =
+                (mp['dx'] as num?)?.toDouble() ?? (mp['x'] as num?)?.toDouble();
+            final double? dy =
+                (mp['dy'] as num?)?.toDouble() ?? (mp['y'] as num?)?.toDouble();
+            if (dx != null && dy != null) points.add(Offset(dx, dy));
+          }
+        }
+
+        // 3) 도형 계열 호환 (startPoint/endPoint, A/B/C 등)
+        if (points.isEmpty &&
+            map['startPoint'] != null &&
+            map['endPoint'] != null) {
+          final sp = (map['startPoint'] as Map).cast<String, dynamic>();
+          final ep = (map['endPoint'] as Map).cast<String, dynamic>();
+          points.add(
+            Offset((sp['dx'] as num).toDouble(), (sp['dy'] as num).toDouble()),
+          );
+          points.add(
+            Offset((ep['dx'] as num).toDouble(), (ep['dy'] as num).toDouble()),
+          );
+        } else if (points.isEmpty &&
+            map.containsKey('A') &&
+            map.containsKey('B') &&
+            map.containsKey('C')) {
+          final a = (map['A'] as Map).cast<String, dynamic>();
+          final b = (map['B'] as Map).cast<String, dynamic>();
+          final c = (map['C'] as Map).cast<String, dynamic>();
+          points.add(
+            Offset((a['dx'] as num).toDouble(), (a['dy'] as num).toDouble()),
+          );
+          points.add(
+            Offset((b['dx'] as num).toDouble(), (b['dy'] as num).toDouble()),
+          );
+          points.add(
+            Offset((c['dx'] as num).toDouble(), (c['dy'] as num).toDouble()),
+          );
+        }
+
+        if (points.isEmpty) {
+          try {
+            final pd = map['path'];
+            debugPrint(
+              '[DrawingOverlay] points 파싱 실패: type=$type, path.runtimeType=${pd.runtimeType}, sample=${pd is String
+                  ? (pd.length > 120 ? pd.substring(0, 120) + '...' : pd)
+                  : pd is Map
+                  ? (pd.keys.toList())
+                  : pd is List
+                  ? (pd.isNotEmpty ? pd.first.runtimeType : '[]')
+                  : 'null'}',
+            );
+          } catch (_) {}
+          continue;
+        }
+
+        out.add({
+          'points': points
+              .map((p) => {'x': p.dx, 'y': p.dy})
+              .toList(growable: false),
+          'color': colorHex,
+          'width': width,
+          'erase': isEraser,
+        });
+      } catch (_) {
+        continue;
+      }
+    }
+    return out;
+  }
+
+  Rect? _computeStrokeBoundsFromStrokes(List<Map<String, dynamic>> strokes) {
+    if (strokes.isEmpty) return null;
+    double? minX, minY, maxX, maxY;
+    for (final s in strokes) {
+      final pts = (s['points'] as List).cast<Map<String, dynamic>>();
+      final w = (s['width'] as num?)?.toDouble() ?? 8.0;
+      final half = w / 2;
+      for (final p in pts) {
+        final x = (p['x'] as num).toDouble();
+        final y = (p['y'] as num).toDouble();
+        final x1 = x - half;
+        final y1 = y - half;
+        final x2 = x + half;
+        final y2 = y + half;
         minX = (minX == null) ? x1 : (x1 < minX ? x1 : minX);
         minY = (minY == null) ? y1 : (y1 < minY ? y1 : minY);
         maxX = (maxX == null) ? x2 : (x2 > maxX ? x2 : maxX);
         maxY = (maxY == null) ? y2 : (y2 > maxY ? y2 : maxY);
       }
     }
-
-    if (minX == null || minY == null || maxX == null || maxY == null) {
+    if (minX == null || minY == null || maxX == null || maxY == null)
       return null;
-    }
-
-    // 패딩 최소화 (선 두께가 이미 반영되어 있음)
     const double pad = 0.5;
     return Rect.fromLTRB(minX - pad, minY - pad, maxX + pad, maxY + pad);
-  }
-}
-
-class _Stroke {
-  final List<Offset> points = <Offset>[];
-  final Color color;
-  final double width;
-  final bool erase;
-  _Stroke({required this.color, required this.width, this.erase = false});
-}
-
-class _DrawingPainter extends CustomPainter {
-  final List<_Stroke> strokes;
-  final double scale;
-  final Offset pan;
-  final double scrollY;
-  final double appBarHeight;
-
-  _DrawingPainter({
-    required this.strokes,
-    required this.scale,
-    required this.pan,
-    required this.scrollY,
-    required this.appBarHeight,
-  });
-
-  /// 문서 좌표를 화면 좌표로 변환
-  Offset _toScreenCoord(Offset docPos) {
-    return Offset(docPos.dx, docPos.dy + appBarHeight - scrollY);
-  }
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    // 레이어를 열어 지우개(BlendMode.clear)가 하위 드로잉을 깔끔히 지우도록 함
-    canvas.saveLayer(Offset.zero & size, Paint());
-
-    // 1) 일반 펜 스트로크 먼저 그리기
-    for (final s in strokes) {
-      if (!s.erase && s.points.isNotEmpty) {
-        final paint =
-            Paint()
-              ..color = s.color
-              ..strokeWidth = s.width
-              ..style = PaintingStyle.stroke
-              ..strokeCap = StrokeCap.round
-              ..isAntiAlias = true;
-
-        final path = Path();
-        final first = _toScreenCoord(s.points.first);
-        path.moveTo(first.dx, first.dy);
-        for (int i = 1; i < s.points.length; i++) {
-          final p = _toScreenCoord(s.points[i]);
-          path.lineTo(p.dx, p.dy);
-        }
-        canvas.drawPath(path, paint);
-      }
-    }
-
-    // 2) 지우개 스트로크는 Clear 블렌드모드로 덮어서 삭제
-    for (final s in strokes) {
-      if (s.erase && s.points.isNotEmpty) {
-        final erasePaint =
-            Paint()
-              ..blendMode = BlendMode.clear
-              ..strokeWidth = s.width
-              ..style = PaintingStyle.stroke
-              ..strokeCap = StrokeCap.round
-              ..isAntiAlias = true;
-
-        final path = Path();
-        final first = _toScreenCoord(s.points.first);
-        path.moveTo(first.dx, first.dy);
-        for (int i = 1; i < s.points.length; i++) {
-          final p = _toScreenCoord(s.points[i]);
-          path.lineTo(p.dx, p.dy);
-        }
-        // 단일 점일 때도 원형으로 지우도록 처리
-        if (s.points.length == 1) {
-          final c = _toScreenCoord(s.points.first);
-          path.addOval(Rect.fromCircle(center: c, radius: s.width / 2));
-        }
-
-        canvas.drawPath(path, erasePaint);
-      }
-    }
-
-    canvas.restore();
-  }
-
-  @override
-  bool shouldRepaint(covariant _DrawingPainter oldDelegate) {
-    // 스트로크 개수가 변경되었거나 스크롤 위치가 변경되었을 때만 리페인트
-    return strokes.length != oldDelegate.strokes.length ||
-        scrollY != oldDelegate.scrollY ||
-        strokes.isNotEmpty; // 현재 그리는 중이면 항상 리페인트
   }
 }

@@ -8,6 +8,8 @@ import 'package:doppy/theme/app_colors.dart';
 import 'dart:math' as math;
 import 'package:provider/provider.dart';
 import 'package:doppy/editor/component/row_image_component.dart';
+import 'package:webview_flutter/webview_flutter.dart';
+import 'package:webview_flutter_android/webview_flutter_android.dart';
 
 /// 텍스트와 독립적인 링크 블록 노드
 class LinkNode extends BlockNode {
@@ -108,8 +110,9 @@ class LinkComponentViewModel extends SingleColumnLayoutComponentViewModel {
 }
 
 class LinkComponentBuilder implements ComponentBuilder {
-  const LinkComponentBuilder({this.dragService});
+  const LinkComponentBuilder({this.dragService, this.isEditing = true});
   final DragService? dragService;
+  final bool isEditing;
 
   @override
   Widget? createComponent(
@@ -125,6 +128,7 @@ class LinkComponentBuilder implements ComponentBuilder {
         description: viewModel.description,
         thumbnailUrl: viewModel.thumbnailUrl,
         dragService: dragService,
+        isEditing: isEditing,
       );
     }
     return null;
@@ -157,6 +161,7 @@ class _LinkComponent extends StatefulWidget {
     required this.description,
     required this.thumbnailUrl,
     this.dragService,
+    this.isEditing = true,
   }) : _componentKey = componentKey,
        super(key: componentKey);
 
@@ -167,25 +172,185 @@ class _LinkComponent extends StatefulWidget {
   final String description;
   final String thumbnailUrl;
   final DragService? dragService;
+  final bool isEditing;
 
   @override
   State<_LinkComponent> createState() => _LinkComponentState();
 }
 
-class _LinkComponentState extends State<_LinkComponent> with DocumentComponent {
+class _LinkComponentState extends State<_LinkComponent>
+    with TickerProviderStateMixin, DocumentComponent {
   GlobalKey get componentKey => widget._componentKey;
 
   static const double marginTop = 4;
   static const double marginBottom = 2;
   static const double paddingWithText = 15;
 
+  OverlayEntry? _previewEntry;
+  late final AnimationController _previewCtrl;
+  WebViewController? _previewWebCtrl;
+  Offset? _pressGlobalPos; // 손가락 전역 좌표
+  Size? _overlaySize; // Overlay 크기 캐시
+  double? _previewSize; // 정사각 미리보기 한 변 길이
+
+  @override
+  void initState() {
+    super.initState();
+    _previewCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 160),
+    );
+  }
+
+  @override
+  void dispose() {
+    _hidePreview();
+    _previewCtrl.dispose();
+    super.dispose();
+  }
+
+  void _showPreview(Offset globalPos) {
+    if (widget.isEditing) return;
+    _pressGlobalPos = globalPos;
+    if (_previewEntry != null) {
+      _previewEntry!.markNeedsBuild();
+      return;
+    }
+    final overlay = Overlay.of(context);
+
+    // 링크 카드의 전역 위치/크기 계산 + Overlay 정보 수집
+    final box = context.findRenderObject() as RenderBox?;
+    final overlayBox = overlay.context.findRenderObject() as RenderBox?;
+    if (box == null || overlayBox == null) return;
+    _overlaySize = overlayBox.size;
+
+    // URL 정규화
+    final String raw = widget.url.trim();
+    if (raw.isEmpty) return;
+    final String normalized =
+        raw.startsWith('http://') || raw.startsWith('https://')
+            ? raw
+            : 'https://$raw';
+    final uri = Uri.tryParse(normalized);
+    if (uri == null) return;
+
+    // 컨테이너 크기: 1:1 정사각, 화면 폭에 맞춰 조금 크게
+    const double margin = 16;
+    final double maxSize = _overlaySize!.width - margin * 2;
+    _previewSize = maxSize.clamp(200, 240);
+
+    // WebView 컨트롤러 준비 (플랫폼 추상화 기반)
+    try {
+      final params = const PlatformWebViewControllerCreationParams();
+      final controller = WebViewController.fromPlatformCreationParams(params);
+      if (controller.platform is AndroidWebViewController) {
+        final androidCtrl = controller.platform as AndroidWebViewController;
+        AndroidWebViewController.enableDebugging(true);
+        androidCtrl.setMediaPlaybackRequiresUserGesture(false);
+      }
+      _previewWebCtrl =
+          controller
+            ..setJavaScriptMode(JavaScriptMode.unrestricted)
+            ..setBackgroundColor(Colors.transparent)
+            ..loadRequest(uri);
+    } catch (_) {
+      return;
+    }
+
+    _previewEntry = OverlayEntry(
+      builder: (context) {
+        final theme = Theme.of(context).colorScheme;
+        final size = _previewSize ?? 240;
+        final press = _pressGlobalPos;
+        if (press == null) return const SizedBox.shrink();
+
+        // 손가락 전역 좌표 -> Overlay 로컬 좌표 변환
+        final local = overlayBox.globalToLocal(press);
+
+        // 위치 계산: 손가락 위(기본), 부족하면 아래
+        double left = local.dx - size / 2;
+        left = left.clamp(16, _overlaySize!.width - size - 16);
+        double top = local.dy - size - 12;
+        if (top < 16) top = local.dy + 12;
+
+        return Stack(
+          children: [
+            Positioned(
+              left: left,
+              top: top,
+              width: size,
+              height: size,
+              child: FadeTransition(
+                opacity: CurvedAnimation(
+                  parent: _previewCtrl,
+                  curve: Curves.easeOut,
+                ),
+                child: ScaleTransition(
+                  scale: Tween<double>(begin: 0.94, end: 1.0).animate(
+                    CurvedAnimation(
+                      parent: _previewCtrl,
+                      curve: Curves.easeOutCubic,
+                    ),
+                  ),
+                  child: Material(
+                    color: Colors.transparent,
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: theme.surface,
+                        borderRadius: BorderRadius.circular(16),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.28),
+                            blurRadius: 20,
+                            offset: const Offset(0, 12),
+                          ),
+                        ],
+                        border: Border.all(
+                          color: theme.onSurface.withOpacity(0.06),
+                          width: 1,
+                        ),
+                      ),
+                      clipBehavior: Clip.antiAlias,
+                      child:
+                          _previewWebCtrl == null
+                              ? const SizedBox.shrink()
+                              : WebViewWidget(controller: _previewWebCtrl!),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+
+    overlay.insert(_previewEntry!);
+    _previewCtrl.forward(from: 0.0);
+  }
+
+  void _updatePreviewPosition(Offset globalPos) {
+    if (_previewEntry == null) return;
+    _pressGlobalPos = globalPos;
+    _previewEntry!.markNeedsBuild();
+  }
+
+  void _hidePreview() {
+    _previewCtrl.reverse();
+    _previewEntry?.remove();
+    _previewEntry = null;
+    _previewWebCtrl = null;
+    _pressGlobalPos = null;
+  }
+
   @override
   Widget build(BuildContext context) {
-    // selection 핸들이 링크 노드를 포함하는지 확인
+    // selection 핸들이 링크 노드를 포함하는지 확인 (편집 모드에서만)
     // ignore: invalid_use_of_visible_for_testing_member
-    final seState = context.findAncestorStateOfType<SuperEditorState>();
-    // ignore: invalid_use_of_visible_for_testing_member
-    final composerSelection = seState?.editContext.composer.selection;
+    final seState =
+        widget.isEditing
+            ? context.findAncestorStateOfType<SuperEditorState>()
+            : null;
     // ignore: invalid_use_of_visible_for_testing_member
     final doc = seState?.editContext.editor.document;
 
@@ -205,23 +370,36 @@ class _LinkComponentState extends State<_LinkComponent> with DocumentComponent {
         doc == null ? false : _hasNeighborMention(doc, widget.nodeId, 1);
 
     final imageService = context.watch<NodeComponentService>();
-    final isSelected = imageService.selectedImageId == widget.nodeId;
+    final bool isSelected =
+        widget.isEditing && imageService.selectedImageId == widget.nodeId;
 
     bool isSelectionHighlighted = false;
-    if (composerSelection != null &&
-        !composerSelection.isCollapsed &&
-        doc != null) {
-      isSelectionHighlighted = _isNodeCoveredBySelection(
-        doc,
-        composerSelection,
-        widget.nodeId,
-      );
+    if (widget.isEditing && seState != null && doc != null) {
+      // ignore: invalid_use_of_visible_for_testing_member
+      final selection = seState.editContext.composer.selection;
+      if (selection != null && !selection.isCollapsed) {
+        isSelectionHighlighted = _isNodeCoveredBySelection(
+          doc,
+          selection,
+          widget.nodeId,
+        );
+      }
     }
 
     final card = GestureDetector(
-      onTap: () {
-        imageService.selectImage(widget.nodeId);
-      },
+      onTap:
+          widget.isEditing
+              ? () {
+                imageService.selectImage(widget.nodeId);
+              }
+              : null,
+      onLongPressStart:
+          widget.isEditing ? null : (d) => _showPreview(d.globalPosition),
+      onLongPressMoveUpdate:
+          widget.isEditing
+              ? null
+              : (d) => _updatePreviewPosition(d.globalPosition),
+      onLongPressEnd: widget.isEditing ? null : (_) => _hidePreview(),
       child: Stack(
         children: [
           // 배경 이미지
@@ -319,8 +497,8 @@ class _LinkComponentState extends State<_LinkComponent> with DocumentComponent {
         Stack(
           children: [
             card,
-            // 선택 하이라이트 오버레이
-            if (isSelectionHighlighted)
+            // 선택 하이라이트 오버레이 (편집 모드에서만)
+            if (widget.isEditing && isSelectionHighlighted)
               Positioned.fill(
                 child: IgnorePointer(
                   child: Container(
@@ -334,8 +512,8 @@ class _LinkComponentState extends State<_LinkComponent> with DocumentComponent {
                   ),
                 ),
               ),
-            // 선택 테두리
-            if (isSelected)
+            // 선택 테두리 (편집 모드에서만)
+            if (widget.isEditing && isSelected)
               Positioned.fill(
                 child: IgnorePointer(
                   child: Container(
@@ -349,8 +527,8 @@ class _LinkComponentState extends State<_LinkComponent> with DocumentComponent {
                   ),
                 ),
               ),
-            // 드래그 삽입 라인
-            if (_shouldShowTopDropLine())
+            // 드래그 삽입 라인 (편집 모드에서만)
+            if (widget.isEditing && _shouldShowTopDropLine())
               Positioned(
                 top: 0,
                 left: 0,
@@ -360,7 +538,7 @@ class _LinkComponentState extends State<_LinkComponent> with DocumentComponent {
                   child: Container(height: 5, color: AppColors.primary),
                 ),
               ),
-            if (_shouldShowBottomDropLine())
+            if (widget.isEditing && _shouldShowBottomDropLine())
               Positioned(
                 bottom: 0,
                 left: 0,
@@ -457,6 +635,7 @@ class _LinkComponentState extends State<_LinkComponent> with DocumentComponent {
 
   // 드래그 삽입 라인 표시 로직
   bool _shouldShowTopDropLine() {
+    if (!widget.isEditing) return false;
     final svc = widget.dragService;
     if (svc == null) return false;
     final di = svc.dropIndex;
@@ -472,6 +651,7 @@ class _LinkComponentState extends State<_LinkComponent> with DocumentComponent {
   }
 
   bool _shouldShowBottomDropLine() {
+    if (!widget.isEditing) return false;
     final svc = widget.dragService;
     if (svc == null) return false;
     final di = svc.dropIndex;
@@ -497,6 +677,7 @@ class _LinkComponentState extends State<_LinkComponent> with DocumentComponent {
 
   /// 삽입 라인 표시 여부를 결정하는 공통 로직
   bool _shouldShowInsertionLine(int currentNodeIndex, bool isTopLine) {
+    if (!widget.isEditing) return false;
     final svc = widget.dragService;
     if (svc == null) return false;
 

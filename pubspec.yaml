@@ -55,6 +55,10 @@ dependencies:
   video_compress: ^3.1.2
   video_player: ^2.9.1
   path_provider: ^2.1.1
+  flutter_drawing_board: ^0.9.8
+  webview_flutter: ^4.7.0
+  webview_flutter_android: ^3.16.6
+  webview_flutter_wkwebview: ^3.13.1
 
 dependency_overrides:
   screenshot: ^3.0.0

@@ -90,7 +90,7 @@ Stylesheet buildCustomStylesheet(BuildContext context) {
               fontSize: 18,
               fontWeight: FontWeight.bold,
               color: bodyColor,
-              height: 1.5,
+              height: 1,
             );
 
             // 구글 폰트 적용
@@ -109,8 +109,8 @@ Stylesheet buildCustomStylesheet(BuildContext context) {
             return {
               Styles.textStyle: mentionStyle,
               Styles.padding: CascadingPadding.only(
-                top: 4,
-                bottom: 4,
+                top: 1,
+                bottom: 1,
                 left: 20,
                 right: 20,
               ),

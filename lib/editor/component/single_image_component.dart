@@ -70,7 +70,7 @@ class SingleImageComponent extends StatefulWidget {
 }
 
 class _SingleImageComponentState extends State<SingleImageComponent>
-    with DocumentComponent, SingleTickerProviderStateMixin {
+    with DocumentComponent, TickerProviderStateMixin {
   GlobalKey get componentKey => widget._componentKey;
 
   static const double marginTop = 4;
@@ -78,17 +78,31 @@ class _SingleImageComponentState extends State<SingleImageComponent>
   static const double paddingWithText = 15;
 
   late final AnimationController _controller;
+  // 스포일러 해제 스캐터 이펙트
+  late final AnimationController _scatterCtrl;
+  bool _scatterActive = false;
+  bool _wasSpoilerVisible = false;
 
   @override
   void initState() {
     super.initState();
     _controller = AnimationController.unbounded(vsync: this)
       ..repeat(min: 0, max: 1, period: const Duration(milliseconds: 1300));
+    _scatterCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 520),
+    )..addStatusListener((status) {
+      if (status == AnimationStatus.completed ||
+          status == AnimationStatus.dismissed) {
+        if (mounted) setState(() => _scatterActive = false);
+      }
+    });
   }
 
   @override
   void dispose() {
     _controller.dispose();
+    _scatterCtrl.dispose();
     super.dispose();
   }
 
@@ -177,6 +191,17 @@ class _SingleImageComponentState extends State<SingleImageComponent>
               }
             } catch (_) {}
 
+            // 해제 직전 → 직후 전환 감지하여 스캐터 실행
+            if (_wasSpoilerVisible &&
+                !isSpoilerFlag &&
+                _scatterCtrl.status != AnimationStatus.forward) {
+              _scatterActive = true;
+              _scatterCtrl
+                ..reset()
+                ..forward();
+            }
+            _wasSpoilerVisible = isSpoilerFlag;
+
             return Stack(
               children: [
                 Padding(
@@ -233,6 +258,33 @@ class _SingleImageComponentState extends State<SingleImageComponent>
                                         phase: _controller.value,
                                         isEditing: widget.isEditing,
                                         backgroundColor: bgColor,
+                                        dotColor: dotColor,
+                                        isLightTheme: isLightTheme,
+                                      ),
+                                    );
+                                  },
+                                );
+                              },
+                            ),
+                          ),
+                        ),
+                      if (_scatterActive)
+                        Positioned.fill(
+                          child: IgnorePointer(
+                            ignoring: true,
+                            child: Builder(
+                              builder: (context) {
+                                final theme = Theme.of(context).colorScheme;
+                                final brightness = Theme.of(context).brightness;
+                                final dotColor = theme.onSurface;
+                                final isLightTheme =
+                                    brightness == Brightness.light;
+                                return AnimatedBuilder(
+                                  animation: _scatterCtrl,
+                                  builder: (context, _) {
+                                    return CustomPaint(
+                                      painter: _ImageSpoilerScatterPainter(
+                                        t: _scatterCtrl.value,
                                         dotColor: dotColor,
                                         isLightTheme: isLightTheme,
                                       ),
@@ -778,5 +830,58 @@ class _ImageSpoilerPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant _ImageSpoilerPainter oldDelegate) {
     return oldDelegate.phase != phase || oldDelegate.isEditing != isEditing;
+  }
+}
+
+// 이미지 스포일러 해제 시 파티클 흩어짐 이펙트
+class _ImageSpoilerScatterPainter extends CustomPainter {
+  final double t; // 0..1 진행도
+  final Color dotColor;
+  final bool isLightTheme;
+  _ImageSpoilerScatterPainter({
+    required this.t,
+    required this.dotColor,
+    required this.isLightTheme,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final rect = Offset.zero & size;
+    final baseOpacity = isLightTheme ? 0.4 : 0.6;
+    final fade = (1.0 - Curves.easeOut.transform(t)).clamp(0.0, 1.0);
+    final paint =
+        Paint()
+          ..style = PaintingStyle.fill
+          ..color = dotColor.withOpacity(baseOpacity * fade);
+
+    final area = rect.width * rect.height;
+    final count = math.max(80, (area / 220).floor());
+    final cx = rect.center.dx;
+    final cy = rect.center.dy;
+    for (int i = 0; i < count; i++) {
+      final seed = rect.hashCode ^ (i * 1009);
+      final r = math.Random(seed);
+      final rx = r.nextDouble() * rect.width;
+      final ry = r.nextDouble() * rect.height;
+      final startX = rect.left + rx;
+      final startY = rect.top + ry;
+      // 중심에서 방사형 퍼짐
+      final dirX = (startX - cx);
+      final dirY = (startY - cy);
+      final dirLen = math.sqrt(dirX * dirX + dirY * dirY) + 0.001;
+      final nx = dirX / dirLen;
+      final ny = dirY / dirLen;
+      final speed = 30 + r.nextDouble() * 44; // px
+      final move = Curves.easeOutQuad.transform(t) * speed;
+      final x = startX + nx * move;
+      final y = startY + ny * move;
+      final sz = 1.2 + (1.8 * (1.0 - t));
+      canvas.drawRect(Rect.fromLTWH(x, y, sz, sz), paint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _ImageSpoilerScatterPainter oldDelegate) {
+    return oldDelegate.t != t;
   }
 }

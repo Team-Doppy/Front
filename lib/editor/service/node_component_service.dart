@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:super_editor/super_editor.dart';
 
 /// 에디터 내 특수 노드(이미지/이미지행/링크/멘션 등)의 선택/하이라이트 상태를 관리하는 서비스
@@ -17,13 +18,22 @@ class NodeComponentService extends ChangeNotifier {
   }
 
   /// 스포일러 상태만 초기화 (다른 상태는 유지)
-  void clearSpoilers() {
+  /// notify=false로 호출하면 리스너 알림 없이 내부 상태만 비웁니다.
+  void clearSpoilers({bool notify = true}) {
     if (_spoilerByNodeId.isEmpty) return;
     _spoilerByNodeId.clear();
-    if (kDebugMode) {
-      print('[NodeComponentService] clearSpoilers: 모든 스포일러 상태 초기화');
+
+    if (!notify) return;
+
+    // 위젯 트리가 잠긴 상태에서는 다음 프레임에 알림을 스케줄링
+    final phase = SchedulerBinding.instance.schedulerPhase;
+    if (phase == SchedulerPhase.idle) {
+      notifyListeners();
+    } else {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (hasListeners) notifyListeners();
+      });
     }
-    notifyListeners();
   }
 
   // ===== 스포일러 헬퍼 =====

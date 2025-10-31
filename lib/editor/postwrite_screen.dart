@@ -320,8 +320,6 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     try {
       dragService.invalidateNodeRectCache();
     } catch (_) {}
-
-    // 앱바 표시 로직은 _onKeyboardVisibilityChanged에서 처리
     _onKeyboardVisibilityChanged();
   }
 

@@ -788,12 +788,14 @@ extension _TopExpandedRow on _DefaultToolbarState {
           child: Row(
             children: [
               _buildSvgChip(
+                size: 25,
                 svgPath: 'assets/icons/editor_pen.svg',
                 label: '그리기',
                 onTap: () => _selectStickerType(StickerKind.draw),
               ),
 
               _buildSvgChip(
+                size: 27,
                 svgPath: 'assets/icons/link.svg',
                 label: '링크',
                 onTap: () {
@@ -830,6 +832,7 @@ extension _TopExpandedRow on _DefaultToolbarState {
               _buildChip(
                 icon: Icons.alternate_email,
                 label: '언급',
+                size: 26,
                 onTap: () {
                   Navigator.of(context).push(
                     PageRouteBuilder(
@@ -855,6 +858,7 @@ extension _TopExpandedRow on _DefaultToolbarState {
               _buildChip(
                 icon: Icons.horizontal_rule,
                 label: '구분선',
+                size: 24,
                 onTap: () {
                   widget.stylingService.insertDivider();
                   // 추가 후 상단 두번째 툴바 닫기
@@ -1602,6 +1606,7 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
     required IconData icon,
     required String label,
     VoidCallback? onTap,
+    double? size,
   }) {
     final Color onSurface = Theme.of(
       context,
@@ -1617,7 +1622,7 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
           padding: const EdgeInsets.symmetric(horizontal: 12),
           child: Row(
             mainAxisSize: MainAxisSize.min,
-            children: [Icon(icon, size: 20, color: onSurface)],
+            children: [Icon(icon, size: size ?? 20, color: onSurface)],
           ),
         ),
       ),
@@ -1628,6 +1633,7 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
     required String svgPath,
     required String label,
     VoidCallback? onTap,
+    double? size,
   }) {
     final Color onSurface = Theme.of(
       context,
@@ -1645,8 +1651,8 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
             children: [
               SvgPicture.asset(
                 svgPath,
-                width: 20,
-                height: 20,
+                width: size ?? 20,
+                height: size ?? 20,
                 colorFilter: ColorFilter.mode(onSurface, BlendMode.srcIn),
               ),
             ],
@@ -1896,6 +1902,8 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
       PageRouteBuilder(
         opaque: false,
         barrierDismissible: true,
+        transitionDuration: Duration.zero,
+        reverseTransitionDuration: Duration.zero,
         pageBuilder:
             (_, __, ___) => StickerOverlay(
               initialKind: kind,
