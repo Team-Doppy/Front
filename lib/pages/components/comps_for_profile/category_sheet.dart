@@ -54,17 +54,28 @@ class _CategoryItemWithActionsState extends State<_CategoryItemWithActions>
   double _dragOffset = 0.0;
   late AnimationController _animationController;
   late Animation<double> _animation;
+  double _startOffset = 0.0;
+
+  void _animationListener() {
+    if (!_animationController.isAnimating) return;
+
+    setState(() {
+      final targetOffset = -140.0;
+      _dragOffset =
+          _startOffset + (_animation.value) * (targetOffset - _startOffset);
+    });
+  }
 
   @override
   void initState() {
     super.initState();
     _animationController = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 300),
+      duration: const Duration(milliseconds: 400),
     );
     _animation = CurvedAnimation(
       parent: _animationController,
-      curve: Curves.easeOut,
+      curve: Curves.elasticOut,
     );
   }
 
@@ -72,55 +83,6 @@ class _CategoryItemWithActionsState extends State<_CategoryItemWithActions>
   void dispose() {
     _animationController.dispose();
     super.dispose();
-  }
-
-  void _showMenu(BuildContext context) async {
-    await showDialog<String>(
-      context: context,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          contentPadding: const EdgeInsets.only(top: 12, bottom: 12),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-          ),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              ListTile(
-                leading: Icon(
-                  Icons.edit,
-                  color: Theme.of(context).colorScheme.primary,
-                ),
-                title: Text(
-                  '수정',
-                  style: TextStyle(
-                    color: Theme.of(context).colorScheme.onSurface,
-                  ),
-                ),
-                onTap: () {
-                  Navigator.of(context).pop('edit');
-                  widget.onEdit();
-                },
-              ),
-              ListTile(
-                leading: Icon(
-                  Icons.delete,
-                  color: Theme.of(context).colorScheme.error,
-                ),
-                title: Text(
-                  '삭제',
-                  style: TextStyle(color: Theme.of(context).colorScheme.error),
-                ),
-                onTap: () {
-                  Navigator.of(context).pop('delete');
-                  widget.onDelete();
-                },
-              ),
-            ],
-          ),
-        );
-      },
-    );
   }
 
   @override
@@ -136,32 +98,41 @@ class _CategoryItemWithActionsState extends State<_CategoryItemWithActions>
         });
       },
       onHorizontalDragEnd: (details) {
-        setState(() {
-          // 버튼이 충분히 드러난 상태가 아닐 때만 원래 위치로 복원
-          if (_dragOffset.abs() < 100) {
-            _dragOffset = 0.0;
-            _animationController.reverse();
-          } else {
-            _animationController.forward();
-          }
-        });
+        final currentOffset = _dragOffset;
+
+        // 버튼이 보이도록 충분히 밀렸는지 확인
+        final needsToSlide = currentOffset > -100;
+
+        if (needsToSlide) {
+          // 리스너 중복 방지를 위해 기존 리스너 제거
+          _animationController.removeListener(_animationListener);
+          _animationController.addListener(_animationListener);
+          _startOffset = currentOffset;
+          _animationController.reset();
+          _animationController.forward();
+        } else {
+          // 이미 충분히 밀렸으면 애니메이션만 추가
+          _animationController.forward();
+        }
       },
       onTap: () {
         // 탭은 항목 선택으로 처리
-        widget.onTap();
-        // 그리고 오프셋 리셋
         if (_dragOffset != 0) {
+          // 드래그 상태면 먼저 닫기
           setState(() {
             _dragOffset = 0.0;
           });
+          _animationController.reverse();
+        } else {
+          widget.onTap();
         }
       },
       child: Stack(
         children: [
-          // 수정 버튼 (왼쪽, 파란색)
+          // 수정 버튼 (드래그된 부분의 왼쪽, 파란색)
           if (_dragOffset < 0)
             Positioned(
-              left: 0,
+              left: MediaQuery.of(context).size.width + _dragOffset,
               top: 0,
               bottom: 0,
               width: 70,
@@ -198,10 +169,10 @@ class _CategoryItemWithActionsState extends State<_CategoryItemWithActions>
               ),
             ),
 
-          // 삭제 버튼 (오른쪽 끝, 빨간색)
+          // 삭제 버튼 (오른쪽, 빨간색)
           if (_dragOffset < -70)
             Positioned(
-              left: 70,
+              left: MediaQuery.of(context).size.width + _dragOffset + 70,
               top: 0,
               bottom: 0,
               width: 70,
@@ -247,7 +218,17 @@ class _CategoryItemWithActionsState extends State<_CategoryItemWithActions>
                       ? Theme.of(context).colorScheme.primary.withOpacity(0.1)
                       : Colors.transparent,
               child: InkWell(
-                onTap: widget.onTap,
+                onTap: () {
+                  if (_dragOffset != 0) {
+                    // 드래그 상태면 먼저 닫기
+                    setState(() {
+                      _dragOffset = 0.0;
+                    });
+                    _animationController.reverse();
+                  } else {
+                    widget.onTap();
+                  }
+                },
                 child: Container(
                   padding: const EdgeInsets.symmetric(
                     horizontal: 20,
@@ -288,23 +269,6 @@ class _CategoryItemWithActionsState extends State<_CategoryItemWithActions>
                           ),
                         ),
                       ),
-                      if (widget.isOwnProfile) ...[
-                        const SizedBox(width: 8),
-                        InkWell(
-                          onTap: () => _showMenu(context),
-                          borderRadius: BorderRadius.circular(20),
-                          child: Padding(
-                            padding: const EdgeInsets.all(8),
-                            child: Icon(
-                              Icons.more_vert,
-                              size: 20,
-                              color: Theme.of(
-                                context,
-                              ).colorScheme.onSurface.withOpacity(0.5),
-                            ),
-                          ),
-                        ),
-                      ],
                     ],
                   ),
                 ),

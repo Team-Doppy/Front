@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'dart:ui' as ui;
 
 /// 앱 전역에서 사용하는 다이얼로그 유틸리티
 class DialogUtils {
@@ -20,158 +19,154 @@ class DialogUtils {
     String cancelText = '취소',
     bool isDestructive = false,
   }) async {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
     return showGeneralDialog<bool>(
       context: context,
       barrierDismissible: true,
       barrierLabel: MaterialLocalizations.of(context).modalBarrierDismissLabel,
-      barrierColor: Colors.transparent, // 투명하게 설정하고 커스텀 배경 사용
-      transitionDuration: const Duration(milliseconds: 200),
+      barrierColor: Colors.black.withOpacity(0.4),
+      transitionDuration: const Duration(milliseconds: 250),
       pageBuilder: (context, animation, secondaryAnimation) {
-        return Stack(
-          children: [
-            // 블러 배경 (탭 시 닫기)
-            Positioned.fill(
-              child: GestureDetector(
-                onTap: () => Navigator.of(context).pop(null),
-                child: Container(
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
-                      colors: [
-                        const Color(0xFF1A1A1A).withOpacity(0.85),
-                        const Color(0xFF0A0A0A).withOpacity(0.9),
-                      ],
-                    ),
-                  ),
-                ),
+        return Center(
+          child: Material(
+            color: Colors.transparent,
+            child: Container(
+              width: 270,
+              decoration: BoxDecoration(
+                color:
+                    isDark ? const Color(0xFF2C2C2E) : const Color(0xFFF2F2F7),
+                borderRadius: BorderRadius.circular(14),
               ),
-            ),
-            // 다이얼로그
-            Center(
-              child: Material(
-                color: Colors.transparent,
-                child: Container(
-                  margin: const EdgeInsets.symmetric(horizontal: 40),
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                      colors: [
-                        const Color(0xFF2C2C2C).withOpacity(0.98),
-                        const Color(0xFF242424).withOpacity(0.98),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // Title and Message
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 20, 20, 16),
+                    child: Column(
+                      children: [
+                        Text(
+                          title,
+                          style: TextStyle(
+                            color: isDark ? Colors.white : Colors.black,
+                            fontSize: 17,
+                            fontWeight: FontWeight.w600,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          message,
+                          style: TextStyle(
+                            color:
+                                isDark
+                                    ? Colors.white.withOpacity(0.6)
+                                    : Colors.black.withOpacity(0.6),
+                            fontSize: 13,
+                            fontWeight: FontWeight.w400,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
                       ],
                     ),
-                    borderRadius: BorderRadius.circular(20),
-                    border: Border.all(
-                      color: Colors.white.withOpacity(0.08),
-                      width: 1,
-                    ),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.4),
-                        blurRadius: 24,
-                        spreadRadius: 4,
-                        offset: const Offset(0, 8),
-                      ),
-                    ],
                   ),
-                  padding: const EdgeInsets.all(24),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
+
+                  // Divider
+                  Container(
+                    height: 0.5,
+                    color:
+                        isDark
+                            ? Colors.white.withOpacity(0.2)
+                            : Colors.black.withOpacity(0.2),
+                  ),
+
+                  // Buttons
+                  Row(
                     children: [
-                      Text(
-                        title,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 19,
-                          fontWeight: FontWeight.w700,
-                          letterSpacing: -0.3,
-                        ),
-                      ),
-                      const SizedBox(height: 14),
-                      Text(
-                        message,
-                        style: TextStyle(
-                          color: Colors.white.withOpacity(0.75),
-                          fontSize: 15,
-                          height: 1.6,
-                          fontWeight: FontWeight.w400,
-                        ),
-                      ),
-                      const SizedBox(height: 24),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.end,
-                        children: [
-                          TextButton(
-                            onPressed: () => Navigator.of(context).pop(false),
-                            style: TextButton.styleFrom(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 20,
-                                vertical: 10,
-                              ),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(10),
+                      // Cancel Button
+                      Expanded(
+                        child: GestureDetector(
+                          onTap: () => Navigator.of(context).pop(false),
+                          child: Container(
+                            height: 44,
+                            decoration: BoxDecoration(
+                              color: Colors.transparent,
+                              borderRadius: const BorderRadius.only(
+                                bottomLeft: Radius.circular(20),
                               ),
                             ),
-                            child: Text(
-                              cancelText,
-                              style: TextStyle(
-                                color: Colors.white.withOpacity(0.5),
-                                fontWeight: FontWeight.w600,
-                                fontSize: 15,
+                            child: Center(
+                              child: Text(
+                                cancelText,
+                                style: TextStyle(
+                                  color:
+                                      isDark
+                                          ? const Color(0xFF0A84FF)
+                                          : const Color(0xFF007AFF),
+                                  fontSize: 17,
+                                  fontWeight: FontWeight.w600,
+                                ),
                               ),
                             ),
                           ),
-                          const SizedBox(width: 8),
-                          TextButton(
-                            onPressed: () => Navigator.of(context).pop(true),
-                            style: TextButton.styleFrom(
-                              backgroundColor:
-                                  isDestructive
-                                      ? const Color(
-                                        0xFFFF5252,
-                                      ).withOpacity(0.15)
-                                      : Theme.of(
-                                        context,
-                                      ).colorScheme.primary.withOpacity(0.15),
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 20,
-                                vertical: 10,
-                              ),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(10),
+                        ),
+                      ),
+
+                      // Vertical Divider
+                      Container(
+                        width: 0.5,
+                        height: 44,
+                        color:
+                            isDark
+                                ? Colors.white.withOpacity(0.2)
+                                : Colors.black.withOpacity(0.2),
+                      ),
+
+                      // Confirm Button
+                      Expanded(
+                        child: GestureDetector(
+                          onTap: () => Navigator.of(context).pop(true),
+                          child: Container(
+                            height: 44,
+                            decoration: const BoxDecoration(
+                              color: Colors.transparent,
+                              borderRadius: BorderRadius.only(
+                                bottomRight: Radius.circular(20),
                               ),
                             ),
-                            child: Text(
-                              confirmText,
-                              style: TextStyle(
-                                color:
-                                    isDestructive
-                                        ? const Color(0xFFFF5252)
-                                        : Theme.of(context).colorScheme.primary,
-                                fontWeight: FontWeight.w700,
-                                fontSize: 15,
+                            child: Center(
+                              child: Text(
+                                confirmText,
+                                style: TextStyle(
+                                  color:
+                                      isDestructive
+                                          ? const Color(0xFFFF3B30)
+                                          : isDark
+                                          ? const Color(0xFF0A84FF)
+                                          : const Color(0xFF007AFF),
+                                  fontSize: 17,
+                                  fontWeight: FontWeight.w600,
+                                ),
                               ),
                             ),
                           ),
-                        ],
+                        ),
                       ),
                     ],
                   ),
-                ),
+                ],
               ),
             ),
-          ],
+          ),
         );
       },
       transitionBuilder: (context, animation, secondaryAnimation, child) {
         return FadeTransition(
           opacity: CurvedAnimation(parent: animation, curve: Curves.easeOut),
           child: ScaleTransition(
-            scale: Tween<double>(begin: 0.95, end: 1.0).animate(
-              CurvedAnimation(parent: animation, curve: Curves.easeOutCubic),
+            scale: Tween<double>(begin: 1.1, end: 1.0).animate(
+              CurvedAnimation(parent: animation, curve: Curves.easeOut),
             ),
             child: child,
           ),
@@ -187,126 +182,108 @@ class DialogUtils {
     required String message,
     String buttonText = '확인',
   }) async {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
     return showGeneralDialog<void>(
       context: context,
       barrierDismissible: true,
       barrierLabel: MaterialLocalizations.of(context).modalBarrierDismissLabel,
-      barrierColor: Colors.transparent, // 투명하게 설정하고 커스텀 배경 사용
-      transitionDuration: const Duration(milliseconds: 200),
+      barrierColor: Colors.black.withOpacity(0.4),
+      transitionDuration: const Duration(milliseconds: 250),
       pageBuilder: (context, animation, secondaryAnimation) {
-        return Stack(
-          children: [
-            // 블러 배경 (탭 시 닫기)
-            Positioned.fill(
-              child: GestureDetector(
-                onTap: () => Navigator.of(context).pop(null),
-                child: Container(
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
-                      colors: [
-                        const Color(0xFF1A1A1A).withOpacity(0.85),
-                        const Color(0xFF0A0A0A).withOpacity(0.9),
-                      ],
-                    ),
-                  ),
-                ),
+        return Center(
+          child: Material(
+            color: Colors.transparent,
+            child: Container(
+              width: 270,
+              decoration: BoxDecoration(
+                color:
+                    isDark ? const Color(0xFF2C2C2E) : const Color(0xFFF2F2F7),
+                borderRadius: BorderRadius.circular(14),
               ),
-            ),
-            // 다이얼로그
-            Center(
-              child: Material(
-                color: Colors.transparent,
-                child: Container(
-                  margin: const EdgeInsets.symmetric(horizontal: 40),
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                      colors: [
-                        const Color(0xFF2C2C2C).withOpacity(0.98),
-                        const Color(0xFF242424).withOpacity(0.98),
-                      ],
-                    ),
-                    borderRadius: BorderRadius.circular(20),
-                    border: Border.all(
-                      color: Colors.white.withOpacity(0.08),
-                      width: 1,
-                    ),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.4),
-                        blurRadius: 24,
-                        spreadRadius: 4,
-                        offset: const Offset(0, 8),
-                      ),
-                    ],
-                  ),
-                  padding: const EdgeInsets.all(24),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        title,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 19,
-                          fontWeight: FontWeight.w700,
-                          letterSpacing: -0.3,
-                        ),
-                      ),
-                      const SizedBox(height: 14),
-                      Text(
-                        message,
-                        style: TextStyle(
-                          color: Colors.white.withOpacity(0.75),
-                          fontSize: 15,
-                          height: 1.6,
-                          fontWeight: FontWeight.w400,
-                        ),
-                      ),
-                      const SizedBox(height: 24),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.end,
-                        children: [
-                          TextButton(
-                            onPressed: () => Navigator.of(context).pop(null),
-                            style: TextButton.styleFrom(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 20,
-                                vertical: 10,
-                              ),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(10),
-                              ),
-                            ),
-                            child: Text(
-                              buttonText,
-                              style: TextStyle(
-                                color: Theme.of(context).colorScheme.primary,
-                                fontWeight: FontWeight.w700,
-                                fontSize: 15,
-                              ),
-                            ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // Title and Message
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 20, 20, 16),
+                    child: Column(
+                      children: [
+                        Text(
+                          title,
+                          style: TextStyle(
+                            color: isDark ? Colors.white : Colors.black,
+                            fontSize: 17,
+                            fontWeight: FontWeight.w600,
                           ),
-                        ],
-                      ),
-                    ],
+                          textAlign: TextAlign.center,
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          message,
+                          style: TextStyle(
+                            color:
+                                isDark
+                                    ? Colors.white.withOpacity(0.6)
+                                    : Colors.black.withOpacity(0.6),
+                            fontSize: 13,
+                            fontWeight: FontWeight.w400,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                      ],
+                    ),
                   ),
-                ),
+
+                  // Divider
+                  Container(
+                    height: 0.5,
+                    color:
+                        isDark
+                            ? Colors.white.withOpacity(0.2)
+                            : Colors.black.withOpacity(0.2),
+                  ),
+
+                  // Button
+                  GestureDetector(
+                    onTap: () => Navigator.of(context).pop(),
+                    child: Container(
+                      height: 44,
+                      width: double.infinity,
+                      decoration: const BoxDecoration(
+                        color: Colors.transparent,
+                        borderRadius: BorderRadius.only(
+                          bottomLeft: Radius.circular(20),
+                          bottomRight: Radius.circular(20),
+                        ),
+                      ),
+                      child: Center(
+                        child: Text(
+                          buttonText,
+                          style: TextStyle(
+                            color:
+                                isDark
+                                    ? const Color(0xFF0A84FF)
+                                    : const Color(0xFF007AFF),
+                            fontSize: 17,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
-          ],
+          ),
         );
       },
       transitionBuilder: (context, animation, secondaryAnimation, child) {
         return FadeTransition(
           opacity: CurvedAnimation(parent: animation, curve: Curves.easeOut),
           child: ScaleTransition(
-            scale: Tween<double>(begin: 0.95, end: 1.0).animate(
-              CurvedAnimation(parent: animation, curve: Curves.easeOutCubic),
+            scale: Tween<double>(begin: 1.1, end: 1.0).animate(
+              CurvedAnimation(parent: animation, curve: Curves.easeOut),
             ),
             child: child,
           ),

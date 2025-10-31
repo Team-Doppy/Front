@@ -493,6 +493,13 @@ class _PostExportScreenState extends State<PostExportScreen>
     // 제목과 본문을 편집된 내용으로 업데이트
     editedBase['title'] = editedTitle;
     editedBase['summary'] = editedExcerpt; // 사용자가 편집한 내용을 summary로 설정
+
+    // 디버그 로깅: 실제 전달되는 값 확인
+    debugPrint('===== [_buildFinalJson] 공개 범위 설정 =====');
+    debugPrint('_audiencePrivateOnly: $_audiencePrivateOnly');
+    debugPrint('_audienceSelectAll: $_audienceSelectAll');
+    debugPrint('_selectedAudienceGroupIds: $_selectedAudienceGroupIds');
+
     return PostExporter.composeFinalPayload(
       thumbnailImageUrl: _exportedThumbnailImageUrl,
       base: editedBase,

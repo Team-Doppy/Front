@@ -67,12 +67,27 @@ class SingleImageComponent extends StatefulWidget {
 }
 
 class _SingleImageComponentState extends State<SingleImageComponent>
-    with DocumentComponent {
+    with DocumentComponent, SingleTickerProviderStateMixin {
   GlobalKey get componentKey => widget._componentKey;
 
   static const double marginTop = 4;
   static const double marginBottom = 2;
   static const double paddingWithText = 15;
+
+  late final AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController.unbounded(vsync: this)
+      ..repeat(min: 0, max: 1, period: const Duration(milliseconds: 1300));
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -130,6 +145,40 @@ class _SingleImageComponentState extends State<SingleImageComponent>
               );
             }
 
+            // 스포일러 상태 (세션 캐시 + 이미지 메타데이터 둘 다 허용)
+            bool isSpoilerFlag = false;
+            try {
+              final node = doc?.getNodeById(widget.nodeId);
+              if (node is ImageNode) {
+                final meta =
+                    (node as dynamic).metadata as Map<String, dynamic>?;
+                if (meta != null && (meta['spoiler'] == true)) {
+                  isSpoilerFlag = true;
+                }
+              }
+            } catch (_) {}
+            // 세션 캐시
+            if (context.read<NodeComponentService>().isSpoiler(widget.nodeId)) {
+              isSpoilerFlag = true;
+            }
+
+            // 댓글 배지 표시 값 추출
+            bool hasCommentsFlag = false;
+            int commentCount = 0;
+            try {
+              final node = doc?.getNodeById(widget.nodeId);
+              if (node is ImageNode) {
+                final meta =
+                    (node as dynamic).metadata as Map<String, dynamic>?;
+                if (meta != null) {
+                  hasCommentsFlag = meta['hasComments'] == true;
+                  final cc = meta['commentCount'];
+                  if (cc is num) commentCount = cc.toInt();
+                  if (cc is String) commentCount = int.tryParse(cc) ?? 0;
+                }
+              }
+            } catch (_) {}
+
             return Stack(
               children: [
                 Padding(
@@ -140,6 +189,49 @@ class _SingleImageComponentState extends State<SingleImageComponent>
                   child: Stack(
                     children: [
                       image,
+                      if (hasCommentsFlag)
+                        Positioned(
+                          top: 0,
+                          right: 0,
+                          child: IgnorePointer(
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 4,
+                                vertical: 4,
+                              ),
+                              decoration: BoxDecoration(
+                                color: Colors.black.withOpacity(0.55),
+                                borderRadius: BorderRadius.circular(14),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(
+                                    Icons.chat_bubble_rounded,
+                                    color: Colors.white,
+                                    size: 14,
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      if (isSpoilerFlag)
+                        Positioned.fill(
+                          child: IgnorePointer(
+                            child: AnimatedBuilder(
+                              animation: _controller,
+                              builder: (context, _) {
+                                return CustomPaint(
+                                  painter: _ImageSpoilerPainter(
+                                    phase: _controller.value,
+                                    isEditing: true,
+                                  ),
+                                );
+                              },
+                            ),
+                          ),
+                        ),
                       if (isUploading)
                         Positioned.fill(
                           child: IgnorePointer(
@@ -614,5 +706,53 @@ class _SingleImageComponentState extends State<SingleImageComponent>
     if (neighborIndex < 0 || neighborIndex >= doc.nodeCount) return false;
     final neighbor = doc.getNodeAt(neighborIndex);
     return neighbor is ImageNode || neighbor is ImageRowNode;
+  }
+}
+
+class _ImageSpoilerPainter extends CustomPainter {
+  final double phase;
+  final bool isEditing;
+  _ImageSpoilerPainter({required this.phase, required this.isEditing});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final rect = Offset.zero & size;
+    final mask =
+        Paint()
+          ..style = PaintingStyle.fill
+          ..color = Colors.white.withOpacity(isEditing ? 0.4 : 1.0);
+    final dot =
+        Paint()
+          ..style = PaintingStyle.fill
+          ..color = Colors.black.withOpacity(0.3);
+
+    canvas.drawRect(rect, mask);
+    final area = rect.width * rect.height;
+    final count =
+        isEditing
+            ? math.max(40, (area / 180).floor())
+            : math.max(60, (area / 120).floor());
+    final double t = phase * (2 * math.pi) * 1.1;
+    for (int i = 0; i < count; i++) {
+      final seed = rect.hashCode ^ (i * 486187739);
+      final r = math.Random(seed);
+      final baseX = r.nextDouble() * rect.width;
+      final baseY = r.nextDouble() * rect.height;
+      final amp = 1.2 + r.nextDouble() * 1.8; // 1.2~3.0px
+      final ox = math.sin(t + i * 0.17) * amp;
+      final oy = math.cos(t * 1.1 + i * 0.11) * amp;
+      double x = baseX + ox;
+      double y = baseY + oy;
+      x = x % rect.width;
+      y = y % rect.height;
+      if (x < 0) x += rect.width;
+      if (y < 0) y += rect.height;
+      canvas.drawRect(Rect.fromLTWH(x, y, 1.5, 1.5), dot);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _ImageSpoilerPainter oldDelegate) {
+    return oldDelegate.phase != phase || oldDelegate.isEditing != isEditing;
   }
 }

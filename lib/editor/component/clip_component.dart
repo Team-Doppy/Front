@@ -46,7 +46,8 @@ class ClipNode extends BlockNode {
     this.url = '',
     this.localPath = '',
     this.thumbnailPath = '',
-  });
+    Map<String, dynamic>? metadata,
+  }) : _metadata = metadata ?? const {};
 
   @override
   bool get isDeletable => false;
@@ -59,6 +60,10 @@ class ClipNode extends BlockNode {
   final String url;
   final String localPath;
   final String thumbnailPath;
+  final Map<String, dynamic> _metadata;
+
+  @override
+  Map<String, dynamic> get metadata => _metadata;
 
   @override
   bool containsPosition(Object position) =>
@@ -96,6 +101,7 @@ class ClipNode extends BlockNode {
       url: url,
       localPath: localPath,
       thumbnailPath: thumbnailPath,
+      metadata: newMetadata,
     );
   }
 
@@ -111,6 +117,7 @@ class ClipNode extends BlockNode {
       url: url,
       localPath: localPath,
       thumbnailPath: thumbnailPath,
+      metadata: {...metadata, ...newProperties},
     );
   }
 }
@@ -269,6 +276,20 @@ class _PinComponentState extends State<_PinComponent> with DocumentComponent {
       child: _buildVideoContent(context),
     );
 
+    // 댓글 배지 표시 여부/카운트 (metadata.hasComments/commentCount)
+    bool hasCommentsFlag = false;
+    int commentCount = 0;
+    try {
+      final node = doc?.getNodeById(widget.nodeId);
+      if (node is ClipNode) {
+        final meta = node.metadata;
+        hasCommentsFlag = meta['hasComments'] == true;
+        final cc = meta['commentCount'];
+        if (cc is num) commentCount = cc.toInt();
+        if (cc is String) commentCount = int.tryParse(cc) ?? 0;
+      }
+    } catch (_) {}
+
     return Stack(
       children: [
         Column(
@@ -279,6 +300,34 @@ class _PinComponentState extends State<_PinComponent> with DocumentComponent {
             Stack(
               children: [
                 card,
+                // 댓글 배지 (읽기 전용 - 포인터 통과)
+                if (hasCommentsFlag)
+                  Positioned(
+                    top: marginTop + 8,
+                    right: 8,
+                    child: IgnorePointer(
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 4,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withOpacity(0.6),
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.chat_bubble_rounded,
+                              color: Colors.white,
+                              size: 14,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
                 // 선택 하이라이트 오버레이
                 if (isSelectionHighlighted)
                   Positioned.fill(

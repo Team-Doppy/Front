@@ -8,6 +8,7 @@ import 'package:doppy/pages/user/setting_screen.dart';
 import 'package:doppy/providers/feed_provider/other_profile_feed_provider.dart';
 import 'package:doppy/utils/network_utils.dart';
 import 'package:doppy/utils/error_handler.dart';
+import 'package:doppy/utils/dialog_utils.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:doppy/data/services/upload_service.dart';
@@ -272,7 +273,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                         slivers: [
                           SliverAppBar(
                             expandedHeight: topPadding + 100,
-                            toolbarHeight: 60,
+                            toolbarHeight: 50,
                             backgroundColor: Colors.transparent,
                             automaticallyImplyLeading: false,
                             elevation: 0,
@@ -291,16 +292,11 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                                               Icons.arrow_back_ios_new_rounded,
                                               color:
                                                   Theme.of(
-                                                            context,
-                                                          ).brightness ==
-                                                          Brightness.dark
-                                                      ? Colors.white
-                                                          .withOpacity(0.9)
-                                                      : Colors.black
-                                                          .withOpacity(0.9),
-                                              size: 20,
+                                                    context,
+                                                  ).colorScheme.onSurface,
+                                              size: 22,
                                             ),
-                                            SizedBox(width: 8),
+                                            SizedBox(width: 14),
                                           ],
                                         ),
                                       ),
@@ -310,7 +306,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                                   Text(
                                     _displayUsername,
                                     style: TextStyle(
-                                      fontSize: 21,
+                                      fontSize: 24,
                                       fontWeight: FontWeight.bold,
                                       color: Theme.of(
                                         context,
@@ -749,13 +745,27 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
           case FriendRequestStatus.accepted:
             buttonText = '친구 취소';
             buttonAction = () async {
-              try {
-                await friendProvider.deleteFriend(widget.otherUser!.username);
-              } catch (e) {
-                if (mounted) {
-                  ScaffoldMessenger.of(
-                    context,
-                  ).showSnackBar(SnackBar(content: Text('오류: $e')));
+              // 확인 다이얼로그 표시
+              final confirm = await DialogUtils.showConfirmDialog(
+                context,
+                title: '친구 취소',
+                message:
+                    '${widget.otherUser?.alias ?? widget.otherUser?.username ?? '이 사용자'}님과의 친구 관계를 취소하시겠습니까?',
+                confirmText: '취소하기',
+                cancelText: '돌아가기',
+                isDestructive: true,
+              );
+
+              // 확인을 누른 경우에만 친구 취소 실행
+              if (confirm == true && mounted) {
+                try {
+                  await friendProvider.deleteFriend(widget.otherUser!.username);
+                } catch (e) {
+                  if (mounted) {
+                    ScaffoldMessenger.of(
+                      context,
+                    ).showSnackBar(SnackBar(content: Text('오류: $e')));
+                  }
                 }
               }
             };
@@ -789,7 +799,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                     child: _buildFilledButton(
                       text: buttonText,
                       onTap: buttonAction,
-                      isLoading: friendProvider.isLoading,
+                      isLoading: friendProvider.isLoadingStatus,
                       isFilled:
                           friendProvider.friendStatus ==
                           FriendRequestStatus.none,
@@ -813,7 +823,8 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     return GestureDetector(
       onTap: isLoading ? null : onTap,
       child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 24),
+        height: 44, // 고정 높이로 UI 흔들림 방지
+        padding: const EdgeInsets.symmetric(horizontal: 24),
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(12),
           color:
@@ -825,12 +836,14 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
           child:
               isLoading
                   ? SizedBox(
-                    width: 16,
-                    height: 16,
+                    width: 20,
+                    height: 20,
                     child: CircularProgressIndicator(
-                      strokeWidth: 2,
+                      strokeWidth: 2.5,
                       valueColor: AlwaysStoppedAnimation<Color>(
-                        Theme.of(context).colorScheme.onSurface,
+                        isFilled
+                            ? Colors.white
+                            : Theme.of(context).colorScheme.onSurface,
                       ),
                     ),
                   )

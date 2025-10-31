@@ -538,6 +538,7 @@ class CommentPreviewSection extends StatelessWidget {
                     ),
                   ],
                 ),
+              SizedBox(height: 20),
             ],
           ),
         ],

@@ -71,10 +71,14 @@ class DoppyLoadingLogo extends StatelessWidget {
         // 뒤로가기 버튼
         if (showBackButton)
           Positioned(
-            top: 40,
-            left: 16,
+            top: 58.5,
+            left: 4,
             child: IconButton(
-              icon: Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white),
+              icon: Icon(
+                Icons.arrow_back_ios_new_rounded,
+                color: Theme.of(context).colorScheme.onSurface,
+                size: 22,
+              ),
               onPressed: onBack ?? () => Navigator.of(context).pop(),
             ),
           ),

@@ -70,24 +70,75 @@ class PostReaderService {
           break;
 
         case 'image':
+          final data = (m['data'] as Map?)?.cast<String, dynamic>();
+          final imageUrl = (m['url'] ?? data?['url'] ?? '').toString();
+          final mediaId = (m['mediaId'] ?? data?['mediaId'])?.toString();
+          final hasComments =
+              (m['hasComments'] ?? data?['hasComments']) == true;
+          final commentCount =
+              (m['commentCount'] ?? data?['commentCount']) ?? 0;
+
           rebuilt.add(
             ImageNode(
               id: id,
-              imageUrl: (m['url'] ?? '').toString(),
+              imageUrl: imageUrl,
               altText: (m['altText'] ?? '').toString(),
+              metadata: <String, dynamic>{
+                if (mediaId != null) 'mediaId': mediaId,
+                'hasComments': hasComments,
+                'commentCount':
+                    (commentCount is num)
+                        ? commentCount.toInt()
+                        : int.tryParse(commentCount.toString()) ?? 0,
+              },
             ),
           );
           break;
 
         case 'imageRow':
+          final urls =
+              ((m['urls'] as List?) ?? const [])
+                  .map((e) => e.toString())
+                  .toList();
+
+          // 각 이미지별 댓글 정보 추출
+          final imageCommentInfo = <String, Map<String, dynamic>>{};
+          final data = (m['data'] as Map?)?.cast<String, dynamic>();
+
+          // imageRow의 data에서 각 이미지별 정보가 있을 수 있음
+          // 예: data: { images: [{ url: "...", mediaId: 123, hasComments: true, commentCount: 5 }, ...] }
+          if (data != null && data['images'] is List) {
+            final images = data['images'] as List;
+            for (final img in images) {
+              if (img is Map) {
+                final imgMap = img.cast<String, dynamic>();
+                final url = imgMap['url']?.toString();
+                if (url != null && urls.contains(url)) {
+                  final mediaId = imgMap['mediaId']?.toString();
+                  final hasComments = imgMap['hasComments'] == true;
+                  final commentCount =
+                      (imgMap['commentCount'] is num)
+                          ? (imgMap['commentCount'] as num).toInt()
+                          : int.tryParse(
+                                imgMap['commentCount']?.toString() ?? '0',
+                              ) ??
+                              0;
+                  imageCommentInfo[url] = {
+                    if (mediaId != null) 'mediaId': mediaId,
+                    'hasComments': hasComments,
+                    'commentCount': commentCount,
+                  };
+                }
+              }
+            }
+          }
+
           rebuilt.add(
             ImageRowNode(
               id: id,
-              imageUrls:
-                  ((m['urls'] as List?) ?? const [])
-                      .map((e) => e.toString())
-                      .toList(),
+              imageUrls: urls,
               spacing: (m['spacing'] as num?)?.toDouble() ?? 4.0,
+              metadata: {'imageCommentInfo': imageCommentInfo},
             ),
           );
           break;
@@ -121,12 +172,58 @@ class PostReaderService {
           break;
 
         case 'clip':
+          final data = (m['data'] as Map?)?.cast<String, dynamic>();
+          final url = (m['url'] ?? data?['url'] ?? '').toString();
+          final mediaId = (m['mediaId'] ?? data?['mediaId'])?.toString();
+          final hasComments =
+              (m['hasComments'] ?? data?['hasComments']) == true;
+          final commentCount =
+              (m['commentCount'] ?? data?['commentCount']) ?? 0;
+
           rebuilt.add(
             ClipNode(
               id: id,
               label: (m['label'] ?? '').toString(),
               colorHex: (m['color'] ?? '#FF5252').toString(),
-              url: (m['url'] ?? '').toString(),
+              url: url,
+              metadata: <String, dynamic>{
+                if (mediaId != null) 'mediaId': mediaId,
+                'hasComments': hasComments,
+                'commentCount':
+                    (commentCount is num)
+                        ? commentCount.toInt()
+                        : int.tryParse(commentCount.toString()) ?? 0,
+              },
+            ),
+          );
+          break;
+
+        case 'video':
+          final data = (m['data'] as Map?)?.cast<String, dynamic>();
+          final url = (m['url'] ?? data?['url'] ?? '').toString();
+          final mediaId = (m['mediaId'] ?? data?['mediaId'])?.toString();
+          final hasComments =
+              (m['hasComments'] ?? data?['hasComments']) == true;
+          final commentCount =
+              (m['commentCount'] ?? data?['commentCount']) ?? 0;
+
+          rebuilt.add(
+            ClipNode(
+              id:
+                  id.isNotEmpty
+                      ? id
+                      : 'clip_${DateTime.now().millisecondsSinceEpoch}',
+              label: (m['label'] ?? '').toString(),
+              colorHex: (m['color'] ?? '#FF5252').toString(),
+              url: url,
+              metadata: <String, dynamic>{
+                if (mediaId != null) 'mediaId': mediaId,
+                'hasComments': hasComments,
+                'commentCount':
+                    (commentCount is num)
+                        ? commentCount.toInt()
+                        : int.tryParse(commentCount.toString()) ?? 0,
+              },
             ),
           );
           break;

@@ -2,6 +2,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:doppy/utils/error_handler.dart';
 import 'package:flutter/material.dart';
 import 'package:doppy/data/services/comment_service.dart';
+import 'package:doppy/data/services/media_comment_service.dart';
 import 'package:doppy/pages/components/comment_item.dart';
 import 'package:doppy/pages/components/comment_input_section.dart';
 import 'package:doppy/providers/user_provider.dart';
@@ -19,6 +20,8 @@ class FullscreenImageViewer extends StatefulWidget {
   final bool isVideo;
   final Duration? initialPosition; // 비디오 초기 재생 위치
   final VideoPlayerController? preloadedController; // 이미 초기화된 컨트롤러 주입
+  final String? mediaId;
+  final List<String> allMediaIds;
 
   const FullscreenImageViewer({
     super.key,
@@ -29,6 +32,8 @@ class FullscreenImageViewer extends StatefulWidget {
     this.isVideo = false,
     this.initialPosition,
     this.preloadedController,
+    this.mediaId,
+    this.allMediaIds = const [],
   });
 
   @override
@@ -111,41 +116,74 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer>
     _commentPreviewControllers.clear();
   }
 
-  void _loadImageComments() {
-    // 현재 이미지에 대한 댓글이 없으면 초기화
-    if (!_commentsByImage.containsKey(_currentImageUrl)) {
-      _commentsByImage[_currentImageUrl] = [
-        Comment(
-          id: '1',
-          author: 'testuser1',
-          content: '이미지 정말 예쁘네요! 👏',
-          authorProfileImageUrl: '',
-          postId: '0',
-          imageUrl: _currentImageUrl,
-          createdAt: DateTime.now().toIso8601String(),
-          updatedAt: DateTime.now().toIso8601String(),
-        ),
-        Comment(
-          id: '2',
-          author: 'testuser2',
-          content: '저도 이런 곳 가고 싶어요',
-          authorProfileImageUrl: '',
-          postId: '0',
-          imageUrl: _currentImageUrl,
-          createdAt: DateTime.now().toIso8601String(),
-          updatedAt: DateTime.now().toIso8601String(),
-        ),
-      ];
+  Future<void> _loadImageComments() async {
+    print(
+      '[FIV] _loadImageComments() start: idx=$_currentImageIndex url=$_currentImageUrl isVideo=${widget.isVideo}',
+    );
+    try {
+      // mediaId 추출: exported에서 metadata로 주입되어 있어야 함
+      final mediaId = _extractCurrentMediaId();
+      print('[FIV] extracted mediaId=$mediaId');
+      if (mediaId == null) {
+        print('[FIV] skip fetch: mediaId is null');
+        setState(() => _commentsByImage[_currentImageUrl] = []);
+        return;
+      }
+      final svc = MediaCommentService();
+      final list =
+          widget.isVideo
+              ? await svc.fetchVideoComments(
+                videoId: mediaId,
+                page: 0,
+                size: 20,
+              )
+              : await svc.fetchImageComments(
+                imageId: mediaId,
+                page: 0,
+                size: 20,
+              );
+      print('[FIV] fetched list size=${list.length}');
+      final mapped =
+          list
+              .map(
+                (m) => Comment(
+                  id: m.id,
+                  author: m.author ?? '',
+                  content: m.text,
+                  authorProfileImageUrl: m.authorProfileImageUrl ?? '',
+                  postId: '0',
+                  imageUrl: _currentImageUrl,
+                  createdAt: m.createdAt,
+                  updatedAt: m.updatedAt,
+                ),
+              )
+              .toList();
+      setState(() {
+        _commentsByImage[_currentImageUrl] = mapped;
+        _disposeCommentPreviewControllers();
+        _commentPreviewControllers.clear();
+        _initCommentPreviewAnimations();
+      });
+    } catch (e) {
+      print('[FIV] fetch failed: $e');
+      setState(() => _commentsByImage[_currentImageUrl] = []);
     }
+  }
 
-    setState(() {
-      // 애니메이션 다시 초기화
-      _disposeCommentPreviewControllers();
-      _commentPreviewControllers.clear();
-    });
-
-    // 애니메이션 다시 실행
-    _initCommentPreviewAnimations();
+  String? _extractCurrentMediaId() {
+    if (widget.allMediaIds.isNotEmpty) {
+      final idx =
+          (_currentImageIndex >= 0 &&
+                  _currentImageIndex < widget.allMediaIds.length)
+              ? _currentImageIndex
+              : 0;
+      final id = widget.allMediaIds[idx];
+      final result = id.isEmpty ? null : id;
+      print('[FIV] mediaId from list idx=$idx -> $result');
+      return result;
+    }
+    print('[FIV] mediaId from single -> ${widget.mediaId}');
+    return widget.mediaId;
   }
 
   @override
@@ -169,21 +207,63 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer>
   Future<void> _submitComment() async {
     final text = _commentController.text.trim();
     if (text.isEmpty) return;
+    final mediaId = _extractCurrentMediaId();
+    if (mediaId == null || mediaId.isEmpty) {
+      ErrorHandler.showError(context, '미디어 식별자를 찾을 수 없어요');
+      return;
+    }
 
+    // 낙관적 추가
+    final tempId = 'temp_${DateTime.now().millisecondsSinceEpoch}';
+    final prev = List<Comment>.from(_imageComments);
     setState(() {
-      final newComment = Comment(
-        id: DateTime.now().millisecondsSinceEpoch.toString(),
-        author: '내 댓글',
-        content: text,
-        authorProfileImageUrl: '',
-        postId: '0',
-        imageUrl: _currentImageUrl,
-        createdAt: DateTime.now().toIso8601String(),
-        updatedAt: DateTime.now().toIso8601String(),
-      );
-      _commentsByImage[_currentImageUrl] = [..._imageComments, newComment];
+      _commentsByImage[_currentImageUrl] = [
+        ..._imageComments,
+        Comment(
+          id: tempId,
+          author: '나',
+          content: text,
+          authorProfileImageUrl: '',
+          postId: '0',
+          imageUrl: _currentImageUrl,
+          createdAt: DateTime.now().toIso8601String(),
+          updatedAt: DateTime.now().toIso8601String(),
+        ),
+      ];
       _commentController.clear();
     });
+
+    try {
+      print(
+        '[FIV] POST comment mediaId=$mediaId text="$text" isVideo=${widget.isVideo}',
+      );
+      final svc = MediaCommentService();
+      final newId =
+          widget.isVideo
+              ? await svc.createVideoComment(videoId: mediaId, text: text)
+              : await svc.createImageComment(imageId: mediaId, text: text);
+      print('[FIV] POST result id=$newId');
+
+      if (!mounted) return;
+
+      setState(() {
+        final list = List<Comment>.from(_imageComments);
+        final idx = list.indexWhere((c) => c.id == tempId);
+        if (idx != -1 && newId.isNotEmpty) {
+          list[idx] = list[idx].copyWith(id: newId);
+          _commentsByImage[_currentImageUrl] = list;
+        }
+      });
+    } catch (e) {
+      print('[FIV] POST failed: $e');
+      if (!mounted) return;
+
+      setState(() {
+        _commentsByImage[_currentImageUrl] = prev;
+        _commentController.text = text;
+      });
+      ErrorHandler.showError(context, '댓글 전송에 실패했습니다');
+    }
   }
 
   void _closeViewer() {
@@ -480,6 +560,12 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer>
                               Theme.of(context).brightness == Brightness.dark
                                   ? Theme.of(context).colorScheme.surface
                                   : Colors.grey[100],
+                          border: Border.all(
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.outline.withOpacity(0.2),
+                            width: 1,
+                          ),
                           borderRadius: BorderRadius.only(
                             topLeft: Radius.circular(20),
                             topRight: Radius.circular(20),
@@ -491,7 +577,7 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer>
                             SizedBox(height: 15),
                             Container(
                               height: 5,
-                              width: 80,
+                              width: 60,
                               decoration: BoxDecoration(
                                 color: Theme.of(
                                   context,
@@ -645,7 +731,7 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer>
             ),
 
             Positioned(
-              top: MediaQuery.of(context).padding.top + 16,
+              top: MediaQuery.of(context).padding.top,
               left: 16,
               child: GestureDetector(
                 onTap: _closeViewer,
@@ -663,7 +749,7 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer>
               ),
             ),
             Positioned(
-              top: MediaQuery.of(context).padding.top + 16,
+              top: MediaQuery.of(context).padding.top,
               right: 16,
               child: GestureDetector(
                 onTap: _downloadImage,

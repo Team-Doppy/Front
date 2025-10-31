@@ -711,7 +711,11 @@ class EditorService extends ChangeNotifier {
     return id;
   }
 
-  Future<void> replacePlaceholderWithUrl(String id, String url) async {
+  Future<void> replacePlaceholderWithUrl(
+    String id,
+    String url, {
+    String? mediaId,
+  }) async {
     try {
       // 기존 노드(localPath)를 기억하여 행 내부 로컬 URL 교체에 활용
       String? localPath;
@@ -755,7 +759,10 @@ class EditorService extends ChangeNotifier {
         id: id,
         imageUrl: url,
         altText: '',
-        metadata: {'isPlaceholder': false},
+        metadata: {
+          'isPlaceholder': false,
+          if (mediaId != null && mediaId.isNotEmpty) 'mediaId': mediaId,
+        },
       );
       editor.execute([
         ReplaceNodeRequest(existingNodeId: id, newNode: newNode),

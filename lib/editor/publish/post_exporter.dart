@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 
 import 'package:doppy/editor/service/editor_service.dart';
 import 'package:doppy/editor/service/sticker_service.dart';
+import 'package:doppy/editor/service/node_component_service.dart';
 import 'package:super_editor/super_editor.dart';
 import 'package:doppy/editor/style/defualt_toolbar.dart';
 import 'package:doppy/editor/component/link_component.dart';
@@ -120,50 +121,165 @@ class PostExporter {
         if ((meta['isTitle'] == true) && titleText.isEmpty) {
           titleText = node.text.text;
         }
-        nodes.add({
+
+        // 텍스트에 스포일러 attribution이 있는지 확인
+        bool hasSpoiler = false;
+        for (int i = 0; i < node.text.text.length; i++) {
+          final attrs = node.text.getAllAttributionsAt(i);
+          if (attrs.any((a) => a is NamedAttribution && a.id == 'spoiler')) {
+            hasSpoiler = true;
+            break;
+          }
+        }
+
+        final align = meta['textAlign'] as String?;
+        final isTitle = meta['isTitle'] == true;
+        final fontFamily = meta['fontFamily'] as String?;
+
+        final nodeMap = <String, dynamic>{
           'id': node.id,
           'type': 'paragraph',
           'text': node.text.text,
-          'align': meta['textAlign'] ?? 'center',
-          'isTitle': meta['isTitle'] == true,
-          'isSubheading': meta['isSubheading'] == true,
-          'fontFamily': meta['fontFamily'], // 폰트 정보 저장
           'spans': _buildParagraphSpans(node.text),
-        });
+        };
+
+        // 필요한 필드만 추가
+        if (align != null && align != 'center') {
+          nodeMap['align'] = align;
+        }
+        if (isTitle) {
+          nodeMap['isTitle'] = true;
+        }
+        if (fontFamily != null && fontFamily.isNotEmpty) {
+          nodeMap['fontFamily'] = fontFamily;
+        }
+        if (hasSpoiler) {
+          nodeMap['spoiler'] = true;
+        }
+
+        nodes.add(nodeMap);
         continue;
       }
 
       // ImageNode (SuperEditor 내장)
       if (node is ImageNode) {
-        nodes.add({
-          'id': node.id,
-          'type': 'image',
-          'url': node.imageUrl,
-          'altText': node.altText,
-        });
+        // metadata에서 mediaId/spoiler 추출
+        Map<String, dynamic>? meta;
+        try {
+          meta = (node as dynamic).metadata as Map<String, dynamic>?;
+        } catch (_) {
+          meta = null;
+        }
+        final mediaId = meta != null ? (meta['mediaId']?.toString()) : null;
+
+        // 스포일러 확인: metadata 또는 NodeComponentService
+        bool hasSpoiler = false;
+        if (meta != null && meta['spoiler'] == true) {
+          hasSpoiler = true;
+        } else {
+          final nodeService = NodeComponentService();
+          hasSpoiler = nodeService.isSpoiler(node.id);
+        }
+
+        final dataMap = <String, dynamic>{'url': node.imageUrl};
+
+        if (mediaId != null && mediaId.isNotEmpty) {
+          dataMap['mediaId'] = int.tryParse(mediaId) ?? mediaId;
+        }
+        if (hasSpoiler) {
+          dataMap['spoiler'] = true;
+        }
+
+        nodes.add({'id': node.id, 'type': 'image', 'data': dataMap});
         continue;
       }
 
       // ImageRowNode (프로젝트에 존재하는 경우)
       if (node is ImageRowNode) {
-        nodes.add({
+        // 스포일러 확인: metadata 또는 NodeComponentService
+        bool hasSpoiler = false;
+        final meta = node.metadata;
+        if (meta['spoiler'] == true) {
+          hasSpoiler = true;
+        } else {
+          final nodeService = NodeComponentService();
+          hasSpoiler = nodeService.isSpoiler(node.id);
+        }
+
+        // 각 이미지별 mediaId 추출 (댓글 정보는 제외)
+        final imageCommentInfo =
+            meta['imageCommentInfo'] as Map<String, dynamic>?;
+        final List<Map<String, dynamic>> images = [];
+        bool hasMediaId = false;
+
+        if (imageCommentInfo != null && imageCommentInfo.isNotEmpty) {
+          for (final imageUrl in node.imageUrls) {
+            final imgData = <String, dynamic>{'url': imageUrl};
+
+            if (imageCommentInfo[imageUrl] is Map) {
+              final imgInfo =
+                  imageCommentInfo[imageUrl] as Map<String, dynamic>;
+              final mediaId = imgInfo['mediaId']?.toString();
+
+              if (mediaId != null && mediaId.isNotEmpty) {
+                imgData['mediaId'] = int.tryParse(mediaId) ?? mediaId;
+                hasMediaId = true;
+              }
+            }
+
+            images.add(imgData);
+          }
+        } else {
+          // mediaId 정보가 없으면 기본 URL만
+          for (final imageUrl in node.imageUrls) {
+            images.add({'url': imageUrl});
+          }
+        }
+
+        final nodeMap = <String, dynamic>{
           'id': node.id,
           'type': 'imageRow',
           'urls': node.imageUrls,
-          'spacing': node.spacing,
-        });
+        };
+
+        if (node.spacing != 4.0) {
+          nodeMap['spacing'] = node.spacing;
+        }
+        if (hasMediaId) {
+          nodeMap['data'] = {'images': images};
+        }
+        if (hasSpoiler) {
+          nodeMap['spoiler'] = true;
+        }
+
+        nodes.add(nodeMap);
         continue;
       }
 
-      //   (커스텀)
+      // Video(ClipNode) → 서버 규격: { type: "video", data: { mediaId, url } }
       if (node is ClipNode) {
-        nodes.add({
-          'id': node.id,
-          'type': 'clip',
-          'label': node.label,
-          'color': node.colorHex,
-          'url': node.url,
-        });
+        final meta = node.metadata;
+        final mediaId = meta['mediaId']?.toString();
+
+        // 스포일러 확인: metadata 또는 NodeComponentService
+        bool hasSpoiler = false;
+        if (meta['spoiler'] == true) {
+          hasSpoiler = true;
+        } else {
+          final nodeService = NodeComponentService();
+          hasSpoiler = nodeService.isSpoiler(node.id);
+        }
+
+        final dataMap = <String, dynamic>{'url': node.url};
+
+        if (mediaId != null && mediaId.isNotEmpty) {
+          dataMap['mediaId'] = int.tryParse(mediaId) ?? mediaId;
+        }
+        if (hasSpoiler) {
+          dataMap['spoiler'] = true;
+        }
+
+        nodes.add({'id': node.id, 'type': 'video', 'data': dataMap});
         continue;
       }
 
@@ -357,6 +473,7 @@ class PostExporter {
       } else if (a is FontSizeAttribution) {
         fontSize = a.fontSize;
       }
+      // spoiler는 노드 레벨에서 처리하므로 spans에서는 제외
     }
 
     final map = <String, dynamic>{
@@ -483,15 +600,24 @@ class PostExporter {
     String accessLevel;
     List<int> sharedGroupIds;
 
+    // 디버그 로깅: 파라미터 확인
+    debugPrint('===== [composeFinalPayload] 파라미터 =====');
+    debugPrint('privateOnly: $privateOnly');
+    debugPrint('publicOnly: $publicOnly');
+    debugPrint('selectedGroupIds: $selectedGroupIds');
+
     if (privateOnly == true) {
       accessLevel = 'PRIVATE';
       sharedGroupIds = [];
+      debugPrint('[composeFinalPayload] → PRIVATE 선택됨');
     } else if (publicOnly == true) {
       accessLevel = 'PUBLIC';
       sharedGroupIds = [];
+      debugPrint('[composeFinalPayload] → PUBLIC 선택됨');
     } else {
       accessLevel = 'GROUPS';
       sharedGroupIds = selectedGroupIds ?? [];
+      debugPrint('[composeFinalPayload] → GROUPS 선택됨 (그룹: $sharedGroupIds)');
 
       // GROUPS 선택시 최소 1개 이상의 그룹 ID 필요 (발행 시에만 검증)
       if (!skipValidation && sharedGroupIds.isEmpty) {
@@ -501,15 +627,22 @@ class PostExporter {
       }
     }
 
-    // 3. 기존 base를 복사하고 공개 범위 필드만 추가
+    // 3. 기존 base를 복사하되, 공개 범위 관련 필드는 제거하고 새로 설정
     final Map<String, dynamic> result = <String, dynamic>{...base};
+
+    // 기존 공개 범위 필드 완전히 제거 (덮어쓰기 보장)
+    result.remove('accessLevel');
+    result.remove('sharedGroupIds');
 
     // 4. 공개 범위 필수 필드 추가
     result['accessLevel'] = accessLevel;
 
-    // 5. 그룹 공유시 필수 필드
+    // 5. 그룹 공유시 필수 필드 (GROUPS인 경우만 추가)
     if (accessLevel == 'GROUPS' && sharedGroupIds.isNotEmpty) {
       result['sharedGroupIds'] = sharedGroupIds;
+    } else {
+      // GROUPS가 아니면 sharedGroupIds는 완전히 제거
+      result.remove('sharedGroupIds');
     }
 
     // 6. 카테고리 ID 추가 (필수)
@@ -542,7 +675,9 @@ class PostExporter {
         if (n is! Map) continue;
         final String type = (n['type'] ?? '').toString();
         if (type == 'image') {
-          final String url = (n['url'] ?? '').toString();
+          // data.url 또는 url 필드에서 추출
+          final data = n['data'] as Map<String, dynamic>?;
+          final String url = (data?['url'] ?? n['url'] ?? '').toString();
           if (url.isNotEmpty) usedUrls.add(url);
         } else if (type == 'imageRow') {
           final List<dynamic> urls = List<dynamic>.from(n['urls'] ?? const []);
@@ -550,6 +685,11 @@ class PostExporter {
             final String url = u.toString();
             if (url.isNotEmpty) usedUrls.add(url);
           }
+        } else if (type == 'video') {
+          // data.url에서 추출
+          final data = n['data'] as Map<String, dynamic>?;
+          final String url = (data?['url'] ?? '').toString();
+          if (url.isNotEmpty) usedUrls.add(url);
         }
       }
 

@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:super_editor/super_editor.dart';
+import 'package:doppy/editor/service/node_component_service.dart';
+import 'package:doppy/editor/component/row_image_component.dart';
 
 class SelectedToolbar extends StatelessWidget {
   const SelectedToolbar({
@@ -42,7 +44,22 @@ class SelectedToolbar extends StatelessWidget {
           ),
          */
           const Spacer(),
-          if (node is ImageNode) ...[
+          if (node is ImageNode || node is ImageRowNode) ...[
+            // 스포일러 토글
+            IconButton(
+              tooltip: '스포 방지',
+              onPressed:
+                  selectedId != null
+                      ? () {
+                        NodeComponentService().toggleSpoiler(selectedId!);
+                      }
+                      : null,
+              icon: Icon(
+                Icons.visibility_off,
+                size: 20,
+                color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
+              ),
+            ),
             IconButton(
               tooltip: '수정',
               onPressed: onEdit,

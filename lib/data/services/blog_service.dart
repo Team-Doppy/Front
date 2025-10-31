@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 import 'package:doppy/data/services/base_api_service.dart';
 
 class BlogService {
@@ -395,16 +396,40 @@ class BlogService {
     );
 
     // 서버 DTO에 맞춰 매핑: title, author, thumbnailImageUrl, content(JsonNode), accessLevel
-    // accessLevel 매핑 (PUBLIC | PRIVATE | GROUPS)
-    final Map<String, dynamic> visibility =
-        (postData['visibility'] as Map?)?.cast<String, dynamic>() ??
-        const <String, dynamic>{'type': 'public'};
-    final String vType =
-        (visibility['type'] ?? 'public').toString().toUpperCase();
-    final String accessLevel =
-        (vType == 'PRIVATE')
-            ? 'PRIVATE'
-            : (vType == 'GROUPS' ? 'GROUPS' : 'PUBLIC');
+    // accessLevel은 PostExporter에서 직접 설정한 값만 사용 (PUBLIC | PRIVATE | GROUPS)
+    // visibility 객체는 사용하지 않음
+    final dynamic accessLevelRaw = postData['accessLevel'];
+    String accessLevel;
+    if (accessLevelRaw != null) {
+      accessLevel = accessLevelRaw.toString().toUpperCase();
+      // 유효한 값인지 검증
+      if (accessLevel != 'PRIVATE' && accessLevel != 'GROUPS') {
+        accessLevel = 'PUBLIC'; // 기본값
+      }
+      debugPrint('[UploadPost] accessLevel: $accessLevel');
+    } else {
+      // accessLevel이 없으면 기본값으로 PUBLIC 설정
+      accessLevel = 'PUBLIC';
+      debugPrint('[UploadPost] accessLevel not found, using default: PUBLIC');
+    }
+
+    // sharedGroupIds 추출
+    List<int>? sharedGroupIds;
+    if (postData['sharedGroupIds'] != null) {
+      final dynamic sgIds = postData['sharedGroupIds'];
+      if (sgIds is List) {
+        sharedGroupIds =
+            sgIds
+                .map((e) {
+                  if (e is int) return e;
+                  if (e is String) return int.tryParse(e) ?? 0;
+                  return (e as num?)?.toInt() ?? 0;
+                })
+                .where((id) => id > 0)
+                .toList();
+      }
+      debugPrint('[UploadPost] sharedGroupIds: $sharedGroupIds');
+    }
 
     // content(JsonNode) 전송: 문자열이면 decode, 맵/리스트면 그대로 사용
     dynamic contentJson = postData['content'];
@@ -433,9 +458,19 @@ class BlogService {
       if (postData['usedImageUrls'] != null)
         'usedImageUrls': List<String>.from(postData['usedImageUrls'] as List),
       if (thumbnailImageId != null) 'thumbnailImageId': thumbnailImageId,
+      // GROUPS인 경우에만 sharedGroupIds 추가
+      if (accessLevel == 'GROUPS' &&
+          sharedGroupIds != null &&
+          sharedGroupIds.isNotEmpty)
+        'sharedGroupIds': sharedGroupIds,
     };
 
-    print('[UploadPost] request body: ${json.encode(requestBody)}');
+    debugPrint('[UploadPost] ===== 최종 요청 본문 =====');
+    debugPrint('[UploadPost] accessLevel: $accessLevel');
+    if (accessLevel == 'GROUPS' && sharedGroupIds != null) {
+      debugPrint('[UploadPost] sharedGroupIds: $sharedGroupIds');
+    }
+    debugPrint('[UploadPost] request body: ${json.encode(requestBody)}');
 
     try {
       final response = await _dio.post(
@@ -517,15 +552,39 @@ class BlogService {
     );
 
     // 서버 DTO 규격에 맞게 업데이트 바디 구성
-    final Map<String, dynamic> visibility =
-        (postData['visibility'] as Map?)?.cast<String, dynamic>() ??
-        const <String, dynamic>{'type': 'public'};
-    final String vType =
-        (visibility['type'] ?? 'public').toString().toUpperCase();
-    final String accessLevel =
-        (vType == 'PRIVATE')
-            ? 'PRIVATE'
-            : (vType == 'GROUPS' ? 'GROUPS' : 'PUBLIC');
+    // accessLevel은 postData에서 직접 읽기 (visibility 객체 사용 안 함)
+    final dynamic accessLevelRaw = postData['accessLevel'];
+    String accessLevel;
+    if (accessLevelRaw != null) {
+      accessLevel = accessLevelRaw.toString().toUpperCase();
+      // 유효한 값인지 검증
+      if (accessLevel != 'PRIVATE' && accessLevel != 'GROUPS') {
+        accessLevel = 'PUBLIC'; // 기본값
+      }
+      debugPrint('[UpdatePost] accessLevel: $accessLevel');
+    } else {
+      // accessLevel이 없으면 기본값으로 PUBLIC 설정
+      accessLevel = 'PUBLIC';
+      debugPrint('[UpdatePost] accessLevel not found, using default: PUBLIC');
+    }
+
+    // sharedGroupIds 추출
+    List<int>? sharedGroupIds;
+    if (postData['sharedGroupIds'] != null) {
+      final dynamic sgIds = postData['sharedGroupIds'];
+      if (sgIds is List) {
+        sharedGroupIds =
+            sgIds
+                .map((e) {
+                  if (e is int) return e;
+                  if (e is String) return int.tryParse(e) ?? 0;
+                  return (e as num?)?.toInt() ?? 0;
+                })
+                .where((id) => id > 0)
+                .toList();
+      }
+      debugPrint('[UpdatePost] sharedGroupIds: $sharedGroupIds');
+    }
 
     dynamic contentJson = postData['content'];
     if (contentJson is String && contentJson.isNotEmpty) {
@@ -548,7 +607,18 @@ class BlogService {
       'accessLevel': accessLevel,
       'summary': summary,
       if (thumbnailImageId != null) 'thumbnailImageId': thumbnailImageId,
+      // GROUPS인 경우에만 sharedGroupIds 추가
+      if (accessLevel == 'GROUPS' &&
+          sharedGroupIds != null &&
+          sharedGroupIds.isNotEmpty)
+        'sharedGroupIds': sharedGroupIds,
     };
+
+    debugPrint('[UpdatePost] ===== 최종 요청 본문 =====');
+    debugPrint('[UpdatePost] accessLevel: $accessLevel');
+    if (accessLevel == 'GROUPS' && sharedGroupIds != null) {
+      debugPrint('[UpdatePost] sharedGroupIds: $sharedGroupIds');
+    }
 
     print('[UpdatePost] request body: ${json.encode(requestBody)}');
 

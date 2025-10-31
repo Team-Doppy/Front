@@ -27,6 +27,10 @@ class HighlightAttribution extends ColorAttribution {
   String get id => 'highlight';
 }
 
+/// 스포일러(가림) 텍스트 Attribution (JSON 직렬화용 id만 사용)
+/// NamedAttribution을 사용하면 export/import 시 그대로 보존된다.
+const NamedAttribution spoilerAttribution = NamedAttribution('spoiler');
+
 /// 기본 형광펜 색상들 (연한 톤으로 수정)
 const Color highlightYellow = Color(0xFFFFF59D); // 더 연한 노란색
 const Color highlightGreen = Color(0xFFA5D6A7); // 더 연한 초록색
@@ -134,6 +138,19 @@ class TextStylingService extends ChangeNotifier {
       ToggleTextAttributionsRequest(
         documentRange: selection,
         attributions: {strikethroughAttribution},
+      ),
+    ]);
+  }
+
+  /// 스포일러 토글 (선택 영역 가리기)
+  void toggleSpoiler() {
+    final selection = composer.selection;
+    if (selection == null) return;
+
+    editor.execute([
+      ToggleTextAttributionsRequest(
+        documentRange: selection,
+        attributions: {spoilerAttribution},
       ),
     ]);
   }
@@ -454,6 +471,7 @@ class TextStylingService extends ChangeNotifier {
         'underline': false,
         'strikethrough': false,
         'highlight': false,
+        'spoiler': false,
       };
     }
 
@@ -466,6 +484,7 @@ class TextStylingService extends ChangeNotifier {
         'underline': false,
         'strikethrough': false,
         'highlight': false,
+        'spoiler': false,
       };
     }
 
@@ -478,6 +497,7 @@ class TextStylingService extends ChangeNotifier {
       'underline': attributions.contains(underlineAttribution),
       'strikethrough': attributions.contains(strikethroughAttribution),
       'highlight': attributions.any((attr) => attr is HighlightAttribution),
+      'spoiler': attributions.contains(spoilerAttribution),
     };
   }
 
@@ -746,6 +766,17 @@ extension _TopExpandedRow on _DefaultToolbarState {
             const SizedBox(width: 6),
             // 🎨 형광펜 버튼 추가
             _buildHighlightToggleIcon(),
+
+            const SizedBox(width: 6),
+            // 🙈 스포일러(가림) 토글 버튼
+            _buildToggleIcon(
+              icon: Icons.visibility_off,
+              isActive: _currentStyles['spoiler'] ?? false,
+              onTap: () {
+                widget.stylingService.toggleSpoiler();
+                _updateStyles();
+              },
+            ),
 
             // 오른쪽 끝으로 밀기
           ],
@@ -1280,6 +1311,7 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
                       await widget.editorService.replacePlaceholderWithUrl(
                         id,
                         t.url!,
+                        mediaId: t.imageId,
                       );
                     } else {
                       widget.editorService.deleteImagePlaceholderNode(id);

@@ -88,6 +88,8 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
   @override
   void initState() {
     super.initState();
+    // 스포일러 렌더링 모드: 글쓰기화면
+    setSpoilerEditingMode(true);
 
     // 편집 모드이면 전달된 exportedDataForEdit를 기반으로 문서를 복원
     // 새 글 작성 모드이면 빈 문서 생성
@@ -582,6 +584,8 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
 
   @override
   void dispose() {
+    // 스포일러 모드 복구
+    setSpoilerEditingMode(false);
     // 이미지 선택 상태 초기화
     nodeComponentService.clearHighlightedSelectionSilently();
     nodeComponentService.clearSelectionSilently();
@@ -676,61 +680,66 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                               Expanded(
                                 child: Theme(
                                   data: AppTheme.lightTheme,
-                                  child: SuperEditor(
-                                    gestureMode:
-                                        Platform.isIOS
-                                            ? DocumentGestureMode.iOS
-                                            : DocumentGestureMode.android,
-                                    editor: editor,
-                                    focusNode: _editorFocusNode,
-                                    stylesheet: _buildStylesheet(context),
-                                    selectionStyle: SelectionStyles(
-                                      selectionColor: AppColors.primary
-                                          .withValues(alpha: 0.3),
-                                      highlightEmptyTextBlocks: false,
-                                    ),
-                                    documentLayoutKey: _documentLayoutKey,
-                                    scrollController: scrollController,
+                                  child: Stack(
+                                    children: [
+                                      SuperEditor(
+                                        gestureMode:
+                                            Platform.isIOS
+                                                ? DocumentGestureMode.iOS
+                                                : DocumentGestureMode.android,
+                                        editor: editor,
+                                        focusNode: _editorFocusNode,
+                                        stylesheet: _buildStylesheet(context),
+                                        selectionStyle: SelectionStyles(
+                                          selectionColor: AppColors.primary
+                                              .withValues(alpha: 0.3),
+                                          highlightEmptyTextBlocks: false,
+                                        ),
+                                        documentLayoutKey: _documentLayoutKey,
+                                        scrollController: scrollController,
 
-                                    componentBuilders: [
-                                      // 타이틀 문단 전용 빌더(드래그 없음)
-                                      TitleParagraphComponentBuilder(
-                                        editorService: editorService,
-                                      ),
-                                      // 커스텀 이미지 컴포넌트들
-                                      SingleImageComponentBuilder(
-                                        dragService: dragService,
-                                      ),
-                                      RowImageComponentBuilder(
-                                        dragService: dragService,
-                                      ),
-                                      CustomParagraphComponentBuilder(
-                                        dragService: dragService,
-                                        editorService: editorService,
-                                      ),
+                                        componentBuilders: [
+                                          // 타이틀 문단 전용 빌더(드래그 없음)
+                                          TitleParagraphComponentBuilder(
+                                            editorService: editorService,
+                                          ),
+                                          // 커스텀 이미지 컴포넌트들
+                                          SingleImageComponentBuilder(
+                                            dragService: dragService,
+                                          ),
+                                          RowImageComponentBuilder(
+                                            dragService: dragService,
+                                          ),
+                                          CustomParagraphComponentBuilder(
+                                            dragService: dragService,
+                                            editorService: editorService,
+                                          ),
 
-                                      // 커스텀 언급 노드 컴포넌트
-                                      MentionComponentBuilder(
-                                        dragService: dragService,
-                                      ),
-                                      // 구분선 전용 컴포넌트
-                                      DividerComponentBuilder(
-                                        dragService: dragService,
-                                      ),
+                                          // 커스텀 언급 노드 컴포넌트
+                                          MentionComponentBuilder(
+                                            dragService: dragService,
+                                          ),
+                                          // 구분선 전용 컴포넌트
+                                          DividerComponentBuilder(
+                                            dragService: dragService,
+                                          ),
 
-                                      LinkComponentBuilder(
-                                        dragService: dragService,
-                                      ),
+                                          LinkComponentBuilder(
+                                            dragService: dragService,
+                                          ),
 
-                                      PinComponentBuilder(
-                                        dragService: dragService,
-                                      ),
+                                          PinComponentBuilder(
+                                            dragService: dragService,
+                                          ),
 
-                                      // 기본 컴포넌트들 (Paragraph 제외)
-                                      ...defaultComponentBuilders.where(
-                                        (builder) =>
-                                            builder.runtimeType.toString() !=
-                                            'ParagraphComponentBuilder',
+                                          // 기본 컴포넌트들 (Paragraph 제외)
+                                          ...defaultComponentBuilders.where(
+                                            (builder) =>
+                                                builder.runtimeType
+                                                    .toString() !=
+                                                'ParagraphComponentBuilder',
+                                          ),
+                                        ],
                                       ),
                                     ],
                                   ),

@@ -1,6 +1,7 @@
 import 'package:doppy/data/services/upload_service.dart';
 import 'package:doppy/editor/postwrite_screen.dart';
 import 'package:doppy/editor/service/node_component_service.dart';
+import 'package:doppy/editor/service/post_reader_service.dart';
 import 'package:doppy/editor/service/sticker_service.dart';
 import 'package:doppy/providers/feed_provider/feed_ui_service.dart';
 import 'package:doppy/pages/screens/home_screen.dart';
@@ -57,6 +58,7 @@ Future<void> main() async {
         ChangeNotifierProvider(create: (_) => GroupProvider()),
         ChangeNotifierProvider(create: (_) => CategoryOverlayProvider()),
         ChangeNotifierProvider(create: (_) => PostDragDropService()),
+
         ChangeNotifierProvider(create: (_) => SearchService()),
         ChangeNotifierProvider(create: (_) => SearchProvider()),
         ChangeNotifierProvider(create: (_) => NodeComponentService()),

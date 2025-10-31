@@ -1,6 +1,8 @@
 import 'package:doppy/editor/component/row_image_component.dart';
 import 'package:doppy/theme/app_colors.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
+import 'dart:math';
 import 'package:super_editor/super_editor.dart';
 import 'package:doppy/editor/service/drag_service.dart';
 import 'package:doppy/editor/service/editor_service.dart';
@@ -73,7 +75,7 @@ class CustomParagraphComponentBuilder implements ComponentBuilder {
   }
 }
 
-class _ParagraphWithDropLines extends StatelessWidget {
+class _ParagraphWithDropLines extends StatefulWidget {
   const _ParagraphWithDropLines({
     required this.nodeId,
     required this.dragService,
@@ -87,14 +89,41 @@ class _ParagraphWithDropLines extends StatelessWidget {
   final Widget child;
 
   @override
+  State<_ParagraphWithDropLines> createState() =>
+      _ParagraphWithDropLinesState();
+}
+
+class _ParagraphWithDropLinesState extends State<_ParagraphWithDropLines>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+  final GlobalKey _subtreeKey = GlobalKey();
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController.unbounded(vsync: this)
+      ..repeat(min: 0, max: 1, period: const Duration(milliseconds: 1500));
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
-      animation: Listenable.merge([dragService, editorService]),
+      animation: Listenable.merge([
+        _controller,
+        widget.dragService,
+        widget.editorService,
+      ]),
       builder: (context, _) {
-        final currentIndex = dragService.getNodeIndex(nodeId);
-        final dropIndex = dragService.dropIndex;
-        final isSelf = dragService.draggingNodeId == nodeId;
-        final documentLength = editorService.document.length;
+        final currentIndex = widget.dragService.getNodeIndex(widget.nodeId);
+        final dropIndex = widget.dragService.dropIndex;
+        final isSelf = widget.dragService.draggingNodeId == widget.nodeId;
+        final documentLength = widget.editorService.document.length;
         final isLastNode = currentIndex == documentLength - 1;
 
         bool showTop =
@@ -105,15 +134,12 @@ class _ParagraphWithDropLines extends StatelessWidget {
 
         bool showBottom = false;
         if (isLastNode && dropIndex != null && !isSelf && currentIndex != -1) {
-          // 마지막 노드일 때만 아래쪽 라인 표시 (문서 끝에 삽입)
           showBottom = dropIndex == documentLength;
         }
-        // 일반적인 경우는 이중 표시 방지를 위해 하단 라인 비활성화
 
-        // 방어: 위 노드가 이미지면 상단 라인 비표시(이미지가 하단 라인을 그리도록 위임)
         if (showTop) {
           try {
-            final doc = editorService.document;
+            final doc = widget.editorService.document;
             if (currentIndex - 1 >= 0) {
               final prev = doc.getNodeAt(currentIndex - 1);
               if (prev is ImageNode ||
@@ -126,27 +152,50 @@ class _ParagraphWithDropLines extends StatelessWidget {
           } catch (_) {}
         }
 
+        // 문단 내부 스포일러 박스 계산 (문단 로컬 좌표)
+        final boxes = _collectSpoilerBoxes();
+
         Widget content = DefaultTextStyle.merge(
           textAlign: _resolveTextAlign(),
-          child: child,
+          child: KeyedSubtree(key: _subtreeKey, child: widget.child),
         );
 
         return Stack(
           children: [
-            Container(margin: EdgeInsets.only(top: 4), child: content),
+            Container(margin: const EdgeInsets.only(top: 4), child: content),
+            // 문단 위에 직접 글리터 렌더링 (로컬 좌표기준이라 오프셋 불필요)
+            if (boxes.isNotEmpty)
+              Positioned.fill(
+                child: IgnorePointer(
+                  ignoring: true,
+                  child: CustomPaint(
+                    painter: _ParagraphSpoilerPainter(
+                      boxes: boxes,
+                      phase: _controller.value,
+                      isEditing: true, // 글쓰기 화면
+                    ),
+                  ),
+                ),
+              ),
             if (showTop)
-              Positioned(
+              const Positioned(
                 top: 0,
                 left: 0,
                 right: 0,
-                child: Container(height: 5, color: AppColors.primary),
+                child: SizedBox(
+                  height: 5,
+                  child: ColoredBox(color: AppColors.primary),
+                ),
               ),
             if (showBottom)
-              Positioned(
+              const Positioned(
                 bottom: 0,
                 left: 0,
                 right: 0,
-                child: Container(height: 5, color: AppColors.primary),
+                child: SizedBox(
+                  height: 5,
+                  child: ColoredBox(color: AppColors.primary),
+                ),
               ),
           ],
         );
@@ -157,7 +206,9 @@ class _ParagraphWithDropLines extends StatelessWidget {
   TextAlign _resolveTextAlign() {
     TextAlign resolvedAlign = TextAlign.left;
     try {
-      final node = editorService.editor.document.getNodeById(nodeId);
+      final node = widget.editorService.editor.document.getNodeById(
+        widget.nodeId,
+      );
       if (node is ParagraphNode) {
         final alignName = node.metadata['textAlign'] as String?;
         if (alignName == 'center') {
@@ -170,6 +221,136 @@ class _ParagraphWithDropLines extends StatelessWidget {
       }
     } catch (_) {}
     return resolvedAlign;
+  }
+
+  List<Rect> _collectSpoilerBoxes() {
+    try {
+      final node = widget.editorService.editor.document.getNodeById(
+        widget.nodeId,
+      );
+      if (node is! ParagraphNode) return const [];
+      final text = node.text;
+
+      // 스포일러 구간 수집
+      final spans = <TextRange>[];
+      bool inSpoiler = false;
+      int start = 0;
+      for (int i = 0; i <= text.text.length; i++) {
+        final attrs =
+            i < text.text.length
+                ? text.getAllAttributionsAt(i)
+                : const <Attribution>{};
+        final has = attrs.any(
+          (a) => a is NamedAttribution && a.id == 'spoiler',
+        );
+        if (has && !inSpoiler) {
+          inSpoiler = true;
+          start = i;
+        } else if (!has && inSpoiler) {
+          inSpoiler = false;
+          spans.add(TextRange(start: start, end: i));
+        }
+      }
+      if (spans.isEmpty) return const [];
+
+      // RenderParagraph 찾기
+      final ctx = _subtreeKey.currentContext;
+      if (ctx == null) return const [];
+      final RenderObject? ro = ctx.findRenderObject();
+      final rp = _findRenderParagraph(ro);
+      if (rp == null) return const [];
+
+      final paraOffset = (rp as RenderBox).localToGlobal(Offset.zero);
+      final hostOffset =
+          (context.findRenderObject() as RenderBox?)?.localToGlobal(
+            Offset.zero,
+          ) ??
+          Offset.zero;
+
+      final boxes = <Rect>[];
+      for (final r in spans) {
+        final sel = TextSelection(baseOffset: r.start, extentOffset: r.end);
+        final tb = rp.getBoxesForSelection(sel);
+        for (final b in tb) {
+          // 글로벌 → 이 컴포넌트(Stack) 로컬 좌표
+          final rect = b.toRect().shift(paraOffset - hostOffset);
+          boxes.add(rect.inflate(1.0));
+        }
+      }
+      return boxes;
+    } catch (_) {
+      return const [];
+    }
+  }
+}
+
+RenderParagraph? _findRenderParagraph(RenderObject? root) {
+  if (root == null) return null;
+  if (root is RenderParagraph) return root;
+  RenderParagraph? found;
+  root.visitChildren((child) {
+    found ??= _findRenderParagraph(child);
+  });
+  return found;
+}
+
+class _ParagraphSpoilerPainter extends CustomPainter {
+  final List<Rect> boxes;
+  final double phase; // 0..1
+  final bool isEditing;
+  _ParagraphSpoilerPainter({
+    required this.boxes,
+    required this.phase,
+    required this.isEditing,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (boxes.isEmpty) return;
+    final mask =
+        Paint()
+          ..style = PaintingStyle.fill
+          ..color = Colors.white.withOpacity(isEditing ? 0.5 : 1.0);
+    final dot =
+        Paint()
+          ..style = PaintingStyle.fill
+          ..color = Colors.black.withOpacity(0.75);
+
+    for (final rect in boxes) {
+      canvas.drawRect(rect, mask);
+      // 밀도 높은 1px 점들
+      final area = rect.width * rect.height;
+      // 글쓰기 모드(isEditing=true)에서는 밀도 낮춤
+      final count =
+          isEditing
+              ? max(40, (area / 200).floor())
+              : max(120, (area / 80).floor());
+      final double t = phase * (2 * pi) * 0.9; // 텍스트는 느리게
+      for (int i = 0; i < count; i++) {
+        final seed = rect.hashCode ^ (i * 486187739);
+        final r = Random(seed);
+        final baseX = r.nextDouble() * rect.width;
+        final baseY = r.nextDouble() * rect.height;
+        // 진동 기반 이동 (자글자글 효과)
+        final amp = 1.6 + r.nextDouble() * 1.6; // 1.6~3.2px (덜 요란)
+        final ox = sin(t + i * 0.17) * amp;
+        final oy = cos(t * 1.1 + i * 0.11) * amp;
+        double x = baseX + ox;
+        double y = baseY + oy;
+        x = x % rect.width;
+        y = y % rect.height;
+        if (x < 0) x += rect.width;
+        if (y < 0) y += rect.height;
+        canvas.drawRect(Rect.fromLTWH(rect.left + x, rect.top + y, 1, 1), dot);
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _ParagraphSpoilerPainter oldDelegate) {
+    return oldDelegate.phase != phase ||
+        oldDelegate.boxes != boxes ||
+        oldDelegate.isEditing != isEditing;
   }
 }
 

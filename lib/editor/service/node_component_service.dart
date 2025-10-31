@@ -11,6 +11,7 @@ class NodeComponentService extends ChangeNotifier {
   void clearAll() {
     clearHighlightedSelection();
     selectImage(null);
+    _spoilerByNodeId.clear();
   }
 
   // URL↔ID 매핑 로직 제거됨
@@ -21,6 +22,8 @@ class NodeComponentService extends ChangeNotifier {
   final Map<String, Uint8List> _editedBytesByNodeId = <String, Uint8List>{};
   // 텍스트 범위 선택에 포함된 이미지/이미지행 하이라이트 id 집합
   final Set<String> _selectionHighlightedImageIds = <String>{};
+  // 스포일러 상태 (세션 범위 캐시)
+  final Map<String, bool> _spoilerByNodeId = <String, bool>{};
 
   // Getters
   String? get selectedImageId => _selectedImageId;
@@ -28,8 +31,8 @@ class NodeComponentService extends ChangeNotifier {
   String? get selectedNodeId => _selectedImageId;
   Uint8List? getEditedBytes(String nodeId) => _editedBytesByNodeId[nodeId];
   Set<String> get selectionHighlightedIds => _selectionHighlightedImageIds;
-
   bool get hasSelectedImage => _selectedImageId != null;
+  bool isSpoiler(String nodeId) => _spoilerByNodeId[nodeId] == true;
 
   // ====== Transient thumbnail storage (session-scoped, in-memory only) ======
   final Map<String, String> _tempThumbnailUrlBySession = <String, String>{};
@@ -119,6 +122,18 @@ class NodeComponentService extends ChangeNotifier {
     if (_editedBytesByNodeId.remove(nodeId) != null) {
       notifyListeners();
     }
+  }
+
+  /// 이미지/행 노드 스포일러 토글 및 설정
+  void toggleSpoiler(String nodeId) {
+    _spoilerByNodeId[nodeId] = !(_spoilerByNodeId[nodeId] == true);
+    notifyListeners();
+  }
+
+  void setSpoiler(String nodeId, bool value) {
+    if (_spoilerByNodeId[nodeId] == value) return;
+    _spoilerByNodeId[nodeId] = value;
+    notifyListeners();
   }
 
   /// 현재 텍스트 범위 선택에 포함된 특수 노드를 하이라이트한다

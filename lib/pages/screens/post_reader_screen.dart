@@ -88,6 +88,8 @@ class _PostReaderScreenState extends State<PostReaderScreen>
   bool _isVideoViewer = false;
   String? _currentImageUrl;
   List<String> _allImageUrls = [];
+  String? _currentMediaId;
+  List<String> _allMediaIds = [];
 
   void _handleTap() async {
     if (_lastTapPosition == null) return;
@@ -148,7 +150,26 @@ class _PostReaderScreenState extends State<PostReaderScreen>
       case ImageNode:
         final imageNode = node as ImageNode;
         print('  - Image: ${imageNode.imageUrl}');
-        _showFullscreenImage(imageNode.imageUrl);
+        // mediaId 메타 추출
+        String? mediaId;
+        try {
+          final meta = (imageNode as dynamic).metadata as Map<String, dynamic>?;
+          final v = meta != null ? meta['mediaId'] : null;
+          if (v != null) mediaId = v.toString();
+        } catch (_) {}
+
+        setState(() {
+          _currentImageUrl = imageNode.imageUrl;
+          _allImageUrls = [_currentImageUrl!];
+          _isVideoViewer = false;
+          _showImageViewer = true;
+          _currentMediaId = mediaId;
+          _allMediaIds = mediaId != null ? [mediaId] : [];
+        });
+        // 뷰어 열 때 mediaId 전달
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+        });
         break;
 
       case ImageRowNode:
@@ -169,7 +190,10 @@ class _PostReaderScreenState extends State<PostReaderScreen>
           setState(() {
             _allImageUrls = imageRowNode.imageUrls;
             _currentImageUrl = imageRowNode.imageUrls[clickedIndex];
+            _isVideoViewer = false;
             _showImageViewer = true;
+            _currentMediaId = null;
+            _allMediaIds = List.filled(_allImageUrls.length, '');
           });
         }
         break;
@@ -216,13 +240,6 @@ class _PostReaderScreenState extends State<PostReaderScreen>
       controller.restartVideo?.call();
       print('[ClipNode] restartVideo() 호출됨');
     }
-  }
-
-  void _showFullscreenImage(String imageUrl) {
-    setState(() {
-      _currentImageUrl = imageUrl;
-      _showImageViewer = true;
-    });
   }
 
   void _closeImageViewer() {
@@ -758,8 +775,6 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                             onShowComments: _showCommentBottomSheet,
                           ),
                         ),
-                        if (_commentService.comments.isNotEmpty)
-                          SliverToBoxAdapter(child: SizedBox(height: 100)),
                       ],
                     ),
                   ),
@@ -834,15 +849,15 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                                 child: Row(
                                   crossAxisAlignment: CrossAxisAlignment.center,
                                   children: [
-                                    SizedBox(width: 15),
+                                    SizedBox(width: 17),
                                     GestureDetector(
                                       onTap: () => Navigator.of(context).pop(),
                                       child: Icon(
                                         Icons.arrow_back_ios_new_rounded,
-                                        color: Theme.of(context)
-                                            .colorScheme
-                                            .onSurface
-                                            .withOpacity(0.7),
+                                        color:
+                                            Theme.of(
+                                              context,
+                                            ).colorScheme.onSurface,
                                         size: 22,
                                       ),
                                     ),
@@ -855,9 +870,6 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                                               _currentExportedData ??
                                               widget.exported;
                                           if (dataToEdit['id'] != null) {
-                                            print(
-                                              '[PostReader] 수정 모드로 진입: ${dataToEdit.keys.toList()}',
-                                            );
                                             Navigator.of(context).push(
                                               MaterialPageRoute(
                                                 builder:
@@ -953,6 +965,9 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                     child: FullscreenImageViewer(
                       imageUrl: _currentImageUrl!,
                       allImageUrls: _allImageUrls,
+                      mediaId: _currentMediaId,
+                      allMediaIds: _allMediaIds,
+
                       initialIndex:
                           _currentImageUrl != null && _allImageUrls.isNotEmpty
                               ? _allImageUrls.indexOf(_currentImageUrl!)

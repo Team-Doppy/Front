@@ -17,7 +17,9 @@ class ImageRowNode extends BlockNode {
     required this.id,
     required List<String> imageUrls,
     this.spacing = 8.0,
-  }) : imageUrls = imageUrls.take(3).toList(); // 최대 3개로 제한
+    Map<String, dynamic>? metadata,
+  }) : imageUrls = imageUrls.take(3).toList(), // 최대 3개로 제한
+       _metadata = metadata ?? <String, dynamic>{};
 
   @override
   bool get isDeletable => false;
@@ -26,6 +28,10 @@ class ImageRowNode extends BlockNode {
   final String id;
   final List<String> imageUrls;
   final double spacing;
+  final Map<String, dynamic> _metadata;
+
+  @override
+  Map<String, dynamic> get metadata => _metadata;
 
   String get nodeType => 'imageRow';
 
@@ -35,11 +41,13 @@ class ImageRowNode extends BlockNode {
     String? id,
     List<String>? imageUrls,
     double? spacing,
+    Map<String, dynamic>? metadata,
   }) {
     return ImageRowNode(
       id: id ?? this.id,
       imageUrls: imageUrls?.take(3).toList() ?? this.imageUrls,
       spacing: spacing ?? this.spacing,
+      metadata: metadata ?? _metadata,
     );
   }
 
@@ -85,11 +93,11 @@ class ImageRowNode extends BlockNode {
 
   @override
   DocumentNode copyAndReplaceMetadata(Map<String, dynamic> newMetadata) {
-    // 메타데이터 사용 안 하면 동일 복제 반환
     return ImageRowNode(
       id: id,
       imageUrls: List<String>.from(imageUrls),
       spacing: spacing,
+      metadata: newMetadata,
     );
   }
 
@@ -101,11 +109,13 @@ class ImageRowNode extends BlockNode {
 
   @override
   DocumentNode copyWithAddedMetadata(Map<String, dynamic> newProperties) {
-    // 동일
+    final updatedMetadata = Map<String, dynamic>.from(_metadata);
+    updatedMetadata.addAll(newProperties);
     return ImageRowNode(
       id: id,
       imageUrls: List<String>.from(imageUrls),
       spacing: spacing,
+      metadata: updatedMetadata,
     );
   }
 
@@ -197,9 +207,10 @@ class ImageRowComponent extends StatefulWidget {
 }
 
 class _ImageRowComponentState extends State<ImageRowComponent>
-    with DocumentComponent {
+    with DocumentComponent, SingleTickerProviderStateMixin {
   double? _unifiedHeight;
   final Map<String, Size> _imageSizes = {};
+  late final AnimationController _controller;
 
   // DocumentComponent 필수 메서드들
   @override
@@ -310,6 +321,19 @@ class _ImageRowComponentState extends State<ImageRowComponent>
   static const double marginBottom = 0;
 
   @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController.unbounded(vsync: this)
+      ..repeat(min: 0, max: 1, period: const Duration(milliseconds: 900));
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final imageService = context.watch<NodeComponentService>();
     final isSelected = imageService.selectedImageId == widget.nodeId;
@@ -352,47 +376,125 @@ class _ImageRowComponentState extends State<ImageRowComponent>
                           // 이미지들
                           ...widget.imageUrls.asMap().entries.map((entry) {
                             final imageUrl = entry.value;
+
+                            // 메타데이터에서 댓글 정보 가져오기
+                            bool hasComments = false;
+                            int commentCount = 0;
+                            try {
+                              final node = doc?.getNodeById(widget.nodeId);
+                              if (node is ImageRowNode) {
+                                final meta = node.metadata;
+                                final commentInfo =
+                                    meta['imageCommentInfo']
+                                        as Map<String, dynamic>?;
+                                if (commentInfo != null &&
+                                    commentInfo[imageUrl] is Map) {
+                                  final imgInfo =
+                                      commentInfo[imageUrl]
+                                          as Map<String, dynamic>;
+                                  hasComments = imgInfo['hasComments'] == true;
+                                  final cc = imgInfo['commentCount'];
+                                  if (cc is num) commentCount = cc.toInt();
+                                  if (cc is String)
+                                    commentCount = int.tryParse(cc) ?? 0;
+                                }
+                              }
+                            } catch (_) {}
+
                             return Expanded(
                               child: Container(
                                 margin:
                                     imageUrl == widget.imageUrls.last
                                         ? EdgeInsets.zero
                                         : EdgeInsets.only(right: 1),
-                                child: SizedBox(
-                                  height: _unifiedHeight ?? 150,
-                                  child: Image.network(
-                                    imageUrl,
-                                    fit: BoxFit.cover,
-                                    loadingBuilder: (context, child, loading) {
-                                      if (loading == null) return child;
-                                      return ShimmerBox(
-                                        width: double.infinity,
-                                        height: _unifiedHeight ?? 150,
-                                        borderRadius: BorderRadius.circular(0),
-                                      );
-                                    },
-                                    errorBuilder: (context, error, stack) {
-                                      print('Image error: $error');
-                                      return ImageErrorPlaceholder(width: 200);
-                                    },
-                                    frameBuilder: (
-                                      context,
-                                      child,
-                                      frame,
-                                      sync,
-                                    ) {
-                                      if (frame != null) {
-                                        WidgetsBinding.instance
-                                            .addPostFrameCallback((_) {
-                                              _measureAndUnifyHeight(
-                                                imageUrl,
-                                                constraints.maxWidth,
-                                              );
-                                            });
-                                      }
-                                      return child;
-                                    },
-                                  ),
+                                child: Stack(
+                                  children: [
+                                    SizedBox(
+                                      height: _unifiedHeight ?? 150,
+                                      child: Image.network(
+                                        imageUrl,
+                                        fit: BoxFit.cover,
+                                        loadingBuilder: (
+                                          context,
+                                          child,
+                                          loading,
+                                        ) {
+                                          if (loading == null) return child;
+                                          return ShimmerBox(
+                                            width: double.infinity,
+                                            height: _unifiedHeight ?? 150,
+                                            borderRadius: BorderRadius.circular(
+                                              0,
+                                            ),
+                                          );
+                                        },
+                                        errorBuilder: (context, error, stack) {
+                                          print('Image error: $error');
+                                          return ImageErrorPlaceholder(
+                                            width: 200,
+                                          );
+                                        },
+                                        frameBuilder: (
+                                          context,
+                                          child,
+                                          frame,
+                                          sync,
+                                        ) {
+                                          if (frame != null) {
+                                            WidgetsBinding.instance
+                                                .addPostFrameCallback((_) {
+                                                  _measureAndUnifyHeight(
+                                                    imageUrl,
+                                                    constraints.maxWidth,
+                                                  );
+                                                });
+                                          }
+                                          return child;
+                                        },
+                                      ),
+                                    ),
+                                    // 댓글 배지
+                                    if (hasComments)
+                                      Positioned(
+                                        top: 4,
+                                        right: 4,
+                                        child: IgnorePointer(
+                                          child: Container(
+                                            padding: const EdgeInsets.symmetric(
+                                              horizontal: 6,
+                                              vertical: 2,
+                                            ),
+                                            decoration: BoxDecoration(
+                                              color: Colors.black.withOpacity(
+                                                0.55,
+                                              ),
+                                              borderRadius:
+                                                  BorderRadius.circular(12),
+                                            ),
+                                            child: Row(
+                                              mainAxisSize: MainAxisSize.min,
+                                              children: [
+                                                const Icon(
+                                                  Icons
+                                                      .chat_bubble_outline_rounded,
+                                                  color: Colors.white,
+                                                  size: 12,
+                                                ),
+                                                const SizedBox(width: 3),
+                                                Text(
+                                                  commentCount.toString(),
+                                                  style: const TextStyle(
+                                                    color: Colors.white,
+                                                    fontSize: 11,
+                                                    fontWeight: FontWeight.w600,
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                  ],
                                 ),
                               ),
                             );
@@ -406,6 +508,26 @@ class _ImageRowComponentState extends State<ImageRowComponent>
                       child: IgnorePointer(
                         child: Container(
                           color: AppColors.primary.withOpacity(0.4),
+                        ),
+                      ),
+                    ),
+
+                  // 스포일러 마스킹 (세션 캐시)
+                  if (context.watch<NodeComponentService>().isSpoiler(
+                    widget.nodeId,
+                  ))
+                    Positioned.fill(
+                      child: IgnorePointer(
+                        child: AnimatedBuilder(
+                          animation: _controller,
+                          builder: (context, _) {
+                            return CustomPaint(
+                              painter: _RowImageSpoilerPainter(
+                                phase: _controller.value,
+                                isEditing: true,
+                              ),
+                            );
+                          },
                         ),
                       ),
                     ),
@@ -723,6 +845,54 @@ class _ImageRowComponentState extends State<ImageRowComponent>
       }
     }
     return true;
+  }
+}
+
+class _RowImageSpoilerPainter extends CustomPainter {
+  final double phase;
+  final bool isEditing;
+  _RowImageSpoilerPainter({required this.phase, required this.isEditing});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final rect = Offset.zero & size;
+    final mask =
+        Paint()
+          ..style = PaintingStyle.fill
+          ..color = Colors.white.withOpacity(isEditing ? 0.4 : 1.0);
+    final dot =
+        Paint()
+          ..style = PaintingStyle.fill
+          ..color = Colors.black.withOpacity(0.3);
+
+    canvas.drawRect(rect, mask);
+    final area = rect.width * rect.height;
+    final count =
+        isEditing
+            ? math.max(40, (area / 180).floor())
+            : math.max(60, (area / 120).floor());
+    final double t = phase * (2 * math.pi) * 1.1;
+    for (int i = 0; i < count; i++) {
+      final seed = rect.hashCode ^ (i * 486187739);
+      final r = math.Random(seed);
+      final baseX = r.nextDouble() * rect.width;
+      final baseY = r.nextDouble() * rect.height;
+      final amp = 1.2 + r.nextDouble() * 1.8; // 1.2~3.0px
+      final ox = math.sin(t + i * 0.17) * amp;
+      final oy = math.cos(t * 1.1 + i * 0.11) * amp;
+      double x = baseX + ox;
+      double y = baseY + oy;
+      x = x % rect.width;
+      y = y % rect.height;
+      if (x < 0) x += rect.width;
+      if (y < 0) y += rect.height;
+      canvas.drawRect(Rect.fromLTWH(x, y, 1.5, 1.5), dot);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _RowImageSpoilerPainter oldDelegate) {
+    return oldDelegate.phase != phase || oldDelegate.isEditing != isEditing;
   }
 }
 

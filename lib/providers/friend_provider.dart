@@ -134,6 +134,8 @@ class FriendProvider with ChangeNotifier {
 
   /// 이웃(친구) 해제
   Future<bool> deleteFriend(String targetUsername) async {
+    _isLoadingStatus = true;
+    notifyListeners();
     try {
       await _friendService.deleteFriend(targetUsername);
       // 목록/상태 국소 업데이트
@@ -141,11 +143,13 @@ class FriendProvider with ChangeNotifier {
       _receivedRequests.removeWhere((f) => f.username == targetUsername);
       _sentRequests.removeWhere((f) => f.username == targetUsername);
       _friendStatus = FriendRequestStatus.none;
-      notifyListeners();
       return true;
     } catch (e) {
       debugPrint('이웃 해제 실패: $e');
       return false;
+    } finally {
+      _isLoadingStatus = false;
+      notifyListeners();
     }
   }
 
@@ -176,24 +180,32 @@ class FriendProvider with ChangeNotifier {
 
   /// 친구 신청 보내기
   Future<bool> sendFriendRequest(String targetUsername) async {
+    _isLoadingStatus = true;
+    notifyListeners();
     try {
       final String username = targetUsername.trim();
       if (username.isEmpty) {
         print("친구 신청 실패: targetUsername 비어있음");
+        _isLoadingStatus = false;
+        notifyListeners();
         return false;
       }
       if (_friendStatus != FriendRequestStatus.none) {
         // 이미 요청했거나 수락된 상태는 중복 요청 방지
+        _isLoadingStatus = false;
+        notifyListeners();
         return false;
       }
 
       await _friendService.sendFriendRequest(username);
       _friendStatus = FriendRequestStatus.requested; // UI 즉시 반영
-      notifyListeners();
       return true;
     } catch (e) {
       print("친구 신청 실패: $e");
       return false;
+    } finally {
+      _isLoadingStatus = false;
+      notifyListeners();
     }
   }
 
