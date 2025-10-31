@@ -122,10 +122,8 @@ class CommentInputSection extends StatelessWidget {
                       borderSide: BorderSide.none,
                     ),
                     filled: true,
-                    fillColor:
-                        isDarkMode
-                            ? Theme.of(context).colorScheme.surface
-                            : Colors.grey[300],
+                    fillColor: Theme.of(context).colorScheme.surface,
+
                     contentPadding: const EdgeInsets.symmetric(
                       horizontal: 16,
                       vertical: 0,
@@ -139,10 +137,7 @@ class CommentInputSection extends StatelessWidget {
                 child: Container(
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
-                    color:
-                        isDarkMode
-                            ? Theme.of(context).colorScheme.surface
-                            : Colors.grey[300],
+                    color: Theme.of(context).colorScheme.surface,
                     shape: BoxShape.circle,
                   ),
                   child: Icon(

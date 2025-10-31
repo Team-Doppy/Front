@@ -176,12 +176,14 @@ class _DrawingOverlayState extends State<DrawingOverlay>
                       onPressed: () => Navigator.of(context).pop(),
                       icon: Icon(
                         Icons.close,
-                        color: Colors.white.withOpacity(0.9),
-                        size: 22,
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.onSurface.withOpacity(0.4),
+                        size: 23,
                       ),
                       style: IconButton.styleFrom(),
                     ),
-                    const SizedBox(width: 20),
+                    const SizedBox(width: 5),
 
                     GestureDetector(
                       onTap: _strokes.isNotEmpty ? _undo : null,
@@ -191,8 +193,12 @@ class _DrawingOverlayState extends State<DrawingOverlay>
                         height: 24,
                         colorFilter: ColorFilter.mode(
                           _strokes.isNotEmpty
-                              ? Colors.white.withOpacity(0.9)
-                              : Colors.white.withOpacity(0.3),
+                              ? Theme.of(
+                                context,
+                              ).colorScheme.onSurface.withOpacity(0.9)
+                              : Theme.of(
+                                context,
+                              ).colorScheme.onSurface.withOpacity(0.4),
                           BlendMode.srcIn,
                         ),
                       ),
@@ -206,8 +212,12 @@ class _DrawingOverlayState extends State<DrawingOverlay>
                         height: 24,
                         colorFilter: ColorFilter.mode(
                           _redo.isNotEmpty
-                              ? Colors.white.withOpacity(0.9)
-                              : Colors.white.withOpacity(0.3),
+                              ? Theme.of(
+                                context,
+                              ).colorScheme.onSurface.withOpacity(0.9)
+                              : Theme.of(
+                                context,
+                              ).colorScheme.onSurface.withOpacity(0.3),
                           BlendMode.srcIn,
                         ),
                       ),
@@ -226,8 +236,12 @@ class _DrawingOverlayState extends State<DrawingOverlay>
                         style: TextStyle(
                           color:
                               _hasValidContent()
-                                  ? Colors.white
-                                  : Colors.white.withOpacity(0.3),
+                                  ? Theme.of(
+                                    context,
+                                  ).colorScheme.onSurface.withOpacity(0.9)
+                                  : Theme.of(
+                                    context,
+                                  ).colorScheme.onSurface.withOpacity(0.3),
                           fontWeight: FontWeight.w700,
                           fontSize: 16,
                         ),
@@ -256,7 +270,7 @@ class _DrawingOverlayState extends State<DrawingOverlay>
                 children: [
                   // 슬라이더 영역
                   SizedBox(
-                    width: _isAdjustingWidth ? 60 : 40,
+                    width: _isAdjustingWidth ? 60 : 54,
 
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
@@ -265,8 +279,10 @@ class _DrawingOverlayState extends State<DrawingOverlay>
                         if (_isAdjustingWidth)
                           Text(
                             '${_width.round()}',
-                            style: const TextStyle(
-                              color: Colors.white,
+                            style: TextStyle(
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.onSurface.withOpacity(0.9),
                               fontSize: 16,
                               fontWeight: FontWeight.bold,
                             ),
@@ -280,15 +296,19 @@ class _DrawingOverlayState extends State<DrawingOverlay>
                               data: SliderTheme.of(context).copyWith(
                                 trackHeight: 6,
                                 thumbShape: const RoundSliderThumbShape(
-                                  enabledThumbRadius: 8,
+                                  enabledThumbRadius: 6,
                                 ),
                                 overlayShape: const RoundSliderOverlayShape(
                                   overlayRadius: 16,
                                 ),
                               ),
                               child: Slider(
-                                activeColor: Colors.white.withOpacity(0.9),
-                                inactiveColor: Colors.white.withOpacity(0.2),
+                                activeColor: Theme.of(
+                                  context,
+                                ).colorScheme.onSurface.withOpacity(0.9),
+                                inactiveColor: Theme.of(
+                                  context,
+                                ).colorScheme.onSurface.withOpacity(0.2),
                                 min: 1,
                                 max: 30,
                                 value: _width.clamp(1.0, 30.0),
@@ -317,9 +337,19 @@ class _DrawingOverlayState extends State<DrawingOverlay>
               ),
             ),
           ),
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 0,
+            child: Container(
+              height: 80,
+              width: double.infinity,
+              color: Theme.of(context).colorScheme.background,
+            ),
+          ),
           // 하단 툴바 - SingleChildScrollView로 오버플로우 방지
           Positioned(
-            bottom: MediaQuery.of(context).padding.bottom + 8,
+            bottom: 12,
             left: 0,
             right: 0,
             child: FadeTransition(
@@ -395,8 +425,8 @@ class _DrawingOverlayState extends State<DrawingOverlay>
         decoration: BoxDecoration(
           color:
               active
-                  ? Colors.white.withOpacity(0.22)
-                  : Colors.white.withOpacity(0.10),
+                  ? Theme.of(context).colorScheme.onSurface.withOpacity(0.22)
+                  : Theme.of(context).colorScheme.onSurface.withOpacity(0.10),
           borderRadius: BorderRadius.circular(12),
           border: Border.all(color: Colors.white24),
         ),
@@ -416,7 +446,10 @@ class _DrawingOverlayState extends State<DrawingOverlay>
         decoration: BoxDecoration(
           shape: BoxShape.circle,
           border: Border.all(
-            color: sel ? Colors.white : Colors.white24,
+            color:
+                sel
+                    ? Theme.of(context).colorScheme.onSurface.withOpacity(0.7)
+                    : Theme.of(context).colorScheme.onSurface.withOpacity(0.10),
             width: sel ? 3 : 1,
           ),
         ),
@@ -531,29 +564,10 @@ class _DrawingPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    // 지우개 영역을 계산하기 위한 Path
-    Path erasePath = Path();
+    // 레이어를 열어 지우개(BlendMode.clear)가 하위 드로잉을 깔끔히 지우도록 함
+    canvas.saveLayer(Offset.zero & size, Paint());
 
-    // 모든 지우개 스트로크를 하나의 Path로 합치기
-    for (final s in strokes) {
-      if (s.erase && s.points.isNotEmpty) {
-        if (s.points.length > 1) {
-          final firstScreen = _toScreenCoord(s.points.first);
-          erasePath.moveTo(firstScreen.dx, firstScreen.dy);
-          for (int i = 1; i < s.points.length; i++) {
-            final screenPos = _toScreenCoord(s.points[i]);
-            erasePath.lineTo(screenPos.dx, screenPos.dy);
-          }
-        } else {
-          final screenPos = _toScreenCoord(s.points.first);
-          erasePath.addOval(
-            Rect.fromCircle(center: screenPos, radius: s.width / 2),
-          );
-        }
-      }
-    }
-
-    // 일반 펜 스트로크를 그리되, 지우개 영역은 제외
+    // 1) 일반 펜 스트로크 먼저 그리기
     for (final s in strokes) {
       if (!s.erase && s.points.isNotEmpty) {
         final paint =
@@ -565,26 +579,45 @@ class _DrawingPainter extends CustomPainter {
               ..isAntiAlias = true;
 
         final path = Path();
-        final firstScreen = _toScreenCoord(s.points.first);
-        path.moveTo(firstScreen.dx, firstScreen.dy);
+        final first = _toScreenCoord(s.points.first);
+        path.moveTo(first.dx, first.dy);
         for (int i = 1; i < s.points.length; i++) {
-          final screenPos = _toScreenCoord(s.points[i]);
-          path.lineTo(screenPos.dx, screenPos.dy);
+          final p = _toScreenCoord(s.points[i]);
+          path.lineTo(p.dx, p.dy);
         }
-
-        // 지우개 영역이 있으면 차감
-        if (!erasePath.getBounds().isEmpty) {
-          final newPath = Path.combine(
-            PathOperation.difference,
-            path,
-            erasePath,
-          );
-          canvas.drawPath(newPath, paint);
-        }
-
         canvas.drawPath(path, paint);
       }
     }
+
+    // 2) 지우개 스트로크는 Clear 블렌드모드로 덮어서 삭제
+    for (final s in strokes) {
+      if (s.erase && s.points.isNotEmpty) {
+        final erasePaint =
+            Paint()
+              ..blendMode = BlendMode.clear
+              ..strokeWidth = s.width
+              ..style = PaintingStyle.stroke
+              ..strokeCap = StrokeCap.round
+              ..isAntiAlias = true;
+
+        final path = Path();
+        final first = _toScreenCoord(s.points.first);
+        path.moveTo(first.dx, first.dy);
+        for (int i = 1; i < s.points.length; i++) {
+          final p = _toScreenCoord(s.points[i]);
+          path.lineTo(p.dx, p.dy);
+        }
+        // 단일 점일 때도 원형으로 지우도록 처리
+        if (s.points.length == 1) {
+          final c = _toScreenCoord(s.points.first);
+          path.addOval(Rect.fromCircle(center: c, radius: s.width / 2));
+        }
+
+        canvas.drawPath(path, erasePaint);
+      }
+    }
+
+    canvas.restore();
   }
 
   @override

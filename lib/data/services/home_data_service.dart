@@ -1,6 +1,5 @@
 import 'package:doppy/data/models/post_data.dart';
 import 'package:doppy/data/services/blog_service.dart';
-import 'package:doppy/utils/network_utils.dart';
 import 'package:flutter/material.dart';
 
 /// 피드 데이터 컨테이너
@@ -165,6 +164,12 @@ class HomeDataService {
   }) async {
     print('[HomeDataService] 친구글 로드: page=$page, size=$size, refresh=$refresh');
 
+    // 새로고침이면 캐시 완전히 비우기
+    if (refresh) {
+      _cache.invalidateCache('friends');
+      print('[HomeDataService] 친구글 캐시 무효화 완료');
+    }
+
     // 새로고침이 아니면 캐시 확인
     if (!refresh) {
       final cached = _cache.getCachedFeedData('friends', page, size);
@@ -195,6 +200,12 @@ class HomeDataService {
     bool refresh = false,
   }) async {
     print('[HomeDataService] 전체글 로드: page=$page, size=$size, refresh=$refresh');
+
+    // 새로고침이면 캐시 완전히 비우기
+    if (refresh) {
+      _cache.invalidateCache('all');
+      print('[HomeDataService] 전체글 캐시 무효화 완료');
+    }
 
     // 새로고침이 아니면 캐시 확인
     if (!refresh) {

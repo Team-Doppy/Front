@@ -1,5 +1,7 @@
 import 'dart:typed_data';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:super_editor/super_editor.dart';
 
 /// 에디터 내 특수 노드(이미지/이미지행/링크/멘션 등)의 선택/하이라이트 상태를 관리하는 서비스
 class NodeComponentService extends ChangeNotifier {
@@ -12,6 +14,34 @@ class NodeComponentService extends ChangeNotifier {
     clearHighlightedSelection();
     selectImage(null);
     _spoilerByNodeId.clear();
+  }
+
+  /// 스포일러 상태만 초기화 (다른 상태는 유지)
+  void clearSpoilers() {
+    if (_spoilerByNodeId.isEmpty) return;
+    _spoilerByNodeId.clear();
+    if (kDebugMode) {
+      print('[NodeComponentService] clearSpoilers: 모든 스포일러 상태 초기화');
+    }
+    notifyListeners();
+  }
+
+  // ===== 스포일러 헬퍼 =====
+  bool shouldShowImageSpoiler(String nodeId, Map<String, dynamic>? metadata) {
+    if (isSpoilerDisabled(nodeId)) return false; // 해제되면 숨기지 않음
+    final metaFlag = (metadata != null && metadata['spoiler'] == true);
+    return metaFlag || isSpoiler(nodeId);
+  }
+
+  bool shouldShowParagraphSpoiler(String nodeId, AttributedText text) {
+    if (isSpoilerDisabled(nodeId)) return false;
+    for (int i = 0; i < text.text.length; i++) {
+      final attrs = text.getAllAttributionsAt(i);
+      if (attrs.any((a) => a is NamedAttribution && a.id == 'spoiler')) {
+        return true;
+      }
+    }
+    return false;
   }
 
   // URL↔ID 매핑 로직 제거됨
@@ -33,6 +63,19 @@ class NodeComponentService extends ChangeNotifier {
   Set<String> get selectionHighlightedIds => _selectionHighlightedImageIds;
   bool get hasSelectedImage => _selectedImageId != null;
   bool isSpoiler(String nodeId) => _spoilerByNodeId[nodeId] == true;
+
+  /// 스포일러가 명시적으로 비활성화되었는지 확인 (false로 설정된 경우)
+  bool isSpoilerDisabled(String nodeId) {
+    final hasKey = _spoilerByNodeId.containsKey(nodeId);
+    final value = _spoilerByNodeId[nodeId];
+    final result = hasKey && value == false;
+    if (kDebugMode) {
+      print(
+        '[NodeComponentService] isSpoilerDisabled: $nodeId -> hasKey=$hasKey, value=$value, result=$result',
+      );
+    }
+    return result;
+  }
 
   // ====== Transient thumbnail storage (session-scoped, in-memory only) ======
   final Map<String, String> _tempThumbnailUrlBySession = <String, String>{};
@@ -131,8 +174,19 @@ class NodeComponentService extends ChangeNotifier {
   }
 
   void setSpoiler(String nodeId, bool value) {
-    if (_spoilerByNodeId[nodeId] == value) return;
+    final oldValue = _spoilerByNodeId[nodeId];
+    if (oldValue == value) {
+      if (kDebugMode) {
+        print('[NodeComponentService] setSpoiler: $nodeId = $value (변경 없음)');
+      }
+      return;
+    }
     _spoilerByNodeId[nodeId] = value;
+    if (kDebugMode) {
+      print(
+        '[NodeComponentService] setSpoiler: $nodeId = $value (이전: $oldValue), notifyListeners 호출',
+      );
+    }
     notifyListeners();
   }
 

@@ -12,12 +12,14 @@ class PostReaderStickers extends StatelessWidget {
     required this.layoutKey,
     required this.stackKey,
     required this.scrollController,
+    this.topInset = 0,
   });
 
   final List stickers;
   final GlobalKey layoutKey;
   final GlobalKey stackKey;
   final ScrollController scrollController;
+  final double topInset;
 
   @override
   Widget build(BuildContext context) {
@@ -42,13 +44,25 @@ class PostReaderStickers extends StatelessWidget {
           final type = (m['type'] ?? '').toString();
           // zIndex는 정렬에만 사용되었으며 여기선 미사용
           final rot = (m['rotation'] as num?)?.toDouble() ?? 0.0;
-          final scale = (m['scale'] as num?)?.toDouble() ?? 1.0;
+          double baseScale = (m['scale'] as num?)?.toDouble() ?? 1.0;
           final anchor = (m['anchor'] as Map?)?.cast<String, dynamic>();
           late final Offset absPos;
           late final bool needsScrollCompensation;
+          double anchorScale = 1.0; // 앵커 기준 스케일 보정 (refW 대비 현재 width)
 
+          Rect? nodeRectForAnchor;
+
+          bool anchorHasRefW = false;
           if (anchor != null) {
             absPos = _resolveAnchor(anchor);
+            // refW/refH가 있으면 현재 노드 크기 대비 스케일 보정
+            final nodeId = (anchor['nodeId'] ?? '').toString();
+            nodeRectForAnchor = _getNodeRect(nodeId);
+            final refW = (anchor['refW'] as num?)?.toDouble();
+            if (nodeRectForAnchor != null && refW != null && refW > 0) {
+              anchorScale = nodeRectForAnchor.width / refW;
+              anchorHasRefW = true;
+            }
             needsScrollCompensation = false;
           } else {
             final pf =
@@ -68,6 +82,7 @@ class PostReaderStickers extends StatelessWidget {
           }
 
           Widget body;
+          Size? bodySize; // 드로잉 등 크기 중심 보정용
           if (type == 'text') {
             final content =
                 (m['content'] as Map?)?.cast<String, dynamic>() ?? {};
@@ -165,6 +180,11 @@ class PostReaderStickers extends StatelessWidget {
             final content =
                 (m['content'] as Map?)?.cast<String, dynamic>() ?? {};
             final strokes = (content['strokes'] as List?) ?? [];
+            // 드로잉 바운딩 박스 계산하여 중심 보정에 사용
+            final bounds = _computeDrawingBounds(strokes);
+            if (bounds != null) {
+              bodySize = Size(bounds.width, bounds.height);
+            }
             body = RepaintBoundary(
               child: DrawingStickerRenderer(
                 strokes: strokes.cast<Map<String, dynamic>>(),
@@ -177,16 +197,28 @@ class PostReaderStickers extends StatelessWidget {
           final double topPos =
               needsScrollCompensation ? (absPos.dy - scrollY) : absPos.dy;
 
+          // 최종 스케일: 저장된 스케일 * 앵커 스케일 보정
+          final double finalScale = baseScale * anchorScale;
+
+          // 드로잉 등은 앵커 지점이 중앙이 되도록 보정
+          double left = absPos.dx;
+          double top = topPos + topInset;
+          // 구버전(anchor에 refW가 없는) 데이터는 좌상단 기준으로 저장됨 → 중심 보정 금지
+          if (bodySize != null && anchorHasRefW) {
+            left = absPos.dx - (bodySize.width * finalScale) / 2;
+            top = topPos - (bodySize.height * finalScale) / 2 + topInset;
+          }
+
           children.add(
             Positioned(
-              left: absPos.dx,
-              top: topPos,
+              left: left,
+              top: top,
               child: Transform(
                 alignment: Alignment.center,
                 transform:
                     Matrix4.identity()
                       ..rotateZ(rot)
-                      ..scale(scale),
+                      ..scale(finalScale),
                 child: body,
               ),
             ),
@@ -195,6 +227,55 @@ class PostReaderStickers extends StatelessWidget {
         return Stack(children: children);
       },
     );
+  }
+
+  Rect? _getNodeRect(String nodeId) {
+    final layout = layoutKey.currentState as DocumentLayout?;
+    if (layout == null) return null;
+    try {
+      final rect = layout.getRectForSelection(
+        DocumentPosition(
+          nodeId: nodeId,
+          nodePosition: const UpstreamDownstreamNodePosition.upstream(),
+        ),
+        DocumentPosition(
+          nodeId: nodeId,
+          nodePosition: const UpstreamDownstreamNodePosition.downstream(),
+        ),
+      );
+      return rect;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  // 드로잉 바운딩 박스 계산 (렌더러와 동일 로직)
+  Rect? _computeDrawingBounds(List strokes) {
+    if (strokes.isEmpty) return null;
+    double? minX, minY, maxX, maxY;
+    for (final strokeData in strokes) {
+      final points =
+          (strokeData['points'] as List?)?.cast<Map<String, dynamic>>() ??
+          const [];
+      final width = (strokeData['width'] as num?)?.toDouble() ?? 8.0;
+      final half = width / 2;
+      for (final p in points) {
+        final x = (p['x'] as num).toDouble();
+        final y = (p['y'] as num).toDouble();
+        final x1 = x - half;
+        final y1 = y - half;
+        final x2 = x + half;
+        final y2 = y + half;
+        minX = (minX == null) ? x1 : (x1 < minX ? x1 : minX);
+        minY = (minY == null) ? y1 : (y1 < minY ? y1 : minY);
+        maxX = (maxX == null) ? x2 : (x2 > maxX ? x2 : maxX);
+        maxY = (maxY == null) ? y2 : (y2 > maxY ? y2 : maxY);
+      }
+    }
+    if (minX == null || minY == null || maxX == null || maxY == null)
+      return null;
+    const double pad = 0.5;
+    return Rect.fromLTRB(minX - pad, minY - pad, maxX + pad, maxY + pad);
   }
 
   Offset _resolveAnchor(Map<String, dynamic> anchor) {
@@ -217,7 +298,16 @@ class PostReaderStickers extends StatelessWidget {
         ),
       );
       if (rect == null) return const Offset(0, 0);
-      final topLeftInStack = stackBox.globalToLocal(rect.topLeft);
+      // getRectForSelection은 DocumentLayout의 로컬 좌표계 기준이므로
+      // 먼저 DocumentLayout RenderBox를 통해 전역 좌표로 변환한 뒤,
+      // Stack 로컬 좌표로 다시 변환한다.
+      final layoutBox =
+          layoutKey.currentContext?.findRenderObject() as RenderBox?;
+      final rectTopLeftGlobal =
+          layoutBox != null
+              ? layoutBox.localToGlobal(rect.topLeft)
+              : rect.topLeft;
+      final topLeftInStack = stackBox.globalToLocal(rectTopLeftGlobal);
       final x = topLeftInStack.dx + relX * rect.width;
       final y = topLeftInStack.dy + relY * rect.height;
       return Offset(x, y);
@@ -251,9 +341,14 @@ class DrawingStickerRenderer extends StatelessWidget {
       return const SizedBox.shrink();
     }
 
+    // 저장된 좌표는 이미 (0,0) 기준 상대 좌표이므로,
+    // bounds의 left, top이 0이 아닐 수 있지만 (패딩이나 음수 선 두께 반영)
+    // 실제 그리기는 bounds.left, bounds.top을 고려해서 offset 조정 필요
+    final offset = Offset(bounds.left, bounds.top);
+
     return RepaintBoundary(
       child: CustomPaint(
-        painter: _VectorDrawingPainter(strokes: strokes),
+        painter: _VectorDrawingPainter(strokes: strokes, offset: offset),
         size: Size(bounds.width, bounds.height),
         isComplex: true,
         willChange: false,
@@ -272,6 +367,7 @@ class DrawingStickerRenderer extends StatelessWidget {
       final half = width / 2;
 
       for (final p in points) {
+        // 저장된 좌표는 이미 bounds 기준 상대 좌표이므로 그대로 사용
         final x = (p['x'] as num).toDouble();
         final y = (p['y'] as num).toDouble();
 
@@ -292,7 +388,10 @@ class DrawingStickerRenderer extends StatelessWidget {
     }
 
     // 패딩 최소화 (선 두께가 이미 반영되어 있음)
+    // minX, minY가 0 근처일 수 있지만, 음수일 수도 있으므로 그대로 사용
     const double pad = 0.5;
+    // bounds는 상대 좌표 기준이므로, (0,0)을 기준으로 하는 Rect 생성
+    // 하지만 실제로는 최소값이 음수일 수 있으므로 그대로 사용
     return Rect.fromLTRB(minX - pad, minY - pad, maxX + pad, maxY + pad);
   }
 }
@@ -300,11 +399,15 @@ class DrawingStickerRenderer extends StatelessWidget {
 /// 벡터 그리기 페인터
 class _VectorDrawingPainter extends CustomPainter {
   final List<Map<String, dynamic>> strokes;
+  final Offset offset; // bounds의 최소값 (minX, minY)
 
-  _VectorDrawingPainter({required this.strokes});
+  _VectorDrawingPainter({required this.strokes, required this.offset});
 
   @override
   void paint(Canvas canvas, Size size) {
+    // bounds의 offset만큼 이동 (bounds의 좌상단이 (0,0)이 되도록)
+    canvas.translate(-offset.dx, -offset.dy);
+
     for (final strokeData in strokes) {
       final points =
           (strokeData['points'] as List).cast<Map<String, dynamic>>();
@@ -330,6 +433,7 @@ class _VectorDrawingPainter extends CustomPainter {
 
       final path = Path();
       final firstPoint = points.first;
+      // 저장된 좌표는 이미 상대 좌표이므로 그대로 사용
       path.moveTo(
         (firstPoint['x'] as num).toDouble(),
         (firstPoint['y'] as num).toDouble(),

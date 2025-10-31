@@ -6,6 +6,12 @@ import '../../utils/network_utils.dart';
 
 /// 내 피드 전용 Provider (캐시 포함)
 class MyProfileFeedProvider extends BaseFeedProvider {
+  // 싱글톤 패턴
+  static final MyProfileFeedProvider _instance =
+      MyProfileFeedProvider._internal();
+  factory MyProfileFeedProvider() => _instance;
+  MyProfileFeedProvider._internal();
+
   // 독립적인 상태 관리
   String? _username;
   bool _loading = false;
@@ -335,7 +341,11 @@ class MyProfileFeedProvider extends BaseFeedProvider {
     _currentPage = 0;
     _totalPages = 0;
     invalidateCache();
+    // 선택 상태도 초기화
+    selectBase(BaseFilter.all);
+    selectCategory(null);
     notifyListeners();
+    print('[MyProfileFeedProvider] 로그아웃 - 모든 데이터 초기화 완료');
   }
 
   @override

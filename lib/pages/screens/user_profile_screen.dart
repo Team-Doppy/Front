@@ -69,6 +69,9 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
       _feedProvider = context.read<OtherProfileFeedProvider>();
     }
 
+    // 스크롤 리스너 추가: 페이지네이션 자동 로드
+    _scrollController.addListener(_onScroll);
+
     WidgetsBinding.instance.addPostFrameCallback((_) {
       try {
         context.read<PostDragDropService>().setVerticalController(
@@ -186,9 +189,32 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     }
   }
 
+  /// 스크롤 리스너: 끝에 가까워지면 다음 페이지 로드
+  void _onScroll() {
+    if (!_scrollController.hasClients) return;
+
+    final maxScroll = _scrollController.position.maxScrollExtent;
+    final currentScroll = _scrollController.position.pixels;
+    final threshold = maxScroll * 0.8; // 80% 지점에서 로드
+
+    // 스크롤이 끝에서 200픽셀 이내이거나 80% 이상 스크롤되었을 때
+    if (currentScroll >= threshold) {
+      // 더 로드할 데이터가 있고, 현재 로딩 중이 아닐 때만 호출
+      if (_feedProvider.hasMore && !_feedProvider.isLoadingMore) {
+        print(
+          '[UserProfileScreen] 스크롤 끝 감지 - 자동 로드 시작 (${(currentScroll / maxScroll * 100).toStringAsFixed(1)}%)',
+        );
+        _feedProvider.loadMore();
+      }
+    }
+  }
+
   @override
   void dispose() {
     _categoryDropDown.setOnCategoryChanged(null);
+
+    // 스크롤 리스너 제거
+    _scrollController.removeListener(_onScroll);
 
     if (mounted) {
       try {
@@ -377,12 +403,12 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                                   imageUrl: _displayImageUrl,
                                   username: _displayUsername,
                                   size: 150,
-                                  borderWidth: 2,
+                                  borderWidth: 3,
                                   borderColor:
                                       Theme.of(context).brightness ==
                                               Brightness.dark
                                           ? Colors.grey.shade300
-                                          : Colors.grey.shade600,
+                                          : Colors.grey.shade400,
                                   isUploading: _isUploadingProfileImage,
                                   onTap:
                                       _isOwnProfile && !_isUploadingProfileImage

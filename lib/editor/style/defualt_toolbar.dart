@@ -788,57 +788,6 @@ extension _TopExpandedRow on _DefaultToolbarState {
           child: Row(
             children: [
               _buildSvgChip(
-                svgPath: 'assets/icons/pin_point.svg',
-                label: '핀포인트',
-                onTap: () {
-                  //widget.editorService.addPinNode();
-                  _forceCloseToolbar();
-                },
-              ),
-              const SizedBox(width: 8),
-              _buildSvgChip(
-                svgPath: 'assets/icons/editor_sticker.svg',
-                label: '스티커',
-                onTap: () async {
-                  // 키보드 내리기
-                  FocusManager.instance.primaryFocus?.unfocus();
-                  Navigator.of(context).push(
-                    PageRouteBuilder(
-                      opaque: false,
-                      barrierDismissible: true,
-                      pageBuilder:
-                          (_, __, ___) => StickerOverlay(
-                            onSubmit: ({
-                              String? emoji,
-                              Uint8List? image,
-                              required String text,
-                              Map<String, dynamic>? textStyle,
-                            }) {
-                              final svc = context.read<StickerService>();
-                              if (image != null) {
-                                final Size size = MediaQuery.of(context).size;
-                                final scrollY =
-                                    widget.scrollController?.offset ?? 0.0;
-                                final at = Offset(
-                                  size.width / 2 - 100,
-                                  scrollY + size.height / 2 - 200,
-                                );
-                                svc.addImageSticker(image, at);
-                              }
-
-                              _toggle(ToolbarSection.none);
-                            },
-                            initialKind: StickerKind.image,
-                          ),
-                    ),
-                  );
-                  if (context.mounted) {
-                    FocusManager.instance.primaryFocus?.unfocus();
-                  }
-                },
-              ),
-
-              _buildSvgChip(
                 svgPath: 'assets/icons/editor_pen.svg',
                 label: '그리기',
                 onTap: () => _selectStickerType(StickerKind.draw),
@@ -852,6 +801,8 @@ extension _TopExpandedRow on _DefaultToolbarState {
                     PageRouteBuilder(
                       opaque: false,
                       barrierDismissible: true,
+                      transitionDuration: Duration.zero,
+                      reverseTransitionDuration: Duration.zero,
                       pageBuilder:
                           (_, __, ___) => LinkOverlay(
                             onSubmit: ({
@@ -884,6 +835,8 @@ extension _TopExpandedRow on _DefaultToolbarState {
                     PageRouteBuilder(
                       opaque: false,
                       barrierDismissible: true,
+                      transitionDuration: Duration.zero,
+                      reverseTransitionDuration: Duration.zero,
                       pageBuilder:
                           (_, __, ___) => MentionOverlay(
                             onClose: () {},
@@ -1189,7 +1142,7 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
 
     return Container(
       height: 38,
-      padding: const EdgeInsets.symmetric(horizontal: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 2),
       decoration: BoxDecoration(
         color: background,
         borderRadius: BorderRadius.circular(8),
@@ -1209,6 +1162,7 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
         // 카메라 섹션 (아이콘만, 옵션은 상단 행)
         _buildMainSvgIcon(
           svgPath: 'assets/icons/editor_gallery.svg',
+          size: 27,
           isActive: true,
           onTap: () async {
             // 키보드 내리기 (한 번만, 충분한 시간 대기)
@@ -1439,6 +1393,7 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
           svgPath: 'assets/icons/ic_text.svg',
           isActive: _expanded == ToolbarSection.text,
           onTap: () => _toggle(ToolbarSection.text),
+          size: 24,
         ),
         // 더 이상 하단에서 펼치지 않음
         const SizedBox(width: 10),
@@ -1487,6 +1442,7 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
           isActive: _expanded == ToolbarSection.insert,
           onTap: () => _toggle(ToolbarSection.insert),
           activeColor: Theme.of(context).colorScheme.onSurface,
+          size: 32,
         ),
 
         // 오른쪽 끝으로 밀어내기 위한 공간
@@ -1512,10 +1468,11 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
           icon: Icons.close,
           isActive: false,
           onTap: _forceCloseToolbar,
+          size: 20,
         ),
-        const SizedBox(width: 10),
+        const SizedBox(width: 4),
         _buildDivider(),
-        const SizedBox(width: 10),
+        const SizedBox(width: 4),
         // 확장된 내용
         Expanded(child: _buildTopExpandedRowContent()),
       ],
@@ -1527,6 +1484,7 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
     required bool isActive,
     required VoidCallback onTap,
     Color? activeColor,
+    double? size,
   }) {
     final Color onSurface = Theme.of(context).colorScheme.onSurface;
     final Color color =
@@ -1540,7 +1498,7 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
           width: 36,
           height: 50,
           alignment: Alignment.center,
-          child: Icon(icon, size: isActive ? 28 : 25, color: color),
+          child: Icon(icon, size: size ?? (isActive ? 28 : 25), color: color),
         ),
       ),
     );
@@ -1550,6 +1508,7 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
     required String svgPath,
     required bool isActive,
     required VoidCallback onTap,
+    double? size,
   }) {
     final Color onSurface = Theme.of(context).colorScheme.onSurface;
     final Color color = onSurface.withOpacity(0.5);
@@ -1564,8 +1523,8 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
           alignment: Alignment.center,
           child: SvgPicture.asset(
             svgPath,
-            width: isActive ? 28 : 25,
-            height: isActive ? 28 : 25,
+            width: size ?? (isActive ? 28 : 25),
+            height: size ?? (isActive ? 28 : 25),
             colorFilter: ColorFilter.mode(color, BlendMode.srcIn),
           ),
         ),
@@ -2214,12 +2173,42 @@ class _KeyboardDependentButtons extends StatelessWidget {
             context: context,
             svgPath: 'assets/icons/download.svg',
             isActive: false,
+            size: 24,
             onTap: () {
               onShowDraftList?.call();
             },
           ),
         ],
       ],
+    );
+  }
+
+  Widget _buildMainSvgIcon({
+    required String svgPath,
+    required bool isActive,
+    required VoidCallback onTap,
+    double? size,
+    required BuildContext context,
+  }) {
+    final Color onSurface = Theme.of(context).colorScheme.onSurface;
+    final Color color = onSurface.withOpacity(0.5);
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(8),
+        child: Container(
+          width: 36,
+          height: 40,
+          alignment: Alignment.center,
+          child: SvgPicture.asset(
+            svgPath,
+            width: size ?? (isActive ? 28 : 25),
+            height: size ?? (isActive ? 28 : 25),
+            colorFilter: ColorFilter.mode(color, BlendMode.srcIn),
+          ),
+        ),
+      ),
     );
   }
 
@@ -2243,36 +2232,6 @@ class _KeyboardDependentButtons extends StatelessWidget {
           height: 50,
           alignment: Alignment.center,
           child: Icon(icon, size: isActive ? 26 : 22, color: color),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildMainSvgIcon({
-    required BuildContext context,
-    required String svgPath,
-    required bool isActive,
-    required VoidCallback onTap,
-    Color? activeColor,
-  }) {
-    final Color onSurface = Theme.of(context).colorScheme.onSurface;
-    final Color color =
-        isActive ? (activeColor ?? onSurface) : onSurface.withOpacity(0.5);
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(8),
-        child: Container(
-          width: 36,
-          height: 50,
-          alignment: Alignment.center,
-          child: SvgPicture.asset(
-            svgPath,
-            width: isActive ? 26 : 22,
-            height: isActive ? 26 : 22,
-            colorFilter: ColorFilter.mode(color, BlendMode.srcIn),
-          ),
         ),
       ),
     );

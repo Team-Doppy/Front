@@ -397,6 +397,7 @@ class _VerticalCategorySectionState extends State<VerticalCategorySection> {
                                         },
                                 child: CardView(
                                   post: post,
+                                  showViewBadge: !isReadOnly,
                                   isFirst: isFirstPost,
                                   isLast: isLastPost,
                                 ),
@@ -513,6 +514,9 @@ class _VerticalCategorySectionState extends State<VerticalCategorySection> {
                                                       isImageOnly
                                                           ? ImageView(
                                                             post: post,
+                                                            showViewCount:
+                                                                !isReadOnly &&
+                                                                !isSystemCategory,
                                                           )
                                                           : _buildPostCard(
                                                             theme,
@@ -530,7 +534,12 @@ class _VerticalCategorySectionState extends State<VerticalCategorySection> {
                                         opacity: 0.3,
                                         child:
                                             isImageOnly
-                                                ? ImageView(post: post)
+                                                ? ImageView(
+                                                  post: post,
+                                                  showViewCount:
+                                                      !isReadOnly &&
+                                                      !isSystemCategory,
+                                                )
                                                 : _buildPostCard(
                                                   theme,
                                                   post,
@@ -542,7 +551,12 @@ class _VerticalCategorySectionState extends State<VerticalCategorySection> {
                                         onTap: () => _openPost(context, post),
                                         child:
                                             isImageOnly
-                                                ? ImageView(post: post)
+                                                ? ImageView(
+                                                  post: post,
+                                                  showViewCount:
+                                                      !isReadOnly &&
+                                                      !isSystemCategory,
+                                                )
                                                 : _buildPostCard(
                                                   theme,
                                                   post,
@@ -746,7 +760,15 @@ class _VerticalCategorySectionState extends State<VerticalCategorySection> {
     bool isLastPost,
   ) {
     // 내 피드인지 확인 (BaseFeedProvider가 MyProfileFeedProvider인지 확인)
-    final isMyFeed = context.read<BaseFeedProvider>() is MyProfileFeedProvider;
+    final feedProvider = context.read<BaseFeedProvider>();
+    final isReadOnly = feedProvider.isReadOnly;
+
+    // 시스템 카테고리 확인 (categoryId가 null이거나 숫자가 아닌 경우)
+    final categoryIdInt = int.tryParse(widget.categoryId ?? '');
+    final isSystemCategory = categoryIdInt == null;
+
+    // 이미지 모드와 동일한 조건: !isReadOnly && !isSystemCategory
+    final showViewBadge = !isReadOnly && !isSystemCategory;
 
     return Column(
       children: [
@@ -754,7 +776,7 @@ class _VerticalCategorySectionState extends State<VerticalCategorySection> {
           width: double.infinity,
           child: CardView(
             post: post,
-            showViewBadge: isMyFeed,
+            showViewBadge: showViewBadge,
             isFirst: isFirstPost,
             isLast: isLastPost,
           ),

@@ -216,6 +216,11 @@ class _MentionOverlayState extends State<MentionOverlay> {
   bool _loading = false;
   DateTime? _lastQueryAt;
 
+  // 드래그 관련 상태
+  double _dragStartY = 0.0;
+  double _dragStartX = 0.0;
+  bool _isDragging = false;
+
   @override
   void initState() {
     super.initState();
@@ -265,15 +270,14 @@ class _MentionOverlayState extends State<MentionOverlay> {
 
   @override
   Widget build(BuildContext context) {
+    final bool hasQuery = _controller.text.trim().isNotEmpty;
     return Scaffold(
       appBar: AppBar(
         backgroundColor: const Color.fromARGB(182, 96, 96, 96),
         elevation: 0,
         scrolledUnderElevation: 0,
-        leading: IconButton(
-          onPressed: () => Navigator.of(context).pop(),
-          icon: Icon(Icons.close, color: Colors.white, size: 22),
-        ),
+        automaticallyImplyLeading: false,
+
         title: Container(
           padding: const EdgeInsets.symmetric(vertical: 20),
           child: TextField(
@@ -334,124 +338,245 @@ class _MentionOverlayState extends State<MentionOverlay> {
             onChanged: _onQueryChanged,
           ),
         ),
+        actions: [
+          GestureDetector(
+            onTap: () => Navigator.of(context).pop(),
+            child: Icon(
+              Icons.close,
+              color: Colors.white.withOpacity(0.7),
+              size: 22,
+            ),
+          ),
+          const SizedBox(width: 16),
+        ],
       ),
 
       backgroundColor: Colors.transparent,
-      body: Stack(
-        children: [
-          // 배경 블러 + 반투명
-          Positioned.fill(
-            child: GestureDetector(
-              onTap: () => Navigator.of(context).pop(),
-              onVerticalDragEnd: (d) {
-                if (d.primaryVelocity != null && d.primaryVelocity! > 400) {
-                  Navigator.of(context).pop();
-                }
-              },
-              child: BackdropFilter(
-                filter: ImageFilter.blur(sigmaX: 5, sigmaY: 5),
-                child: Container(color: const Color.fromARGB(182, 96, 96, 96)),
+      body: GestureDetector(
+        onPanStart: (details) {
+          _dragStartY = details.globalPosition.dy;
+          _dragStartX = details.globalPosition.dx;
+          _isDragging = true;
+        },
+        onPanUpdate: (details) {
+          if (!_isDragging) return;
+
+          final currentY = details.globalPosition.dy;
+          final currentX = details.globalPosition.dx;
+          final deltaY = currentY - _dragStartY;
+          final deltaX = (currentX - _dragStartX).abs();
+
+          // 아래로 50px 이상 드래그하면 바로 닫기
+          if (deltaY > 50) {
+            _isDragging = false;
+            Navigator.of(context).pop();
+            return;
+          }
+
+          // 좌우로 50px 이상 드래그하면 바로 닫기
+          if (deltaX > 50) {
+            _isDragging = false;
+            Navigator.of(context).pop();
+            return;
+          }
+        },
+        onPanEnd: (details) {
+          if (!_isDragging) return;
+
+          // 드래그 속도에 따라 오버레이 닫기
+          final velocity = details.velocity.pixelsPerSecond;
+          if (velocity.dy.abs() > velocity.dx.abs()) {
+            // 세로 드래그 (아래로)
+            if (velocity.dy > 200) {
+              Navigator.of(context).pop();
+            }
+          } else {
+            // 가로 드래그 (좌우)
+            if (velocity.dx.abs() > 200) {
+              Navigator.of(context).pop();
+            }
+          }
+          _isDragging = false;
+        },
+        child: Stack(
+          children: [
+            // 배경 블러 + 반투명
+            Positioned.fill(
+              child: GestureDetector(
+                onTap: () => Navigator.of(context).pop(),
+                child: BackdropFilter(
+                  filter: ImageFilter.blur(sigmaX: 5, sigmaY: 5),
+                  child: Container(
+                    color: const Color.fromARGB(182, 96, 96, 96),
+                  ),
+                ),
               ),
             ),
-          ),
-          Column(
-            children: [
-              SizedBox(height: 20),
-              if (_loading || _results.isNotEmpty)
-                SizedBox(
-                  height: 140,
-                  child:
-                      _loading
-                          ? ListView.separated(
-                            scrollDirection: Axis.horizontal,
-                            padding: const EdgeInsets.symmetric(horizontal: 12),
-                            itemBuilder: (_, i) => _LoadingCircleUser(),
-                            separatorBuilder:
-                                (_, __) => const SizedBox(width: 8),
-                            itemCount: 6, // 로딩 중일 때 6개 표시
-                          )
-                          : ListView.separated(
-                            scrollDirection: Axis.horizontal,
-                            padding: const EdgeInsets.symmetric(horizontal: 12),
-                            itemBuilder: (_, i) {
-                              final item = _results[i];
-                              final bool selected = _selected.any(
-                                (s) => s.username == item.username,
-                              );
-                              final bool isRecentMention =
-                                  _controller.text.isEmpty;
-                              return _CircleUser(
-                                user: item,
-                                selected: selected,
-                                isRecentMention: isRecentMention,
-                                onTap: () => _toggleSelect(item),
-                                onRemove:
-                                    isRecentMention
-                                        ? () => _removeFromRecent(item)
-                                        : null,
-                              );
-                            },
-                            separatorBuilder:
-                                (_, __) => const SizedBox(width: 8),
-                            itemCount: _results.length,
-                          ),
-                ),
-              Expanded(
-                child: Container(
-                  child:
-                      _selected.isNotEmpty
-                          ? Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 16),
-                            child: ListView.separated(
-                              shrinkWrap: true,
-                              itemBuilder:
-                                  (_, i) => _SelectedRowChip(
-                                    label: _selected[i].username,
-                                    onRemove: () => _toggleSelect(_selected[i]),
+            Column(
+              children: [
+                SizedBox(height: 20),
+                if (hasQuery)
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      SizedBox(
+                        height: 140,
+                        child:
+                            _loading
+                                ? ListView.separated(
+                                  scrollDirection: Axis.horizontal,
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 12,
                                   ),
-                              separatorBuilder:
-                                  (_, __) => const SizedBox(height: 8),
-                              itemCount: _selected.length,
-                            ),
-                          )
-                          : Container(),
+                                  itemBuilder: (_, i) => _LoadingCircleUser(),
+                                  separatorBuilder:
+                                      (_, __) => const SizedBox(width: 8),
+                                  itemCount: 6,
+                                )
+                                : (_results.isNotEmpty
+                                    ? ListView.separated(
+                                      scrollDirection: Axis.horizontal,
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 12,
+                                      ),
+                                      itemBuilder: (_, i) {
+                                        final item = _results[i];
+                                        final bool selected = _selected.any(
+                                          (s) => s.username == item.username,
+                                        );
+                                        return _CircleUser(
+                                          user: item,
+                                          selected: selected,
+                                          isRecentMention: false,
+                                          onTap: () => _toggleSelect(item),
+                                        );
+                                      },
+                                      separatorBuilder:
+                                          (_, __) => const SizedBox(width: 8),
+                                      itemCount: _results.length,
+                                    )
+                                    : Center(
+                                      child: Text(
+                                        '검색 결과가 없습니다',
+                                        style: const TextStyle(
+                                          color: Colors.white70,
+                                        ),
+                                      ),
+                                    )),
+                      ),
+                    ],
+                  )
+                else if (!hasQuery &&
+                    _selected.isEmpty &&
+                    (_loading || _results.isNotEmpty))
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      SizedBox(
+                        height: 140,
+                        child:
+                            _loading
+                                ? ListView.separated(
+                                  scrollDirection: Axis.horizontal,
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 12,
+                                  ),
+                                  itemBuilder: (_, i) => _LoadingCircleUser(),
+                                  separatorBuilder:
+                                      (_, __) => const SizedBox(width: 8),
+                                  itemCount: 6,
+                                )
+                                : ListView.separated(
+                                  scrollDirection: Axis.horizontal,
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 12,
+                                  ),
+                                  itemBuilder: (_, i) {
+                                    final item = _results[i];
+                                    final bool selected = _selected.any(
+                                      (s) => s.username == item.username,
+                                    );
+                                    final bool isRecentMention =
+                                        _controller.text.isEmpty;
+                                    return _CircleUser(
+                                      user: item,
+                                      selected: selected,
+                                      isRecentMention: isRecentMention,
+                                      onTap: () => _toggleSelect(item),
+                                      onRemove:
+                                          isRecentMention
+                                              ? () => _removeFromRecent(item)
+                                              : null,
+                                    );
+                                  },
+                                  separatorBuilder:
+                                      (_, __) => const SizedBox(width: 8),
+                                  itemCount: _results.length,
+                                ),
+                      ),
+                    ],
+                  ),
+                Expanded(
+                  child: Container(
+                    child:
+                        !hasQuery && _selected.isNotEmpty
+                            ? Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Expanded(
+                                  child: Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 8,
+                                    ),
+                                    child: ListView.separated(
+                                      shrinkWrap: true,
+                                      itemBuilder:
+                                          (_, i) => _SelectedRowChip(
+                                            label: _selected[i].username,
+                                            onRemove:
+                                                () =>
+                                                    _toggleSelect(_selected[i]),
+                                          ),
+                                      separatorBuilder:
+                                          (_, __) => const SizedBox(height: 8),
+                                      itemCount: _selected.length,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            )
+                            : Container(),
+                  ),
                 ),
-              ),
-              Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 8,
-                ),
-                child: ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor:
-                        _selected.isEmpty
-                            ? Colors.transparent
-                            : _selected.length == 1
-                            ? Theme.of(context).colorScheme.onSurface
-                            : AppColors.darkTextPrimary,
-                    foregroundColor:
-                        _selected.isEmpty
-                            ? Colors.transparent
-                            : _selected.length == 1
-                            ? Theme.of(context).colorScheme.surface
-                            : AppColors.darkBackground,
-                    elevation: 0,
-                    minimumSize: Size(double.infinity, 48),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(20),
+                // 선택된 사람이 있을 때만 버튼 표시
+                if (_selected.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 20,
+                      vertical: 8,
+                    ),
+                    child: ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.white,
+                        foregroundColor: Colors.black,
+                        elevation: 0,
+                        minimumSize: Size(double.infinity, 48),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                      ),
+                      onPressed: _submit,
+                      child: const Text(
+                        '언급하기',
+                        style: TextStyle(fontWeight: FontWeight.w700),
+                      ),
                     ),
                   ),
-                  onPressed: _submit,
-                  child: const Text(
-                    '언급하기',
-                    style: TextStyle(fontWeight: FontWeight.w700),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ],
+                SizedBox(height: 5),
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -509,13 +634,22 @@ class _MentionOverlayState extends State<MentionOverlay> {
 
   void _toggleSelect(_UserChip user) {
     final idx = _selected.indexWhere((s) => s.username == user.username);
+    final bool wasSelected = idx >= 0;
     setState(() {
-      if (idx >= 0) {
+      if (wasSelected) {
         _selected.removeAt(idx);
       } else {
         _selected.add(user);
       }
     });
+
+    // 새로 추가된 경우: 검색을 종료하고 "이미 추가한 사람" 섹션으로 전환
+    if (!wasSelected) {
+      _controller.clear();
+      _onQueryChanged('');
+      // 포커스 유지로 추가를 연속할 수 있게 함
+      _focusNode.requestFocus();
+    }
   }
 
   void _submit() {
@@ -579,23 +713,27 @@ class _CircleUser extends StatelessWidget {
         children: [
           Stack(
             children: [
-              Container(
-                width: 100,
-                height: 100,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: AppColors.darkSurfaceVariant,
-                  border: Border.all(
-                    color: selected ? AppColors.primary : AppColors.darkBorder,
-                    width: selected ? 3.5 : 1,
+              Padding(
+                padding: const EdgeInsets.only(top: 4.0),
+                child: Container(
+                  width: 80,
+                  height: 80,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: Theme.of(context).colorScheme.surface,
+                    border: Border.all(
+                      color: selected ? AppColors.primary : Colors.transparent,
+                      width: selected ? 2 : 1,
+                    ),
                   ),
-                ),
-                child: CommonProfileAvatar(
-                  username: user.username,
-                  size: 100,
-                  borderWidth: 1,
-
-                  imageUrl: user.imageUrl,
+                  child: CommonProfileAvatar(
+                    username: user.username,
+                    size: 80,
+                    borderWidth: 1,
+                    borderColor:
+                        selected ? AppColors.primary : Colors.transparent,
+                    imageUrl: user.imageUrl,
+                  ),
                 ),
               ),
               // 최근 언급 대상일 때만 X 버튼 표시
@@ -610,8 +748,10 @@ class _CircleUser extends StatelessWidget {
                       height: 20,
                       child: Icon(
                         Icons.close,
-                        color: Theme.of(context).colorScheme.onSurfaceVariant,
-                        size: 12,
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.surface.withOpacity(0.7),
+                        size: 17,
                       ),
                     ),
                   ),
@@ -647,7 +787,7 @@ class _SelectedRowChip extends StatelessWidget {
 
       child: Row(
         children: [
-          const Icon(Icons.alternate_email, color: Colors.white70, size: 16),
+          Icon(Icons.alternate_email, color: Colors.white, size: 20),
 
           const SizedBox(width: 8),
           Expanded(
@@ -655,14 +795,24 @@ class _SelectedRowChip extends StatelessWidget {
               label,
               style: const TextStyle(
                 color: Colors.white,
-                fontWeight: FontWeight.w600,
-                fontSize: 18,
+                fontWeight: FontWeight.bold,
+                fontSize: 20,
               ),
             ),
           ),
           GestureDetector(
             onTap: onRemove,
-            child: const Icon(Icons.close, color: Colors.white70, size: 16),
+            child: Padding(
+              padding: const EdgeInsets.only(top: 4.0, bottom: 4.0),
+              child: Text(
+                '취소',
+                style: TextStyle(
+                  color: Colors.white.withOpacity(0.5),
+                  fontSize: 15,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
           ),
         ],
       ),

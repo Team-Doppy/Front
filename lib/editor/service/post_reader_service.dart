@@ -1,12 +1,13 @@
 import 'dart:ui' as ui;
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:super_editor/super_editor.dart';
 import 'package:doppy/editor/component/link_component.dart';
-import 'package:doppy/editor/component/mention_component.dart';
 import 'package:doppy/editor/component/row_image_component.dart';
 import 'package:doppy/editor/component/divider_component.dart';
 import 'package:doppy/editor/component/clip_component.dart';
 import 'package:doppy/editor/service/sticker_service.dart';
+import 'package:doppy/editor/service/node_component_service.dart';
 import 'package:doppy/editor/style/defualt_toolbar.dart';
 import 'package:video_player/video_player.dart';
 
@@ -34,6 +35,10 @@ class PostReaderService {
       nodes = const [];
     }
     final rebuilt = <DocumentNode>[];
+    final nodeService = NodeComponentService();
+
+    // 스포일러 상태 복원을 위한 임시 저장소
+    final spoilerNodes = <String>[];
 
     for (final raw in nodes) {
       if (raw is! Map) {
@@ -54,6 +59,18 @@ class PostReaderService {
           if (isTitle && !includeTitleNode) break;
           final spans = (m['spans'] as List?) ?? const [];
           final attributed = _buildAttributedText(text, spans);
+
+          // 노드 레벨에 spoiler: true가 있으면 전체 텍스트에 spoiler attribution 적용
+          if (m['spoiler'] == true && text.isNotEmpty) {
+            final range = SpanRange(0, text.length - 1);
+            attributed.addAttribution(spoilerAttribution, range);
+            if (kDebugMode) {
+              print(
+                '[PostReaderService] Paragraph 노드 전체 스포일러 적용: $id, 텍스트 길이: ${text.length}',
+              );
+            }
+          }
+
           final meta = <String, dynamic>{'textAlign': align};
 
           // fontFamily를 메타데이터에서 추출하여 추가
@@ -77,6 +94,14 @@ class PostReaderService {
               (m['hasComments'] ?? data?['hasComments']) == true;
           final commentCount =
               (m['commentCount'] ?? data?['commentCount']) ?? 0;
+          // 스포일러 정보 확인 (노드 레벨 또는 data 내부)
+          final hasSpoiler =
+              (m['spoiler'] == true) || (data?['spoiler'] == true);
+
+          // NodeComponentService에 스포일러 상태 복원
+          if (hasSpoiler) {
+            spoilerNodes.add(id);
+          }
 
           rebuilt.add(
             ImageNode(
@@ -90,6 +115,7 @@ class PostReaderService {
                     (commentCount is num)
                         ? commentCount.toInt()
                         : int.tryParse(commentCount.toString()) ?? 0,
+                if (hasSpoiler) 'spoiler': true,
               },
             ),
           );
@@ -133,12 +159,23 @@ class PostReaderService {
             }
           }
 
+          // 스포일러 정보 확인 (노드 레벨)
+          final hasSpoiler = m['spoiler'] == true;
+
+          // NodeComponentService에 스포일러 상태 복원
+          if (hasSpoiler) {
+            spoilerNodes.add(id);
+          }
+
           rebuilt.add(
             ImageRowNode(
               id: id,
               imageUrls: urls,
               spacing: (m['spacing'] as num?)?.toDouble() ?? 4.0,
-              metadata: {'imageCommentInfo': imageCommentInfo},
+              metadata: {
+                'imageCommentInfo': imageCommentInfo,
+                if (hasSpoiler) 'spoiler': true,
+              },
             ),
           );
           break;
@@ -156,15 +193,33 @@ class PostReaderService {
           break;
 
         case 'mention':
-          rebuilt.add(
-            MentionNode(
-              id: id,
-              usernames:
-                  ((m['usernames'] as List?) ?? const [])
-                      .map((e) => e.toString())
-                      .toList(),
-            ),
-          );
+          // 멘션은 이제 Paragraph 기반으로 처리됨
+          final usernames =
+              ((m['usernames'] as List?) ?? const [])
+                  .map((e) => e.toString())
+                  .toList();
+          final String text = usernames.map((u) => '@$u').join('\n');
+
+          final AttributedText attributed = AttributedText(text);
+          if (text.isNotEmpty) {
+            attributed.addAttribution(
+              boldAttribution,
+              SpanRange(0, text.length - 1),
+            );
+          }
+
+          final meta = <String, dynamic>{
+            'textAlign': (m['align'] ?? 'center').toString(),
+            'mention': true,
+            'usernames': usernames,
+          };
+
+          // fontFamily를 메타데이터에서 추출하여 추가
+          if (m['fontFamily'] != null) {
+            meta['fontFamily'] = m['fontFamily'];
+          }
+
+          rebuilt.add(ParagraphNode(id: id, text: attributed, metadata: meta));
           break;
 
         case 'divider':
@@ -179,6 +234,14 @@ class PostReaderService {
               (m['hasComments'] ?? data?['hasComments']) == true;
           final commentCount =
               (m['commentCount'] ?? data?['commentCount']) ?? 0;
+          // 스포일러 정보 확인 (노드 레벨 또는 data 내부)
+          final hasSpoiler =
+              (m['spoiler'] == true) || (data?['spoiler'] == true);
+
+          // NodeComponentService에 스포일러 상태 복원
+          if (hasSpoiler) {
+            spoilerNodes.add(id);
+          }
 
           rebuilt.add(
             ClipNode(
@@ -193,6 +256,7 @@ class PostReaderService {
                     (commentCount is num)
                         ? commentCount.toInt()
                         : int.tryParse(commentCount.toString()) ?? 0,
+                if (hasSpoiler) 'spoiler': true,
               },
             ),
           );
@@ -206,13 +270,23 @@ class PostReaderService {
               (m['hasComments'] ?? data?['hasComments']) == true;
           final commentCount =
               (m['commentCount'] ?? data?['commentCount']) ?? 0;
+          // 스포일러 정보 확인 (노드 레벨 또는 data 내부)
+          final hasSpoiler =
+              (m['spoiler'] == true) || (data?['spoiler'] == true);
+
+          final finalId =
+              id.isNotEmpty
+                  ? id
+                  : 'clip_${DateTime.now().millisecondsSinceEpoch}';
+
+          // NodeComponentService에 스포일러 상태 복원
+          if (hasSpoiler) {
+            spoilerNodes.add(finalId);
+          }
 
           rebuilt.add(
             ClipNode(
-              id:
-                  id.isNotEmpty
-                      ? id
-                      : 'clip_${DateTime.now().millisecondsSinceEpoch}',
+              id: finalId,
               label: (m['label'] ?? '').toString(),
               colorHex: (m['color'] ?? '#FF5252').toString(),
               url: url,
@@ -223,6 +297,7 @@ class PostReaderService {
                     (commentCount is num)
                         ? commentCount.toInt()
                         : int.tryParse(commentCount.toString()) ?? 0,
+                if (hasSpoiler) 'spoiler': true,
               },
             ),
           );
@@ -232,6 +307,28 @@ class PostReaderService {
           // 알 수 없는 노드는 문단으로 폴백
           rebuilt.add(ParagraphNode(id: id, text: AttributedText('[${type}]')));
       }
+    }
+
+    // 스포일러 상태를 NodeComponentService에 복원
+    // 빌드 중 setState 방지를 위해 빌드 완료 후 실행
+    if (spoilerNodes.isNotEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        for (final nodeId in spoilerNodes) {
+          // 사용자가 해제한 스포일러는 다시 활성화하지 않음
+          if (nodeService.isSpoilerDisabled(nodeId)) {
+            continue;
+          }
+          nodeService.setSpoiler(nodeId, true);
+          if (kDebugMode) {
+            print('[PostReaderService] 스포일러 상태 복원: $nodeId');
+          }
+        }
+        if (kDebugMode) {
+          print(
+            '[PostReaderService] 스포일러 상태 복원 완료: ${spoilerNodes.length}개 노드',
+          );
+        }
+      });
     }
 
     return MutableDocument(nodes: rebuilt);
@@ -282,9 +379,13 @@ class PostReaderService {
         // 형광펜 속성
         final highlightHex = ann['highlight'] as String?;
         if (highlightHex != null && highlightHex.isNotEmpty) {
-          print('DEBUG: PostReaderService 형광펜 디코딩 - HEX: $highlightHex');
+          if (kDebugMode) {
+            print('DEBUG: PostReaderService 형광펜 디코딩 - HEX: $highlightHex');
+          }
           final highlightColor = _parseHexColor(highlightHex);
-          print('DEBUG: PostReaderService 형광펜 디코딩 - 색상: $highlightColor');
+          if (kDebugMode) {
+            print('DEBUG: PostReaderService 형광펜 디코딩 - 색상: $highlightColor');
+          }
           atts.add(HighlightAttribution(highlightColor));
         }
 
@@ -292,6 +393,16 @@ class PostReaderService {
         final fontFamily = ann['fontFamily'] as String?;
         if (fontFamily != null && fontFamily.isNotEmpty) {
           atts.add(FontFamilyAttribution(fontFamily));
+        }
+
+        // 스포일러 속성
+        if (ann['spoiler'] == true) {
+          atts.add(spoilerAttribution);
+          if (kDebugMode) {
+            print(
+              '[PostReaderService] spans에서 스포일러 발견: start=$start, end=$end',
+            );
+          }
         }
 
         // 속성을 텍스트에 적용

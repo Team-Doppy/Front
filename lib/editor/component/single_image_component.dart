@@ -4,7 +4,6 @@ import 'dart:typed_data';
 import 'package:doppy/common/widgets/image_error_placeholder.dart';
 import 'package:doppy/editor/component/row_image_component.dart';
 import 'package:doppy/editor/component/link_component.dart';
-import 'package:doppy/editor/component/mention_component.dart';
 import 'package:doppy/editor/service/drag_service.dart';
 import 'package:doppy/editor/service/node_component_service.dart';
 import 'package:doppy/pages/components/shimmer_box.dart';
@@ -15,9 +14,10 @@ import 'dart:math' as math;
 import 'package:super_editor/super_editor.dart';
 
 class SingleImageComponentBuilder implements ComponentBuilder {
-  const SingleImageComponentBuilder({this.dragService});
+  const SingleImageComponentBuilder({this.dragService, this.isEditing = true});
 
   final dynamic dragService; // DragService 타입을 나중에 import해서 수정
+  final bool isEditing;
 
   @override
   Widget? createComponent(
@@ -30,6 +30,7 @@ class SingleImageComponentBuilder implements ComponentBuilder {
         imageUrl: componentViewModel.imageUrl,
         componentKey: componentContext.componentKey,
         dragService: dragService,
+        isEditing: isEditing,
       );
     }
     return null;
@@ -53,6 +54,7 @@ class SingleImageComponent extends StatefulWidget {
     required this.imageUrl,
     required GlobalKey componentKey,
     this.dragService,
+    this.isEditing = true,
     Key? key,
   }) : _componentKey = componentKey,
        super(key: componentKey);
@@ -61,6 +63,7 @@ class SingleImageComponent extends StatefulWidget {
   final String imageUrl;
   final GlobalKey _componentKey;
   final dynamic dragService; // DragService 타입을 나중에 import해서 수정
+  final bool isEditing;
 
   @override
   State<SingleImageComponent> createState() => _SingleImageComponentState();
@@ -145,26 +148,24 @@ class _SingleImageComponentState extends State<SingleImageComponent>
               );
             }
 
-            // 스포일러 상태 (세션 캐시 + 이미지 메타데이터 둘 다 허용)
+            // 스포일러 상태 (헬퍼 사용)
             bool isSpoilerFlag = false;
+            final nodeService = context.read<NodeComponentService>();
             try {
               final node = doc?.getNodeById(widget.nodeId);
+              Map<String, dynamic>? meta;
               if (node is ImageNode) {
-                final meta =
-                    (node as dynamic).metadata as Map<String, dynamic>?;
-                if (meta != null && (meta['spoiler'] == true)) {
-                  isSpoilerFlag = true;
-                }
+                meta = (node as dynamic).metadata as Map<String, dynamic>?;
               }
+              isSpoilerFlag = nodeService.shouldShowImageSpoiler(
+                widget.nodeId,
+                meta,
+              );
             } catch (_) {}
-            // 세션 캐시
-            if (context.read<NodeComponentService>().isSpoiler(widget.nodeId)) {
-              isSpoilerFlag = true;
-            }
 
             // 댓글 배지 표시 값 추출
             bool hasCommentsFlag = false;
-            int commentCount = 0;
+
             try {
               final node = doc?.getNodeById(widget.nodeId);
               if (node is ImageNode) {
@@ -172,9 +173,6 @@ class _SingleImageComponentState extends State<SingleImageComponent>
                     (node as dynamic).metadata as Map<String, dynamic>?;
                 if (meta != null) {
                   hasCommentsFlag = meta['hasComments'] == true;
-                  final cc = meta['commentCount'];
-                  if (cc is num) commentCount = cc.toInt();
-                  if (cc is String) commentCount = int.tryParse(cc) ?? 0;
                 }
               }
             } catch (_) {}
@@ -219,14 +217,27 @@ class _SingleImageComponentState extends State<SingleImageComponent>
                       if (isSpoilerFlag)
                         Positioned.fill(
                           child: IgnorePointer(
-                            child: AnimatedBuilder(
-                              animation: _controller,
-                              builder: (context, _) {
-                                return CustomPaint(
-                                  painter: _ImageSpoilerPainter(
-                                    phase: _controller.value,
-                                    isEditing: true,
-                                  ),
+                            child: Builder(
+                              builder: (context) {
+                                final theme = Theme.of(context).colorScheme;
+                                final brightness = Theme.of(context).brightness;
+                                final bgColor = theme.background;
+                                final dotColor = theme.onSurface;
+                                final isLightTheme =
+                                    brightness == Brightness.light;
+                                return AnimatedBuilder(
+                                  animation: _controller,
+                                  builder: (context, _) {
+                                    return CustomPaint(
+                                      painter: _ImageSpoilerPainter(
+                                        phase: _controller.value,
+                                        isEditing: widget.isEditing,
+                                        backgroundColor: bgColor,
+                                        dotColor: dotColor,
+                                        isLightTheme: isLightTheme,
+                                      ),
+                                    );
+                                  },
                                 );
                               },
                             ),
@@ -478,7 +489,7 @@ class _SingleImageComponentState extends State<SingleImageComponent>
     bool isSpecialNode(DocumentNode? node) {
       if (node == null) return false;
       return node is LinkNode ||
-          node is MentionNode ||
+          (node is ParagraphNode && node.metadata['mention'] == true) ||
           node is ImageNode ||
           node is ImageRowNode;
     }
@@ -712,7 +723,16 @@ class _SingleImageComponentState extends State<SingleImageComponent>
 class _ImageSpoilerPainter extends CustomPainter {
   final double phase;
   final bool isEditing;
-  _ImageSpoilerPainter({required this.phase, required this.isEditing});
+  final Color backgroundColor;
+  final Color dotColor;
+  final bool isLightTheme;
+  _ImageSpoilerPainter({
+    required this.phase,
+    required this.isEditing,
+    required this.backgroundColor,
+    required this.dotColor,
+    required this.isLightTheme,
+  });
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -720,11 +740,13 @@ class _ImageSpoilerPainter extends CustomPainter {
     final mask =
         Paint()
           ..style = PaintingStyle.fill
-          ..color = Colors.white.withOpacity(isEditing ? 0.4 : 1.0);
+          ..color = backgroundColor.withOpacity(isEditing ? 0.4 : 1.0);
+    // 라이트 테마일 때는 점 색상을 더 연하게
+    final dotOpacity = isLightTheme ? 0.4 : 0.6;
     final dot =
         Paint()
           ..style = PaintingStyle.fill
-          ..color = Colors.black.withOpacity(0.3);
+          ..color = dotColor.withOpacity(dotOpacity);
 
     canvas.drawRect(rect, mask);
     final area = rect.width * rect.height;
@@ -733,21 +755,23 @@ class _ImageSpoilerPainter extends CustomPainter {
             ? math.max(40, (area / 180).floor())
             : math.max(60, (area / 120).floor());
     final double t = phase * (2 * math.pi) * 1.1;
+
+    // 기본 점들 그리기 (크기 증가: 1.5 -> 2.5)
     for (int i = 0; i < count; i++) {
       final seed = rect.hashCode ^ (i * 486187739);
       final r = math.Random(seed);
       final baseX = r.nextDouble() * rect.width;
       final baseY = r.nextDouble() * rect.height;
-      final amp = 1.2 + r.nextDouble() * 1.8; // 1.2~3.0px
+      final amp = 1.2 + r.nextDouble() * 4; // 1.2~3.0px
       final ox = math.sin(t + i * 0.17) * amp;
-      final oy = math.cos(t * 1.1 + i * 0.11) * amp;
+      final oy = math.cos(t * 1.1 + i * 0.09) * amp;
       double x = baseX + ox;
       double y = baseY + oy;
       x = x % rect.width;
       y = y % rect.height;
       if (x < 0) x += rect.width;
       if (y < 0) y += rect.height;
-      canvas.drawRect(Rect.fromLTWH(x, y, 1.5, 1.5), dot);
+      canvas.drawRect(Rect.fromLTWH(x, y, 1.7, 1.7), dot);
     }
   }
 

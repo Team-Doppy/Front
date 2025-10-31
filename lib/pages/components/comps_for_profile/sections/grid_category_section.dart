@@ -623,7 +623,12 @@ class _GridCategorySectionState extends State<GridCategorySection> {
                       },
                     );
                   },
-          child: ImageView(post: post, isFirst: false, isLast: false),
+          child: ImageView(
+            post: post,
+            isFirst: false,
+            isLast: false,
+            showViewCount: !isReadOnly,
+          ),
         ),
       );
     }
@@ -766,6 +771,7 @@ class _GridCategorySectionState extends State<GridCategorySection> {
                           post: post,
                           isFirst: false,
                           isLast: false,
+                          showViewCount: !isReadOnly && !isSystemCategory,
                         ),
                       ),
                     ),
@@ -773,11 +779,21 @@ class _GridCategorySectionState extends State<GridCategorySection> {
                 ),
                 childWhenDragging: Opacity(
                   opacity: 0.3,
-                  child: ImageView(post: post, isFirst: false, isLast: false),
+                  child: ImageView(
+                    post: post,
+                    isFirst: false,
+                    isLast: false,
+                    showViewCount: !isReadOnly && !isSystemCategory,
+                  ),
                 ),
                 child: GestureDetector(
                   onTap: () => _openPost(context, post, index),
-                  child: ImageView(post: post, isFirst: false, isLast: false),
+                  child: ImageView(
+                    post: post,
+                    isFirst: false,
+                    isLast: false,
+                    showViewCount: !isReadOnly && !isSystemCategory,
+                  ),
                 ),
               ),
             ),

@@ -6,8 +6,9 @@ import 'dart:math';
 import 'package:super_editor/super_editor.dart';
 import 'package:doppy/editor/service/drag_service.dart';
 import 'package:doppy/editor/service/editor_service.dart';
+import 'package:doppy/editor/service/node_component_service.dart';
 import 'package:doppy/editor/component/link_component.dart';
-import 'package:doppy/editor/component/mention_component.dart';
+import 'package:provider/provider.dart';
 
 /// 패키지 기본 ParagraphComponent를 사용하고,
 /// 드래그 드롭 라인만 오버레이로 추가하는 경량 커스텀 빌더
@@ -15,10 +16,12 @@ class CustomParagraphComponentBuilder implements ComponentBuilder {
   const CustomParagraphComponentBuilder({
     required this.dragService,
     required this.editorService,
+    this.isEditing = true,
   });
 
   final DragService dragService;
   final EditorService editorService;
+  final bool isEditing;
   static const ParagraphComponentBuilder _defaultBuilder =
       ParagraphComponentBuilder();
 
@@ -70,6 +73,7 @@ class CustomParagraphComponentBuilder implements ComponentBuilder {
       nodeId: componentViewModel.nodeId,
       dragService: dragService,
       editorService: editorService,
+      isEditing: isEditing,
       child: child,
     );
   }
@@ -80,12 +84,14 @@ class _ParagraphWithDropLines extends StatefulWidget {
     required this.nodeId,
     required this.dragService,
     required this.editorService,
+    required this.isEditing,
     required this.child,
   });
 
   final String nodeId;
   final DragService dragService;
   final EditorService editorService;
+  final bool isEditing;
   final Widget child;
 
   @override
@@ -97,6 +103,9 @@ class _ParagraphWithDropLinesState extends State<_ParagraphWithDropLines>
     with SingleTickerProviderStateMixin {
   late final AnimationController _controller;
   final GlobalKey _subtreeKey = GlobalKey();
+  // 스포일러 범위 캐싱 (텍스트가 바뀔 때만 재계산)
+  String? _lastTextSnapshot;
+  List<TextRange>? _cachedSpoilerRanges;
 
   @override
   void initState() {
@@ -113,11 +122,16 @@ class _ParagraphWithDropLinesState extends State<_ParagraphWithDropLines>
 
   @override
   Widget build(BuildContext context) {
+    // NodeComponentService를 Listenable로 추가하여 변경사항 감지
+    final nodeService = Provider.of<NodeComponentService>(
+      context,
+      listen: false,
+    );
     return AnimatedBuilder(
       animation: Listenable.merge([
-        _controller,
         widget.dragService,
         widget.editorService,
+        nodeService, // NodeComponentService 변경사항 감지 (ChangeNotifier는 Listenable)
       ]),
       builder: (context, _) {
         final currentIndex = widget.dragService.getNodeIndex(widget.nodeId);
@@ -145,7 +159,7 @@ class _ParagraphWithDropLinesState extends State<_ParagraphWithDropLines>
               if (prev is ImageNode ||
                   prev is ImageRowNode ||
                   prev is LinkNode ||
-                  prev is MentionNode) {
+                  (prev is ParagraphNode && prev.metadata['mention'] == true)) {
                 showTop = false;
               }
             }
@@ -153,7 +167,7 @@ class _ParagraphWithDropLinesState extends State<_ParagraphWithDropLines>
         }
 
         // 문단 내부 스포일러 박스 계산 (문단 로컬 좌표)
-        final boxes = _collectSpoilerBoxes();
+        final boxes = _collectSpoilerBoxes(context, nodeService);
 
         Widget content = DefaultTextStyle.merge(
           textAlign: _resolveTextAlign(),
@@ -164,18 +178,37 @@ class _ParagraphWithDropLinesState extends State<_ParagraphWithDropLines>
           children: [
             Container(margin: const EdgeInsets.only(top: 4), child: content),
             // 문단 위에 직접 글리터 렌더링 (로컬 좌표기준이라 오프셋 불필요)
+            // 읽기 모드이고 스포일러가 있을 때는 탭 이벤트를 통과시켜야 함
             if (boxes.isNotEmpty)
-              Positioned.fill(
-                child: IgnorePointer(
-                  ignoring: true,
-                  child: CustomPaint(
-                    painter: _ParagraphSpoilerPainter(
-                      boxes: boxes,
-                      phase: _controller.value,
-                      isEditing: true, // 글쓰기 화면
+              Builder(
+                builder: (context) {
+                  final theme = Theme.of(context).colorScheme;
+                  final brightness = Theme.of(context).brightness;
+                  final bgColor = theme.background;
+                  final dotColor = theme.onSurface;
+                  final isLightTheme = brightness == Brightness.light;
+                  return Positioned.fill(
+                    child: IgnorePointer(
+                      ignoring:
+                          widget.isEditing, // 편집 모드에서는 탭 무시, 읽기 모드에서는 탭 통과
+                      child: AnimatedBuilder(
+                        animation: _controller,
+                        builder: (context, __) {
+                          return CustomPaint(
+                            painter: _ParagraphSpoilerPainter(
+                              boxes: boxes,
+                              phase: _controller.value,
+                              isEditing: widget.isEditing,
+                              backgroundColor: bgColor,
+                              dotColor: dotColor,
+                              isLightTheme: isLightTheme,
+                            ),
+                          );
+                        },
+                      ),
                     ),
-                  ),
-                ),
+                  );
+                },
               ),
             if (showTop)
               const Positioned(
@@ -223,7 +256,10 @@ class _ParagraphWithDropLinesState extends State<_ParagraphWithDropLines>
     return resolvedAlign;
   }
 
-  List<Rect> _collectSpoilerBoxes() {
+  List<Rect> _collectSpoilerBoxes(
+    BuildContext context,
+    NodeComponentService nodeService,
+  ) {
     try {
       final node = widget.editorService.editor.document.getNodeById(
         widget.nodeId,
@@ -231,27 +267,57 @@ class _ParagraphWithDropLinesState extends State<_ParagraphWithDropLines>
       if (node is! ParagraphNode) return const [];
       final text = node.text;
 
-      // 스포일러 구간 수집
-      final spans = <TextRange>[];
-      bool inSpoiler = false;
-      int start = 0;
-      for (int i = 0; i <= text.text.length; i++) {
-        final attrs =
-            i < text.text.length
-                ? text.getAllAttributionsAt(i)
-                : const <Attribution>{};
-        final has = attrs.any(
-          (a) => a is NamedAttribution && a.id == 'spoiler',
-        );
-        if (has && !inSpoiler) {
-          inSpoiler = true;
-          start = i;
-        } else if (!has && inSpoiler) {
-          inSpoiler = false;
-          spans.add(TextRange(start: start, end: i));
-        }
+      // NodeComponentService에서 스포일러가 명시적으로 해제되었는지 먼저 확인
+      // false가 저장되어 있으면 스포일러를 표시하지 않음
+      final isDisabled = nodeService.isSpoilerDisabled(widget.nodeId);
+      print(
+        '[ParagraphComponent] _collectSpoilerBoxes: nodeId=${widget.nodeId}, isSpoilerDisabled=$isDisabled',
+      );
+      if (isDisabled) {
+        print('[ParagraphComponent] 스포일러 해제됨 - 빈 리스트 반환');
+        return const []; // 스포일러가 해제되었으므로 표시하지 않음
       }
-      if (spans.isEmpty) return const [];
+
+      // 스포일러 구간 수집 (텍스트 스냅샷이 변할 때만 재계산)
+      List<TextRange> spans;
+      final snapshot = text.text;
+      if (_lastTextSnapshot != snapshot || _cachedSpoilerRanges == null) {
+        final calc = <TextRange>[];
+        bool inSpoiler = false;
+        int start = 0;
+        for (int i = 0; i <= text.text.length; i++) {
+          final attrs =
+              i < text.text.length
+                  ? text.getAllAttributionsAt(i)
+                  : const <Attribution>{};
+          final has = attrs.any(
+            (a) => a is NamedAttribution && a.id == 'spoiler',
+          );
+          if (has && !inSpoiler) {
+            inSpoiler = true;
+            start = i;
+          } else if (!has && inSpoiler) {
+            inSpoiler = false;
+            calc.add(TextRange(start: start, end: i));
+          }
+        }
+        _lastTextSnapshot = snapshot;
+        _cachedSpoilerRanges = calc;
+        spans = calc;
+      } else {
+        spans = _cachedSpoilerRanges!;
+      }
+
+      if (spans.isEmpty) {
+        // 디버깅: 스포일러가 없는지 확인
+        print(
+          '[ParagraphComponent] 스포일러 구간 없음: nodeId=${widget.nodeId}, 텍스트 길이=${text.text.length}',
+        );
+        return const [];
+      }
+      print(
+        '[ParagraphComponent] 스포일러 구간 발견: nodeId=${widget.nodeId}, 구간 수=${spans.length}',
+      );
 
       // RenderParagraph 찾기
       final ctx = _subtreeKey.currentContext;
@@ -298,10 +364,16 @@ class _ParagraphSpoilerPainter extends CustomPainter {
   final List<Rect> boxes;
   final double phase; // 0..1
   final bool isEditing;
+  final Color backgroundColor;
+  final Color dotColor;
+  final bool isLightTheme;
   _ParagraphSpoilerPainter({
     required this.boxes,
     required this.phase,
     required this.isEditing,
+    required this.backgroundColor,
+    required this.dotColor,
+    required this.isLightTheme,
   });
 
   @override
@@ -310,11 +382,13 @@ class _ParagraphSpoilerPainter extends CustomPainter {
     final mask =
         Paint()
           ..style = PaintingStyle.fill
-          ..color = Colors.white.withOpacity(isEditing ? 0.5 : 1.0);
+          ..color = backgroundColor.withOpacity(isEditing ? 0.5 : 1.0);
+    // 라이트 테마일 때는 점 색상을 더 연하게
+    final dotOpacity = isLightTheme ? 0.6 : 0.75;
     final dot =
         Paint()
           ..style = PaintingStyle.fill
-          ..color = Colors.black.withOpacity(0.75);
+          ..color = dotColor.withOpacity(dotOpacity);
 
     for (final rect in boxes) {
       canvas.drawRect(rect, mask);
@@ -324,7 +398,7 @@ class _ParagraphSpoilerPainter extends CustomPainter {
       final count =
           isEditing
               ? max(40, (area / 200).floor())
-              : max(120, (area / 80).floor());
+              : max(60, (area / 150).floor());
       final double t = phase * (2 * pi) * 0.9; // 텍스트는 느리게
       for (int i = 0; i < count; i++) {
         final seed = rect.hashCode ^ (i * 486187739);
@@ -332,7 +406,7 @@ class _ParagraphSpoilerPainter extends CustomPainter {
         final baseX = r.nextDouble() * rect.width;
         final baseY = r.nextDouble() * rect.height;
         // 진동 기반 이동 (자글자글 효과)
-        final amp = 1.6 + r.nextDouble() * 1.6; // 1.6~3.2px (덜 요란)
+        final amp = 1.6 + r.nextDouble() * 1; // 1.6~3.2px (덜 요란)
         final ox = sin(t + i * 0.17) * amp;
         final oy = cos(t * 1.1 + i * 0.11) * amp;
         double x = baseX + ox;

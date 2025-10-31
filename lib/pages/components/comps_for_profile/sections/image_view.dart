@@ -10,10 +10,12 @@ class ImageView extends StatelessWidget {
     required this.post,
     this.isFirst = false,
     this.isLast = false,
+    this.showViewCount = false,
   });
   final PostData post;
   final bool isFirst;
   final bool isLast;
+  final bool showViewCount;
 
   @override
   Widget build(BuildContext context) {
@@ -39,23 +41,56 @@ class ImageView extends StatelessWidget {
               topRight: isLast ? const Radius.circular(12) : Radius.zero,
               bottomRight: isLast ? const Radius.circular(12) : Radius.zero,
             ),
-            child: AspectRatio(
-              aspectRatio: 4 / 5,
-              child: CachedNetworkImage(
-                imageUrl: post.thumbnailImageUrl,
-                fit: BoxFit.cover,
-                placeholder:
-                    (context, url) => Container(
-                      color: theme.colorScheme.surface.withOpacity(0.1),
-                      child: const ShimmerBox(
-                        width: double.infinity,
-                        height: 180,
-                        borderRadius: BorderRadius.zero,
+            child: Stack(
+              children: [
+                AspectRatio(
+                  aspectRatio: 4 / 5,
+                  child: CachedNetworkImage(
+                    imageUrl: post.thumbnailImageUrl,
+                    fit: BoxFit.cover,
+                    placeholder:
+                        (context, url) => Container(
+                          color: theme.colorScheme.surface.withOpacity(0.1),
+                          child: const ShimmerBox(
+                            width: double.infinity,
+                            height: 180,
+                            borderRadius: BorderRadius.zero,
+                          ),
+                        ),
+                    errorWidget:
+                        (context, url, error) => const ImageErrorPlaceholder(),
+                  ),
+                ),
+                // 좋아요와 조회수 (내 피드일 때만)
+                if (showViewCount)
+                  Positioned(
+                    bottom: 2,
+                    right: 2,
+                    child: Container(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: post.viewCount > 9 ? 4 : 8,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withOpacity(0.6),
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            '${post.viewCount}',
+                            style: const TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w500,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
-                errorWidget:
-                    (context, url, error) => const ImageErrorPlaceholder(),
-              ),
+                  ),
+              ],
             ),
           ),
         );

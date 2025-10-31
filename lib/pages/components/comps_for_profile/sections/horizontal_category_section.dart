@@ -527,11 +527,6 @@ class _HorizontalCategorySectionState extends State<HorizontalCategorySection> {
                                                               opacity: 1.0,
                                                               child: IgnorePointer(
                                                                 child: Container(
-                                                                  margin:
-                                                                      const EdgeInsets.symmetric(
-                                                                        vertical:
-                                                                            5,
-                                                                      ),
                                                                   width: 5,
                                                                   decoration: BoxDecoration(
                                                                     color:
@@ -1109,15 +1104,12 @@ class _HorizontalCategorySectionState extends State<HorizontalCategorySection> {
       ),
     );
 
-    print('[HorizontalCategorySection] PostReaderScreen 결과: $result');
     // 포스트가 삭제된 경우 피드를 다시 로드
     if (result != null && result['deleted'] == true) {
-      print('[HorizontalCategorySection] 포스트 삭제 감지 - 피드 새로고침 시작');
       final provider = context.read<BaseFeedProvider>();
       provider.clearInMemory();
       provider.setNetworkError(null);
       await provider.loadInitial(force: true);
-      print('[HorizontalCategorySection] 피드 새로고침 완료');
     }
   }
 
@@ -1143,16 +1135,11 @@ class _HorizontalCategorySectionState extends State<HorizontalCategorySection> {
 
         // 서버에 순서 변경 저장
         await provider.reorderPostsInCategory(categoryId, orderedPostIds);
-
-        print('[HorizontalCategorySection] 카테고리 $categoryId 포스트 순서 서버 저장 완료');
       } else {
         // OtherProfileFeedProvider인 경우 로컬 변경만
         provider.movePostLocally(movedPostId, categoryId, targetPosition);
-        print('[HorizontalCategorySection] 읽기 전용 프로필: 로컬 변경만 수행');
       }
     } catch (e) {
-      print('⚠️ [HorizontalCategorySection] 포스트 순서 서버 저장 실패: $e');
-
       // 에러 발생 시 사용자에게 알림
       try {
         ScaffoldMessenger.of(

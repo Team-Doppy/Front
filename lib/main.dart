@@ -53,8 +53,12 @@ Future<void> main() async {
         ChangeNotifierProvider(create: (_) => AuthProvider()),
         ChangeNotifierProvider(create: (_) => FriendProvider()),
         ChangeNotifierProvider(create: (_) => UserProvider()),
-        ChangeNotifierProvider(create: (_) => OtherProfileFeedProvider()),
-        ChangeNotifierProvider(create: (_) => MyProfileFeedProvider()), // 내 피드용
+        ChangeNotifierProvider(
+          create: (_) => OtherProfileFeedProvider(),
+        ), // 싱글톤 인스턴스 사용
+        ChangeNotifierProvider(
+          create: (_) => MyProfileFeedProvider(),
+        ), // 내 피드용 (싱글톤 인스턴스 사용)
         ChangeNotifierProvider(create: (_) => GroupProvider()),
         ChangeNotifierProvider(create: (_) => CategoryOverlayProvider()),
         ChangeNotifierProvider(create: (_) => PostDragDropService()),

@@ -7,7 +7,6 @@ import 'package:doppy/editor/service/node_component_service.dart';
 import 'package:doppy/theme/app_colors.dart';
 import 'dart:math' as math;
 import 'package:provider/provider.dart';
-import 'package:doppy/editor/component/mention_component.dart';
 import 'package:doppy/editor/component/row_image_component.dart';
 
 /// 텍스트와 독립적인 링크 블록 노드
@@ -230,7 +229,7 @@ class _LinkComponentState extends State<_LinkComponent> with DocumentComponent {
             margin: EdgeInsets.only(top: marginTop, bottom: marginBottom),
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(5),
-              color: Theme.of(context).colorScheme.surfaceVariant,
+              color: Theme.of(context).colorScheme.surface,
             ),
             child: Row(
               children: [
@@ -245,8 +244,8 @@ class _LinkComponentState extends State<_LinkComponent> with DocumentComponent {
                           widget.title.isNotEmpty ? widget.title : widget.url,
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: Colors.white,
+                          style: TextStyle(
+                            color: Theme.of(context).colorScheme.onSurface,
                             fontWeight: FontWeight.w600,
                             fontSize: 15,
                           ),
@@ -258,9 +257,8 @@ class _LinkComponentState extends State<_LinkComponent> with DocumentComponent {
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
-                            color: Theme.of(
-                              context,
-                            ).colorScheme.surface.withOpacity(0.5),
+                            color:
+                                Theme.of(context).colorScheme.onSurfaceVariant,
                             fontSize: 12,
                           ),
                         ),
@@ -332,7 +330,6 @@ class _LinkComponentState extends State<_LinkComponent> with DocumentComponent {
                     ),
                     decoration: BoxDecoration(
                       color: AppColors.primary.withOpacity(0.4),
-                      borderRadius: BorderRadius.circular(12),
                     ),
                   ),
                 ),
@@ -348,7 +345,6 @@ class _LinkComponentState extends State<_LinkComponent> with DocumentComponent {
                     ),
                     decoration: BoxDecoration(
                       border: Border.all(color: AppColors.primary, width: 3),
-                      borderRadius: BorderRadius.circular(12),
                     ),
                   ),
                 ),
@@ -511,7 +507,7 @@ class _LinkComponentState extends State<_LinkComponent> with DocumentComponent {
     bool isSpecialNode(DocumentNode? node) {
       if (node == null) return false;
       return node is LinkNode ||
-          node is MentionNode ||
+          (node is ParagraphNode && node.metadata['mention'] == true) ||
           node is ImageNode ||
           node is ImageRowNode;
     }
@@ -610,7 +606,7 @@ class _LinkComponentState extends State<_LinkComponent> with DocumentComponent {
     final neighborIndex = myIndex + direction;
     if (neighborIndex < 0 || neighborIndex >= doc.nodeCount) return false;
     final neighbor = doc.getNodeAt(neighborIndex);
-    return neighbor is MentionNode;
+    return neighbor is ParagraphNode && neighbor.metadata['mention'] == true;
   }
 
   bool _hasNeighborImage(Document doc, String nodeId, int direction) {

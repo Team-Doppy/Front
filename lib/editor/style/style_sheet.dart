@@ -2,6 +2,7 @@ import 'package:doppy/editor/component/clip_component.dart';
 import 'package:doppy/editor/component/row_image_component.dart';
 import 'package:doppy/editor/config.dart';
 import 'package:doppy/editor/style/defualt_toolbar.dart'; // HighlightAttribution import
+import 'package:doppy/editor/service/node_component_service.dart';
 import 'package:doppy/providers/theme_provider.dart';
 import 'package:doppy/theme/app_colors.dart';
 import 'package:flutter/material.dart';
@@ -79,6 +80,43 @@ Stylesheet buildCustomStylesheet(BuildContext context) {
             };
           }
 
+          // 멘션 노드 스타일 (metadata['mention'] == true)
+          final isMention = docNode.metadata['mention'] == true;
+          if (isMention) {
+            // 메타데이터에서 폰트 정보 읽기
+            final fontFamily = docNode.metadata['fontFamily'] as String?;
+
+            TextStyle mentionStyle = TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
+              color: bodyColor,
+              height: 1.5,
+            );
+
+            // 구글 폰트 적용
+            if (fontFamily != null && fontFamily.isNotEmpty) {
+              try {
+                mentionStyle = GoogleFonts.getFont(
+                  fontFamily,
+                  textStyle: mentionStyle,
+                );
+              } catch (e) {
+                print('[FontDebug] 멘션 폰트 적용 실패: $fontFamily (오류: $e)');
+                mentionStyle = mentionStyle.copyWith(fontFamily: fontFamily);
+              }
+            }
+
+            return {
+              Styles.textStyle: mentionStyle,
+              Styles.padding: CascadingPadding.only(
+                top: 4,
+                bottom: 4,
+                left: 20,
+                right: 20,
+              ),
+            };
+          }
+
           // 메타데이터에서 폰트 정보 읽기
           final fontFamily = docNode.metadata['fontFamily'] as String?;
 
@@ -145,6 +183,34 @@ Stylesheet buildCustomStylesheet(BuildContext context) {
 
         return {};
       }),
+      // 스포일러가 해제된 ParagraphNode의 텍스트를 보이게 함
+      // inlineTextStyler에서 투명하게 만든 것을 덮어씀
+      StyleRule(BlockSelector.all, (doc, node) {
+        if (!_spoilerEditingMode && node is ParagraphNode) {
+          // 읽기 모드에서만 적용
+          final nodeService = NodeComponentService();
+          if (nodeService.isSpoilerDisabled(node.id)) {
+            // 스포일러가 해제되었으면 텍스트를 보이게 함
+            // inlineTextStyler에서 transparent로 만든 것을 원래 색으로 복원
+            final text = node.text;
+            bool hasSpoilerAttribution = false;
+            for (int i = 0; i < text.text.length; i++) {
+              final attrs = text.getAllAttributionsAt(i);
+              if (attrs.any(
+                (a) => a is NamedAttribution && a.id == 'spoiler',
+              )) {
+                hasSpoilerAttribution = true;
+                break;
+              }
+            }
+            if (hasSpoilerAttribution) {
+              // spoiler attribution이 있지만 해제되었으면 텍스트 색상을 복원
+              return {Styles.textStyle: TextStyle(color: bodyColor)};
+            }
+          }
+        }
+        return {};
+      }),
     ],
     inlineTextStyler: (attributions, existingStyle) {
       TextStyle style = existingStyle;
@@ -190,18 +256,28 @@ Stylesheet buildCustomStylesheet(BuildContext context) {
       // 🙈 스포일러 스타일: 모드에 따라 다르게 처리
       if (isSpoiler) {
         if (_spoilerEditingMode) {
-          // 글쓰기: 글자가 더 진하게 보이도록 투명도 조정
           final Color base = style.color ?? bodyColor;
           style = style.copyWith(
             color: base.withOpacity(1),
             decoration: TextDecoration.none,
           );
         } else {
-          // 글보기: 완전히 숨김 (오버레이에서 마스킹 및 글리터 처리)
-          style = style.copyWith(
-            color: Colors.transparent,
-            decoration: TextDecoration.none,
-          );
+          // addRulesAfter에서 해제된 문단은 bodyColor로 덮어쓴다.
+          // inlineTextStyler에서는 기존 색이 bodyColor로 들어온 경우 해제로 판단하여 투명 처리하지 않는다.
+          final Color? existingColor = existingStyle.color;
+          final bool isRevealed =
+              existingColor != null && existingColor.value == bodyColor.value;
+          if (isRevealed) {
+            style = style.copyWith(
+              color: bodyColor,
+              decoration: TextDecoration.none,
+            );
+          } else {
+            style = style.copyWith(
+              color: Colors.transparent,
+              decoration: TextDecoration.none,
+            );
+          }
         }
       }
 

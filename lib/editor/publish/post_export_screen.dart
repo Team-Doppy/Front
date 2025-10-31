@@ -986,7 +986,7 @@ class _PostExportScreenState extends State<PostExportScreen>
                                 child: Container(
                                   decoration: BoxDecoration(
                                     borderRadius: BorderRadius.circular(
-                                      cardRadius,
+                                      cardRadius + 2,
                                     ),
                                     border: Border.all(
                                       color: Theme.of(

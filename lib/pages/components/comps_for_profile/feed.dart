@@ -38,23 +38,6 @@ class Feed {
         .toList();
   }
 
-  /// BaseFilter에 따라 포스트 필터링
-  List<PostData> _applyBaseFilter(List<PostData> posts, BaseFilter base) {
-    if (base == BaseFilter.all) return posts;
-    return posts.where((post) {
-      switch (base) {
-        case BaseFilter.private:
-          return post.accessLevel == AccessLevel.private;
-        case BaseFilter.groups:
-          return post.accessLevel == AccessLevel.groups;
-        case BaseFilter.public:
-          return post.accessLevel == AccessLevel.public;
-        case BaseFilter.all:
-          return true;
-      }
-    }).toList();
-  }
-
   /// 시스템 카테고리 여부 판단
   bool _isSystemCategory(Map<String, dynamic> cat) {
     return (cat['isSystem'] == true);
@@ -114,33 +97,69 @@ class Feed {
         // BaseFilter를 직접 사용하여 필터링
         // 단, filteredCategoryId가 있으면 커스텀 카테고리 상세보기이므로 시스템 필터를 무시
         if (filteredBase != BaseFilter.all && filteredCategoryId == null) {
-          // BaseFilter에 따라 모든 포스트를 필터링
-          final allPosts = _applyBaseFilter(
-            _mapRawToPosts(feedProvider.posts),
-            filteredBase,
-          );
+          // systemCategoryMappings를 사용하여 포스트 필터링
+          String systemTitle;
+          String systemKey;
+          switch (filteredBase) {
+            case BaseFilter.private:
+              systemTitle = '나만보기';
+              systemKey = '나만보기';
+              break;
+            case BaseFilter.groups:
+              systemTitle = '그룹공유';
+              systemKey = '그룹공유';
+              break;
+            case BaseFilter.public:
+              systemTitle = '전체공개';
+              systemKey = '전체공개';
+              break;
+            case BaseFilter.all:
+              systemTitle = '전체';
+              systemKey = '';
+              break;
+          }
 
-          if (allPosts.isNotEmpty) {
-            String systemTitle;
-            switch (filteredBase) {
-              case BaseFilter.private:
-                systemTitle = '나만보기';
-                break;
-              case BaseFilter.groups:
-                systemTitle = '그룹공유';
-                break;
-              case BaseFilter.public:
-                systemTitle = '전체공개';
-                break;
-              case BaseFilter.all:
-                systemTitle = '전체';
-                break;
+          // systemCategoryMappings에서 포스트 ID 목록 가져오기
+          final systemMappings = feedProvider.systemCategoryMappings;
+          List<PostData> filteredPosts = [];
+
+          if (systemMappings != null && systemKey.isNotEmpty) {
+            final postIdList = systemMappings[systemKey] as List?;
+            if (postIdList != null && postIdList.isNotEmpty) {
+              // 포스트 ID를 Set으로 변환 (빠른 조회를 위해)
+              final Set<String> targetPostIds =
+                  postIdList
+                      .map((item) {
+                        if (item is Map) {
+                          return item['postId']?.toString();
+                        } else if (item is int) {
+                          return item.toString();
+                        }
+                        return item?.toString();
+                      })
+                      .whereType<String>()
+                      .toSet();
+
+              // 모든 포스트에서 해당 ID에 맞는 포스트만 필터링
+              final allPosts = _mapRawToPosts(feedProvider.posts);
+              filteredPosts =
+                  allPosts
+                      .where((post) => targetPostIds.contains(post.id))
+                      .toList();
+
+              print('[Feed] 시스템 카테고리 필터링: $systemKey');
+              print(
+                '[Feed] systemCategoryMappings 포스트 ID 수: ${targetPostIds.length}',
+              );
+              print('[Feed] 필터링된 포스트 수: ${filteredPosts.length}');
             }
+          }
 
+          if (filteredPosts.isNotEmpty) {
             categoryMetaDataList.add(
               CategoryMetaData(
                 title: systemTitle,
-                posts: allPosts,
+                posts: filteredPosts,
                 categoryId: 'system_${filteredBase.name}',
                 isReadOnly: true,
               ),

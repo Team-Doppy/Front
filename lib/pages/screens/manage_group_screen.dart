@@ -543,23 +543,120 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
 
   // 플로팅 액션 버튼
   Widget _buildFloatingActionButton() {
-    return Positioned(
-      right: 10,
-      bottom: 30,
+    final double keyboardInset = MediaQuery.of(context).viewInsets.bottom;
+    final double bottomGap = keyboardInset > 0 ? 10 : 30;
+
+    return AnimatedPositioned(
+      right: 12,
+      bottom: bottomGap,
+      duration: const Duration(milliseconds: 220),
+      curve: Curves.easeInOut,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.end,
         mainAxisSize: MainAxisSize.min,
         children: [
-          // + 버튼 (멤버 추가) - 전체 친구(-1) 선택 시 숨김
-          if (_selectedGroup != null &&
-              _selectedGroup!.id != -1 &&
-              !_isSearchExpanded)
+          // 전체 친구 그룹 여부
+          if (_selectedGroup != null && _selectedGroup!.id == -1) ...[
+            // 검색 플로팅 버튼(전체 친구일 때만 표시)
+            Container(
+              height: 50,
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.onSurface.withOpacity(1),
+                borderRadius: BorderRadius.circular(50),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (_isSearchExpanded)
+                    GestureDetector(
+                      onTap: () {},
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 300),
+                        curve: Curves.easeInOut,
+                        width: 280,
+                        child: TextField(
+                          style: TextStyle(
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.surface.withOpacity(0.8),
+                          ),
+                          cursorColor: Theme.of(
+                            context,
+                          ).colorScheme.surface.withOpacity(0.8),
+                          controller: _searchController,
+                          focusNode: _searchFocusNode,
+                          textAlignVertical: TextAlignVertical.center,
+                          onChanged: (value) {
+                            setState(() {
+                              _searchQuery = value.trim().toLowerCase();
+                            });
+                          },
+                          decoration: InputDecoration(
+                            filled: true,
+                            fillColor: Colors.transparent,
+                            hintText: '그룹이나 친구를 검색해보세요',
+                            hintStyle: TextStyle(
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.surfaceVariant.withOpacity(0.6),
+                              fontSize: 16,
+                            ),
+                            contentPadding: const EdgeInsets.symmetric(
+                              vertical: 6,
+                              horizontal: 20,
+                            ),
+                            border: const OutlineInputBorder(
+                              borderRadius: BorderRadius.all(
+                                Radius.circular(28),
+                              ),
+                              borderSide: BorderSide.none,
+                            ),
+                            enabledBorder: const OutlineInputBorder(
+                              borderRadius: BorderRadius.all(
+                                Radius.circular(28),
+                              ),
+                              borderSide: BorderSide.none,
+                            ),
+                            focusedBorder: const OutlineInputBorder(
+                              borderRadius: BorderRadius.all(
+                                Radius.circular(28),
+                              ),
+                              borderSide: BorderSide.none,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  GestureDetector(
+                    onTap: _toggleSearch,
+                    child: Container(
+                      width: 50,
+                      height: 50,
+                      decoration: BoxDecoration(
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.onSurface.withOpacity(0.6),
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(
+                        _isSearchExpanded
+                            ? Icons.keyboard_arrow_down
+                            : Icons.search,
+                        color: Theme.of(context).colorScheme.surface,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ] else ...[
+            // + 버튼 (멤버 추가) - 전체 친구가 아닐 때만 표시
             GestureDetector(
               onTap: _showAddMemberBottomSheet,
               child: Container(
-                width: 60,
-                height: 60,
-                margin: const EdgeInsets.only(bottom: 6),
+                width: 50,
+                height: 50,
+
                 decoration: BoxDecoration(
                   color: Theme.of(context).colorScheme.onSurface,
                   shape: BoxShape.circle,
@@ -577,100 +674,7 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
                 ),
               ),
             ),
-          // 검색 버튼
-          Container(
-            height: 60,
-            decoration: BoxDecoration(
-              color: Theme.of(context).colorScheme.onSurface.withOpacity(1),
-              borderRadius: BorderRadius.circular(50),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                // 검색창 (확장 시에만 표시)
-                if (_isSearchExpanded)
-                  GestureDetector(
-                    onTap: () {
-                      // 검색창 클릭 시 이벤트 전파 방지 (닫히지 않도록)
-                    },
-                    child: AnimatedContainer(
-                      duration: const Duration(milliseconds: 300),
-                      curve: Curves.easeInOut,
-                      width: 280,
-                      child: TextField(
-                        style: TextStyle(
-                          color: Theme.of(
-                            context,
-                          ).colorScheme.surface.withOpacity(0.8),
-                        ),
-                        cursorColor: Theme.of(
-                          context,
-                        ).colorScheme.surface.withOpacity(0.8),
-                        controller: _searchController,
-                        focusNode: _searchFocusNode,
-                        textAlignVertical: TextAlignVertical.center,
-                        onChanged: (value) {
-                          setState(() {
-                            _searchQuery = value.trim().toLowerCase();
-                          });
-                        },
-                        decoration: InputDecoration(
-                          filled: true,
-                          fillColor: Colors.transparent,
-                          hintText: '그룹이나 친구를 검색해보세요',
-                          hintStyle: TextStyle(
-                            color: Theme.of(
-                              context,
-                            ).colorScheme.surfaceVariant.withOpacity(0.6),
-                            fontSize: 16,
-                          ),
-                          contentPadding: const EdgeInsets.symmetric(
-                            vertical: 6,
-                            horizontal: 20,
-                          ),
-                          border: const OutlineInputBorder(
-                            borderRadius: BorderRadius.all(Radius.circular(28)),
-                            borderSide: BorderSide.none,
-                          ),
-                          enabledBorder: const OutlineInputBorder(
-                            borderRadius: BorderRadius.all(Radius.circular(28)),
-                            borderSide: BorderSide.none,
-                          ),
-                          focusedBorder: const OutlineInputBorder(
-                            borderRadius: BorderRadius.all(Radius.circular(28)),
-                            borderSide: BorderSide.none,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                // 메인 검색 버튼
-                GestureDetector(
-                  onTap: _toggleSearch,
-                  child: Container(
-                    width: 60,
-                    height: 60,
-                    decoration: BoxDecoration(
-                      color: Theme.of(
-                        context,
-                      ).colorScheme.onSurface.withOpacity(0.6),
-                      shape: BoxShape.circle,
-                    ),
-                    child: AnimatedRotation(
-                      duration: const Duration(milliseconds: 300),
-                      turns: 0.0,
-                      child: Icon(
-                        _isSearchExpanded
-                            ? Icons.keyboard_arrow_down
-                            : Icons.search,
-                        color: Theme.of(context).colorScheme.surface,
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
+          ],
         ],
       ),
     );
@@ -684,6 +688,7 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
       context.read<GroupProvider>().fetchGroupMembers(_selectedGroup!.id);
     }
     showModalBottomSheet(
+      barrierColor: Theme.of(context).colorScheme.onBackground.withOpacity(0.1),
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
@@ -788,7 +793,9 @@ class _AddMemberBottomSheetState extends State<_AddMemberBottomSheet> {
 
                         child: Icon(
                           Icons.close,
-                          color: Theme.of(context).colorScheme.onSurface,
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.onSurface.withOpacity(0.7),
                           size: 22,
                         ),
                       ),
@@ -937,19 +944,17 @@ class _AddMemberBottomSheetState extends State<_AddMemberBottomSheet> {
                   CommonProfileAvatar(
                     imageUrl: friend.profileImageUrl,
                     username: friend.username,
-                    size: 120,
-                    borderWidth: isSelected ? 2 : 0,
+                    size: 110,
+                    borderWidth: isSelected ? 4 : 0,
                     borderColor:
                         isSelected
-                            ? Theme.of(context).colorScheme.primary
-                            : Theme.of(
-                              context,
-                            ).colorScheme.onSurface.withOpacity(0.2),
+                            ? Theme.of(context).colorScheme.onSurface
+                            : null,
                   ),
                   if (isSelected)
                     Positioned(
-                      top: 0,
-                      right: 0,
+                      top: 1,
+                      right: 1,
                       child: Container(
                         width: 24,
                         height: 24,
@@ -975,7 +980,7 @@ class _AddMemberBottomSheetState extends State<_AddMemberBottomSheet> {
                   fontWeight: FontWeight.w500,
                 ),
                 textAlign: TextAlign.center,
-                maxLines: 2,
+                maxLines: 1,
                 overflow: TextOverflow.ellipsis,
               ),
             ],
@@ -1229,7 +1234,7 @@ class _FriendTile extends StatelessWidget {
       child: CommonProfileAvatar(
         imageUrl: data.url,
         username: data.username,
-        size: 120,
+        size: 115,
       ),
     );
 

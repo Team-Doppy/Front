@@ -105,7 +105,7 @@ class DialogUtils {
                                           ? const Color(0xFF0A84FF)
                                           : const Color(0xFF007AFF),
                                   fontSize: 17,
-                                  fontWeight: FontWeight.w600,
+                                  fontWeight: FontWeight.w500,
                                 ),
                               ),
                             ),
@@ -146,7 +146,7 @@ class DialogUtils {
                                           ? const Color(0xFF0A84FF)
                                           : const Color(0xFF007AFF),
                                   fontSize: 17,
-                                  fontWeight: FontWeight.w600,
+                                  fontWeight: FontWeight.w500,
                                 ),
                               ),
                             ),

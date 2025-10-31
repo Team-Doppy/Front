@@ -1,6 +1,5 @@
 import 'dart:convert';
 import 'package:doppy/editor/component/link_component.dart';
-import 'package:doppy/editor/component/mention_component.dart';
 import 'package:doppy/editor/component/row_image_component.dart';
 import 'package:super_editor/super_editor.dart';
 
@@ -81,14 +80,29 @@ class EditService {
           );
           break;
         case 'mention':
+          // 멘션은 이제 Paragraph 기반으로 처리됨
+          final usernames =
+              ((m['usernames'] as List?) ?? const [])
+                  .map((e) => e.toString())
+                  .toList();
+          final String text = usernames.map((u) => '@$u').join('\n');
+
+          final AttributedText attributed = AttributedText(text);
+          if (text.isNotEmpty) {
+            attributed.addAttribution(
+              boldAttribution,
+              SpanRange(0, text.length - 1),
+            );
+          }
+
+          final meta = <String, dynamic>{
+            'textAlign': (m['align'] ?? 'center').toString(),
+            'mention': true,
+            'usernames': usernames,
+          };
+
           rebuilt.add(
-            MentionNode(
-              id: uid('mention'),
-              usernames:
-                  ((m['usernames'] as List?) ?? const [])
-                      .map((e) => e.toString())
-                      .toList(),
-            ),
+            ParagraphNode(id: uid('p'), text: attributed, metadata: meta),
           );
           break;
         default:

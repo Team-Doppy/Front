@@ -83,8 +83,8 @@ class CardView extends StatelessWidget {
                         left: 3,
                         bottom: 3,
                         child: Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 8,
+                          padding: EdgeInsets.symmetric(
+                            horizontal: post.viewCount > 9 ? 4 : 8,
                             vertical: 4,
                           ),
                           decoration: BoxDecoration(

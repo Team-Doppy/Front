@@ -19,17 +19,19 @@ import 'package:doppy/pages/components/comment_bottom_sheet.dart';
 import 'package:doppy/pages/components/comment_preview_section.dart';
 import 'package:doppy/pages/components/doppy_loading_logo.dart';
 import 'package:doppy/pages/components/fullscreen_image_viewer.dart';
+import 'package:doppy/utils/dialog_utils.dart';
 
 // 읽기 전용에서는 에디터 전용 컴포넌트를 사용하지 않음
 import 'package:doppy/editor/component/link_component.dart';
-import 'package:doppy/editor/component/mention_component.dart';
 import 'package:doppy/editor/component/divider_component.dart';
+import 'package:doppy/editor/component/paragraph_component.dart';
 import 'package:doppy/editor/component/clip_component.dart'
     show ClipNode, videoPlayerControllers, PinComponentBuilder;
 import 'package:doppy/editor/service/editor_service.dart';
 import 'package:doppy/editor/service/drag_service.dart';
 import 'package:doppy/editor/service/post_reader_service.dart';
 import 'package:doppy/editor/service/post_reader_stickers.dart';
+import 'package:doppy/editor/service/node_component_service.dart';
 
 /// 읽기 전용: 작성 화면에서 Export된 Map을 받아 그대로 복원하여 보여준다.
 class PostReaderScreen extends StatefulWidget {
@@ -137,11 +139,6 @@ class _PostReaderScreenState extends State<PostReaderScreen>
         }
         break;
 
-      case MentionNode:
-        final mentionNode = node as MentionNode;
-        print('  - Mention: ${mentionNode.usernames}');
-        break;
-
       case LinkNode:
         final linkNode = node as LinkNode;
         print('  - Link: ${linkNode.url}');
@@ -150,6 +147,29 @@ class _PostReaderScreenState extends State<PostReaderScreen>
       case ImageNode:
         final imageNode = node as ImageNode;
         print('  - Image: ${imageNode.imageUrl}');
+
+        // 스포일러 상태 확인
+        final nodeService = NodeComponentService();
+        bool hasSpoiler = false;
+        try {
+          // NodeComponentService에서 확인
+          hasSpoiler = nodeService.isSpoiler(imageNode.id);
+          // metadata에서도 확인
+          if (!hasSpoiler) {
+            final meta =
+                (imageNode as dynamic).metadata as Map<String, dynamic>?;
+            hasSpoiler = meta != null && (meta['spoiler'] == true);
+          }
+        } catch (_) {}
+
+        // 스포일러가 있으면 해제
+        if (hasSpoiler) {
+          nodeService.setSpoiler(imageNode.id, false);
+          print('[PostReaderScreen] 이미지 스포일러 해제: ${imageNode.id}');
+          return; // 스포일러 해제만 하고 종료
+        }
+
+        // 스포일러가 없으면 full viewer 열기
         // mediaId 메타 추출
         String? mediaId;
         try {
@@ -166,16 +186,33 @@ class _PostReaderScreenState extends State<PostReaderScreen>
           _currentMediaId = mediaId;
           _allMediaIds = mediaId != null ? [mediaId] : [];
         });
-        // 뷰어 열 때 mediaId 전달
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (!mounted) return;
-        });
         break;
 
       case ImageRowNode:
         final imageRowNode = node as ImageRowNode;
         print('  - ImageRow: ${imageRowNode.imageUrls}');
 
+        // 스포일러 상태 확인
+        final nodeService = NodeComponentService();
+        bool hasSpoiler = false;
+        try {
+          // NodeComponentService에서 확인
+          hasSpoiler = nodeService.isSpoiler(imageRowNode.id);
+          // metadata에서도 확인
+          if (!hasSpoiler) {
+            final meta = imageRowNode.metadata;
+            hasSpoiler = meta['spoiler'] == true;
+          }
+        } catch (_) {}
+
+        // 스포일러가 있으면 해제
+        if (hasSpoiler) {
+          nodeService.setSpoiler(imageRowNode.id, false);
+          print('[PostReaderScreen] 이미지 행 스포일러 해제: ${imageRowNode.id}');
+          return; // 스포일러 해제만 하고 종료
+        }
+
+        // 스포일러가 없으면 full viewer 열기
         // 클릭한 위치의 이미지 인덱스 계산
         final nodeRect = _dragService.getNodeGlobalRect(imageRowNode.id);
         if (nodeRect != null) {
@@ -205,6 +242,41 @@ class _PostReaderScreenState extends State<PostReaderScreen>
       case ParagraphNode:
         final paragraphNode = node as ParagraphNode;
         print('  - Paragraph: ${paragraphNode.text}');
+
+        // 스포일러 확인: 텍스트에 spoiler attribution이 있는지 확인
+        final text = paragraphNode.text;
+        bool hasSpoiler = false;
+        try {
+          // 텍스트 전체를 확인하여 spoiler attribution이 있는지 체크
+          for (int i = 0; i < text.text.length; i++) {
+            final attrs = text.getAllAttributionsAt(i);
+            if (attrs.any((a) => a is NamedAttribution && a.id == 'spoiler')) {
+              hasSpoiler = true;
+              break;
+            }
+          }
+        } catch (_) {}
+
+        // 스포일러가 있으면 NodeComponentService를 통해 해제하고 문서에서도 제거
+        if (hasSpoiler) {
+          final nodeService = NodeComponentService();
+          print(
+            '[PostReaderScreen] Paragraph 스포일러 발견: ${paragraphNode.id}, 해제 전 isSpoilerDisabled=${nodeService.isSpoilerDisabled(paragraphNode.id)}',
+          );
+
+          // NodeComponentService에 "스포일러 해제됨" 상태 저장
+          // 문서는 수정하지 않고 UI에서만 일시적으로 해제
+          nodeService.setSpoiler(paragraphNode.id, false);
+
+          // setState를 호출하여 UI 업데이트 (NodeComponentService 변경 감지)
+          setState(() {});
+
+          print(
+            '[PostReaderScreen] Paragraph 스포일러 해제 완료: ${paragraphNode.id}, 해제 후 isSpoilerDisabled=${nodeService.isSpoilerDisabled(paragraphNode.id)}',
+          );
+        } else {
+          print('[PostReaderScreen] Paragraph 스포일러 없음: ${paragraphNode.id}');
+        }
         break;
 
       default:
@@ -275,28 +347,15 @@ class _PostReaderScreenState extends State<PostReaderScreen>
       return;
     }
 
-    // 삭제 확인 다이얼로그
-    final bool? shouldDelete = await showDialog<bool>(
-      context: context,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          title: const Text('게시물 삭제'),
-          content: const Text(
-            '정말로 이 게시물을 삭제하시겠습니까?\n30일 이후 자동 영구 삭제됩니다.\n삭제된 게시물의 조회수, 댓글, 좋아요 등의 데이터는 복구할 수 없습니다.',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(false),
-              child: const Text('취소'),
-            ),
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(true),
-              style: TextButton.styleFrom(foregroundColor: Colors.red),
-              child: const Text('삭제'),
-            ),
-          ],
-        );
-      },
+    // 삭제 확인 다이얼로그 (공통 다이얼로그 사용)
+    final bool? shouldDelete = await DialogUtils.showConfirmDialog(
+      context,
+      title: '게시물 삭제',
+      message:
+          '정말로 이 게시물을 삭제하시겠습니까?\n30일 이후 자동 영구 삭제됩니다.\n삭제된 게시물의 조회수, 댓글, 좋아요 등의 데이터는 복구할 수 없습니다.',
+      confirmText: '삭제',
+      cancelText: '취소',
+      isDestructive: true,
     );
 
     if (shouldDelete != true) return;
@@ -305,8 +364,6 @@ class _PostReaderScreenState extends State<PostReaderScreen>
       await _blogService.deletePost(postId);
 
       if (mounted) {
-        ErrorHandler.showInfo(context, '게시물이 삭제되었습니다');
-
         // 뒤로가기 전에 결과 전달하여 프로필 화면이 다시 빌드되도록 함
         Navigator.of(context).pop({'deleted': true});
       }
@@ -373,6 +430,11 @@ class _PostReaderScreenState extends State<PostReaderScreen>
   @override
   void initState() {
     super.initState();
+    // 새 글 진입 시 이전 화면에서 해제한 스포일러 상태를 초기화하여
+    // 항상 기본(가려진) 상태로 시작
+    try {
+      NodeComponentService().clearSpoilers();
+    } catch (_) {}
     _document = _postReaderService.rebuildDocumentForRead(widget.exported);
     _composer = MutableDocumentComposer();
     _editor = createDefaultDocumentEditor(
@@ -448,7 +510,7 @@ class _PostReaderScreenState extends State<PostReaderScreen>
       _contentFuture = _loadContentWithImages(postId);
 
       // 0.5초 후 로딩 로고 표시
-      Future.delayed(const Duration(milliseconds: 600), () {
+      Future.delayed(const Duration(milliseconds: 500), () {
         if (mounted) {
           setState(() {
             _showLoadingLogo = true;
@@ -481,6 +543,10 @@ class _PostReaderScreenState extends State<PostReaderScreen>
     _scrollCtrl.removeListener(_onScroll);
     _commentsAnimCtrl.dispose();
     _commentOverlayCtrl.dispose();
+    // 화면 종료 시 스포일러 세션 상태 초기화
+    try {
+      NodeComponentService().clearSpoilers();
+    } catch (_) {}
     super.dispose();
   }
 
@@ -623,7 +689,7 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                     }
                     // 드래그 종료 시 닫기 판단
                     if (n is ScrollEndNotification) {
-                      if (_pullAccum >= 80.0) {
+                      if (_pullAccum >= 100.0) {
                         Navigator.of(context).maybePop();
                       }
                       _pullAccum = 0.0;
@@ -751,12 +817,20 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                           componentBuilders: [
                             SingleImageComponentBuilder(
                               dragService: _dragService,
+                              isEditing: false, // 읽기 모드
                             ),
-                            RowImageComponentBuilder(dragService: _dragService),
+                            RowImageComponentBuilder(
+                              dragService: _dragService,
+                              isEditing: false, // 읽기 모드
+                            ),
                             LinkComponentBuilder(),
-                            MentionComponentBuilder(dragService: _dragService),
                             DividerComponentBuilder(),
                             PinComponentBuilder(dragService: _dragService),
+                            CustomParagraphComponentBuilder(
+                              dragService: _dragService,
+                              editorService: _editorService,
+                              isEditing: false, // 읽기 모드
+                            ),
                             ...defaultComponentBuilders,
                           ],
                           documentLayoutKey: _layoutKey,
@@ -789,6 +863,8 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                       layoutKey: _layoutKey,
                       stackKey: _stackKey,
                       scrollController: _scrollCtrl,
+
+                      topInset: _showAppBar ? (_appBarHeight + 45) : 0.0,
                     ),
                   ),
                 ),
@@ -906,13 +982,14 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                                             horizontal: 8,
                                             vertical: 4,
                                           ),
-                                          child: Icon(
-                                            Icons.delete_outline_rounded,
-                                            color: Theme.of(context)
-                                                .colorScheme
-                                                .onSurface
-                                                .withOpacity(0.7),
-                                            size: 22,
+                                          child: Text(
+                                            '삭제',
+                                            style: TextStyle(
+                                              color:
+                                                  Theme.of(
+                                                    context,
+                                                  ).colorScheme.onSurface,
+                                            ),
                                           ),
                                         ),
                                       ),

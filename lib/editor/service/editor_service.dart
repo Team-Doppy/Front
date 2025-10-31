@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:doppy/editor/component/app_image_node.dart';
 import 'package:doppy/editor/component/link_component.dart';
-import 'package:doppy/editor/component/mention_component.dart';
 import 'package:doppy/editor/component/row_image_component.dart';
 import 'package:doppy/editor/component/clip_component.dart';
 import 'package:doppy/editor/postwrite_screen.dart';
@@ -18,6 +17,8 @@ class EditorService extends ChangeNotifier {
   GlobalKey? _documentLayoutKey;
   // 마지막 유효 selection 캐시 (포커스가 잠시 사라져도 사용)
   DocumentSelection? _lastSelection;
+  // 멘션 삭제 처리 중 무한 루프 방지 플래그
+  bool _isClearingMention = false;
 
   bool publishable = false; // 문서 변경 시 1회 순회로 갱신되는 캐시 값
 
@@ -44,6 +45,280 @@ class EditorService extends ChangeNotifier {
   void _onDocumentChanged(DocumentChangeLog changeLog) {
     final change = changeLog.changes[0];
     print('changeLog.changes[0]: $change');
+
+    // 멘션 문단(ParagraphNode with metadata.mention == true)에서 일부 삭제가 발생하면
+    // 텍스트를 한 번에 비우도록 처리 (가장 먼저 체크)
+    if (change is TextDeletedEvent && !_isClearingMention) {
+      try {
+        // TextDeletedEvent에서 직접 nodeId 가져오기
+        String? targetNodeId;
+        try {
+          targetNodeId = (change as dynamic).nodeId as String?;
+          print(
+            '[EditorService] TextDeletedEvent에서 nodeId 직접 가져오기: $targetNodeId',
+          );
+        } catch (_) {}
+
+        // 방법 1: _lastSelection에서 가져오기 (삭제 전 상태)
+        if (targetNodeId == null && _lastSelection != null) {
+          targetNodeId = _lastSelection!.extent.nodeId;
+          print(
+            '[EditorService] 멘션 삭제 감지: _lastSelection에서 nodeId=$targetNodeId',
+          );
+        }
+
+        // 방법 2: 현재 selection에서 가져오기
+        if (targetNodeId == null) {
+          final selection = editor.composer.selectionNotifier.value;
+          if (selection != null) {
+            targetNodeId = selection.extent.nodeId;
+            print(
+              '[EditorService] 멘션 삭제 감지: 현재 selection에서 nodeId=$targetNodeId',
+            );
+          }
+        }
+
+        if (targetNodeId != null) {
+          final node = document.getNodeById(targetNodeId);
+
+          if (node is ParagraphNode) {
+            final isMention = node.metadata['mention'] == true;
+            print(
+              '[EditorService] 노드 확인: nodeId=$targetNodeId, isParagraph=true, isMention=$isMention, text="${node.text.text}"',
+            );
+
+            if (isMention && node.text.text.isNotEmpty) {
+              _isClearingMention = true;
+
+              // 삭제 전 텍스트 저장 (로깅용)
+              final originalText = node.text.text;
+
+              // usernames 메타데이터에서 첫 번째 멘션 찾기
+              final List<dynamic> currentUsernames =
+                  (node.metadata['usernames'] as List?) ?? const [];
+
+              if (currentUsernames.isEmpty) {
+                // usernames가 없으면 멘션 노드가 아니므로 처리 안 함
+                _isClearingMention = false;
+                return;
+              }
+
+              final firstUsername = currentUsernames[0].toString();
+              final mentionPattern = '@$firstUsername';
+              final text = node.text.text;
+
+              // 텍스트에서 멘션 패턴 찾기
+              final mentionStartIndex = text.indexOf(mentionPattern);
+
+              String newText;
+              bool shouldDeleteNode = false;
+
+              if (mentionStartIndex == -1) {
+                // 패턴을 찾을 수 없으면 노드 전체 삭제
+                shouldDeleteNode = true;
+                newText = '';
+              } else {
+                // 멘션 부분 제거
+                final mentionEndIndex =
+                    mentionStartIndex + mentionPattern.length;
+
+                // 멘션 앞뒤 텍스트를 합침
+                final beforeMention = text.substring(0, mentionStartIndex);
+                final afterMention = text.substring(mentionEndIndex);
+                newText = (beforeMention + afterMention).trim();
+
+                // 남은 텍스트가 없으면 노드 삭제, 있으면 텍스트만 수정
+                if (newText.isEmpty) {
+                  shouldDeleteNode = true;
+                }
+              }
+
+              // IME 위치 매핑 오류 방지: 문서 변경 전에 selection을 먼저 클리어
+              try {
+                editor.composer.clearSelection();
+              } catch (e) {
+                print('[EditorService] 멘션 삭제 전 selection 클리어 실패: $e');
+              }
+
+              // 문서 변경을 다음 마이크로태스크로 지연하여 IME가 selection 클리어를 처리할 시간을 줌
+              final nodeIdForAsync = targetNodeId;
+              final nodeIndex = document.getNodeIndexById(nodeIdForAsync);
+
+              Future.microtask(() {
+                try {
+                  // 문서 변경 전에 플래그 유지
+                  final wasClearing = _isClearingMention;
+                  _isClearingMention = true;
+
+                  if (shouldDeleteNode) {
+                    // 노드 전체 삭제
+                    document.deleteNode(nodeIdForAsync);
+                  } else {
+                    // 멘션 부분만 제거하고 남은 텍스트 유지
+                    final currentNode = document.getNodeById(nodeIdForAsync);
+                    if (currentNode is ParagraphNode) {
+                      // 멘션 메타데이터 제거 (일반 문단으로 변환)
+                      final newMetadata = Map<String, dynamic>.from(
+                        currentNode.metadata,
+                      );
+                      newMetadata.remove('mention');
+                      newMetadata.remove('usernames');
+
+                      // 원본 텍스트의 attribution 유지하면서 새 텍스트 생성
+                      final newAttributedText = AttributedText(newText);
+
+                      // 기존 attribution 중 bold를 제외하고 복사 (필요시)
+                      // 여기서는 새 텍스트에만 적용
+
+                      final updatedNode = ParagraphNode(
+                        id: currentNode.id,
+                        text: newAttributedText,
+                        metadata: newMetadata,
+                      );
+
+                      document.replaceNodeById(nodeIdForAsync, updatedNode);
+                    }
+                  }
+
+                  // 플래그 복원
+                  _isClearingMention = wasClearing;
+
+                  // 즉시 상태 업데이트
+                  _recomputePublishable();
+                  _isClearingMention = false;
+
+                  // 다음 프레임에서 selection을 설정
+                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                    try {
+                      final doc = document;
+                      DocumentPosition? position;
+
+                      if (shouldDeleteNode) {
+                        // 노드가 삭제되었으면 다음 노드 또는 이전 노드로
+                        // 단, 제목 노드(index 0)로는 커서가 가지 않도록 보호
+                        if (nodeIndex < doc.nodeCount) {
+                          final nextNode = doc.getNodeAt(nodeIndex);
+                          // 제목 노드가 아니고 ParagraphNode인 경우만
+                          if (nextNode != null &&
+                              nextNode is ParagraphNode &&
+                              nextNode.metadata['isTitle'] != true) {
+                            position = DocumentPosition(
+                              nodeId: nextNode.id,
+                              nodePosition: const TextNodePosition(offset: 0),
+                            );
+                          }
+                        }
+
+                        // 제목 다음 노드가 없거나 제목이면 빈 문단 생성
+                        if (position == null && nodeIndex == 1) {
+                          // 제목 바로 밑 노드가 삭제된 경우
+                          // 제목 다음에 빈 문단이 없으면 생성
+                          if (doc.nodeCount <= 1 ||
+                              (doc.nodeCount > 1 &&
+                                  doc.getNodeAt(1)?.metadata['isTitle'] ==
+                                      true)) {
+                            final paragraphId =
+                                'p_${DateTime.now().millisecondsSinceEpoch}';
+                            final ParagraphNode newParagraph = ParagraphNode(
+                              id: paragraphId,
+                              text: AttributedText(''),
+                              metadata: {'textAlign': 'center'},
+                            );
+                            doc.insertNodeAt(1, newParagraph);
+                            position = DocumentPosition(
+                              nodeId: paragraphId,
+                              nodePosition: const TextNodePosition(offset: 0),
+                            );
+                          }
+                        }
+
+                        // 이전 노드로 이동 (제목 제외)
+                        if (position == null && nodeIndex > 1) {
+                          final prevNode = doc.getNodeAt(nodeIndex - 1);
+                          if (prevNode != null &&
+                              prevNode is ParagraphNode &&
+                              prevNode.metadata['isTitle'] != true) {
+                            final prevText = prevNode.text.text;
+                            position = DocumentPosition(
+                              nodeId: prevNode.id,
+                              nodePosition: TextNodePosition(
+                                offset: prevText.length,
+                              ),
+                            );
+                          }
+                        }
+
+                        // 여전히 위치가 없으면 제목 다음에 빈 문단 생성
+                        if (position == null && doc.nodeCount >= 1) {
+                          final firstNode = doc.getNodeAt(0);
+                          if (firstNode != null &&
+                              firstNode is ParagraphNode &&
+                              firstNode.metadata['isTitle'] == true) {
+                            final paragraphId =
+                                'p_${DateTime.now().millisecondsSinceEpoch}';
+                            final ParagraphNode newParagraph = ParagraphNode(
+                              id: paragraphId,
+                              text: AttributedText(''),
+                              metadata: {'textAlign': 'center'},
+                            );
+                            doc.insertNodeAt(1, newParagraph);
+                            position = DocumentPosition(
+                              nodeId: paragraphId,
+                              nodePosition: const TextNodePosition(offset: 0),
+                            );
+                          }
+                        }
+                      } else {
+                        // 노드가 수정되었으면 현재 노드의 멘션 제거된 위치로
+                        // 단, 제목 노드가 아닌 경우만
+                        final updatedNode = doc.getNodeById(nodeIdForAsync);
+                        if (updatedNode is ParagraphNode &&
+                            updatedNode.metadata['isTitle'] != true) {
+                          // 멘션 패턴 위치 확인 (삭제 후에는 없을 것이므로 텍스트 길이만큼)
+                          position = DocumentPosition(
+                            nodeId: nodeIdForAsync,
+                            nodePosition: TextNodePosition(
+                              offset: updatedNode.text.text.length,
+                            ),
+                          );
+                        }
+                      }
+
+                      if (position != null) {
+                        editor.execute([
+                          ChangeSelectionRequest(
+                            DocumentSelection.collapsed(position: position),
+                            SelectionChangeType.placeCaret,
+                            SelectionReason.userInteraction,
+                          ),
+                        ]);
+                      }
+                    } catch (e) {
+                      print('[EditorService] 멘션 삭제 후 selection 업데이트 실패: $e');
+                    }
+                  });
+
+                  notifyListeners();
+                } catch (e) {
+                  print('[EditorService] 멘션 삭제/수정 실패: $e');
+                  _isClearingMention = false;
+                }
+              });
+
+              print(
+                '[EditorService] 멘션 처리 완료 - 원본: "$originalText", 삭제 후: "$newText", 노드 삭제: $shouldDeleteNode',
+              );
+              return; // 이벤트 처리 중단
+            }
+          }
+        } else {
+          print('[EditorService] 멘션 삭제 감지: nodeId를 찾을 수 없음');
+        }
+      } catch (e) {
+        _isClearingMention = false;
+        print('[EditorService] 멘션 삭제 처리 중 오류: $e');
+      }
+    }
 
     if (change is NodeRemovedEvent) {
       if (getEditingIndex() == 0) {
@@ -100,8 +375,7 @@ class EditorService extends ChangeNotifier {
       return;
     }
 
-    if (changeLog.changes[0] is TextInsertionEvent ||
-        changeLog.changes[0] is TextDeletedEvent) {
+    if (change is TextInsertionEvent || change is TextDeletedEvent) {
       if (getEditingIndex() == 0) {
         _recomputePublishable();
         notifyListeners();
@@ -152,7 +426,7 @@ class EditorService extends ChangeNotifier {
         return true;
       } else if (node is ImageRowNode ||
           node is LinkNode ||
-          node is MentionNode) {
+          (node is ParagraphNode && node.metadata['mention'] == true)) {
         return true;
       } else {
         // 기타 노드가 존재하면 본문이 있다고 간주
@@ -202,7 +476,7 @@ class EditorService extends ChangeNotifier {
           return true;
         } else if (node is ImageRowNode ||
             node is LinkNode ||
-            node is MentionNode) {
+            (node is ParagraphNode && node.metadata['mention'] == true)) {
           return true;
         } else {
           // 기타 노드가 존재하면 본문이 있다고 간주
@@ -235,8 +509,13 @@ class EditorService extends ChangeNotifier {
         nodes.add({'t': 'row', 'urls': List<String>.from(node.imageUrls)});
       } else if (node is LinkNode) {
         nodes.add({'t': 'link', 'url': node.url, 'title': node.title});
-      } else if (node is MentionNode) {
-        nodes.add({'t': 'mention', 'users': List<String>.from(node.usernames)});
+      } else if (node is ParagraphNode && node.metadata['mention'] == true) {
+        final List<dynamic> namesDyn =
+            (node.metadata['usernames'] as List?) ?? const [];
+        nodes.add({
+          't': 'mention',
+          'users': namesDyn.map((e) => e.toString()).toList(),
+        });
       } else {
         nodes.add({'t': node.runtimeType.toString(), 'id': node.id});
       }
@@ -501,13 +780,93 @@ class EditorService extends ChangeNotifier {
     } catch (_) {}
   }
 
-  /// 언급 노드를 현재 커서 다음 슬롯에 삽입
+  /// 언급 노드를 문단(Paragraph) 기반으로 삽입한다.
+  /// - 전체 텍스트는 굵게(bold)
+  /// - 메타데이터로 mention 플래그와 usernames를 보관
+  /// - 컴포넌트처럼 현재 라인 다음 슬롯에 삽입(필요 시 끝에 빈 문단 생성)
+  /// - 각 멘션은 개별 노드로 생성되어 세로로 표시됨
   void addMentionNode(List<String> usernames) {
-    final node = MentionNode(
-      id: 'mention_${DateTime.now().millisecondsSinceEpoch}',
-      usernames: usernames,
-    );
-    _insertComponentNodeAtNextLine(node);
+    try {
+      if (usernames.isEmpty) return;
+
+      // 이전 문단 정렬을 승계
+      final int caretIndex = _getCaretNodeIndexSafe();
+      final String inheritedAlign = _getPreviousParagraphAlign(caretIndex);
+
+      // 각 멘션을 개별 노드로 생성
+      int insertIndex = _getCaretNodeIndexSafe();
+
+      // 현재 커서 위치의 다음 줄에 삽입
+      if (insertIndex == 0) {
+        insertIndex = 1;
+      } else {
+        // 현재 커서가 있는 문단에 텍스트가 있으면 다음 줄에 삽입
+        final currentNode = document.getNodeAt(insertIndex);
+        if (currentNode is ParagraphNode &&
+            currentNode.text.text.trim().isNotEmpty) {
+          insertIndex = insertIndex + 1;
+        }
+      }
+
+      // 각 username을 개별 노드로 삽입
+      for (int i = 0; i < usernames.length; i++) {
+        final username = usernames[i];
+        final String text = '@$username';
+        final String id =
+            'p_mention_${DateTime.now().millisecondsSinceEpoch}_$i';
+
+        final AttributedText attributed = AttributedText(text);
+        attributed.addAttribution(
+          boldAttribution,
+          SpanRange(0, text.length - 1),
+        );
+
+        final ParagraphNode mentionParagraph = ParagraphNode(
+          id: id,
+          text: attributed,
+          metadata: {
+            'textAlign': inheritedAlign,
+            'mention': true,
+            'usernames': [username], // 각 노드는 하나의 username만 가짐
+          },
+        );
+
+        // 각 노드를 순서대로 삽입
+        final doc = document;
+        if (insertIndex > doc.nodeCount) {
+          insertIndex = doc.nodeCount;
+        }
+
+        final edits = <EditRequest>[
+          InsertNodeAtIndexRequest(
+            nodeIndex: insertIndex,
+            newNode: mentionParagraph,
+          ),
+        ];
+
+        // 마지막 노드가 문서 끝에 삽입되면 빈 문단 추가
+        if (insertIndex == doc.nodeCount) {
+          final String paragraphId =
+              'p_${DateTime.now().millisecondsSinceEpoch}';
+          final ParagraphNode newParagraph = ParagraphNode(
+            id: paragraphId,
+            text: AttributedText(''),
+            metadata: {'textAlign': inheritedAlign},
+          );
+          edits.add(
+            InsertNodeAtIndexRequest(
+              nodeIndex: insertIndex + 1,
+              newNode: newParagraph,
+            ),
+          );
+        }
+
+        editor.execute(edits);
+        insertIndex++; // 다음 노드는 그 다음 위치에 삽입
+      }
+
+      notifyListeners();
+    } catch (_) {}
   }
 
   /// Video clip placeholder 노드 추가
@@ -859,6 +1218,18 @@ class EditorService extends ChangeNotifier {
         );
         doc.insertNodeAt(1, newParagraph);
         print('📝 제목 다음에 빈 문단 생성');
+      }
+    } else {
+      // 현재 커서가 있는 문단에 텍스트가 있으면 다음 줄에 삽입
+      if (insertIndex < doc.nodeCount) {
+        final currentNode = doc.getNodeAt(insertIndex);
+        if (currentNode is ParagraphNode) {
+          final hasText = currentNode.text.text.trim().isNotEmpty;
+          if (hasText) {
+            insertIndex = insertIndex + 1;
+            print('🎯 현재 문단에 텍스트가 있음, 다음 줄(index $insertIndex)에 삽입');
+          }
+        }
       }
     }
 

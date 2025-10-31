@@ -212,64 +212,69 @@ class _CategoryItemWithActionsState extends State<_CategoryItemWithActions>
           // 메인 컨텐츠
           Transform.translate(
             offset: Offset(_dragOffset, 0),
-            child: Material(
-              color:
-                  widget.isSelected
-                      ? Theme.of(context).colorScheme.primary.withOpacity(0.1)
-                      : Colors.transparent,
-              child: InkWell(
-                onTap: () {
-                  if (_dragOffset != 0) {
-                    // 드래그 상태면 먼저 닫기
-                    setState(() {
-                      _dragOffset = 0.0;
-                    });
-                    _animationController.reverse();
-                  } else {
-                    widget.onTap();
-                  }
-                },
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 20,
-                    vertical: 12,
-                  ),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          widget.category['name'],
-                          style: TextStyle(
-                            fontWeight:
-                                widget.isSelected
-                                    ? FontWeight.w600
-                                    : FontWeight.w400,
-                            fontSize: 16,
-                            color: Theme.of(context).colorScheme.onSurface,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 0),
+              child: Material(
+                borderRadius: BorderRadius.circular(12),
+                color:
+                    widget.isSelected
+                        ? Theme.of(context).colorScheme.primary.withOpacity(0.8)
+                        : Colors.transparent,
+                child: InkWell(
+                  onTap: () {
+                    if (_dragOffset != 0) {
+                      // 드래그 상태면 먼저 닫기
+                      setState(() {
+                        _dragOffset = 0.0;
+                      });
+                      _animationController.reverse();
+                    } else {
+                      widget.onTap();
+                    }
+                  },
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 20,
+                      vertical: 12,
+                    ),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            widget.category['name'],
+                            style: TextStyle(
+                              fontWeight:
+                                  widget.isSelected
+                                      ? FontWeight.w700
+                                      : FontWeight.w400,
+                              fontSize: 16,
+                              color:
+                                  widget.isSelected
+                                      ? Colors.white
+                                      : Theme.of(context).colorScheme.onSurface,
+                            ),
                           ),
                         ),
-                      ),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 10,
-                          vertical: 4,
-                        ),
-                        decoration: BoxDecoration(
-                          color: Theme.of(
-                            context,
-                          ).colorScheme.primary.withOpacity(0.15),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: Text(
-                          '${widget.category['postCount'] ?? 0}',
-                          style: TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w600,
-                            color: Theme.of(context).colorScheme.primary,
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 4,
+                          ),
+
+                          child: Text(
+                            '${widget.category['postCount'] ?? 0}',
+                            style: TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w700,
+                              color:
+                                  widget.isSelected
+                                      ? Colors.white
+                                      : Theme.of(context).colorScheme.primary,
+                            ),
                           ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
               ),
@@ -283,10 +288,20 @@ class _CategoryItemWithActionsState extends State<_CategoryItemWithActions>
 
 class CategoryDropDown {
   VoidCallback? _onCategoryChanged;
+  bool _isCreatingCategory = false;
+  final TextEditingController _createCategoryController =
+      TextEditingController();
+  final FocusNode _createCategoryFocusNode = FocusNode();
 
   /// 카테고리 변경 콜백 설정
   void setOnCategoryChanged(VoidCallback? callback) {
     _onCategoryChanged = callback;
+  }
+
+  /// 리소스 정리
+  void dispose() {
+    _createCategoryController.dispose();
+    _createCategoryFocusNode.dispose();
   }
 
   /// 카테고리 드롭다운 표시 (BottomSheet)
@@ -295,62 +310,99 @@ class CategoryDropDown {
     GlobalKey buttonKey,
     BaseFeedProvider feedProvider,
   ) async {
+    // 상태 초기화
+    _isCreatingCategory = false;
+    _createCategoryController.clear();
+
     await showModalBottomSheet(
       context: context,
       isScrollControlled: true,
+      isDismissible: true,
+      enableDrag: true,
       backgroundColor: Colors.transparent,
+      barrierColor: Colors.black.withOpacity(0.5),
       builder: (BuildContext context) {
-        return DraggableScrollableSheet(
-          initialChildSize: 0.6,
-          minChildSize: 0.4,
-          maxChildSize: 0.9,
-          builder: (context, scrollController) {
-            return ClipRRect(
-              borderRadius: const BorderRadius.vertical(
-                top: Radius.circular(24),
-              ),
-              child: BackdropFilter(
-                filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: Theme.of(
-                      context,
-                    ).colorScheme.surface.withOpacity(0.95),
-                    borderRadius: const BorderRadius.vertical(
-                      top: Radius.circular(24),
-                    ),
-                    border: Border.all(
-                      color: Theme.of(
-                        context,
-                      ).colorScheme.surface.withOpacity(0.6),
-                      width: 0.5,
-                    ),
-                  ),
-                  child: Column(
-                    children: [
-                      // 핸들 바
-                      Container(
-                        margin: const EdgeInsets.only(top: 12, bottom: 8),
-                        width: 40,
-                        height: 4,
-                        decoration: BoxDecoration(
-                          color: Colors.grey.withOpacity(0.3),
-                          borderRadius: BorderRadius.circular(2),
-                        ),
-                      ),
-                      SizedBox(height: 12),
-
-                      // 카테고리 리스트
-                      Expanded(
-                        child: SingleChildScrollView(
-                          controller: scrollController,
-                          child: _buildCategoryContent(context, feedProvider),
-                        ),
-                      ),
-                    ],
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            return Stack(
+              children: [
+                // 배경 영역 (바깥 부분) - 탭하면 닫힘
+                Positioned.fill(
+                  child: GestureDetector(
+                    onTap: () {
+                      Navigator.of(context).pop();
+                    },
+                    child: Container(color: Colors.transparent),
                   ),
                 ),
-              ),
+                // 바텀시트 컨텐츠
+                DraggableScrollableSheet(
+                  initialChildSize: 0.6,
+                  minChildSize: 0.4,
+                  maxChildSize: 0.9,
+                  builder: (context, scrollController) {
+                    return GestureDetector(
+                      onTap: () {
+                        // 바텀시트 내부를 탭해도 닫히지 않도록 이벤트 소비
+                      },
+                      child: ClipRRect(
+                        borderRadius: const BorderRadius.vertical(
+                          top: Radius.circular(24),
+                        ),
+                        child: BackdropFilter(
+                          filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+                          child: Container(
+                            decoration: BoxDecoration(
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.surface.withOpacity(0.95),
+                              borderRadius: const BorderRadius.vertical(
+                                top: Radius.circular(24),
+                              ),
+                              border: Border.all(
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.surface.withOpacity(0.6),
+                                width: 0.5,
+                              ),
+                            ),
+                            child: Column(
+                              children: [
+                                // 핸들 바
+                                Container(
+                                  margin: const EdgeInsets.only(
+                                    top: 12,
+                                    bottom: 8,
+                                  ),
+                                  width: 40,
+                                  height: 4,
+                                  decoration: BoxDecoration(
+                                    color: Colors.grey.withOpacity(0.3),
+                                    borderRadius: BorderRadius.circular(2),
+                                  ),
+                                ),
+                                SizedBox(height: 12),
+
+                                // 카테고리 리스트
+                                Expanded(
+                                  child: SingleChildScrollView(
+                                    controller: scrollController,
+                                    child: _buildCategoryContent(
+                                      context,
+                                      feedProvider,
+                                      setModalState,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ],
             );
           },
         );
@@ -366,48 +418,54 @@ class CategoryDropDown {
     required BuildContext context,
     required VoidCallback onTap,
   }) {
-    return Material(
-      color:
-          isSelected
-              ? Theme.of(context).colorScheme.primary.withOpacity(0.1)
-              : Colors.transparent,
-      child: InkWell(
-        onTap: onTap,
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-          child: Row(
-            children: [
-              Expanded(
-                child: Text(
-                  title,
-                  style: TextStyle(
-                    fontWeight: isSelected ? FontWeight.w600 : FontWeight.w400,
-                    fontSize: 16,
-                    color: Theme.of(context).colorScheme.onSurface,
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 0),
+      child: Material(
+        borderRadius: BorderRadius.circular(12),
+        color:
+            isSelected
+                ? Theme.of(context).colorScheme.primary.withOpacity(0.8)
+                : Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    title,
+                    style: TextStyle(
+                      fontWeight:
+                          isSelected ? FontWeight.w700 : FontWeight.w400,
+                      fontSize: 16,
+                      color:
+                          isSelected
+                              ? Colors.white
+                              : Theme.of(context).colorScheme.onSurface,
+                    ),
                   ),
                 ),
-              ),
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 10,
-                  vertical: 4,
-                ),
-                decoration: BoxDecoration(
-                  color: Theme.of(
-                    context,
-                  ).colorScheme.primary.withOpacity(0.15),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Text(
-                  count.toString(),
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    color: Theme.of(context).colorScheme.primary,
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 4,
+                  ),
+
+                  child: Text(
+                    count.toString(),
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                      color:
+                          isSelected
+                              ? Colors.white
+                              : Theme.of(context).colorScheme.primary,
+                    ),
                   ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
@@ -418,6 +476,7 @@ class CategoryDropDown {
   Widget _buildCategoryContent(
     BuildContext context,
     BaseFeedProvider feedProvider,
+    StateSetter setModalState,
   ) {
     final categories = feedProvider.categories;
     final postsByCategory = feedProvider.postsByCategory;
@@ -455,111 +514,119 @@ class CategoryDropDown {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        // 카테고리 생성 버튼은 본인 프로필일 때만 표시
-        if (isOwnProfile) _buildCreateCategoryButton(context, feedProvider),
+        // 카테고리 생성 모드일 때는 텍스트 필드만, 아닐 때는 버튼과 카테고리 목록
+        if (isOwnProfile) ...[
+          if (_isCreatingCategory)
+            _buildCreateCategoryField(context, feedProvider, setModalState)
+          else
+            _buildCreateCategoryButton(context, feedProvider, setModalState),
+        ],
 
-        // 전체 탭
-        _buildCategoryItem(
-          title: '전체',
-          count: totalPosts,
-          isSelected:
-              feedProvider.selectedBase == BaseFilter.all &&
-              feedProvider.selectedCategoryId == null,
-          context: context,
-          onTap: () {
-            feedProvider.selectBase(BaseFilter.all);
-            Navigator.of(context).pop();
-            _onCategoryChanged?.call();
-          },
-        ),
-
-        // 시스템 카테고리 구분선
-        if (isOwnProfile &&
-            (privatePosts > 0 || groupPosts > 0 || publicPosts > 0)) ...[
-          // 나만보기
-          Builder(
-            builder: (_) {
-              print(
-                '[CategoryDropDown] 나만보기 렌더링 - privatePosts: $privatePosts',
-              );
-              if (privatePosts > 0) {
-                return _buildCategoryItem(
-                  title: '나만보기',
-                  count: privatePosts,
-                  isSelected:
-                      feedProvider.selectedBase == BaseFilter.private &&
-                      feedProvider.selectedCategoryId == null,
-                  context: context,
-                  onTap: () {
-                    feedProvider.selectBase(BaseFilter.private);
-                    Navigator.of(context).pop();
-                    _onCategoryChanged?.call();
-                  },
-                );
-              }
-              return const SizedBox.shrink();
+        // 카테고리 목록은 생성 모드가 아닐 때만 표시
+        if (!_isCreatingCategory) ...[
+          // 전체 탭
+          _buildCategoryItem(
+            title: '전체',
+            count: totalPosts,
+            isSelected:
+                feedProvider.selectedBase == BaseFilter.all &&
+                feedProvider.selectedCategoryId == null,
+            context: context,
+            onTap: () {
+              feedProvider.selectBase(BaseFilter.all);
+              Navigator.of(context).pop();
+              _onCategoryChanged?.call();
             },
           ),
 
-          // 그룹공유
-          if (groupPosts > 0)
-            _buildCategoryItem(
-              title: '그룹공유',
-              count: groupPosts,
-              isSelected:
-                  feedProvider.selectedBase == BaseFilter.groups &&
-                  feedProvider.selectedCategoryId == null,
-              context: context,
-              onTap: () {
-                feedProvider.selectBase(BaseFilter.groups);
-                Navigator.of(context).pop();
-                _onCategoryChanged?.call();
+          // 시스템 카테고리 구분선
+          if (isOwnProfile &&
+              (privatePosts > 0 || groupPosts > 0 || publicPosts > 0)) ...[
+            // 나만보기
+            Builder(
+              builder: (_) {
+                print(
+                  '[CategoryDropDown] 나만보기 렌더링 - privatePosts: $privatePosts',
+                );
+                if (privatePosts > 0) {
+                  return _buildCategoryItem(
+                    title: '나만보기',
+                    count: privatePosts,
+                    isSelected:
+                        feedProvider.selectedBase == BaseFilter.private &&
+                        feedProvider.selectedCategoryId == null,
+                    context: context,
+                    onTap: () {
+                      feedProvider.selectBase(BaseFilter.private);
+                      Navigator.of(context).pop();
+                      _onCategoryChanged?.call();
+                    },
+                  );
+                }
+                return const SizedBox.shrink();
               },
             ),
 
-          // 전체공개
-          if (publicPosts > 0)
-            _buildCategoryItem(
-              title: '전체공개',
-              count: publicPosts,
-              isSelected:
-                  feedProvider.selectedBase == BaseFilter.public &&
-                  feedProvider.selectedCategoryId == null,
-              context: context,
-              onTap: () {
-                feedProvider.selectBase(BaseFilter.public);
-                Navigator.of(context).pop();
-                _onCategoryChanged?.call();
-              },
-            ),
-        ],
-
-        // 사용자가 만든 카테고리
-        ...categories
-            .where((c) => !(c['isSystem'] == true))
-            .map(
-              (c) => _CategoryItemWithActions(
-                category: c,
-                isOwnProfile: isOwnProfile,
-                feedProvider: feedProvider,
+            // 그룹공유
+            if (groupPosts > 0)
+              _buildCategoryItem(
+                title: '그룹공유',
+                count: groupPosts,
                 isSelected:
-                    feedProvider.selectedCategoryId == c['id'].toString(),
+                    feedProvider.selectedBase == BaseFilter.groups &&
+                    feedProvider.selectedCategoryId == null,
+                context: context,
                 onTap: () {
-                  feedProvider.selectCategory(c['id'].toString());
+                  feedProvider.selectBase(BaseFilter.groups);
                   Navigator.of(context).pop();
                   _onCategoryChanged?.call();
                 },
-                onEdit: () async {
-                  // 카테고리 수정 로직
-                  // TODO: 수정 다이얼로그 구현
-                },
-                onDelete: () {
-                  if (feedProvider is MyProfileFeedProvider) {
-                    _deleteCategory(context, feedProvider, c['id']);
-                  }
+              ),
+
+            // 전체공개
+            if (publicPosts > 0)
+              _buildCategoryItem(
+                title: '전체공개',
+                count: publicPosts,
+                isSelected:
+                    feedProvider.selectedBase == BaseFilter.public &&
+                    feedProvider.selectedCategoryId == null,
+                context: context,
+                onTap: () {
+                  feedProvider.selectBase(BaseFilter.public);
+                  Navigator.of(context).pop();
+                  _onCategoryChanged?.call();
                 },
               ),
-            ),
+          ],
+
+          // 사용자가 만든 카테고리
+          ...categories
+              .where((c) => !(c['isSystem'] == true))
+              .map(
+                (c) => _CategoryItemWithActions(
+                  category: c,
+                  isOwnProfile: isOwnProfile,
+                  feedProvider: feedProvider,
+                  isSelected:
+                      feedProvider.selectedCategoryId == c['id'].toString(),
+                  onTap: () {
+                    feedProvider.selectCategory(c['id'].toString());
+                    Navigator.of(context).pop();
+                    _onCategoryChanged?.call();
+                  },
+                  onEdit: () async {
+                    // 카테고리 수정 로직
+                    // TODO: 수정 다이얼로그 구현
+                  },
+                  onDelete: () {
+                    if (feedProvider is MyProfileFeedProvider) {
+                      _deleteCategory(context, feedProvider, c['id']);
+                    }
+                  },
+                ),
+              ),
+        ],
 
         // BottomSheet 하단 여백
         const SizedBox(height: 20),
@@ -570,21 +637,19 @@ class CategoryDropDown {
   Widget _buildCreateCategoryButton(
     BuildContext context,
     BaseFeedProvider feedProvider,
+    StateSetter setModalState,
   ) {
     return Material(
       color: Colors.transparent,
       child: InkWell(
-        onTap: () async {
-          Navigator.of(context).pop();
-          final name = await showDialog<String?>(
-            context: context,
-            builder: (_) => const CategoryCreateDialog(),
-          );
-
-          if (name != null && name.trim().isNotEmpty) {
-            await _createCategory(context, feedProvider, name.trim());
-            _onCategoryChanged?.call();
-          }
+        onTap: () {
+          setModalState(() {
+            _isCreatingCategory = true;
+          });
+          // 키보드가 나타날 때까지 잠시 기다린 후 포커스
+          Future.delayed(const Duration(milliseconds: 100), () {
+            _createCategoryFocusNode.requestFocus();
+          });
         },
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
@@ -605,6 +670,138 @@ class CategoryDropDown {
         ),
       ),
     );
+  }
+
+  /// 카테고리 생성 텍스트 필드 (인라인)
+  Widget _buildCreateCategoryField(
+    BuildContext context,
+    BaseFeedProvider feedProvider,
+    StateSetter setModalState,
+  ) {
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            decoration: BoxDecoration(
+              color: Colors.transparent,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(
+                color: Theme.of(context).colorScheme.primary,
+                width: 2,
+              ),
+            ),
+            child: TextField(
+              controller: _createCategoryController,
+              focusNode: _createCategoryFocusNode,
+              autofocus: true,
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w500,
+                color: Theme.of(context).colorScheme.onSurface,
+              ),
+              decoration: InputDecoration(
+                hintText: '새 카테고리 이름',
+                hintStyle: TextStyle(
+                  fontSize: 16,
+                  color: Theme.of(
+                    context,
+                  ).colorScheme.onSurface.withOpacity(0.5),
+                ),
+                border: InputBorder.none,
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 20,
+                  vertical: 8,
+                ),
+              ),
+              onSubmitted:
+                  (value) => _handleCreateCategory(
+                    context,
+                    feedProvider,
+                    setModalState,
+                  ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: TextButton(
+                  onPressed: () {
+                    setModalState(() {
+                      _isCreatingCategory = false;
+                      _createCategoryController.clear();
+                    });
+                    _createCategoryFocusNode.unfocus();
+                  },
+                  style: TextButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                  ),
+                  child: Text(
+                    '취소',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.onSurface.withOpacity(0.4),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: TextButton(
+                  onPressed: () {
+                    setModalState(() {
+                      _handleCreateCategory(
+                        context,
+                        feedProvider,
+                        setModalState,
+                      );
+                    });
+                  },
+                  style: TextButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                  ),
+                  child: Text(
+                    '생성',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
+                      color: Theme.of(context).colorScheme.primary,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 카테고리 생성 처리
+  void _handleCreateCategory(
+    BuildContext context,
+    BaseFeedProvider feedProvider,
+    StateSetter setModalState,
+  ) async {
+    final name = _createCategoryController.text.trim();
+    if (name.isEmpty) return;
+
+    try {
+      await _createCategory(context, feedProvider, name);
+      setModalState(() {
+        _isCreatingCategory = false;
+        _createCategoryController.clear();
+      });
+      _createCategoryFocusNode.unfocus();
+      _onCategoryChanged?.call();
+    } catch (e) {
+      // 에러는 _createCategory에서 처리됨
+    }
   }
 
   /// 카테고리 생성 (서버 API 호출)
@@ -728,62 +925,5 @@ class CategoryDropDown {
       // 오류 발생 시 콘솔에만 출력
       print('[CategoryDropDown] SnackBar 표시 오류: $e - 메시지: $message');
     }
-  }
-}
-
-class CategoryCreateDialog extends StatefulWidget {
-  const CategoryCreateDialog({super.key});
-
-  @override
-  State<CategoryCreateDialog> createState() => _CategoryCreateDialogState();
-}
-
-class _CategoryCreateDialogState extends State<CategoryCreateDialog> {
-  final TextEditingController _controller = TextEditingController();
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      title: Text(
-        '',
-        style: TextStyle(
-          fontSize: 16,
-          fontWeight: FontWeight.w600,
-          color: Theme.of(context).colorScheme.onSurface,
-        ),
-      ),
-      content: TextField(
-        controller: _controller,
-        autofocus: true,
-        decoration: InputDecoration(
-          hintText: '카테고리 이름',
-          hintStyle: TextStyle(
-            fontSize: 14,
-            fontWeight: FontWeight.w400,
-            color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
-          ),
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop<String?>(null),
-          child: Text('취소'),
-        ),
-        ElevatedButton(
-          onPressed: () {
-            final name = _controller.text.trim();
-            if (name.isEmpty) return;
-            Navigator.of(context).pop<String?>(name);
-          },
-          child: const Text('생성'),
-        ),
-      ],
-    );
   }
 }

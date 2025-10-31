@@ -89,15 +89,7 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       _allIsLoading = false;
       _allHasMoreData = _allPosts.length == 10;
       _allCurrentPage = _allPosts.isNotEmpty ? 1 : 0;
-
-      print(
-        '[HomeScreen] 스플래시에서 프리로드된 데이터: 친구글 ${_friendsPosts.length}개, 전체글 ${_allPosts.length}개',
-      );
     }
-
-    print(
-      '[HomeScreen] initState: 친구글 ${_friendsPosts.length}개, 전체글 ${_allPosts.length}개',
-    );
 
     // 네트워크 에러는 API 요청 시점에서만 처리
 
@@ -124,8 +116,7 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           _refreshInProgress = false;
         }
       });
-      // 프로필 로드 (스플래시에서 하지 않음)
-      print('[HomeScreen] 프로필 백그라운드 로드 시작');
+
       _loadProfileSafely();
 
       // 친구글이 비어있으면 로드
@@ -133,18 +124,12 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       // 스플래시에서 에러가 났다면 _friendsPosts가 비어있고, 서버에서 로드 필요
       // refresh=false로 설정하면 캐시를 먼저 확인하고, 캐시가 없을 때만 서버에서 로드
       if (_friendsPosts.isEmpty && !_friendsIsLoading) {
-        print('[HomeScreen] 친구글 로드되지 않음 - 캐시 또는 서버에서 로드 시작');
         _loadFriendsPosts(refresh: false); // 캐시 우선 확인
-      } else if (!_friendsPosts.isEmpty) {
-        print('[HomeScreen] 스플래시에서 친구글 로드됨: ${_friendsPosts.length}개');
       }
 
       // 전체글이 비어있으면 로드
       if (_allPosts.isEmpty && !_allIsLoading) {
-        print('[HomeScreen] 전체글 로드되지 않음 - 캐시 또는 서버에서 로드 시작');
         _loadAllPosts(refresh: false); // 캐시 우선 확인
-      } else if (!_allPosts.isEmpty) {
-        print('[HomeScreen] 스플래시에서 전체글 로드됨: ${_allPosts.length}개');
       }
     });
 
@@ -202,7 +187,6 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
   // 검색 오버레이 열기 (독립 화면으로)
   void openSearchOverlay({String? initialQuery}) {
-    print('[HomeScreen.openSearchOverlay] 호출됨 - initialQuery: $initialQuery');
     Navigator.of(context).push(
       PageRouteBuilder(
         opaque: true,
@@ -580,10 +564,10 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                           ).colorScheme.background.withOpacity(0.85),
                           Theme.of(
                             context,
-                          ).colorScheme.background.withOpacity(0.85),
+                          ).colorScheme.background.withOpacity(0.75),
                           Theme.of(
                             context,
-                          ).colorScheme.background.withOpacity(0.85),
+                          ).colorScheme.background.withOpacity(0.8),
                         ],
                         stops: const [0.0, 0.7, 1.0],
                       ),

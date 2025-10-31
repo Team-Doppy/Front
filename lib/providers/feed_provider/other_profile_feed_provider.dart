@@ -3,6 +3,12 @@ import '../../utils/network_utils.dart';
 
 /// 다른 사람 피드 전용 Provider (캐시 없음, 항상 서버에서 로드)
 class OtherProfileFeedProvider extends BaseFeedProvider {
+  // 싱글톤 패턴
+  static final OtherProfileFeedProvider _instance =
+      OtherProfileFeedProvider._internal();
+  factory OtherProfileFeedProvider() => _instance;
+  OtherProfileFeedProvider._internal();
+
   // 독립적인 상태 관리
   String? _username;
   bool _loading = false;
@@ -158,7 +164,11 @@ class OtherProfileFeedProvider extends BaseFeedProvider {
     _username = null;
     _currentPage = 0;
     _totalPages = 0;
+    // 선택 상태도 초기화
+    selectBase(BaseFilter.all);
+    selectCategory(null);
     notifyListeners();
+    print('[OtherProfileFeedProvider] 로그아웃 - 모든 데이터 초기화 완료');
   }
 
   @override

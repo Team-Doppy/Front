@@ -74,10 +74,9 @@ class _PostCardState extends State<PostCard> {
     if (widget.thumbnailImageUrl.isNotEmpty) {
       return Container(
         decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: BorderRadius.circular(13),
           border: Border.all(
-            color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
-            width: 0.5,
+            color: Theme.of(context).colorScheme.onSurface.withOpacity(0.3),
           ),
         ),
         child: ClipRRect(
@@ -131,13 +130,7 @@ class _PostCardState extends State<PostCard> {
     } else {
       // 로컬 에셋
       return Container(
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-            color: Theme.of(context).colorScheme.surfaceVariant,
-            width: 1,
-          ),
-        ),
+        decoration: BoxDecoration(borderRadius: BorderRadius.circular(12)),
         child: Center(
           child: Icon(
             Icons.error,
@@ -162,8 +155,8 @@ class _PostCardState extends State<PostCard> {
         ),
 
         Positioned(
-          left: 6,
-          bottom: 6,
+          left: 3,
+          bottom: 3,
           child: GestureDetector(
             onTap: () {
               final isMyPost =
@@ -194,34 +187,22 @@ class _PostCardState extends State<PostCard> {
             behavior: HitTestBehavior.opaque,
             child: ClipRRect(
               borderRadius: BorderRadius.circular(35),
-              child: BackdropFilter(
-                filter: ui.ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-                child: Container(
-                  padding: const EdgeInsets.only(right: 6),
-                  decoration: BoxDecoration(
-                    color: Colors.black.withOpacity(0.0),
-                    borderRadius: BorderRadius.circular(35),
-                  ),
-                  child: Row(
-                    children: [
-                      CommonProfileAvatar(
-                        imageUrl: widget.authorProfileImageUrl ?? "",
-                        username: widget.author,
-                        size: 30,
-                        borderWidth: 1,
-                      ),
-                      const SizedBox(width: 4),
-                      Text(
-                        widget.author,
-                        style: TextStyle(
-                          color: Theme.of(context).colorScheme.surface,
-                          fontSize: 13,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                      const SizedBox(width: 4),
-                    ],
-                  ),
+              child: Container(
+                decoration: BoxDecoration(
+                  color: Theme.of(
+                    context,
+                  ).colorScheme.onSurface.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(35),
+                ),
+                child: Row(
+                  children: [
+                    CommonProfileAvatar(
+                      imageUrl: widget.authorProfileImageUrl ?? "",
+                      username: widget.author,
+                      size: 35,
+                      borderWidth: 1,
+                    ),
+                  ],
                 ),
               ),
             ),

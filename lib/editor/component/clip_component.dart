@@ -8,7 +8,6 @@ import 'package:doppy/editor/service/node_component_service.dart';
 import 'package:doppy/theme/app_colors.dart';
 import 'dart:math' as math;
 import 'package:provider/provider.dart';
-import 'package:doppy/editor/component/mention_component.dart';
 import 'package:doppy/editor/component/row_image_component.dart';
 import 'package:video_player/video_player.dart';
 import 'package:doppy/editor/service/post_reader_service.dart';
@@ -521,7 +520,7 @@ class _PinComponentState extends State<_PinComponent> with DocumentComponent {
     bool isSpecialNode(DocumentNode? node) {
       if (node == null) return false;
       return node is ClipNode ||
-          node is MentionNode ||
+          (node is ParagraphNode && node.metadata['mention'] == true) ||
           node is ImageNode ||
           node is ImageRowNode;
     }
@@ -620,7 +619,7 @@ class _PinComponentState extends State<_PinComponent> with DocumentComponent {
     final neighborIndex = myIndex + direction;
     if (neighborIndex < 0 || neighborIndex >= doc.nodeCount) return false;
     final neighbor = doc.getNodeAt(neighborIndex);
-    return neighbor is MentionNode;
+    return neighbor is ParagraphNode && neighbor.metadata['mention'] == true;
   }
 
   bool _hasNeighborImage(Document doc, String nodeId, int direction) {

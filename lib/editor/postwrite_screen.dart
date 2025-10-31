@@ -13,7 +13,6 @@ import 'package:doppy/editor/component/single_image_component.dart';
 import 'package:doppy/editor/component/row_image_component.dart';
 import 'package:doppy/editor/component/title_component.dart';
 import 'package:doppy/editor/component/paragraph_component.dart';
-import 'package:doppy/editor/component/mention_component.dart';
 import 'package:doppy/editor/component/divider_component.dart';
 import 'package:doppy/editor/overlay/drag_overlay_widget.dart';
 import 'package:doppy/editor/service/drag_service.dart';
@@ -402,7 +401,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
             node is ImageRowNode ||
             node is ClipNode ||
             node is LinkNode ||
-            node is MentionNode;
+            (node is ParagraphNode && node.metadata['mention'] == true);
       }
 
       final bool isSpecialBefore = before != null && isSpecialNode(before);
@@ -467,7 +466,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
         node is ImageNode ||
         node is ImageRowNode ||
         node is LinkNode ||
-        node is MentionNode ||
+        (node is ParagraphNode && node.metadata['mention'] == true) ||
         node is ClipNode;
 
     nodeComponentService.selectNode(isSpecial ? nodeId : null);
@@ -715,10 +714,6 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                                             editorService: editorService,
                                           ),
 
-                                          // 커스텀 언급 노드 컴포넌트
-                                          MentionComponentBuilder(
-                                            dragService: dragService,
-                                          ),
                                           // 구분선 전용 컴포넌트
                                           DividerComponentBuilder(
                                             dragService: dragService,
@@ -873,9 +868,11 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
   String _getNodeType(dynamic node) {
     if (node is ImageNode) return 'image';
     if (node is ImageRowNode) return 'imageRow';
-    if (node is ParagraphNode) return 'paragraph';
+    if (node is ParagraphNode) {
+      if (node.metadata['mention'] == true) return 'mention';
+      return 'paragraph';
+    }
     if (node is LinkNode) return 'link';
-    if (node is MentionNode) return 'mention';
     if (node is DividerNode) return 'divider';
     if (node is ClipNode) return 'clip';
     return 'default';

@@ -1,7 +1,6 @@
 import 'package:doppy/common/widgets/image_error_placeholder.dart';
 import 'package:doppy/editor/postwrite_screen.dart';
 import 'package:doppy/editor/component/link_component.dart';
-import 'package:doppy/editor/component/mention_component.dart';
 import 'package:doppy/editor/service/node_component_service.dart';
 import 'package:doppy/editor/service/drag_service.dart';
 import 'package:doppy/pages/components/shimmer_box.dart';
@@ -144,9 +143,10 @@ class ImageRowNode extends BlockNode {
 }
 
 class RowImageComponentBuilder implements ComponentBuilder {
-  const RowImageComponentBuilder({this.dragService});
+  const RowImageComponentBuilder({this.dragService, this.isEditing = true});
 
   final dynamic dragService; // DragService 타입을 나중에 import해서 수정
+  final bool isEditing;
 
   @override
   Widget? createComponent(
@@ -160,6 +160,7 @@ class RowImageComponentBuilder implements ComponentBuilder {
         spacing: componentViewModel.spacing,
         componentKey: componentContext.componentKey, // ← 매우 중요
         dragService: dragService,
+        isEditing: isEditing,
       );
     }
     return null;
@@ -189,6 +190,7 @@ class ImageRowComponent extends StatefulWidget {
     required this.spacing,
     required GlobalKey componentKey,
     this.dragService,
+    this.isEditing = true,
     Key? key,
   }) : _componentKey = componentKey,
        super(key: componentKey);
@@ -197,6 +199,7 @@ class ImageRowComponent extends StatefulWidget {
   final List<String> imageUrls;
   final double spacing;
   final dynamic dragService; // DragService 타입을 나중에 import해서 수정
+  final bool isEditing;
 
   final GlobalKey _componentKey;
 
@@ -512,25 +515,54 @@ class _ImageRowComponentState extends State<ImageRowComponent>
                       ),
                     ),
 
-                  // 스포일러 마스킹 (세션 캐시)
-                  if (context.watch<NodeComponentService>().isSpoiler(
-                    widget.nodeId,
-                  ))
-                    Positioned.fill(
-                      child: IgnorePointer(
-                        child: AnimatedBuilder(
-                          animation: _controller,
-                          builder: (context, _) {
-                            return CustomPaint(
-                              painter: _RowImageSpoilerPainter(
-                                phase: _controller.value,
-                                isEditing: true,
+                  // 스포일러 마스킹 (metadata + 세션 캐시)
+                  Builder(
+                    builder: (context) {
+                      bool isSpoilerFlag = false;
+                      final nodeService = context.watch<NodeComponentService>();
+                      try {
+                        final node = doc?.getNodeById(widget.nodeId);
+                        Map<String, dynamic>? meta;
+                        if (node is ImageRowNode) {
+                          meta = node.metadata;
+                        }
+                        isSpoilerFlag = nodeService.shouldShowImageSpoiler(
+                          widget.nodeId,
+                          meta,
+                        );
+                      } catch (_) {}
+
+                      if (!isSpoilerFlag) return const SizedBox.shrink();
+
+                      return Builder(
+                        builder: (context) {
+                          final theme = Theme.of(context).colorScheme;
+                          final brightness = Theme.of(context).brightness;
+                          final bgColor = theme.background;
+                          final dotColor = theme.onSurface;
+                          final isLightTheme = brightness == Brightness.light;
+                          return Positioned.fill(
+                            child: IgnorePointer(
+                              child: AnimatedBuilder(
+                                animation: _controller,
+                                builder: (context, _) {
+                                  return CustomPaint(
+                                    painter: _RowImageSpoilerPainter(
+                                      phase: _controller.value,
+                                      isEditing: widget.isEditing,
+                                      backgroundColor: bgColor,
+                                      dotColor: dotColor,
+                                      isLightTheme: isLightTheme,
+                                    ),
+                                  );
+                                },
                               ),
-                            );
-                          },
-                        ),
-                      ),
-                    ),
+                            ),
+                          );
+                        },
+                      );
+                    },
+                  ),
 
                   // 선택 보더
                   if (isSelected)
@@ -702,7 +734,7 @@ class _ImageRowComponentState extends State<ImageRowComponent>
     bool isSpecialNode(DocumentNode? node) {
       if (node == null) return false;
       return node is LinkNode ||
-          node is MentionNode ||
+          (node is ParagraphNode && node.metadata['mention'] == true) ||
           node is ImageNode ||
           node is ImageRowNode;
     }
@@ -851,7 +883,16 @@ class _ImageRowComponentState extends State<ImageRowComponent>
 class _RowImageSpoilerPainter extends CustomPainter {
   final double phase;
   final bool isEditing;
-  _RowImageSpoilerPainter({required this.phase, required this.isEditing});
+  final Color backgroundColor;
+  final Color dotColor;
+  final bool isLightTheme;
+  _RowImageSpoilerPainter({
+    required this.phase,
+    required this.isEditing,
+    required this.backgroundColor,
+    required this.dotColor,
+    required this.isLightTheme,
+  });
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -859,11 +900,13 @@ class _RowImageSpoilerPainter extends CustomPainter {
     final mask =
         Paint()
           ..style = PaintingStyle.fill
-          ..color = Colors.white.withOpacity(isEditing ? 0.4 : 1.0);
+          ..color = backgroundColor.withOpacity(isEditing ? 0.4 : 1.0);
+    // 라이트 테마일 때는 점 색상을 더 연하게
+    final dotOpacity = isLightTheme ? 0.2 : 0.3;
     final dot =
         Paint()
           ..style = PaintingStyle.fill
-          ..color = Colors.black.withOpacity(0.3);
+          ..color = dotColor.withOpacity(dotOpacity);
 
     canvas.drawRect(rect, mask);
     final area = rect.width * rect.height;
@@ -872,6 +915,8 @@ class _RowImageSpoilerPainter extends CustomPainter {
             ? math.max(40, (area / 180).floor())
             : math.max(60, (area / 120).floor());
     final double t = phase * (2 * math.pi) * 1.1;
+
+    // 기본 점들 그리기 (크기 증가: 1.5 -> 2.5)
     for (int i = 0; i < count; i++) {
       final seed = rect.hashCode ^ (i * 486187739);
       final r = math.Random(seed);
@@ -886,7 +931,7 @@ class _RowImageSpoilerPainter extends CustomPainter {
       y = y % rect.height;
       if (x < 0) x += rect.width;
       if (y < 0) y += rect.height;
-      canvas.drawRect(Rect.fromLTWH(x, y, 1.5, 1.5), dot);
+      canvas.drawRect(Rect.fromLTWH(x, y, 2.5, 2.5), dot);
     }
   }
 
