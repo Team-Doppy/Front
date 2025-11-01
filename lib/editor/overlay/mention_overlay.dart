@@ -273,7 +273,7 @@ class _MentionOverlayState extends State<MentionOverlay> {
     final bool hasQuery = _controller.text.trim().isNotEmpty;
     return Scaffold(
       appBar: AppBar(
-        backgroundColor: const Color.fromARGB(182, 96, 96, 96),
+        backgroundColor: const Color(0xFF2D2D2D).withOpacity(0.9),
         elevation: 0,
         scrolledUnderElevation: 0,
         automaticallyImplyLeading: false,
@@ -405,9 +405,9 @@ class _MentionOverlayState extends State<MentionOverlay> {
               child: GestureDetector(
                 onTap: () => Navigator.of(context).pop(),
                 child: BackdropFilter(
-                  filter: ImageFilter.blur(sigmaX: 5, sigmaY: 5),
+                  filter: ImageFilter.blur(sigmaX: 25, sigmaY: 25),
                   child: Container(
-                    color: const Color.fromARGB(182, 96, 96, 96),
+                    color: const Color(0xFF2D2D2D).withOpacity(0.9),
                   ),
                 ),
               ),
@@ -750,7 +750,7 @@ class _CircleUser extends StatelessWidget {
                         Icons.close,
                         color: Theme.of(
                           context,
-                        ).colorScheme.surface.withOpacity(0.7),
+                        ).colorScheme.surface.withOpacity(0.4),
                         size: 17,
                       ),
                     ),

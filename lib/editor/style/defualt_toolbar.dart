@@ -93,7 +93,12 @@ class TextStylingService extends ChangeNotifier {
   /// 굵게 토글
   void toggleBold() {
     final selection = composer.selection;
-    if (selection == null) return;
+    if (selection == null || selection.isCollapsed) {
+      // 선택이 없으면 다음 입력에 적용
+      composer.preferences.toggleStyle(boldAttribution);
+      notifyListeners();
+      return;
+    }
 
     editor.execute([
       ToggleTextAttributionsRequest(
@@ -106,7 +111,12 @@ class TextStylingService extends ChangeNotifier {
   /// 기울임 토글
   void toggleItalic() {
     final selection = composer.selection;
-    if (selection == null) return;
+    if (selection == null || selection.isCollapsed) {
+      // 선택이 없으면 다음 입력에 적용
+      composer.preferences.toggleStyle(italicsAttribution);
+      notifyListeners();
+      return;
+    }
 
     editor.execute([
       ToggleTextAttributionsRequest(
@@ -119,7 +129,12 @@ class TextStylingService extends ChangeNotifier {
   /// 밑줄 토글
   void toggleUnderline() {
     final selection = composer.selection;
-    if (selection == null) return;
+    if (selection == null || selection.isCollapsed) {
+      // 선택이 없으면 다음 입력에 적용
+      composer.preferences.toggleStyle(underlineAttribution);
+      notifyListeners();
+      return;
+    }
 
     editor.execute([
       ToggleTextAttributionsRequest(
@@ -132,7 +147,12 @@ class TextStylingService extends ChangeNotifier {
   /// 취소선 토글
   void toggleStrikethrough() {
     final selection = composer.selection;
-    if (selection == null) return;
+    if (selection == null || selection.isCollapsed) {
+      // 선택이 없으면 다음 입력에 적용
+      composer.preferences.toggleStyle(strikethroughAttribution);
+      notifyListeners();
+      return;
+    }
 
     editor.execute([
       ToggleTextAttributionsRequest(
@@ -143,9 +163,13 @@ class TextStylingService extends ChangeNotifier {
   }
 
   /// 스포일러 토글 (선택 영역 가리기)
+  /// 스포일러는 선택 영역이 있을 때만 작동 (특정 텍스트를 가리는 용도)
   void toggleSpoiler() {
     final selection = composer.selection;
-    if (selection == null) return;
+    if (selection == null || selection.isCollapsed) {
+      // 스포일러는 선택 영역이 필수
+      return;
+    }
 
     editor.execute([
       ToggleTextAttributionsRequest(
@@ -364,7 +388,21 @@ class TextStylingService extends ChangeNotifier {
   /// 텍스트 색상 적용
   void applyTextColor(Color color) {
     final selection = composer.selection;
-    if (selection == null) return;
+
+    // 선택이 없으면 다음 입력에 적용
+    if (selection == null || selection.isCollapsed) {
+      // 기존 색상 제거 (형광펜은 제외!)
+      final currentAttrs = composer.preferences.currentAttributions.toList();
+      for (final attr in currentAttrs) {
+        if (attr is ColorAttribution && attr is! HighlightAttribution) {
+          composer.preferences.removeStyle(attr);
+        }
+      }
+      // 새 색상 추가
+      composer.preferences.addStyle(ColorAttribution(color));
+      notifyListeners();
+      return;
+    }
 
     // 기존 색상 속성 제거
     _removeColorAttributions();
@@ -382,7 +420,21 @@ class TextStylingService extends ChangeNotifier {
   /// 폰트 크기 변경
   void changeFontSize(double size) {
     final selection = composer.selection;
-    if (selection == null) return;
+
+    // 선택이 없으면 다음 입력에 적용
+    if (selection == null || selection.isCollapsed) {
+      // 기존 폰트 크기 제거
+      final currentAttrs = composer.preferences.currentAttributions.toList();
+      for (final attr in currentAttrs) {
+        if (attr is FontSizeAttribution) {
+          composer.preferences.removeStyle(attr);
+        }
+      }
+      // 새 폰트 크기 추가
+      composer.preferences.addStyle(FontSizeAttribution(size));
+      notifyListeners();
+      return;
+    }
 
     // 기존 폰트 크기 속성 제거
     _removeFontSizeAttributions();
@@ -403,8 +455,14 @@ class TextStylingService extends ChangeNotifier {
     if (selection == null) return;
 
     final existingAttributions = _getAttributionsInSelection();
+    // ✅ HighlightAttribution은 제외하고 ColorAttribution만 제거
     final colorAttributions =
-        existingAttributions.where((attr) => attr is ColorAttribution).toSet();
+        existingAttributions
+            .where(
+              (attr) =>
+                  attr is ColorAttribution && attr is! HighlightAttribution,
+            ) // 형광펜은 제외!
+            .toSet();
 
     if (colorAttributions.isNotEmpty) {
       editor.execute([
@@ -464,14 +522,17 @@ class TextStylingService extends ChangeNotifier {
   /// 현재 선택된 텍스트의 스타일 상태 확인
   Map<String, bool> getCurrentStyles() {
     final selection = composer.selection;
-    if (selection == null) {
+
+    // 선택이 없거나 collapsed면 preferences에서 상태 확인
+    if (selection == null || selection.isCollapsed) {
+      final currentStyles = composer.preferences.currentAttributions;
       return {
-        'bold': false,
-        'italic': false,
-        'underline': false,
-        'strikethrough': false,
-        'highlight': false,
-        'spoiler': false,
+        'bold': currentStyles.contains(boldAttribution),
+        'italic': currentStyles.contains(italicsAttribution),
+        'underline': currentStyles.contains(underlineAttribution),
+        'strikethrough': currentStyles.contains(strikethroughAttribution),
+        'highlight': currentStyles.any((attr) => attr is HighlightAttribution),
+        'spoiler': currentStyles.contains(spoilerAttribution),
       };
     }
 
@@ -608,12 +669,55 @@ class TextStylingService extends ChangeNotifier {
     }
 
     if (selection != null && !selection.isCollapsed) {
-      // ✅ 선택 영역이 있으면: 메타데이터에 폰트 적용
-      print('[FontDebug] 선택 영역에 폰트 적용: $targetFamily');
-      applyFontToMetadata(targetFamily);
+      // ✅ 선택 영역이 있으면: Attribution으로 폰트 적용 (기존 폰트 덮어쓰기)
+      print('[FontDebug] 선택 영역에 Attribution으로 폰트 적용: $targetFamily');
+
+      // 1. 먼저 선택 영역의 기존 폰트 attribution을 모두 제거
+      final selectedNodes = editor.document.getNodesInside(
+        selection.extent,
+        selection.base,
+      );
+
+      for (final node in selectedNodes) {
+        if (node is ParagraphNode) {
+          final text = node.text;
+          // 선택 영역 내에서 폰트 attribution 제거
+          final mutableText = text.copyText(0);
+          for (int i = 0; i < text.text.length; i++) {
+            final attributions = text.getAllAttributionsAt(i);
+            for (final attr in attributions) {
+              if (attr is FontFamilyAttribution) {
+                mutableText.removeAttribution(attr, SpanRange(i, i));
+              }
+            }
+          }
+
+          // 노드 교체
+          if (mutableText.text != text.text || mutableText != text) {
+            final newNode = ParagraphNode(
+              id: node.id,
+              text: mutableText,
+              metadata: node.metadata,
+            );
+            editor.execute([
+              ReplaceNodeRequest(existingNodeId: node.id, newNode: newNode),
+            ]);
+          }
+        }
+      }
+
+      // 2. 새로운 폰트 attribution 추가
+      if (targetFamily.isNotEmpty) {
+        final newAttribution = FontFamilyAttribution(targetFamily);
+        editor.execute([
+          AddTextAttributionsRequest(
+            documentRange: selection,
+            attributions: {newAttribution},
+          ),
+        ]);
+      }
     } else {
       // ✅ 선택 영역이 없으면: 모든 ParagraphNode에 전역 폰트 적용
-      print('[FontDebug] 전역 폰트 적용: $targetFamily');
 
       // 전역 폰트 설정
       if (_globalFontFamily != targetFamily) {
@@ -713,19 +817,13 @@ extension _TopExpandedRow on _DefaultToolbarState {
         return ListView(
           scrollDirection: Axis.horizontal,
           children: [
-            // 축약 아이콘: 사이즈 / 색상
+            if (_textPanel == TextPanel.none) ...[_buildFontNameButton()],
             if (_textPanel == TextPanel.none) ...[_buildSizeCollapsedButton()],
+            // 축약 아이콘: 사이즈 / 색상
             if (_textPanel == TextPanel.size) ...[_buildFontSizeRow()],
             if (_textPanel == TextPanel.none) ...[_buildColorCollapsedButton()],
             if (_textPanel == TextPanel.color) ...[_buildColorPaletteRow()],
-
-            // 폰트 선택 버튼 (오버레이)
-            _buildToggleIcon(
-              icon: Icons.font_download_outlined,
-              isActive: false,
-              onTap: _openFontPickerOverlay,
-            ),
-            const SizedBox(width: 6),
+            SizedBox(width: 6),
 
             // 간단 토글들
             _buildToggleIcon(
@@ -735,7 +833,9 @@ extension _TopExpandedRow on _DefaultToolbarState {
                 widget.stylingService.toggleBold();
                 _updateStyles();
               },
+              size: 24,
             ),
+
             const SizedBox(width: 6),
             _buildToggleIcon(
               icon: Icons.format_italic,
@@ -744,8 +844,10 @@ extension _TopExpandedRow on _DefaultToolbarState {
                 widget.stylingService.toggleItalic();
                 _updateStyles();
               },
+              size: 24,
             ),
-            const SizedBox(width: 6),
+
+            SizedBox(width: 6),
             _buildToggleIcon(
               icon: Icons.format_underlined,
               isActive: _currentStyles['underline'] ?? false,
@@ -753,8 +855,10 @@ extension _TopExpandedRow on _DefaultToolbarState {
                 widget.stylingService.toggleUnderline();
                 _updateStyles();
               },
+              size: 24,
             ),
-            const SizedBox(width: 6),
+
+            SizedBox(width: 6),
             _buildToggleIcon(
               icon: Icons.format_strikethrough,
               isActive: _currentStyles['strikethrough'] ?? false,
@@ -762,21 +866,34 @@ extension _TopExpandedRow on _DefaultToolbarState {
                 widget.stylingService.toggleStrikethrough();
                 _updateStyles();
               },
+              size: 24,
             ),
-            const SizedBox(width: 6),
-            // 🎨 형광펜 버튼 추가
-            _buildHighlightToggleIcon(),
-
-            const SizedBox(width: 6),
-            // 🙈 스포일러(가림) 토글 버튼
-            _buildToggleIcon(
-              icon: Icons.visibility_off,
-              isActive: _currentStyles['spoiler'] ?? false,
+            SizedBox(width: 6),
+            // 🎨 형광펜 토글 버튼 (실제 형광펜 색상 표시)
+            _buildHighlighterToggleIcon(
+              isActive: _currentStyles['highlight'] ?? false,
               onTap: () {
-                widget.stylingService.toggleSpoiler();
-                _updateStyles();
+                _showHighlightColorPalette();
               },
             ),
+            SizedBox(width: 6),
+
+            // 🙈 스포일러(가림) 토글 버튼 (선택 영역 필수)
+            _buildSvgToggleIcon(
+              svgPath: 'assets/icons/spoiler.svg',
+              isActive: _currentStyles['spoiler'] ?? false,
+              label: '스포일러',
+              onTap:
+                  _hasTextSelection
+                      ? () {
+                        widget.stylingService.toggleSpoiler();
+                        _updateStyles();
+                      }
+                      : () {},
+              size: 28,
+            ),
+
+            SizedBox(width: 40),
 
             // 오른쪽 끝으로 밀기
           ],
@@ -1095,20 +1212,30 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
 
   // 폰트 선택 오버레이 열기 (블러 배경)
   void _openFontPickerOverlay() {
-    // 🔧 선택 영역을 저장 (포커스 해제 전에)
+    // 선택 영역을 저장 (포커스 해제 전에)
     final savedSelection = widget.stylingService.composer.selection;
-    print('[FontDebug] 저장된 selection: $savedSelection');
     FocusManager.instance.primaryFocus?.unfocus();
 
-    Navigator.of(context)
-        .push(
-          PageRouteBuilder(
-            opaque: false,
-            barrierDismissible: true,
-            pageBuilder:
-                (ctx, __, ___) => FontOverlay(
+    // DraggableScrollableController 생성
+    final sheetController = DraggableScrollableController();
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder:
+          (ctx) => DraggableScrollableSheet(
+            controller: sheetController, // 컨트롤러 연결
+            initialChildSize: 0.6, // 처음엔 반만
+            minChildSize: 0.5,
+            maxChildSize: 0.9, // 위로 드래그하면 거의 전체까지
+            builder:
+                (_, scrollController) => FontOverlay(
+                  scrollController:
+                      scrollController, // DraggableScrollableSheet의 컨트롤러 전달
+                  sheetController: sheetController, // 시트 컨트롤러 전달
                   onSelect: (fontItem) {
-                    // 🔧 저장된 selection 복원
+                    // 저장된 selection 복원
                     if (savedSelection != null) {
                       widget.stylingService.editor.execute([
                         ChangeSelectionRequest(
@@ -1117,24 +1244,15 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
                           SelectionReason.userInteraction,
                         ),
                       ]);
-                      print('[FontDebug] selection 복원됨: $savedSelection');
                     }
 
                     // 폰트 적용
                     widget.stylingService.applyFont(fontItem);
-                    print(
-                      '[FontOverlay] 폰트 적용됨: ${fontItem.displayName} (${fontItem.identifier})',
-                    );
                   },
-                  onClose: () => Navigator.of(ctx).maybePop(),
+                  onClose: () => Navigator.of(ctx).pop(),
                 ),
           ),
-        )
-        .then((_) {
-          if (context.mounted) {
-            FocusManager.instance.primaryFocus?.unfocus();
-          }
-        });
+    );
   }
 
   @override
@@ -1467,16 +1585,20 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
   Widget _buildExpandedToolbar() {
     return Row(
       children: [
-        // 닫기 버튼 (왼쪽 끝)
-        _buildMainIcon(
-          icon: Icons.close,
-          isActive: false,
-          onTap: _forceCloseToolbar,
-          size: 20,
-        ),
-        const SizedBox(width: 4),
-        _buildDivider(),
-        const SizedBox(width: 4),
+        // 폰트 크기/색상 패널이 펼쳐졌을 때는 닫기 버튼 숨김
+        if (_textPanel == TextPanel.none) ...[
+          const SizedBox(width: 4),
+          // 닫기 버튼 (왼쪽 끝)
+          _buildMainIcon(
+            icon: Icons.close,
+            isActive: false,
+            onTap: _forceCloseToolbar,
+            size: 20,
+          ),
+          const SizedBox(width: 2),
+          _buildDivider(),
+          const SizedBox(width: 4),
+        ],
         // 확장된 내용
         Expanded(child: _buildTopExpandedRowContent()),
       ],
@@ -1539,24 +1661,117 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
   Widget _buildToggleIcon({
     required IconData icon,
     required bool isActive,
-    required VoidCallback onTap,
+    required VoidCallback? onTap,
+    double? size,
   }) {
     final Color surfaceVariant = Theme.of(context).colorScheme.surfaceVariant;
     final Color onSurface = Theme.of(context).colorScheme.onSurface;
+    final bool isEnabled = onTap != null;
+
+    return Opacity(
+      opacity: isEnabled ? 1.0 : 0.3,
+      child: Material(
+        color: isActive ? surfaceVariant : Colors.transparent,
+        borderRadius: BorderRadius.circular(8),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(8),
+          child: Container(
+            width: 36,
+            height: 36,
+            alignment: Alignment.center,
+            child: Icon(
+              icon,
+              size: size ?? 20,
+              color: isActive ? onSurface : onSurface.withOpacity(0.4),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 현재 적용 중인 폰트명 가져오기
+  String _getCurrentFontName() {
+    final selection = widget.stylingService.composer.selection;
+
+    // 선택 영역이 있으면 해당 범위의 폰트 확인
+    if (selection != null && !selection.isCollapsed) {
+      final node = widget.stylingService.editor.document.getNodeById(
+        selection.base.nodeId,
+      );
+      if (node is ParagraphNode) {
+        // 1. Attribution에서 폰트 확인
+        final position = selection.base.nodePosition as TextNodePosition;
+        final attributions = node.text.getAllAttributionsAt(position.offset);
+        for (final attribution in attributions) {
+          if (attribution is FontFamilyAttribution) {
+            return attribution.fontFamily;
+          }
+        }
+        // 2. 메타데이터에서 폰트 확인
+        final fontFamily = node.metadata['fontFamily'] as String?;
+        if (fontFamily != null && fontFamily.isNotEmpty) {
+          return fontFamily;
+        }
+      }
+    }
+
+    // 선택 영역이 없으면 전역 폰트 또는 첫 번째 문단의 폰트 확인
+    final globalFont = widget.stylingService.globalFontFamily;
+    if (globalFont != null && globalFont.isNotEmpty) {
+      return globalFont;
+    }
+
+    // 첫 번째 문단의 폰트 확인
+    for (int i = 0; i < widget.stylingService.editor.document.length; i++) {
+      final node = widget.stylingService.editor.document.getNodeAt(i);
+      if (node is ParagraphNode) {
+        final fontFamily = node.metadata['fontFamily'] as String?;
+        if (fontFamily != null && fontFamily.isNotEmpty) {
+          return fontFamily;
+        }
+      }
+    }
+
+    return '기본'; // 기본 폰트
+  }
+
+  /// 폰트명 표시 버튼
+  Widget _buildFontNameButton() {
+    final String fontName = _getCurrentFontName();
+    final String displayName =
+        fontName.length > 8 ? '${fontName.substring(0, 8)}' : fontName;
+
     return Material(
-      color: isActive ? surfaceVariant : Colors.transparent,
+      color: Colors.transparent,
       borderRadius: BorderRadius.circular(8),
       child: InkWell(
-        onTap: onTap,
+        onTap: _openFontPickerOverlay,
         borderRadius: BorderRadius.circular(8),
         child: Container(
-          width: 36,
           height: 36,
-          alignment: Alignment.center,
-          child: Icon(
-            icon,
-            size: 20,
-            color: isActive ? onSurface : onSurface.withOpacity(0.4),
+          padding: const EdgeInsets.only(left: 10, right: 8, top: 2),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                displayName,
+                style: TextStyle(
+                  fontSize: 17,
+                  fontWeight: FontWeight.w500,
+                  color: Theme.of(
+                    context,
+                  ).colorScheme.onSurface.withOpacity(0.8),
+                ),
+              ),
+              const SizedBox(width: 4),
+              Icon(
+                Icons.arrow_drop_up,
+                size: 18,
+                color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
+              ),
+            ],
           ),
         ),
       ),
@@ -1566,7 +1781,7 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
   Widget _buildDivider() {
     final Color borderColor = Theme.of(
       context,
-    ).colorScheme.onSurface.withOpacity(0.15);
+    ).colorScheme.onSurface.withOpacity(0.1);
     return Container(
       margin: const EdgeInsets.symmetric(vertical: 8),
       width: 1,
@@ -1593,8 +1808,8 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
             border: Border.all(color: borderColor),
           ),
           child: Container(
-            width: 18,
-            height: 18,
+            width: 22,
+            height: 22,
             decoration: BoxDecoration(color: color, shape: BoxShape.circle),
           ),
         ),
@@ -1610,7 +1825,7 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
   }) {
     final Color onSurface = Theme.of(
       context,
-    ).colorScheme.onSurface.withOpacity(0.7);
+    ).colorScheme.onSurface.withOpacity(0.6);
     return Material(
       color: Colors.transparent,
 
@@ -1629,6 +1844,73 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
     );
   }
 
+  Widget _buildSvgToggleIcon({
+    required String svgPath,
+    required bool isActive,
+    required VoidCallback onTap,
+    required String label,
+    double? size,
+  }) {
+    final Color surfaceVariant = Theme.of(context).colorScheme.surfaceVariant;
+    final Color onSurface = Theme.of(context).colorScheme.onSurface;
+
+    return Material(
+      color: isActive ? surfaceVariant : Colors.transparent,
+      borderRadius: BorderRadius.circular(8),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(8),
+        child: Container(
+          width: 36,
+          height: 36,
+          alignment: Alignment.center,
+          child: SvgPicture.asset(
+            svgPath,
+            width: size ?? 24,
+            height: size ?? 24,
+            colorFilter: ColorFilter.mode(onSurface, BlendMode.srcIn),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 형광펜 전용 토글 버튼 (실제 형광펜 색상 표시)
+  Widget _buildHighlighterToggleIcon({
+    required bool isActive,
+    required VoidCallback onTap,
+  }) {
+    final Color surfaceVariant = Theme.of(context).colorScheme.surfaceVariant;
+    final Color onSurface = Theme.of(context).colorScheme.onSurface;
+    final Color? highlightColor = _getCurrentHighlightColor();
+
+    return Material(
+      color: isActive ? surfaceVariant : Colors.transparent,
+      borderRadius: BorderRadius.circular(8),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(8),
+        child: Container(
+          width: 36,
+          height: 36,
+          alignment: Alignment.center,
+          child: SvgPicture.asset(
+            'assets/icons/highlighter.svg',
+            width: 24.5,
+            height: 24.5,
+            colorFilter: ColorFilter.mode(
+              // 활성화 시: 실제 형광펜 색상, 비활성화 시: 회색
+              isActive && highlightColor != null
+                  ? highlightColor
+                  : onSurface.withOpacity(0.4),
+              BlendMode.srcIn,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildSvgChip({
     required String svgPath,
     required String label,
@@ -1637,7 +1919,7 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
   }) {
     final Color onSurface = Theme.of(
       context,
-    ).colorScheme.onSurface.withOpacity(0.7);
+    ).colorScheme.onSurface.withOpacity(0.6);
     return Material(
       color: Colors.transparent,
       child: InkWell(
@@ -1683,6 +1965,7 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
+        const SizedBox(width: 6),
         // 왼쪽 화살표
         GestureDetector(
           onTap: () {
@@ -1692,26 +1975,52 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
           },
           child: Icon(
             Icons.chevron_left,
-            size: 20,
+            size: 28,
             color: Colors.grey.shade600,
           ),
         ),
-        const SizedBox(width: 16),
+        const SizedBox(width: 4),
         // 폰트 사이즈 버튼들
-        _buildFontSizeButton('11', 11),
+        _buildFontSizeButton('10', 11),
         const SizedBox(width: 8),
         _buildFontSizeButton('13', 13),
-        const SizedBox(width: 8),
-        _buildFontSizeButton('15', 15),
         const SizedBox(width: 8),
         _buildFontSizeButton('16', 16),
         const SizedBox(width: 8),
         _buildFontSizeButton('19', 19),
         const SizedBox(width: 8),
-        _buildFontSizeButton('24', 24),
+        _buildFontSizeButton('22', 22),
+        const SizedBox(width: 8),
+        _buildFontSizeButton('25', 25),
         const SizedBox(width: 8),
         _buildFontSizeButton('28', 28),
         const SizedBox(width: 16),
+        _buildFontSizeButton('31', 31),
+        const SizedBox(width: 8),
+        _buildFontSizeButton('34', 34),
+        const SizedBox(width: 8),
+        _buildFontSizeButton('37', 37),
+        const SizedBox(width: 8),
+        _buildFontSizeButton('40', 40),
+        const SizedBox(width: 8),
+        _buildFontSizeButton('43', 43),
+        const SizedBox(width: 8),
+        _buildFontSizeButton('46', 46),
+        const SizedBox(width: 8),
+        _buildFontSizeButton('49', 49),
+        const SizedBox(width: 8),
+        _buildFontSizeButton('52', 52),
+        const SizedBox(width: 8),
+
+        const SizedBox(width: 8),
+        _buildFontSizeButton('55', 55),
+        const SizedBox(width: 8),
+        _buildFontSizeButton('58', 58),
+        const SizedBox(width: 8),
+        _buildFontSizeButton('61', 61),
+        const SizedBox(width: 8),
+        _buildFontSizeButton('64', 64),
+        const SizedBox(width: 8),
         _buildDivider(),
         const SizedBox(width: 16),
       ],
@@ -1720,7 +2029,9 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
 
   // 폰트 사이즈 버튼
   Widget _buildFontSizeButton(String label, double size) {
-    final Color surfaceVariant = Theme.of(context).colorScheme.surfaceVariant;
+    final Color surfaceVariant = Theme.of(
+      context,
+    ).colorScheme.onSurface.withOpacity(0.1);
     final Color onSurface = Theme.of(context).colorScheme.onSurface;
     final currentSize = _getCurrentFontSize();
     final isActive = currentSize == size;
@@ -1730,6 +2041,9 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
       child: InkWell(
         onTap: () {
           widget.stylingService.changeFontSize(size);
+          setState(() {
+            _textPanel = TextPanel.none; // 크기 선택 후 패널 닫기
+          });
           _updateStyles();
         },
         borderRadius: BorderRadius.circular(4),
@@ -1744,7 +2058,7 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
             child: Text(
               label,
               style: TextStyle(
-                fontSize: 14,
+                fontSize: 17,
                 color: isActive ? onSurface : onSurface.withOpacity(0.6),
                 fontWeight: isActive ? FontWeight.w600 : FontWeight.w500,
               ),
@@ -1758,7 +2072,9 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
   // 축약 버튼: 사이즈
   Widget _buildSizeCollapsedButton() {
     final Color surfaceVariant = Theme.of(context).colorScheme.surfaceVariant;
-    final Color onSurface = Theme.of(context).colorScheme.onSurface;
+    final Color onSurface = Theme.of(
+      context,
+    ).colorScheme.onSurface.withOpacity(0.6);
     final currentSize = _getCurrentFontSize().toInt();
     return Material(
       color: _textPanel == TextPanel.size ? surfaceVariant : Colors.transparent,
@@ -1773,12 +2089,16 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
         borderRadius: BorderRadius.circular(8),
         child: Container(
           height: 36,
-          padding: const EdgeInsets.symmetric(horizontal: 10),
+          padding: const EdgeInsets.only(left: 10, right: 10, bottom: 1),
           child: Row(
             children: [
               Text(
                 '$currentSize',
-                style: TextStyle(color: onSurface, fontWeight: FontWeight.w600),
+                style: TextStyle(
+                  color: onSurface,
+                  fontWeight: FontWeight.w400,
+                  fontSize: 18,
+                ),
               ),
             ],
           ),
@@ -1787,10 +2107,12 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
     );
   }
 
-  // 축약 버튼: 색상
+  // 축약 버튼: 색상 (현재 적용된 색상 표시)
   Widget _buildColorCollapsedButton() {
     final Color surfaceVariant = Theme.of(context).colorScheme.surfaceVariant;
     final Color onSurface = Theme.of(context).colorScheme.onSurface;
+    final Color currentColor = _getCurrentTextColor();
+
     return Material(
       color:
           _textPanel == TextPanel.color ? surfaceVariant : Colors.transparent,
@@ -1807,13 +2129,100 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
         borderRadius: BorderRadius.circular(8),
         child: Container(
           height: 36,
-          padding: const EdgeInsets.symmetric(horizontal: 10),
+          padding: const EdgeInsets.only(left: 12, right: 8, bottom: 1.4),
           child: Row(
-            children: [Icon(Icons.circle, size: 18, color: onSurface)],
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SvgPicture.asset(
+                'assets/icons/ic_text.svg',
+                width: 19.5,
+                height: 19.5,
+                colorFilter: ColorFilter.mode(
+                  onSurface.withOpacity(0.6),
+                  BlendMode.srcIn,
+                ),
+              ),
+
+              Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  SizedBox(height: 10),
+                  Container(
+                    width: 7,
+                    height: 7,
+                    decoration: BoxDecoration(
+                      color: currentColor,
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                ],
+              ),
+            ],
           ),
         ),
       ),
     );
+  }
+
+  /// 현재 적용 중인 텍스트 색상 가져오기
+  Color _getCurrentTextColor() {
+    final selection = widget.stylingService.composer.selection;
+
+    // 선택 영역이 있으면 해당 범위의 색상 확인
+    if (selection != null && !selection.isCollapsed) {
+      final node = widget.stylingService.editor.document.getNodeById(
+        selection.base.nodeId,
+      );
+      if (node is TextNode) {
+        final position = selection.base.nodePosition as TextNodePosition;
+        final attributions = node.text.getAllAttributionsAt(position.offset);
+        for (final attribution in attributions) {
+          // ✅ 형광펜은 제외하고 글자색만 반환
+          if (attribution is ColorAttribution &&
+              attribution is! HighlightAttribution) {
+            return attribution.color;
+          }
+        }
+      }
+    } else {
+      // 선택이 없으면 preferences에서 확인
+      final currentAttrs =
+          widget.stylingService.composer.preferences.currentAttributions;
+      for (final attr in currentAttrs) {
+        // ✅ 형광펜은 제외하고 글자색만 반환
+        if (attr is ColorAttribution && attr is! HighlightAttribution) {
+          return attr.color;
+        }
+      }
+    }
+
+    // 기본 색상 (테마의 onSurface)
+    return Theme.of(context).colorScheme.onSurface;
+  }
+
+  /// 현재 형광펜 색상 가져오기
+  Color? _getCurrentHighlightColor() {
+    final selection = widget.stylingService.composer.selection;
+
+    // 선택 영역이 있으면 해당 범위의 형광펜 색상 확인
+    if (selection != null && !selection.isCollapsed) {
+      final node = widget.stylingService.editor.document.getNodeById(
+        selection.base.nodeId,
+      );
+      if (node is TextNode) {
+        final position = selection.base.nodePosition as TextNodePosition;
+        final attributions = node.text.getAllAttributionsAt(position.offset);
+        for (final attribution in attributions) {
+          if (attribution is HighlightAttribution) {
+            return attribution.color;
+          }
+        }
+      }
+    }
+
+    return null; // 형광펜이 없으면 null
   }
 
   // 펼쳐진 색상 팔레트 행
@@ -1843,6 +2252,7 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
 
     return Row(
       children: [
+        const SizedBox(width: 6),
         // 왼쪽 화살표
         GestureDetector(
           onTap: () {
@@ -1852,7 +2262,7 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
           },
           child: Icon(
             Icons.chevron_left,
-            size: 20,
+            size: 28,
             color: Colors.grey.shade600,
           ),
         ),
@@ -1860,6 +2270,9 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
         for (final c in palette) ...[
           _buildColorDot(c, () {
             widget.stylingService.applyTextColor(c);
+            setState(() {
+              _textPanel = TextPanel.none; // 색상 선택 후 패널 닫기
+            });
             _updateStyles();
           }),
         ],
@@ -1962,78 +2375,6 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
     if (context.mounted) {
       FocusManager.instance.primaryFocus?.unfocus();
     }
-  }
-
-  // 🎨 형광펜 토글 버튼 (색상 팔레트 포함)
-  Widget _buildHighlightToggleIcon() {
-    final isActive = _currentStyles['highlight'] ?? false;
-    final Color surfaceVariant = Theme.of(context).colorScheme.surfaceVariant;
-    final Color onSurface = Theme.of(context).colorScheme.onSurface;
-
-    return Material(
-      color: isActive ? surfaceVariant : Colors.transparent,
-      borderRadius: BorderRadius.circular(8),
-      child: InkWell(
-        // 탭 시 바로 팔레트 표시 (롱프레스 불필요)
-        onTap: _showHighlightColorPalette,
-        onLongPress: () {
-          // 롱프레스 시 색상 팔레트 표시
-          _showHighlightColorPalette();
-        },
-        borderRadius: BorderRadius.circular(8),
-        child: Container(
-          height: 36,
-          padding: const EdgeInsets.symmetric(horizontal: 8),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
-                Icons.highlight,
-                size: 20,
-                color: isActive ? onSurface : onSurface.withOpacity(0.6),
-              ),
-              if (isActive) ...[
-                const SizedBox(width: 4),
-                Container(
-                  width: 12,
-                  height: 12,
-                  decoration: BoxDecoration(
-                    color: _getCurrentHighlightColor(),
-                    borderRadius: BorderRadius.circular(2),
-                    border: Border.all(
-                      color: onSurface.withOpacity(0.3),
-                      width: 0.5,
-                    ),
-                  ),
-                ),
-              ],
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  // 현재 형광펜 색상 가져오기
-  Color _getCurrentHighlightColor() {
-    final selection = widget.stylingService.composer.selection;
-    if (selection == null) return highlightYellow;
-
-    final node = widget.stylingService.editor.document.getNodeById(
-      selection.base.nodeId,
-    );
-    if (node is! TextNode) return highlightYellow;
-
-    final position = selection.base.nodePosition as TextNodePosition;
-    final attributions = node.text.getAllAttributionsAt(position.offset);
-
-    for (final attribution in attributions) {
-      if (attribution is HighlightAttribution) {
-        return attribution.color;
-      }
-    }
-
-    return highlightYellow; // 기본값
   }
 
   // 형광펜 색상 팔레트 표시

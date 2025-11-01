@@ -100,6 +100,12 @@ class AppTheme {
         selectionHandleColor: AppColors.primary,
       ),
 
+      // ===== PopupMenu Theme =====
+      popupMenuTheme: PopupMenuThemeData(
+        color: AppColors.lightBackground,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      ),
+
       // ===== Scaffold Background =====
       scaffoldBackgroundColor: AppColors.lightBackground,
     );
@@ -196,6 +202,12 @@ class AppTheme {
       textSelectionTheme: TextSelectionThemeData(
         cursorColor: AppColors.primary,
         selectionHandleColor: AppColors.primary,
+      ),
+
+      // ===== PopupMenu Theme =====
+      popupMenuTheme: PopupMenuThemeData(
+        color: AppColors.darkBackground,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       ),
 
       // ===== Scaffold Background =====

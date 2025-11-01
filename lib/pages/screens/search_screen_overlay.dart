@@ -98,57 +98,7 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
                   onClear: _clearSearch,
                   onBack: _resetToInitial,
                   onClose: widget.onClose,
-                  onSubmitted: () async {
-                    print(
-                      '[SearchOverlay] onSubmitted: ${searchService.query}',
-                    );
-
-                    try {
-                      setState(() {
-                        _hasNetworkError = false;
-                      });
-
-                      await searchService.searchBlogsByTitleOnce(
-                        keyword: searchService.query,
-                      );
-
-                      // 검색 완료 후 결과를 PostData로 변환
-                      final blogResults = searchService.blogResults;
-                      final posts =
-                          blogResults.map((item) {
-                            return PostData(
-                              id: item.id,
-                              thumbnailImageUrl: item.imageUrl ?? '',
-                              title: item.title ?? '',
-                              summary: '',
-                              author: item.author ?? item.username ?? '',
-                              authorProfileImageUrl: item.profileImageUrl ?? '',
-                              content: item.content ?? '',
-                              accessLevel: AccessLevel.public,
-                              viewCount: 0,
-                              likeCount: item.likes ?? 0,
-                              isLiked: false,
-                              createdAt:
-                                  item.createdAt ??
-                                  DateTime.now().toIso8601String(),
-                              updatedAt:
-                                  item.createdAt ??
-                                  DateTime.now().toIso8601String(),
-                            );
-                          }).toList();
-
-                      // 콜백으로 검색 결과와 검색어 전달 (콜백에서 Navigator.pop 처리)
-                      widget.onSearchComplete?.call(posts, searchService.query);
-                    } catch (e) {
-                      // 네트워크 에러 발생 시 처리
-                      print('[SearchOverlay] 검색 실패: $e');
-                      setState(() {
-                        _hasNetworkError = true;
-                      });
-                      // 에러가 발생해도 빈 결과로 처리하여 "오프라인 상태입니다" 메시지 표시
-                      widget.onSearchComplete?.call([], searchService.query);
-                    }
-                  },
+                  onSubmitted: _runSearch,
                 ),
                 Expanded(
                   child: AnimatedBuilder(
@@ -190,6 +140,39 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
     );
   }
 
+  Future<void> _runSearch() async {
+    final searchService = context.read<SearchService>();
+    print('[SearchOverlay] runSearch: ${searchService.query}');
+    try {
+      setState(() => _hasNetworkError = false);
+      await searchService.searchBlogsByTitleOnce(keyword: searchService.query);
+      final blogResults = searchService.blogResults;
+      final posts =
+          blogResults.map((item) {
+            return PostData(
+              id: item.id,
+              thumbnailImageUrl: item.imageUrl ?? '',
+              title: item.title ?? '',
+              summary: '',
+              author: item.author ?? item.username ?? '',
+              authorProfileImageUrl: item.profileImageUrl ?? '',
+              content: item.content ?? '',
+              accessLevel: AccessLevel.public,
+              viewCount: 0,
+              likeCount: item.likes ?? 0,
+              isLiked: false,
+              createdAt: item.createdAt ?? DateTime.now().toIso8601String(),
+              updatedAt: item.createdAt ?? DateTime.now().toIso8601String(),
+            );
+          }).toList();
+      widget.onSearchComplete?.call(posts, searchService.query);
+    } catch (e) {
+      print('[SearchOverlay] 검색 실패: $e');
+      setState(() => _hasNetworkError = true);
+      widget.onSearchComplete?.call([], searchService.query);
+    }
+  }
+
   Widget _buildSearchBody(BuildContext context, SearchService searchService) {
     if (_freezeDuringPush) {
       final enableHero = _freezeKind == 'live';
@@ -203,6 +186,7 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
         onTapHistory: (_) {},
         onRemoveHistory: (_) {},
         enableHero: enableHero,
+        onTapSearch: _runSearch,
       );
     }
     return Builder(
@@ -266,6 +250,7 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
             onTapHistory: (_) {},
             onRemoveHistory: (_) {},
             enableHero: true,
+            onTapSearch: _runSearch,
           );
         }
 
@@ -316,6 +301,7 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
               context.read<SearchService>().removeFromSearchHistory(username);
             },
             enableHero: false,
+            onTapSearch: _runSearch,
           );
         }
 
@@ -336,6 +322,7 @@ class _SearchResults extends StatelessWidget {
   final Function(String) onTapHistory;
   final Function(String) onRemoveHistory;
   final bool enableHero;
+  final VoidCallback onTapSearch;
 
   const _SearchResults({
     required this.accounts,
@@ -347,11 +334,58 @@ class _SearchResults extends StatelessWidget {
     required this.onTapHistory,
     required this.onRemoveHistory,
     required this.enableHero,
+    required this.onTapSearch,
   });
 
   @override
   Widget build(BuildContext context) {
     final List<Widget> children = [];
+    if (query.isNotEmpty) {
+      // 검색어 실행 타일 (항상 맨 위)
+      children.add(
+        GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTapDown: (_) => onAnyTapDown.call(),
+          onTap: onTapSearch,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 0),
+            child: Row(
+              children: [
+                // 검색 아이콘을 CommonProfileAvatar에 넣기
+                CommonProfileAvatar(
+                  imageUrl: null,
+                  username: 'search',
+                  size: 70,
+                  borderColor: Theme.of(context).colorScheme.background,
+
+                  borderWidth: 2,
+                  centerWidget: Icon(
+                    Icons.search,
+                    size: 30,
+                    color: Theme.of(
+                      context,
+                    ).colorScheme.onSurfaceVariant.withOpacity(0.8),
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    query,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w600,
+                      fontSize: 16,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
     if (accounts.isNotEmpty) {
       final seen = <String>{};
       for (final account in accounts) {
@@ -367,21 +401,6 @@ class _SearchResults extends StatelessWidget {
           ),
         );
       }
-    } else if (query.isNotEmpty) {
-      // 네트워크 에러 상태에 따라 다른 메시지 표시
-      final message = hasNetworkError ? '오프라인 상태입니다' : '검색 결과가 없습니다';
-
-      children.add(
-        Padding(
-          padding: const EdgeInsets.all(16),
-          child: Center(
-            child: Text(
-              message,
-              style: const TextStyle(color: Colors.grey, fontSize: 16),
-            ),
-          ),
-        ),
-      );
     }
 
     return ListView(
@@ -420,7 +439,7 @@ class _AccountListItem extends StatelessWidget {
               CommonProfileAvatar(
                 imageUrl: account.profileImageUrl,
                 username: account.username ?? '',
-                size: 70.0,
+                size: 60.0,
               ),
               const SizedBox(width: 22),
               Expanded(
@@ -468,12 +487,6 @@ class _AccountListItem extends StatelessWidget {
                     color: Theme.of(context).colorScheme.onSurfaceVariant,
                     size: 18,
                   ),
-                )
-              else
-                Icon(
-                  Icons.more_vert,
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                  size: 20,
                 ),
             ],
           ),

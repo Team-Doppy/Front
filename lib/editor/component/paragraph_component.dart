@@ -408,10 +408,34 @@ class _ParagraphWithDropLinesState extends State<_ParagraphWithDropLines>
       for (final r in spans) {
         final sel = TextSelection(baseOffset: r.start, extentOffset: r.end);
         final tb = rp.getBoxesForSelection(sel);
+
+        if (tb.isEmpty) continue;
+
+        // ✅ 각 스포일러 구간의 최소/최대 높이를 계산하여 평평한 경계선 생성
+        double minTop = double.infinity;
+        double maxBottom = double.negativeInfinity;
+
+        for (final b in tb) {
+          minTop = min(minTop, b.top);
+          maxBottom = max(maxBottom, b.bottom);
+        }
+
+        // 전체 구간에 대한 공통 상단/하단 (형광펜이 삐져나오지 않도록 3px 추가)
+        final segmentTop = minTop - 3.0;
+        final segmentBottom = maxBottom + 3.0;
+
         for (final b in tb) {
           // 글로벌 → 이 컴포넌트(Stack) 로컬 좌표
           final rect = b.toRect().shift(paraOffset - hostOffset);
-          boxes.add(rect.inflate(1.0));
+
+          // ✅ 공통 상단/하단을 사용하여 평평한 박스 생성
+          final flatRect = Rect.fromLTRB(
+            rect.left - 1.0,
+            rect.top + segmentTop - b.top, // 공통 상단으로 정렬
+            rect.right + 1.0,
+            rect.bottom + (segmentBottom - maxBottom), // 공통 하단으로 정렬
+          );
+          boxes.add(flatRect);
         }
       }
       return boxes;
@@ -479,7 +503,7 @@ class _ParagraphSpoilerPainter extends CustomPainter {
       final count =
           isEditing
               ? max(40, (area / 200).floor())
-              : max(60, (area / 150).floor());
+              : max(70, (area / 150).floor());
       final double t = phase * (2 * pi) * 0.9; // 텍스트는 느리게
       for (int i = 0; i < count; i++) {
         final seed = rect.hashCode ^ (i * 486187739);

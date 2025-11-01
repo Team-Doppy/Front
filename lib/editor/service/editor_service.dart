@@ -20,8 +20,6 @@ class EditorService extends ChangeNotifier {
   // 멘션 삭제 처리 중 무한 루프 방지 플래그
   bool _isClearingMention = false;
 
-  bool publishable = false; // 문서 변경 시 1회 순회로 갱신되는 캐시 값
-
   // 최근 저장 스냅샷 지문
   String? _lastSavedFingerprint;
 
@@ -32,7 +30,6 @@ class EditorService extends ChangeNotifier {
   EditorService({required this.editor, required this.document}) {
     document.addListener(_onDocumentChanged);
     editor.composer.selectionNotifier.addListener(_onSelectionChanged);
-    _recomputePublishable();
   }
 
   void setDocumentLayoutKey(GlobalKey key) {
@@ -183,8 +180,6 @@ class EditorService extends ChangeNotifier {
                   // 플래그 복원
                   _isClearingMention = wasClearing;
 
-                  // 즉시 상태 업데이트
-                  _recomputePublishable();
                   _isClearingMention = false;
 
                   // 다음 프레임에서 selection을 설정
@@ -324,14 +319,12 @@ class EditorService extends ChangeNotifier {
       if (getEditingIndex() == 0) {
         // 타이틀 문단 삭제 방지
         _ensureTitleAtTop();
-        _recomputePublishable();
         notifyListeners();
         return;
       }
       // 삭제는 이전 인덱스 정보를 잃어서 부분 보정보다 전체 재계산이 안전
       //_recomputeParagraphMargins();
       _ensureParagraphAlignmentForIndex(getEditingIndex());
-      _recomputePublishable();
       return;
     }
 
@@ -341,8 +334,7 @@ class EditorService extends ChangeNotifier {
       // 삽입 지점 주변(상/하/본인)만 마진 재계산
       //_recomputeParagraphMarginsAround(change.insertionIndex);
       _ensureOnlyFirstIsTitle();
-      _recomputePublishable();
-      // 문서 구조가 변했으므로 UI 갱신 필요 (다음 버튼 상태 반영)
+      // 문서 구조가 변했으므로 UI 갱신 필요
       notifyListeners();
       return;
     }
@@ -352,8 +344,7 @@ class EditorService extends ChangeNotifier {
       //_recomputeParagraphMarginsAround(change.from);
       //_recomputeParagraphMarginsAround(change.to);
       _ensureOnlyFirstIsTitle();
-      _recomputePublishable();
-      // 문서 구조가 변했으므로 UI 갱신 필요 (다음 버튼 상태 반영)
+      // 문서 구조가 변했으므로 UI 갱신 필요
       notifyListeners();
       return;
     }
@@ -369,21 +360,18 @@ class EditorService extends ChangeNotifier {
         // _recomputeParagraphMargins();
         _ensureOnlyFirstIsTitle();
       }
-      _recomputePublishable();
-      // 문서 구조/내용이 변했으므로 UI 갱신 필요 (다음 버튼 상태 반영)
+      // 문서 구조/내용이 변했으므로 UI 갱신 필요
       notifyListeners();
       return;
     }
 
     if (change is TextInsertionEvent || change is TextDeletedEvent) {
       if (getEditingIndex() == 0) {
-        _recomputePublishable();
         notifyListeners();
         return;
       }
       _ensureOnlyFirstIsTitle();
-      _recomputePublishable();
-      // 본문 텍스트 변경 또한 버튼 상태에 영향 → 갱신 통지
+      // 본문 텍스트 변경으로 UI 갱신 통지
       notifyListeners();
       return;
     }
@@ -433,57 +421,6 @@ class EditorService extends ChangeNotifier {
         return true;
       }
     }
-    return false;
-  }
-
-  /// 제목과 본문이 모두 채워져 있는지 검증 (다음 버튼 활성화 조건)
-  bool canProceedToPublish() {
-    return publishable;
-  }
-
-  void updatePublishableStatus() {
-    _recomputePublishable();
-    notifyListeners();
-  }
-
-  // ====== 빠른 판정(변경 시 1회 순회) ======
-  void _recomputePublishable() {
-    try {
-      publishable = _hasNonEmptyTitleFast() && _hasNonEmptyBodyFast();
-    } catch (_) {
-      publishable = false;
-    }
-  }
-
-  bool _hasNonEmptyTitleFast() {
-    try {
-      final node = document.getNodeAt(0);
-      if (node is ParagraphNode && (node.metadata['isTitle'] == true)) {
-        return node.text.text.trim().isNotEmpty;
-      }
-    } catch (_) {}
-    return false;
-  }
-
-  bool _hasNonEmptyBodyFast() {
-    try {
-      for (int i = 1; i < document.length; i++) {
-        final node = document.getNodeAt(i);
-        if (node == null) continue;
-        if (node is ParagraphNode) {
-          if (node.text.text.trim().isNotEmpty) return true;
-        } else if (node is ImageNode || node is AppImageNode) {
-          return true;
-        } else if (node is ImageRowNode ||
-            node is LinkNode ||
-            (node is ParagraphNode && node.metadata['mention'] == true)) {
-          return true;
-        } else {
-          // 기타 노드가 존재하면 본문이 있다고 간주
-          return true;
-        }
-      }
-    } catch (_) {}
     return false;
   }
 

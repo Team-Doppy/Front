@@ -270,45 +270,47 @@ class _LinkOverlayState extends State<LinkOverlay> {
                 child: BackdropFilter(
                   filter: ui.ImageFilter.blur(sigmaX: 15, sigmaY: 15),
                   child: Container(
-                    color: const Color.fromARGB(182, 96, 96, 96),
+                    color: const ui.Color.fromARGB(235, 45, 45, 45),
                   ),
                 ),
               ),
             ),
-            Padding(
-              padding: const EdgeInsets.all(8.0),
-              child: Column(
-                children: [
-                  Expanded(
-                    child: AnimatedSwitcher(
-                      duration: const Duration(milliseconds: 150),
-                      switchInCurve: Curves.easeOut,
-                      switchOutCurve: Curves.easeIn,
-                      child:
-                          _focusNode.hasFocus
-                              ? _buildSuggestions()
-                              : _items.isNotEmpty
-                              ? _buildItemsList()
-                              : Center(
-                                key: const ValueKey('empty'),
-                                child: Text(
-                                  '링크를 추가해주세요',
-                                  style: TextStyle(
-                                    color: Colors.white.withOpacity(0.6),
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.w500,
+            SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.all(8.0),
+                child: Column(
+                  children: [
+                    Expanded(
+                      child: AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 150),
+                        switchInCurve: Curves.easeOut,
+                        switchOutCurve: Curves.easeIn,
+                        child:
+                            _focusNode.hasFocus
+                                ? _buildSuggestions()
+                                : _items.isNotEmpty
+                                ? _buildItemsList()
+                                : Center(
+                                  key: const ValueKey('empty'),
+                                  child: Text(
+                                    '링크를 추가해주세요',
+                                    style: TextStyle(
+                                      color: Colors.white.withOpacity(0.6),
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.w500,
+                                    ),
                                   ),
                                 ),
-                              ),
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
             if (_items.isNotEmpty && !_focusNode.hasFocus)
               Positioned(
-                left: 16,
-                right: 16,
+                left: 20,
+                right: 20,
                 bottom: 16,
                 child: ElevatedButton(
                   style: ElevatedButton.styleFrom(
@@ -493,12 +495,15 @@ class _LinkOverlayState extends State<LinkOverlay> {
 
     return Container(
       key: const ValueKey('suggestions'),
-      margin: const EdgeInsets.symmetric(horizontal: 0, vertical: 8),
+
       child: ListView.separated(
         shrinkWrap: false,
-        itemCount: _suggestions.length,
+        itemCount: _suggestions.length.clamp(0, 7),
         separatorBuilder:
-            (_, __) => Divider(height: 1, color: Colors.white.withOpacity(0.1)),
+            (_, __) => Divider(
+              height: 1,
+              color: const ui.Color.fromARGB(255, 0, 0, 0).withOpacity(0.0),
+            ),
         itemBuilder: (context, index) {
           final suggestion = _suggestions[index];
           // 유명 사이트인지 확인하여 이름 표시
@@ -530,7 +535,11 @@ class _LinkOverlayState extends State<LinkOverlay> {
                   Expanded(
                     child: Text(
                       displayName,
-                      style: const TextStyle(color: Colors.white, fontSize: 14),
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.9),
+                        fontWeight: FontWeight.w400,
+                        fontSize: 15,
+                      ),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),

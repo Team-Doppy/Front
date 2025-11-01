@@ -79,11 +79,6 @@ class NodeComponentService extends ChangeNotifier {
     final hasKey = _spoilerByNodeId.containsKey(nodeId);
     final value = _spoilerByNodeId[nodeId];
     final result = hasKey && value == false;
-    if (kDebugMode) {
-      print(
-        '[NodeComponentService] isSpoilerDisabled: $nodeId -> hasKey=$hasKey, value=$value, result=$result',
-      );
-    }
     return result;
   }
 
@@ -93,12 +88,6 @@ class NodeComponentService extends ChangeNotifier {
 
   String? getTempThumbnailUrl(String sessionKey) {
     final url = _tempThumbnailUrlBySession[sessionKey];
-    print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-    print('🔍 [NodeComponentService] getTempThumbnailUrl');
-    print('   sessionKey: $sessionKey');
-    print('   결과: $url');
-    print('   전체 맵: $_tempThumbnailUrlBySession');
-    print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
     return url;
   }
 
@@ -110,13 +99,7 @@ class NodeComponentService extends ChangeNotifier {
     if (id != null) {
       _tempThumbnailIdBySession[sessionKey] = id;
     }
-    print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-    print('💾 [NodeComponentService] setTempThumbnail');
-    print('   sessionKey: $sessionKey');
-    print('   url: $url');
-    print('   id: $id');
-    print('   저장 후 전체 맵: $_tempThumbnailUrlBySession');
-    print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+
     notifyListeners();
   }
 

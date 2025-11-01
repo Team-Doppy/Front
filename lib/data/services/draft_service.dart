@@ -350,9 +350,8 @@ class DraftService {
 
   /// 임시저장 ID 생성 (타이틀별 + 타임스탬프)
   String _generateDraftId(String title) {
-    final timestamp = DateTime.now().millisecondsSinceEpoch;
-    final titleHash = title.hashCode.abs(); // 제목 기반 해시
-    return 'draft_${titleHash}_$timestamp';
+    final titleHash = title.hashCode.abs(); // 제목 기반 해시만 사용 (timestamp 제거)
+    return 'draft_$titleHash';
   }
 
   /// 제목별 임시저장 그룹 가져오기

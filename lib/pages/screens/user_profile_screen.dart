@@ -59,7 +59,23 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
   @override
   void initState() {
     super.initState();
-    _isOwnProfile = (widget.otherUser == null);
+
+    // otherUser가 현재 사용자와 동일한지 확인
+    final currentUser = context.read<UserProvider>().currentUser;
+    final isActuallyMe =
+        widget.otherUser != null &&
+        currentUser != null &&
+        widget.otherUser!.username == currentUser.username;
+
+    // otherUser가 null이거나, otherUser가 나 자신이면 내 프로필
+    _isOwnProfile = (widget.otherUser == null) || isActuallyMe;
+
+    if (isActuallyMe) {
+      print('[UserProfileScreen] otherUser가 본인임 → 내 프로필 모드로 전환');
+      print('  - otherUser: ${widget.otherUser!.username}');
+      print('  - currentUser: ${currentUser.username}');
+    }
+
     _scrollController = ScrollController();
 
     // 내 프로필이면 MyProfileFeedProvider, 다른 사람 프로필이면 ProfileFeedProvider 사용

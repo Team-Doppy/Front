@@ -10,6 +10,7 @@ import 'package:doppy/pages/components/shimmer_box.dart';
 import 'package:doppy/theme/app_colors.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'dart:ui' as ui;
 import 'dart:math' as math;
 import 'package:super_editor/super_editor.dart';
 
@@ -244,25 +245,47 @@ class _SingleImageComponentState extends State<SingleImageComponent>
                           child: IgnorePointer(
                             child: Builder(
                               builder: (context) {
-                                final theme = Theme.of(context).colorScheme;
                                 final brightness = Theme.of(context).brightness;
-                                final bgColor = theme.background;
-                                final dotColor = theme.onSurface;
                                 final isLightTheme =
                                     brightness == Brightness.light;
-                                return AnimatedBuilder(
-                                  animation: _controller,
-                                  builder: (context, _) {
-                                    return CustomPaint(
-                                      painter: _ImageSpoilerPainter(
-                                        phase: _controller.value,
-                                        isEditing: widget.isEditing,
-                                        backgroundColor: bgColor,
-                                        dotColor: dotColor,
-                                        isLightTheme: isLightTheme,
+                                return Stack(
+                                  children: [
+                                    // ✅ 기본 블러 레이어 (전체 채우기)
+                                    Positioned.fill(
+                                      child: ClipRect(
+                                        child: BackdropFilter(
+                                          filter: ui.ImageFilter.blur(
+                                            sigmaX: 20,
+                                            sigmaY: 20,
+                                          ),
+                                          child: Container(
+                                            color: Colors.black.withOpacity(
+                                              0.1,
+                                            ),
+                                          ),
+                                        ),
                                       ),
-                                    );
-                                  },
+                                    ),
+                                    Positioned.fill(
+                                      child: AnimatedBuilder(
+                                        animation: _controller,
+                                        builder: (context, _) {
+                                          return CustomPaint(
+                                            painter: _ImageSpoilerPainter(
+                                              phase: _controller.value,
+                                              isEditing: widget.isEditing,
+                                              // 배경 마스크 제거 → 블러만 적용
+                                              backgroundColor:
+                                                  Colors.transparent,
+                                              // 점은 항상 흰색
+                                              dotColor: Colors.white,
+                                              isLightTheme: isLightTheme,
+                                            ),
+                                          );
+                                        },
+                                      ),
+                                    ),
+                                  ],
                                 );
                               },
                             ),
@@ -274,9 +297,7 @@ class _SingleImageComponentState extends State<SingleImageComponent>
                             ignoring: true,
                             child: Builder(
                               builder: (context) {
-                                final theme = Theme.of(context).colorScheme;
                                 final brightness = Theme.of(context).brightness;
-                                final dotColor = theme.onSurface;
                                 final isLightTheme =
                                     brightness == Brightness.light;
                                 return AnimatedBuilder(
@@ -285,7 +306,8 @@ class _SingleImageComponentState extends State<SingleImageComponent>
                                     return CustomPaint(
                                       painter: _ImageSpoilerScatterPainter(
                                         t: _scatterCtrl.value,
-                                        dotColor: dotColor,
+                                        // 점은 항상 흰색
+                                        dotColor: Colors.white,
                                         isLightTheme: isLightTheme,
                                       ),
                                     );
@@ -788,42 +810,64 @@ class _ImageSpoilerPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
+    // 초기 프레임 등에서 Size가 0인 경우 NaN이 발생하지 않도록 보호
+    if (size.width <= 0 || size.height <= 0) return;
     final rect = Offset.zero & size;
-    final mask =
-        Paint()
-          ..style = PaintingStyle.fill
-          ..color = backgroundColor.withOpacity(isEditing ? 0.4 : 1.0);
-    // 라이트 테마일 때는 점 색상을 더 연하게
-    final dotOpacity = isLightTheme ? 0.4 : 0.6;
+    final mask = Paint()..style = PaintingStyle.fill;
+    // 배경 칠하기는 명시적으로 투명색이 아닌 경우에만 수행
+    // (Colors.transparent.withOpacity(1.0) → 불투명한 검정 문제 방지)
+    if (backgroundColor.alpha != 0) {
+      final double alpha = isEditing ? 0.4 : 1.0;
+      if (alpha > 0) {
+        mask.color = backgroundColor.withOpacity(alpha);
+        canvas.drawRect(rect, mask);
+      }
+    }
+    // 점을 더 선명하게 보이도록 높은 불투명도
+    final dotOpacity = isLightTheme ? 0.9 : 0.95;
     final dot =
         Paint()
           ..style = PaintingStyle.fill
           ..color = dotColor.withOpacity(dotOpacity);
 
-    canvas.drawRect(rect, mask);
     final area = rect.width * rect.height;
+    // 밀도 상향: 큰 이미지에서도 충분한 알갱이 수 유지 (성능 고려)
     final count =
         isEditing
-            ? math.max(40, (area / 180).floor())
-            : math.max(60, (area / 120).floor());
-    final double t = phase * (2 * math.pi) * 1.1;
+            ? math.max(300, (area / 1200).floor())
+            : math.max(400, (area / 900).floor());
+    // 속도 낮춤
+    final double t = phase * (2 * math.pi) * 1.6;
 
-    // 기본 점들 그리기 (크기 증가: 1.5 -> 2.5)
+    // 기본 점들 그리기 (크기 2.2, 움직임/깜빡임 강화)
     for (int i = 0; i < count; i++) {
       final seed = rect.hashCode ^ (i * 486187739);
       final r = math.Random(seed);
       final baseX = r.nextDouble() * rect.width;
       final baseY = r.nextDouble() * rect.height;
-      final amp = 1.2 + r.nextDouble() * 4; // 1.2~3.0px
-      final ox = math.sin(t + i * 0.17) * amp;
-      final oy = math.cos(t * 1.1 + i * 0.09) * amp;
+      // 진폭 낮춤 (움직임 강도 감소)
+      final amp = 1.0 + r.nextDouble() * 5.0; // 1~6px
+      final ox = math.sin(t + i * 0.21) * amp;
+      final oy = math.cos(t * 0.9 + i * 0.13) * amp;
       double x = baseX + ox;
       double y = baseY + oy;
-      x = x % rect.width;
-      y = y % rect.height;
+      // width/height가 0일 경우 나눗셈으로 NaN이 발생할 수 있으므로 방어
+      if (rect.width > 0)
+        x = x % rect.width;
+      else
+        x = 0;
+      if (rect.height > 0)
+        y = y % rect.height;
+      else
+        y = 0;
       if (x < 0) x += rect.width;
       if (y < 0) y += rect.height;
-      canvas.drawRect(Rect.fromLTWH(x, y, 1.7, 1.7), dot);
+      // 별 깜빡임 효과: 점마다 약간 다른 투명도 변조
+      final twinkle = 0.7 + 0.3 * math.sin(t * 1.3 + i * 0.5);
+      final p = dot..color = dot.color.withOpacity(dotOpacity * twinkle);
+      // 알갱이 크기 축소
+      final sizePx = 1.0 + r.nextDouble() * 1.4; // 1.0~2.4px 원형
+      canvas.drawCircle(Offset(x, y), sizePx / 2, p);
     }
   }
 

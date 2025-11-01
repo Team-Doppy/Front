@@ -58,18 +58,10 @@ class PostReaderService {
           // 단, 드래프트 복구시에는 includeTitleNode가 true이면 포함
           if (isTitle && !includeTitleNode) break;
           final spans = (m['spans'] as List?) ?? const [];
-          final attributed = _buildAttributedText(text, spans);
-
-          // 노드 레벨에 spoiler: true가 있으면 전체 텍스트에 spoiler attribution 적용
-          if (m['spoiler'] == true && text.isNotEmpty) {
-            final range = SpanRange(0, text.length - 1);
-            attributed.addAttribution(spoilerAttribution, range);
-            if (kDebugMode) {
-              print(
-                '[PostReaderService] Paragraph 노드 전체 스포일러 적용: $id, 텍스트 길이: ${text.length}',
-              );
-            }
-          }
+          final attributed = _buildAttributedText(
+            text,
+            spans,
+          ); // ✅ spans에서 spoiler 처리됨
 
           final meta = <String, dynamic>{'textAlign': align};
 
@@ -457,17 +449,18 @@ class PostReaderService {
     final nodes = (content['nodes'] as List?) ?? [];
 
     for (final raw in nodes) {
-      if (clipUrls.length >= 2) break; // 최대 2개만 프리캐싱
-
       final m = (raw as Map).cast<String, dynamic>();
       final type = (m['type'] ?? '').toString();
 
-      if (type == 'clip') {
-        final url = (m['url'] ?? '').toString();
+      if (type == 'clip' || type == 'video') {
+        // video 타입도 포함
+        final data = m['data'] as Map<String, dynamic>?;
+        final url = (data?['url'] ?? m['url'] ?? '').toString();
         if (url.isNotEmpty) clipUrls.add(url);
       }
     }
 
+    print('[PostReaderService] 클립 URL 추출 완료: ${clipUrls.length}개');
     return clipUrls;
   }
 
@@ -505,9 +498,12 @@ class PostReaderService {
 
   // ===== 영상 프리로드 컨트롤러 캐시 =====
   static final Map<String, VideoPlayerController> _preloadedControllers = {};
+  static final Map<String, DateTime> _preloadTimestamps = {}; // 생성 시간 추적
+  static const int _maxPreloadCount = 20; // 최대 프리로드 개수 (모든 클립 지원)
 
   /// 프리로드된 컨트롤러를 전달하고 캐시에서 제거한다 (소유권 이전)
   static VideoPlayerController? takePreloadedController(String url) {
+    _preloadTimestamps.remove(url);
     return _preloadedControllers.remove(url);
   }
 
@@ -522,46 +518,103 @@ class PostReaderService {
       c.dispose();
     }
     _preloadedControllers.clear();
+    _preloadTimestamps.clear();
+  }
+
+  /// 오래된 컨트롤러부터 정리 (메모리 관리)
+  static void _disposeOldestControllers({int keepCount = 4}) {
+    if (_preloadedControllers.length <= keepCount) return;
+
+    // 생성 시간 기준으로 정렬 (오래된 순)
+    final sorted =
+        _preloadTimestamps.entries.toList()
+          ..sort((a, b) => a.value.compareTo(b.value));
+
+    // 오래된 것부터 제거
+    final toRemove = sorted.length - keepCount;
+    for (int i = 0; i < toRemove; i++) {
+      final url = sorted[i].key;
+      final controller = _preloadedControllers.remove(url);
+      _preloadTimestamps.remove(url);
+      controller?.dispose();
+      print('[PostReaderService] 오래된 프리로드 컨트롤러 정리: $url');
+    }
   }
 
   /// 클립(영상)을 미리 로드한다 - 병렬 초기화 지원
   Future<void> preloadClips(
     BuildContext context,
     List<String> clipUrls, {
-    int maxCount = 4,
+    int? maxCount, // ✅ nullable로 변경 (null이면 무제한)
   }) async {
     if (clipUrls.isEmpty) {
       return;
     }
 
-    final urlsToPreload =
-        clipUrls
-            .where((url) => !_preloadedControllers.containsKey(url))
-            .take(maxCount)
-            .toList();
+    // 이미 프리로드된 URL 제외
+    var urlsToPreload = clipUrls.where(
+      (url) => !_preloadedControllers.containsKey(url),
+    );
 
-    if (urlsToPreload.isEmpty) {
-      print('[PostReaderService] 프리로드할 클립 없음');
+    // maxCount가 지정되면 제한, 아니면 전체
+    if (maxCount != null) {
+      urlsToPreload = urlsToPreload.take(maxCount);
+    }
+
+    final urlsList = urlsToPreload.toList();
+
+    if (urlsList.isEmpty) {
+      print('[PostReaderService] 프리로드할 클립 없음 (이미 모두 캐시됨)');
       return;
     }
 
-    print('[PostReaderService] 클립 ${urlsToPreload.length}개 병렬 프리로드 시작');
+    print('[PostReaderService] 클립 ${urlsList.length}개 병렬 프리로드 시작');
+
+    // 최대 개수 초과 시 오래된 것부터 정리 (안전장치)
+    final totalAfterPreload = _preloadedControllers.length + urlsList.length;
+    if (totalAfterPreload > _maxPreloadCount) {
+      final keepCount = _maxPreloadCount - urlsList.length;
+      if (keepCount > 0) {
+        _disposeOldestControllers(keepCount: keepCount);
+      }
+    }
 
     try {
       await Future.wait(
-        urlsToPreload.map((url) async {
+        urlsList.map((url) async {
+          // ✅ urlsList 사용
           final controller = VideoPlayerController.networkUrl(Uri.parse(url));
           try {
+            // 1. 기본 초기화 (메타데이터 + 첫 프레임)
             await controller.initialize();
+
+            // 2. 초기 버퍼 확보 (0.1초 무음 재생 후 정지)
+            await controller.setVolume(0); // 무음
+            await controller.play();
+            await Future.delayed(const Duration(milliseconds: 120)); // 버퍼 확보
+            await controller.pause();
+            await controller.seekTo(Duration.zero); // 처음으로 되돌리기
+
+            // 캐시에 저장 및 타임스탬프 기록
             _preloadedControllers[url] = controller;
-            print('[PostReaderService] 클립 프리캐싱 완료: $url');
+            _preloadTimestamps[url] = DateTime.now();
+
+            final shortUrl = url.split('/').last; // 파일명만 추출
+            print('[PostReaderService] ✅ 클립 프리캐싱 완료 (버퍼 확보): $shortUrl');
           } catch (e) {
             print('[PostReaderService] 클립 프리캐싱 실패: $url - $e');
             await controller.dispose();
           }
         }),
       );
-      print('[PostReaderService] 클립 병렬 프리캐싱 완료');
+      print(
+        '[PostReaderService] 🎉 클립 병렬 프리캐싱 완료 (총 ${_preloadedControllers.length}개 캐시됨)',
+      );
+      print('[PostReaderService] 캐시된 URL 목록:');
+      for (final url in _preloadedControllers.keys) {
+        final shortUrl = url.split('/').last;
+        print('  - $shortUrl');
+      }
     } catch (e) {
       print('[PostReaderService] 클립 프리캐싱 중 오류: $e');
     }

@@ -30,9 +30,6 @@ class ImageView extends StatelessWidget {
               topRight: isLast ? const Radius.circular(12) : Radius.zero,
               bottomRight: isLast ? const Radius.circular(12) : Radius.zero,
             ),
-            border: Border.all(
-              color: theme.colorScheme.onSurface.withOpacity(0.2),
-            ),
           ),
           child: ClipRRect(
             borderRadius: BorderRadius.only(

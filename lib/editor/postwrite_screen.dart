@@ -1,5 +1,5 @@
 import 'dart:io';
-import 'package:doppy/editor/%20adf.dart';
+import 'package:doppy/editor/editor_appbar.dart';
 import 'package:doppy/editor/component/clip_component.dart'
     show ClipNode, videoPlayerControllers, PinComponentBuilder;
 
@@ -18,8 +18,9 @@ import 'package:doppy/editor/overlay/drag_overlay_widget.dart';
 import 'package:doppy/editor/service/drag_service.dart';
 import 'package:doppy/editor/service/editor_service.dart';
 import 'package:doppy/editor/service/node_component_service.dart';
-import 'package:doppy/editor/service/edit_service.dart';
 import 'package:doppy/editor/service/sticker_service.dart';
+import 'package:doppy/editor/service/post_reader_service.dart';
+import 'package:doppy/editor/service/content_change_detector.dart';
 import 'package:doppy/utils/dialog_utils.dart';
 import 'package:doppy/editor/style/style_sheet.dart';
 import 'package:doppy/editor/style/defualt_toolbar.dart';
@@ -34,6 +35,7 @@ import 'package:doppy/editor/overlay/draft_list_overlay.dart';
 import 'package:doppy/editor/publish/post_exporter.dart';
 import 'package:doppy/data/services/draft_service.dart';
 import 'package:doppy/data/services/upload_service.dart';
+import 'package:doppy/data/services/blog_service.dart';
 import 'package:doppy/editor/image/custom_image_editor_screen.dart';
 
 /// 글 공개 범위 옵션
@@ -44,11 +46,13 @@ enum NodeType { paragraph, image, imageRow, location, unknown }
 class PostwriteScreen extends StatefulWidget {
   final bool isEditingMode;
   final Map<String, dynamic>? exportedDataForEdit;
+  final String? postId; // 수정 모드용 post ID
 
   const PostwriteScreen({
     super.key,
     this.isEditingMode = false,
     this.exportedDataForEdit,
+    this.postId,
   });
 
   @override
@@ -69,7 +73,6 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
   late final DragService dragService;
   late final DraftService draftService;
   late final TextStylingService textStylingService;
-  late final EditService editService;
 
   //overlay
   OverlayEntry? overlayEntry;
@@ -84,6 +87,16 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
   bool isKeyboardVisible = false; // 키보드 표시 상태
   String? currentDraftId; // 임시저장 관련
 
+  // 공개범위 설정 (편집 모드용)
+  String _editVisibility = 'public';
+  List<int> _editGroupIds = [];
+
+  // 서버에 적용된 제목 (썸네일 오버레이에서 변경 시 업데이트)
+  String? _serverAppliedTitle;
+
+  // 저장 중 상태
+  bool _isSaving = false;
+
   @override
   void initState() {
     super.initState();
@@ -94,9 +107,21 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     // 새 글 작성 모드이면 빈 문서 생성
     if (widget.isEditingMode && widget.exportedDataForEdit != null) {
       try {
-        document = EditService().rebuildDocumentForEdit(
+        // PostReaderService를 사용하여 문서 복원 (제목 포함)
+        final postReaderService = PostReaderService();
+        document = postReaderService.rebuildDocumentForRead(
           widget.exportedDataForEdit!,
+          includeTitleNode: true, // 편집 모드에서는 제목도 포함
         );
+
+        // 기존 공개범위 정보 복원
+        final metadata =
+            widget.exportedDataForEdit!['metadata'] as Map<String, dynamic>?;
+        if (metadata != null) {
+          _editVisibility = metadata['visibility'] ?? 'public';
+          final groupIds = metadata['groupIds'] as List<dynamic>?;
+          _editGroupIds = groupIds?.map((e) => e as int).toList() ?? [];
+        }
       } catch (e) {
         // 실패 시 빈 문서로 초기화
         document = MutableDocument(
@@ -156,8 +181,6 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
 
     // 전역 스타일링 서비스 설정 (렌더링용)
     setGlobalTextStylingService(textStylingService);
-    // 편집 서비스
-    editService = EditService();
 
     // ImageService는 build 메서드에서 설정
     dragService = DragService(
@@ -176,7 +199,41 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     // 폰트 변경 감지
     textStylingService.addListener(_onEditorServiceChange);
 
+    // 스티커(그리기 포함) 변경 감지
+    stickerService.addListener(_onEditorServiceChange);
+
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      // 편집 모드일 때 스티커 복원
+      if (widget.isEditingMode && widget.exportedDataForEdit != null) {
+        try {
+          final postReaderService = PostReaderService();
+          postReaderService.restoreStickers(
+            exported: widget.exportedDataForEdit!,
+            stickerService: stickerService,
+          );
+        } catch (e) {
+          print('[PostwriteScreen] 스티커 복원 실패: $e');
+        }
+
+        // 썸네일 정보를 NodeComponentService에 persist
+        try {
+          final thumbnailUrl =
+              widget.exportedDataForEdit!['thumbnailImageUrl'] as String?;
+          final thumbnailId =
+              widget.exportedDataForEdit!['thumbnailImageId']?.toString();
+          if (thumbnailUrl != null && thumbnailUrl.isNotEmpty) {
+            nodeComponentService.setTempThumbnail(
+              'default',
+              url: thumbnailUrl,
+              id: thumbnailId,
+            );
+            print('[PostwriteScreen] 썸네일 복원: $thumbnailUrl (ID: $thumbnailId)');
+          }
+        } catch (e) {
+          print('[PostwriteScreen] 썸네일 복원 실패: $e');
+        }
+      }
+
       // 편집 모드가 아닐 때만 커서 이동
       if (!widget.isEditingMode) {
         final node = document.getNodeById('2');
@@ -376,6 +433,77 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     } else if (action == 'restartVideo') {
       controller.restartVideo?.call();
       print('[ClipNode] restartVideo() 호출됨');
+    }
+  }
+
+  // 제목 노드 업데이트 (썸네일 오버레이에서 제목 변경 시)
+  void _updateTitleNode(String newTitle) {
+    try {
+      // 첫 번째 노드가 제목 노드인지 확인
+      final firstNode = document.getNodeAt(0);
+      if (firstNode is! ParagraphNode ||
+          firstNode.metadata['isTitle'] != true) {
+        print('[PostwriteScreen] 제목 노드를 찾을 수 없습니다');
+        return;
+      }
+
+      // 새 제목 노드 생성
+      final newTitleNode = ParagraphNode(
+        id: firstNode.id,
+        text: AttributedText(newTitle),
+        metadata: firstNode.metadata,
+      );
+
+      // 노드 교체
+      document.replaceNodeById(firstNode.id, newTitleNode);
+
+      // UI 갱신
+      setState(() {});
+
+      print('[PostwriteScreen] 제목 노드 업데이트 완료: "$newTitle"');
+    } catch (e) {
+      print('[PostwriteScreen] 제목 노드 업데이트 실패: $e');
+    }
+  }
+
+  // 서버에 적용된 제목을 원본 데이터에 반영 (변경 감지 시 사용)
+  Map<String, dynamic> _updateOriginalWithServerTitle(
+    Map<String, dynamic> original,
+  ) {
+    if (_serverAppliedTitle == null) return original;
+
+    try {
+      // Deep copy
+      final updated = Map<String, dynamic>.from(original);
+      final content = updated['content'] as Map<String, dynamic>?;
+      if (content == null) return original;
+
+      final nodes = content['nodes'] as List?;
+      if (nodes == null || nodes.isEmpty) return original;
+
+      // 첫 번째 노드가 제목 노드인지 확인
+      final firstNode = nodes[0] as Map<String, dynamic>?;
+      if (firstNode == null || firstNode['type'] != 'paragraph') {
+        return original;
+      }
+
+      // 제목 텍스트만 업데이트
+      final updatedNodes = List.from(nodes);
+      final updatedFirstNode = Map<String, dynamic>.from(firstNode);
+      updatedFirstNode['text'] = _serverAppliedTitle;
+
+      updatedNodes[0] = updatedFirstNode;
+
+      final updatedContent = Map<String, dynamic>.from(content);
+      updatedContent['nodes'] = updatedNodes;
+
+      updated['content'] = updatedContent;
+
+      print('[PostwriteScreen] 원본 데이터에 서버 제목 반영: $_serverAppliedTitle');
+      return updated;
+    } catch (e) {
+      print('[PostwriteScreen] 원본 데이터 업데이트 실패: $e');
+      return original;
     }
   }
 
@@ -591,6 +719,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     textStylingService.dispose();
     editorService.removeListener(_onEditorServiceChange);
     editorService.dispose();
+    stickerService.removeListener(_onEditorServiceChange);
     dragService.removeListener(_onDragging);
     scrollController.removeListener(_onScrollChanged);
     _editorFocusNode.dispose();
@@ -607,6 +736,26 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     return WillPopScope(
       onWillPop: () async {
         if (widget.isEditingMode) {
+          // 수정 모드: 변경사항이 있는지 확인
+          // 서버에 적용된 제목이 있으면 원본 데이터를 업데이트해서 비교
+          final originalForComparison =
+              _serverAppliedTitle != null
+                  ? _updateOriginalWithServerTitle(widget.exportedDataForEdit!)
+                  : widget.exportedDataForEdit!;
+
+          final hasChanges = ContentChangeDetector.hasContentChanged(
+            originalExported: originalForComparison,
+            editorService: editorService,
+            stickerService: stickerService,
+          );
+
+          // 변경사항이 없으면 바로 나가기
+          if (!hasChanges) {
+            _cleanupAndExit();
+            return false;
+          }
+
+          // 변경사항이 있을 때만 다이얼로그 표시
           final shouldCancel = await DialogUtils.showConfirmDialog(
             context,
             title: '수정 취소',
@@ -633,8 +782,12 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
             isDestructive: false,
           );
           if (shouldSave == true) {
-            await _saveDraft();
-            _cleanupAndExit();
+            final success = await _saveDraft();
+            // ✅ 임시저장 성공했을 때만 편집기 닫기
+            if (success) {
+              _cleanupAndExit();
+            }
+            // 실패하면 편집기 유지 (다이얼로그만 닫힘)
           } else if (shouldSave == false) {
             _cleanupAndExit();
           }
@@ -773,6 +926,15 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                     child: StickerCanvas(scrollController: scrollController),
                   ),
 
+                  // 저장 중 전체 화면 블록 오버레이
+                  if (_isSaving)
+                    Positioned.fill(
+                      child: AbsorbPointer(
+                        absorbing: true,
+                        child: Container(color: Colors.transparent),
+                      ),
+                    ),
+
                   // 앱바
                   AnimatedPositioned(
                     duration: const Duration(milliseconds: 200),
@@ -783,10 +945,33 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                             ? EditModeAppBar(
                               editorService: editorService,
                               onSave: _saveEditedPost,
+                              currentVisibility: _editVisibility,
+                              currentGroupIds: _editGroupIds,
+                              postId: widget.postId,
+                              isSaving: _isSaving, // 저장 중 상태 전달
+                              onVisibilityChanged: (visibility, groupIds) {
+                                setState(() {
+                                  _editVisibility = visibility;
+                                  _editGroupIds = groupIds;
+                                });
+                              },
+                              onTitleSummaryChanged: (title, summary) {
+                                // 썸네일 오버레이에서 제목/요약이 변경되면 에디터 제목 노드 업데이트
+                                _updateTitleNode(title);
+                                // 서버에 적용된 제목 저장 (변경 감지 시 제외용)
+                                setState(() {
+                                  _serverAppliedTitle = title;
+                                });
+                                print(
+                                  '[PostwriteScreen] 제목 업데이트 및 서버 적용: $title',
+                                );
+                              },
                             )
                             : EditorAppBar(
                               editorService: editorService,
                               stickerService: stickerService,
+                              onSaveDraft: _saveDraft,
+                              onLoadDraft: _showDraftList,
                             ),
                   ),
 
@@ -932,6 +1117,9 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     editor.execute([
       ReplaceNodeRequest(existingNodeId: selectedId, newNode: newNode),
     ]);
+
+    // 확장/축소 후 자동으로 선택 해제
+    NodeComponentService().clearSelection();
   }
 
   String _getNextPaddingMode(String current) {
@@ -1075,14 +1263,33 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
   }
 
   /// 수동 임시저장 (새 버전 생성)
-  Future<void> _saveDraft() async {
+  Future<bool> _saveDraft() async {
     try {
+      // 제목만 검증
+      final hasTitle = editorService.hasNonEmptyTitle();
+
+      if (!hasTitle) {
+        if (mounted) {
+          await DialogUtils.showInfoDialog(
+            context,
+            title: '제목을 입력해주세요',
+            message: '제목을 입력해야 임시저장할 수 있습니다.',
+          );
+        }
+        return false; // ✅ 실패 반환
+      }
+
       final title = PostExporter.getTitleFromDocument(document);
+
+      // 제목 기반으로 draftId 생성 (같은 제목이면 덮어쓰기)
+      final titleHash = title.hashCode.abs();
+      final draftIdByTitle = 'draft_$titleHash';
+
       final thumbnailUrl = nodeComponentService.getTempThumbnailUrl(
-        currentDraftId ?? '',
+        draftIdByTitle,
       );
 
-      // 항상 새로운 버전으로 저장 (existingDraftId를 null로)
+      // 제목이 같으면 기존 임시저장을 덮어씀
       currentDraftId = await draftService.saveDraft(
         editorService: editorService,
         stickerService: stickerService,
@@ -1090,7 +1297,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
         thumbnailUrl: thumbnailUrl ?? '',
         visibility: 'public', // 기본값
         selectedGroupIds: [],
-        existingDraftId: null, // 새 버전 생성
+        existingDraftId: draftIdByTitle, // 제목 기반 ID로 덮어쓰기
       );
 
       // 저장 스냅샷 마크
@@ -1098,26 +1305,188 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
       stickerService.saveInitialState();
 
       // 임시저장 후에는 매핑 맵을 유지 (계속 작업할 수 있도록)
+
+      // 성공 스낵바 표시
+      if (mounted) {
+        ErrorHandler.showInfo(context, '임시저장에 성공했습니다');
+      }
+      return true; // ✅ 성공 반환
     } catch (e) {
       if (mounted) {
         ErrorHandler.showError(context, '임시저장에 실패했습니다');
       }
+      return false; // ✅ 실패 반환
     }
   }
 
   /// 수정된 포스트 저장 (편집 모드 전용)
   Future<void> _saveEditedPost() async {
+    print('[PostwriteScreen] ===== 수정 완료 버튼 클릭 =====');
+
+    // 이미 저장 중이면 무시
+    if (_isSaving) return;
+
+    // 1. 제목 검증
+    final hasTitle = editorService.hasNonEmptyTitle();
+    if (!hasTitle) {
+      await DialogUtils.showInfoDialog(
+        context,
+        title: '제목을 입력해주세요',
+        message: '제목을 입력해야 수정할 수 있습니다.',
+      );
+      return;
+    }
+
+    // 2. 변경사항 확인
+    final originalForComparison =
+        _serverAppliedTitle != null
+            ? _updateOriginalWithServerTitle(widget.exportedDataForEdit!)
+            : widget.exportedDataForEdit!;
+
+    final hasChanges = ContentChangeDetector.hasContentChanged(
+      originalExported: originalForComparison,
+      editorService: editorService,
+      stickerService: stickerService,
+    );
+
+    if (!hasChanges) {
+      // 변경사항이 없으면 조용히 나가기
+      Navigator.of(context).pop();
+      return;
+    }
+
+    // 3. 저장 중 상태로 변경
+    setState(() => _isSaving = true);
+
     try {
-      // TODO: implement update API call
-      // 1. 현재 문서 상태를 export
-      // 2. BlogService.updatePost 호출
-      // 3. 성공 시 PostReaderScreen으로 돌아가기
-      print('[PostwriteScreen] 수정 완료 버튼 클릭 (구현 예정)');
-    } catch (e) {
+      // 4. 현재 문서 상태를 export
+      final exported = PostExporter.exportToMap(
+        editorService: editorService,
+        stickerService: stickerService,
+      );
+
+      // 5. content 추출
+      final content = exported['content'] as Map<String, dynamic>?;
+      if (content == null) {
+        throw Exception('본문 데이터를 추출할 수 없습니다.');
+      }
+
+      // 6. 제목 추출 (항상 현재 document의 제목 사용)
+      final title = PostExporter.getTitleFromDocument(document);
+
+      // 7. 사용된 이미지/비디오 URL 수집
+      final usedImageUrls = _collectUsedMediaUrls(exported);
+
+      print('[PostwriteScreen] Export 완료');
+      print('  - 제목: $title');
+      print('  - 사용된 미디어: ${usedImageUrls.length}개');
+
+      // 8. 서버에 본문 업데이트 요청
+      await BlogService().updatePostContent(
+        postId: int.parse(widget.postId!),
+        content: content,
+        title: title,
+        usedImageUrls: usedImageUrls,
+      );
+
+      print('[PostwriteScreen] ✅ 본문 수정 완료');
+
+      // 9. 안정화 시간 (0.5초) 후 완료
+      await Future.delayed(const Duration(milliseconds: 500));
+
       if (mounted) {
-        ErrorHandler.showError(context, '수정에 실패했습니다');
+        setState(() => _isSaving = false);
+
+        Navigator.of(context).pop();
+      }
+    } catch (e) {
+      print('[PostwriteScreen] ❌ 본문 수정 실패: $e');
+
+      // 저장 중 상태 해제
+      if (mounted) {
+        setState(() => _isSaving = false);
+        ErrorHandler.handleError(context, e);
       }
     }
+  }
+
+  /// 사용된 이미지/비디오 URL 수집
+  /// PostExporter와 동일한 로직 사용
+  List<String> _collectUsedMediaUrls(Map<String, dynamic> exported) {
+    final Set<String> usedUrls = <String>{};
+
+    try {
+      // content의 nodes에서 이미지/비디오 URL 수집
+      final dynamic content = exported['content'];
+      final List<dynamic> nodes =
+          (content is Map)
+              ? List<dynamic>.from(content['nodes'] as List? ?? const [])
+              : const [];
+
+      print('[PostwriteScreen] URL 수집 시작 (노드 개수: ${nodes.length})');
+
+      for (int i = 0; i < nodes.length; i++) {
+        final n = nodes[i];
+        if (n is! Map) continue;
+
+        final String type = (n['type'] ?? '').toString();
+        print('  - 노드[$i] 타입: $type');
+
+        if (type == 'image') {
+          // data.url 또는 url 필드에서 추출
+          final data = n['data'] as Map<String, dynamic>?;
+          final String url = (data?['url'] ?? n['url'] ?? '').toString();
+          if (url.isNotEmpty) {
+            usedUrls.add(url);
+            print('    → 이미지 URL 추가: $url');
+          }
+        } else if (type == 'imageRow') {
+          // urls 필드에서 추출
+          final List<dynamic> urls = List<dynamic>.from(n['urls'] ?? const []);
+          for (final u in urls) {
+            final String url = u.toString();
+            if (url.isNotEmpty) {
+              usedUrls.add(url);
+              print('    → 이미지행 URL 추가: $url');
+            }
+          }
+        } else if (type == 'video' || type == 'clip') {
+          // data.url에서 추출 (비디오도 usedImageUrls에 포함!)
+          final data = n['data'] as Map<String, dynamic>?;
+          final String url = (data?['url'] ?? '').toString();
+          if (url.isNotEmpty) {
+            usedUrls.add(url);
+            print('    → 비디오 URL 추가: $url');
+          }
+        }
+      }
+
+      // 스티커에서 이미지 URL 수집
+      final stickers = exported['stickers'] as List?;
+      if (stickers != null) {
+        print('  - 스티커 개수: ${stickers.length}');
+        for (final sticker in stickers) {
+          if (sticker is Map && sticker['type'] == 'image') {
+            final imageUrl = sticker['imageUrl'];
+            if (imageUrl != null && imageUrl.toString().isNotEmpty) {
+              usedUrls.add(imageUrl.toString());
+              print('    → 스티커 URL 추가: $imageUrl');
+            }
+          }
+        }
+      }
+
+      print('[PostwriteScreen] ✅ 총 수집된 미디어 URL: ${usedUrls.length}개');
+      if (usedUrls.isNotEmpty) {
+        for (final url in usedUrls) {
+          print('  - $url');
+        }
+      }
+    } catch (e) {
+      print('[PostwriteScreen] 미디어 URL 수집 실패: $e');
+    }
+
+    return usedUrls.toList();
   }
 
   /// 임시저장 목록 보기
@@ -1151,14 +1520,6 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                     // 불러온 상태를 저장 스냅샷으로 간주
                     editorService.markSavedSnapshot();
                     stickerService.saveInitialState();
-
-                    // UI 업데이트
-                    Future.delayed(const Duration(milliseconds: 200), () {
-                      if (mounted) {
-                        editorService.updatePublishableStatus();
-                        setState(() {});
-                      }
-                    });
                   } else if (!success && mounted) {
                     ErrorHandler.showError(context, '임시저장을 불러올 수 없습니다');
                   }

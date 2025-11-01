@@ -430,7 +430,8 @@ class _PostListState extends State<PostList> {
 
               // 위로 스와이프 감지 (섹션 전환용)
               if (_gestureAccumY < -_verticalSwipeThreshold &&
-                  widget.onFilterTap != null) {
+                  widget.onFilterTap != null &&
+                  !widget.isShowingSearchResults) {
                 print(
                   '⬆️ Listener로 위로 스와이프 감지! 섹션 전환 (임계값: $_verticalSwipeThreshold)',
                 );
@@ -707,14 +708,17 @@ class _PostListState extends State<PostList> {
     String subtitle;
     bool showRecommendButton = false;
 
-    if (widget.isShowingFriendsOnly) {
-      message = "친구포스트가 없어요";
-      subtitle = "오늘은 내가 먼저 포스트를 올려볼까요?";
-
+    if (widget.isShowingSearchResults) {
+      message = '검색 결과가 없어요';
+      subtitle = '"${widget.searchQuery}"에 대한 결과가 없어요';
+      showRecommendButton = false; // 검색 중에는 추천글 이동 버튼 숨김
+    } else if (widget.isShowingFriendsOnly) {
+      message = '친구포스트가 없어요';
+      subtitle = '오늘은 내가 먼저 포스트를 올려볼까요?';
       showRecommendButton = true; // 친구글 탭에서만 추천글 버튼 표시
     } else {
-      message = "아직 글이 없어요";
-      subtitle = "새로운 글들이 곧 올라올 거예요!";
+      message = '아직 글이 없어요';
+      subtitle = '새로운 글들이 곧 올라올 거예요!';
     }
 
     return Center(

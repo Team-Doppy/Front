@@ -381,6 +381,159 @@ class BlogService {
     }
   }
 
+  /// 포스트 공개범위 변경
+  Future<void> updatePostAccessLevel({
+    required int postId,
+    required String accessLevel, // 'PRIVATE', 'PUBLIC', 'GROUPS'
+    List<int>? sharedGroupIds, // GROUPS일 때만 필요
+  }) async {
+    print('[BlogService] 공개범위 변경 요청: $postId -> $accessLevel');
+
+    try {
+      final data = <String, dynamic>{'accessLevel': accessLevel};
+
+      if (accessLevel == 'GROUPS' && sharedGroupIds != null) {
+        data['sharedGroupIds'] = sharedGroupIds;
+      }
+
+      await _dio.put('/api/posts/$postId/access-level', data: data);
+
+      print('[BlogService] 공개범위 변경 성공: $postId -> $accessLevel');
+    } catch (e) {
+      print('[BlogService] 공개범위 변경 실패: $e');
+
+      if (e is DioException) {
+        if (e.response?.statusCode == 400) {
+          final message = e.response?.data?['message'] ?? '잘못된 요청입니다.';
+          throw Exception(message);
+        } else if (e.response?.statusCode == 401) {
+          throw Exception('인증이 필요합니다.');
+        } else if (e.response?.statusCode == 404) {
+          throw Exception('포스트를 찾을 수 없습니다.');
+        } else {
+          throw Exception('서버 오류가 발생했습니다. (${e.response?.statusCode})');
+        }
+      }
+      rethrow;
+    }
+  }
+
+  /// 포스트 썸네일, 타이틀, 요약 수정
+  ///
+  /// [postId] - 수정할 포스트 ID
+  /// [thumbnailImageUrl] - 새 썸네일 이미지 URL (선택사항)
+  /// [title] - 새 제목 (선택사항)
+  /// [summary] - 새 요약 (선택사항)
+  ///
+  /// 제공된 값만 업데이트되고, null인 값은 변경되지 않습니다.
+  Future<void> updatePostThumbnail({
+    required int postId,
+    String? thumbnailImageUrl,
+    String? title,
+    String? summary,
+  }) async {
+    print('[BlogService] 썸네일/타이틀/요약 수정 요청: $postId');
+
+    try {
+      // 쿼리 파라미터 구성
+      final queryParams = <String, String>{};
+
+      if (thumbnailImageUrl != null && thumbnailImageUrl.isNotEmpty) {
+        queryParams['thumbnailImageUrl'] = thumbnailImageUrl;
+        print('[BlogService] - 썸네일: $thumbnailImageUrl');
+      }
+
+      if (title != null && title.isNotEmpty) {
+        queryParams['title'] = title;
+        print('[BlogService] - 타이틀: $title');
+      }
+
+      if (summary != null && summary.isNotEmpty) {
+        queryParams['summary'] = summary;
+        print('[BlogService] - 요약: $summary');
+      }
+
+      // 변경할 내용이 없으면 에러
+      if (queryParams.isEmpty) {
+        throw Exception('수정할 내용이 없습니다.');
+      }
+
+      await _dio.put(
+        '/api/posts/$postId/thumbnail',
+        queryParameters: queryParams,
+      );
+
+      print('[BlogService] 썸네일/타이틀/요약 수정 성공: $postId');
+    } catch (e) {
+      print('[BlogService] 썸네일/타이틀/요약 수정 실패: $e');
+
+      if (e is DioException) {
+        if (e.response?.statusCode == 400) {
+          final message = e.response?.data?['message'] ?? '잘못된 요청입니다.';
+          throw Exception(message);
+        } else if (e.response?.statusCode == 401) {
+          throw Exception('인증이 필요합니다.');
+        } else if (e.response?.statusCode == 404) {
+          throw Exception('포스트를 찾을 수 없습니다.');
+        } else {
+          throw Exception('서버 오류가 발생했습니다. (${e.response?.statusCode})');
+        }
+      }
+      rethrow;
+    }
+  }
+
+  /// 포스트 본문(content), 타이틀 수정
+  ///
+  /// [postId] - 수정할 포스트 ID
+  /// [content] - 새 본문 content (blocks 구조)
+  /// [title] - 새 제목 (선택사항)
+  /// [usedImageUrls] - 사용된 이미지/비디오 URL 목록
+  ///
+  /// 참고: summary(요약)는 썸네일 수정 API에서만 변경 가능
+  Future<void> updatePostContent({
+    required int postId,
+    required Map<String, dynamic> content,
+    String? title,
+    required List<String> usedImageUrls,
+  }) async {
+    print('[BlogService] 본문/타이틀 수정 요청: $postId');
+
+    try {
+      final requestBody = <String, dynamic>{
+        'content': content,
+        'usedImageUrls': usedImageUrls,
+      };
+
+      if (title != null && title.isNotEmpty) {
+        requestBody['title'] = title;
+        print('[BlogService] - 타이틀: $title');
+      }
+
+      print('[BlogService] - 사용된 미디어: ${usedImageUrls.length}개');
+
+      await _dio.put('/api/posts/$postId/content', data: requestBody);
+
+      print('[BlogService] 본문/타이틀 수정 성공: $postId');
+    } catch (e) {
+      print('[BlogService] 본문/타이틀 수정 실패: $e');
+
+      if (e is DioException) {
+        if (e.response?.statusCode == 400) {
+          final message = e.response?.data?['message'] ?? '잘못된 요청입니다.';
+          throw Exception(message);
+        } else if (e.response?.statusCode == 401) {
+          throw Exception('인증이 필요합니다.');
+        } else if (e.response?.statusCode == 404) {
+          throw Exception('포스트를 찾을 수 없습니다.');
+        } else {
+          throw Exception('서버 오류가 발생했습니다. (${e.response?.statusCode})');
+        }
+      }
+      rethrow;
+    }
+  }
+
   /// 블로그 포스트를 서버에 업로드합니다.
   ///
   /// [postData] - 포스트 데이터 (제목, 내용, 썸네일 URL, 태그 등)
@@ -531,6 +684,42 @@ class BlogService {
       if (e is DioException) {
         throw HttpException(
           'get content failed ${e.response?.statusCode}: ${e.response?.data}',
+        );
+      }
+      rethrow;
+    }
+  }
+
+  /// 블로그 메타데이터만 조회 (content 제외)
+  ///
+  /// title, thumbnailImageUrl, thumbnailImageId, summary, author,
+  /// accessLevel, viewCount, likeCount, isLiked, createdAt, updatedAt 등의 정보만 반환.
+  /// 조회수 증가 안함.
+  Future<Map<String, dynamic>> getPostMetadata(String postId) async {
+    try {
+      print('[BlogService] 메타데이터 조회: postId=$postId');
+
+      final response = await _dio.get(
+        '/api/posts/$postId/metadata',
+        options: Options(receiveTimeout: const Duration(seconds: 10)),
+      );
+
+      final data = response.data;
+      if (data is Map<String, dynamic>) {
+        print('[BlogService] 메타데이터 로드 성공');
+        print('  - 제목: ${data['title']}');
+        print('  - 썸네일: ${data['thumbnailImageUrl']}');
+        print('  - 요약: ${data['summary']}');
+        return data;
+      }
+
+      return <String, dynamic>{};
+    } catch (e) {
+      print('[BlogService] getPostMetadata error: $e');
+
+      if (e is DioException) {
+        throw HttpException(
+          'get metadata failed ${e.response?.statusCode}: ${e.response?.data}',
         );
       }
       rethrow;

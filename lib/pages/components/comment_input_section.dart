@@ -12,6 +12,8 @@ class CommentInputSection extends StatelessWidget {
     required this.onSubmit,
     required this.onCancelReply,
     required this.onCancelEdit,
+    this.backgroundColor,
+    this.foregroundColor,
   });
 
   final TextEditingController commentController;
@@ -21,11 +23,15 @@ class CommentInputSection extends StatelessWidget {
   final VoidCallback onSubmit;
   final VoidCallback onCancelReply;
   final VoidCallback onCancelEdit;
+  final Color? backgroundColor;
+  final Color? foregroundColor;
 
   @override
   Widget build(BuildContext context) {
     final bottomInset = MediaQuery.of(context).padding.bottom;
-    final isDarkMode = Theme.of(context).brightness == Brightness.dark;
+    final ColorScheme scheme = Theme.of(context).colorScheme;
+    final Color bgColor = backgroundColor ?? scheme.surface;
+    final Color fgColor = foregroundColor ?? scheme.onSurface;
 
     return Container(
       padding: EdgeInsets.only(
@@ -42,7 +48,7 @@ class CommentInputSection extends StatelessWidget {
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
               decoration: BoxDecoration(
-                color: Colors.transparent,
+                color: bgColor,
                 borderRadius: BorderRadius.circular(12),
               ),
               child: Row(
@@ -51,7 +57,7 @@ class CommentInputSection extends StatelessWidget {
                     child: Text(
                       '@${replyTarget!.author} : ${replyTarget!.content}',
                       overflow: TextOverflow.ellipsis,
-                      style: TextStyle(color: Colors.white, fontSize: 16),
+                      style: TextStyle(color: fgColor, fontSize: 16),
                     ),
                   ),
                   const SizedBox(width: 8),
@@ -60,9 +66,7 @@ class CommentInputSection extends StatelessWidget {
                     child: Icon(
                       Icons.close,
                       size: 18,
-                      color: Theme.of(
-                        context,
-                      ).colorScheme.onPrimaryContainer.withOpacity(0.6),
+                      color: fgColor.withOpacity(0.6),
                     ),
                   ),
                 ],
@@ -74,7 +78,7 @@ class CommentInputSection extends StatelessWidget {
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
               decoration: BoxDecoration(
-                color: Colors.transparent,
+                color: bgColor,
                 borderRadius: BorderRadius.circular(12),
               ),
               child: Row(
@@ -83,7 +87,7 @@ class CommentInputSection extends StatelessWidget {
                     child: Text(
                       '수정 중: ${editingComment!.content}',
                       overflow: TextOverflow.ellipsis,
-                      style: TextStyle(color: Colors.white, fontSize: 16),
+                      style: TextStyle(color: fgColor, fontSize: 16),
                     ),
                   ),
                   const SizedBox(width: 8),
@@ -92,9 +96,7 @@ class CommentInputSection extends StatelessWidget {
                     child: Icon(
                       Icons.close,
                       size: 16,
-                      color: Theme.of(
-                        context,
-                      ).colorScheme.onPrimaryContainer.withOpacity(0.6),
+                      color: fgColor.withOpacity(0.6),
                     ),
                   ),
                 ],
@@ -106,7 +108,7 @@ class CommentInputSection extends StatelessWidget {
             children: [
               Expanded(
                 child: TextField(
-                  cursorColor: Theme.of(context).colorScheme.onSurface,
+                  cursorColor: fgColor,
                   controller: commentController,
                   focusNode: focusNode,
                   minLines: 1,
@@ -122,7 +124,8 @@ class CommentInputSection extends StatelessWidget {
                       borderSide: BorderSide.none,
                     ),
                     filled: true,
-                    fillColor: Theme.of(context).colorScheme.surface,
+                    fillColor: bgColor,
+                    hintStyle: TextStyle(color: fgColor.withOpacity(0.5)),
 
                     contentPadding: const EdgeInsets.symmetric(
                       horizontal: 16,
@@ -137,14 +140,10 @@ class CommentInputSection extends StatelessWidget {
                 child: Container(
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
-                    color: Theme.of(context).colorScheme.surface,
+                    color: bgColor,
                     shape: BoxShape.circle,
                   ),
-                  child: Icon(
-                    Icons.send_rounded,
-                    size: 24,
-                    color: Theme.of(context).colorScheme.onSurface,
-                  ),
+                  child: Icon(Icons.send_rounded, size: 24, color: fgColor),
                 ),
               ),
             ],

@@ -45,7 +45,7 @@ class CardView extends StatelessWidget {
                         ),
                         child: Container(
                           decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(10),
+                            borderRadius: BorderRadius.circular(11),
                             border: Border.all(
                               color: theme.colorScheme.onSurface.withOpacity(
                                 0.3,
@@ -144,7 +144,7 @@ class CardView extends StatelessWidget {
                         post.parsedContent,
                         style: TextStyle(
                           fontSize: 12,
-                          fontWeight: FontWeight.w200,
+                          fontWeight: FontWeight.w400,
                           color: theme.colorScheme.onSurface.withOpacity(0.6),
                           height: 1.4,
                         ),

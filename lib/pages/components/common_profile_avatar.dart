@@ -10,8 +10,11 @@ class CommonProfileAvatar extends StatelessWidget {
   final Color? borderColor;
   final bool isUploading;
   final VoidCallback? onTap;
+  Color? backgroundColor;
+  // 이미지 대신 중앙에 임의 위젯을 표시하고 싶을 때 사용 (예: 검색 아이콘)
+  final Widget? centerWidget;
 
-  const CommonProfileAvatar({
+  CommonProfileAvatar({
     super.key,
     this.imageUrl,
     required this.username,
@@ -20,6 +23,8 @@ class CommonProfileAvatar extends StatelessWidget {
     this.borderColor,
     this.isUploading = false,
     this.onTap,
+    this.centerWidget,
+    this.backgroundColor,
   });
 
   @override
@@ -45,7 +50,12 @@ class CommonProfileAvatar extends StatelessWidget {
             ),
             child: ClipOval(
               child:
-                  imageUrl != null && imageUrl!.isNotEmpty
+                  centerWidget != null
+                      ? Container(
+                        color: backgroundColor ?? Colors.transparent,
+                        child: Center(child: centerWidget),
+                      )
+                      : imageUrl != null && imageUrl!.isNotEmpty
                       ? CachedNetworkImage(
                         imageUrl: imageUrl!,
                         fit: BoxFit.cover,

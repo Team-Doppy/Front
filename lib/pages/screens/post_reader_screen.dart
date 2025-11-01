@@ -61,6 +61,7 @@ class _PostReaderScreenState extends State<PostReaderScreen>
   Future<Map<String, dynamic>>? _contentFuture;
   Map<String, dynamic>? _currentExportedData; // 최신 컨텐츠를 저장
   bool _showLoadingLogo = false; // 로딩 로고 표시 여부
+  bool _isRenderReady = false; // 스포일러 마스크 렌더링 완료 여부
 
   // 스크롤 애니메이션을 위한 변수들
   static const double _appBarHeight = 52.0; // AppBar 높이
@@ -123,16 +124,27 @@ class _PostReaderScreenState extends State<PostReaderScreen>
 
         // 2) 액션이 없으면 전체화면으로 열기 (프리로드 보장)
         if (clipNode.url.isNotEmpty) {
-          try {
-            final cached = PostReaderService.getPreloadedController(
-              clipNode.url,
-            );
-            if (cached == null) {
+          // 프리로드 컨트롤러 확인
+          final controller = PostReaderService.getPreloadedController(
+            clipNode.url,
+          );
+
+          if (controller == null) {
+            print('[PostReaderScreen] ⚠️ 비디오가 프리로드되지 않음: ${clipNode.url}');
+            print('[PostReaderScreen] 즉시 프리로드 시작...');
+
+            try {
+              // 프리로드 안 되어 있으면 즉시 프리로드
               await _postReaderService.preloadClips(context, [
                 clipNode.url,
               ], maxCount: 1);
+              print('[PostReaderScreen] 즉시 프리로드 완료');
+            } catch (e) {
+              print('[PostReaderScreen] 즉시 프리로드 실패: $e');
             }
-          } catch (_) {}
+          } else {
+            print('[PostReaderScreen] ✅ 비디오가 이미 프리로드됨');
+          }
 
           setState(() {
             _currentImageUrl = clipNode.url;
@@ -195,6 +207,7 @@ class _PostReaderScreenState extends State<PostReaderScreen>
         // 스포일러가 있으면 해제
         if (hasSpoiler) {
           nodeService.setSpoiler(imageNode.id, false);
+          setState(() {}); // UI 즉시 업데이트
           print('[PostReaderScreen] 이미지 스포일러 해제: ${imageNode.id}');
           return; // 스포일러 해제만 하고 종료
         }
@@ -238,6 +251,7 @@ class _PostReaderScreenState extends State<PostReaderScreen>
         // 스포일러가 있으면 해제
         if (hasSpoiler) {
           nodeService.setSpoiler(imageRowNode.id, false);
+          setState(() {}); // UI 즉시 업데이트
           print('[PostReaderScreen] 이미지 행 스포일러 해제: ${imageRowNode.id}');
           return; // 스포일러 해제만 하고 종료
         }
@@ -495,8 +509,10 @@ class _PostReaderScreenState extends State<PostReaderScreen>
     }
   }
 
-  // 본문 로드 + 상위 6개 이미지 + 최대 2개 클립 미리 디코딩
-  Future<Map<String, dynamic>> _loadContentWithImages(String postId) async {
+  // 본문 로드 + 상위 6개 이미지 + 모든 클립 미리 디코딩
+  Future<Map<String, dynamic>> _loadContentWithPreloadedMedia(
+    String postId,
+  ) async {
     final content = await _blogService.getPostContent(postId);
 
     // 이미지와 클립 URL 추출 및 미리 로드
@@ -505,7 +521,17 @@ class _PostReaderScreenState extends State<PostReaderScreen>
       await _postReaderService.preloadImages(context, imageUrls);
 
       final clipUrls = _postReaderService.extractClipUrls(content);
-      await _postReaderService.preloadClips(context, clipUrls);
+
+      // 모든 클립 프리로드 (120ms씩만 재생하므로 가벼움)
+      if (clipUrls.isNotEmpty) {
+        print('[PostReaderScreen] 전체 클립 프리로드 시작: ${clipUrls.length}개');
+        await _postReaderService.preloadClips(
+          context,
+          clipUrls,
+          // maxCount 지정 안 함 → 모든 클립 프리로드
+        );
+        print('[PostReaderScreen] 전체 클립 프리로드 완료');
+      }
     }
 
     return content;
@@ -531,23 +557,15 @@ class _PostReaderScreenState extends State<PostReaderScreen>
     _readOnlyFocus = FocusNode(canRequestFocus: false);
     _scrollCtrl.addListener(_onScroll);
 
-    // 이미지 프리캐싱 (async로 처리)
+    // 전체 이미지 URL 저장 (프리캐싱은 _loadContentWithPreloadedMedia에서 처리)
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted && _contentFuture != null) {
         _contentFuture!.then((content) {
           if (mounted) {
             final imageUrls = _postReaderService.extractImageUrls(content);
-            print('[PostReaderScreen] 이미지 프리캐싱 시작: ${imageUrls.length}개');
-            _postReaderService.preloadImages(context, imageUrls);
-
-            // 전체 이미지 URL 저장
             setState(() {
               _allImageUrls = imageUrls;
             });
-
-            final clipUrls = _postReaderService.extractClipUrls(content);
-            print('[PostReaderScreen] 클립 프리캐싱 시작: ${clipUrls.length}개');
-            _postReaderService.preloadClips(context, clipUrls);
           }
         });
       }
@@ -573,10 +591,9 @@ class _PostReaderScreenState extends State<PostReaderScreen>
     );
 
     // 포스트 ID 설정 및 서비스 초기화
-    print('[PostReaderScreen] exported 데이터: ${widget.exported}');
+
     final postId = widget.exported['id']?.toString();
     if (postId != null && postId.isNotEmpty) {
-      print('[PostReaderScreen] 포스트 ID: $postId');
       _commentService.setPostId(postId);
 
       // 초기 댓글 로드 (미리보기용으로 소량만)
@@ -591,7 +608,7 @@ class _PostReaderScreenState extends State<PostReaderScreen>
         '[PostReaderScreen] 초기 좋아요 상태: $initialIsLiked, 카운트: $initialLikeCount',
       );
       // 본문 로드 + 상위 6개 이미지 미리 디코딩
-      _contentFuture = _loadContentWithImages(postId);
+      _contentFuture = _loadContentWithPreloadedMedia(postId);
 
       // 0.5초 후 로딩 로고 표시
       Future.delayed(const Duration(milliseconds: 500), () {
@@ -601,9 +618,6 @@ class _PostReaderScreenState extends State<PostReaderScreen>
           });
         }
       });
-    } else {
-      print('[PostReaderScreen] 유효하지 않은 포스트 ID: $postId');
-      print('[PostReaderScreen] exported 키들: ${widget.exported.keys.toList()}');
     }
 
     // 서비스 변경사항 감지
@@ -627,6 +641,11 @@ class _PostReaderScreenState extends State<PostReaderScreen>
     _scrollCtrl.removeListener(_onScroll);
     _commentsAnimCtrl.dispose();
     _commentOverlayCtrl.dispose();
+
+    // 프리로드된 비디오 컨트롤러 정리
+    PostReaderService.disposeAllPreloaded();
+    print('[PostReaderScreen] 프리로드 컨트롤러 모두 정리');
+
     // 화면 종료 시 스포일러 세션 상태 초기화 (프레임 잠금 중 알림 방지)
     try {
       NodeComponentService().clearSpoilers(notify: false);
@@ -689,6 +708,20 @@ class _PostReaderScreenState extends State<PostReaderScreen>
           future: _contentFuture,
           builder: (context, snap) {
             if (snap.connectionState == ConnectionState.waiting) {
+              return DoppyLoadingLogo(
+                opacity: _showLoadingLogo ? 1.0 : 0.0,
+                showBackButton: true,
+                onBack: () => Navigator.of(context).pop(),
+              );
+            }
+
+            // ✅ 데이터 로드 완료 후 100ms 대기 (스포일러 마스크 렌더링 시간)
+            if (snap.hasData && !_isRenderReady) {
+              Future.delayed(const Duration(milliseconds: 150), () {
+                if (mounted) {
+                  setState(() => _isRenderReady = true);
+                }
+              });
               return DoppyLoadingLogo(
                 opacity: _showLoadingLogo ? 1.0 : 0.0,
                 showBackButton: true,
@@ -1012,16 +1045,41 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                       onEdit: () {
                         final dataToEdit =
                             _currentExportedData ?? widget.exported;
-                        if (dataToEdit['id'] != null) {
-                          Navigator.of(context).push(
-                            MaterialPageRoute(
-                              builder:
-                                  (_) => PostwriteScreen(
-                                    isEditingMode: true,
-                                    exportedDataForEdit: dataToEdit,
-                                  ),
+                        final postId =
+                            dataToEdit['id']?.toString() ??
+                            widget.exported['id']?.toString();
+
+                        if (postId != null && postId.isNotEmpty) {
+                          Navigator.of(context).pushReplacement(
+                            PageRouteBuilder(
+                              pageBuilder:
+                                  (context, animation, secondaryAnimation) =>
+                                      PostwriteScreen(
+                                        isEditingMode: true,
+                                        exportedDataForEdit: dataToEdit,
+                                        postId: postId,
+                                      ),
+                              transitionDuration: const Duration(
+                                milliseconds: 200,
+                              ),
+                              reverseTransitionDuration: const Duration(
+                                milliseconds: 200,
+                              ),
+                              transitionsBuilder: (
+                                context,
+                                animation,
+                                secondaryAnimation,
+                                child,
+                              ) {
+                                return FadeTransition(
+                                  opacity: animation,
+                                  child: child,
+                                );
+                              },
                             ),
                           );
+                        } else {
+                          print('[PostReaderScreen] postId가 없습니다');
                         }
                       },
                       onDelete: _deletePost,

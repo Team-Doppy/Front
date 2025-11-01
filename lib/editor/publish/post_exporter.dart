@@ -130,16 +130,6 @@ class PostExporter {
           continue;
         }
 
-        // 텍스트에 스포일러 attribution이 있는지 확인
-        bool hasSpoiler = false;
-        for (int i = 0; i < node.text.text.length; i++) {
-          final attrs = node.text.getAllAttributionsAt(i);
-          if (attrs.any((a) => a is NamedAttribution && a.id == 'spoiler')) {
-            hasSpoiler = true;
-            break;
-          }
-        }
-
         final align = meta['textAlign'] as String?;
         final isTitle = meta['isTitle'] == true;
         final fontFamily = meta['fontFamily'] as String?;
@@ -148,7 +138,7 @@ class PostExporter {
           'id': node.id,
           'type': 'paragraph',
           'text': node.text.text,
-          'spans': _buildParagraphSpans(node.text),
+          'spans': _buildParagraphSpans(node.text), // ✅ spans에 spoiler 정보 포함됨
         };
 
         // 필요한 필드만 추가
@@ -161,9 +151,7 @@ class PostExporter {
         if (fontFamily != null && fontFamily.isNotEmpty) {
           nodeMap['fontFamily'] = fontFamily;
         }
-        if (hasSpoiler) {
-          nodeMap['spoiler'] = true;
-        }
+        // spoiler는 spans에서 처리하므로 노드 레벨에서는 제거
 
         nodes.add(nodeMap);
         continue;
@@ -444,6 +432,7 @@ class PostExporter {
     bool italic = false;
     bool underline = false;
     bool strike = false;
+    bool spoiler = false; // ✅ spans에 포함
     double? fontSize;
     ui.Color? color;
     ui.Color? highlight;
@@ -457,6 +446,8 @@ class PostExporter {
         underline = true;
       } else if (a == strikethroughAttribution) {
         strike = true;
+      } else if (a == spoilerAttribution) {
+        spoiler = true; // ✅ spoiler를 spans에 포함
       } else if (a is HighlightAttribution) {
         // 형광펜 색상
         highlight = a.color;
@@ -466,7 +457,6 @@ class PostExporter {
       } else if (a is FontSizeAttribution) {
         fontSize = a.fontSize;
       }
-      // spoiler는 노드 레벨에서 처리하므로 spans에서는 제외
     }
 
     final map = <String, dynamic>{
@@ -474,6 +464,7 @@ class PostExporter {
       if (italic) 'italic': true,
       if (underline) 'underline': true,
       if (strike) 'strikethrough': true,
+      if (spoiler) 'spoiler': true, // ✅ spans에 포함
       if (fontSize != null) 'font_size': fontSize,
       if (color != null) 'color': _hexColor(color),
       if (highlight != null) 'highlight': _hexColor(highlight),

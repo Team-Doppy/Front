@@ -232,18 +232,27 @@ Stylesheet buildCustomStylesheet(BuildContext context) {
         } else if (attribution == strikethroughAttribution) {
           hasStrikethrough = true;
         } else if (attribution is HighlightAttribution) {
+          // ✅ 형광펜 (HighlightAttribution은 ColorAttribution을 상속)
           highlightColor = attribution.color;
         } else if (attribution is NamedAttribution &&
             attribution.id == 'spoiler') {
           isSpoiler = true;
-        } else if (attribution is ColorAttribution) {
+        } else if (attribution is ColorAttribution &&
+            attribution is! HighlightAttribution) {
+          // ✅ 글자색 (형광펜은 제외!)
           style = style.copyWith(color: attribution.color);
         } else if (attribution is FontSizeAttribution) {
-          style = style.copyWith(fontSize: attribution.fontSize);
+          style = style.copyWith(
+            fontSize: attribution.fontSize,
+            height: 1.2, // 커서가 텍스트에 맞도록 line height 조정
+          );
         } else if (attribution is FontFamilyAttribution) {
           fontFamily = attribution.fontFamily;
         }
       }
+
+      // ✅ 형광펜이 있을 때 텍스트 색상을 더 진하게
+      final hasHighlight = highlightColor != null;
 
       style = style.copyWith(
         fontWeight: isBold ? FontWeight.bold : FontWeight.normal,
@@ -252,6 +261,18 @@ Stylesheet buildCustomStylesheet(BuildContext context) {
         // 🎨 형광펜 배경색 적용 (연한 색상으로 자연스럽게)
         backgroundColor: highlightColor?.withOpacity(0.4),
       );
+
+      // ✅ 형광펜이 있을 때 텍스트를 더 선명하게 (채도 증가 + 약간 굵게)
+      if (hasHighlight && style.color != null) {
+        final currentColor = style.color!;
+        // 채도를 높여서 선명하게 (밝기는 유지)
+        final hsl = HSLColor.fromColor(currentColor);
+        final vividColor =
+            hsl
+                .withSaturation((hsl.saturation * 1.4).clamp(0.0, 1.0))
+                .toColor();
+        style = style.copyWith(color: vividColor);
+      }
 
       // 🙈 스포일러 스타일: 모드에 따라 다르게 처리
       if (isSpoiler) {
