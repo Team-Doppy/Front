@@ -3,6 +3,7 @@ import 'package:doppy/pages/components/common_profile_avatar.dart';
 import 'package:doppy/pages/screens/user_profile_screen.dart';
 import 'package:doppy/data/models/post_data.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/cupertino.dart';
 import 'package:provider/provider.dart';
 import '../../../theme/app_text_styles.dart';
 import '../../../data/services/search_service.dart';
@@ -30,6 +31,7 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
   List<SearchContentItem> _frozenAccounts = const [];
   String _freezeKind = '';
   bool _hasNetworkError = false;
+  bool _suppressAnimOnce = false;
 
   @override
   void initState() {
@@ -105,7 +107,9 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
                     animation: searchService,
                     builder: (_, __) {
                       final bool disableAnim =
-                          _freezeDuringPush || searchService.query.isNotEmpty;
+                          _freezeDuringPush ||
+                          _suppressAnimOnce ||
+                          searchService.query.isNotEmpty;
                       return AnimatedSwitcher(
                         duration:
                             disableAnim
@@ -144,8 +148,13 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
     final searchService = context.read<SearchService>();
     print('[SearchOverlay] runSearch: ${searchService.query}');
     try {
+      // 빈 검색어면 수행하지 않음
+      if (searchService.query.trim().isEmpty) {
+        return;
+      }
       setState(() => _hasNetworkError = false);
-      await searchService.searchBlogsByTitleOnce(keyword: searchService.query);
+      // 페이지네이션 초기화: 20개씩
+      await searchService.startBlogsSearch(searchService.query, size: 20);
       final blogResults = searchService.blogResults;
       final posts =
           blogResults.map((item) {
@@ -153,7 +162,7 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
               id: item.id,
               thumbnailImageUrl: item.imageUrl ?? '',
               title: item.title ?? '',
-              summary: '',
+              summary: item.summary ?? item.parsedContent ?? '',
               author: item.author ?? item.username ?? '',
               authorProfileImageUrl: item.profileImageUrl ?? '',
               content: item.content ?? '',
@@ -212,37 +221,36 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
                   _frozenAccounts = List.of(searchService.searchingAccounts);
                 }),
             onTapAccount: (item) {
+              // 뷰 잠금 후 네비게이션 (포커스 변화 억제)
+              searchService.lockView();
               searchService.onTapContentItem(
                 item,
                 onNavigateToProfile: (username) {
-                  Navigator.push(
-                    context,
-                    PageRouteBuilder(
-                      pageBuilder:
-                          (context, animation, secondaryAnimation) =>
-                              UserProfileScreen(
-                                otherUser: User(
-                                  id: 0,
-                                  username: username,
-                                  alias: item.alias,
-                                  profileImageUrl: item.profileImageUrl,
-                                ),
-                              ),
-                      transitionsBuilder: (
-                        context,
-                        animation,
-                        secondaryAnimation,
-                        child,
-                      ) {
-                        return FadeTransition(opacity: animation, child: child);
-                      },
-                      transitionDuration: const Duration(milliseconds: 100),
-                      reverseTransitionDuration: const Duration(
-                        milliseconds: 100,
-                      ),
-                    ),
-                  ).whenComplete(() {
-                    if (mounted) setState(() => _freezeDuringPush = false);
+                  final route = MaterialPageRoute(
+                    builder:
+                        (_) => UserProfileScreen(
+                          otherUser: User(
+                            id: 0,
+                            username: username,
+                            alias: item.alias,
+                            profileImageUrl: item.profileImageUrl,
+                          ),
+                        ),
+                  );
+                  Navigator.push(context, route).whenComplete(() {
+                    if (!mounted) return;
+                    setState(() {
+                      _freezeDuringPush = false;
+                      _suppressAnimOnce = true;
+                    });
+                    WidgetsBinding.instance.addPostFrameCallback((_) {
+                      if (!mounted) return;
+                      setState(() => _suppressAnimOnce = false);
+                    });
+                    final svc = context.read<SearchService>();
+                    svc.unlockView();
+                    svc.setFocused(true);
+                    _searchFocusNode.requestFocus();
                   });
                 },
               );
@@ -268,32 +276,33 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
                   _frozenAccounts = List.of(searchService.searchHistory);
                 }),
             onTapAccount: (item) {
-              Navigator.push(
-                context,
-                PageRouteBuilder(
-                  pageBuilder:
-                      (context, animation, secondaryAnimation) =>
-                          UserProfileScreen(
-                            otherUser: User(
-                              id: 0,
-                              username: item.username ?? '',
-                              alias: item.alias,
-                              profileImageUrl: item.profileImageUrl,
-                            ),
-                          ),
-                  transitionsBuilder: (
-                    context,
-                    animation,
-                    secondaryAnimation,
-                    child,
-                  ) {
-                    return FadeTransition(opacity: animation, child: child);
-                  },
-                  transitionDuration: const Duration(milliseconds: 100),
-                  reverseTransitionDuration: const Duration(milliseconds: 100),
-                ),
-              ).whenComplete(() {
-                if (mounted) setState(() => _freezeDuringPush = false);
+              context.read<SearchService>().lockView();
+
+              final route = MaterialPageRoute(
+                builder:
+                    (_) => UserProfileScreen(
+                      otherUser: User(
+                        id: 0,
+                        username: item.username ?? '',
+                        alias: item.alias,
+                        profileImageUrl: item.profileImageUrl,
+                      ),
+                    ),
+              );
+              Navigator.push(context, route).whenComplete(() {
+                if (!mounted) return;
+                setState(() {
+                  _freezeDuringPush = false;
+                  _suppressAnimOnce = true;
+                });
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  if (!mounted) return;
+                  setState(() => _suppressAnimOnce = false);
+                });
+                final svc = context.read<SearchService>();
+                svc.unlockView();
+                svc.setFocused(true);
+                _searchFocusNode.requestFocus();
               });
             },
             onTapHistory: (_) {},

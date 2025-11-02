@@ -1,8 +1,7 @@
-import 'dart:math' as math;
 import 'package:flutter/material.dart';
+import 'package:shimmer/shimmer.dart';
 
-/// Modern shimmer effect with smooth wave animation
-class ShimmerBox extends StatefulWidget {
+class ShimmerBox extends StatelessWidget {
   final double width;
   final double height;
   final BorderRadius? borderRadius;
@@ -17,58 +16,36 @@ class ShimmerBox extends StatefulWidget {
   });
 
   @override
-  State<ShimmerBox> createState() => _ShimmerBoxState();
-}
-
-class _ShimmerBoxState extends State<ShimmerBox>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _controller;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 2000),
-    )..repeat();
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
+    final bool isDark =
+        Theme.of(context).colorScheme.brightness == Brightness.dark;
+    final Color baseColor =
+        isDark ? const Color(0xFF2A2A2A) : const Color(0xFFE8E8E8);
+    final Color highlightColor =
+        isDark ? const Color(0xFF3A3A3A) : const Color(0xFFF3F3F3);
 
-    final baseColor = theme.colorScheme.surface;
-    final highlightColor = theme.colorScheme.onSurface;
+    final BorderRadius resolvedRadius = borderRadius ?? BorderRadius.zero;
 
-    return AnimatedBuilder(
-      animation: _controller,
-      builder: (context, child) {
-        // 펄스 효과를 위한 투명도 계산 (매우 은은하게)
-        final double pulseValue =
-            (1.0 + math.sin(2 * math.pi * _controller.value)) / 2.0;
-        final double opacity = 0.05 + (0.06 * pulseValue);
+    final Widget child =
+        (shape != null)
+            ? DecoratedBox(
+              decoration: ShapeDecoration(color: baseColor, shape: shape!),
+              child: SizedBox(width: width, height: height),
+            )
+            : Container(
+              width: width,
+              height: height,
+              decoration: BoxDecoration(
+                color: baseColor,
+                borderRadius: resolvedRadius,
+              ),
+            );
 
-        return Container(
-          width: widget.width,
-          height: widget.height,
-          decoration: BoxDecoration(
-            borderRadius: widget.borderRadius ?? BorderRadius.circular(8),
-            color: baseColor,
-          ),
-          child: Container(
-            decoration: BoxDecoration(
-              borderRadius: widget.borderRadius ?? BorderRadius.circular(8),
-              color: highlightColor.withOpacity(opacity),
-            ),
-          ),
-        );
-      },
+    return Shimmer.fromColors(
+      baseColor: baseColor,
+      highlightColor: highlightColor,
+      period: const Duration(milliseconds: 1200),
+      child: child,
     );
   }
 }

@@ -4,6 +4,7 @@ import 'package:doppy/pages/components/comps_for_profile/sections/vertical_categ
 import 'package:doppy/pages/components/comps_for_profile/sections/grid_category_section.dart';
 import 'package:doppy/pages/components/comps_for_profile/sections/category_model.dart';
 import 'package:doppy/providers/feed_provider/base_feed_provider.dart';
+import 'package:doppy/providers/feed_provider/my_profile_feed_provider.dart';
 import 'package:doppy/utils/network_utils.dart';
 import 'package:doppy/pages/components/error_state_widget.dart';
 import 'package:flutter/material.dart';
@@ -93,7 +94,7 @@ class Feed {
         // 카테고리 → 섹션 메타 구성
         final List<CategoryMetaData> categoryMetaDataList = [];
 
-        // 시스템 카테고리 처리 (나만보기, 그룹공개, 전체공개)
+        // 시스템 카테고리 처리 (나만보기, 친구공유, 그룹공개, 전체공개)
         // BaseFilter를 직접 사용하여 필터링
         // 단, filteredCategoryId가 있으면 커스텀 카테고리 상세보기이므로 시스템 필터를 무시
         if (filteredBase != BaseFilter.all && filteredCategoryId == null) {
@@ -104,6 +105,10 @@ class Feed {
             case BaseFilter.private:
               systemTitle = '나만보기';
               systemKey = '나만보기';
+              break;
+            case BaseFilter.friends:
+              systemTitle = '친구공유';
+              systemKey = '친구공유';
               break;
             case BaseFilter.groups:
               systemTitle = '그룹공유';
@@ -166,8 +171,62 @@ class Feed {
             );
           }
         } else {
-          // 카테고리 배열 순서대로 순회 (리오더 반영)
-          for (final cat in feedProvider.categories) {
+          // 프로필: 내 프로필(읽기 가능 상태)에서는 사용자가 정한 순서를 그대로 사용
+          // 단, 사용자가 아직 한 번도 재정렬하지 않은 경우에는 "막 생성된 카테고리"를 한시적으로 맨 앞에 배치 (예외 규칙)
+          // 타인 프로필/읽기 전용에서는 기존 정렬 정책 유지 (신규 상단, 시스템/미분류 규칙)
+          final sortedCategories = List<Map<String, dynamic>>.from(
+            feedProvider.categories,
+          );
+          if (feedProvider.isReadOnly) {
+            sortedCategories.sort((a, b) {
+              final bool aUncat = _isUncategorized(a);
+              final bool bUncat = _isUncategorized(b);
+              if (aUncat != bUncat) return aUncat ? 1 : -1; // 미분류 뒤로
+
+              final bool aSys = _isSystemCategory(a);
+              final bool bSys = _isSystemCategory(b);
+              if (aSys != bSys) return aSys ? 1 : -1; // 시스템 뒤로
+
+              final int aId = (a['id'] as int?) ?? -1;
+              final int bId = (b['id'] as int?) ?? -1;
+              return bId.compareTo(aId); // 내림차순
+            });
+          } else {
+            // 내 프로필: 아직 사용자 재정렬 이력이 없고 드래그 중이 아닐 때만 신규(최대 id) 카테고리를 맨 앞 예외 배치
+            final providerType = context.read<BaseFeedProvider>();
+            try {
+              // MyProfileFeedProvider에만 존재하는 hasUserReordered 사용
+              final dynamic dyn = providerType;
+              final bool hasUserReordered =
+                  (dyn is MyProfileFeedProvider) ? dyn.hasUserReordered : false;
+              final bool dragging = _isDraggingCategory.value == true;
+              if (!hasUserReordered && !dragging) {
+                // 사용자/시스템/미분류 구분
+                final userCats =
+                    sortedCategories.where((c) {
+                      final id = (c['id'] as int?) ?? -1;
+                      return !_isSystemCategory(c) && id != 0;
+                    }).toList();
+                if (userCats.isNotEmpty) {
+                  // 최대 id(최근 생성)를 맨 앞에 위치시키고 나머지는 기존 순서 유지
+                  final int maxId = userCats
+                      .map((c) => (c['id'] as int?) ?? -1)
+                      .fold(-1, (a, b) => a > b ? a : b);
+                  final int currentIndex = sortedCategories.indexWhere(
+                    (c) => ((c['id'] as int?) ?? -1) == maxId,
+                  );
+                  if (currentIndex > 0) {
+                    final moved = sortedCategories.removeAt(currentIndex);
+                    // 맨 앞에 삽입 (시스템/미분류는 이미 뒤로 가있으므로 안전)
+                    sortedCategories.insert(0, moved);
+                  }
+                }
+              }
+            } catch (_) {}
+          }
+
+          // 정렬된 순서대로 순회 (리오더 반영 + 신규 상단)
+          for (final cat in sortedCategories) {
             final categoryKey = (cat['id'] ?? '').toString();
             final rawPosts =
                 feedProvider.postsByCategory[categoryKey] ??

@@ -560,6 +560,7 @@ class PostExporter {
     DateTime? createdAt,
     bool? privateOnly = false,
     bool? publicOnly = false,
+    bool? friendsOnly = false,
     List<int>? selectedGroupIds = const [],
     int? categoryId, // 카테고리 ID (필수)
     bool skipValidation = false, // 임시저장용 검증 생략 플래그
@@ -589,6 +590,7 @@ class PostExporter {
     debugPrint('privateOnly: $privateOnly');
     debugPrint('publicOnly: $publicOnly');
     debugPrint('selectedGroupIds: $selectedGroupIds');
+    debugPrint('friendsOnly: $friendsOnly');
 
     if (privateOnly == true) {
       accessLevel = 'PRIVATE';
@@ -598,6 +600,10 @@ class PostExporter {
       accessLevel = 'PUBLIC';
       sharedGroupIds = [];
       debugPrint('[composeFinalPayload] → PUBLIC 선택됨');
+    } else if (friendsOnly == true) {
+      accessLevel = 'FRIENDS';
+      sharedGroupIds = [];
+      debugPrint('[composeFinalPayload] → FRIENDS 선택됨');
     } else {
       accessLevel = 'GROUPS';
       sharedGroupIds = selectedGroupIds ?? [];

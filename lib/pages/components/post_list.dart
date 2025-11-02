@@ -118,24 +118,22 @@ class _PostListState extends State<PostList> {
   void didUpdateWidget(PostList oldWidget) {
     super.didUpdateWidget(oldWidget);
 
-    // 게시물 목록이 변경되었을 때
-    if (widget.posts != oldWidget.posts) {
-      print(
-        '📝 PostList 업데이트: 기존 ${_items.length}개 → 새로운 ${widget.posts.length}개',
-      );
+    // 부모에서 같은 리스트 인스턴스를 mutate(addAll)해도 길이 변경을 감지하여 동기화
+    final int newLen = widget.posts.length;
+    if (newLen != _items.length || widget.posts != oldWidget.posts) {
+      print(' PostList 업데이트: 기존 ${_items.length}개 → 새로운 $newLen개');
 
-      // 새로운 포스트가 추가된 경우 (기존보다 길이가 길어짐)
-      if (widget.posts.length > _items.length) {
-        // 기존 _items에 새로운 포스트들만 추가
-        final newPosts = widget.posts.skip(_items.length).toList();
+      if (newLen > _items.length) {
+        // 증가: 새로 추가된 항목들만 반영
+        final newPosts = widget.posts.sublist(_items.length);
         _items.addAll(newPosts);
         _loadLikeStatusForNewPosts(newPosts);
-        print('➕ 새로운 포스트 ${newPosts.length}개 추가됨');
+        print('새로운 포스트 ${newPosts.length}개 추가됨');
       } else {
-        // 완전히 새로운 목록인 경우 (길이가 같거나 짧아짐)
+        // 감소하거나 완전 교체: 전체 재동기화
         _items = List<PostData>.from(widget.posts);
         _loadLikeStatusForAllPosts();
-        print('🔄 완전히 새로운 포스트 목록으로 교체');
+        print('포스트 목록 재동기화(길이 감소/교체)');
       }
     }
   }
@@ -173,12 +171,15 @@ class _PostListState extends State<PostList> {
                       ? Duration(milliseconds: 0)
                       : Duration(milliseconds: 100),
               curve: Curves.easeInOut,
-              child: Text(
-                ' Doppy',
-                style: GoogleFonts.notoSansKr(
-                  fontSize: 22,
-                  fontWeight: FontWeight.bold,
-                  color: Theme.of(context).colorScheme.primary,
+              child: Container(
+                padding: const EdgeInsets.only(bottom: 6),
+                child: Text(
+                  ' doppy',
+                  style: GoogleFonts.notoSansKr(
+                    fontSize: 22,
+                    fontWeight: FontWeight.bold,
+                    color: Theme.of(context).colorScheme.primary,
+                  ),
                 ),
               ),
             ),
@@ -223,15 +224,7 @@ class _PostListState extends State<PostList> {
                                   child: Row(
                                     mainAxisSize: MainAxisSize.min,
                                     children: [
-                                      Icon(
-                                        Icons.search,
-                                        size: 18,
-                                        color:
-                                            Theme.of(
-                                              context,
-                                            ).colorScheme.primary,
-                                      ),
-                                      const SizedBox(width: 6),
+                                      const SizedBox(width: 8),
                                       Text(
                                         widget.searchQuery,
                                         style: TextStyle(
@@ -251,7 +244,7 @@ class _PostListState extends State<PostList> {
                                           size: 18,
                                           color: Theme.of(context)
                                               .colorScheme
-                                              .onSurface
+                                              .primary
                                               .withOpacity(0.7),
                                         ),
                                       ),
@@ -263,7 +256,7 @@ class _PostListState extends State<PostList> {
                           ),
                         )
                         : Padding(
-                          padding: const EdgeInsets.only(right: 12, top: 10),
+                          padding: const EdgeInsets.only(right: 20, top: 6),
                           child: GestureDetector(
                             onTap: widget.onFilterTap,
                             child: Row(
@@ -274,23 +267,21 @@ class _PostListState extends State<PostList> {
                                     child: Text(
                                       widget.sectionLabel!,
                                       style: TextStyle(
-                                        color: Theme.of(context)
-                                            .colorScheme
-                                            .onSurface
-                                            .withOpacity(0.8),
-                                        fontSize: 14,
-                                        fontWeight: FontWeight.w500,
+                                        color: Theme.of(
+                                          context,
+                                        ).colorScheme.primary.withOpacity(1),
+                                        fontSize: 15,
+                                        fontWeight: FontWeight.w600,
                                       ),
                                     ),
                                   ),
                                 ],
-                                SizedBox(width: 4),
                                 Icon(
-                                  Icons.keyboard_arrow_up_rounded,
-                                  size: 18,
+                                  Icons.keyboard_arrow_up,
+                                  size: 24,
                                   color: Theme.of(
                                     context,
-                                  ).colorScheme.onSurface.withOpacity(0.8),
+                                  ).colorScheme.primary.withOpacity(0.9),
                                 ),
                               ],
                             ),

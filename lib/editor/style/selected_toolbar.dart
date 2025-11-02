@@ -156,7 +156,10 @@ class _SelectedToolbarState extends State<SelectedToolbar> {
     double? size,
   }) {
     final Color surfaceVariant = Theme.of(context).colorScheme.surfaceVariant;
-    final Color onSurface = Theme.of(context).colorScheme.onSurface;
+    final Color onSurface =
+        isActive
+            ? Theme.of(context).colorScheme.onSurface
+            : Theme.of(context).colorScheme.onSurface.withOpacity(0.7);
 
     return Material(
       color: isActive ? surfaceVariant : Colors.transparent,

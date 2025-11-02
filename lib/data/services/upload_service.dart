@@ -20,6 +20,12 @@ class UploadTask extends ChangeNotifier {
   final File? file;
   final Uint8List? bytes;
   final String fileName;
+
+  /// 노드/플레이스홀더 등 상위 객체를 식별하기 위한 참조 ID (선택)
+  final String? refId;
+
+  /// 네트워크 요청 취소용 토큰
+  final CancelToken cancelToken = CancelToken();
   UploadState state = UploadState.pending;
   double progress = 0.0;
   String? url;
@@ -33,6 +39,7 @@ class UploadTask extends ChangeNotifier {
     required this.fileName,
     this.file,
     this.bytes,
+    this.refId,
   });
 
   void _setProgress(double value) {
@@ -47,6 +54,10 @@ class UploadTask extends ChangeNotifier {
 }
 
 class UploadService with ChangeNotifier {
+  // Singleton
+  static final UploadService _instance = UploadService._internal();
+  factory UploadService() => _instance;
+  UploadService._internal();
   final List<UploadTask> _tasks = [];
   final Queue<UploadTask> _queue = Queue<UploadTask>();
   int _inflight = 0;
@@ -58,6 +69,19 @@ class UploadService with ChangeNotifier {
 
   List<UploadTask> get tasks => List.unmodifiable(_tasks);
 
+  /// 업로드 진행 중(pending|uploading) 작업이 있는지 여부
+  /// kinds를 지정하지 않으면 에디터 관련(kind: editorImage, video, thumbnail)을 기본으로 검사
+  bool hasActiveUploads({Set<UploadKind>? kinds}) {
+    final Set<UploadKind> targetKinds =
+        kinds ??
+        {UploadKind.editorImage, UploadKind.video, UploadKind.thumbnail};
+    return _tasks.any(
+      (t) =>
+          targetKinds.contains(t.kind) &&
+          (t.state == UploadState.pending || t.state == UploadState.uploading),
+    );
+  }
+
   @override
   void dispose() {
     _disposed = true;
@@ -68,6 +92,7 @@ class UploadService with ChangeNotifier {
     File file, {
     required UploadKind kind,
     String? overrideName,
+    String? refId,
   }) {
     final String name = overrideName ?? file.path.split('/').last;
     final task = UploadTask(
@@ -75,6 +100,7 @@ class UploadService with ChangeNotifier {
       kind: kind,
       fileName: name,
       file: file,
+      refId: refId,
     );
     _register(task);
     return task;
@@ -84,12 +110,14 @@ class UploadService with ChangeNotifier {
     Uint8List bytes, {
     required UploadKind kind,
     required String fileName,
+    String? refId,
   }) {
     final task = UploadTask(
       id: _genId(),
       kind: kind,
       fileName: fileName,
       bytes: bytes,
+      refId: refId,
     );
     _register(task);
     return task;
@@ -115,9 +143,26 @@ class UploadService with ChangeNotifier {
       orElse: () => throw StateError('task not found'),
     );
     if (task.state == UploadState.uploading) {
-      // 간단화: 현재 http.MultipartRequest는 취소 API 없음. 상태만 표시.
+      // 실제 네트워크 요청 취소 시도
+      if (!task.cancelToken.isCancelled) {
+        task.cancelToken.cancel('cancelled by user');
+      }
     }
     task._setState(UploadState.cancelled);
+  }
+
+  /// refId(예: 노드ID)로 모든 태스크 취소
+  void cancelByRef(String refId) {
+    // 큐에서 제거
+    _queue.removeWhere((t) => t.refId == refId);
+    for (final task in _tasks.where((t) => t.refId == refId)) {
+      if (task.state == UploadState.uploading &&
+          !task.cancelToken.isCancelled) {
+        task.cancelToken.cancel('cancelled by refId');
+      }
+      task._setState(UploadState.cancelled);
+    }
+    notifyListeners();
   }
 
   // 내부
@@ -242,6 +287,7 @@ class UploadService with ChangeNotifier {
           sendTimeout: const Duration(seconds: 30),
           receiveTimeout: const Duration(seconds: 30),
         ),
+        cancelToken: task.cancelToken,
       );
 
       if (response.statusCode == 200) {
@@ -322,6 +368,7 @@ class UploadService with ChangeNotifier {
           sendTimeout: const Duration(seconds: 45),
           receiveTimeout: const Duration(seconds: 45),
         ),
+        cancelToken: task.cancelToken,
       );
 
       if (response.statusCode == 200) {
@@ -376,6 +423,7 @@ class UploadService with ChangeNotifier {
           sendTimeout: const Duration(minutes: 2),
           receiveTimeout: const Duration(minutes: 2),
         ),
+        cancelToken: task.cancelToken,
       );
 
       if (response.statusCode == 200) {

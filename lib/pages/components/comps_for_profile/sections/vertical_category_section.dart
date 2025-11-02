@@ -1,10 +1,14 @@
 import 'dart:math' as math;
+import 'package:cached_network_image/cached_network_image.dart';
+import 'package:doppy/common/widgets/image_error_placeholder.dart';
 import 'package:doppy/pages/components/comps_for_profile/sections/card_view.dart';
+import 'package:doppy/pages/components/shimmer_box.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import 'package:doppy/data/models/post_data.dart';
+import 'package:doppy/data/services/blog_service.dart';
 import 'package:doppy/providers/feed_provider/feed_ui_service.dart';
 import 'package:doppy/providers/feed_provider/base_feed_provider.dart';
 import 'package:doppy/providers/feed_provider/my_profile_feed_provider.dart';
@@ -13,6 +17,7 @@ import 'package:doppy/pages/components/comps_for_profile/sections/category_model
 import 'package:doppy/pages/components/comps_for_profile/sections/image_view.dart';
 import 'package:doppy/pages/components/comps_for_profile/sections/post_action_sheet.dart';
 import 'package:doppy/pages/screens/post_reader_screen.dart';
+import 'package:doppy/utils/dialog_utils.dart';
 
 /// 수직 카드 뷰 카테고리 섹션
 class VerticalCategorySection extends StatefulWidget {
@@ -53,6 +58,91 @@ class VerticalCategorySection extends StatefulWidget {
 class _VerticalCategorySectionState extends State<VerticalCategorySection> {
   int? _postDropTargetIndex;
   int? _draggingPostIndex;
+
+  Future<void> _showCategoryDropdown(BuildContext iconContext) async {
+    final int? catId = int.tryParse(widget.categoryId ?? '');
+    if (catId == null) return;
+
+    final RenderBox button = iconContext.findRenderObject() as RenderBox;
+    final RenderBox overlay =
+        Navigator.of(iconContext).overlay!.context.findRenderObject()
+            as RenderBox;
+    final RelativeRect position = RelativeRect.fromRect(
+      Rect.fromPoints(
+        button.localToGlobal(Offset.zero, ancestor: overlay),
+        button.localToGlobal(
+          button.size.bottomRight(Offset.zero),
+          ancestor: overlay,
+        ),
+      ),
+      Offset.zero & overlay.size,
+    );
+
+    final String? action = await showMenu<String>(
+      context: iconContext,
+      position: position,
+      color: Theme.of(iconContext).colorScheme.surface,
+      items: [
+        PopupMenuItem<String>(
+          value: 'edit',
+          child: Row(children: const [Text('이름 수정')]),
+        ),
+
+        PopupMenuItem<String>(
+          value: 'delete',
+          child: Row(children: const [Text('카테고리 삭제')]),
+        ),
+      ],
+    );
+
+    if (action == 'edit') {
+      final newName = await DialogUtils.showTextInputDialog(
+        iconContext,
+        title: '카테고리 이름 수정',
+        hintText: '새 이름 입력',
+        initialText: widget.title,
+        confirmText: '저장',
+      );
+      if (newName != null && newName.trim().isNotEmpty) {
+        try {
+          final provider = iconContext.read<BaseFeedProvider>();
+          await BlogService().updateCategoryName(
+            categoryId: catId,
+            name: newName.trim(),
+          );
+          await provider.refresh();
+        } catch (_) {
+          try {
+            ScaffoldMessenger.of(
+              iconContext,
+            ).showSnackBar(const SnackBar(content: Text('카테고리 수정 실패')));
+          } catch (_) {}
+        }
+      }
+    } else if (action == 'delete') {
+      final bool? confirmed = await DialogUtils.showConfirmDialog(
+        iconContext,
+        title: '카테고리 삭제',
+        message: '정말 삭제하시겠어요? 되돌릴 수 없어요.\n이 카테고리의 포스트는 지워지지 않아요.',
+        confirmText: '삭제',
+        cancelText: '취소',
+        isDestructive: true,
+      );
+      if (confirmed == true) {
+        try {
+          final provider = iconContext.read<BaseFeedProvider>();
+          await BlogService().deleteCategory(catId);
+          await provider.refresh();
+        } catch (_) {
+          try {
+            ScaffoldMessenger.of(
+              iconContext,
+            ).showSnackBar(const SnackBar(content: Text('카테고리 삭제 실패')));
+          } catch (_) {}
+        }
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -226,6 +316,7 @@ class _VerticalCategorySectionState extends State<VerticalCategorySection> {
                                             posts: widget.posts,
                                             categoryId: widget.categoryId,
                                           ),
+                                          username,
                                         ),
                                 onDragStarted: () {
                                   // readonly일 때는 드래그 시작하지 않음
@@ -308,10 +399,28 @@ class _VerticalCategorySectionState extends State<VerticalCategorySection> {
                                       if (!context
                                           .read<BaseFeedProvider>()
                                           .isReadOnly)
-                                        Icon(
-                                          Icons.drag_indicator,
-                                          color: theme.colorScheme.onSurface
-                                              .withOpacity(0.4),
+                                        Builder(
+                                          builder:
+                                              (iconCtx) => InkWell(
+                                                onTap:
+                                                    () => _showCategoryDropdown(
+                                                      iconCtx,
+                                                    ),
+                                                borderRadius:
+                                                    BorderRadius.circular(8),
+                                                child: Padding(
+                                                  padding: const EdgeInsets.all(
+                                                    4,
+                                                  ),
+                                                  child: Icon(
+                                                    Icons.drag_indicator,
+                                                    color: theme
+                                                        .colorScheme
+                                                        .onSurface
+                                                        .withOpacity(0.4),
+                                                  ),
+                                                ),
+                                              ),
                                         ),
                                     ],
                                   ),
@@ -484,52 +593,35 @@ class _VerticalCategorySectionState extends State<VerticalCategorySection> {
                                           _draggingPostIndex = null;
                                         });
                                       },
-                                      feedback: LayoutBuilder(
-                                        builder: (context, constraints) {
-                                          // 카드의 예상 높이 계산
-                                          const estimatedCardHeight = 120.0;
-
-                                          return Transform.translate(
-                                            offset: Offset(
-                                              -MediaQuery.of(
-                                                    context,
-                                                  ).size.width /
-                                                  2,
-                                              -estimatedCardHeight / 2,
-                                            ),
-                                            child: Transform.scale(
-                                              scale: 0.9,
-                                              child: ConstrainedBox(
-                                                constraints:
-                                                    BoxConstraints.loose(
-                                                      Size.fromWidth(
-                                                        MediaQuery.of(
-                                                          context,
-                                                        ).size.width,
-                                                      ),
-                                                    ),
-                                                child: Opacity(
-                                                  opacity: 0.8,
-                                                  child:
-                                                      isImageOnly
-                                                          ? ImageView(
-                                                            post: post,
-                                                            showViewCount:
-                                                                !isReadOnly &&
-                                                                !isSystemCategory,
-                                                          )
-                                                          : _buildPostCard(
-                                                            theme,
-                                                            post,
-                                                            isFirstPost,
-                                                            isLastPost,
-                                                          ),
-                                                ),
+                                      feedback: Transform.translate(
+                                        offset: Offset(
+                                          -MediaQuery.of(context).size.width /
+                                              2,
+                                          -120 / 2,
+                                        ),
+                                        child: Transform.scale(
+                                          scale: 0.9,
+                                          child: ConstrainedBox(
+                                            constraints: BoxConstraints.loose(
+                                              Size.fromWidth(
+                                                MediaQuery.of(
+                                                  context,
+                                                ).size.width,
                                               ),
                                             ),
-                                          );
-                                        },
+                                            child: Opacity(
+                                              opacity: 0.8,
+                                              child: _buildPostCardFeedback(
+                                                theme,
+                                                post,
+                                                isFirstPost,
+                                                isLastPost,
+                                              ),
+                                            ),
+                                          ),
+                                        ),
                                       ),
+
                                       childWhenDragging: Opacity(
                                         opacity: 0.3,
                                         child:
@@ -715,6 +807,7 @@ class _VerticalCategorySectionState extends State<VerticalCategorySection> {
     BuildContext context,
     ThemeData theme,
     CategoryMetaData categoryMetaData,
+    String? username,
   ) {
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -740,7 +833,11 @@ class _VerticalCategorySectionState extends State<VerticalCategorySection> {
               borderRadius: BorderRadius.circular(8),
             ),
             child: Text(
-              categoryMetaData.title,
+              _getCategoryDisplayTitle(
+                categoryMetaData.title,
+                categoryMetaData.categoryId,
+                username,
+              ),
               style: theme.textTheme.titleLarge?.copyWith(
                 fontWeight: FontWeight.w700,
                 fontSize: 16,
@@ -782,6 +879,31 @@ class _VerticalCategorySectionState extends State<VerticalCategorySection> {
           ),
         ),
       ],
+    );
+  }
+
+  Widget _buildPostCardFeedback(
+    ThemeData theme,
+    PostData post,
+    bool isFirstPost,
+    bool isLastPost,
+  ) {
+    return ConstrainedBox(
+      constraints: const BoxConstraints.tightFor(
+        width: double.infinity,
+        height: 140,
+      ),
+      child: Material(
+        elevation: 4,
+        borderRadius: BorderRadius.circular(10),
+        clipBehavior: Clip.antiAlias,
+        child: CardView(
+          post: post,
+          showViewBadge: false,
+          isFirst: isFirstPost,
+          isLast: isLastPost,
+        ),
+      ),
     );
   }
 

@@ -416,30 +416,46 @@ class PostReaderService {
     return ui.Color(int.parse(v, radix: 16));
   }
 
-  /// 컨텐츠에서 이미지 URL을 추출한다
+  /// 컨텐츠에서 이미지 URL을 추출한다 (포맷 변화에 견고)
   List<String> extractImageUrls(Map<String, dynamic> content) {
     final List<String> imageUrls = [];
     final nodes = (content['nodes'] as List?) ?? [];
 
     for (final raw in nodes) {
-      if (imageUrls.length >= 6) break;
+      if (imageUrls.length >= 64) break; // 안전 상한
 
       final m = (raw as Map).cast<String, dynamic>();
       final type = (m['type'] ?? '').toString();
+      final data = (m['data'] as Map?)?.cast<String, dynamic>();
 
-      if (type == 'image') {
-        final url = (m['url'] ?? '').toString();
-        if (url.isNotEmpty) imageUrls.add(url);
-      } else if (type == 'imageRow') {
-        final urls =
-            ((m['urls'] as List?) ?? const [])
-                .map((e) => e.toString())
-                .where((u) => u.isNotEmpty)
-                .toList();
-        imageUrls.addAll(urls);
+      bool addSingle(String? u) {
+        final s = (u ?? '').toString();
+        if (s.isNotEmpty) {
+          imageUrls.add(s);
+          return true;
+        }
+        return false;
+      }
+
+      if (type == 'image' || type == 'img' || type == 'single_image') {
+        // url 필드 우선, 없으면 data.url
+        if (!addSingle(m['url'])) {
+          addSingle(data?['url']);
+        }
+      } else if (type == 'imageRow' ||
+          type == 'image_row' ||
+          type == 'row_image') {
+        // urls 또는 data.urls
+        final rawUrls =
+            (m['urls'] as List?) ?? (data?['urls'] as List?) ?? const [];
+        for (final u in rawUrls) {
+          if (imageUrls.length >= 64) break;
+          addSingle(u?.toString());
+        }
       }
     }
 
+    print('[PostReaderService] 이미지 URL 추출 완료: ${imageUrls.length}개');
     return imageUrls;
   }
 
@@ -500,6 +516,25 @@ class PostReaderService {
   static final Map<String, VideoPlayerController> _preloadedControllers = {};
   static final Map<String, DateTime> _preloadTimestamps = {}; // 생성 시간 추적
   static const int _maxPreloadCount = 20; // 최대 프리로드 개수 (모든 클립 지원)
+
+  // ===== 프리로드 완료 알림 리스너 =====
+  static final List<void Function(String)> _clipPreloadedListeners = [];
+
+  static void addClipPreloadedListener(void Function(String url) listener) {
+    _clipPreloadedListeners.add(listener);
+  }
+
+  static void removeClipPreloadedListener(void Function(String url) listener) {
+    _clipPreloadedListeners.remove(listener);
+  }
+
+  static void _notifyClipPreloaded(String url) {
+    for (final l in List.from(_clipPreloadedListeners)) {
+      try {
+        l(url);
+      } catch (_) {}
+    }
+  }
 
   /// 프리로드된 컨트롤러를 전달하고 캐시에서 제거한다 (소유권 이전)
   static VideoPlayerController? takePreloadedController(String url) {
@@ -598,6 +633,9 @@ class PostReaderService {
             // 캐시에 저장 및 타임스탬프 기록
             _preloadedControllers[url] = controller;
             _preloadTimestamps[url] = DateTime.now();
+
+            // 리스너에 프리로드 완료 알림
+            _notifyClipPreloaded(url);
 
             final shortUrl = url.split('/').last; // 파일명만 추출
             print('[PostReaderService] ✅ 클립 프리캐싱 완료 (버퍼 확보): $shortUrl');

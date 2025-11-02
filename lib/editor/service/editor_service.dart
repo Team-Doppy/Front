@@ -9,6 +9,7 @@ import 'package:doppy/editor/service/sticker_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:provider/provider.dart';
+import 'package:doppy/data/services/upload_service.dart';
 import 'package:super_editor/super_editor.dart';
 
 class EditorService extends ChangeNotifier {
@@ -1117,6 +1118,10 @@ class EditorService extends ChangeNotifier {
 
   void deleteVideoPlaceholderNode(String id) {
     try {
+      // 업로드 중인 비디오가 있으면 취소 (비디오 전용 적용)
+      try {
+        UploadService().cancelByRef(id);
+      } catch (_) {}
       document.deleteNode(id);
       notifyListeners();
     } catch (_) {}

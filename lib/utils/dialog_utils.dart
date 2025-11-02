@@ -291,4 +291,172 @@ class DialogUtils {
       },
     );
   }
+
+  /// 텍스트 입력 다이얼로그 (공통 디자인)
+  /// 반환: 확인 시 입력 문자열, 취소/바깥 클릭 시 null
+  static Future<String?> showTextInputDialog(
+    BuildContext context, {
+    required String title,
+    String? hintText,
+    String? initialText,
+    String confirmText = '확인',
+    String cancelText = '취소',
+  }) async {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final controller = TextEditingController(text: initialText ?? '');
+
+    return showGeneralDialog<String>(
+      context: context,
+      barrierDismissible: true,
+      barrierLabel: MaterialLocalizations.of(context).modalBarrierDismissLabel,
+      barrierColor: Colors.black.withOpacity(0.4),
+      transitionDuration: const Duration(milliseconds: 250),
+      pageBuilder: (context, animation, secondaryAnimation) {
+        return Center(
+          child: Material(
+            color: Colors.transparent,
+            child: Container(
+              width: 300,
+              decoration: BoxDecoration(
+                color:
+                    isDark ? const Color(0xFF2C2C2E) : const Color(0xFFF2F2F7),
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 20, 20, 12),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Text(
+                          title,
+                          style: TextStyle(
+                            color: isDark ? Colors.white : Colors.black,
+                            fontSize: 17,
+                            fontWeight: FontWeight.w600,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                        const SizedBox(height: 4),
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(10),
+                          child: TextField(
+                            controller: controller,
+                            autofocus: true,
+                            cursorColor:
+                                isDark ? Colors.white : const Color(0xFF007AFF),
+                            decoration: InputDecoration(
+                              hintText: hintText,
+                              isDense: true,
+                              contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 10,
+                              ),
+                              filled: true,
+                              fillColor:
+                                  isDark
+                                      ? const Color(0xFF3A3A3C)
+                                      : Colors.white,
+                              border: InputBorder.none,
+                              enabledBorder: InputBorder.none,
+                              focusedBorder: InputBorder.none,
+                            ),
+                            style: TextStyle(
+                              color: isDark ? Colors.white : Colors.black,
+                              fontSize: 15,
+                            ),
+                            onSubmitted: (v) {
+                              Navigator.of(context).pop(v.trim());
+                            },
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  // Divider
+                  Container(
+                    height: 0.5,
+                    color:
+                        isDark
+                            ? Colors.white.withOpacity(0.2)
+                            : Colors.black.withOpacity(0.2),
+                  ),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: GestureDetector(
+                          onTap: () => Navigator.of(context).pop(null),
+                          child: Container(
+                            height: 44,
+                            child: Center(
+                              child: Text(
+                                cancelText,
+                                style: TextStyle(
+                                  color:
+                                      isDark
+                                          ? const Color(0xFF0A84FF)
+                                          : const Color(0xFF007AFF),
+                                  fontSize: 17,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                      Container(
+                        width: 0.5,
+                        height: 44,
+                        color:
+                            isDark
+                                ? Colors.white.withOpacity(0.2)
+                                : Colors.black.withOpacity(0.2),
+                      ),
+                      Expanded(
+                        child: GestureDetector(
+                          onTap:
+                              () => Navigator.of(
+                                context,
+                              ).pop(controller.text.trim()),
+                          child: Container(
+                            height: 44,
+                            child: Center(
+                              child: Text(
+                                confirmText,
+                                style: TextStyle(
+                                  color:
+                                      isDark
+                                          ? const Color(0xFF0A84FF)
+                                          : const Color(0xFF007AFF),
+                                  fontSize: 17,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+      transitionBuilder: (context, animation, secondaryAnimation, child) {
+        return FadeTransition(
+          opacity: CurvedAnimation(parent: animation, curve: Curves.easeOut),
+          child: ScaleTransition(
+            scale: Tween<double>(begin: 1.1, end: 1.0).animate(
+              CurvedAnimation(parent: animation, curve: Curves.easeOut),
+            ),
+            child: child,
+          ),
+        );
+      },
+    );
+  }
 }

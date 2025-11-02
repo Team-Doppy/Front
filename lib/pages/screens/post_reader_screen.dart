@@ -515,22 +515,37 @@ class _PostReaderScreenState extends State<PostReaderScreen>
   ) async {
     final content = await _blogService.getPostContent(postId);
 
-    // 이미지와 클립 URL 추출 및 미리 로드
+    // 이미지와 클립 URL 추출 및 미리 로드 (비동기, 화면 그린 뒤 시작)
     if (mounted) {
       final imageUrls = _postReaderService.extractImageUrls(content);
-      await _postReaderService.preloadImages(context, imageUrls);
+      print('[PostReaderScreen] 이미지 프리로드 대상: ${imageUrls.length}개');
+      // 이미지는 상위 6개만 선 프리로드
+      await _postReaderService.preloadImages(context, imageUrls, maxCount: 6);
 
       final clipUrls = _postReaderService.extractClipUrls(content);
-
-      // 모든 클립 프리로드 (120ms씩만 재생하므로 가벼움)
       if (clipUrls.isNotEmpty) {
-        print('[PostReaderScreen] 전체 클립 프리로드 시작: ${clipUrls.length}개');
-        await _postReaderService.preloadClips(
-          context,
-          clipUrls,
-          // maxCount 지정 안 함 → 모든 클립 프리로드
-        );
-        print('[PostReaderScreen] 전체 클립 프리로드 완료');
+        // 첫 번째 클립은 동기 프리로드(타임아웃 가드) → 완전 무쉬머 보장
+        try {
+          await _postReaderService
+              .preloadClips(context, [clipUrls.first], maxCount: 1)
+              .timeout(const Duration(milliseconds: 1000));
+          print('[PostReaderScreen] 첫 클립 동기 프리로드 완료');
+        } catch (e) {
+          print('[PostReaderScreen] 첫 클립 동기 프리로드 타임아웃/실패: $e');
+        }
+
+        // 나머지는 화면 그린 뒤 비동기 프리로드 전체 실행
+        WidgetsBinding.instance.addPostFrameCallback((_) async {
+          try {
+            final rest = clipUrls.skip(1).toList();
+            if (rest.isEmpty) return;
+            // ignore: discarded_futures
+            _postReaderService.preloadClips(context, rest);
+            print('[PostReaderScreen] 나머지 클립 비동기 프리로드 시작: ${rest.length}개');
+          } catch (e) {
+            print('[PostReaderScreen] 클립 프리로드(비동기) 오류: $e');
+          }
+        });
       }
     }
 
@@ -715,9 +730,9 @@ class _PostReaderScreenState extends State<PostReaderScreen>
               );
             }
 
-            // ✅ 데이터 로드 완료 후 100ms 대기 (스포일러 마스크 렌더링 시간)
+            // ✅ 데이터/미디어 선행 준비 후 약간 더 대기하여 첫 프레임 안정화
             if (snap.hasData && !_isRenderReady) {
-              Future.delayed(const Duration(milliseconds: 150), () {
+              Future.delayed(const Duration(milliseconds: 300), () {
                 if (mounted) {
                   setState(() => _isRenderReady = true);
                 }

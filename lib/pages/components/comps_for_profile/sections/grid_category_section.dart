@@ -11,6 +11,8 @@ import 'package:doppy/providers/user_provider.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:doppy/data/services/blog_service.dart';
+import 'package:doppy/utils/dialog_utils.dart';
 
 /// 그리드 버전 카테고리 섹션 - 3개씩 여러 줄로 표시
 class GridCategorySection extends StatefulWidget {
@@ -50,6 +52,91 @@ class GridCategorySection extends StatefulWidget {
 class _GridCategorySectionState extends State<GridCategorySection> {
   int? _postDropTargetIndex;
   int? _draggingPostIndex;
+
+  Future<void> _showCategoryDropdown(BuildContext iconContext) async {
+    final int? catId = int.tryParse(widget.categoryId ?? '');
+    if (catId == null) return;
+
+    final RenderBox button = iconContext.findRenderObject() as RenderBox;
+    final RenderBox overlay =
+        Navigator.of(iconContext).overlay!.context.findRenderObject()
+            as RenderBox;
+    final RelativeRect position = RelativeRect.fromRect(
+      Rect.fromPoints(
+        button.localToGlobal(Offset.zero, ancestor: overlay),
+        button.localToGlobal(
+          button.size.bottomRight(Offset.zero),
+          ancestor: overlay,
+        ),
+      ),
+      Offset.zero & overlay.size,
+    );
+
+    final String? action = await showMenu<String>(
+      context: iconContext,
+      position: position,
+      color: Theme.of(iconContext).colorScheme.surface,
+      items: [
+        PopupMenuItem<String>(
+          value: 'edit',
+          child: Row(children: const [Text('이름 수정')]),
+        ),
+
+        PopupMenuItem<String>(
+          value: 'delete',
+          child: Row(children: const [Text('카테고리 삭제')]),
+        ),
+      ],
+    );
+
+    if (action == 'edit') {
+      final newName = await DialogUtils.showTextInputDialog(
+        iconContext,
+        title: '카테고리 이름 수정',
+        hintText: '새 이름 입력',
+        initialText: widget.title,
+        confirmText: '저장',
+      );
+      if (newName != null && newName.trim().isNotEmpty) {
+        try {
+          final provider = iconContext.read<BaseFeedProvider>();
+          await BlogService().updateCategoryName(
+            categoryId: catId,
+            name: newName.trim(),
+          );
+          await provider.refresh();
+        } catch (_) {
+          try {
+            ScaffoldMessenger.of(
+              iconContext,
+            ).showSnackBar(const SnackBar(content: Text('카테고리 수정 실패')));
+          } catch (_) {}
+        }
+      }
+    } else if (action == 'delete') {
+      final bool? confirmed = await DialogUtils.showConfirmDialog(
+        iconContext,
+        title: '카테고리 삭제',
+        message: '정말 삭제하시겠어요? 되돌릴 수 없어요.\n이 카테고리 안의 포스트는 지워지지 않아요.',
+        confirmText: '삭제',
+        cancelText: '취소',
+        isDestructive: true,
+      );
+      if (confirmed == true) {
+        try {
+          final provider = iconContext.read<BaseFeedProvider>();
+          await BlogService().deleteCategory(catId);
+          await provider.refresh();
+        } catch (_) {
+          try {
+            ScaffoldMessenger.of(
+              iconContext,
+            ).showSnackBar(const SnackBar(content: Text('카테고리 삭제 실패')));
+          } catch (_) {}
+        }
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -316,12 +403,35 @@ class _GridCategorySectionState extends State<GridCategorySection> {
                                                   if (!context
                                                       .read<BaseFeedProvider>()
                                                       .isReadOnly)
-                                                    Icon(
-                                                      Icons.drag_indicator,
-                                                      color: theme
-                                                          .colorScheme
-                                                          .onSurface
-                                                          .withOpacity(0.4),
+                                                    Builder(
+                                                      builder:
+                                                          (iconCtx) => InkWell(
+                                                            onTap:
+                                                                () =>
+                                                                    _showCategoryDropdown(
+                                                                      iconCtx,
+                                                                    ),
+                                                            borderRadius:
+                                                                BorderRadius.circular(
+                                                                  8,
+                                                                ),
+                                                            child: Padding(
+                                                              padding:
+                                                                  const EdgeInsets.all(
+                                                                    4,
+                                                                  ),
+                                                              child: Icon(
+                                                                Icons
+                                                                    .drag_indicator,
+                                                                color: theme
+                                                                    .colorScheme
+                                                                    .onSurface
+                                                                    .withOpacity(
+                                                                      0.4,
+                                                                    ),
+                                                              ),
+                                                            ),
+                                                          ),
                                                     ),
                                                 ],
                                               )
@@ -434,10 +544,10 @@ class _GridCategorySectionState extends State<GridCategorySection> {
                                             gridDelegate:
                                                 SliverGridDelegateWithFixedCrossAxisCount(
                                                   crossAxisCount: 3,
-                                                  mainAxisSpacing: 0,
-                                                  crossAxisSpacing: 0,
-                                                  childAspectRatio:
-                                                      (screenWidth / 3) / 160,
+                                                  mainAxisSpacing: 2.5,
+                                                  crossAxisSpacing: 2,
+                                                  // 카드 내부는 4:5 비율(세로형)로 그리므로 그리드 셀도 동일 비율로 맞춘다
+                                                  childAspectRatio: 4 / 5,
                                                 ),
                                             itemCount:
                                                 widget.posts.length +
@@ -446,17 +556,13 @@ class _GridCategorySectionState extends State<GridCategorySection> {
                                               if (index ==
                                                   widget.posts.length) {
                                                 return Stack(
+                                                  clipBehavior: Clip.none,
                                                   children: [
                                                     // 빈 공간
-                                                    Container(
-                                                      margin:
-                                                          const EdgeInsets.symmetric(
-                                                            vertical: 5,
-                                                          ),
-                                                    ),
+
                                                     // 드롭 라인
                                                     Positioned(
-                                                      left: 0,
+                                                      left: -5,
                                                       top: 0,
                                                       bottom: 0,
                                                       child: IgnorePointer(
@@ -809,7 +915,6 @@ class _GridCategorySectionState extends State<GridCategorySection> {
                   child: IgnorePointer(
                     child: Container(
                       width: 5,
-                      margin: const EdgeInsets.symmetric(vertical: 5),
                       decoration: BoxDecoration(
                         color: theme.colorScheme.primary,
                       ),
@@ -819,7 +924,7 @@ class _GridCategorySectionState extends State<GridCategorySection> {
               ),
             if (showRightLine)
               Positioned(
-                right: 0,
+                right: -2,
                 top: 0,
                 bottom: 0,
                 child: AnimatedOpacity(
@@ -829,6 +934,7 @@ class _GridCategorySectionState extends State<GridCategorySection> {
                   child: IgnorePointer(
                     child: Container(
                       width: 5,
+
                       decoration: BoxDecoration(
                         color: theme.colorScheme.primary,
                       ),

@@ -80,8 +80,8 @@ class CardView extends StatelessWidget {
                     ),
                     if (showViewBadge)
                       Positioned(
-                        left: 3,
-                        bottom: 3,
+                        left: 5,
+                        bottom: 0,
                         child: Container(
                           padding: EdgeInsets.symmetric(
                             horizontal: post.viewCount > 9 ? 4 : 8,

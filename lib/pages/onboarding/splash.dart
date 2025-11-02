@@ -1,6 +1,6 @@
 import 'package:doppy/main.dart';
+import 'package:doppy/pages/components/doppy_loading_logo.dart';
 import 'package:doppy/providers/auth_provider.dart';
-import 'package:doppy/providers/user_provider.dart';
 import 'package:doppy/data/services/home_data_service.dart';
 import 'package:doppy/utils/network_utils.dart';
 import 'package:flutter/material.dart';
@@ -19,8 +19,6 @@ class _SplashScreenState extends State<SplashScreen>
   late final AnimationController _controller;
   late final Animation<double> _opacity;
   late final Animation<double> _scale;
-  late final Animation<double> _glow;
-  late final Animation<double> _flash;
 
   final HomeDataService _homeDataService = HomeDataService();
 
@@ -40,28 +38,7 @@ class _SplashScreenState extends State<SplashScreen>
 
     _opacity = CurvedAnimation(
       parent: _controller,
-      curve: const Interval(0.0, 0.5, curve: Curves.easeOut),
-    );
-
-    _scale = Tween<double>(begin: 0.85, end: 1.0).animate(
-      CurvedAnimation(
-        parent: _controller,
-        curve: const Interval(0.1, 0.9, curve: Curves.easeOutBack),
-      ),
-    );
-
-    _glow = Tween<double>(begin: 0.0, end: 24.0).animate(
-      CurvedAnimation(
-        parent: _controller,
-        curve: const Interval(0.25, 0.8, curve: Curves.easeOut),
-      ),
-    );
-
-    _flash = Tween<double>(begin: 0.0, end: 0.8).animate(
-      CurvedAnimation(
-        parent: _controller,
-        curve: const Interval(0.55, 0.65, curve: Curves.easeOut),
-      ),
+      curve: const Interval(0.0, 0.1, curve: Curves.easeOut),
     );
 
     startSequence();
@@ -219,20 +196,10 @@ class _SplashScreenState extends State<SplashScreen>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.black,
+      backgroundColor: Theme.of(context).colorScheme.background,
       body: Stack(
         fit: StackFit.expand,
         children: [
-          // 약한 비네팅
-          DecoratedBox(
-            decoration: const BoxDecoration(
-              gradient: RadialGradient(
-                center: Alignment(0, -0.2),
-                radius: 1.0,
-                colors: [Color(0xFF0A0A0A), Colors.black],
-              ),
-            ),
-          ),
           Center(
             child: AnimatedBuilder(
               animation: _controller,
@@ -240,57 +207,12 @@ class _SplashScreenState extends State<SplashScreen>
                 return Stack(
                   alignment: Alignment.center,
                   children: [
-                    // Glow (alpha 직접 적용)
-                    Container(
-                      width: 180 * _scale.value,
-                      height: 180 * _scale.value,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        boxShadow: [
-                          BoxShadow(
-                            color: const Color(0xFFB71C1C).withOpacity(
-                              0.35 * (_opacity.value * 0.9).clamp(0.0, 1.0),
-                            ),
-                            blurRadius: _glow.value,
-                            spreadRadius: _glow.value * 0.25,
-                          ),
-                        ],
-                      ),
-                    ),
-                    // Logo
-                    Opacity(
+                    DoppyLoadingLogo(
                       opacity: _opacity.value,
-                      child: Transform.scale(
-                        scale: _scale.value,
-                        child: SizedBox(
-                          width: 180,
-                          height: 180,
-                          child: Text(
-                            'Doppy',
-                            style: TextStyle(
-                              fontSize: 50,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.white,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                    // Flash overlay (alpha 직접 적용)
-                    IgnorePointer(
-                      child: Container(
-                        width: 260,
-                        height: 260,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          gradient: RadialGradient(
-                            colors: [
-                              Colors.white.withOpacity(0.6 * _flash.value),
-                              Colors.transparent,
-                            ],
-                          ),
-                        ),
-                      ),
+                      dTextSize: 40,
+                      ppyTextSize: 40,
+                      spinnerStrokeWidth: 4.5,
+                      spinnerColor: Theme.of(context).colorScheme.primary,
                     ),
                   ],
                 );
@@ -310,21 +232,12 @@ class _SplashScreenState extends State<SplashScreen>
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      const SizedBox(
-                        width: 20,
-                        height: 20,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          valueColor: AlwaysStoppedAnimation<Color>(
-                            Colors.white,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 16),
                       Text(
-                        _loadingStatus,
-                        style: const TextStyle(
-                          color: Colors.white70,
+                        '환영합니다 ${_loadingStatus}...',
+                        style: TextStyle(
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.onSurface.withOpacity(0.7),
                           fontSize: 14,
                           fontWeight: FontWeight.w500,
                         ),

@@ -1462,6 +1462,7 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
                   File(mp4Path),
                   kind: UploadKind.video,
                   overrideName: mp4FileName,
+                  refId: placeholderId,
                 );
 
                 // 완료 대기(간단 버전)
@@ -1852,7 +1853,9 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
     double? size,
   }) {
     final Color surfaceVariant = Theme.of(context).colorScheme.surfaceVariant;
-    final Color onSurface = Theme.of(context).colorScheme.onSurface;
+    final Color onSurface = Theme.of(
+      context,
+    ).colorScheme.onSurface.withOpacity(0.6);
 
     return Material(
       color: isActive ? surfaceVariant : Colors.transparent,

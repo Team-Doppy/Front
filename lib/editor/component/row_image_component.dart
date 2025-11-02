@@ -16,7 +16,7 @@ class ImageRowNode extends BlockNode {
   ImageRowNode({
     required this.id,
     required List<String> imageUrls,
-    this.spacing = 8.0,
+    this.spacing = 0.0,
     Map<String, dynamic>? metadata,
   }) : imageUrls = imageUrls.take(3).toList(), // 최대 3개로 제한
        _metadata = metadata ?? <String, dynamic>{};
@@ -64,7 +64,7 @@ class ImageRowNode extends BlockNode {
     return ImageRowNode(
       id: json['id'] as String,
       imageUrls: List<String>.from(json['imageUrls'] as List),
-      spacing: (json['spacing'] as num?)?.toDouble() ?? 8.0,
+      spacing: (json['spacing'] as num?)?.toDouble() ?? 0.0,
     );
   }
 
@@ -427,8 +427,9 @@ class _ImageRowComponentState extends State<ImageRowComponent>
                                   hasComments = imgInfo['hasComments'] == true;
                                   final cc = imgInfo['commentCount'];
                                   if (cc is num) commentCount = cc.toInt();
-                                  if (cc is String)
+                                  if (cc is String) {
                                     commentCount = int.tryParse(cc) ?? 0;
+                                  }
                                 }
                               }
                             } catch (_) {}
@@ -438,11 +439,13 @@ class _ImageRowComponentState extends State<ImageRowComponent>
                                 margin:
                                     imageUrl == widget.imageUrls.last
                                         ? EdgeInsets.zero
-                                        : EdgeInsets.only(right: 1),
+                                        : const EdgeInsets.only(right: 2),
                                 child: Stack(
                                   children: [
-                                    SizedBox(
-                                      height: _unifiedHeight ?? 150,
+                                    ConstrainedBox(
+                                      constraints: BoxConstraints.expand(
+                                        height: _unifiedHeight ?? 150,
+                                      ),
                                       child: ImageFiltered(
                                         imageFilter:
                                             isRowSpoiler
@@ -457,17 +460,27 @@ class _ImageRowComponentState extends State<ImageRowComponent>
                                         child: Image.network(
                                           imageUrl,
                                           fit: BoxFit.cover,
-                                          loadingBuilder: (
+                                          frameBuilder: (
                                             context,
                                             child,
-                                            loading,
+                                            frame,
+                                            wasSyncLoaded,
                                           ) {
-                                            if (loading == null) return child;
+                                            if (wasSyncLoaded ||
+                                                frame != null) {
+                                              // 로드 완료 → 높이 측정 트리거
+                                              WidgetsBinding.instance
+                                                  .addPostFrameCallback((_) {
+                                                    _measureAndUnifyHeight(
+                                                      imageUrl,
+                                                      constraints.maxWidth,
+                                                    );
+                                                  });
+                                              return child;
+                                            }
                                             return ShimmerBox(
                                               width: double.infinity,
                                               height: _unifiedHeight ?? 150,
-                                              borderRadius:
-                                                  BorderRadius.circular(0),
                                             );
                                           },
                                           errorBuilder: (
@@ -480,23 +493,7 @@ class _ImageRowComponentState extends State<ImageRowComponent>
                                               width: 200,
                                             );
                                           },
-                                          frameBuilder: (
-                                            context,
-                                            child,
-                                            frame,
-                                            sync,
-                                          ) {
-                                            if (frame != null) {
-                                              WidgetsBinding.instance
-                                                  .addPostFrameCallback((_) {
-                                                    _measureAndUnifyHeight(
-                                                      imageUrl,
-                                                      constraints.maxWidth,
-                                                    );
-                                                  });
-                                            }
-                                            return child;
-                                          },
+                                          // 측정은 frameBuilder에서 처리
                                         ),
                                       ),
                                     ),

@@ -42,8 +42,7 @@ class SearchService extends ChangeNotifier {
 
   // 통합 컨텐츠 데이터 초기화
   late final List<SearchContentItem> _allContentItems = [];
-  int _currentPage = 0;
-  bool _hasMorePosts = true;
+
   bool isLoadingMore = false;
 
   // 최근 본 컨텐츠 관리
@@ -92,6 +91,11 @@ class SearchService extends ChangeNotifier {
 
   // 블로그 제목 검색 결과 (단발)
   List<SearchContentItem> get blogResults => _blogResults;
+  // Paged blogs
+  bool _blogsHasMore = true;
+  int _blogsPage = 0;
+  String _blogsKeyword = '';
+  bool get blogsHasMore => _blogsHasMore;
 
   // 검색 기록 (계정 리스트 형태)
   List<SearchContentItem> get searchHistory => searchHistoryAsAccounts;
@@ -275,8 +279,6 @@ class SearchService extends ChangeNotifier {
   /// 초기화
   Future<void> initialize() async {
     _allContentItems.clear();
-    _currentPage = 0;
-    _hasMorePosts = true;
     await _loadSearchHistory();
     notifyListeners();
   }
@@ -284,8 +286,6 @@ class SearchService extends ChangeNotifier {
   /// 추천 게시글 새로고침
   Future<void> refreshRecommendations() async {
     _allContentItems.clear();
-    _currentPage = 0;
-    _hasMorePosts = true;
   }
 
   /// 최근 본 컨텐츠에 추가
@@ -443,13 +443,20 @@ class SearchService extends ChangeNotifier {
             final title = e['title']?.toString() ?? '';
             final author = e['author']?.toString() ?? '';
             final imageUrl = e['thumbnailImageUrl']?.toString() ?? '';
+            final authorProfile = e['authorProfileImageUrl']?.toString() ?? '';
+            final createdAt = e['createdAt']?.toString();
             final likes = (e['likeCount'] as num?)?.toInt() ?? 0;
             final comments = (e['commentCount'] as num?)?.toInt() ?? 0;
             final content = e['content']?.toString() ?? '';
+            final summaryFromServer = e['summary']?.toString();
 
             // PostData의 parsedContent getter를 활용
             final tempPostData = PostData.fromServer(e);
             final parsedContent = tempPostData.parsedContent;
+            final summary =
+                (summaryFromServer != null && summaryFromServer.isNotEmpty)
+                    ? summaryFromServer
+                    : parsedContent;
 
             _postData[id] = e;
             posts.add(
@@ -462,6 +469,9 @@ class SearchService extends ChangeNotifier {
                 comments: comments,
                 content: content,
                 parsedContent: parsedContent,
+                summary: summary,
+                profileImageUrl: authorProfile,
+                createdAt: createdAt,
               ),
             );
           }
@@ -473,6 +483,94 @@ class SearchService extends ChangeNotifier {
     } catch (e) {
       debugPrint('[searchBlogsByTitleOnce] error: $e');
     }
+  }
+
+  // --- Paged blog search helpers ---
+  Future<List<SearchContentItem>> fetchBlogsByTitlePage({
+    required String keyword,
+    required int page,
+    int size = 20,
+  }) async {
+    final res = await _dio.get(
+      '/api/posts/search',
+      queryParameters: {'keyword': keyword, 'page': page, 'size': size},
+    );
+
+    final List<SearchContentItem> posts = [];
+    if (res.statusCode == 200 && res.data is Map<String, dynamic>) {
+      final content = (res.data['content'] as List?) ?? [];
+      for (final e in content) {
+        if (e is Map<String, dynamic>) {
+          final id = e['id']?.toString() ?? '';
+          final title = e['title']?.toString() ?? '';
+          final author = e['author']?.toString() ?? '';
+          final imageUrl = e['thumbnailImageUrl']?.toString() ?? '';
+          final authorProfile = e['authorProfileImageUrl']?.toString() ?? '';
+          final createdAt = e['createdAt']?.toString();
+          final likes = (e['likeCount'] as num?)?.toInt() ?? 0;
+          final comments = (e['commentCount'] as num?)?.toInt() ?? 0;
+          final contentStr = e['content']?.toString() ?? '';
+          final summaryFromServer = e['summary']?.toString();
+
+          final tempPostData = PostData.fromServer(e);
+          final parsedContent = tempPostData.parsedContent;
+          final summary =
+              (summaryFromServer != null && summaryFromServer.isNotEmpty)
+                  ? summaryFromServer
+                  : parsedContent;
+
+          _postData[id] = e;
+          posts.add(
+            SearchContentItem.post(
+              id: id,
+              title: title,
+              author: author,
+              imageUrl: imageUrl,
+              likes: likes,
+              comments: comments,
+              content: contentStr,
+              parsedContent: parsedContent,
+              summary: summary,
+              profileImageUrl: authorProfile,
+              createdAt: createdAt,
+            ),
+          );
+        }
+      }
+    }
+    return posts;
+  }
+
+  Future<void> startBlogsSearch(String keyword, {int size = 20}) async {
+    if (keyword.trim().isEmpty) return;
+    _blogsKeyword = keyword;
+    final posts = await fetchBlogsByTitlePage(
+      keyword: keyword,
+      page: 0,
+      size: size,
+    );
+    _blogResults = posts;
+    _blogsPage = 1;
+    _blogsHasMore = posts.length == size;
+    notifyListeners();
+  }
+
+  Future<List<SearchContentItem>> loadMoreBlogs({int size = 20}) async {
+    if (_blogsKeyword.isEmpty || !_blogsHasMore) return const [];
+    final posts = await fetchBlogsByTitlePage(
+      keyword: _blogsKeyword,
+      page: _blogsPage,
+      size: size,
+    );
+    if (posts.isNotEmpty) {
+      _blogResults.addAll(posts);
+      _blogsPage += 1;
+      _blogsHasMore = posts.length == size;
+      notifyListeners();
+    } else {
+      _blogsHasMore = false;
+    }
+    return posts;
   }
 
   /// 계정을 검색 기록에 추가 (객체 기반)
@@ -703,6 +801,7 @@ class SearchContentItem {
   final String? content;
   final String? parsedContent;
   final String? createdAt;
+  final String? summary;
 
   const SearchContentItem._({
     required this.id,
@@ -719,6 +818,7 @@ class SearchContentItem {
     this.content,
     this.parsedContent,
     this.createdAt,
+    this.summary,
   });
 
   factory SearchContentItem.account({
@@ -747,6 +847,9 @@ class SearchContentItem {
     required int comments,
     String? content,
     String? parsedContent,
+    String? summary,
+    String? profileImageUrl,
+    String? createdAt,
   }) {
     return SearchContentItem._(
       id: id,
@@ -758,6 +861,9 @@ class SearchContentItem {
       comments: comments,
       content: content,
       parsedContent: parsedContent,
+      summary: summary,
+      profileImageUrl: profileImageUrl,
+      createdAt: createdAt,
     );
   }
 }

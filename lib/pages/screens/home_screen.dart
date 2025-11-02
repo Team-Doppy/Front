@@ -3,6 +3,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:doppy/pages/components/post_list.dart';
 import 'package:doppy/data/models/post_data.dart';
 import 'package:doppy/data/services/home_data_service.dart';
+import 'package:doppy/data/services/search_service.dart';
 import 'package:doppy/pages/components/shimmer_box.dart';
 import 'package:doppy/pages/screens/search_screen_overlay.dart';
 import 'package:doppy/providers/user_provider.dart';
@@ -63,6 +64,7 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   bool _isSearchOverlayVisible = false;
   bool _isShowingSearchResults = false;
   String _searchQuery = '';
+  bool _searchHasMore = true;
 
   // 새로고침 시 배경 이미지 유지용
   String? _previousBackgroundImageUrl;
@@ -157,6 +159,115 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         }
       });
     });
+  }
+
+  Future<void> _refreshSearchResults() async {
+    if (_searchQuery.trim().isEmpty) return;
+    try {
+      final svc = context.read<SearchService>();
+      await svc.startBlogsSearch(_searchQuery, size: 20);
+      final items = svc.blogResults;
+
+      final refreshed =
+          items
+              .map(
+                (item) => PostData(
+                  id: item.id,
+                  thumbnailImageUrl: item.imageUrl ?? '',
+                  title: item.title ?? '',
+                  summary: item.summary ?? item.parsedContent ?? '',
+                  author: item.author ?? item.username ?? '',
+                  authorProfileImageUrl: item.profileImageUrl ?? '',
+                  content: item.content ?? '',
+                  accessLevel: AccessLevel.public,
+                  viewCount: 0,
+                  likeCount: item.likes ?? 0,
+                  isLiked: false,
+                  createdAt: DateTime.now().toIso8601String(),
+                  updatedAt: DateTime.now().toIso8601String(),
+                ),
+              )
+              .toList();
+
+      // 현재 섹션에 반영
+      setState(() {
+        if (_currentSectionIndex == 0) {
+          _friendsPosts = refreshed;
+          _friendsIsLoading = false;
+          _friendsIsLoadingMore = false;
+          _friendsHasMoreData = false;
+        } else {
+          _allPosts = refreshed;
+          _allIsLoading = false;
+          _allIsLoadingMore = false;
+          _allHasMoreData = false;
+        }
+        _searchHasMore = svc.blogsHasMore;
+      });
+
+      // 전역 상태도 업데이트
+      context.read<SearchProvider>().setSearchResults(refreshed, _searchQuery);
+    } catch (e) {
+      debugPrint('[HomeScreen] 검색 새로고침 실패: $e');
+    }
+  }
+
+  Future<void> _loadMoreSearchResults() async {
+    final svc = context.read<SearchService>();
+    if (!_searchHasMore) return;
+    if (_currentSectionIndex == 0 && _friendsIsLoadingMore) return;
+    if (_currentSectionIndex == 1 && _allIsLoadingMore) return;
+
+    setState(() {
+      if (_currentSectionIndex == 0) {
+        _friendsIsLoadingMore = true;
+      } else {
+        _allIsLoadingMore = true;
+      }
+    });
+
+    try {
+      final items = await svc.loadMoreBlogs(size: 20);
+      final append =
+          items
+              .map(
+                (item) => PostData(
+                  id: item.id,
+                  thumbnailImageUrl: item.imageUrl ?? '',
+                  title: item.title ?? '',
+                  summary: item.summary ?? item.parsedContent ?? '',
+                  author: item.author ?? item.username ?? '',
+                  authorProfileImageUrl: item.profileImageUrl ?? '',
+                  content: item.content ?? '',
+                  accessLevel: AccessLevel.public,
+                  viewCount: 0,
+                  likeCount: item.likes ?? 0,
+                  isLiked: false,
+                  createdAt: DateTime.now().toIso8601String(),
+                  updatedAt: DateTime.now().toIso8601String(),
+                ),
+              )
+              .toList();
+
+      setState(() {
+        if (_currentSectionIndex == 0) {
+          _friendsPosts.addAll(append);
+          _friendsIsLoadingMore = false;
+        } else {
+          _allPosts.addAll(append);
+          _allIsLoadingMore = false;
+        }
+        _searchHasMore = svc.blogsHasMore;
+      });
+    } catch (e) {
+      setState(() {
+        if (_currentSectionIndex == 0) {
+          _friendsIsLoadingMore = false;
+        } else {
+          _allIsLoadingMore = false;
+        }
+      });
+    }
   }
 
   @override
@@ -477,19 +588,22 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       return Positioned.fill(
         child: Stack(
           children: [
-            Positioned.fill(
-              child: CachedNetworkImage(
-                imageUrl: _previousBackgroundImageUrl!,
-                fit: BoxFit.cover,
-                key: ValueKey('bg-previous-$_previousBackgroundImageUrl'),
-                placeholder:
-                    (context, url) => ShimmerBox(
-                      width: double.infinity,
-                      height: double.infinity,
-                    ),
-                errorWidget: (context, url, error) => const Icon(Icons.error),
-              ),
-            ),
+            Theme.of(context).brightness == Brightness.dark
+                ? Positioned.fill(
+                  child: CachedNetworkImage(
+                    imageUrl: _previousBackgroundImageUrl!,
+                    fit: BoxFit.cover,
+                    key: ValueKey('bg-previous-$_previousBackgroundImageUrl'),
+                    placeholder:
+                        (context, url) => ShimmerBox(
+                          width: double.infinity,
+                          height: double.infinity,
+                        ),
+                    errorWidget:
+                        (context, url, error) => const Icon(Icons.error),
+                  ),
+                )
+                : SizedBox.shrink(),
             Positioned.fill(
               child: BackdropFilter(
                 filter: ui.ImageFilter.blur(sigmaX: 20, sigmaY: 20),
@@ -696,12 +810,16 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       containerWidth: screenWidth,
       posts: _friendsPosts,
       onLoadMore:
-          (_friendsHasMoreData && !_isShowingSearchResults)
-              ? _loadMoreFriendsPosts
-              : null,
+          _isShowingSearchResults
+              ? (_searchHasMore ? _loadMoreSearchResults : null)
+              : (_friendsHasMoreData ? _loadMoreFriendsPosts : null),
       isLoadingMore: _friendsIsLoadingMore,
       isLoading: _friendsIsLoading,
-      onRefresh: () => _loadFriendsPosts(refresh: true),
+      onRefresh:
+          () =>
+              _isShowingSearchResults
+                  ? _refreshSearchResults()
+                  : _loadFriendsPosts(refresh: true),
       showCardShimmer: _friendsIsCardShimmering,
       onPageChanged: (index) {
         setState(() {
@@ -723,7 +841,7 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       isShowingFriendsOnly: true,
       onFilterTap: _handleSectionSwitch,
       showAppBar: true,
-      sectionLabel: '친구글',
+      sectionLabel: '전체글',
       appBarOpacity: _appBarOpacity, // 앱바 투명도 전달
       networkError: _friendsError, // 에러 상태 전달
       onRetryError: () => _loadFriendsPosts(refresh: true), // 에러 재시도 콜백
@@ -755,12 +873,16 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       containerWidth: screenWidth,
       posts: _allPosts,
       onLoadMore:
-          (_allHasMoreData && !_isShowingSearchResults)
-              ? _loadMoreAllPosts
-              : null,
+          _isShowingSearchResults
+              ? (_searchHasMore ? _loadMoreSearchResults : null)
+              : (_allHasMoreData ? _loadMoreAllPosts : null),
       isLoadingMore: _allIsLoadingMore,
       isLoading: _allIsLoading,
-      onRefresh: () => _loadAllPosts(refresh: true),
+      onRefresh:
+          () =>
+              _isShowingSearchResults
+                  ? _refreshSearchResults()
+                  : _loadAllPosts(refresh: true),
       showCardShimmer: _allIsCardShimmering,
       onPageChanged: (index) {
         setState(() {
@@ -782,7 +904,7 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       isShowingFriendsOnly: false,
       onFilterTap: _handleSectionSwitch,
       showAppBar: true,
-      sectionLabel: '전체글',
+      sectionLabel: '친구글',
       appBarOpacity: _appBarOpacity, // 앱바 투명도 전달
       networkError: _allError, // 에러 상태 전달
       onRetryError: () => _loadAllPosts(refresh: true), // 에러 재시도 콜백

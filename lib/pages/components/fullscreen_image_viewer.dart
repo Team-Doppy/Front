@@ -1,6 +1,7 @@
 import 'dart:ui';
 
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:doppy/theme/app_colors.dart';
 import 'package:doppy/utils/error_handler.dart';
 import 'package:flutter/material.dart';
 import 'package:doppy/data/services/comment_service.dart';
@@ -58,6 +59,7 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer>
   final Map<int, TransformationController> _imageZoomControllers = {};
   final TransformationController _videoZoomController =
       TransformationController();
+  double _imageGestureMinScale = 1.0;
 
   @override
   void initState() {
@@ -82,6 +84,27 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer>
       _loadImageComments();
       _initCommentPreviewAnimations();
     });
+  }
+
+  bool get _isMediaZoomed {
+    try {
+      if (widget.isVideo) {
+        final m = _videoZoomController.value;
+        final sx = m.storage[0];
+        final sy = m.storage[5];
+        final s = (sx + sy) / 2.0;
+        return s > 1.01;
+      }
+      final ctrl = _imageZoomControllers[_currentImageIndex];
+      if (ctrl == null) return false;
+      final m = ctrl.value;
+      final sx = m.storage[0];
+      final sy = m.storage[5];
+      final s = (sx + sy) / 2.0;
+      return s > 1.01;
+    } catch (_) {
+      return false;
+    }
   }
 
   void showComments({Duration duration = const Duration(milliseconds: 260)}) {
@@ -240,7 +263,7 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer>
     if (text.isEmpty) return;
     final mediaId = _extractCurrentMediaId();
     if (mediaId == null || mediaId.isEmpty) {
-      ErrorHandler.showError(context, '미디어 식별자를 찾을 수 없어요');
+      ErrorHandler.showError(context, '반응 추가중 오류가 발생했어요');
       return;
     }
 
@@ -342,83 +365,98 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer>
   @override
   Widget build(BuildContext context) {
     final isDarkMode = Theme.of(context).brightness == Brightness.dark;
+    final bool _zoomed = _isMediaZoomed;
     return GestureDetector(
-      onVerticalDragUpdate: (details) {
-        // 전역 드래그에서도 방향 추적 → 임계값 자동복귀(내릴 때만) 적용
-        _isSheetDraggingDown = details.primaryDelta! > 0;
-        if (details.primaryDelta! < 0 && _commentsController.value < 1.0) {
-          // 위로 드래그: 댓글 열기
-          final delta = -details.primaryDelta! / 300; // 민감도 조절
-          setState(() {
-            _commentsController.value = (_commentsController.value + delta)
-                .clamp(0.0, 1.0);
-          });
-        } else if (details.primaryDelta! > 0 &&
-            _commentsController.value > 0.0) {
-          // 아래로 드래그: 댓글 닫기
-          final delta = details.primaryDelta! / 300;
-          setState(() {
-            _commentsController.value = (_commentsController.value - delta)
-                .clamp(0.0, 1.0);
-          });
-        }
-      },
-      onVerticalDragEnd: (details) {
-        // velocity가 있으면 방향에 따라 바로 완료
-        if (details.primaryVelocity! < -300) {
-          // 위로 빠르게 스와이프: 완전히 열기
-          showComments();
-        } else if (details.primaryVelocity! > 300) {
-          // 아래로 빠르게 스와이프
-          if (_commentsController.value > 0.5) {
-            // 이미 많이 열려있으면 닫기 (댓글만 닫기)
-            _commentsController.reverse();
-          } else if (_commentsController.value > 0) {
-            // 조금 열려있어도 닫기
-            _commentsController.reverse();
-          }
-        } else {
-          // velocity가 작으면 현재 위치에 따라 결정
-          if (_commentsController.value > 0.5) {
-            showComments();
-          } else if (_commentsController.value > 0) {
-            // 댓글이 열려있으면 닫기
-            _commentsController.reverse();
-          }
-        }
+      onVerticalDragUpdate:
+          _zoomed
+              ? null
+              : (details) {
+                // 전역 드래그에서도 방향 추적 → 임계값 자동복귀(내릴 때만) 적용
+                _isSheetDraggingDown = details.primaryDelta! > 0;
+                if (details.primaryDelta! < 0 &&
+                    _commentsController.value < 1.0) {
+                  // 위로 드래그: 댓글 열기
+                  final delta = -details.primaryDelta! / 300; // 민감도 조절
+                  setState(() {
+                    _commentsController.value =
+                        (_commentsController.value + delta).clamp(0.0, 1.0);
+                  });
+                } else if (details.primaryDelta! > 0 &&
+                    _commentsController.value > 0.0) {
+                  // 아래로 드래그: 댓글 닫기
+                  final delta = details.primaryDelta! / 300;
+                  setState(() {
+                    _commentsController.value =
+                        (_commentsController.value - delta).clamp(0.0, 1.0);
+                  });
+                }
+              },
+      onVerticalDragEnd:
+          _zoomed
+              ? null
+              : (details) {
+                // velocity가 있으면 방향에 따라 바로 완료
+                if (details.primaryVelocity! < -300) {
+                  // 위로 빠르게 스와이프: 완전히 열기
+                  showComments();
+                } else if (details.primaryVelocity! > 300) {
+                  // 아래로 빠르게 스와이프
+                  if (_commentsController.value > 0.5) {
+                    // 이미 많이 열려있으면 닫기 (댓글만 닫기)
+                    _commentsController.reverse();
+                  } else if (_commentsController.value > 0) {
+                    // 조금 열려있어도 닫기
+                    _commentsController.reverse();
+                  }
+                } else {
+                  // velocity가 작으면 현재 위치에 따라 결정
+                  if (_commentsController.value > 0.5) {
+                    showComments();
+                  } else if (_commentsController.value > 0) {
+                    // 댓글이 열려있으면 닫기
+                    _commentsController.reverse();
+                  }
+                }
 
-        // _dragOffset 리셋
-        setState(() {
-          _dragOffset = 0.0;
-        });
-        _isSheetDraggingDown = false; // 방향 플래그 리셋
-      },
-      onHorizontalDragUpdate: (details) {
-        // 오른쪽으로 스와이프하여 닫기 (댓글 시트가 닫혀있을 때만)
-        if (_commentsController.value == 0) {
-          final dx = details.primaryDelta ?? 0.0;
-          if (dx > 0) {
-            setState(() {
-              _hDragOffset = (_hDragOffset + dx).clamp(0.0, 300.0);
-            });
-          } else {
-            setState(() {
-              _hDragOffset = (_hDragOffset + dx).clamp(0.0, 300.0);
-            });
-          }
-        }
-      },
-      onHorizontalDragEnd: (details) {
-        if (_commentsController.value == 0) {
-          if (_hDragOffset > 80 || (details.primaryVelocity ?? 0) > 600) {
-            _closeViewer();
-          } else {
-            setState(() {
-              _hDragOffset = 0.0;
-            });
-          }
-        }
-      },
+                // _dragOffset 리셋
+                setState(() {
+                  _dragOffset = 0.0;
+                });
+                _isSheetDraggingDown = false; // 방향 플래그 리셋
+              },
+      onHorizontalDragUpdate:
+          _zoomed
+              ? null
+              : (details) {
+                // 오른쪽으로 스와이프하여 닫기 (댓글 시트가 닫혀있을 때만)
+                if (_commentsController.value == 0) {
+                  final dx = details.primaryDelta ?? 0.0;
+                  if (dx > 0) {
+                    setState(() {
+                      _hDragOffset = (_hDragOffset + dx).clamp(0.0, 300.0);
+                    });
+                  } else {
+                    setState(() {
+                      _hDragOffset = (_hDragOffset + dx).clamp(0.0, 300.0);
+                    });
+                  }
+                }
+              },
+      onHorizontalDragEnd:
+          _zoomed
+              ? null
+              : (details) {
+                if (_commentsController.value == 0) {
+                  if (_hDragOffset > 80 ||
+                      (details.primaryVelocity ?? 0) > 600) {
+                    _closeViewer();
+                  } else {
+                    setState(() {
+                      _hDragOffset = 0.0;
+                    });
+                  }
+                }
+              },
       child: Opacity(
         opacity: (1.0 - _dragOffset / 300).clamp(0.0, 1.0),
         child: Stack(
@@ -508,7 +546,10 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer>
                         }
                       },
                       child: PageView.builder(
-                        physics: const BouncingScrollPhysics(),
+                        physics:
+                            (_commentsController.value > 0.05 || _zoomed)
+                                ? const NeverScrollableScrollPhysics()
+                                : const BouncingScrollPhysics(),
                         itemCount:
                             widget.allImageUrls.isNotEmpty
                                 ? widget.allImageUrls.length
@@ -535,6 +576,8 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer>
                                 preloadedController: widget.preloadedController,
                                 hideScrubber: _commentsController.value > 0.1,
                                 zoomController: _videoZoomController,
+                                lockInteraction:
+                                    _commentsController.value > 0.05,
                               ),
                             );
                           }
@@ -545,11 +588,38 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer>
                                   index,
                                   () => TransformationController(),
                                 );
+                                final bool sheetOpen =
+                                    _commentsController.value > 0.05;
+                                if (sheetOpen) {
+                                  ctrl.value = Matrix4.identity();
+                                }
                                 return InteractiveViewer(
-                                  minScale: 1.0,
-                                  maxScale: 4.0,
-                                  panEnabled: true,
-                                  clipBehavior: Clip.antiAliasWithSaveLayer,
+                                  minScale: sheetOpen ? 1.0 : 1.0,
+                                  maxScale: sheetOpen ? 1.0 : 4.0,
+                                  panEnabled: !sheetOpen,
+                                  boundaryMargin:
+                                      sheetOpen
+                                          ? EdgeInsets.zero
+                                          : const EdgeInsets.all(200),
+                                  clipBehavior: Clip.none,
+                                  onInteractionStart: (_) {
+                                    _imageGestureMinScale = 1.0;
+                                    setState(() {});
+                                  },
+                                  onInteractionUpdate: (details) {
+                                    _imageGestureMinScale =
+                                        _imageGestureMinScale < details.scale
+                                            ? _imageGestureMinScale
+                                            : details.scale;
+                                    setState(() {});
+                                  },
+                                  onInteractionEnd: (_) {
+                                    if (_imageGestureMinScale < 1.0) {
+                                      // 강한 축소 제스처 → 원래 크기로 즉시 복귀
+                                      ctrl.value = Matrix4.identity();
+                                    }
+                                    setState(() {});
+                                  },
                                   transformationController: ctrl,
                                   child: SizedBox(
                                     width: constraints.maxWidth,
@@ -672,26 +742,8 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer>
 
                               child: Column(
                                 children: [
-                                  SizedBox(height: 15),
-                                  GestureDetector(
-                                    onTap: () {
-                                      final v = _commentsController.value;
-                                      if (v < 0.5) {
-                                        showComments();
-                                      } else {
-                                        hideComments();
-                                      }
-                                    },
-                                    child: Container(
-                                      height: 5,
-                                      width: 60,
-                                      decoration: BoxDecoration(
-                                        color: Colors.white.withOpacity(0.4),
-                                        borderRadius: BorderRadius.circular(10),
-                                      ),
-                                    ),
-                                  ),
-                                  SizedBox(height: 20),
+                                  SizedBox(height: 10),
+
                                   Expanded(
                                     child: Consumer<UserProvider>(
                                       builder: (context, userProvider, child) {
@@ -721,19 +773,15 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer>
                                                           horizontal: 14,
                                                           vertical: 10,
                                                         ),
-                                                    decoration: BoxDecoration(
-                                                      color: Colors.white
-                                                          .withOpacity(0.12),
-                                                      borderRadius:
-                                                          BorderRadius.circular(
-                                                            18,
-                                                          ),
-                                                    ),
+
                                                     child: const Text(
                                                       '처음으로 반응을 남겨보세요!',
                                                       style: TextStyle(
-                                                        color: Colors.white,
+                                                        color:
+                                                            AppColors.primary,
                                                         fontSize: 15,
+                                                        fontWeight:
+                                                            FontWeight.w600,
                                                         height: 1.2,
                                                       ),
                                                     ),
@@ -799,11 +847,14 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer>
                                     CommentInputSection(
                                       backgroundColor: const Color.fromARGB(
                                         255,
-                                        32,
-                                        31,
-                                        31,
-                                      ).withOpacity(0.5),
-                                      foregroundColor: Colors.white,
+                                        243,
+                                        243,
+                                        243,
+                                      ),
+                                      foregroundColor:
+                                          Theme.of(
+                                            context,
+                                          ).colorScheme.onSurface,
                                       commentController: _commentController,
                                       focusNode: _commentFocus,
                                       replyTarget: null,
@@ -986,6 +1037,7 @@ class _VideoPlayerWidget extends StatefulWidget {
   final VideoPlayerController? preloadedController;
   final bool hideScrubber; // 댓글 올라왔을 때 시크바 숨김
   final TransformationController? zoomController; // 확대 제어 전달용
+  final bool lockInteraction; // 상위 시트 열림 시 인터랙션 잠금
 
   const _VideoPlayerWidget({
     required this.url,
@@ -993,6 +1045,7 @@ class _VideoPlayerWidget extends StatefulWidget {
     this.preloadedController,
     this.hideScrubber = false,
     this.zoomController,
+    this.lockInteraction = false,
   });
 
   @override
@@ -1008,6 +1061,7 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
   bool _isSeeking = false;
   bool _wasPlayingBeforeSeek = false;
   Duration? _targetSeekPosition; // 드래그 중 목표 위치
+  double _gestureMinScale = 1.0; // 강한 축소 감지를 위한 최소 스케일
 
   @override
   void initState() {
@@ -1149,9 +1203,29 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
             child: Center(
               child: InteractiveViewer(
                 minScale: 1.0,
-                maxScale: 4.0,
-                panEnabled: true,
+                maxScale: widget.lockInteraction ? 1.0 : 4.0,
+                panEnabled: !widget.lockInteraction,
+                boundaryMargin: const EdgeInsets.all(200),
                 clipBehavior: Clip.none,
+                onInteractionStart: (_) {
+                  _gestureMinScale = 1.0;
+                  setState(() {});
+                },
+                onInteractionUpdate: (details) {
+                  _gestureMinScale =
+                      _gestureMinScale < details.scale
+                          ? _gestureMinScale
+                          : details.scale;
+                  setState(() {});
+                },
+                onInteractionEnd: (_) {
+                  if (_gestureMinScale < 1.0) {
+                    // 강한 축소 제스처 → 원래 크기로 즉시 복귀
+                    (widget.zoomController ?? TransformationController())
+                        .value = Matrix4.identity();
+                  }
+                  setState(() {});
+                },
                 transformationController: widget.zoomController,
                 child: FittedBox(
                   fit: videoFit,

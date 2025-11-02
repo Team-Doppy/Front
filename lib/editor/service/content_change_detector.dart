@@ -55,6 +55,48 @@ class ContentChangeDetector {
     }
   }
 
+  /// ID 비교를 위한 정규화: null/''/'null'/0 → null, 그 외는 문자열로 통일
+  static String? _normalizeId(dynamic value) {
+    if (value == null) return null;
+    if (value is num) {
+      if (value == 0) return null;
+      return value.toString();
+    }
+    final String s = value.toString().trim();
+    if (s.isEmpty) return null;
+    if (s.toLowerCase() == 'null') return null;
+    if (s == '0') return null;
+    return s;
+  }
+
+  /// 문자열 비교를 위한 정규화: null/''/'null' → null, 그 외 trim 적용
+  static String? _normalizeString(dynamic value) {
+    if (value == null) return null;
+    final String s = value.toString().trim();
+    if (s.isEmpty) return null;
+    if (s.toLowerCase() == 'null') return null;
+    return s;
+  }
+
+  /// 동등성 비교를 위한 숫자 파싱
+  static num? _asNumOrNull(dynamic value) {
+    if (value == null) return null;
+    if (value is num) return value;
+    if (value is String) {
+      final s = value.trim();
+      if (s.isEmpty) return null;
+      return num.tryParse(s);
+    }
+    return null;
+  }
+
+  /// 숫자 동등성(허용 오차 포함)
+  static bool _numEquals(num? a, num? b, {double epsilon = 0.0001}) {
+    if (a == null && b == null) return true;
+    if (a == null || b == null) return false;
+    return (a - b).abs() < epsilon;
+  }
+
   /// 문서 구조 및 내용 비교
   static bool _hasDocumentStructureChanged(
     Map<String, dynamic> original,
@@ -162,8 +204,8 @@ class ContentChangeDetector {
     int index,
   ) {
     // 1. 텍스트 내용 비교
-    final originalText = original['text'] as String?;
-    final currentText = current['text'] as String?;
+    final originalText = _normalizeString(original['text']);
+    final currentText = _normalizeString(current['text']);
 
     if (originalText != currentText) {
       print('[ContentChangeDetector] 노드[$index] 텍스트 변경');
@@ -201,21 +243,29 @@ class ContentChangeDetector {
       return true;
     }
 
-    // 2. 이미지 ID
-    if (original['imageId'] != current['imageId']) {
-      print('[ContentChangeDetector] 노드[$index] 이미지 ID 변경');
-      return true;
+    // 2. 이미지 ID (null/''/0 동등 처리, 타입 차이 보정)
+    final String? origImageId = _normalizeId(original['imageId']);
+    final String? currImageId = _normalizeId(current['imageId']);
+    if (origImageId != currImageId) {
+      // 두 값이 모두 존재할 때만 변경으로 간주 (한쪽만 비어있으면 서버/클라이언트 표현 차이로 무시)
+      if (origImageId != null && currImageId != null) {
+        print('[ContentChangeDetector] 노드[$index] 이미지 ID 변경');
+        return true;
+      }
     }
 
     // 3. 이미지 크기
-    if (original['width'] != current['width'] ||
-        original['height'] != current['height']) {
+    final num? oW = _asNumOrNull(original['width']);
+    final num? oH = _asNumOrNull(original['height']);
+    final num? cW = _asNumOrNull(current['width']);
+    final num? cH = _asNumOrNull(current['height']);
+    if (!_numEquals(oW, cW) || !_numEquals(oH, cH)) {
       print('[ContentChangeDetector] 노드[$index] 이미지 크기 변경');
       return true;
     }
 
     // 4. alt 텍스트
-    if (original['alt'] != current['alt']) {
+    if (_normalizeString(original['alt']) != _normalizeString(current['alt'])) {
       print('[ContentChangeDetector] 노드[$index] 이미지 alt 변경');
       return true;
     }
@@ -247,13 +297,55 @@ class ContentChangeDetector {
       return true;
     }
 
-    // 각 이미지 비교
+    // 각 이미지 비교 (ID/사이즈/alt 느슨 비교)
     for (int i = 0; i < originalImages.length; i++) {
       final origImg = originalImages[i] as Map<String, dynamic>?;
       final currImg = currentImages[i] as Map<String, dynamic>?;
 
+      // null 비교
+      if (origImg == null || currImg == null) {
+        if (origImg != currImg) {
+          print('[ContentChangeDetector] 노드[$index] 이미지 행[$i] 변경(null)');
+          return true;
+        }
+        continue;
+      }
+
+      // URL
+      if (_normalizeString(origImg['imageUrl']) !=
+          _normalizeString(currImg['imageUrl'])) {
+        print('[ContentChangeDetector] 노드[$index] 이미지 행[$i] URL 변경');
+        return true;
+      }
+
+      // ID (느슨 비교: 둘 다 존재할 때만 변경)
+      final String? oId = _normalizeId(origImg['imageId']);
+      final String? cId = _normalizeId(currImg['imageId']);
+      if (oId != cId && oId != null && cId != null) {
+        print('[ContentChangeDetector] 노드[$index] 이미지 행[$i] ID 변경');
+        return true;
+      }
+
+      // width/height
+      final num? oW = _asNumOrNull(origImg['width']);
+      final num? oH = _asNumOrNull(origImg['height']);
+      final num? cW = _asNumOrNull(currImg['width']);
+      final num? cH = _asNumOrNull(currImg['height']);
+      if (!_numEquals(oW, cW) || !_numEquals(oH, cH)) {
+        print('[ContentChangeDetector] 노드[$index] 이미지 행[$i] 크기 변경');
+        return true;
+      }
+
+      // alt
+      if (_normalizeString(origImg['alt']) !=
+          _normalizeString(currImg['alt'])) {
+        print('[ContentChangeDetector] 노드[$index] 이미지 행[$i] alt 변경');
+        return true;
+      }
+
+      // 기타 필드는 깊은 비교 (있다면)
       if (!_deepEquals(origImg, currImg)) {
-        print('[ContentChangeDetector] 노드[$index] 이미지 행[$i] 변경');
+        print('[ContentChangeDetector] 노드[$index] 이미지 행[$i] 기타 변경');
         return true;
       }
     }
@@ -273,21 +365,27 @@ class ContentChangeDetector {
     int index,
   ) {
     // 1. 비디오 URL
-    if (original['clipUrl'] != current['clipUrl']) {
+    if (_normalizeString(original['clipUrl']) !=
+        _normalizeString(current['clipUrl'])) {
       print('[ContentChangeDetector] 노드[$index] 클립 URL 변경');
       return true;
     }
 
     // 2. 썸네일 URL
-    if (original['thumbnailUrl'] != current['thumbnailUrl']) {
+    if (_normalizeString(original['thumbnailUrl']) !=
+        _normalizeString(current['thumbnailUrl'])) {
       print('[ContentChangeDetector] 노드[$index] 클립 썸네일 변경');
       return true;
     }
 
-    // 3. 비디오 ID
-    if (original['videoId'] != current['videoId']) {
-      print('[ContentChangeDetector] 노드[$index] 클립 ID 변경');
-      return true;
+    // 3. 비디오 ID (null/''/0 동등 처리)
+    final String? origVideoId = _normalizeId(original['videoId']);
+    final String? currVideoId = _normalizeId(current['videoId']);
+    if (origVideoId != currVideoId) {
+      if (origVideoId != null && currVideoId != null) {
+        print('[ContentChangeDetector] 노드[$index] 클립 ID 변경');
+        return true;
+      }
     }
 
     // 4. 메타데이터
@@ -305,25 +403,28 @@ class ContentChangeDetector {
     int index,
   ) {
     // 1. URL
-    if (original['url'] != current['url']) {
+    if (_normalizeString(original['url']) != _normalizeString(current['url'])) {
       print('[ContentChangeDetector] 노드[$index] 링크 URL 변경');
       return true;
     }
 
     // 2. 제목
-    if (original['title'] != current['title']) {
+    if (_normalizeString(original['title']) !=
+        _normalizeString(current['title'])) {
       print('[ContentChangeDetector] 노드[$index] 링크 제목 변경');
       return true;
     }
 
     // 3. 설명
-    if (original['description'] != current['description']) {
+    if (_normalizeString(original['description']) !=
+        _normalizeString(current['description'])) {
       print('[ContentChangeDetector] 노드[$index] 링크 설명 변경');
       return true;
     }
 
     // 4. 이미지 URL
-    if (original['imageUrl'] != current['imageUrl']) {
+    if (_normalizeString(original['imageUrl']) !=
+        _normalizeString(current['imageUrl'])) {
       print('[ContentChangeDetector] 노드[$index] 링크 이미지 변경');
       return true;
     }
@@ -372,19 +473,24 @@ class ContentChangeDetector {
     int index,
   ) {
     // spoiler
-    if (original['spoiler'] != current['spoiler']) {
+    final bool origSpoiler = original['spoiler'] == true;
+    final bool currSpoiler = current['spoiler'] == true;
+    if (origSpoiler != currSpoiler) {
       print('[ContentChangeDetector] 노드[$index] spoiler 변경');
       return true;
     }
 
-    // align
-    if (original['align'] != current['align']) {
+    // align: null 과 'center' 를 동일하게 취급 (export 시 center는 생략되기도 함)
+    final String origAlign = (original['align'] ?? 'center').toString();
+    final String currAlign = (current['align'] ?? 'center').toString();
+    if (origAlign != currAlign) {
       print('[ContentChangeDetector] 노드[$index] align 변경');
       return true;
     }
 
-    // fontFamily
-    if (original['fontFamily'] != current['fontFamily']) {
+    // fontFamily (null/'' 동등 처리)
+    if (_normalizeString(original['fontFamily']) !=
+        _normalizeString(current['fontFamily'])) {
       print('[ContentChangeDetector] 노드[$index] fontFamily 변경');
       return true;
     }
@@ -480,9 +586,14 @@ class ContentChangeDetector {
 
       switch (stickerType) {
         case 'image':
-          // 이미지 URL, ID 비교
-          if (origSticker['imageUrl'] != currSticker['imageUrl'] ||
-              origSticker['imageId'] != currSticker['imageId']) {
+          // 이미지 URL, ID 비교 (ID는 느슨 비교)
+          final String? sOrigId = _normalizeId(origSticker['imageId']);
+          final String? sCurrId = _normalizeId(currSticker['imageId']);
+          final bool urlChanged =
+              origSticker['imageUrl'] != currSticker['imageUrl'];
+          final bool idChanged =
+              (sOrigId != sCurrId) && (sOrigId != null && sCurrId != null);
+          if (urlChanged || idChanged) {
             print('[ContentChangeDetector] 스티커[$i] 이미지 데이터 변경');
             return true;
           }

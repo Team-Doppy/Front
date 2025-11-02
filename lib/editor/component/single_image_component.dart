@@ -215,16 +215,18 @@ class _SingleImageComponentState extends State<SingleImageComponent>
                       image,
                       if (hasCommentsFlag)
                         Positioned(
-                          top: 0,
-                          right: 0,
+                          top: -4,
+                          right: -4,
                           child: IgnorePointer(
                             child: Container(
                               padding: const EdgeInsets.symmetric(
-                                horizontal: 4,
-                                vertical: 4,
+                                horizontal: 7,
+                                vertical: 7,
                               ),
                               decoration: BoxDecoration(
-                                color: Colors.black.withOpacity(0.55),
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.surface.withOpacity(1),
                                 borderRadius: BorderRadius.circular(14),
                               ),
                               child: Row(
@@ -232,7 +234,7 @@ class _SingleImageComponentState extends State<SingleImageComponent>
                                 children: [
                                   Icon(
                                     Icons.chat_bubble_rounded,
-                                    color: Colors.white,
+                                    color: AppColors.primary,
                                     size: 14,
                                   ),
                                 ],
@@ -707,7 +709,8 @@ class _SingleImageComponentState extends State<SingleImageComponent>
         filterQuality: FilterQuality.low,
         frameBuilder: (context, child, frame, wasSyncLoaded) {
           if (wasSyncLoaded || frame != null) return child;
-          return ShimmerBox(width: w, height: 220);
+          final h = w / (4 / 5);
+          return ShimmerBox(width: w, height: h);
         },
       );
     }
@@ -737,7 +740,8 @@ class _SingleImageComponentState extends State<SingleImageComponent>
             filterQuality: FilterQuality.low,
             frameBuilder: (context, child, frame, wasSyncLoaded) {
               if (wasSyncLoaded || frame != null) return child;
-              return ShimmerBox(width: w, height: 220);
+              final h = w / (4 / 5);
+              return ShimmerBox(width: w, height: h);
             },
             errorBuilder:
                 (context, error, stack) => ImageErrorPlaceholder(
@@ -761,13 +765,18 @@ class _SingleImageComponentState extends State<SingleImageComponent>
     return Image.network(
       url,
       fit: BoxFit.contain,
-      loadingBuilder: (context, child, progress) {
-        if (progress == null) return child; // 로드 완료
-        return ShimmerBox(width: double.infinity, height: 200); // 로드 중
+      frameBuilder: (context, child, frame, wasSyncLoaded) {
+        // 프리로드(캐시 히트)된 경우 즉시 child 렌더 → 쉬머 미노출
+        if (wasSyncLoaded || frame != null) return child;
+        final w = MediaQuery.of(context).size.width;
+        final h = w / (4 / 5);
+        return ShimmerBox(width: w, height: h);
       },
       errorBuilder:
-          (context, error, stack) =>
-              ImageErrorPlaceholder(width: double.infinity, height: 200),
+          (context, error, stack) => ImageErrorPlaceholder(
+            width: MediaQuery.of(context).size.width,
+            height: MediaQuery.of(context).size.width / (4 / 5),
+          ),
     );
   }
 

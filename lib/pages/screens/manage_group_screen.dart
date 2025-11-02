@@ -1234,7 +1234,7 @@ class _FriendTile extends StatelessWidget {
       child: CommonProfileAvatar(
         imageUrl: data.url,
         username: data.username,
-        size: 115,
+        size: 110,
       ),
     );
 

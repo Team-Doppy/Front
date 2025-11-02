@@ -319,7 +319,7 @@ class _ThumbnailEditOverlayState extends State<ThumbnailEditOverlay> {
               : Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  const Spacer(flex: 2),
+                  const Spacer(flex: 1),
 
                   // 썸네일 카드 (키보드 열리면 숨김)
                   AnimatedCrossFade(

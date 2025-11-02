@@ -80,17 +80,21 @@ class ErrorHandler {
   }) {
     if (!context.mounted) return;
 
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final Color bgColor = isDark ? Colors.black : Colors.white;
+    final Color fgColor = isDark ? Colors.white : Colors.black87;
+
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Row(
           children: [
-            Icon(Icons.info_outline, color: Colors.white, size: 20),
+            Icon(Icons.info_outline, color: fgColor, size: 20),
             const SizedBox(width: 12),
             Expanded(
               child: Text(
                 message,
-                style: const TextStyle(
-                  color: Colors.white,
+                style: TextStyle(
+                  color: fgColor,
                   fontSize: 14,
                   fontWeight: FontWeight.w500,
                 ),
@@ -98,7 +102,7 @@ class ErrorHandler {
             ),
           ],
         ),
-        backgroundColor: Theme.of(context).colorScheme.onSurface,
+        backgroundColor: bgColor,
         behavior: SnackBarBehavior.floating,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
         duration: duration,

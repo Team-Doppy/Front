@@ -368,11 +368,11 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                                       GestureDetector(
                                         child: Icon(
                                           Icons.edit,
-                                          color: Theme.of(context)
-                                              .colorScheme
-                                              .onSurface
-                                              .withOpacity(0.7),
-                                          size: 20,
+                                          color:
+                                              Theme.of(
+                                                context,
+                                              ).colorScheme.onSurface,
+                                          size: 19,
                                         ),
                                         onTap: () {
                                           me != null
@@ -386,12 +386,12 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                                       // 설정 버튼
                                       GestureDetector(
                                         child: Icon(
-                                          Icons.settings,
-                                          color: Theme.of(context)
-                                              .colorScheme
-                                              .onSurface
-                                              .withOpacity(0.7),
-                                          size: 20,
+                                          Icons.menu,
+                                          color:
+                                              Theme.of(
+                                                context,
+                                              ).colorScheme.onSurface,
+                                          size: 24,
                                         ),
                                         onTap: () {
                                           Navigator.of(context).push(
@@ -401,7 +401,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                                           );
                                         },
                                       ),
-                                      SizedBox(width: 12),
+                                      SizedBox(width: 15),
                                     ],
                                   ],
                                 ),

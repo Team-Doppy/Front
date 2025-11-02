@@ -5,7 +5,7 @@ import '../../data/models/post_data.dart';
 import '../../utils/network_utils.dart';
 
 // 카테고리 필터 타입
-enum BaseFilter { all, private, groups, public }
+enum BaseFilter { all, private, friends, groups, public }
 
 /// 피드 Provider의 공통 기능을 담은 추상 부모 클래스
 abstract class BaseFeedProvider extends ChangeNotifier {
@@ -245,8 +245,9 @@ abstract class BaseFeedProvider extends ChangeNotifier {
   int get totalPostCount {
     final publicCount = publicPostCount;
     final privateCount = privatePostCount;
+    final friendsCount = friendsPostCount;
     final groupsCount = groupsPostCount;
-    return publicCount + privateCount + groupsCount;
+    return publicCount + privateCount + friendsCount + groupsCount;
   }
 
   int get privatePostCount {
@@ -273,6 +274,14 @@ abstract class BaseFeedProvider extends ChangeNotifier {
     return count;
   }
 
+  int get friendsPostCount {
+    if (_systemCategoryMappings == null) return 0;
+    final postIds = _systemCategoryMappings!['친구공유'] as List?;
+    final count = postIds?.length ?? 0;
+    print('[BaseFeedProvider] friendsPostCount: $count');
+    return count;
+  }
+
   String get selectedLabel {
     if (_selectedCategoryId != null) {
       final category = _categories.firstWhere(
@@ -287,6 +296,8 @@ abstract class BaseFeedProvider extends ChangeNotifier {
         return '전체';
       case BaseFilter.private:
         return '나만보기';
+      case BaseFilter.friends:
+        return '친구공유';
       case BaseFilter.groups:
         return '그룹공유';
       case BaseFilter.public:

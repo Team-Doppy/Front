@@ -19,6 +19,9 @@ class MyProfileFeedProvider extends BaseFeedProvider {
   bool _hasMore = true;
   int _currentPage = 0;
   int _totalPages = 0;
+  bool _hasUserReordered = false;
+
+  bool get hasUserReordered => _hasUserReordered;
 
   // 내 피드 캐시
   Map<String, dynamic>? _cachedUserInfo;
@@ -315,6 +318,7 @@ class MyProfileFeedProvider extends BaseFeedProvider {
           _currentPage++;
           _totalPages = totalPages;
           _hasMore = _currentPage < _totalPages;
+          // 초기 로드 이후에도 사용자가 직접 순서를 바꾸기 전까지는 서버 순서를 유지
 
           // 캐시 업데이트
           _saveToCache();
@@ -434,6 +438,7 @@ class MyProfileFeedProvider extends BaseFeedProvider {
       await blogService.reorderCategories(orderedIntIds);
       print('[MyProfileFeedProvider] 서버 카테고리 재정렬 성공');
       _saveToCache(); // Update cache on success
+      _hasUserReordered = true; // 사용자가 명시적으로 순서를 바꿈
     } catch (e) {
       print('⚠️ [MyProfileFeedProvider] 서버 재정렬 실패, 롤백: $e');
       categoriesInternal

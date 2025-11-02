@@ -275,6 +275,33 @@ class BlogService {
     }
   }
 
+  /// 카테고리 이름 수정
+  Future<void> updateCategoryName({
+    required int categoryId,
+    required String name,
+  }) async {
+    print('[BlogService] 카테고리 이름 수정 요청: id=$categoryId, name=$name');
+    try {
+      await _dio.put('/api/categories/$categoryId', data: {'name': name});
+      print('[BlogService] 카테고리 이름 수정 성공: $categoryId');
+    } catch (e) {
+      print('[BlogService] 카테고리 이름 수정 실패: $e');
+      if (e is DioException) {
+        if (e.response?.statusCode == 400) {
+          final message = e.response?.data?['message'] ?? '잘못된 요청입니다.';
+          throw Exception(message);
+        } else if (e.response?.statusCode == 401) {
+          throw Exception('인증이 필요합니다.');
+        } else if (e.response?.statusCode == 404) {
+          throw Exception('카테고리를 찾을 수 없습니다.');
+        } else {
+          throw Exception('서버 오류가 발생했습니다. (${e.response?.statusCode})');
+        }
+      }
+      rethrow;
+    }
+  }
+
   /// 카테고리 순서 변경
   Future<void> reorderCategories(List<int> orderedIds) async {
     print('[BlogService] 카테고리 순서 변경 요청: $orderedIds');
@@ -549,14 +576,16 @@ class BlogService {
     );
 
     // 서버 DTO에 맞춰 매핑: title, author, thumbnailImageUrl, content(JsonNode), accessLevel
-    // accessLevel은 PostExporter에서 직접 설정한 값만 사용 (PUBLIC | PRIVATE | GROUPS)
+    // accessLevel은 PostExporter에서 직접 설정한 값만 사용 (PUBLIC | PRIVATE | FRIENDS | GROUPS)
     // visibility 객체는 사용하지 않음
     final dynamic accessLevelRaw = postData['accessLevel'];
     String accessLevel;
     if (accessLevelRaw != null) {
       accessLevel = accessLevelRaw.toString().toUpperCase();
       // 유효한 값인지 검증
-      if (accessLevel != 'PRIVATE' && accessLevel != 'GROUPS') {
+      if (accessLevel != 'PRIVATE' &&
+          accessLevel != 'GROUPS' &&
+          accessLevel != 'FRIENDS') {
         accessLevel = 'PUBLIC'; // 기본값
       }
       debugPrint('[UploadPost] accessLevel: $accessLevel');
@@ -747,7 +776,9 @@ class BlogService {
     if (accessLevelRaw != null) {
       accessLevel = accessLevelRaw.toString().toUpperCase();
       // 유효한 값인지 검증
-      if (accessLevel != 'PRIVATE' && accessLevel != 'GROUPS') {
+      if (accessLevel != 'PRIVATE' &&
+          accessLevel != 'GROUPS' &&
+          accessLevel != 'FRIENDS') {
         accessLevel = 'PUBLIC'; // 기본값
       }
       debugPrint('[UpdatePost] accessLevel: $accessLevel');
@@ -875,7 +906,7 @@ class BlogService {
       print('[BlogService] Fetching home posts: page=$page, size=$size');
 
       final response = await _dio.get(
-        '/api/posts/home',
+        '/api/posts/friends',
         queryParameters: {'page': page, 'size': size},
         options: Options(receiveTimeout: const Duration(seconds: 10)),
       );

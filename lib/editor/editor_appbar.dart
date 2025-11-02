@@ -14,6 +14,7 @@ import 'package:doppy/providers/group_provider.dart';
 import 'package:doppy/editor/overlay/thumbnail_edit_overlay.dart';
 import 'package:doppy/providers/user_provider.dart';
 import 'package:doppy/data/services/blog_service.dart';
+import 'package:doppy/data/services/upload_service.dart';
 
 class EditModeAppBar extends StatefulWidget {
   final EditorService editorService;
@@ -874,6 +875,17 @@ class EditorAppBar extends StatelessWidget {
   });
 
   Future<void> _onNextButtonTapped(BuildContext context) async {
+    // 업로드 작업 이중 가드: 업로드 중이면 진행 차단
+    final upload = context.read<UploadService>();
+    if (upload.hasActiveUploads()) {
+      await DialogUtils.showInfoDialog(
+        context,
+        title: '업로드 중',
+        message: '아직 업로드 중인 미디어가 있어요. 잠시만 기다려주세요.',
+      );
+      return;
+    }
+
     // 제목과 본문 검증
     final hasTitle = editorService.hasNonEmptyTitle();
     final hasBody = editorService.hasNonEmptyBody();

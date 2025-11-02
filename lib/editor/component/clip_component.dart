@@ -1,3 +1,4 @@
+import 'dart:typed_data';
 import 'dart:ui';
 import 'dart:io';
 
@@ -10,8 +11,9 @@ import 'dart:math' as math;
 import 'package:provider/provider.dart';
 import 'package:doppy/editor/component/row_image_component.dart';
 import 'package:video_player/video_player.dart';
-import 'package:doppy/editor/service/post_reader_service.dart';
+import 'package:video_thumbnail/video_thumbnail.dart';
 import 'package:doppy/pages/components/shimmer_box.dart';
+import 'package:doppy/editor/service/post_reader_service.dart';
 
 /// VideoPlayer 컨트롤러를 저장하는 맵
 final videoPlayerControllers = <String, VideoPlayerControllerProxy>{};
@@ -161,8 +163,9 @@ class PinComponentViewModel extends SingleColumnLayoutComponentViewModel {
 }
 
 class PinComponentBuilder implements ComponentBuilder {
-  const PinComponentBuilder({this.dragService});
+  const PinComponentBuilder({this.dragService, this.isEditing = false});
   final DragService? dragService;
+  final bool isEditing; // 에디터에서는 true, 리더에서는 false
 
   @override
   Widget? createComponent(
@@ -179,6 +182,7 @@ class PinComponentBuilder implements ComponentBuilder {
         localPath: viewModel.localPath,
         thumbnailPath: viewModel.thumbnailPath,
         dragService: dragService,
+        isEditing: isEditing,
       );
     }
     return null;
@@ -213,6 +217,7 @@ class _PinComponent extends StatefulWidget {
     required this.localPath,
     required this.thumbnailPath,
     this.dragService,
+    this.isEditing = false,
   }) : _componentKey = componentKey,
        super(key: componentKey);
 
@@ -224,6 +229,7 @@ class _PinComponent extends StatefulWidget {
   final String localPath;
   final String thumbnailPath;
   final DragService? dragService;
+  final bool isEditing;
 
   @override
   State<_PinComponent> createState() => _PinComponentState();
@@ -235,6 +241,42 @@ class _PinComponentState extends State<_PinComponent> with DocumentComponent {
   static const double marginTop = 4;
   static const double marginBottom = 2;
   static const double paddingWithText = 15;
+
+  // 업로드 중 로컬 비디오 썸네일 캐시
+  Uint8List? _localVideoThumbnailBytes;
+  String? _localVideoThumbPath;
+  double? _localVideoThumbAspectRatio; // width / height
+
+  Future<void> _ensureLocalVideoThumbnail() async {
+    final String path = widget.localPath;
+    if (path.isEmpty) return;
+    if (_localVideoThumbPath == path && _localVideoThumbnailBytes != null)
+      return;
+    _localVideoThumbPath = path;
+    try {
+      final bytes = await VideoThumbnail.thumbnailData(
+        video: path,
+        imageFormat: ImageFormat.JPEG,
+        quality: 70,
+      );
+      if (mounted && _localVideoThumbPath == path) {
+        // 썸네일 바이트 저장 + 실제 가로세로 비율 계산
+        double? aspect;
+        try {
+          if (bytes != null) {
+            final img = await decodeImageFromList(bytes);
+            if (img.width > 0 && img.height > 0) {
+              aspect = img.width / img.height;
+            }
+          }
+        } catch (_) {}
+        setState(() {
+          _localVideoThumbnailBytes = bytes;
+          if (aspect != null) _localVideoThumbAspectRatio = aspect;
+        });
+      }
+    } catch (_) {}
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -641,10 +683,12 @@ class _PinComponentState extends State<_PinComponent> with DocumentComponent {
     final screenWidth = MediaQuery.of(context).size.width;
     final maxHeight = screenWidth * 1.5;
 
-    // 로컬 파일 경로가 있으면 (placeholder 상태) 썸네일과 로딩 표시
+    // 로컬 파일 경로가 있으면 (업로드 중) 썸네일과 로딩 표시
     if (widget.localPath.isNotEmpty) {
-      // 기본 비율로 계산한 높이
-      final calculatedHeight = screenWidth / 16 * 9;
+      _ensureLocalVideoThumbnail();
+      // 기본 비율로 계산한 높이 (썸네일이 준비되면 실제 비율 사용)
+      final double aspect = _localVideoThumbAspectRatio ?? (16 / 9);
+      final calculatedHeight = screenWidth / aspect;
       final finalHeight =
           calculatedHeight > maxHeight ? maxHeight : calculatedHeight;
 
@@ -664,14 +708,19 @@ class _PinComponentState extends State<_PinComponent> with DocumentComponent {
                   height: calculatedHeight,
                 ),
               ),
-              // 로딩 쉬머 오버레이
+              // 업로드 진행 오버레이 (이미지 업로드와 통일: 검정 0.6)
               Positioned.fill(
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(12),
-                  child: ShimmerBox(
-                    width: screenWidth,
-                    height: calculatedHeight,
-                    borderRadius: BorderRadius.circular(12),
+                child: Container(
+                  color: Colors.black.withOpacity(0.6),
+                  child: const Center(
+                    child: SizedBox(
+                      width: 28,
+                      height: 28,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                      ),
+                    ),
                   ),
                 ),
               ),
@@ -680,39 +729,38 @@ class _PinComponentState extends State<_PinComponent> with DocumentComponent {
         );
       }
 
-      // 썸네일이 없으면 기본 아이콘 표시
+      // 썸네일이 없으면 비디오 첫 프레임 썸네일 생성 후 표시 (도착 전까지는 쉬머)
       return SizedBox(
         width: screenWidth,
         height: finalHeight,
-        child: ClipRRect(
-          child: Image.file(
-            File(widget.localPath),
-            fit: BoxFit.cover,
-            width: screenWidth,
-            height: calculatedHeight,
-            errorBuilder: (context, error, stackTrace) {
-              return Container(
+        child: Stack(
+          children: [
+            if (_localVideoThumbnailBytes != null)
+              Image.memory(
+                _localVideoThumbnailBytes!,
+                fit: BoxFit.cover,
                 width: screenWidth,
-                height: finalHeight,
-                color: Colors.grey[200],
-                child: Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(Icons.video_file, size: 48, color: Colors.grey),
-                      SizedBox(height: 8),
-                      Text('미리보기', style: TextStyle(color: Colors.grey)),
-                      SizedBox(height: 4),
-                      Text(
-                        widget.label.isNotEmpty ? widget.label : 'clip',
-                        style: TextStyle(fontSize: 12, color: Colors.grey[600]),
-                      ),
-                    ],
+                height: calculatedHeight,
+              )
+            else
+              ShimmerBox(width: screenWidth, height: screenWidth / (4 / 5)),
+            // 업로드 진행 오버레이 (이미지 업로드와 통일: 검정 0.6)
+            Positioned.fill(
+              child: Container(
+                color: Colors.black.withOpacity(0.6),
+                child: const Center(
+                  child: SizedBox(
+                    width: 28,
+                    height: 28,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                    ),
                   ),
                 ),
-              );
-            },
-          ),
+              ),
+            ),
+          ],
         ),
       );
     }
@@ -722,6 +770,7 @@ class _PinComponentState extends State<_PinComponent> with DocumentComponent {
       return _VisibilityAwareVideoPlayer(
         url: widget.url,
         thumbnailPath: widget.thumbnailPath,
+        isEditing: widget.isEditing,
       );
     }
 
@@ -755,10 +804,12 @@ class _PinComponentState extends State<_PinComponent> with DocumentComponent {
 class _VisibilityAwareVideoPlayer extends StatefulWidget {
   final String url;
   final String thumbnailPath;
+  final bool isEditing;
 
   const _VisibilityAwareVideoPlayer({
     required this.url,
     required this.thumbnailPath,
+    required this.isEditing,
   });
 
   @override
@@ -808,12 +859,8 @@ class _VisibilityAwareVideoPlayerState
     final visibleHeight = math.max(0.0, visibleBottom - visibleTop);
     final visibleRatio = size.height > 0 ? visibleHeight / size.height : 0.0;
 
-    // 보수적으로 설정: 비디오의 최소 50%가 화면에 보여야 재생
-    // 그리고 중앙 부분이 화면 안에 있어야 함
-    final centerY = position.dy + size.height / 2;
-    final isCenterVisible = centerY > viewportTop && centerY < viewportBottom;
-
-    final isVisible = visibleRatio >= 0.5 && isCenterVisible;
+    // 기준 상향: 최소 60%가 보이면 재생
+    final isVisible = visibleRatio >= 0.7;
 
     if (_isVisible != isVisible) {
       setState(() {
@@ -831,6 +878,7 @@ class _VisibilityAwareVideoPlayerState
         url: widget.url,
         thumbnailPath: widget.thumbnailPath,
         shouldAutoPlay: _isVisible,
+        isEditing: widget.isEditing,
       ),
     );
   }
@@ -841,11 +889,13 @@ class _VideoPlayerWidget extends StatefulWidget {
   final String url;
   final String thumbnailPath;
   final bool shouldAutoPlay;
+  final bool isEditing;
 
   const _VideoPlayerWidget({
     required this.url,
     required this.thumbnailPath,
     this.shouldAutoPlay = true,
+    required this.isEditing,
   });
 
   @override
@@ -860,12 +910,50 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
   bool _hasPlayedOnce = false;
   bool _isPlaying = false;
   bool _isPreloaded = false; // 프리로드된 컨트롤러인지 여부
+  void Function(String url)? _onClipPreloaded;
 
   @override
   void initState() {
     super.initState();
-    _initializeVideo();
+    // 항상 프록시 등록(외부 제어용)
     _registerVideoPlayerController();
+    // 프리로드 컨트롤러가 있으면 동기 부착하여 첫 빌드에서 바로 표시
+    final preloaded = PostReaderService.getPreloadedController(widget.url);
+    if (!widget.isEditing && preloaded != null) {
+      _controller = preloaded;
+      _isPreloaded = true;
+      _isInitialized = preloaded.value.isInitialized;
+      try {
+        _controller!.addListener(_onVideoStatusChanged);
+        _controller!.setVolume(_isMuted ? 0.0 : 1.0);
+      } catch (_) {}
+      if (widget.shouldAutoPlay) {
+        WidgetsBinding.instance.addPostFrameCallback((_) => _playVideo());
+      }
+    } else if (widget.isEditing || widget.shouldAutoPlay) {
+      _initializeVideo();
+    }
+
+    // 프리로드 완료 알림 구독 → 나중에 도착해도 즉시 부착
+    _onClipPreloaded = (url) {
+      if (!mounted) return;
+      if (url != widget.url) return;
+      if (_controller != null || _isInitialized) return;
+      final pre = PostReaderService.getPreloadedController(widget.url);
+      if (pre == null) return;
+      _controller = pre;
+      _isPreloaded = true;
+      _isInitialized = pre.value.isInitialized;
+      try {
+        _controller!.addListener(_onVideoStatusChanged);
+        _controller!.setVolume(_isMuted ? 0.0 : 1.0);
+      } catch (_) {}
+      if (widget.shouldAutoPlay) {
+        _playVideo();
+      }
+      setState(() {});
+    };
+    PostReaderService.addClipPreloadedListener(_onClipPreloaded!);
   }
 
   void _registerVideoPlayerController() {
@@ -884,6 +972,10 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
 
   @override
   void dispose() {
+    if (_onClipPreloaded != null) {
+      PostReaderService.removeClipPreloadedListener(_onClipPreloaded!);
+      _onClipPreloaded = null;
+    }
     // 컨트롤러 해제
     final key = 'video_${widget.url.hashCode}';
     videoPlayerControllers.remove(key);
@@ -908,6 +1000,12 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
   @override
   void didUpdateWidget(_VideoPlayerWidget oldWidget) {
     super.didUpdateWidget(oldWidget);
+    // 지연 초기화: 가시성 변화로 재생이 필요해졌는데 컨트롤러가 없으면 초기화
+    if (!oldWidget.shouldAutoPlay && widget.shouldAutoPlay) {
+      if (_controller == null && !_isInitialized && !widget.isEditing) {
+        _initializeVideo();
+      }
+    }
     // shouldAutoPlay가 변경되면 재생/정지
     if (oldWidget.shouldAutoPlay != widget.shouldAutoPlay &&
         _controller != null &&
@@ -926,27 +1024,30 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
 
   Future<void> _initializeVideo() async {
     try {
-      // 프리로드된 컨트롤러 확인 (제거하지 않고 참조만)
-      final preloaded = PostReaderService.getPreloadedController(widget.url);
-
-      if (preloaded != null) {
-        // 프리로드된 컨트롤러 사용 (캐시에는 유지 - 풀스크린 전환 시 재사용)
-        _controller = preloaded;
-        _isPreloaded = true;
-        print('[ClipComponent] 프리로드 컨트롤러 재사용: ${widget.url}');
-
-        // 이미 초기화되어 있으므로 즉시 사용 가능
-        if (_controller!.value.isInitialized) {
-          _isInitialized = true;
-        } else {
-          await _controller!.initialize();
-        }
-      } else {
-        // 프리로드 안 되어 있으면 새로 생성
+      if (widget.isEditing) {
+        // 수정 모드: 항상 새 컨트롤러 생성
         _controller = VideoPlayerController.networkUrl(Uri.parse(widget.url));
         _isPreloaded = false;
         await _controller!.initialize();
-        print('[ClipComponent] 새 컨트롤러 생성: ${widget.url}');
+        print('[ClipComponent] (편집) 새 컨트롤러 생성: ${widget.url}');
+      } else {
+        // 읽기 모드: 프리로드 컨트롤러가 있으면 재사용, 없으면 새로 생성
+        final preloaded = PostReaderService.getPreloadedController(widget.url);
+        if (preloaded != null) {
+          _controller = preloaded;
+          _isPreloaded = true;
+          print('[ClipComponent] (읽기) 프리로드 컨트롤러 재사용: ${widget.url}');
+          if (_controller!.value.isInitialized) {
+            _isInitialized = true;
+          } else {
+            await _controller!.initialize();
+          }
+        } else {
+          _controller = VideoPlayerController.networkUrl(Uri.parse(widget.url));
+          _isPreloaded = false;
+          await _controller!.initialize();
+          print('[ClipComponent] (읽기) 새 컨트롤러 생성: ${widget.url}');
+        }
       }
 
       // 음소거 설정
@@ -960,6 +1061,22 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
       // 초기화 후 즉시 재생
       if (widget.shouldAutoPlay) {
         _playVideo();
+      }
+
+      // 중복 프리로드 컨트롤러 정리: 위젯이 자체 생성했는데, 이후 프리로드가 완료되어
+      // 캐시에 동일 URL 컨트롤러가 들어온 경우 캐시의 것을 회수/폐기하여 중복을 방지
+      if (!widget.isEditing && !_isPreloaded) {
+        WidgetsBinding.instance.addPostFrameCallback((_) async {
+          try {
+            final duplicated = PostReaderService.takePreloadedController(
+              widget.url,
+            );
+            if (duplicated != null && duplicated != _controller) {
+              await duplicated.dispose();
+              print('[ClipComponent] 중복 프리로드 컨트롤러 정리: ${widget.url}');
+            }
+          } catch (_) {}
+        });
       }
     } catch (e) {
       print('[VideoPlayer] 초기화 실패: $e');

@@ -7,6 +7,7 @@ import 'package:doppy/editor/service/sticker_service.dart';
 import 'package:doppy/pages/screens/post_reader_screen.dart';
 import 'package:doppy/providers/feed_provider/my_profile_feed_provider.dart';
 import 'package:doppy/providers/user_provider.dart';
+import 'package:doppy/theme/app_colors.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -58,6 +59,7 @@ class _PostExportScreenState extends State<PostExportScreen>
   final Set<int> _selectedAudienceGroupIds = {};
   bool _audienceSelectAll = false;
   bool _audiencePrivateOnly = false;
+  bool _audienceFriendsOnly = false;
 
   // Step 3: 카테고리 선택
   int? _selectedCategoryId = 0; // 기본값: 미지정 카테고리 (ID: 0)
@@ -237,14 +239,6 @@ class _PostExportScreenState extends State<PostExportScreen>
 
   // 부드러운 애니메이션과 함께 닫기
   Future<void> _closeWithAnimation() async {
-    // 썸네일 정리
-    try {
-      NodeComponentService().clearTempThumbnail(_nsKey);
-      print('[PostExport] 에디터 닫기 - 로컬 썸네일 이미지 정리 완료');
-    } catch (e) {
-      print('[PostExport] 에디터 닫기 - 썸네일 정리 실패: $e');
-    }
-
     // 닫힐 때는 빠르게 (250ms)
     _intro.duration = const Duration(milliseconds: 250);
     await _intro.reverse();
@@ -283,6 +277,7 @@ class _PostExportScreenState extends State<PostExportScreen>
     // 3. 그룹 공유시 그룹 선택 확인
     if (!_audienceSelectAll &&
         !_audiencePrivateOnly &&
+        !_audienceFriendsOnly &&
         _selectedAudienceGroupIds.isEmpty) {
       return false;
     }
@@ -312,6 +307,7 @@ class _PostExportScreenState extends State<PostExportScreen>
     }
     if (!_audienceSelectAll &&
         !_audiencePrivateOnly &&
+        !_audienceFriendsOnly &&
         _selectedAudienceGroupIds.isEmpty) {
       return '그룹 공유를 선택했을 경우 최소 1개 이상의 그룹을 선택해주세요.';
     }
@@ -343,9 +339,10 @@ class _PostExportScreenState extends State<PostExportScreen>
         return;
       }
 
-      // 4. 그룹 공유시 그룹 선택 검증
+      // 4. 그룹 공유시 그룹 선택 검증 (친구공유는 예외)
       if (!_audienceSelectAll &&
           !_audiencePrivateOnly &&
+          !_audienceFriendsOnly &&
           _selectedAudienceGroupIds.isEmpty) {
         ErrorHandler.showError(context, '그룹 공유를 선택했을 경우 최소 1개 이상의 그룹을 선택해주세요.');
         return;
@@ -377,9 +374,13 @@ class _PostExportScreenState extends State<PostExportScreen>
       debugPrint('제목: $finalTitle');
       debugPrint('컨텐츠: $finalExcerpt');
       debugPrint('썸네일: $_exportedThumbnailImageUrl');
-      debugPrint(
-        '공개 범위: ${_audienceSelectAll ? "PUBLIC" : (_audiencePrivateOnly ? "PRIVATE" : "GROUPS")}',
-      );
+      final scopeLabel =
+          _audienceSelectAll
+              ? 'PUBLIC'
+              : (_audiencePrivateOnly
+                  ? 'PRIVATE'
+                  : (_audienceFriendsOnly ? 'FRIENDS' : 'GROUPS'));
+      debugPrint('공개 범위: $scopeLabel');
       if (!_audienceSelectAll && !_audiencePrivateOnly) {
         debugPrint('선택된 그룹: $_selectedAudienceGroupIds');
       }
@@ -494,6 +495,49 @@ class _PostExportScreenState extends State<PostExportScreen>
     editedBase['title'] = editedTitle;
     editedBase['summary'] = editedExcerpt; // 사용자가 편집한 내용을 summary로 설정
 
+    // 발행 직전 정리: 서버에 업로드되지 않은 로컬 이미지/영상 노드 제거
+    try {
+      bool _isHttpUrl(String u) =>
+          u.startsWith('http://') || u.startsWith('https://');
+      final dynamic contentDyn = editedBase['content'];
+      if (contentDyn is Map) {
+        final List<dynamic> nodes = List<dynamic>.from(
+          contentDyn['nodes'] as List? ?? const [],
+        );
+        final List<dynamic> cleaned = [];
+        for (final n in nodes) {
+          if (n is! Map) continue;
+          final String type = (n['type'] ?? '').toString();
+          if (type == 'image') {
+            final Map<String, dynamic>? data =
+                (n['data'] as Map?)?.cast<String, dynamic>();
+            final String url = (data?['url'] ?? n['url'] ?? '').toString();
+            if (_isHttpUrl(url)) cleaned.add(n);
+          } else if (type == 'imageRow') {
+            final List<dynamic> urls = List<dynamic>.from(
+              n['urls'] ?? const [],
+            );
+            final List<String> httpUrls =
+                urls.map((e) => e.toString()).where(_isHttpUrl).toList();
+            if (httpUrls.isNotEmpty) {
+              n['urls'] = httpUrls;
+              cleaned.add(n);
+            }
+          } else if (type == 'video' || type == 'clip') {
+            final Map<String, dynamic>? data =
+                (n['data'] as Map?)?.cast<String, dynamic>();
+            final String url = (data?['url'] ?? n['url'] ?? '').toString();
+            if (_isHttpUrl(url)) cleaned.add(n);
+          } else {
+            cleaned.add(n); // 그 외 노드는 그대로 유지
+          }
+        }
+        editedBase['content'] = {...contentDyn, 'nodes': cleaned};
+      }
+    } catch (e) {
+      debugPrint('[PostExport] 로컬 미디어 정리 중 오류: $e');
+    }
+
     // 디버그 로깅: 실제 전달되는 값 확인
     debugPrint('===== [_buildFinalJson] 공개 범위 설정 =====');
     debugPrint('_audiencePrivateOnly: $_audiencePrivateOnly');
@@ -505,6 +549,7 @@ class _PostExportScreenState extends State<PostExportScreen>
       base: editedBase,
       privateOnly: _audiencePrivateOnly,
       publicOnly: _audienceSelectAll,
+      friendsOnly: _audienceFriendsOnly,
       selectedGroupIds: _selectedAudienceGroupIds.toList(),
       categoryId: _selectedCategoryId, // 카테고리 ID 전달
       createdAt: DateTime.now(),
@@ -556,7 +601,6 @@ class _PostExportScreenState extends State<PostExportScreen>
   }
 
   Widget _buildDynamicBackground() {
-    final isDark = Theme.of(context).colorScheme.brightness == Brightness.dark;
     return Positioned.fill(
       child: Stack(
         children: [
@@ -568,11 +612,10 @@ class _PostExportScreenState extends State<PostExportScreen>
                       _exportedThumbnailImageUrl,
                       fit: BoxFit.cover,
                       errorBuilder:
-                          (context, error, stackTrace) => Container(
-                            color: Theme.of(context).colorScheme.surface,
-                          ),
+                          (context, error, stackTrace) =>
+                              Container(color: AppColors.darkSurface),
                     )
-                    : Container(color: Theme.of(context).colorScheme.surface),
+                    : Container(color: AppColors.darkSurface),
           ),
           // 블러 오버레이 (썸네일이 있을 때만)
           if (_exportedThumbnailImageUrl.isNotEmpty)
@@ -585,27 +628,24 @@ class _PostExportScreenState extends State<PostExportScreen>
                       begin: Alignment.topCenter,
                       end: Alignment.bottomCenter,
                       colors: [
-                        isDark
-                            ? Theme.of(
-                              context,
-                            ).colorScheme.background.withOpacity(0.8)
-                            : Theme.of(
-                              context,
-                            ).colorScheme.background.withOpacity(0.8),
-                        isDark
-                            ? Theme.of(
-                              context,
-                            ).colorScheme.background.withOpacity(0.8)
-                            : Theme.of(
-                              context,
-                            ).colorScheme.background.withOpacity(0.6),
-                        isDark
-                            ? Theme.of(
-                              context,
-                            ).colorScheme.background.withOpacity(0.8)
-                            : Theme.of(
-                              context,
-                            ).colorScheme.background.withOpacity(0.5),
+                        const ui.Color.fromARGB(
+                          235,
+                          45,
+                          45,
+                          45,
+                        ).withOpacity(0.8),
+                        const ui.Color.fromARGB(
+                          235,
+                          45,
+                          45,
+                          45,
+                        ).withOpacity(0.8),
+                        const ui.Color.fromARGB(
+                          235,
+                          45,
+                          45,
+                          45,
+                        ).withOpacity(0.8),
                       ],
                       stops: const [0.0, 0.7, 1.0],
                     ),
@@ -652,9 +692,10 @@ class _PostExportScreenState extends State<PostExportScreen>
             editedTitle.isNotEmpty &&
             editedExcerpt.isNotEmpty;
       case 1: // Step 2: 공개 범위
-        // 전체공개, 나만보기, 또는 그룹 중 하나는 선택되어야 함
+        // 전체공개, 나만보기, 전체 친구 또는 그룹 중 하나는 선택되어야 함
         return _audienceSelectAll ||
             _audiencePrivateOnly ||
+            _audienceFriendsOnly ||
             _selectedAudienceGroupIds.isNotEmpty;
       case 2: // Step 3: 카테고리
         return true; // 항상 진행 가능
@@ -816,7 +857,7 @@ class _PostExportScreenState extends State<PostExportScreen>
             child: Text(
               '수정완료',
               style: TextStyle(
-                color: Theme.of(context).colorScheme.onSurface,
+                color: AppColors.darkTextPrimary,
                 fontWeight: FontWeight.w500,
               ),
             ),
@@ -848,8 +889,8 @@ class _PostExportScreenState extends State<PostExportScreen>
           child: Text(
             '이전',
             style: TextStyle(
-              color: Theme.of(context).colorScheme.onSurface.withOpacity(0.9),
-
+              color: AppColors.darkTextPrimary.withOpacity(0.9),
+              fontSize: 15,
               fontWeight: FontWeight.w500,
             ),
           ),
@@ -865,10 +906,8 @@ class _PostExportScreenState extends State<PostExportScreen>
               style: TextStyle(
                 color:
                     _canProceedToNextStep()
-                        ? Theme.of(context).colorScheme.onSurface.withOpacity(1)
-                        : Theme.of(
-                          context,
-                        ).colorScheme.onSurface.withOpacity(0.3),
+                        ? AppColors.darkTextPrimary.withOpacity(1)
+                        : AppColors.darkTextPrimary.withOpacity(0.3),
                 fontWeight: FontWeight.w500,
               ),
             ),
@@ -914,11 +953,9 @@ class _PostExportScreenState extends State<PostExportScreen>
                           '업로드',
                           key: const ValueKey('text'),
                           style: TextStyle(
-                            color: Theme.of(
-                              context,
-                            ).colorScheme.onSurface.withOpacity(0.9),
-                            fontWeight: FontWeight.w600,
-                            fontSize: 16,
+                            color: Colors.white.withOpacity(0.9),
+                            fontWeight: FontWeight.w500,
+                            fontSize: 15,
                           ),
                         ),
               ),
@@ -935,7 +972,7 @@ class _PostExportScreenState extends State<PostExportScreen>
               context,
             ).colorScheme.onSurface.withOpacity(0.1),
             valueColor: AlwaysStoppedAnimation<Color>(
-              Theme.of(context).colorScheme.onSurface,
+              AppColors.darkTextPrimary,
             ),
           ),
         ),
@@ -989,9 +1026,8 @@ class _PostExportScreenState extends State<PostExportScreen>
                                       cardRadius + 2,
                                     ),
                                     border: Border.all(
-                                      color: Theme.of(
-                                        context,
-                                      ).colorScheme.onSurface.withOpacity(0.1),
+                                      color: AppColors.darkTextPrimary
+                                          .withOpacity(0.1),
                                       width: 2,
                                     ),
                                   ),
@@ -1056,7 +1092,7 @@ class _PostExportScreenState extends State<PostExportScreen>
                               child: Icon(
                                 Icons.camera_alt,
                                 size: 18,
-                                color: Theme.of(context).colorScheme.surface,
+                                color: AppColors.darkSurface,
                               ),
                             ),
                           ),*/
@@ -1089,9 +1125,7 @@ class _PostExportScreenState extends State<PostExportScreen>
                       focusNode: _titleFocusNode,
                       textAlign: TextAlign.center,
                       style: TextStyle(
-                        color: Theme.of(
-                          context,
-                        ).colorScheme.onSurface.withOpacity(0.9),
+                        color: AppColors.darkTextPrimary.withOpacity(0.9),
                         fontSize: 35,
                         fontWeight: FontWeight.bold,
                         letterSpacing: -0.2,
@@ -1119,9 +1153,7 @@ class _PostExportScreenState extends State<PostExportScreen>
                       focusNode: _excerptFocusNode,
                       textAlign: TextAlign.center,
                       style: TextStyle(
-                        color: Theme.of(
-                          context,
-                        ).colorScheme.onSurface.withOpacity(0.7),
+                        color: AppColors.darkTextPrimary.withOpacity(0.7),
                         fontSize: 14,
                         fontWeight: FontWeight.w300,
                         height: 1.8,
@@ -1152,8 +1184,6 @@ class _PostExportScreenState extends State<PostExportScreen>
 
   // Step 2: 공개 범위 선택
   Widget _buildStep2AudienceSelection() {
-    final isDarkMode =
-        Theme.of(context).colorScheme.brightness == Brightness.dark;
     return Consumer<GroupProvider>(
       builder: (context, groupProvider, child) {
         // 그룹 목록 로드
@@ -1188,7 +1218,7 @@ class _PostExportScreenState extends State<PostExportScreen>
                 style: Theme.of(context).textTheme.headlineSmall?.copyWith(
                   fontWeight: FontWeight.bold,
                   fontSize: 22,
-                  color: Theme.of(context).colorScheme.onSurface,
+                  color: AppColors.darkTextPrimary,
                 ),
               ),
               const SizedBox(height: 20),
@@ -1204,13 +1234,9 @@ class _PostExportScreenState extends State<PostExportScreen>
                       margin: const EdgeInsets.only(bottom: 12),
                       decoration: BoxDecoration(
                         color:
-                            isDarkMode
-                                ? (_audienceSelectAll
-                                    ? Colors.white.withOpacity(0.4)
-                                    : Colors.white.withOpacity(0.1))
-                                : (_audienceSelectAll
-                                    ? Theme.of(context).colorScheme.onPrimary
-                                    : Colors.grey.shade200.withOpacity(0.3)),
+                            _audienceSelectAll
+                                ? Colors.white.withOpacity(0.4)
+                                : Colors.white.withOpacity(0.1),
                         borderRadius: BorderRadius.circular(16),
                       ),
                       child: Material(
@@ -1237,25 +1263,14 @@ class _PostExportScreenState extends State<PostExportScreen>
                                         style: TextStyle(
                                           fontSize: 16,
                                           fontWeight: FontWeight.w600,
-                                          color:
-                                              isDarkMode
-                                                  ? Colors.white
-                                                  : Theme.of(context)
-                                                      .colorScheme
-                                                      .onSurface
-                                                      .withOpacity(0.9),
+                                          color: Colors.white,
                                         ),
                                       ),
                                     ),
                                     if (_audienceSelectAll)
                                       Icon(
                                         Icons.check,
-                                        color:
-                                            isDarkMode
-                                                ? Colors.white
-                                                : Theme.of(
-                                                  context,
-                                                ).colorScheme.onSurface,
+                                        color: Colors.white,
                                         size: 20,
                                       ),
                                   ],
@@ -1271,13 +1286,9 @@ class _PostExportScreenState extends State<PostExportScreen>
                       width: double.infinity,
                       decoration: BoxDecoration(
                         color:
-                            isDarkMode
-                                ? (_audiencePrivateOnly
-                                    ? Colors.white.withOpacity(0.4)
-                                    : Colors.white.withOpacity(0.1))
-                                : (_audiencePrivateOnly
-                                    ? Theme.of(context).colorScheme.onPrimary
-                                    : Colors.grey.shade200.withOpacity(0.3)),
+                            _audiencePrivateOnly
+                                ? Colors.white.withOpacity(0.4)
+                                : Colors.white.withOpacity(0.1),
                         borderRadius: BorderRadius.circular(16),
                       ),
                       child: Material(
@@ -1288,6 +1299,7 @@ class _PostExportScreenState extends State<PostExportScreen>
                             setState(() {
                               _audiencePrivateOnly = true;
                               _audienceSelectAll = false;
+                              _audienceFriendsOnly = false;
                               _selectedAudienceGroupIds.clear();
                             });
                           },
@@ -1304,25 +1316,68 @@ class _PostExportScreenState extends State<PostExportScreen>
                                         style: TextStyle(
                                           fontSize: 16,
                                           fontWeight: FontWeight.w600,
-                                          color:
-                                              isDarkMode
-                                                  ? Colors.white
-                                                  : Theme.of(context)
-                                                      .colorScheme
-                                                      .onSurface
-                                                      .withOpacity(0.9),
+                                          color: Colors.white,
                                         ),
                                       ),
                                     ),
                                     if (_audiencePrivateOnly)
                                       Icon(
                                         Icons.check,
-                                        color:
-                                            isDarkMode
-                                                ? Colors.white
-                                                : Theme.of(
-                                                  context,
-                                                ).colorScheme.onSurface,
+                                        color: Colors.white,
+                                        size: 20,
+                                      ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    // 친구공유
+                    Container(
+                      width: double.infinity,
+                      decoration: BoxDecoration(
+                        color:
+                            _audienceFriendsOnly
+                                ? Colors.white.withOpacity(0.4)
+                                : Colors.white.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      child: Material(
+                        color: Colors.transparent,
+                        child: InkWell(
+                          borderRadius: BorderRadius.circular(16),
+                          onTap: () {
+                            setState(() {
+                              _audienceFriendsOnly = true;
+                              _audiencePrivateOnly = false;
+                              _audienceSelectAll = false;
+                              _selectedAudienceGroupIds.clear();
+                            });
+                          },
+                          child: Padding(
+                            padding: const EdgeInsets.all(16),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: Text(
+                                        '친구공유',
+                                        style: TextStyle(
+                                          fontSize: 16,
+                                          fontWeight: FontWeight.w600,
+                                          color: Colors.white,
+                                        ),
+                                      ),
+                                    ),
+                                    if (_audienceFriendsOnly)
+                                      const Icon(
+                                        Icons.check,
+                                        color: Colors.white,
                                         size: 20,
                                       ),
                                   ],
@@ -1345,12 +1400,7 @@ class _PostExportScreenState extends State<PostExportScreen>
                   style: TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.w600,
-                    color:
-                        isDarkMode
-                            ? Colors.white.withOpacity(0.6)
-                            : Theme.of(
-                              context,
-                            ).colorScheme.onSurface.withOpacity(0.6),
+                    color: Colors.white.withOpacity(0.6),
                   ),
                 ),
               ),
@@ -1379,17 +1429,9 @@ class _PostExportScreenState extends State<PostExportScreen>
                               margin: const EdgeInsets.only(bottom: 8),
                               decoration: BoxDecoration(
                                 color:
-                                    isDarkMode
-                                        ? (isSelected
-                                            ? Colors.white.withOpacity(0.4)
-                                            : Colors.white.withOpacity(0.1))
-                                        : (isSelected
-                                            ? Theme.of(
-                                              context,
-                                            ).colorScheme.onPrimary
-                                            : Colors.grey.shade200.withOpacity(
-                                              0.3,
-                                            )),
+                                    isSelected
+                                        ? Colors.white.withOpacity(0.4)
+                                        : Colors.white.withOpacity(0.1),
                                 borderRadius: BorderRadius.circular(12),
                               ),
                               child: Material(
@@ -1406,6 +1448,7 @@ class _PostExportScreenState extends State<PostExportScreen>
                                         // 그룹 선택 시 전체공개/나만보기 먼저 해제
                                         _audienceSelectAll = false;
                                         _audiencePrivateOnly = false;
+                                        _audienceFriendsOnly = false;
                                         _selectedAudienceGroupIds.add(group.id);
                                       }
                                     });
@@ -1418,13 +1461,7 @@ class _PostExportScreenState extends State<PostExportScreen>
                                           child: Text(
                                             group.name,
                                             style: TextStyle(
-                                              color:
-                                                  isDarkMode
-                                                      ? Colors.white
-                                                      : Theme.of(context)
-                                                          .colorScheme
-                                                          .onSurface
-                                                          .withOpacity(0.9),
+                                              color: Colors.white,
                                               fontSize: 16,
                                               fontWeight: FontWeight.w600,
                                             ),
@@ -1433,12 +1470,7 @@ class _PostExportScreenState extends State<PostExportScreen>
                                         if (isSelected)
                                           Icon(
                                             Icons.check,
-                                            color:
-                                                isDarkMode
-                                                    ? Colors.white
-                                                    : Theme.of(
-                                                      context,
-                                                    ).colorScheme.onSurface,
+                                            color: Colors.white,
                                             size: 22,
                                           ),
                                       ],
@@ -1459,8 +1491,7 @@ class _PostExportScreenState extends State<PostExportScreen>
 
   // Step 3: 카테고리 선택
   Widget _buildStep3CategorySelection() {
-    final isDarkMode =
-        Theme.of(context).colorScheme.brightness == Brightness.dark;
+    final isDarkMode = true; // 항상 다크모드 UI 사용
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 10),
       child: Column(
@@ -1472,10 +1503,7 @@ class _PostExportScreenState extends State<PostExportScreen>
             style: Theme.of(context).textTheme.headlineSmall?.copyWith(
               fontWeight: FontWeight.bold,
               fontSize: 22,
-              color:
-                  isDarkMode
-                      ? Colors.white
-                      : Theme.of(context).colorScheme.onSurface,
+              color: Colors.white,
             ),
           ),
 
@@ -1589,16 +1617,11 @@ class _PostExportScreenState extends State<PostExportScreen>
           children: [
             TextField(
               cursorColor:
-                  isDarkMode
-                      ? Colors.white
-                      : Theme.of(context).colorScheme.primary,
+                  isDarkMode ? Colors.white : AppColors.darkTextPrimary,
               controller: _newCategoryController,
               autofocus: true,
               style: TextStyle(
-                color:
-                    isDarkMode
-                        ? Colors.white
-                        : Theme.of(context).colorScheme.onSurface,
+                color: isDarkMode ? Colors.white : AppColors.darkTextPrimary,
                 fontSize: 16,
               ),
               decoration: InputDecoration(
@@ -1647,11 +1670,9 @@ class _PostExportScreenState extends State<PostExportScreen>
                     backgroundColor:
                         isDarkMode
                             ? Colors.white.withOpacity(0.9)
-                            : Theme.of(context).colorScheme.primary,
+                            : AppColors.darkTextPrimary,
                     foregroundColor:
-                        isDarkMode
-                            ? Colors.black
-                            : Theme.of(context).colorScheme.onPrimary,
+                        isDarkMode ? Colors.black : AppColors.darkBackground,
                     padding: const EdgeInsets.symmetric(
                       horizontal: 20,
                       vertical: 10,
@@ -1676,7 +1697,7 @@ class _PostExportScreenState extends State<PostExportScreen>
       child: Container(
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
-          color: Colors.grey.shade200.withOpacity(0.3),
+          color: Colors.white.withOpacity(0.1),
           borderRadius: BorderRadius.circular(12),
         ),
         child: Row(
@@ -1748,13 +1769,9 @@ class _PostExportScreenState extends State<PostExportScreen>
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
           color:
-              isDarkMode
-                  ? (isSelected
-                      ? Colors.white.withOpacity(0.4)
-                      : Colors.white.withOpacity(0.1))
-                  : (isSelected
-                      ? Theme.of(context).colorScheme.onPrimary
-                      : Colors.grey.shade200.withOpacity(0.3)),
+              isSelected
+                  ? Colors.white.withOpacity(0.4)
+                  : Colors.white.withOpacity(0.1),
           borderRadius: BorderRadius.circular(12),
         ),
         child: Row(
@@ -1763,14 +1780,7 @@ class _PostExportScreenState extends State<PostExportScreen>
               child: Text(
                 title,
                 style: TextStyle(
-                  color:
-                      isDarkMode
-                          ? Colors.white
-                          : (isSelected
-                              ? Theme.of(context).colorScheme.onSurface
-                              : Theme.of(
-                                context,
-                              ).colorScheme.onSurface.withOpacity(0.9)),
+                  color: Colors.white,
                   fontSize: 16,
                   fontWeight: FontWeight.w600,
                 ),
@@ -1779,10 +1789,7 @@ class _PostExportScreenState extends State<PostExportScreen>
             if (isSelected)
               Icon(
                 Icons.check,
-                color:
-                    isDarkMode
-                        ? Colors.white
-                        : Theme.of(context).colorScheme.onSurface,
+                color: isDarkMode ? Colors.white : AppColors.darkTextPrimary,
                 size: 22,
               ),
           ],
@@ -1800,7 +1807,7 @@ class _PostExportScreenState extends State<PostExportScreen>
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
           decoration: BoxDecoration(
-            color: Theme.of(context).colorScheme.onSurface.withOpacity(0.2),
+            color: AppColors.darkTextPrimary.withOpacity(0.2),
             borderRadius: BorderRadius.circular(35),
           ),
           child: Row(
@@ -1808,7 +1815,7 @@ class _PostExportScreenState extends State<PostExportScreen>
               Text(
                 '편집하기',
                 style: TextStyle(
-                  color: Theme.of(context).colorScheme.onSurface,
+                  color: AppColors.darkTextPrimary,
                   fontSize: 14,
                   fontWeight: FontWeight.w300,
                 ),
@@ -1869,7 +1876,7 @@ class _AudiencePickerState extends State<_AudiencePicker> {
     final List<Group> groups = groupProv.myGroups;
     return Container(
       decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.background,
+        color: AppColors.darkBackground,
         borderRadius: BorderRadius.circular(16),
       ),
       child: Padding(
@@ -2360,17 +2367,14 @@ class _EmptyImagePlaceholder extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      color: Theme.of(context).colorScheme.surface,
+      color: AppColors.darkSurface,
       child: Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(
               '눌러서 썸네일을 선택해주세요',
-              style: TextStyle(
-                color: Theme.of(context).colorScheme.onSurface,
-                fontSize: 15,
-              ),
+              style: TextStyle(color: AppColors.darkTextPrimary, fontSize: 15),
             ),
           ],
         ),

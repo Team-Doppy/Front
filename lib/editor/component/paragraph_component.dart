@@ -221,9 +221,14 @@ class _ParagraphWithDropLinesState extends State<_ParagraphWithDropLines>
                 builder: (context) {
                   final theme = Theme.of(context).colorScheme;
                   final brightness = Theme.of(context).brightness;
-                  final bgColor = theme.background;
-                  final dotColor = theme.onSurface;
                   final isLightTheme = brightness == Brightness.light;
+                  // 다크 모드의 편집 화면에서는 박스 배경을 투명 처리하여
+                  // 회색 박스가 깔리는 현상을 방지한다.
+                  final bgColor =
+                      (!isLightTheme && widget.isEditing)
+                          ? Colors.transparent
+                          : theme.background;
+                  final dotColor = theme.onSurface;
                   return Positioned.fill(
                     child: IgnorePointer(
                       ignoring:
@@ -484,45 +489,116 @@ class _ParagraphSpoilerPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     if (boxes.isEmpty) return;
-    final mask =
-        Paint()
-          ..style = PaintingStyle.fill
-          ..color = backgroundColor.withOpacity(isEditing ? 0.5 : 1.0);
-    // 라이트 테마일 때는 점 색상을 더 연하게
-    final dotOpacity = isLightTheme ? 0.6 : 0.75;
-    final dot =
-        Paint()
-          ..style = PaintingStyle.fill
-          ..color = dotColor.withOpacity(dotOpacity);
+    final mask = Paint()..style = PaintingStyle.fill;
+    // 라이트/다크 기본 점 불투명도
+    final baseDotOpacity = isLightTheme ? 0.6 : 0.85;
+    final dot = Paint()..style = PaintingStyle.fill;
 
-    for (final rect in boxes) {
-      canvas.drawRect(rect, mask);
-      // 밀도 높은 1px 점들
+    // 박스 병합: 같은 줄(top/bottom 유사)에서 인접/겹치는 영역을 하나로 합쳐서
+    // 공백 단위로 중복 렌더링되어 밝아지는 현상을 제거한다.
+    final List<Rect> merged = _mergeBoxes(boxes);
+
+    for (final rect in merged) {
+      // 배경이 투명(알파 0)일 경우에는 배경을 칠하지 않는다.
+      final double fillAlpha = isEditing ? 0.5 : 1.0;
+      if (backgroundColor.alpha != 0 && fillAlpha > 0) {
+        mask.color = backgroundColor.withOpacity(fillAlpha);
+        canvas.drawRect(rect, mask);
+      }
+      // 점들 그리기
       final area = rect.width * rect.height;
       // 글쓰기 모드(isEditing=true)에서는 밀도 낮춤
       final count =
           isEditing
               ? max(40, (area / 200).floor())
               : max(70, (area / 150).floor());
-      final double t = phase * (2 * pi) * 0.9; // 텍스트는 느리게
+      final double t = phase * (2 * pi) * 0.85; // 텍스트는 느리게
+
+      // 안쪽 인셋으로 에지 밴딩 방지
+      final double inset = min(3.0, min(rect.width, rect.height) * 0.15);
+      final double w = max(1.0, rect.width - inset * 2);
+      final double h = max(1.0, rect.height - inset * 2);
       for (int i = 0; i < count; i++) {
         final seed = rect.hashCode ^ (i * 486187739);
         final r = Random(seed);
-        final baseX = r.nextDouble() * rect.width;
-        final baseY = r.nextDouble() * rect.height;
-        // 진동 기반 이동 (자글자글 효과)
-        final amp = 1.6 + r.nextDouble() * 1; // 1.6~3.2px (덜 요란)
-        final ox = sin(t + i * 0.17) * amp;
-        final oy = cos(t * 1.1 + i * 0.11) * amp;
+        final baseX = inset + r.nextDouble() * w;
+        final baseY = inset + r.nextDouble() * h;
+        // 개별 위상/진폭으로 패턴 정렬 방지
+        final ampX = 1.0 + r.nextDouble() * 1.4;
+        final ampY = 1.0 + r.nextDouble() * 1.4;
+        final phaseShift = r.nextDouble() * 2 * pi;
+        final ox =
+            sin(t * (0.85 + r.nextDouble() * 0.5) + i * 0.13 + phaseShift) *
+            ampX;
+        final oy =
+            cos(t * (0.9 + r.nextDouble() * 0.5) + i * 0.11 + phaseShift) *
+            ampY;
         double x = baseX + ox;
         double y = baseY + oy;
         x = x % rect.width;
         y = y % rect.height;
         if (x < 0) x += rect.width;
         if (y < 0) y += rect.height;
-        canvas.drawRect(Rect.fromLTWH(rect.left + x, rect.top + y, 1, 1), dot);
+        final size = 1.0 + r.nextDouble() * 0.8;
+        final opacity = (0.85 + r.nextDouble() * 0.15) * baseDotOpacity;
+        final effectiveColor =
+            (!isLightTheme && isEditing) ? Colors.white : dotColor;
+        dot.color = effectiveColor.withOpacity(opacity.clamp(0.0, 1.0));
+        canvas.drawRect(
+          Rect.fromLTWH(rect.left + x, rect.top + y, size, size),
+          dot,
+        );
       }
     }
+  }
+
+  // 같은 줄에서 인접/겹치는 TextBox들을 묶어서 중복 렌더링을 제거
+  List<Rect> _mergeBoxes(List<Rect> src) {
+    if (src.length <= 1) return src;
+    const double vTol = 1.0; // 상하 허용 오차
+    const double hJoin = 1.5; // 수평 결합 간격 허용
+
+    // 줄 그룹화: top/bottom이 비슷하면 같은 줄로 본다
+    final List<List<Rect>> lines = [];
+    for (final r in src..sort((a, b) => a.top.compareTo(b.top))) {
+      bool placed = false;
+      for (final line in lines) {
+        final Rect ref = line.first;
+        if ((r.top - ref.top).abs() < vTol &&
+            (r.bottom - ref.bottom).abs() < vTol) {
+          line.add(r);
+          placed = true;
+          break;
+        }
+      }
+      if (!placed) lines.add([r]);
+    }
+
+    // 각 줄에서 좌우로 병합
+    final List<Rect> merged = [];
+    for (final line in lines) {
+      line.sort((a, b) => a.left.compareTo(b.left));
+      Rect? cur;
+      for (final r in line) {
+        if (cur == null) {
+          cur = r;
+          continue;
+        }
+        if (r.left <= cur.right + hJoin) {
+          cur = Rect.fromLTRB(
+            cur.left,
+            min(cur.top, r.top),
+            max(cur.right, r.right),
+            max(cur.bottom, r.bottom),
+          );
+        } else {
+          merged.add(cur);
+          cur = r;
+        }
+      }
+      if (cur != null) merged.add(cur);
+    }
+    return merged;
   }
 
   @override

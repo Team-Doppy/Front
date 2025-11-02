@@ -118,9 +118,20 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
         final metadata =
             widget.exportedDataForEdit!['metadata'] as Map<String, dynamic>?;
         if (metadata != null) {
-          _editVisibility = metadata['visibility'] ?? 'public';
-          final groupIds = metadata['groupIds'] as List<dynamic>?;
-          _editGroupIds = groupIds?.map((e) => e as int).toList() ?? [];
+          final rawVis = (metadata['visibility'] ?? 'PUBLIC').toString();
+          final visUpper = rawVis.toUpperCase();
+          if (visUpper == 'PRIVATE') {
+            _editVisibility = 'private';
+            _editGroupIds = [];
+          } else if (visUpper == 'GROUPS' || visUpper == 'PARTIAL') {
+            _editVisibility = 'partial';
+            final groupIds = metadata['groupIds'] as List<dynamic>?;
+            _editGroupIds =
+                groupIds?.map((e) => (e as num).toInt()).toList() ?? [];
+          } else {
+            _editVisibility = 'public';
+            _editGroupIds = [];
+          }
         }
       } catch (e) {
         // 실패 시 빈 문서로 초기화
@@ -396,6 +407,10 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
       dragService.endDrag();
       composer.clearSelection();
       nodeComponentService.clearAll();
+      // 작성 종료 시 세션 썸네일 정리 (작성 과정 동안만 유지)
+      try {
+        nodeComponentService.clearTempThumbnail('default');
+      } catch (_) {}
     } catch (_) {}
 
     try {
@@ -876,6 +891,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
 
                                           PinComponentBuilder(
                                             dragService: dragService,
+                                            isEditing: true,
                                           ),
 
                                           // 기본 컴포넌트들 (Paragraph 제외)
@@ -1306,10 +1322,6 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
 
       // 임시저장 후에는 매핑 맵을 유지 (계속 작업할 수 있도록)
 
-      // 성공 스낵바 표시
-      if (mounted) {
-        ErrorHandler.showInfo(context, '임시저장에 성공했습니다');
-      }
       return true; // ✅ 성공 반환
     } catch (e) {
       if (mounted) {

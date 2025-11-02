@@ -9,6 +9,10 @@ class DoppyLoadingLogo extends StatelessWidget {
     this.opacity = 1.0,
     this.showBackButton = false,
     this.onBack,
+    this.spinnerColor,
+    this.dTextSize,
+    this.ppyTextSize,
+    this.spinnerStrokeWidth,
   });
 
   /// 로고 투명도 (0.0 ~ 1.0)
@@ -19,6 +23,17 @@ class DoppyLoadingLogo extends StatelessWidget {
 
   /// 뒤로가기 버튼 클릭 콜백
   final VoidCallback? onBack;
+
+  /// 로딩 스피너 색상 (기본: onSurface)
+  final Color? spinnerColor;
+
+  /// "d" 텍스트 크기 (기본: 32)
+  final double? dTextSize;
+
+  /// "ppy" 텍스트 크기 (기본: 32)
+  final double? ppyTextSize;
+
+  final double? spinnerStrokeWidth;
 
   @override
   Widget build(BuildContext context) {
@@ -35,21 +50,21 @@ class DoppyLoadingLogo extends StatelessWidget {
                 Text(
                   "d",
                   style: TextStyle(
-                    fontSize: 32,
+                    fontSize: dTextSize ?? 32,
                     fontWeight: FontWeight.w800,
                     color: Theme.of(context).colorScheme.onSurface,
                     letterSpacing: 1.2,
                   ),
                 ),
                 Padding(
-                  padding: EdgeInsets.only(top: 2),
+                  padding: EdgeInsets.only(top: 5),
                   child: SizedBox(
-                    width: 18,
-                    height: 18,
+                    width: (ppyTextSize ?? 36) / 2,
+                    height: (ppyTextSize ?? 36) / 2,
                     child: CircularProgressIndicator(
-                      strokeWidth: 3,
+                      strokeWidth: spinnerStrokeWidth ?? 3,
                       valueColor: AlwaysStoppedAnimation<Color>(
-                        Theme.of(context).colorScheme.onSurface,
+                        spinnerColor ?? Theme.of(context).colorScheme.onSurface,
                       ),
                     ),
                   ),
@@ -57,7 +72,7 @@ class DoppyLoadingLogo extends StatelessWidget {
                 Text(
                   "ppy",
                   style: TextStyle(
-                    fontSize: 32,
+                    fontSize: ppyTextSize ?? 32,
                     fontWeight: FontWeight.w800,
                     color: Theme.of(context).colorScheme.onSurface,
                     letterSpacing: 1.2,
