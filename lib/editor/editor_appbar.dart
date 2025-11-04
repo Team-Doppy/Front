@@ -14,7 +14,7 @@ import 'package:doppy/providers/group_provider.dart';
 import 'package:doppy/editor/overlay/thumbnail_edit_overlay.dart';
 import 'package:doppy/providers/user_provider.dart';
 import 'package:doppy/data/services/blog_service.dart';
-import 'package:doppy/data/services/upload_service.dart';
+import 'package:doppy/providers/feed_provider/my_profile_feed_provider.dart';
 
 class EditModeAppBar extends StatefulWidget {
   final EditorService editorService;
@@ -24,6 +24,8 @@ class EditModeAppBar extends StatefulWidget {
   final Function(String visibility, List<int> groupIds)? onVisibilityChanged;
   final Function(String title, String summary)?
   onTitleSummaryChanged; // 제목/요약 변경 콜백
+  final VoidCallback? onCategoryChanged; // 카테고리 변경 콜백
+  final VoidCallback? onThumbnailChanged; // 썸네일 변경 콜백
   final String? postId; // 서버에서 데이터 가져오기용
   final bool isSaving; // 저장 중 상태
 
@@ -37,6 +39,8 @@ class EditModeAppBar extends StatefulWidget {
     this.onTitleSummaryChanged,
     this.postId,
     this.isSaving = false,
+    this.onCategoryChanged,
+    this.onThumbnailChanged,
   });
 
   @override
@@ -99,17 +103,72 @@ class _EditModeAppBarState extends State<EditModeAppBar> {
       final metadata = results[0] as Map<String, dynamic>;
       final categories = results[1] as List<Map<String, dynamic>>;
 
+      // FeedProvider에서 현재 포스트의 카테고리 우선 탐색
+      int? categoryIdFromFeed;
+      try {
+        final feed = MyProfileFeedProvider();
+        final pid = widget.postId != null ? int.tryParse(widget.postId!) : null;
+        if (pid != null) {
+          for (final entry in feed.postsByCategory.entries) {
+            final String key = entry.key.toString();
+            final int? catId = int.tryParse(key);
+            final list = entry.value;
+            final found = list.any(
+              (p) =>
+                  (p['id'] is int ? p['id'] : int.tryParse('${p['id']}')) ==
+                  pid,
+            );
+            if (found) {
+              categoryIdFromFeed = catId ?? 0;
+              break;
+            }
+          }
+        }
+      } catch (e) {
+        print('[EditModeAppBar] FeedProvider에서 카테고리 파싱 실패: $e');
+      }
+
       setState(() {
         // 썸네일 정보 업데이트
         _thumbnailUrl = metadata['thumbnailImageUrl'] as String?;
         _thumbnailId = metadata['thumbnailImageId']?.toString();
 
-        // 카테고리 정보 업데이트
-        _selectedCategoryId = metadata['categoryId'] as int? ?? 0;
+        // 카테고리 정보 업데이트: FeedProvider 우선, 실패 시 메타데이터 fallback
+        if (categoryIdFromFeed != null) {
+          _selectedCategoryId = categoryIdFromFeed;
+        } else {
+          _selectedCategoryId = metadata['categoryId'] as int? ?? 0;
+        }
         _cachedCategories = categories;
 
-        // 공개범위 정보는 이미 widget에서 전달받음
-        // (필요시 metadata['accessLevel']로 추가 업데이트 가능)
+        // 공개범위 메타데이터 반영 (친구공개/그룹공개 포함)
+        try {
+          final String? level =
+              metadata['accessLevel']?.toString().toUpperCase();
+          final List<dynamic> shared =
+              (metadata['sharedGroupIds'] is List)
+                  ? List<dynamic>.from(metadata['sharedGroupIds'])
+                  : const [];
+          if (level != null && level.isNotEmpty) {
+            if (level == 'PRIVATE') {
+              _selectedVisibility = 'private';
+              _selectedGroupIds.clear();
+            } else if (level == 'PUBLIC') {
+              _selectedVisibility = 'public';
+              _selectedGroupIds.clear();
+            } else if (level == 'FRIENDS') {
+              _selectedVisibility = 'friends';
+              _selectedGroupIds.clear();
+            } else if (level == 'GROUPS') {
+              _selectedVisibility = 'partial';
+              _selectedGroupIds =
+                  shared
+                      .map((e) => e is int ? e : int.tryParse(e.toString()))
+                      .whereType<int>()
+                      .toList();
+            }
+          }
+        } catch (_) {}
 
         _isLoading = false;
       });
@@ -252,6 +311,10 @@ class _EditModeAppBarState extends State<EditModeAppBar> {
                             _thumbnailUrl = url;
                             _thumbnailId = id;
                           });
+                          print('[EditModeAppBar] 썸네일 변경됨: $url');
+                          // 부모에 통지: 썸네일 변경됨
+                          widget.onThumbnailChanged?.call();
+                          print('[EditModeAppBar] 부모 콜백 호출 완료');
                         },
                         onMetadataChanged: (title, summary) {
                           // 제목/요약이 변경되었을 때 부모(PostwriteScreen)에게 알림
@@ -346,6 +409,13 @@ class _EditModeAppBarState extends State<EditModeAppBar> {
                     return;
                   }
 
+                  // 변경 없음 가드
+                  if (_selectedCategoryId == id) {
+                    print('[EditModeAppBar] 카테고리 변경 없음 - API 호출 생략');
+                    ErrorHandler.showInfo(context, '이미 선택된 카테고리예요');
+                    return;
+                  }
+
                   try {
                     // 서버에 카테고리 변경 요청
                     await BlogService().movePostToCategory(
@@ -359,6 +429,7 @@ class _EditModeAppBarState extends State<EditModeAppBar> {
                       });
                       ErrorHandler.showInfo(context, '카테고리가 변경되었습니다');
                       print('[EditModeAppBar] 카테고리 변경 성공: $name (ID: $id)');
+                      widget.onCategoryChanged?.call();
                     }
                   } catch (e) {
                     print('[EditModeAppBar] 카테고리 변경 실패: $e');
@@ -392,6 +463,13 @@ class _EditModeAppBarState extends State<EditModeAppBar> {
             Future.delayed(Duration.zero, () async {
               if (widget.postId == null) {
                 print('[EditModeAppBar] postId가 없습니다');
+                return;
+              }
+
+              // 변경 없음 가드
+              if (_selectedVisibility == 'private') {
+                print('[EditModeAppBar] 공개범위 변경 없음(private) - API 호출 생략');
+                ErrorHandler.showInfo(context, '이미 나만보기예요');
                 return;
               }
 
@@ -439,6 +517,13 @@ class _EditModeAppBarState extends State<EditModeAppBar> {
                 return;
               }
 
+              // 변경 없음 가드
+              if (_selectedVisibility == 'public') {
+                print('[EditModeAppBar] 공개범위 변경 없음(public) - API 호출 생략');
+                ErrorHandler.showInfo(context, '이미 전체공개예요');
+                return;
+              }
+
               try {
                 // 서버에 공개범위 변경 요청
                 await BlogService().updatePostAccessLevel(
@@ -468,6 +553,56 @@ class _EditModeAppBarState extends State<EditModeAppBar> {
           },
         ),
 
+        // 친구공개
+        PopupMenuItem<String>(
+          value: 'friends',
+          child: _buildDropdownItemWithDivider(
+            context: context,
+            title: '친구공개',
+            isSelected: _selectedVisibility == 'friends',
+          ),
+          onTap: () {
+            Future.delayed(Duration.zero, () async {
+              if (widget.postId == null) {
+                print('[EditModeAppBar] postId가 없습니다');
+                return;
+              }
+
+              // 변경 없음 가드
+              if (_selectedVisibility == 'friends') {
+                print('[EditModeAppBar] 공개범위 변경 없음(friends) - API 호출 생략');
+                ErrorHandler.showInfo(context, '이미 친구공개예요');
+                return;
+              }
+
+              try {
+                await BlogService().updatePostAccessLevel(
+                  postId: int.parse(widget.postId!),
+                  accessLevel: 'FRIENDS',
+                );
+
+                if (mounted) {
+                  setState(() {
+                    _selectedVisibility = 'friends';
+                    _selectedGroupIds.clear();
+                  });
+                  widget.onVisibilityChanged?.call(
+                    _selectedVisibility,
+                    _selectedGroupIds,
+                  );
+                  ErrorHandler.showInfo(context, '공개범위가 친구공개로 변경되었습니다');
+                  print('[EditModeAppBar] 공개범위 변경 성공: FRIENDS');
+                }
+              } catch (e) {
+                print('[EditModeAppBar] 공개범위 변경 실패: $e');
+                if (mounted) {
+                  ErrorHandler.handleError(context, e);
+                }
+              }
+            });
+          },
+        ),
+
         // 그룹공개
         PopupMenuItem<String>(
           value: 'partial',
@@ -480,10 +615,14 @@ class _EditModeAppBarState extends State<EditModeAppBar> {
           ),
           onTap: () {
             Future.delayed(Duration.zero, () {
+              // 그룹이 없으면 적용하지 않음
+              if (groupProvider.myGroups.isEmpty) {
+                ErrorHandler.showWarning(context, '그룹이 없습니다. 먼저 그룹을 생성해주세요');
+                return;
+              }
               setState(() {
                 _selectedVisibility = 'partial';
-                if (_selectedGroupIds.isEmpty &&
-                    groupProvider.myGroups.isNotEmpty) {
+                if (_selectedGroupIds.isEmpty) {
                   _selectedGroupIds.add(groupProvider.myGroups.first.id);
                 }
               });
@@ -492,7 +631,9 @@ class _EditModeAppBarState extends State<EditModeAppBar> {
             Future.delayed(const Duration(milliseconds: 100), () {
               final RenderBox button = context.findRenderObject() as RenderBox;
               final Offset position = button.localToGlobal(Offset.zero);
-              _showGroupSelectionMenu(context, position);
+              groupProvider.myGroups.length > 1
+                  ? _showGroupSelectionMenu(context, position)
+                  : null;
             });
           },
         ),
@@ -576,6 +717,24 @@ class _EditModeAppBarState extends State<EditModeAppBar> {
 
                 if (widget.postId == null) {
                   print('[EditModeAppBar] postId가 없습니다');
+                  return;
+                }
+
+                // 변경 없음 가드 (선택된 그룹 집합 동일 + 이미 partial)
+                final Set<int> beforeSet = Set<int>.from(_selectedGroupIds);
+                final Set<int> afterSet = Set<int>.from(newGroupIds);
+                if (_selectedVisibility == 'partial' &&
+                    beforeSet.length == afterSet.length &&
+                    beforeSet.containsAll(afterSet)) {
+                  print('[EditModeAppBar] 공개 그룹 변경 없음 - API 호출 생략');
+                  ErrorHandler.showInfo(context, '이미 선택된 그룹이에요');
+                  // 드롭다운을 다시 열기
+                  Future.delayed(const Duration(milliseconds: 100), () {
+                    final RenderBox button =
+                        context.findRenderObject() as RenderBox;
+                    final Offset position = button.localToGlobal(Offset.zero);
+                    _showGroupSelectionMenu(context, position);
+                  });
                   return;
                 }
 
@@ -800,12 +959,7 @@ class _EditModeAppBarState extends State<EditModeAppBar> {
                             horizontal: 6,
                             vertical: 4,
                           ),
-                          decoration: BoxDecoration(
-                            color: Theme.of(
-                              context,
-                            ).colorScheme.onSurface.withOpacity(0.02),
-                            borderRadius: BorderRadius.circular(10),
-                          ),
+                          decoration: BoxDecoration(),
                           child: Padding(
                             padding: const EdgeInsets.only(top: 2),
                             child:
@@ -863,8 +1017,9 @@ class _EditModeAppBarState extends State<EditModeAppBar> {
 class EditorAppBar extends StatelessWidget {
   final EditorService editorService;
   final StickerService stickerService;
-  final VoidCallback? onSaveDraft;
+  final Future<bool> Function()? onSaveDraft;
   final VoidCallback? onLoadDraft;
+  final String? currentDraftId; // 현재 임시저장 ID
 
   const EditorAppBar({
     super.key,
@@ -872,16 +1027,16 @@ class EditorAppBar extends StatelessWidget {
     required this.stickerService,
     this.onSaveDraft,
     this.onLoadDraft,
+    this.currentDraftId,
   });
 
   Future<void> _onNextButtonTapped(BuildContext context) async {
-    // 업로드 작업 이중 가드: 업로드 중이면 진행 차단
-    final upload = context.read<UploadService>();
-    if (upload.hasActiveUploads()) {
+    // 플레이스홀더 기반 가드: 문서에 이미지/영상 플레이스홀더가 있으면 진행 차단
+    if (editorService.hasAnyPlaceholders()) {
       await DialogUtils.showInfoDialog(
         context,
-        title: '업로드 중',
-        message: '아직 업로드 중인 미디어가 있어요. 잠시만 기다려주세요.',
+        title: '업로드 대기',
+        message: '아직 업로드가 완료되지 않은 미디어가 있어요. 잠시만 기다려주세요.',
       );
       return;
     }
@@ -918,7 +1073,12 @@ class EditorAppBar extends StatelessWidget {
       PageRouteBuilder(
         opaque: false,
         barrierDismissible: true,
-        pageBuilder: (_, __, ___) => PostExportScreen(exported: json),
+        pageBuilder:
+            (_, __, ___) => PostExportScreen(
+              exported: json,
+              sessionKey:
+                  currentDraftId ?? 'default', // draft ID를 sessionKey로 사용
+            ),
       ),
     );
   }
@@ -983,11 +1143,15 @@ class EditorAppBar extends StatelessWidget {
                         context,
                       ).colorScheme.background.withOpacity(1),
 
-                      onSelected: (value) {
+                      onSelected: (value) async {
                         if (value == 'load') {
                           onLoadDraft?.call();
                         } else if (value == 'save') {
-                          onSaveDraft?.call();
+                          final success = await onSaveDraft?.call();
+                          // 명시적 임시저장 시 성공했을 때만 사용자 알림
+                          if (success == true) {
+                            ErrorHandler.showInfo(context, '임시저장되었습니다');
+                          }
                         }
                       },
                       itemBuilder:

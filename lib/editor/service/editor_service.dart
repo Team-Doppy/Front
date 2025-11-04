@@ -9,7 +9,6 @@ import 'package:doppy/editor/service/sticker_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:provider/provider.dart';
-import 'package:doppy/data/services/upload_service.dart';
 import 'package:super_editor/super_editor.dart';
 
 class EditorService extends ChangeNotifier {
@@ -425,6 +424,44 @@ class EditorService extends ChangeNotifier {
     return false;
   }
 
+  /// 문서 내 이미지/영상 플레이스홀더가 존재하는지 검사
+  bool hasAnyPlaceholders() {
+    return hasImagePlaceholders() || hasVideoPlaceholders();
+  }
+
+  /// 이미지 플레이스홀더(업로드 대기 중) 존재 여부
+  bool hasImagePlaceholders() {
+    for (int i = 0; i < document.length; i++) {
+      final node = document.getNodeAt(i);
+      if (node is AppImageNode) {
+        final meta = (node as dynamic).metadata as Map<String, dynamic>?;
+        final isPlaceholder = meta != null && (meta['isPlaceholder'] == true);
+        final hasLocalOnly = (node.imageUrl.isEmpty);
+        if (isPlaceholder || hasLocalOnly) return true;
+      }
+      if (node is ImageRowNode) {
+        // 행 내부에 로컬 경로(file://)가 끼어있으면 아직 교체 전이라고 간주
+        final urls = node.imageUrls;
+        final hasLocal = urls.any((u) => u.startsWith('file://'));
+        if (hasLocal) return true;
+      }
+    }
+    return false;
+  }
+
+  /// 영상 플레이스홀더(업로드 대기 중) 존재 여부
+  bool hasVideoPlaceholders() {
+    for (int i = 0; i < document.length; i++) {
+      final node = document.getNodeAt(i);
+      if (node is ClipNode) {
+        final url = node.url;
+        final localPath = node.localPath;
+        if (url.isEmpty && localPath.isNotEmpty) return true;
+      }
+    }
+    return false;
+  }
+
   /// 문서 내용을 간단 스냅샷으로 직렬화하여 지문(fingerprint)을 생성
   String computeDocumentFingerprint() {
     final nodes = <Map<String, dynamic>>[];
@@ -830,18 +867,40 @@ class EditorService extends ChangeNotifier {
   }
 
   /// Video placeholder를 실제 URL로 교체
-  Future<void> replaceVideoPlaceholderWithUrl(String id, String url) async {
+  /// - 기본은 id로 찾고, 실패 시 fallbackLocalPath가 주어지면 localPath로 검색해 교체
+  Future<void> replaceVideoPlaceholderWithUrl(
+    String id,
+    String url, {
+    String? fallbackLocalPath,
+  }) async {
     try {
-      final existing = editor.document.getNodeById(id);
-      if (existing is! ClipNode) return;
+      DocumentNode? nodeFound = editor.document.getNodeById(id);
+      if (nodeFound is! ClipNode) {
+        // id로 못 찾았으면 localPath로 검색 (플레이스홀더가 이동/치환된 경우 대비)
+        if (fallbackLocalPath != null && fallbackLocalPath.isNotEmpty) {
+          for (int i = 0; i < editor.document.length; i++) {
+            final n = editor.document.getNodeAt(i);
+            if (n is ClipNode) {
+              final lp = n.localPath;
+              final isPlaceholder = (n.url.isEmpty && lp.isNotEmpty);
+              if (isPlaceholder && lp == fallbackLocalPath) {
+                nodeFound = n;
+                id = n.id; // 이후 교체를 위해 id 갱신
+                break;
+              }
+            }
+          }
+        }
+      }
+      if (nodeFound is! ClipNode) return;
 
       final newNode = ClipNode(
-        id: existing.id,
-        label: existing.label,
-        colorHex: existing.colorHex,
+        id: nodeFound.id,
+        label: nodeFound.label,
+        colorHex: nodeFound.colorHex,
         url: url,
         localPath: '', // placeholder 해제
-        thumbnailPath: existing.thumbnailPath, // 썸네일 경로 유지
+        thumbnailPath: nodeFound.thumbnailPath, // 썸네일 경로 유지
       );
 
       editor.execute([
@@ -1118,10 +1177,6 @@ class EditorService extends ChangeNotifier {
 
   void deleteVideoPlaceholderNode(String id) {
     try {
-      // 업로드 중인 비디오가 있으면 취소 (비디오 전용 적용)
-      try {
-        UploadService().cancelByRef(id);
-      } catch (_) {}
       document.deleteNode(id);
       notifyListeners();
     } catch (_) {}

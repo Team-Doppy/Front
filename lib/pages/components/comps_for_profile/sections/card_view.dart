@@ -3,10 +3,12 @@ import 'dart:ui';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:doppy/common/widgets/image_error_placeholder.dart';
 import 'package:doppy/data/models/post_data.dart';
+import 'package:doppy/data/services/video_cache_service.dart';
 import 'package:doppy/pages/components/shimmer_box.dart';
 import 'package:flutter/material.dart';
+import 'package:video_player/video_player.dart';
 
-class CardView extends StatelessWidget {
+class CardView extends StatefulWidget {
   const CardView({
     super.key,
     required this.post,
@@ -20,7 +22,100 @@ class CardView extends StatelessWidget {
   final bool isFirst;
 
   @override
+  State<CardView> createState() => _CardViewState();
+}
+
+class _CardViewState extends State<CardView> {
+  VideoPlayerController? _videoController;
+  bool _isVideo = false;
+  String? _currentVideoUrl; // 현재 사용 중인 비디오 URL
+
+  @override
+  void initState() {
+    super.initState();
+    _checkIfVideo();
+  }
+
+  @override
+  void didUpdateWidget(CardView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // 포스트가 변경되었을 때 비디오 컨트롤러 재초기화
+    if (oldWidget.post.id != widget.post.id ||
+        oldWidget.post.thumbnailImageUrl != widget.post.thumbnailImageUrl) {
+      _releaseVideoController();
+      _checkIfVideo();
+    }
+  }
+
+  @override
+  void dispose() {
+    _releaseVideoController();
+    super.dispose();
+  }
+
+  void _releaseVideoController() {
+    if (_currentVideoUrl != null) {
+      VideoCacheService().releaseController(
+        _currentVideoUrl!,
+        namespace: 'profile',
+      );
+      _currentVideoUrl = null;
+      _videoController = null;
+    }
+  }
+
+  void _checkIfVideo() {
+    final url = widget.post.thumbnailImageUrl.toLowerCase();
+    _isVideo =
+        url.endsWith('.mp4') ||
+        url.endsWith('.mov') ||
+        url.endsWith('.m4v') ||
+        url.contains('/videos/') ||
+        url.contains('video');
+
+    if (_isVideo) {
+      _currentVideoUrl = widget.post.thumbnailImageUrl;
+      _videoController = VideoCacheService().getOrCreateController(
+        _currentVideoUrl!,
+        namespace: 'profile',
+      );
+
+      // 이미 초기화된 경우 바로 재생, 아니면 리스너 등록 후 재생
+      if (_videoController!.value.isInitialized) {
+        _videoController!.setVolume(0);
+        _videoController!.setLooping(true);
+        _videoController!.play();
+        if (mounted) setState(() {});
+      } else {
+        _videoController!.addListener(_onVideoInitialized);
+      }
+    }
+  }
+
+  void _onVideoInitialized() {
+    if (_videoController?.value.isInitialized ?? false) {
+      _videoController?.removeListener(_onVideoInitialized);
+      try {
+        _videoController?.setVolume(0);
+        _videoController?.setLooping(true);
+        _videoController?.play();
+      } catch (_) {}
+      if (mounted) setState(() {});
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
+    // 취소/해제 레이스로 캐시 컨트롤러가 사라졌다면 한 번만 안전 재획득
+    if (_isVideo && _currentVideoUrl != null) {
+      final cache = VideoCacheService();
+      if (!cache.hasController(_currentVideoUrl!, namespace: 'profile')) {
+        _videoController = cache.getOrCreateController(
+          _currentVideoUrl!,
+          namespace: 'profile',
+        );
+      }
+    }
     final theme = Theme.of(context);
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 0, vertical: 3),
@@ -55,36 +150,73 @@ class CardView extends StatelessWidget {
                           ),
                           child: ClipRRect(
                             borderRadius: BorderRadius.circular(10),
-                            child: CachedNetworkImage(
-                              imageUrl: post.thumbnailImageUrl,
-                              fit: BoxFit.cover,
-                              width: double.infinity,
-                              height: 150,
-                              placeholder:
-                                  (context, url) => Container(
-                                    color: theme.colorScheme.surface
-                                        .withOpacity(0.1),
-                                    child: const ShimmerBox(
+                            child:
+                                _isVideo && _videoController != null
+                                    ? _videoController!.value.isInitialized
+                                        ? FittedBox(
+                                          fit: BoxFit.cover,
+                                          child: SizedBox(
+                                            width:
+                                                _videoController!
+                                                    .value
+                                                    .size
+                                                    .width,
+                                            height:
+                                                _videoController!
+                                                    .value
+                                                    .size
+                                                    .height,
+                                            child: VideoPlayer(
+                                              _videoController!,
+                                            ),
+                                          ),
+                                        )
+                                        : Container(
+                                          color: theme.colorScheme.surface
+                                              .withOpacity(0.1),
+                                          child: const ShimmerBox(
+                                            width: double.infinity,
+                                            height: 180,
+                                            borderRadius: BorderRadius.zero,
+                                          ),
+                                        )
+                                    : CachedNetworkImage(
+                                      imageUrl: widget.post.thumbnailImageUrl,
+                                      fit: BoxFit.cover,
                                       width: double.infinity,
-                                      height: 180,
-                                      borderRadius: BorderRadius.zero,
+                                      height: 150,
+                                      fadeInDuration: const Duration(
+                                        milliseconds: 180,
+                                      ),
+                                      fadeOutDuration: const Duration(
+                                        milliseconds: 80,
+                                      ),
+                                      fadeInCurve: Curves.easeOut,
+                                      placeholder:
+                                          (context, url) => Container(
+                                            color: theme.colorScheme.surface
+                                                .withOpacity(0.1),
+                                            child: const ShimmerBox(
+                                              width: double.infinity,
+                                              height: 180,
+                                              borderRadius: BorderRadius.zero,
+                                            ),
+                                          ),
+                                      errorWidget:
+                                          (context, url, error) =>
+                                              const ImageErrorPlaceholder(),
                                     ),
-                                  ),
-                              errorWidget:
-                                  (context, url, error) =>
-                                      const ImageErrorPlaceholder(),
-                            ),
                           ),
                         ),
                       ),
                     ),
-                    if (showViewBadge)
+                    if (widget.showViewBadge)
                       Positioned(
                         left: 5,
                         bottom: 0,
                         child: Container(
                           padding: EdgeInsets.symmetric(
-                            horizontal: post.viewCount > 9 ? 4 : 8,
+                            horizontal: widget.post.viewCount > 9 ? 4 : 8,
                             vertical: 4,
                           ),
                           decoration: BoxDecoration(
@@ -95,7 +227,7 @@ class CardView extends StatelessWidget {
                             mainAxisSize: MainAxisSize.min,
                             children: [
                               Text(
-                                '${post.viewCount}',
+                                '${widget.post.viewCount}',
                                 style: TextStyle(
                                   fontSize: 12,
                                   fontWeight: FontWeight.w600,
@@ -118,7 +250,7 @@ class CardView extends StatelessWidget {
                       SizedBox(height: 10),
                       // 제목
                       Text(
-                        post.title,
+                        widget.post.title,
                         style: TextStyle(
                           fontSize: 16,
                           fontWeight: FontWeight.w600,
@@ -131,7 +263,7 @@ class CardView extends StatelessWidget {
                       const SizedBox(height: 4),
                       // 발행날짜
                       Text(
-                        _formatDateString(post.createdAt),
+                        _formatDateString(widget.post.createdAt),
                         style: TextStyle(
                           fontSize: 12,
                           fontWeight: FontWeight.w300,
@@ -141,7 +273,7 @@ class CardView extends StatelessWidget {
                       const SizedBox(height: 8),
                       // 요약
                       Text(
-                        post.parsedContent,
+                        widget.post.parsedContent,
                         style: TextStyle(
                           fontSize: 12,
                           fontWeight: FontWeight.w400,
@@ -168,7 +300,7 @@ class CardView extends StatelessWidget {
                             ),
                             const SizedBox(width: 4),
                             Text(
-                              '${post.likeCount}',
+                              '${widget.post.likeCount}',
                               style: TextStyle(
                                 fontSize: 14,
                                 fontWeight: FontWeight.w300,

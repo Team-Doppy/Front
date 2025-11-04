@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:doppy/editor/image/models/image_adjustment.dart';
+import 'package:doppy/image/models/image_adjustment.dart';
 
 /// 조정 슬라이더 위젯
 class AdjustmentSlider extends StatelessWidget {

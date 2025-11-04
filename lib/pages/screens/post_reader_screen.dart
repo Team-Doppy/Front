@@ -170,7 +170,7 @@ class _PostReaderScreenState extends State<PostReaderScreen>
           break;
         }
         try {
-          final ok = await launchUrl(
+          await launchUrl(
             uri,
             mode: LaunchMode.inAppWebView,
             webViewConfiguration: const WebViewConfiguration(
@@ -178,9 +178,6 @@ class _PostReaderScreenState extends State<PostReaderScreen>
               enableDomStorage: true,
             ),
           );
-          if (!ok && mounted) {
-            ErrorHandler.showError(context, '링크를 열 수 없어요');
-          }
         } catch (_) {
           if (mounted) ErrorHandler.showError(context, '링크를 열 수 없어요');
         }

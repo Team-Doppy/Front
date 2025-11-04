@@ -17,8 +17,15 @@ import 'dart:async';
 
 class HomeScreen extends StatefulWidget {
   final HomeData? preloadedHomeData;
+  final ValueNotifier<bool>? searchResultsNotifier; // 검색 결과 표시 상태 알림용
+  final bool isActive; // 현재 탭이 활성 상태인지
 
-  const HomeScreen({super.key, this.preloadedHomeData});
+  const HomeScreen({
+    super.key,
+    this.preloadedHomeData,
+    this.searchResultsNotifier,
+    this.isActive = true,
+  });
 
   @override
   State<HomeScreen> createState() => HomeScreenState();
@@ -66,8 +73,49 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   String _searchQuery = '';
   bool _searchHasMore = true;
 
+  // 검색 전 데이터 백업 (검색 종료 시 복원용)
+  List<PostData>? _friendsPostsBeforeSearch;
+  List<PostData>? _allPostsBeforeSearch;
+  int _friendsCurrentPostIndexBeforeSearch = 0;
+  int _allCurrentPostIndexBeforeSearch = 0;
+
   // 새로고침 시 배경 이미지 유지용
   String? _previousBackgroundImageUrl;
+  bool _overlayObscured = false; // 검색 오버레이로 가려졌는지
+
+  // SearchProvider 리스너 참조 (dispose용)
+  VoidCallback? _searchProviderListener;
+
+  // 검색 결과 표시 여부를 외부에서 확인할 수 있는 getter
+  bool get isShowingSearchResults => _isShowingSearchResults;
+
+  // 탭 활성/비활성은 부모에서 전달되는 widget.isActive로 처리 (리스너 불필요)
+
+  // 바텀 네비게이션에서 호출할 수 있는 public 메서드
+  void clearSearchAndReturnToHome() {
+    if (_isShowingSearchResults) {
+      context.read<SearchProvider>().clearSearchResults();
+      setState(() {
+        _isShowingSearchResults = false;
+        _searchQuery = '';
+        // 백업된 데이터 복원
+        if (_currentSectionIndex == 0 && _friendsPostsBeforeSearch != null) {
+          _friendsPosts = _friendsPostsBeforeSearch!;
+          _friendsCurrentPostIndex = _friendsCurrentPostIndexBeforeSearch;
+          _friendsRefreshCount++;
+        } else if (_currentSectionIndex == 1 && _allPostsBeforeSearch != null) {
+          _allPosts = _allPostsBeforeSearch!;
+          _allCurrentPostIndex = _allCurrentPostIndexBeforeSearch;
+          _allRefreshCount++;
+        }
+      });
+      // 백업 데이터 초기화
+      _friendsPostsBeforeSearch = null;
+      _allPostsBeforeSearch = null;
+      // 검색 결과 표시 상태를 부모에게 알림
+      widget.searchResultsNotifier?.value = false;
+    }
+  }
 
   @override
   void initState() {
@@ -140,16 +188,21 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       final searchResultProvider = context.read<SearchProvider>();
       if (searchResultProvider.hasSearchResults) {
         setState(() {
-          _friendsPosts = searchResultProvider.searchResults;
+          // 새로운 리스트로 교체하여 PostList가 변경을 감지하도록
+          _friendsPosts = List<PostData>.from(
+            searchResultProvider.searchResults,
+          );
           _searchQuery = searchResultProvider.searchQuery;
           _isShowingSearchResults = true;
           _friendsIsLoading = false;
           _friendsHasMoreData = false;
+          _friendsCurrentPostIndex = 0;
+          _friendsRefreshCount++; // 강제 새로고침
         });
       }
 
       // Provider의 오버레이 상태 변화를 감지
-      searchResultProvider.addListener(() {
+      _searchProviderListener = () {
         if (!searchResultProvider.isSearchOverlayVisible &&
             _isSearchOverlayVisible) {
           // 다른 탭으로 이동 시 오버레이 닫기
@@ -157,8 +210,29 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             _isSearchOverlayVisible = false;
           });
         }
-      });
+      };
+      searchResultProvider.addListener(_searchProviderListener!);
     });
+  }
+
+  @override
+  void dispose() {
+    // SearchProvider 리스너 제거
+    if (_searchProviderListener != null) {
+      try {
+        context.read<SearchProvider>().removeListener(_searchProviderListener!);
+      } catch (_) {
+        // context가 이미 dispose된 경우 무시
+      }
+    }
+
+    // 네트워크 구독 취소
+    _networkSub?.cancel();
+
+    // PageView 컨트롤러 해제
+    _sectionPageController.dispose();
+
+    super.dispose();
   }
 
   Future<void> _refreshSearchResults() async {
@@ -196,11 +270,15 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           _friendsIsLoading = false;
           _friendsIsLoadingMore = false;
           _friendsHasMoreData = false;
+          _friendsCurrentPostIndex = 0;
+          _friendsRefreshCount++; // 강제 새로고침
         } else {
           _allPosts = refreshed;
           _allIsLoading = false;
           _allIsLoadingMore = false;
           _allHasMoreData = false;
+          _allCurrentPostIndex = 0;
+          _allRefreshCount++; // 강제 새로고침
         }
         _searchHasMore = svc.blogsHasMore;
       });
@@ -270,60 +348,81 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     }
   }
 
-  @override
-  void dispose() {
-    _networkSub?.cancel();
-    _sectionPageController.dispose();
-    super.dispose();
-  }
-
   // 검색 결과 설정 (외부에서 호출) - 현재 섹션에 설정
   void setSearchResults(List<PostData> results, String query) {
     if (mounted) {
       setState(() {
         if (_currentSectionIndex == 0) {
-          // 친구글 섹션
-          _friendsPosts = results;
+          // 검색 전 데이터 백업 (첫 검색 시에만)
+          if (!_isShowingSearchResults) {
+            _friendsPostsBeforeSearch = List<PostData>.from(_friendsPosts);
+            _friendsCurrentPostIndexBeforeSearch = _friendsCurrentPostIndex;
+          }
+          // 친구글 섹션 - 새로운 리스트로 교체하여 PostList가 변경을 감지하도록
+          _friendsPosts = List<PostData>.from(results);
           _friendsCurrentPostIndex = 0;
+          _friendsRefreshCount++; // 강제 새로고침
+          _friendsIsLoading = false;
+          _friendsHasMoreData = false;
         } else {
-          // 전체글 섹션
-          _allPosts = results;
+          // 검색 전 데이터 백업 (첫 검색 시에만)
+          if (!_isShowingSearchResults) {
+            _allPostsBeforeSearch = List<PostData>.from(_allPosts);
+            _allCurrentPostIndexBeforeSearch = _allCurrentPostIndex;
+          }
+          // 전체글 섹션 - 새로운 리스트로 교체하여 PostList가 변경을 감지하도록
+          _allPosts = List<PostData>.from(results);
           _allCurrentPostIndex = 0;
+          _allRefreshCount++; // 강제 새로고침
+          _allIsLoading = false;
+          _allHasMoreData = false;
         }
         _isShowingSearchResults = true;
         _searchQuery = query;
+        // 검색 결과 표시 상태를 부모에게 알림
+        widget.searchResultsNotifier?.value = true;
       });
     }
   }
 
   // 검색 오버레이 열기 (독립 화면으로)
   void openSearchOverlay({String? initialQuery}) {
-    Navigator.of(context).push(
-      PageRouteBuilder(
-        opaque: true,
-        pageBuilder: (context, animation, secondaryAnimation) {
-          return FadeTransition(
-            opacity: animation,
-            child: SearchScreenOverlay(
-              initialQuery: initialQuery, // 초기 검색어 전달
-              onSearchComplete: (results, query) {
-                // 검색 결과를 받아서 홈화면으로 돌아가며 표시
-                Navigator.of(context).pop(); // 검색 화면 닫기
-                setSearchResults(results, query); // 검색 결과 설정
-              },
-              onClose: () {
-                Navigator.of(context).pop();
-              },
-            ),
-          );
-        },
-        transitionsBuilder: (context, animation, secondaryAnimation, child) {
-          return child;
-        },
-        transitionDuration: const Duration(milliseconds: 200),
-        reverseTransitionDuration: const Duration(milliseconds: 200),
-      ),
-    );
+    setState(() => _overlayObscured = true);
+    Navigator.of(context)
+        .push(
+          PageRouteBuilder(
+            opaque: true,
+            pageBuilder: (context, animation, secondaryAnimation) {
+              return FadeTransition(
+                opacity: animation,
+                child: SearchScreenOverlay(
+                  initialQuery: initialQuery, // 초기 검색어 전달
+                  onSearchComplete: (results, query) {
+                    // 검색 결과를 받아서 홈화면으로 돌아가며 표시
+                    Navigator.of(context).pop(); // 검색 화면 닫기
+                    setSearchResults(results, query); // 검색 결과 설정
+                  },
+                  onClose: () {
+                    Navigator.of(context).pop();
+                  },
+                ),
+              );
+            },
+            transitionsBuilder: (
+              context,
+              animation,
+              secondaryAnimation,
+              child,
+            ) {
+              return child;
+            },
+            transitionDuration: const Duration(milliseconds: 200),
+            reverseTransitionDuration: const Duration(milliseconds: 200),
+          ),
+        )
+        .whenComplete(() {
+          if (mounted) setState(() => _overlayObscured = false);
+        });
   }
 
   void _resetFriendsFeed({bool showLoading = true}) {
@@ -834,9 +933,17 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         setState(() {
           _isShowingSearchResults = false;
           _searchQuery = '';
-          _friendsCurrentPostIndex = 0;
+          // 백업된 데이터 복원
+          if (_friendsPostsBeforeSearch != null) {
+            _friendsPosts = _friendsPostsBeforeSearch!;
+            _friendsCurrentPostIndex = _friendsCurrentPostIndexBeforeSearch;
+            _friendsRefreshCount++; // UI 갱신
+          }
         });
-        _loadFriendsPosts(refresh: true);
+        // 백업 데이터 초기화
+        _friendsPostsBeforeSearch = null;
+        // 검색 결과 표시 상태를 부모에게 알림
+        widget.searchResultsNotifier?.value = false;
       },
       isShowingFriendsOnly: true,
       onFilterTap: _handleSectionSwitch,
@@ -845,6 +952,7 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       appBarOpacity: _appBarOpacity, // 앱바 투명도 전달
       networkError: _friendsError, // 에러 상태 전달
       onRetryError: () => _loadFriendsPosts(refresh: true), // 에러 재시도 콜백
+      isTabActive: widget.isActive && !_overlayObscured, // 탭 활성 + 오버레이 미표시
     );
   }
 
@@ -897,9 +1005,17 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         setState(() {
           _isShowingSearchResults = false;
           _searchQuery = '';
-          _allCurrentPostIndex = 0;
+          // 백업된 데이터 복원
+          if (_allPostsBeforeSearch != null) {
+            _allPosts = _allPostsBeforeSearch!;
+            _allCurrentPostIndex = _allCurrentPostIndexBeforeSearch;
+            _allRefreshCount++; // UI 갱신
+          }
         });
-        _loadAllPosts(refresh: true);
+        // 백업 데이터 초기화
+        _allPostsBeforeSearch = null;
+        // 검색 결과 표시 상태를 부모에게 알림
+        widget.searchResultsNotifier?.value = false;
       },
       isShowingFriendsOnly: false,
       onFilterTap: _handleSectionSwitch,
@@ -908,6 +1024,7 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       appBarOpacity: _appBarOpacity, // 앱바 투명도 전달
       networkError: _allError, // 에러 상태 전달
       onRetryError: () => _loadAllPosts(refresh: true), // 에러 재시도 콜백
+      isTabActive: widget.isActive && !_overlayObscured, // 탭 활성 + 오버레이 미표시
     );
   }
 }

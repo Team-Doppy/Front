@@ -19,6 +19,18 @@ class LikeService extends ChangeNotifier {
   bool isPostLiked(String postId) => _postLikeStatus[postId] ?? false;
   int getPostLikeCount(String postId) => _postLikeCounts[postId] ?? 0;
 
+  /// 캐시에 해당 포스트의 상태/카운트가 이미 로드되었는지 여부
+  bool hasPost(String postId) =>
+      _postLikeStatus.containsKey(postId) &&
+      _postLikeCounts.containsKey(postId);
+
+  /// 상태/카운트를 서버에서 보장 로드 (없을 때만)
+  Future<void> ensureLoaded(String postId) async {
+    if (postId.isEmpty) return;
+    if (hasPost(postId)) return;
+    await _forceSyncWithServer(postId);
+  }
+
   /// 초기 좋아요 상태와 수 설정 (PostData에서 가져온 값)
   void setInitialLikeData(String postId, bool isLiked, int count) {
     _postLikeStatus[postId] = isLiked;

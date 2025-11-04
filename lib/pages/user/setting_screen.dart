@@ -8,78 +8,31 @@ class SettingScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final bgColor = isDark ? Colors.black : Colors.white;
-    final cardColor = isDark ? const Color(0xFF181818) : Colors.grey[100];
-    final textColor = isDark ? Colors.white : Colors.black;
-    final accent = const Color(0xFFe50914); // 넷플릭스 레드
-
     return Scaffold(
-      backgroundColor: bgColor,
+      backgroundColor: Theme.of(context).colorScheme.background,
       appBar: AppBar(
-        backgroundColor: bgColor,
+        backgroundColor: Theme.of(context).colorScheme.background,
+        scrolledUnderElevation: 0,
         elevation: 0,
-        title: const Text('설정', style: TextStyle(fontWeight: FontWeight.bold)),
+        leading: IconButton(
+          onPressed: () {
+            Navigator.pop(context);
+          },
+          icon: Icon(
+            Icons.arrow_back_ios_new_rounded,
+            color: Theme.of(context).colorScheme.onBackground,
+            size: 20,
+          ),
+        ),
+
         centerTitle: true,
-        iconTheme: IconThemeData(color: textColor),
+        iconTheme: IconThemeData(
+          color: Theme.of(context).colorScheme.onBackground,
+        ),
       ),
       body: Column(
         children: [
           const SizedBox(height: 24),
-          // 프로필 카드
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 24),
-            child: Container(
-              padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(
-                color: cardColor,
-                borderRadius: BorderRadius.circular(18),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.04),
-                    blurRadius: 8,
-                    offset: const Offset(0, 2),
-                  ),
-                ],
-              ),
-              child: Row(
-                children: [
-                  CircleAvatar(
-                    radius: 28,
-                    backgroundColor: accent.withOpacity(0.1),
-                    child: const Icon(
-                      Icons.person,
-                      size: 36,
-                      color: Colors.grey,
-                    ),
-                  ),
-                  const SizedBox(width: 18),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          '홍길동',
-                          style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 18,
-                            color: textColor,
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          '프로필 편집',
-                          style: TextStyle(color: accent, fontSize: 14),
-                        ),
-                      ],
-                    ),
-                  ),
-                  Icon(Icons.chevron_right, color: Colors.grey[400]),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(height: 32),
           // 메뉴 리스트
           Expanded(
             child: ListView(
@@ -118,8 +71,8 @@ class SettingScreen extends StatelessWidget {
                   padding: const EdgeInsets.symmetric(horizontal: 8),
                   child: ElevatedButton.icon(
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: accent,
-                      foregroundColor: Colors.white,
+                      backgroundColor: Theme.of(context).colorScheme.surface,
+                      foregroundColor: Theme.of(context).colorScheme.onSurface,
                       minimumSize: const Size.fromHeight(48),
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(12),

@@ -28,7 +28,7 @@ class ImageErrorPlaceholder extends StatelessWidget {
       ),
       child: Icon(
         Icons.error_outline,
-        color: theme.colorScheme.surface.withOpacity(1),
+        color: theme.colorScheme.onSurface.withOpacity(1),
         size: iconSize,
       ),
     );

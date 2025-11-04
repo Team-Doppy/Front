@@ -218,7 +218,7 @@ Stylesheet buildCustomStylesheet(BuildContext context) {
       bool isItalic = false;
       bool hasUnderline = false;
       bool hasStrikethrough = false;
-      Color? highlightColor;
+      // 형광펜은 별도 오버레이로 렌더링하므로 스타일에서 사용하지 않음
       bool isSpoiler = false;
       String? fontFamily;
 
@@ -232,8 +232,7 @@ Stylesheet buildCustomStylesheet(BuildContext context) {
         } else if (attribution == strikethroughAttribution) {
           hasStrikethrough = true;
         } else if (attribution is HighlightAttribution) {
-          // ✅ 형광펜 (HighlightAttribution은 ColorAttribution을 상속)
-          highlightColor = attribution.color;
+          // no-op: overlay painter handles highlight visuals
         } else if (attribution is NamedAttribution &&
             attribution.id == 'spoiler') {
           isSpoiler = true;
@@ -251,28 +250,12 @@ Stylesheet buildCustomStylesheet(BuildContext context) {
         }
       }
 
-      // ✅ 형광펜이 있을 때 텍스트 색상을 더 진하게
-      final hasHighlight = highlightColor != null;
-
       style = style.copyWith(
         fontWeight: isBold ? FontWeight.bold : FontWeight.normal,
         fontStyle: isItalic ? FontStyle.italic : FontStyle.normal,
         decoration: _buildTextDecoration(hasUnderline, hasStrikethrough),
-        // 🎨 형광펜 배경색 적용 (연한 색상으로 자연스럽게)
-        backgroundColor: highlightColor?.withOpacity(0.4),
+        // 형광펜은 별도 오버레이로 렌더링하므로 배경색은 사용하지 않음
       );
-
-      // ✅ 형광펜이 있을 때 텍스트를 더 선명하게 (채도 증가 + 약간 굵게)
-      if (hasHighlight && style.color != null) {
-        final currentColor = style.color!;
-        // 채도를 높여서 선명하게 (밝기는 유지)
-        final hsl = HSLColor.fromColor(currentColor);
-        final vividColor =
-            hsl
-                .withSaturation((hsl.saturation * 1.4).clamp(0.0, 1.0))
-                .toColor();
-        style = style.copyWith(color: vividColor);
-      }
 
       // 🙈 스포일러 스타일: 모드에 따라 다르게 처리
       if (isSpoiler) {

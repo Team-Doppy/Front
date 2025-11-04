@@ -1,4 +1,5 @@
 import 'package:doppy/editor/component/row_image_component.dart';
+import 'package:doppy/editor/component/clip_component.dart';
 import 'package:doppy/theme/app_colors.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
@@ -9,6 +10,7 @@ import 'package:doppy/editor/service/editor_service.dart';
 import 'package:doppy/editor/service/node_component_service.dart';
 import 'package:doppy/editor/component/link_component.dart';
 import 'package:provider/provider.dart';
+import 'package:doppy/editor/style/defualt_toolbar.dart';
 
 /// 패키지 기본 ParagraphComponent를 사용하고,
 /// 드래그 드롭 라인만 오버레이로 추가하는 경량 커스텀 빌더
@@ -177,6 +179,7 @@ class _ParagraphWithDropLinesState extends State<_ParagraphWithDropLines>
               final prev = doc.getNodeAt(currentIndex - 1);
               if (prev is ImageNode ||
                   prev is ImageRowNode ||
+                  prev is ClipNode ||
                   prev is LinkNode ||
                   (prev is ParagraphNode && prev.metadata['mention'] == true)) {
                 showTop = false;
@@ -213,7 +216,23 @@ class _ParagraphWithDropLinesState extends State<_ParagraphWithDropLines>
 
         Widget stack = Stack(
           children: [
-            Container(margin: const EdgeInsets.only(top: 4), child: content),
+            // 본문 내용 마진 제거
+            content,
+            // 형광펜 오버레이 (스포일러처럼 그리기)
+            Builder(
+              builder: (context) {
+                final hi = _collectHighlightBoxes(context);
+                if (hi.isEmpty) return const SizedBox.shrink();
+                return Positioned.fill(
+                  child: IgnorePointer(
+                    ignoring: true,
+                    child: CustomPaint(
+                      painter: _ParagraphHighlightPainter(highlights: hi),
+                    ),
+                  ),
+                );
+              },
+            ),
             // 문단 위에 직접 글리터 렌더링 (로컬 좌표기준이라 오프셋 불필요)
             // 읽기 모드이고 스포일러가 있을 때는 탭 이벤트를 통과시켜야 함
             if (boxes.isNotEmpty)
@@ -409,41 +428,85 @@ class _ParagraphWithDropLinesState extends State<_ParagraphWithDropLines>
           ) ??
           Offset.zero;
 
+      // 새로운 방식: TextPainter 기반 라인 밴드로 안정적인 박스 계산
       final boxes = <Rect>[];
+      const double vPad = 0.5;
       for (final r in spans) {
-        final sel = TextSelection(baseOffset: r.start, extentOffset: r.end);
-        final tb = rp.getBoxesForSelection(sel);
-
-        if (tb.isEmpty) continue;
-
-        // ✅ 각 스포일러 구간의 최소/최대 높이를 계산하여 평평한 경계선 생성
-        double minTop = double.infinity;
-        double maxBottom = double.negativeInfinity;
-
-        for (final b in tb) {
-          minTop = min(minTop, b.top);
-          maxBottom = max(maxBottom, b.bottom);
-        }
-
-        // 전체 구간에 대한 공통 상단/하단 (형광펜이 삐져나오지 않도록 3px 추가)
-        final segmentTop = minTop - 3.0;
-        final segmentBottom = maxBottom + 3.0;
-
-        for (final b in tb) {
-          // 글로벌 → 이 컴포넌트(Stack) 로컬 좌표
-          final rect = b.toRect().shift(paraOffset - hostOffset);
-
-          // ✅ 공통 상단/하단을 사용하여 평평한 박스 생성
-          final flatRect = Rect.fromLTRB(
-            rect.left - 1.0,
-            rect.top + segmentTop - b.top, // 공통 상단으로 정렬
-            rect.right + 1.0,
-            rect.bottom + (segmentBottom - maxBottom), // 공통 하단으로 정렬
-          );
-          boxes.add(flatRect);
-        }
+        boxes.addAll(
+          _measureLineRectsForRange(
+            rp,
+            r.start,
+            r.end,
+            paraOffset,
+            hostOffset,
+            vPad: vPad,
+          ),
+        );
       }
       return boxes;
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  // 형광펜 구간을 수집하여 색상과 함께 반환
+  List<_ColoredRect> _collectHighlightBoxes(BuildContext context) {
+    try {
+      final node = widget.editorService.editor.document.getNodeById(
+        widget.nodeId,
+      );
+      if (node is! ParagraphNode) return const [];
+      final text = node.text;
+
+      // RenderParagraph
+      final ctx = _subtreeKey.currentContext;
+      if (ctx == null) return const [];
+      final rp = _findRenderParagraph(ctx.findRenderObject());
+      if (rp == null) return const [];
+      final paraOffset = (rp as RenderBox).localToGlobal(Offset.zero);
+      final hostOffset =
+          (context.findRenderObject() as RenderBox?)?.localToGlobal(
+            Offset.zero,
+          ) ??
+          Offset.zero;
+
+      final List<_ColoredRect> out = [];
+
+      Color? currentColor;
+      int runStart = -1;
+      for (int i = 0; i <= text.text.length; i++) {
+        Color? colorAtI;
+        if (i < text.text.length) {
+          final atts = text.getAllAttributionsAt(i);
+          for (final a in atts) {
+            if (a is HighlightAttribution) {
+              colorAtI = a.color;
+              break;
+            }
+          }
+        }
+
+        final changed = (colorAtI?.value != currentColor?.value);
+        if (changed) {
+          if (runStart >= 0 && currentColor != null) {
+            final rects = _measureLineRectsForRange(
+              rp,
+              runStart,
+              i,
+              paraOffset,
+              hostOffset,
+              vPad: 0.5,
+            );
+            for (final r in rects) {
+              out.add(_ColoredRect(rect: r, color: currentColor));
+            }
+          }
+          runStart = i;
+          currentColor = colorAtI;
+        }
+      }
+
+      return out;
     } catch (_) {
       return const [];
     }
@@ -468,6 +531,71 @@ RenderParagraph? _findRenderParagraph(RenderObject? root) {
     found ??= _findRenderParagraph(child);
   });
   return found;
+}
+
+// TextPainter로 [start,end) 범위를 라인 단위 직사각형으로 계산
+List<Rect> _measureLineRectsForRange(
+  RenderParagraph rp,
+  int start,
+  int end,
+  Offset paraOffset,
+  Offset hostOffset, {
+  double vPad = 0.5,
+}) {
+  final renderBox = rp as RenderBox;
+  final tp = TextPainter(
+    text: rp.text,
+    textAlign: rp.textAlign,
+    textDirection: rp.textDirection,
+    strutStyle: rp.strutStyle,
+    textScaleFactor: rp.textScaleFactor,
+    maxLines: rp.maxLines,
+  );
+  tp.layout(maxWidth: renderBox.size.width);
+  final String fullText = rp.text.toPlainText();
+  final List<TextRange> lineRanges = [];
+  int cursor = 0;
+  while (cursor < fullText.length) {
+    final range = tp.getLineBoundary(TextPosition(offset: cursor));
+    if (!range.isValid) break;
+    lineRanges.add(range);
+    if (range.end <= cursor) {
+      cursor += 1; // 무한루프 방지 안전 증가
+    } else {
+      cursor = range.end;
+    }
+  }
+  final List<Rect> rects = [];
+  for (final lr in lineRanges) {
+    final int lineStart = lr.start;
+    final int lineEnd = lr.end;
+    final int from = start < lineStart ? lineStart : start;
+    final int to = end > lineEnd ? lineEnd : end;
+    if (from >= to) continue;
+
+    // 이 라인 구간의 selection 박스를 사용해 상하좌우 모두 안정적으로 계산
+    final sel = TextSelection(baseOffset: from, extentOffset: to);
+    final tboxes = rp.getBoxesForSelection(sel);
+    if (tboxes.isEmpty) continue;
+
+    double lineTopLocal = tboxes.map((b) => b.top).reduce(min) + vPad;
+    double lineBottomLocal = tboxes.map((b) => b.bottom).reduce(max) - vPad;
+    double lineLeftLocal = tboxes.map((b) => b.left).reduce(min);
+    double lineRightLocal = tboxes.map((b) => b.right).reduce(max);
+
+    // 좌표계 변환 (문단 → 호스트)
+    final double dy = paraOffset.dy - hostOffset.dy;
+    final double dx = paraOffset.dx - hostOffset.dx;
+    rects.add(
+      Rect.fromLTRB(
+        dx + lineLeftLocal,
+        dy + lineTopLocal,
+        dx + lineRightLocal,
+        dy + lineBottomLocal,
+      ),
+    );
+  }
+  return rects;
 }
 
 class _ParagraphSpoilerPainter extends CustomPainter {
@@ -503,7 +631,7 @@ class _ParagraphSpoilerPainter extends CustomPainter {
       final double fillAlpha = isEditing ? 0.5 : 1.0;
       if (backgroundColor.alpha != 0 && fillAlpha > 0) {
         mask.color = backgroundColor.withOpacity(fillAlpha);
-        canvas.drawRect(rect, mask);
+      canvas.drawRect(rect, mask);
       }
       // 점들 그리기
       final area = rect.width * rect.height;
@@ -569,8 +697,8 @@ class _ParagraphSpoilerPainter extends CustomPainter {
           line.add(r);
           placed = true;
           break;
-        }
       }
+    }
       if (!placed) lines.add([r]);
     }
 
@@ -665,6 +793,32 @@ class _ParagraphSpoilerScatterPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant _ParagraphSpoilerScatterPainter oldDelegate) {
     return oldDelegate.t != t || oldDelegate.boxes != boxes;
+  }
+}
+
+class _ColoredRect {
+  final Rect rect;
+  final Color color;
+  const _ColoredRect({required this.rect, required this.color});
+}
+
+class _ParagraphHighlightPainter extends CustomPainter {
+  final List<_ColoredRect> highlights;
+  const _ParagraphHighlightPainter({required this.highlights});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (highlights.isEmpty) return;
+    final paint = Paint()..style = PaintingStyle.fill;
+    for (final h in highlights) {
+      paint.color = h.color.withOpacity(0.35);
+      canvas.drawRect(h.rect, paint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _ParagraphHighlightPainter oldDelegate) {
+    return oldDelegate.highlights != highlights;
   }
 }
 

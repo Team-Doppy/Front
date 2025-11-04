@@ -36,7 +36,8 @@ import 'package:doppy/editor/publish/post_exporter.dart';
 import 'package:doppy/data/services/draft_service.dart';
 import 'package:doppy/data/services/upload_service.dart';
 import 'package:doppy/data/services/blog_service.dart';
-import 'package:doppy/editor/image/custom_image_editor_screen.dart';
+import 'package:doppy/image/custom_image_editor_screen.dart';
+import 'package:doppy/providers/feed_provider/my_profile_feed_provider.dart';
 
 /// 글 공개 범위 옵션
 enum VisibilityOption { public, partial, private }
@@ -96,6 +97,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
 
   // 저장 중 상태
   bool _isSaving = false;
+  bool _shouldRefreshMyFeed = false; // 수정사항 발생 시 한 번만 새로고침
 
   @override
   void initState() {
@@ -738,6 +740,17 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     dragService.removeListener(_onDragging);
     scrollController.removeListener(_onScrollChanged);
     _editorFocusNode.dispose();
+    // 수정 도중 변경이 있었다면 내 피드 한 번만 새로고침
+    if (_shouldRefreshMyFeed) {
+      // 비디오 컨트롤러 정리가 완전히 완료될 때까지 약간 지연
+      Future.delayed(const Duration(milliseconds: 300), () {
+        try {
+          final feed = MyProfileFeedProvider(); // 싱글톤 직접 접근
+          feed.invalidateCache();
+          feed.refresh().catchError((_) {});
+        } catch (_) {}
+      });
+    }
     super.dispose();
   }
 
@@ -914,8 +927,10 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                     ),
                   ),
 
-                  if (!stickerService.isDragging)
-                    Positioned.fill(
+                  // 에디터 노드 터치 감지 (항상 유지, 드래그 중에는 포인터만 무시)
+                  Positioned.fill(
+                    child: IgnorePointer(
+                      ignoring: stickerService.isDragging,
                       child: GestureDetector(
                         onTapDown: (details) {
                           _lastTapPosition = details.globalPosition;
@@ -932,12 +947,13 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                         behavior: HitTestBehavior.translucent,
                       ),
                     ),
+                  ),
 
                   // 드래그 오버레이 (키보드가 내려가 있을 때만 표시)
                   if (dragService.draggingNodeId != null && !isKeyboardVisible)
                     _buildDragOverlay(),
 
-                  // 스티커 캔버스
+                  // 스티커 캔버스 (최상위 레이어 - 터치 우선권)
                   Positioned.fill(
                     child: StickerCanvas(scrollController: scrollController),
                   ),
@@ -970,6 +986,8 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                                   _editVisibility = visibility;
                                   _editGroupIds = groupIds;
                                 });
+                                _shouldRefreshMyFeed = true;
+                                // 공개범위 변경 플래그만 설정 (dispose에서 새로고침)
                               },
                               onTitleSummaryChanged: (title, summary) {
                                 // 썸네일 오버레이에서 제목/요약이 변경되면 에디터 제목 노드 업데이트
@@ -981,6 +999,18 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                                 print(
                                   '[PostwriteScreen] 제목 업데이트 및 서버 적용: $title',
                                 );
+                                _shouldRefreshMyFeed = true;
+                              },
+                              onCategoryChanged: () {
+                                _shouldRefreshMyFeed = true;
+                                // 카테고리 변경 플래그만 설정 (dispose에서 새로고침)
+                              },
+                              onThumbnailChanged: () {
+                                print(
+                                  '[PostwriteScreen] onThumbnailChanged 콜백 받음',
+                                );
+                                _shouldRefreshMyFeed = true;
+                                // 썸네일 변경 플래그만 설정 (dispose에서 새로고침)
                               },
                             )
                             : EditorAppBar(
@@ -988,6 +1018,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                               stickerService: stickerService,
                               onSaveDraft: _saveDraft,
                               onLoadDraft: _showDraftList,
+                              currentDraftId: currentDraftId,
                             ),
                   ),
 
@@ -1167,6 +1198,8 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
         // ignore: use_build_context_synchronously
         context,
         PageRouteBuilder(
+          fullscreenDialog: true,
+          barrierColor: Theme.of(context).colorScheme.background,
           opaque: false,
           barrierDismissible: true,
           pageBuilder:
@@ -1234,9 +1267,24 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
   }
 
   void _deleteNode(DocumentNode node, String selectedId) {
-    // 링크/멘션 등 다른 특수 노드 삭제
+    // 링크/멘션 등 다른 특수 노드 삭제 + 영상 임시노드 업로드 취소 연동
     try {
       nodeComponentService.selectNode(null);
+      if (node is ClipNode) {
+        // placeholder(로컬 경로 존재, url 비어있음)일 때 업로드 취소 후 삭제
+        final dynamic dyn = node;
+        final String url = (dyn.url as String?) ?? '';
+        final String localPath = (dyn.localPath as String?) ?? '';
+        if (url.isEmpty && localPath.isNotEmpty) {
+          try {
+            // refId = placeholder 노드 ID 기준으로 업로드 취소
+            context.read<UploadService>().cancelByRef(selectedId);
+          } catch (_) {}
+          editorService.deleteVideoPlaceholderNode(selectedId);
+          setState(() {});
+          return;
+        }
+      }
       document.deleteNode(selectedId);
       setState(() {});
     } catch (e) {
@@ -1301,9 +1349,21 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
       final titleHash = title.hashCode.abs();
       final draftIdByTitle = 'draft_$titleHash';
 
-      final thumbnailUrl = nodeComponentService.getTempThumbnailUrl(
-        draftIdByTitle,
+      // 현재 draft ID를 sessionKey로 persist된 썸네일 및 영상 파일 가져오기
+      final sessionKey = currentDraftId ?? draftIdByTitle;
+      final thumbnailUrl = nodeComponentService.getTempThumbnailUrl(sessionKey);
+      final thumbnailId = nodeComponentService.getTempThumbnailId(sessionKey);
+      final videoFilePath = nodeComponentService.getTempVideoFilePath(
+        sessionKey,
       );
+      final videoThumbnailPath = nodeComponentService.getTempVideoThumbnailPath(
+        sessionKey,
+      );
+
+      print('[PostwriteScreen] 임시저장 - sessionKey: $sessionKey');
+      print('[PostwriteScreen] 임시저장 - 썸네일: $thumbnailUrl (ID: $thumbnailId)');
+      print('[PostwriteScreen] 임시저장 - 영상: $videoFilePath');
+      print('[PostwriteScreen] 임시저장 - 영상 썸네일: $videoThumbnailPath');
 
       // 제목이 같으면 기존 임시저장을 덮어씀
       currentDraftId = await draftService.saveDraft(
@@ -1311,6 +1371,8 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
         stickerService: stickerService,
         title: title,
         thumbnailUrl: thumbnailUrl ?? '',
+        videoFilePath: videoFilePath,
+        videoThumbnailPath: videoThumbnailPath,
         visibility: 'public', // 기본값
         selectedGroupIds: [],
         existingDraftId: draftIdByTitle, // 제목 기반 ID로 덮어쓰기
@@ -1337,6 +1399,16 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
 
     // 이미 저장 중이면 무시
     if (_isSaving) return;
+
+    // 업로드 중 플레이스홀더가 있으면 차단 (작성 시와 동일 정책)
+    if (editorService.hasAnyPlaceholders()) {
+      await DialogUtils.showInfoDialog(
+        context,
+        title: '업로드 대기',
+        message: '아직 업로드가 완료되지 않은 미디어가 있어요. 잠시만 기다려주세요.',
+      );
+      return;
+    }
 
     // 1. 제목 검증
     final hasTitle = editorService.hasNonEmptyTitle();
@@ -1408,7 +1480,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
 
       if (mounted) {
         setState(() => _isSaving = false);
-
+        _shouldRefreshMyFeed = true;
         Navigator.of(context).pop();
       }
     } catch (e) {

@@ -72,6 +72,8 @@ class SingleImageComponent extends StatefulWidget {
 
 class _SingleImageComponentState extends State<SingleImageComponent>
     with DocumentComponent, TickerProviderStateMixin {
+  // 새 프레임이 준비되기 전까지 마지막으로 성공적으로 렌더한 child를 보존해 깜빡임을 줄인다.
+  Widget? _lastRenderedChild;
   GlobalKey get componentKey => widget._componentKey;
 
   static const double marginTop = 4;
@@ -708,9 +710,12 @@ class _SingleImageComponentState extends State<SingleImageComponent>
         fit: BoxFit.contain,
         filterQuality: FilterQuality.low,
         frameBuilder: (context, child, frame, wasSyncLoaded) {
-          if (wasSyncLoaded || frame != null) return child;
+          if (wasSyncLoaded || frame != null) {
+            _lastRenderedChild = child;
+            return child;
+          }
           final h = w / (4 / 5);
-          return ShimmerBox(width: w, height: h);
+          return _lastRenderedChild ?? ShimmerBox(width: w, height: h);
         },
       );
     }
@@ -739,9 +744,12 @@ class _SingleImageComponentState extends State<SingleImageComponent>
             cacheWidth: w.isFinite ? w.toInt() : null,
             filterQuality: FilterQuality.low,
             frameBuilder: (context, child, frame, wasSyncLoaded) {
-              if (wasSyncLoaded || frame != null) return child;
+              if (wasSyncLoaded || frame != null) {
+                _lastRenderedChild = child;
+                return child;
+              }
               final h = w / (4 / 5);
-              return ShimmerBox(width: w, height: h);
+              return _lastRenderedChild ?? ShimmerBox(width: w, height: h);
             },
             errorBuilder:
                 (context, error, stack) => ImageErrorPlaceholder(
@@ -767,10 +775,13 @@ class _SingleImageComponentState extends State<SingleImageComponent>
       fit: BoxFit.contain,
       frameBuilder: (context, child, frame, wasSyncLoaded) {
         // 프리로드(캐시 히트)된 경우 즉시 child 렌더 → 쉬머 미노출
-        if (wasSyncLoaded || frame != null) return child;
+        if (wasSyncLoaded || frame != null) {
+          _lastRenderedChild = child;
+          return child;
+        }
         final w = MediaQuery.of(context).size.width;
         final h = w / (4 / 5);
-        return ShimmerBox(width: w, height: h);
+        return _lastRenderedChild ?? ShimmerBox(width: w, height: h);
       },
       errorBuilder:
           (context, error, stack) => ImageErrorPlaceholder(

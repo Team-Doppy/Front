@@ -190,7 +190,9 @@ class _DraftListOverlayState extends State<DraftListOverlay>
               },
               child: BackdropFilter(
                 filter: ui.ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-                child: Container(color: Colors.black.withOpacity(0.3)),
+                child: Container(
+                  color: const ui.Color.fromARGB(235, 45, 45, 45),
+                ),
               ),
             ),
           ),
@@ -200,7 +202,7 @@ class _DraftListOverlayState extends State<DraftListOverlay>
             top: 0,
             left: 0,
             right: 0,
-            bottom: 100,
+            bottom: 10,
             child: AnimatedBuilder(
               animation: _ctrl,
               builder: (context, child) {
@@ -268,17 +270,19 @@ class _DraftListOverlayState extends State<DraftListOverlay>
                       _isDragging = false;
                     }
                   },
-                  child: Container(
-                    decoration: BoxDecoration(
-                      color: Colors.transparent,
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(16),
-                      child:
-                          _drafts.isEmpty
-                              ? _buildEmptyState()
-                              : _buildDraftList(),
+                  child: SafeArea(
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: Colors.transparent,
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(16),
+                        child:
+                            _drafts.isEmpty
+                                ? _buildEmptyState()
+                                : _buildDraftList(),
+                      ),
                     ),
                   ),
                 ),
@@ -298,7 +302,7 @@ class _DraftListOverlayState extends State<DraftListOverlay>
                 filter: ui.ImageFilter.blur(sigmaX: 10, sigmaY: 10),
                 child: Container(
                   height: 56 + MediaQuery.of(context).padding.top,
-                  color: Colors.black.withOpacity(0.3),
+                  color: const ui.Color.fromARGB(243, 43, 43, 43),
                   padding: EdgeInsets.only(
                     top: MediaQuery.of(context).padding.top,
                     left: 24,
@@ -355,8 +359,7 @@ class _DraftListOverlayState extends State<DraftListOverlay>
   }
 
   Widget _buildDraftList() {
-    final topPadding =
-        MediaQuery.of(context).padding.top + 56 + 32; // SafeArea + 앱바 + 여백
+    final topPadding = 70.0; // SafeArea + 앱바 + 여백
 
     // 제목별로 그룹화된 임시저장을 단순 리스트로 변환
     final allDrafts = <DraftData>[];
@@ -372,12 +375,7 @@ class _DraftListOverlayState extends State<DraftListOverlay>
 
     return ListView.separated(
       controller: _scrollController,
-      padding: EdgeInsets.only(
-        top: topPadding,
-        left: 24,
-        right: 24,
-        bottom: 32,
-      ),
+      padding: EdgeInsets.only(top: topPadding, left: 24, right: 24),
       itemCount: allDrafts.length,
       separatorBuilder: (context, index) => const SizedBox(height: 1),
       itemBuilder: (context, index) {
@@ -452,7 +450,7 @@ class _DraftListOverlayState extends State<DraftListOverlay>
         }
       },
       child: Container(
-        height: 72,
+        height: 85,
         child: Stack(
           children: [
             // 삭제 버튼 배경

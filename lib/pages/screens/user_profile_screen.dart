@@ -17,7 +17,7 @@ import 'package:doppy/providers/friend_provider.dart';
 import 'package:doppy/providers/feed_provider/my_profile_feed_provider.dart';
 import 'package:doppy/providers/feed_provider/base_feed_provider.dart';
 import 'package:doppy/data/models/user_model.dart';
-import 'package:doppy/editor/image/profile_image_bottom_sheet.dart';
+import 'package:doppy/image/profile_image_bottom_sheet.dart';
 import 'dart:io';
 import 'dart:ui';
 import 'dart:async';

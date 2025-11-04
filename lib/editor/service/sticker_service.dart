@@ -193,6 +193,18 @@ class StickerService extends ChangeNotifier {
     _dragAccum = Offset.zero; // 누적 델타 리셋
     _scaleDelta = 1.0; // 배율은 항상 1.0에서 시작(상대 배율)
     _rotationDelta = 0.0; // 회전도 상대값으로 시작
+    // LOG
+    // ignore: avoid_print
+    print(
+      '[StickerService] beginDrag id=' +
+          id +
+          ' basePos=' +
+          _dragBasePos.toString() +
+          ' scale=' +
+          _dragBaseScale.toString(),
+    );
+    // 드래그 시작을 알림 → 에디터 레이어가 IgnorePointer(ignoring: true)로 전환되어
+    // 이후 포인터 이벤트가 스티커 레이어로 전달되도록 한다.
     notifyListeners();
   }
 
@@ -205,6 +217,20 @@ class StickerService extends ChangeNotifier {
     _dragAccum += delta;
     _scaleDelta = scaleDelta;
     _rotationDelta = rotationDelta;
+    // LOG
+    // ignore: avoid_print
+    print(
+      '[StickerService] updateDrag id=' +
+          (_draggingId ?? '') +
+          ' d=' +
+          delta.toString() +
+          ' scaleΔ=' +
+          scaleDelta.toString() +
+          ' rotΔ=' +
+          rotationDelta.toString() +
+          ' previewPos=' +
+          dragPreviewPos.toString(),
+    );
     notifyListeners();
   }
 
@@ -212,6 +238,8 @@ class StickerService extends ChangeNotifier {
     if (_draggingId == null) return;
     final id = _draggingId!;
     if (_dragOverDelete) {
+      // ignore: avoid_print
+      print('[StickerService] endDrag delete id=' + id);
       remove(id);
     } else {
       var newPos = dragPreviewPos;
@@ -220,6 +248,17 @@ class StickerService extends ChangeNotifier {
       if (newPos.dy.isNaN || newPos.dy.isInfinite) newPos = const Offset(0, 0);
       final newScale = dragPreviewScale.clamp(minScale, maxScale);
       final newRot = dragPreviewRotation;
+      // ignore: avoid_print
+      print(
+        '[StickerService] endDrag commit id=' +
+            id +
+            ' pos=' +
+            newPos.toString() +
+            ' scale=' +
+            newScale.toString() +
+            ' rot=' +
+            newRot.toString(),
+      );
       transform(id, position: newPos, scale: newScale, rotation: newRot);
     }
     _draggingId = null;
@@ -227,6 +266,8 @@ class StickerService extends ChangeNotifier {
     _scaleDelta = 1.0;
     _rotationDelta = 0.0;
     _dragOverDelete = false;
+    // ignore: avoid_print
+    print('[StickerService] endDrag reset');
     notifyListeners();
   }
 

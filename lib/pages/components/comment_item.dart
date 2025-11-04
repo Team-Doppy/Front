@@ -118,7 +118,7 @@ class CommentItem extends StatelessWidget {
       borderWidth: 1,
       borderColor: Theme.of(
         context,
-      ).colorScheme.onSurfaceVariant.withOpacity(isMe ? 1 : 0.3),
+      ).colorScheme.onSurfaceVariant.withOpacity(0.3),
     );
   }
 
@@ -140,7 +140,9 @@ class CommentItem extends StatelessWidget {
             color:
                 isMe
                     ? Theme.of(context).colorScheme.primary
-                    : Theme.of(context).colorScheme.surfaceVariant,
+                    : Theme.of(
+                      context,
+                    ).colorScheme.surfaceVariant.withOpacity(0.9),
             borderRadius: BorderRadius.only(
               topLeft: const Radius.circular(16),
               topRight: const Radius.circular(16),

@@ -1,6 +1,6 @@
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
-import 'package:doppy/editor/image/models/filter_preset.dart';
+import 'package:doppy/image/models/filter_preset.dart';
 
 /// 필터 칩 (미리보기 이미지)
 class FilterChipWidget extends StatelessWidget {

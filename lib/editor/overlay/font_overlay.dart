@@ -55,6 +55,7 @@ class FontOverlay extends StatefulWidget {
   final VoidCallback? onClose;
   final ScrollController? scrollController; // DraggableScrollableSheet용
   final DraggableScrollableController? sheetController; // 시트 확장/축소용 컨트롤러
+  final String? initialCurrentFamily; // 현재 적용 폰트(식별자)
 
   const FontOverlay({
     super.key,
@@ -62,6 +63,7 @@ class FontOverlay extends StatefulWidget {
     this.onClose,
     this.scrollController,
     this.sheetController,
+    this.initialCurrentFamily,
   });
 
   @override
@@ -89,7 +91,12 @@ class _FontOverlayState extends State<FontOverlay> {
     if (!mounted) return;
     setState(() {
       _favorites = fav.toSet();
+      // 우선순위: 외부에서 전달된 현재 폰트 → 저장된 최근 폰트
+      if ((widget.initialCurrentFamily ?? '').isNotEmpty) {
+        _current = (widget.initialCurrentFamily, cur.$2);
+      } else {
       _current = cur;
+      }
     });
   }
 

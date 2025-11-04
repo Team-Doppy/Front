@@ -1240,8 +1240,8 @@ class _FriendTile extends StatelessWidget {
 
     if (blur) {
       avatar = Container(
-        width: 120,
-        height: 120,
+        width: 110,
+        height: 110,
         decoration: BoxDecoration(
           shape: BoxShape.circle,
           border: Border.all(

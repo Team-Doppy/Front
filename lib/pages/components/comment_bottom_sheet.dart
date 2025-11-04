@@ -20,7 +20,7 @@ class CommentBottomSheet extends StatefulWidget {
 }
 
 class _CommentBottomSheetState extends State<CommentBottomSheet>
-    with TickerProviderStateMixin {
+    with TickerProviderStateMixin, WidgetsBindingObserver {
   final CommentService _commentService = CommentService();
   final TextEditingController _commentController = TextEditingController();
   final FocusNode _commentFocus = FocusNode();
@@ -44,6 +44,7 @@ class _CommentBottomSheetState extends State<CommentBottomSheet>
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
 
     // 바운싱 애니메이션 초기화
     _bounceAnimationController = AnimationController(
@@ -59,15 +60,6 @@ class _CommentBottomSheetState extends State<CommentBottomSheet>
     );
 
     _commentService.addListener(_onCommentServiceChanged);
-
-    // 오버레이 열릴 때 자동 포커스
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      Future.delayed(const Duration(milliseconds: 300), () {
-        if (mounted) {
-          _commentFocus.requestFocus();
-        }
-      });
-    });
   }
 
   void _onCommentServiceChanged() {
@@ -129,6 +121,7 @@ class _CommentBottomSheetState extends State<CommentBottomSheet>
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _commentService.removeListener(_onCommentServiceChanged);
 
     _bounceAnimationController.dispose();
@@ -136,6 +129,21 @@ class _CommentBottomSheetState extends State<CommentBottomSheet>
     _commentFocus.dispose();
     _scrollController.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeMetrics() {
+    // 키보드(뷰 인셋) 변화 감지 → 강제 리빌드
+    if (!mounted) return;
+    try {
+      final views = WidgetsBinding.instance.platformDispatcher.views;
+      if (views.isNotEmpty) {
+        final v = views.first;
+        final kb = v.viewInsets.bottom / v.devicePixelRatio;
+        print('[CommentBottomSheet] didChangeMetrics(view) keyboardHeight=$kb');
+      }
+    } catch (_) {}
+    setState(() {});
   }
 
   void _submitComment() async {
@@ -234,6 +242,8 @@ class _CommentBottomSheetState extends State<CommentBottomSheet>
 
   @override
   Widget build(BuildContext context) {
+    // 키보드 높이는 아래 View API 계산을 사용
+
     final allComments = _commentService.getAllComments();
     // 시간순으로 정렬 (오래된 것부터 최신 순으로)
     final comments =
@@ -245,6 +255,17 @@ class _CommentBottomSheetState extends State<CommentBottomSheet>
         _commentKeys[comment.id] = GlobalKey();
       }
     }
+
+    // View API로 키보드 높이 계산 (MediaQuery가 0인 케이스 대비)
+    double keyboardHeight;
+    try {
+      final view = View.of(context);
+      keyboardHeight = view.viewInsets.bottom / view.devicePixelRatio;
+    } catch (_) {
+      // 폴백
+      keyboardHeight = MediaQuery.of(context).viewInsets.bottom;
+    }
+    print('[CommentBottomSheet] keyboardHeight(calculated)=$keyboardHeight');
 
     return Stack(
       children: [
@@ -311,8 +332,12 @@ class _CommentBottomSheetState extends State<CommentBottomSheet>
 
                       // 댓글 리스트
                       Expanded(
-                        child:
-                            _commentService.isLoading && comments.isEmpty
+                        child: Builder(
+                          builder: (context) {
+                            print(
+                              '[CommentBottomSheet] isLoading=${_commentService.isLoading}, isEmpty=${comments.isEmpty}, comments.length=${comments.length}',
+                            );
+                            return _commentService.isLoading && comments.isEmpty
                                 ? const Padding(
                                   padding: EdgeInsets.symmetric(
                                     horizontal: 4,
@@ -333,6 +358,8 @@ class _CommentBottomSheetState extends State<CommentBottomSheet>
                                           _animatingCommentId == commentId,
                                   findTargetComment: _findTargetComment,
                                   onReactionToggle: _toggleReaction,
+                                  keyboardHeight:
+                                      MediaQuery.of(context).viewInsets.bottom,
                                   onLongPress: (offset, comment) {
                                     HapticFeedback.mediumImpact();
                                     CommentItem.openMessageMenu(
@@ -365,24 +392,31 @@ class _CommentBottomSheetState extends State<CommentBottomSheet>
                                   },
                                   onTapTargetComment: _scrollToComment,
                                   commentKeys: _commentKeys,
-                                ),
+                                );
+                          },
+                        ),
                       ),
 
-                      // 댓글 입력창
-                      CommentInputSection(
-                        commentController: _commentController,
-                        focusNode: _commentFocus,
-                        replyTarget: _replyTarget,
-                        editingComment: _editingComment,
-                        onSubmit: _submitComment,
-                        onCancelReply:
-                            () => setState(() => _replyTarget = null),
-                        onCancelEdit: () {
-                          setState(() {
-                            _editingComment = null;
-                            _commentController.clear();
-                          });
-                        },
+                      // 댓글 입력창 (키보드 높이만큼 올림)
+                      AnimatedPadding(
+                        padding: EdgeInsets.only(bottom: keyboardHeight),
+                        duration: const Duration(milliseconds: 180),
+                        curve: Curves.easeOut,
+                        child: CommentInputSection(
+                          commentController: _commentController,
+                          focusNode: _commentFocus,
+                          replyTarget: _replyTarget,
+                          editingComment: _editingComment,
+                          onSubmit: _submitComment,
+                          onCancelReply:
+                              () => setState(() => _replyTarget = null),
+                          onCancelEdit: () {
+                            setState(() {
+                              _editingComment = null;
+                              _commentController.clear();
+                            });
+                          },
+                        ),
                       ),
                     ],
                   ),

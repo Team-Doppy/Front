@@ -2,6 +2,7 @@ import 'dart:typed_data';
 import 'dart:ui';
 import 'dart:io';
 
+import 'package:doppy/data/services/video_cache_service.dart';
 import 'package:flutter/material.dart';
 import 'package:super_editor/super_editor.dart';
 import 'package:doppy/editor/service/drag_service.dart';
@@ -906,15 +907,18 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
   VideoPlayerController? _controller;
   bool _isInitialized = false;
   bool _hasError = false;
-  bool _isMuted = false;
   bool _hasPlayedOnce = false;
   bool _isPlaying = false;
   bool _isPreloaded = false; // 프리로드된 컨트롤러인지 여부
   void Function(String url)? _onClipPreloaded;
+  final VideoMuteService _muteService = VideoMuteService();
 
   @override
   void initState() {
     super.initState();
+    // 음소거 서비스 리스너 등록
+    _muteService.addListener(_onMuteServiceChanged);
+
     // 항상 프록시 등록(외부 제어용)
     _registerVideoPlayerController();
     // 프리로드 컨트롤러가 있으면 동기 부착하여 첫 빌드에서 바로 표시
@@ -925,7 +929,7 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
       _isInitialized = preloaded.value.isInitialized;
       try {
         _controller!.addListener(_onVideoStatusChanged);
-        _controller!.setVolume(_isMuted ? 0.0 : 1.0);
+        _controller!.setVolume(_muteService.isReaderMuted ? 0.0 : 1.0);
       } catch (_) {}
       if (widget.shouldAutoPlay) {
         WidgetsBinding.instance.addPostFrameCallback((_) => _playVideo());
@@ -946,7 +950,7 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
       _isInitialized = pre.value.isInitialized;
       try {
         _controller!.addListener(_onVideoStatusChanged);
-        _controller!.setVolume(_isMuted ? 0.0 : 1.0);
+        _controller!.setVolume(_muteService.isReaderMuted ? 0.0 : 1.0);
       } catch (_) {}
       if (widget.shouldAutoPlay) {
         _playVideo();
@@ -972,6 +976,9 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
 
   @override
   void dispose() {
+    // 음소거 서비스 리스너 제거
+    _muteService.removeListener(_onMuteServiceChanged);
+
     if (_onClipPreloaded != null) {
       PostReaderService.removeClipPreloadedListener(_onClipPreloaded!);
       _onClipPreloaded = null;
@@ -1051,7 +1058,7 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
       }
 
       // 음소거 설정
-      await _controller!.setVolume(_isMuted ? 0.0 : 1.0);
+      await _controller!.setVolume(_muteService.isReaderMuted ? 0.0 : 1.0);
 
       // 재생 완료 리스너
       _controller!.addListener(_onVideoStatusChanged);
@@ -1109,13 +1116,19 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
     }
   }
 
+  void _onMuteServiceChanged() {
+    // 리더 음소거 상태가 변경되면 비디오 볼륨 조정
+    if (_controller != null && _isInitialized) {
+      _controller!.setVolume(_muteService.isReaderMuted ? 0.0 : 1.0);
+      if (mounted) setState(() {});
+    }
+  }
+
   // 외부에서 호출하기 위한 public 메서드들
   void toggleMute() {
     if (_controller == null) return;
-    setState(() {
-      _isMuted = !_isMuted;
-    });
-    _controller!.setVolume(_isMuted ? 0.0 : 1.0);
+    // 리더 음소거 상태 토글
+    _muteService.toggleReaderMute();
   }
 
   void restartVideo() {
@@ -1260,16 +1273,21 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
           Positioned(
             bottom: 8,
             right: 8,
-            child: Container(
-              padding: EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: Colors.black.withOpacity(0.6),
-                shape: BoxShape.circle,
-              ),
-              child: Icon(
-                _isMuted ? Icons.volume_off : Icons.volume_up,
-                color: Colors.white,
-                size: 24,
+            child: GestureDetector(
+              onTap: toggleMute,
+              child: Container(
+                padding: EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.black.withOpacity(0.6),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(
+                  _muteService.isReaderMuted
+                      ? Icons.volume_off
+                      : Icons.volume_up,
+                  color: Colors.white,
+                  size: 16,
+                ),
               ),
             ),
           ),

@@ -601,6 +601,10 @@ class CategoryDropDown {
                   _onCategoryChanged?.call();
                 },
                 onEdit: () async {
+                  final int? catId = c['id'] as int?;
+                  if (catId == 0) {
+                    return;
+                  }
                   // 공통 입력 다이얼로그로 이름 변경
                   final newName = await DialogUtils.showTextInputDialog(
                     context,
@@ -624,6 +628,10 @@ class CategoryDropDown {
                 },
                 onDelete: () {
                   () async {
+                    final int? catId = c['id'] as int?;
+                    if (catId == 0) {
+                      return;
+                    }
                     final bool? confirmed = await DialogUtils.showConfirmDialog(
                       context,
                       title: '카테고리 삭제',

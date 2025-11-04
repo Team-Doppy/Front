@@ -2,7 +2,7 @@ import 'package:doppy/theme/app_colors.dart';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
-import 'package:doppy/editor/image/models/text_overlay_model.dart';
+import 'package:doppy/image/models/text_overlay_model.dart';
 import 'dart:math' as math;
 import 'package:doppy/editor/style/font_catalog.dart';
 

@@ -167,14 +167,18 @@ class PostExporter {
           meta = null;
         }
         final mediaId = meta != null ? (meta['mediaId']?.toString()) : null;
+        final paddingMode = meta != null ? (meta['padding']?.toString()) : null;
 
-        // 스포일러 확인: metadata 또는 NodeComponentService
-        bool hasSpoiler = false;
-        if (meta != null && meta['spoiler'] == true) {
+        // 스포일러 확인: NodeComponentService 우선, metadata는 보조
+        final nodeService = NodeComponentService();
+        bool hasSpoiler;
+
+        if (nodeService.isSpoiler(node.id)) {
           hasSpoiler = true;
+        } else if (nodeService.isSpoilerDisabled(node.id)) {
+          hasSpoiler = false;
         } else {
-          final nodeService = NodeComponentService();
-          hasSpoiler = nodeService.isSpoiler(node.id);
+          hasSpoiler = meta != null && meta['spoiler'] == true;
         }
 
         final dataMap = <String, dynamic>{'url': node.imageUrl};
@@ -182,11 +186,18 @@ class PostExporter {
         if (mediaId != null && mediaId.isNotEmpty) {
           dataMap['mediaId'] = int.tryParse(mediaId) ?? mediaId;
         }
+        // true일 때만 추가 (false는 키 없음으로 표현)
         if (hasSpoiler) {
           dataMap['spoiler'] = true;
         }
 
-        nodes.add({'id': node.id, 'type': 'image', 'data': dataMap});
+        final out = {'id': node.id, 'type': 'image', 'data': dataMap};
+        // 패딩 모드: 기본(center)일 때는 생략, full만 저장
+        if (paddingMode == 'full') {
+          out['padding'] = 'full';
+          print('[PostExporter] ImageNode ${node.id} padding=full 저장');
+        }
+        nodes.add(out);
         continue;
       }
 

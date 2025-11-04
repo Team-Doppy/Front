@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:doppy/editor/image/models/image_adjustment.dart';
+import 'package:doppy/image/models/image_adjustment.dart';
 
 /// 조정 타입 선택 칩
 class AdjustmentChip extends StatelessWidget {

@@ -400,92 +400,104 @@ class _LinkComponentState extends State<_LinkComponent>
               ? null
               : (d) => _updatePreviewPosition(d.globalPosition),
       onLongPressEnd: widget.isEditing ? null : (_) => _hidePreview(),
-      child: Stack(
-        children: [
-          // 배경 이미지
-          Container(
-            margin: EdgeInsets.only(top: marginTop, bottom: marginBottom),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(5),
-              color: Theme.of(context).colorScheme.surface,
-            ),
-            child: Row(
-              children: [
-                SizedBox(width: 12),
-                Expanded(
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 8),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          widget.title.isNotEmpty ? widget.title : widget.url,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: Theme.of(context).colorScheme.onSurface,
-                            fontWeight: FontWeight.w600,
-                            fontSize: 15,
-                          ),
-                        ),
-
-                        const SizedBox(height: 8),
-                        Text(
-                          widget.url,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color:
-                                Theme.of(context).colorScheme.onSurfaceVariant,
-                            fontSize: 12,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                if (widget.thumbnailUrl.isNotEmpty)
-                  ClipRRect(
-                    borderRadius: BorderRadius.only(
-                      topRight: Radius.circular(5),
-                      bottomRight: Radius.circular(5),
-                    ),
-                    child: Image.network(
-                      widget.thumbnailUrl,
-                      width: 120,
-                      height: 120,
-                      fit: BoxFit.cover,
-                      errorBuilder:
-                          (_, __, ___) => Container(
-                            width: 100,
-                            height: 100,
-                            color: Theme.of(context).colorScheme.onSurface,
-                            child: const Icon(
-                              Icons.link,
-                              color: Colors.white54,
-                            ),
-                          ),
-                    ),
-                  )
-                else
-                  Container(
-                    width: 100,
-                    height: 100,
-                    alignment: Alignment.center,
-                    decoration: const BoxDecoration(
-                      color: Color(0xFF2A2A2A),
-                      borderRadius: BorderRadius.only(
-                        topRight: Radius.circular(5),
-                        bottomRight: Radius.circular(5),
-                      ),
-                    ),
-                    child: const Icon(Icons.link, color: Colors.white54),
-                  ),
-              ],
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 20),
+        child: Container(
+          margin: EdgeInsets.only(top: marginTop, bottom: marginBottom),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(12),
+            color: Theme.of(context).colorScheme.surface,
+            border: Border.all(
+              color: Theme.of(context).colorScheme.onSurface.withOpacity(0.08),
+              width: 1,
             ),
           ),
-        ],
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // 위: 썸네일
+              if (widget.thumbnailUrl.isNotEmpty)
+                ClipRRect(
+                  borderRadius: const BorderRadius.only(
+                    topLeft: Radius.circular(12),
+                    topRight: Radius.circular(12),
+                  ),
+                  child: AspectRatio(
+                    aspectRatio: 16 / 9,
+                    child: Image.network(
+                      widget.thumbnailUrl,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => _buildIconPlaceholder(),
+                    ),
+                  ),
+                )
+              else
+                AspectRatio(
+                  aspectRatio: 16 / 9,
+                  child: _buildIconPlaceholder(),
+                ),
+
+              // 아래: 텍스트 정보 (테마 background)
+              Container(
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.surface,
+                  borderRadius: const BorderRadius.only(
+                    bottomLeft: Radius.circular(12),
+                    bottomRight: Radius.circular(12),
+                  ),
+                ),
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // 제목
+                    Text(
+                      widget.title.isNotEmpty ? widget.title : widget.url,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.onSurface,
+                        fontWeight: FontWeight.w600,
+                        fontSize: 16,
+                        height: 1.3,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    // URL
+                    Text(
+                      widget.url,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.onSurface.withOpacity(0.5),
+                        fontSize: 14,
+                        height: 1.2,
+                      ),
+                    ),
+                    // 설명 (있을 경우)
+                    if (widget.description.isNotEmpty) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        widget.description,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.onSurface.withOpacity(0.65),
+                          fontSize: 13,
+                          height: 1.3,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
 
@@ -514,7 +526,11 @@ class _LinkComponentState extends State<_LinkComponent>
               ),
             // 선택 테두리 (편집 모드에서만)
             if (widget.isEditing && isSelected)
-              Positioned.fill(
+              Positioned(
+                top: 0,
+                bottom: 0,
+                left: 20,
+                right: 20,
                 child: IgnorePointer(
                   child: Container(
                     margin: EdgeInsets.only(
@@ -522,7 +538,8 @@ class _LinkComponentState extends State<_LinkComponent>
                       bottom: marginBottom,
                     ),
                     decoration: BoxDecoration(
-                      border: Border.all(color: AppColors.primary, width: 3),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: AppColors.primary, width: 5),
                     ),
                   ),
                 ),
@@ -797,5 +814,25 @@ class _LinkComponentState extends State<_LinkComponent>
     if (neighborIndex < 0 || neighborIndex >= doc.nodeCount) return false;
     final neighbor = doc.getNodeAt(neighborIndex);
     return neighbor is ImageNode || neighbor is ImageRowNode;
+  }
+
+  /// 썸네일 없을 때 아이콘 플레이스홀더
+  Widget _buildIconPlaceholder() {
+    return Container(
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surfaceVariant.withOpacity(0.3),
+        borderRadius: const BorderRadius.only(
+          topLeft: Radius.circular(12),
+          topRight: Radius.circular(12),
+        ),
+      ),
+      child: Center(
+        child: Icon(
+          Icons.link_rounded,
+          color: Theme.of(context).colorScheme.onSurface.withOpacity(0.3),
+          size: 40,
+        ),
+      ),
+    );
   }
 }

@@ -85,6 +85,10 @@ class NodeComponentService extends ChangeNotifier {
   // ====== Transient thumbnail storage (session-scoped, in-memory only) ======
   final Map<String, String> _tempThumbnailUrlBySession = <String, String>{};
   final Map<String, String> _tempThumbnailIdBySession = <String, String>{};
+  final Map<String, String> _tempVideoFilePathBySession =
+      <String, String>{}; // 영상 파일 경로 저장
+  final Map<String, String> _tempVideoThumbnailPathBySession =
+      <String, String>{}; // 영상 로컬 썸네일 파일 경로 저장
 
   String? getTempThumbnailUrl(String sessionKey) {
     final url = _tempThumbnailUrlBySession[sessionKey];
@@ -93,6 +97,12 @@ class NodeComponentService extends ChangeNotifier {
 
   String? getTempThumbnailId(String sessionKey) =>
       _tempThumbnailIdBySession[sessionKey];
+
+  String? getTempVideoFilePath(String sessionKey) =>
+      _tempVideoFilePathBySession[sessionKey];
+
+  String? getTempVideoThumbnailPath(String sessionKey) =>
+      _tempVideoThumbnailPathBySession[sessionKey];
 
   void setTempThumbnail(String sessionKey, {required String url, String? id}) {
     _tempThumbnailUrlBySession[sessionKey] = url;
@@ -103,9 +113,25 @@ class NodeComponentService extends ChangeNotifier {
     notifyListeners();
   }
 
+  void setTempVideoFile(String sessionKey, String filePath) {
+    _tempVideoFilePathBySession[sessionKey] = filePath;
+    notifyListeners();
+  }
+
+  void setTempVideoThumbnail(String sessionKey, String thumbnailPath) {
+    _tempVideoThumbnailPathBySession[sessionKey] = thumbnailPath;
+    notifyListeners();
+  }
+
   void clearTempThumbnail(String sessionKey) {
     _tempThumbnailUrlBySession.remove(sessionKey);
     _tempThumbnailIdBySession.remove(sessionKey);
+    notifyListeners();
+  }
+
+  void clearTempVideoFile(String sessionKey) {
+    _tempVideoFilePathBySession.remove(sessionKey);
+    _tempVideoThumbnailPathBySession.remove(sessionKey);
     notifyListeners();
   }
 
@@ -113,6 +139,8 @@ class NodeComponentService extends ChangeNotifier {
   void clearTempThumbnailSilently(String sessionKey) {
     _tempThumbnailUrlBySession.remove(sessionKey);
     _tempThumbnailIdBySession.remove(sessionKey);
+    _tempVideoFilePathBySession.remove(sessionKey);
+    _tempVideoThumbnailPathBySession.remove(sessionKey);
   }
 
   /// 노드 선택 (과거 호환: 이미지 선택)

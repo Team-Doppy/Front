@@ -81,8 +81,8 @@ class ErrorHandler {
     if (!context.mounted) return;
 
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final Color bgColor = isDark ? Colors.black : Colors.white;
-    final Color fgColor = isDark ? Colors.white : Colors.black87;
+    final Color bgColor = isDark ? Colors.white : Colors.black;
+    final Color fgColor = isDark ? Colors.black87 : Colors.white;
 
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(

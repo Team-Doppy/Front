@@ -89,15 +89,31 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer>
   bool get _isMediaZoomed {
     try {
       if (widget.isVideo) {
-        final m = _videoZoomController.value;
-        final sx = m.storage[0];
-        final sy = m.storage[5];
-        final s = (sx + sy) / 2.0;
-        return s > 1.01;
+        return _isVideoZoomed();
       }
       final ctrl = _imageZoomControllers[_currentImageIndex];
       if (ctrl == null) return false;
+      return _isImageZoomed(ctrl);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  bool _isImageZoomed(TransformationController ctrl) {
+    try {
       final m = ctrl.value;
+      final sx = m.storage[0];
+      final sy = m.storage[5];
+      final s = (sx + sy) / 2.0;
+      return s > 1.01;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  bool _isVideoZoomed() {
+    try {
+      final m = _videoZoomController.value;
       final sx = m.storage[0];
       final sy = m.storage[5];
       final s = (sx + sy) / 2.0;
@@ -364,7 +380,6 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer>
 
   @override
   Widget build(BuildContext context) {
-    final isDarkMode = Theme.of(context).brightness == Brightness.dark;
     final bool _zoomed = _isMediaZoomed;
     return GestureDetector(
       onVerticalDragUpdate:
@@ -389,12 +404,24 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer>
                     _commentsController.value =
                         (_commentsController.value - delta).clamp(0.0, 1.0);
                   });
+                } else if (details.primaryDelta! > 0 &&
+                    _commentsController.value == 0.0) {
+                  // 댓글 닫힌 상태에서 아래로 드래그: 뷰어 닫기
+                  setState(() {
+                    _dragOffset += details.primaryDelta!;
+                  });
                 }
               },
       onVerticalDragEnd:
           _zoomed
               ? null
               : (details) {
+                // 아래로 당겨서 닫기 체크 (댓글이 닫혀있을 때)
+                if (_commentsController.value == 0.0 && _dragOffset > 100) {
+                  _closeViewer();
+                  return;
+                }
+
                 // velocity가 있으면 방향에 따라 바로 완료
                 if (details.primaryVelocity! < -300) {
                   // 위로 빠르게 스와이프: 완전히 열기
@@ -407,6 +434,10 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer>
                   } else if (_commentsController.value > 0) {
                     // 조금 열려있어도 닫기
                     _commentsController.reverse();
+                  } else {
+                    // 댓글 닫힌 상태에서 빠르게 아래로: 뷰어 닫기
+                    _closeViewer();
+                    return;
                   }
                 } else {
                   // velocity가 작으면 현재 위치에 따라 결정
@@ -593,18 +624,19 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer>
                                 if (sheetOpen) {
                                   ctrl.value = Matrix4.identity();
                                 }
+                                final bool isZoomed = _isImageZoomed(ctrl);
                                 return InteractiveViewer(
                                   minScale: sheetOpen ? 1.0 : 1.0,
                                   maxScale: sheetOpen ? 1.0 : 4.0,
-                                  panEnabled: !sheetOpen,
+                                  panEnabled: !sheetOpen && isZoomed,
+                                  scaleEnabled: !sheetOpen,
                                   boundaryMargin:
-                                      sheetOpen
+                                      sheetOpen || !isZoomed
                                           ? EdgeInsets.zero
                                           : const EdgeInsets.all(200),
                                   clipBehavior: Clip.none,
                                   onInteractionStart: (_) {
                                     _imageGestureMinScale = 1.0;
-                                    setState(() {});
                                   },
                                   onInteractionUpdate: (details) {
                                     _imageGestureMinScale =
@@ -614,10 +646,11 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer>
                                     setState(() {});
                                   },
                                   onInteractionEnd: (_) {
-                                    if (_imageGestureMinScale < 1.0) {
-                                      // 강한 축소 제스처 → 원래 크기로 즉시 복귀
+                                    if (_imageGestureMinScale < 0.98) {
+                                      // 조금이라도 축소하면 정확히 원래 위치/크기로 리셋
                                       ctrl.value = Matrix4.identity();
                                     }
+                                    _imageGestureMinScale = 1.0;
                                     setState(() {});
                                   },
                                   transformationController: ctrl,
@@ -1007,12 +1040,8 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer>
                               decoration: BoxDecoration(
                                 color:
                                     index == _currentImageIndex
-                                        ? isDarkMode
-                                            ? Colors.white
-                                            : Colors.black
-                                        : isDarkMode
-                                        ? Colors.white.withOpacity(0.3)
-                                        : Colors.black.withOpacity(0.2),
+                                        ? Colors.white
+                                        : Colors.white.withOpacity(0.3),
                                 shape: BoxShape.circle,
                               ),
                             ),
@@ -1062,6 +1091,20 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
   bool _wasPlayingBeforeSeek = false;
   Duration? _targetSeekPosition; // 드래그 중 목표 위치
   double _gestureMinScale = 1.0; // 강한 축소 감지를 위한 최소 스케일
+
+  bool _isVideoZoomed() {
+    try {
+      final ctrl = widget.zoomController;
+      if (ctrl == null) return false;
+      final m = ctrl.value;
+      final sx = m.storage[0];
+      final sy = m.storage[5];
+      final s = (sx + sy) / 2.0;
+      return s > 1.01;
+    } catch (_) {
+      return false;
+    }
+  }
 
   @override
   void initState() {
@@ -1204,12 +1247,15 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
               child: InteractiveViewer(
                 minScale: 1.0,
                 maxScale: widget.lockInteraction ? 1.0 : 4.0,
-                panEnabled: !widget.lockInteraction,
-                boundaryMargin: const EdgeInsets.all(200),
+                panEnabled: !widget.lockInteraction && _isVideoZoomed(),
+                scaleEnabled: !widget.lockInteraction,
+                boundaryMargin:
+                    widget.lockInteraction || !_isVideoZoomed()
+                        ? EdgeInsets.zero
+                        : const EdgeInsets.all(200),
                 clipBehavior: Clip.none,
                 onInteractionStart: (_) {
                   _gestureMinScale = 1.0;
-                  setState(() {});
                 },
                 onInteractionUpdate: (details) {
                   _gestureMinScale =
@@ -1219,11 +1265,13 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
                   setState(() {});
                 },
                 onInteractionEnd: (_) {
-                  if (_gestureMinScale < 1.0) {
-                    // 강한 축소 제스처 → 원래 크기로 즉시 복귀
-                    (widget.zoomController ?? TransformationController())
-                        .value = Matrix4.identity();
+                  if (_gestureMinScale < 0.98) {
+                    // 조금이라도 축소하면 정확히 원래 위치/크기로 리셋
+                    final ctrl =
+                        widget.zoomController ?? TransformationController();
+                    ctrl.value = Matrix4.identity();
                   }
+                  _gestureMinScale = 1.0;
                   setState(() {});
                 },
                 transformationController: widget.zoomController,

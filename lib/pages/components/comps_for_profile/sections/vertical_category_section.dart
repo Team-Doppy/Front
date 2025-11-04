@@ -63,6 +63,11 @@ class _VerticalCategorySectionState extends State<VerticalCategorySection> {
     final int? catId = int.tryParse(widget.categoryId ?? '');
     if (catId == null) return;
 
+    // categoryId = 0 (기본 카테고리)은 수정/삭제 불가
+    if (catId == 0) {
+      return;
+    }
+
     final RenderBox button = iconContext.findRenderObject() as RenderBox;
     final RenderBox overlay =
         Navigator.of(iconContext).overlay!.context.findRenderObject()

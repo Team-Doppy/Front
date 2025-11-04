@@ -1,7 +1,9 @@
 import 'dart:convert';
+import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:doppy/data/services/upload_service.dart';
-import 'package:doppy/editor/image/native_image_picker.dart';
+import 'package:doppy/image/native_image_picker.dart';
+import 'package:doppy/image/custom_image_editor_screen.dart';
 import 'package:doppy/editor/service/node_component_service.dart';
 import 'package:doppy/editor/service/sticker_service.dart';
 import 'package:doppy/pages/screens/post_reader_screen.dart';
@@ -16,6 +18,12 @@ import 'package:doppy/data/models/group_model.dart';
 import 'package:doppy/editor/publish/post_exporter.dart';
 import 'package:doppy/data/services/blog_service.dart';
 import 'package:doppy/utils/error_handler.dart';
+import 'package:doppy/utils/dialog_utils.dart';
+import 'package:doppy/editor/utils/video_upload_utils.dart';
+import 'package:doppy/data/services/video_cache_service.dart';
+import 'package:http/http.dart' as http;
+import 'dart:io';
+import 'package:video_player/video_player.dart';
 
 void printLarge(String text, {int chunkSize = 800}) {
   final int len = text.length;
@@ -75,6 +83,10 @@ class _PostExportScreenState extends State<PostExportScreen>
   bool _isUploadingThumb = false;
   String? _thumbnailImageId;
   bool _showLoadingOverlay = false; // 0.8초 후에만 표시할 로딩 오버레이
+  File? _localThumbnailFile; // 업로드 중 로컬 파일 미리보기용
+  File? _localVideoFile; // 영상 선택 시 원본 비디오 파일
+  VideoPlayerController? _videoController; // 영상 재생 컨트롤러
+  String? _cachedVideoUrl; // 캐시된 비디오 URL (서버 영상용)
 
   late final AnimationController _controller = AnimationController(
     vsync: this,
@@ -104,10 +116,6 @@ class _PostExportScreenState extends State<PostExportScreen>
 
   @override
   void dispose() {
-    print('[PostExport] ═══════════════════════════════════════');
-    print('[PostExport] dispose 호출됨 - sessionKey: $_nsKey');
-    print('[PostExport] 썸네일은 유지됨 (에디터가 켜져있는 동안)');
-    print('[PostExport] ═══════════════════════════════════════');
     try {
       _titleFocusNode.removeListener(_onEditFocusChange);
       _excerptFocusNode.removeListener(_onEditFocusChange);
@@ -116,8 +124,18 @@ class _PostExportScreenState extends State<PostExportScreen>
       _excerptController.dispose();
       _excerptFocusNode.dispose();
 
-      // 썸네일은 dispose에서 정리하지 않음!
-      // 발행 성공 시 또는 작성취소 시에만 정리
+      // 로컬 비디오 컨트롤러는 직접 dispose
+      if (_localVideoFile != null && _videoController != null) {
+        _videoController?.dispose();
+      }
+
+      // 캐시된 서버 비디오는 참조 해제
+      if (_cachedVideoUrl != null) {
+        VideoCacheService().releaseController(
+          _cachedVideoUrl!,
+          namespace: 'profile',
+        );
+      }
     } catch (e) {
       print('[PostExport] dispose 에러: $e');
     }
@@ -148,9 +166,41 @@ class _PostExportScreenState extends State<PostExportScreen>
     final svc = NodeComponentService();
     final persistedUrl = svc.getTempThumbnailUrl(_nsKey) ?? '';
     final persistedId = svc.getTempThumbnailId(_nsKey);
+    final persistedVideoPath = svc.getTempVideoFilePath(_nsKey);
+    final persistedVideoThumbnailPath = svc.getTempVideoThumbnailPath(_nsKey);
 
     _exportedThumbnailImageUrl = persistedUrl;
     _thumbnailImageId = persistedId;
+
+    // 영상 파일 복원 (있다면)
+    if (persistedVideoPath != null && persistedVideoPath.isNotEmpty) {
+      final videoFile = File(persistedVideoPath);
+      if (videoFile.existsSync()) {
+        _localVideoFile = videoFile;
+        _videoController = VideoPlayerController.file(videoFile)
+          ..initialize().then((_) {
+            if (mounted) {
+              _videoController?.play();
+              _videoController?.setLooping(true);
+              setState(() {});
+            }
+          });
+        print('[PostExport] 영상 파일 복원: $persistedVideoPath');
+
+        // 영상 로컬 썸네일도 복원
+        if (persistedVideoThumbnailPath != null &&
+            persistedVideoThumbnailPath.isNotEmpty) {
+          final thumbnailFile = File(persistedVideoThumbnailPath);
+          if (thumbnailFile.existsSync()) {
+            _localThumbnailFile = thumbnailFile;
+            print('[PostExport] 영상 썸네일 복원: $persistedVideoThumbnailPath');
+          }
+        }
+      } else {
+        print('[PostExport] 영상 파일이 존재하지 않음: $persistedVideoPath');
+        svc.clearTempVideoFile(_nsKey);
+      }
+    }
 
     // 본문 전체 내용
     String collected = _collectText(exported);
@@ -167,6 +217,43 @@ class _PostExportScreenState extends State<PostExportScreen>
     if (preview.isEmpty) preview = _excerpt;
     _excerpt = preview;
     _excerptController.text = _excerpt;
+
+    // 공개 범위 초기값 동기화: accessLevel/sharedGroupIds 반영
+    try {
+      final dynamic rawLevel = exported['accessLevel'];
+      final String level = rawLevel?.toString().toUpperCase() ?? '';
+      final List<dynamic> shared =
+          (exported['sharedGroupIds'] is List)
+              ? List<dynamic>.from(exported['sharedGroupIds'])
+              : const [];
+
+      // 우선 순위: PRIVATE > PUBLIC > FRIENDS > GROUPS(shared)
+      bool selectAll = false;
+      bool privateOnly = false;
+      bool friendsOnly = false;
+      final Set<int> groups = <int>{};
+      for (final x in shared) {
+        final id = (x is int) ? x : int.tryParse(x.toString());
+        if (id != null) groups.add(id);
+      }
+
+      if (level == 'PRIVATE') {
+        privateOnly = true;
+      } else if (level == 'PUBLIC') {
+        selectAll = true;
+      } else if (level == 'FRIENDS') {
+        friendsOnly = true;
+      } else if (level == 'GROUPS') {
+        // 그룹 공유: 기존 그룹 선택 반영
+      }
+
+      _audiencePrivateOnly = privateOnly;
+      _audienceSelectAll = selectAll;
+      _audienceFriendsOnly = friendsOnly;
+      _selectedAudienceGroupIds
+        ..clear()
+        ..addAll(groups);
+    } catch (_) {}
     setState(() {});
   }
 
@@ -557,12 +644,90 @@ class _PostExportScreenState extends State<PostExportScreen>
   }
 
   void _openGalleryPicker() async {
+    // 이미지 또는 비디오 선택 옵션 제공
+    String? mode;
+    final mediaType = await showModalBottomSheet<String>(
+      backgroundColor: Colors.transparent,
+      context: context,
+      builder:
+          (context) => ClipRRect(
+            borderRadius: BorderRadius.circular(16),
+            child: BackdropFilter(
+              filter: ui.ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+              child: Container(
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.surface.withOpacity(0.9),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                height: 180,
+                width: double.infinity,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    const SizedBox(height: 8),
+                    Container(
+                      width: 50,
+                      height: 5,
+                      decoration: BoxDecoration(
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.onSurface.withOpacity(0.3),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    ListTile(
+                      onTap: () async {
+                        mode = 'image';
+                        return Navigator.of(context).pop(mode);
+                      },
+                      title: const Text('이미지 선택'),
+                    ),
+                    ListTile(
+                      onTap: () async {
+                        mode = 'video';
+                        return Navigator.of(context).pop(mode);
+                      },
+                      title: const Text('short clip 선택'),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+    );
+
+    if (mediaType == null || !mounted) return;
+
+    if (mediaType == 'image') {
+      await _pickAndUploadImage();
+    } else if (mediaType == 'video') {
+      await _pickAndExtractVideoThumbnail();
+    }
+  }
+
+  /// 이미지 선택 및 업로드
+  Future<void> _pickAndUploadImage() async {
     final picker = NativeImagePicker();
     final file = await picker.pickSingleImage();
 
     if (file != null) {
       if (!mounted) return;
-      setState(() => _isUploadingThumb = true);
+
+      // 즉시 로컬 파일 미리보기 표시 (영상 제거)
+      setState(() {
+        _localThumbnailFile = file;
+        _isUploadingThumb = true;
+        // 영상 파일 정리
+        _videoController?.dispose();
+        _videoController = null;
+        _localVideoFile = null;
+      });
+
+      // 영상 파일 persist 정리
+      final svc = NodeComponentService();
+      svc.clearTempVideoFile(_nsKey);
+
       try {
         final upload = context.read<UploadService>();
         final tasks = await upload.uploadFilesViaServerBatches([
@@ -573,29 +738,285 @@ class _PostExportScreenState extends State<PostExportScreen>
           final hasUrl = (t.url ?? '').isNotEmpty;
           final hasServerImageId = (t.imageId ?? '').toString().isNotEmpty;
           if (t.state == UploadState.success && hasUrl && hasServerImageId) {
-            // 먼저 persist (setState 전에)
+            // 서버 URL로 교체
             _exportedThumbnailImageUrl = t.url!;
             _thumbnailImageId = t.imageId;
             await _persistThumbnail();
 
-            // 그 다음 UI 업데이트
             if (mounted) {
               setState(() {
-                // 이미 위에서 설정했으므로 여기서는 UI만 업데이트
+                _localThumbnailFile = null; // 로컬 파일 제거
               });
             }
           } else {
             if (mounted) {
               ErrorHandler.showError(context, '썸네일 업로드에 실패했어요. 다시 시도해주세요.');
+              setState(() {
+                _localThumbnailFile = null;
+              });
             }
           }
         }
       } catch (e) {
         if (mounted) {
           ErrorHandler.handleError(context, e, customMessage: '업로드 오류');
+          setState(() {
+            _localThumbnailFile = null;
+          });
         }
       } finally {
         if (mounted) setState(() => _isUploadingThumb = false);
+      }
+    }
+  }
+
+  /// 비디오 선택 및 업로드 (썸네일로 사용)
+  Future<void> _pickAndExtractVideoThumbnail() async {
+    final picker = NativeImagePicker();
+    final videoFile = await picker.pickSingleVideo();
+
+    if (videoFile == null || !mounted) return;
+
+    // 클라이언트 측 파일 검증 (확장자 + 크기)
+    final validationError = await VideoUploadUtils.validateFile(
+      context,
+      videoFile.path,
+    );
+    if (validationError != null) return;
+
+    setState(() => _isUploadingThumb = true);
+
+    try {
+      // 원본 비디오에서 썸네일 생성 (업로드 중 플레이스홀더로 사용)
+      final thumbnail = await VideoUploadUtils.generateThumbnail(
+        videoFile.path,
+      );
+      if (thumbnail == null) {
+        throw Exception('썸네일 생성 실패');
+      }
+
+      // 비디오 플레이어 초기화 (즉시 재생 - 원본)
+      _videoController?.dispose();
+      _videoController = VideoPlayerController.file(videoFile)
+        ..initialize().then((_) {
+          if (mounted) {
+            _videoController?.play();
+            _videoController?.setLooping(true);
+            setState(() {});
+          }
+        });
+
+      // 즉시 영상 파일 저장 + 로컬 썸네일 표시 (플레이어용 + persist)
+      if (mounted) {
+        setState(() {
+          _localVideoFile = videoFile;
+          _localThumbnailFile = thumbnail; // 업로드 중 플레이스홀더로 썸네일 사용
+        });
+        // 영상 파일 경로 + 로컬 썸네일 경로 persist
+        final svc = NodeComponentService();
+        svc.setTempVideoFile(_nsKey, videoFile.path);
+        svc.setTempVideoThumbnail(_nsKey, thumbnail.path);
+        print('[PostExport] 영상 파일 persist: ${videoFile.path}');
+        print('[PostExport] 영상 썸네일 persist: ${thumbnail.path}');
+      }
+
+      // MOV/M4V를 MP4로 변환 (원본 화질 유지)
+      final mp4File = await VideoUploadUtils.compressVideo(videoFile.path);
+      if (mp4File == null) {
+        if (mounted) {
+          await DialogUtils.showInfoDialog(
+            context,
+            title: '업로드 불가',
+            message: '파일이 너무 큽니다.',
+          );
+          _videoController?.dispose();
+          _videoController = null;
+          setState(() {
+            _localVideoFile = null;
+            _localThumbnailFile = null;
+            _isUploadingThumb = false;
+          });
+        }
+        return;
+      }
+
+      // 압축된 MP4 파일을 서버에 업로드
+      final upload = context.read<UploadService>();
+      final task = upload.enqueueFile(mp4File, kind: UploadKind.video);
+
+      // 리스너로 상태 변화 감지
+      bool handled = false;
+      void listener() async {
+        if (handled) return;
+
+        if (task.state == UploadState.success) {
+          handled = true;
+          final videoUrl = task.url;
+          final videoId = task.imageId;
+
+          if (videoUrl == null || videoUrl.isEmpty) {
+            if (mounted) {
+              ErrorHandler.showError(context, '영상 URL을 받지 못했습니다');
+              _videoController?.dispose();
+              _videoController = null;
+              setState(() {
+                _localVideoFile = null;
+                _isUploadingThumb = false;
+              });
+            }
+            return;
+          }
+
+          // 영상 URL을 썸네일로 저장
+          _exportedThumbnailImageUrl = videoUrl;
+          _thumbnailImageId = videoId;
+          _persistThumbnail();
+
+          if (mounted) {
+            setState(() {
+              // 로컬 썸네일은 유지 (영상의 배경으로 계속 표시)
+              _isUploadingThumb = false;
+            });
+          }
+        } else if (task.state == UploadState.failed) {
+          handled = true;
+          if (mounted) {
+            await VideoUploadUtils.showUploadFailedDialog(context, task.error);
+            _videoController?.dispose();
+            _videoController = null;
+            setState(() {
+              _localVideoFile = null;
+              _localThumbnailFile = null;
+              _isUploadingThumb = false;
+            });
+          }
+        } else if (task.state == UploadState.cancelled) {
+          handled = true;
+          if (mounted) {
+            await VideoUploadUtils.showUploadCancelledDialog(context);
+            _videoController?.dispose();
+            _videoController = null;
+            setState(() {
+              _localVideoFile = null;
+              _localThumbnailFile = null;
+              _isUploadingThumb = false;
+            });
+          }
+        }
+      }
+
+      task.addListener(listener);
+
+      // 안전 타임아웃 (2분)
+      Future.delayed(const Duration(minutes: 2), () async {
+        if (!handled && mounted) {
+          task.removeListener(listener);
+          await VideoUploadUtils.showUploadTimeoutDialog(context);
+          _videoController?.dispose();
+          _videoController = null;
+          setState(() {
+            _localVideoFile = null;
+            _localThumbnailFile = null;
+            _isUploadingThumb = false;
+          });
+        }
+      });
+    } catch (e) {
+      if (mounted) {
+        await VideoUploadUtils.showGeneralErrorDialog(context);
+        _videoController?.dispose();
+        _videoController = null;
+        setState(() {
+          _localVideoFile = null;
+          _localThumbnailFile = null;
+          _isUploadingThumb = false;
+        });
+      }
+    }
+  }
+
+  /// 썸네일 편집 (커스텀 이미지 에디터 사용)
+  Future<void> _editThumbnail() async {
+    if (_exportedThumbnailImageUrl.isEmpty) {
+      ErrorHandler.showInfo(context, '먼저 썸네일을 선택해주세요');
+      return;
+    }
+
+    try {
+      FocusScope.of(context).unfocus();
+
+      // 현재 썸네일 이미지를 네트워크에서 로드
+      final response = await http.get(Uri.parse(_exportedThumbnailImageUrl));
+      if (response.statusCode != 200) {
+        if (mounted) {
+          ErrorHandler.showError(context, '이미지를 불러올 수 없습니다');
+        }
+        return;
+      }
+
+      final imageBytes = response.bodyBytes;
+
+      // 커스텀 이미지 에디터 열기
+      final editedBytes = await Navigator.push<Uint8List?>(
+        context,
+        MaterialPageRoute(
+          builder: (context) => CustomImageEditorScreen(imageBytes: imageBytes),
+          fullscreenDialog: true,
+        ),
+      );
+
+      if (editedBytes == null || !mounted) return;
+
+      // 편집된 이미지를 서버에 업로드
+      setState(() => _isUploadingThumb = true);
+
+      final upload = context.read<UploadService>();
+      final tempFile = File(
+        '${Directory.systemTemp.path}/edited_thumbnail_${DateTime.now().millisecondsSinceEpoch}.jpg',
+      );
+      await tempFile.writeAsBytes(editedBytes);
+
+      final tasks = await upload.uploadFilesViaServerBatches([
+        tempFile,
+      ], kind: UploadKind.editorImage);
+
+      // 임시 파일 삭제
+      try {
+        await tempFile.delete();
+      } catch (_) {}
+
+      if (tasks.isEmpty || tasks.first.state != UploadState.success) {
+        if (mounted) {
+          ErrorHandler.showError(context, '썸네일 업로드에 실패했습니다');
+        }
+        return;
+      }
+
+      final newUrl = tasks.first.url;
+      final newId = tasks.first.imageId;
+
+      if (newUrl == null || newUrl.isEmpty) {
+        if (mounted) {
+          ErrorHandler.showError(context, '업로드 URL을 받지 못했습니다');
+        }
+        return;
+      }
+
+      // 새 썸네일 정보 저장
+      _exportedThumbnailImageUrl = newUrl;
+      _thumbnailImageId = newId;
+      await _persistThumbnail();
+
+      if (mounted) {
+        setState(() {});
+      }
+    } catch (e) {
+      if (mounted) {
+        ErrorHandler.handleError(context, e, customMessage: '편집 중 오류가 발생했습니다');
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isUploadingThumb = false);
       }
     }
   }
@@ -607,7 +1028,10 @@ class _PostExportScreenState extends State<PostExportScreen>
           // 썸네일 이미지 또는 단색 배경
           Positioned.fill(
             child:
-                _exportedThumbnailImageUrl.isNotEmpty
+                // 우선순위: 로컬 썸네일 > 서버 URL > 기본 배경
+                _localThumbnailFile != null
+                    ? Image.file(_localThumbnailFile!, fit: BoxFit.cover)
+                    : _exportedThumbnailImageUrl.isNotEmpty
                     ? Image.network(
                       _exportedThumbnailImageUrl,
                       fit: BoxFit.cover,
@@ -618,7 +1042,8 @@ class _PostExportScreenState extends State<PostExportScreen>
                     : Container(color: AppColors.darkSurface),
           ),
           // 블러 오버레이 (썸네일이 있을 때만)
-          if (_exportedThumbnailImageUrl.isNotEmpty)
+          if (_localThumbnailFile != null ||
+              _exportedThumbnailImageUrl.isNotEmpty)
             Positioned.fill(
               child: BackdropFilter(
                 filter: ui.ImageFilter.blur(sigmaX: 15, sigmaY: 15),
@@ -633,19 +1058,19 @@ class _PostExportScreenState extends State<PostExportScreen>
                           45,
                           45,
                           45,
-                        ).withOpacity(0.8),
+                        ).withOpacity(0.7),
                         const ui.Color.fromARGB(
                           235,
                           45,
                           45,
                           45,
-                        ).withOpacity(0.8),
+                        ).withOpacity(0.7),
                         const ui.Color.fromARGB(
                           235,
                           45,
                           45,
                           45,
-                        ).withOpacity(0.8),
+                        ).withOpacity(0.7),
                       ],
                       stops: const [0.0, 0.7, 1.0],
                     ),
@@ -659,6 +1084,11 @@ class _PostExportScreenState extends State<PostExportScreen>
   }
 
   void _nextStep() {
+    // 썸네일 업로드 중이면 진행 불가
+    if (_isUploadingThumb) {
+      return;
+    }
+
     if (_currentStep < _totalSteps - 1) {
       FocusScope.of(context).unfocus();
       setState(() {
@@ -1001,7 +1431,7 @@ class _PostExportScreenState extends State<PostExportScreen>
             firstChild: Stack(
               children: [
                 Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 50.0),
+                  padding: const EdgeInsets.symmetric(horizontal: 40.0),
                   child: Center(
                     child: AspectRatio(
                       aspectRatio: 4 / 5, // PostList와 동일한 4:5 비율
@@ -1037,11 +1467,53 @@ class _PostExportScreenState extends State<PostExportScreen>
                                     ),
                                     child: Stack(
                                       children: [
-                                        // 배경 이미지 (PostCard와 동일)
+                                        // 배경 이미지 또는 비디오 (로컬 미리보기 또는 서버 URL)
                                         Positioned.fill(
                                           child:
-                                              _isUploadingThumb
-                                                  ? const _ShimmerPlaceholder()
+                                              _localVideoFile != null &&
+                                                      _videoController != null
+                                                  ? Stack(
+                                                    children: [
+                                                      // 배경: 로컬 썸네일 (비디오 초기화 전/중에도 항상 표시)
+                                                      if (_localThumbnailFile !=
+                                                          null)
+                                                        Positioned.fill(
+                                                          child: Image.file(
+                                                            _localThumbnailFile!,
+                                                            fit: BoxFit.cover,
+                                                          ),
+                                                        ),
+                                                      // 전경: 비디오 플레이어 (초기화되면 썸네일 위에 재생)
+                                                      if (_videoController!
+                                                          .value
+                                                          .isInitialized)
+                                                        Positioned.fill(
+                                                          child: FittedBox(
+                                                            fit: BoxFit.cover,
+                                                            child: SizedBox(
+                                                              width:
+                                                                  _videoController!
+                                                                      .value
+                                                                      .size
+                                                                      .width,
+                                                              height:
+                                                                  _videoController!
+                                                                      .value
+                                                                      .size
+                                                                      .height,
+                                                              child: VideoPlayer(
+                                                                _videoController!,
+                                                              ),
+                                                            ),
+                                                          ),
+                                                        ),
+                                                    ],
+                                                  )
+                                                  : _localThumbnailFile != null
+                                                  ? Image.file(
+                                                    _localThumbnailFile!,
+                                                    fit: BoxFit.cover,
+                                                  )
                                                   : (_exportedThumbnailImageUrl
                                                           .isEmpty
                                                       ? const _EmptyImagePlaceholder()
@@ -1054,16 +1526,85 @@ class _PostExportScreenState extends State<PostExportScreen>
                                                       )),
                                         ),
 
-                                        Positioned(
-                                          left: 6,
-                                          bottom: 6,
-                                          child: GestureDetector(
-                                            onTap: () {
-                                              print('edit');
-                                            },
-                                            child: _buildEditButton(),
+                                        // 업로드 중 로딩 오버레이
+                                        if (_isUploadingThumb)
+                                          Positioned.fill(
+                                            child: Container(
+                                              color: Colors.black.withOpacity(
+                                                0.3,
+                                              ),
+                                              child: const Center(
+                                                child: CircularProgressIndicator(
+                                                  valueColor:
+                                                      AlwaysStoppedAnimation<
+                                                        Color
+                                                      >(Colors.white),
+                                                  strokeWidth: 3,
+                                                ),
+                                              ),
+                                            ),
                                           ),
-                                        ),
+
+                                        // 음소거 버튼 (영상일 때만 표시)
+                                        if (_localVideoFile != null &&
+                                            _videoController != null &&
+                                            _videoController!
+                                                .value
+                                                .isInitialized)
+                                          Positioned(
+                                            right: 12,
+                                            bottom: 12,
+                                            child: GestureDetector(
+                                              onTap: () {
+                                                setState(() {
+                                                  if (_videoController!
+                                                          .value
+                                                          .volume >
+                                                      0) {
+                                                    _videoController!.setVolume(
+                                                      0,
+                                                    );
+                                                  } else {
+                                                    _videoController!.setVolume(
+                                                      1,
+                                                    );
+                                                  }
+                                                });
+                                              },
+                                              child: Container(
+                                                padding: const EdgeInsets.all(
+                                                  8,
+                                                ),
+                                                decoration: BoxDecoration(
+                                                  color: Colors.black
+                                                      .withOpacity(0.5),
+                                                  shape: BoxShape.circle,
+                                                ),
+                                                child: Icon(
+                                                  _videoController!
+                                                              .value
+                                                              .volume >
+                                                          0
+                                                      ? Icons.volume_up_rounded
+                                                      : Icons
+                                                          .volume_off_rounded,
+                                                  color: Colors.white,
+                                                  size: 20,
+                                                ),
+                                              ),
+                                            ),
+                                          ),
+
+                                        // 편집하기 버튼 (이미지일 때만 표시)
+                                        if (_localVideoFile == null)
+                                          Positioned(
+                                            left: 6,
+                                            bottom: 6,
+                                            child: GestureDetector(
+                                              onTap: _editThumbnail,
+                                              child: _buildEditButton(),
+                                            ),
+                                          ),
                                       ],
                                     ),
                                   ),

@@ -38,6 +38,19 @@ class CommentPreviewSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // 좋아요 상태 캐시 보장 (없을 때만 1회 로드)
+    try {
+      if (!likeService.hasPost(postId)) {
+        WidgetsBinding.instance.addPostFrameCallback((_) async {
+          if (!likeService.hasPost(postId)) {
+            try {
+              await likeService.ensureLoaded(postId);
+            } catch (_) {}
+          }
+        });
+      }
+    } catch (_) {}
+
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
       child: Stack(
@@ -46,120 +59,134 @@ class CommentPreviewSection extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
 
             children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.start,
-                children: [
-                  // 좋아요 버튼
-                  GestureDetector(
-                    behavior: HitTestBehavior.opaque,
-                    onTap: onToggleLike,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 8,
-                      ),
-                      decoration: BoxDecoration(
-                        color:
-                            likeService.isPostLiked(postId)
-                                ? Colors.redAccent.withOpacity(0.1)
-                                : Theme.of(
-                                  context,
-                                ).colorScheme.surfaceVariant.withOpacity(0.5),
-                        borderRadius: BorderRadius.circular(20),
-                        border: Border.all(
-                          color:
-                              likeService.isPostLiked(postId)
-                                  ? Colors.redAccent.withOpacity(0.3)
-                                  : Theme.of(
-                                    context,
-                                  ).colorScheme.outline.withOpacity(0.2),
-                          width: 1,
-                        ),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          AnimatedSwitcher(
-                            duration: const Duration(milliseconds: 200),
-                            child: Icon(
-                              likeService.isPostLiked(postId)
-                                  ? Icons.favorite
-                                  : Icons.favorite_border,
-                              key: ValueKey(likeService.isPostLiked(postId)),
+              AnimatedBuilder(
+                animation: likeService,
+                builder: (context, _) {
+                  final bool isLiked = likeService.isPostLiked(postId);
+                  final int likeCount = likeService.getPostLikeCount(postId);
+                  return Row(
+                    mainAxisAlignment: MainAxisAlignment.start,
+                    children: [
+                      // 좋아요 버튼
+                      GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTap: onToggleLike,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 8,
+                          ),
+                          decoration: BoxDecoration(
+                            color:
+                                isLiked
+                                    ? Colors.redAccent.withOpacity(0.1)
+                                    : Theme.of(context)
+                                        .colorScheme
+                                        .surfaceVariant
+                                        .withOpacity(0.5),
+                            borderRadius: BorderRadius.circular(20),
+                            border: Border.all(
                               color:
-                                  likeService.isPostLiked(postId)
-                                      ? Colors.redAccent
+                                  isLiked
+                                      ? Colors.redAccent.withOpacity(0.3)
                                       : Theme.of(
                                         context,
-                                      ).colorScheme.onSurface.withOpacity(0.7),
-                              size: 18,
+                                      ).colorScheme.outline.withOpacity(0.2),
+                              width: 1,
                             ),
                           ),
-                          const SizedBox(width: 6),
-                          Text(
-                            '${likeService.getPostLikeCount(postId)}',
-                            style: TextStyle(
-                              color:
-                                  likeService.isPostLiked(postId)
-                                      ? Colors.redAccent
-                                      : Theme.of(context).colorScheme.onSurface,
-                              fontSize: 14,
-                              fontWeight: FontWeight.w600,
-                            ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              AnimatedSwitcher(
+                                duration: const Duration(milliseconds: 200),
+                                child: Icon(
+                                  isLiked
+                                      ? Icons.favorite
+                                      : Icons.favorite_border,
+                                  key: ValueKey(isLiked),
+                                  color:
+                                      isLiked
+                                          ? Colors.redAccent
+                                          : Theme.of(context)
+                                              .colorScheme
+                                              .onSurface
+                                              .withOpacity(0.7),
+                                  size: 18,
+                                ),
+                              ),
+                              const SizedBox(width: 6),
+                              Text(
+                                '$likeCount',
+                                style: TextStyle(
+                                  color:
+                                      isLiked
+                                          ? Colors.redAccent
+                                          : Theme.of(
+                                            context,
+                                          ).colorScheme.onSurface,
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ],
                           ),
-                        ],
+                        ),
                       ),
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  // 댓글 정보
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 8,
-                    ),
-                    decoration: BoxDecoration(
-                      color: Theme.of(
-                        context,
-                      ).colorScheme.surfaceVariant.withOpacity(0.5),
-                      borderRadius: BorderRadius.circular(20),
-                      border: Border.all(
-                        color: Theme.of(
-                          context,
-                        ).colorScheme.outline.withOpacity(0.2),
-                        width: 1,
-                      ),
-                    ),
-                    child: GestureDetector(
-                      behavior: HitTestBehavior.opaque,
-                      onTap: onShowComments,
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const SizedBox(width: 4),
-                          Icon(
-                            Icons.chat_bubble_outline,
+                      const SizedBox(width: 10),
+                      // 댓글 정보
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 8,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.surfaceVariant.withOpacity(0.5),
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(
                             color: Theme.of(
                               context,
-                            ).colorScheme.onSurface.withOpacity(0.7),
-                            size: 18,
+                            ).colorScheme.outline.withOpacity(0.2),
+                            width: 1,
                           ),
-                          const SizedBox(width: 6),
-                          Text(
-                            '${commentService.getAllComments().length}',
-                            style: TextStyle(
-                              color: Theme.of(context).colorScheme.onSurface,
-                              fontSize: 14,
-                              fontWeight: FontWeight.w600,
-                            ),
+                        ),
+                        child: GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          onTap: onShowComments,
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const SizedBox(width: 4),
+                              Icon(
+                                Icons.chat_bubble_outline,
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.onSurface.withOpacity(0.7),
+                                size: 18,
+                              ),
+                              const SizedBox(width: 6),
+                              Text(
+                                '${commentService.getAllComments().length}',
+                                style: TextStyle(
+                                  color:
+                                      Theme.of(context).colorScheme.onSurface,
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                              const SizedBox(width: 4),
+                            ],
                           ),
-                          const SizedBox(width: 4),
-                        ],
+                        ),
                       ),
-                    ),
-                  ),
-                ],
+                    ],
+                  );
+                },
               ),
+              const SizedBox(width: 10),
+
               const SizedBox(height: 32),
               commentService.isLoading &&
                       commentService.getAllComments().isEmpty

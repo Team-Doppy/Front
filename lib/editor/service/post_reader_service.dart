@@ -89,6 +89,10 @@ class PostReaderService {
           // 스포일러 정보 확인 (노드 레벨 또는 data 내부)
           final hasSpoiler =
               (m['spoiler'] == true) || (data?['spoiler'] == true);
+          // 패딩 모드 복원 (노드 레벨 우선, data 내 보조)
+          final String? paddingMode =
+              (m['padding'] ?? data?['padding'])?.toString();
+          print('[PostReaderService] ImageNode $id padding=$paddingMode');
 
           // NodeComponentService에 스포일러 상태 복원
           if (hasSpoiler) {
@@ -108,6 +112,7 @@ class PostReaderService {
                         ? commentCount.toInt()
                         : int.tryParse(commentCount.toString()) ?? 0,
                 if (hasSpoiler) 'spoiler': true,
+                if (paddingMode == 'full') 'padding': 'full',
               },
             ),
           );

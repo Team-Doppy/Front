@@ -1,6 +1,5 @@
 import 'dart:io';
 import 'package:doppy/data/models/user_model.dart';
-import 'package:doppy/pages/components/common_profile_avatar.dart';
 import 'package:flutter/material.dart';
 import 'native_image_picker.dart';
 

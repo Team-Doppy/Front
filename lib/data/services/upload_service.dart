@@ -7,8 +7,8 @@ import 'package:doppy/data/services/auth_service.dart';
 import 'package:flutter/foundation.dart';
 import 'package:dio/dio.dart';
 import 'package:http_parser/http_parser.dart';
-import 'package:image/image.dart' as img;
 import 'package:http/http.dart' as http;
+import 'package:image/image.dart' as img;
 
 enum UploadState { pending, uploading, success, failed, cancelled }
 
@@ -176,6 +176,38 @@ class UploadService with ChangeNotifier {
     _pump();
   }
 
+  // ===== 리스너 선등록 지원: Task 생성만 하고 시작은 나중에 =====
+  UploadTask createTaskForFile(
+    File file, {
+    required UploadKind kind,
+    String? overrideName,
+    String? refId,
+  }) {
+    final String name = overrideName ?? file.path.split('/').last;
+    final task = UploadTask(
+      id: _genId(),
+      kind: kind,
+      fileName: name,
+      file: file,
+      refId: refId,
+    );
+    print('[Upload] createTask only id=${task.id} name=${task.fileName}');
+    _tasks.add(task);
+    notifyListeners();
+    return task;
+  }
+
+  void startTask(UploadTask task) {
+    if (!_tasks.contains(task)) {
+      _tasks.add(task);
+    }
+    if (!_queue.contains(task) && task.state == UploadState.pending) {
+      _queue.add(task);
+    }
+    notifyListeners();
+    _pump();
+  }
+
   void _pump() {
     print('[Upload] pump inflight=$_inflight queue=${_queue.length}');
     while (_inflight < maxConcurrent && _queue.isNotEmpty) {
@@ -224,36 +256,43 @@ class UploadService with ChangeNotifier {
         '[Upload] success id=${task.id} url=${task.url} imageId=${task.imageId} durMs=${DateTime.now().difference(started).inMilliseconds}',
       );
     } catch (e) {
+      // 사용자가 취소한 경우: 재시도/실패로 처리하지 않고 즉시 취소로 마무리
+      if (e is DioException && e.type == DioExceptionType.cancel) {
+        print('[Upload] cancelled by user/ref id=${task.id}');
+        task._setState(UploadState.cancelled);
+        return;
+      }
+      if (task.cancelToken.isCancelled) {
+        print('[Upload] cancelToken marked cancelled id=${task.id}');
+        task._setState(UploadState.cancelled);
+        return;
+      }
       task.error = e;
       print('[Upload] error id=${task.id} error=$e');
 
       // 400/500 에러 감지: 즉시 중단 (재시도 안 함)
-      bool isClientOrServerError = false;
+      // 재시도 금지 정책으로 분기용 플래그는 더 이상 필요 없음
       if (e is HttpException) {
         final msg = e.message.toLowerCase();
-        // "upload failed 400:" 또는 "upload failed 500:" 패턴 감지
+        // "upload failed <code>:" 패턴에서 즉시 실패로 간주할 코드들
         if (msg.contains('400') ||
             msg.contains('401') ||
             msg.contains('403') ||
             msg.contains('404') ||
+            msg.contains('413') || // Payload Too Large → 재시도 불필요
+            msg.contains('415') || // Unsupported Media Type
+            msg.contains('422') || // Unprocessable Content
+            msg.contains('429') || // Too Many Requests (즉시 중단)
             msg.contains('500') ||
             msg.contains('502') ||
             msg.contains('503')) {
-          isClientOrServerError = true;
-          print('[Upload] 400/500 에러 감지 - 재시도 중단: $e');
+          print('[Upload] 즉시 실패 코드 감지: $e');
         }
       }
 
-      if (isClientOrServerError || task.attempt >= 3) {
+      // 재시도 금지: 어떤 오류든 즉시 실패 처리
         task._setState(UploadState.failed);
-        print('[Upload] failed id=${task.id}');
-      } else {
-        // 네트워크 오류 등의 경우만 재시도
-        final delayMs = 400 * (1 << (task.attempt - 1));
-        print('[Upload] retry id=${task.id} in ${delayMs}ms');
-        await Future.delayed(Duration(milliseconds: delayMs));
-        _queue.add(task);
-      }
+      print('[Upload] failed (no-retry) id=${task.id}');
     } finally {
       _inflight--;
       if (!_disposed) {
@@ -284,8 +323,8 @@ class UploadService with ChangeNotifier {
         '/api/profile/image/upload',
         data: formData,
         options: Options(
-          sendTimeout: const Duration(seconds: 30),
-          receiveTimeout: const Duration(seconds: 30),
+          sendTimeout: const Duration(seconds: 20),
+          receiveTimeout: const Duration(seconds: 20),
         ),
         cancelToken: task.cancelToken,
       );
@@ -327,6 +366,7 @@ class UploadService with ChangeNotifier {
       }
     } catch (e) {
       if (e is DioException) {
+        if (e.type == DioExceptionType.cancel) rethrow;
         print(
           '[Upload] DioException ${e.response?.statusCode} body=${e.response?.data}',
         );
@@ -365,8 +405,8 @@ class UploadService with ChangeNotifier {
         '/api/images/upload',
         data: formData,
         options: Options(
-          sendTimeout: const Duration(seconds: 45),
-          receiveTimeout: const Duration(seconds: 45),
+          sendTimeout: const Duration(seconds: 20),
+          receiveTimeout: const Duration(seconds: 20),
         ),
         cancelToken: task.cancelToken,
       );
@@ -382,6 +422,7 @@ class UploadService with ChangeNotifier {
       }
     } catch (e) {
       if (e is DioException) {
+        if (e.type == DioExceptionType.cancel) rethrow;
         print(
           '[Upload] DioException ${e.response?.statusCode} body=${e.response?.data}',
         );
@@ -420,8 +461,8 @@ class UploadService with ChangeNotifier {
         '/api/videos/upload',
         data: formData,
         options: Options(
-          sendTimeout: const Duration(minutes: 2),
-          receiveTimeout: const Duration(minutes: 2),
+          sendTimeout: const Duration(minutes: 1),
+          receiveTimeout: const Duration(minutes: 1),
         ),
         cancelToken: task.cancelToken,
       );
@@ -445,7 +486,11 @@ class UploadService with ChangeNotifier {
         );
       }
     } catch (e) {
+      if (e is TimeoutException) {
+        throw HttpException('video upload failed timeout');
+      }
       if (e is DioException) {
+        if (e.type == DioExceptionType.cancel) rethrow;
         print(
           '[UploadVideo] DioException ${e.response?.statusCode} body=${e.response?.data}',
         );
@@ -584,12 +629,35 @@ class UploadService with ChangeNotifier {
           final t = chunk[k];
           if (k < results.length) {
             final r = results[k];
-            t.url = r['accessUrl'] as String?;
-            t.imageId = r['imageId']?.toString();
+            // 응답 정규화: imageId/accessUrl/url/data.* 대응 + 보조 조회
+            String? imageId = (r['imageId'] ?? r['id'])?.toString();
+            String? accessUrl =
+                r['accessUrl']?.toString() ?? r['url']?.toString();
+            if ((accessUrl == null || accessUrl.isEmpty) &&
+                r['data'] is Map<String, dynamic>) {
+              final data = r['data'] as Map<String, dynamic>;
+              imageId ??= (data['imageId'] ?? data['id'])?.toString();
+              accessUrl =
+                  data['accessUrl']?.toString() ??
+                  data['url']?.toString() ??
+                  data['profileImageUrl']?.toString();
+            }
+            if ((accessUrl == null || accessUrl.isEmpty) &&
+                imageId != null &&
+                imageId.isNotEmpty) {
+              try {
+                accessUrl = await _getAccessUrlByImageId(imageId);
+              } catch (e) {
+                print('[UploadBatch] accessUrl lookup failed: $e');
+              }
+            }
+            t.url = accessUrl;
+            t.imageId = imageId;
             t._setProgress(1);
             t._setState(UploadState.success);
-            print('[UploadBatch] success id=${t.id} url=${t.url}');
-            // 매핑 사용 제거됨
+            print(
+              '[UploadBatch] success id=${t.id} url=${t.url} imageId=${t.imageId}',
+            );
           } else {
             t.error = StateError('응답 매핑 누락');
             t._setState(UploadState.failed);
@@ -598,9 +666,11 @@ class UploadService with ChangeNotifier {
         }
       } catch (e) {
         print('[UploadBatch] error $e');
+        final bool isCancelled =
+            e is DioException && e.type == DioExceptionType.cancel;
         for (final t in chunk) {
           t.error = e;
-          t._setState(UploadState.failed);
+          t._setState(isCancelled ? UploadState.cancelled : UploadState.failed);
         }
       }
       if (end < all.length) {
@@ -646,8 +716,8 @@ class UploadService with ChangeNotifier {
         '/api/images/upload-multiple',
         data: formData,
         options: Options(
-          sendTimeout: const Duration(seconds: 60),
-          receiveTimeout: const Duration(seconds: 60),
+          sendTimeout: const Duration(seconds: 30),
+          receiveTimeout: const Duration(seconds: 30),
         ),
       );
 

@@ -32,6 +32,7 @@ class PostList extends StatefulWidget {
   final double appBarOpacity; // 앱바 추가 투명도 (섹션 전환 시 페이드 효과)
   final NetworkError? networkError; // 네트워크 에러 상태
   final VoidCallback? onRetryError; // 에러 재시도 콜백
+  final bool isTabActive; // 탭이 활성화되었는지 (다른 탭으로 이동하면 비디오 정지)
 
   const PostList({
     super.key,
@@ -54,6 +55,7 @@ class PostList extends StatefulWidget {
     this.appBarOpacity = 1.0, // 기본값은 1.0 (완전 불투명)
     this.networkError, // 네트워크 에러 상태
     this.onRetryError, // 에러 재시도 콜백
+    this.isTabActive = true, // 기본값은 활성화
   });
 
   @override
@@ -67,6 +69,7 @@ class _PostListState extends State<PostList> {
   late List<PostData> _items;
   final Set<String> _likingInFlight = <String>{};
   final LikeService _likeService = LikeService();
+  bool _suppressVisibility = false; // 글 보기로 이동 시 일시적으로 재생 차단
 
   double _gestureAccumY = 0.0;
   double _gestureAccumX = 0.0;
@@ -133,7 +136,36 @@ class _PostListState extends State<PostList> {
         // 감소하거나 완전 교체: 전체 재동기화
         _items = List<PostData>.from(widget.posts);
         _loadLikeStatusForAllPosts();
-        print('포스트 목록 재동기화(길이 감소/교체)');
+        print('[PostList] 포스트 목록 재동기화(길이 감소/교체)');
+
+        // 현재 인덱스를 0으로 리셋 (즉시 반영하여 PostCard의 isVisible 업데이트)
+        _currentIndex = 0;
+
+        // PageController를 0으로 이동 (이미 0이어도 강제 실행)
+        if (_pageController.hasClients && _items.isNotEmpty) {
+          // 즉시 실행하여 페이지 위치 동기화
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted && _pageController.hasClients && _items.isNotEmpty) {
+              // 현재 페이지가 0이 아닐 때만 jumpToPage 호출
+              if ((_pageController.page ?? 0).round() != 0) {
+                _pageController.jumpToPage(0);
+                print('[PostList] PageController를 0으로 이동');
+              } else {
+                print('[PostList] PageController 이미 0번 페이지');
+              }
+
+              // 항상 한 번 더 setState하여 PostCard들이 완전히 재빌드되도록 보장
+              // 특히 0번 포스트가 비디오인 경우 볼륨이 재설정되어야 함
+              Future.microtask(() {
+                if (mounted) {
+                  setState(() {
+                    print('[PostList] 강제 재빌드로 볼륨 재설정 트리거');
+                  });
+                }
+              });
+            }
+          });
+        }
       }
     }
   }
@@ -236,12 +268,12 @@ class _PostListState extends State<PostList> {
                                           fontWeight: FontWeight.w500,
                                         ),
                                       ),
-                                      const SizedBox(width: 6),
+                                      const SizedBox(width: 10),
                                       GestureDetector(
                                         onTap: widget.onClearSearch,
                                         child: Icon(
                                           Icons.close,
-                                          size: 18,
+                                          size: 20,
                                           color: Theme.of(context)
                                               .colorScheme
                                               .primary
@@ -462,53 +494,61 @@ class _PostListState extends State<PostList> {
                     );
                   }
                 } else {
+                  setState(() => _suppressVisibility = true);
                   // 중앙 40% - 포스트 상세보기
-                  Navigator.of(context).push(
-                    PageRouteBuilder(
-                      transitionDuration: const Duration(milliseconds: 340),
-                      reverseTransitionDuration: const Duration(
-                        milliseconds: 100,
-                      ),
-                      opaque: false,
-                      pageBuilder:
-                          (_, __, ___) => PostReaderScreen(
-                            exported: _items[_currentIndex].toExportedData(),
-                            heroTag:
-                                'post-hero-${_items[_currentIndex].id}-$_currentIndex',
+                  Navigator.of(context)
+                      .push(
+                        PageRouteBuilder(
+                          transitionDuration: const Duration(milliseconds: 340),
+                          reverseTransitionDuration: const Duration(
+                            milliseconds: 100,
                           ),
-                      transitionsBuilder: (
-                        context,
-                        animation,
-                        secondaryAnimation,
-                        child,
-                      ) {
-                        const begin = Offset(0.0, 0.1);
-                        const end = Offset.zero;
-                        const curve = Curves.easeOutCubic;
-                        var tween = Tween(
-                          begin: begin,
-                          end: end,
-                        ).chain(CurveTween(curve: curve));
-                        var offsetAnimation = animation.drive(tween);
-                        var fadeAnimation = Tween<double>(
-                          begin: 0.0,
-                          end: 1.0,
-                        ).animate(
-                          CurvedAnimation(
-                            parent: animation,
-                            curve: Curves.easeOut,
-                          ),
-                        );
-                        return FadeTransition(
-                          opacity: fadeAnimation,
-                          child: SlideTransition(
-                            position: offsetAnimation,
-                            child: child,
-                          ),
-                        );
-                      },
-                    ),
-                  );
+                          opaque: false,
+                          pageBuilder:
+                              (_, __, ___) => PostReaderScreen(
+                                exported:
+                                    _items[_currentIndex].toExportedData(),
+                                heroTag:
+                                    'post-hero-${_items[_currentIndex].id}-$_currentIndex',
+                              ),
+                          transitionsBuilder: (
+                            context,
+                            animation,
+                            secondaryAnimation,
+                            child,
+                          ) {
+                            const begin = Offset(0.0, 0.1);
+                            const end = Offset.zero;
+                            const curve = Curves.easeOutCubic;
+                            var tween = Tween(
+                              begin: begin,
+                              end: end,
+                            ).chain(CurveTween(curve: curve));
+                            var offsetAnimation = animation.drive(tween);
+                            var fadeAnimation = Tween<double>(
+                              begin: 0.0,
+                              end: 1.0,
+                            ).animate(
+                              CurvedAnimation(
+                                parent: animation,
+                                curve: Curves.easeOut,
+                              ),
+                            );
+                            return FadeTransition(
+                              opacity: fadeAnimation,
+                              child: SlideTransition(
+                                position: offsetAnimation,
+                                child: child,
+                              ),
+                            );
+                          },
+                        ),
+                      )
+                      .whenComplete(() {
+                        if (mounted) {
+                          setState(() => _suppressVisibility = false);
+                        }
+                      });
                 }
               },
               child: Container(
@@ -568,106 +608,133 @@ class _PostListState extends State<PostList> {
           }
         } else {
           // 중앙 40% - 포스트 상세보기
-          Navigator.of(context).push(
-            PageRouteBuilder(
-              transitionDuration: const Duration(milliseconds: 340),
-              reverseTransitionDuration: const Duration(milliseconds: 100),
-              opaque: false,
-              pageBuilder:
-                  (_, __, ___) => PostReaderScreen(
-                    exported: post.toExportedData(),
-                    heroTag: 'post-hero-${post.id}-$index',
+          // 먼저 현재 프레임에서 가시성 차단을 적용
+          setState(() => _suppressVisibility = true);
+          // 다음 프레임에서 push하여 정지가 먼저 반영되도록 함
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!mounted) return;
+            Navigator.of(context)
+                .push(
+                  PageRouteBuilder(
+                    transitionDuration: const Duration(milliseconds: 340),
+                    reverseTransitionDuration: const Duration(
+                      milliseconds: 100,
+                    ),
+                    opaque: false,
+                    pageBuilder:
+                        (_, __, ___) => PostReaderScreen(
+                          exported: post.toExportedData(),
+                          heroTag: 'post-hero-${post.id}-$index',
+                        ),
+                    transitionsBuilder: (
+                      context,
+                      animation,
+                      secondaryAnimation,
+                      child,
+                    ) {
+                      const begin = Offset(0.0, 0.1);
+                      const end = Offset.zero;
+                      const curve = Curves.easeOutCubic;
+                      var tween = Tween(
+                        begin: begin,
+                        end: end,
+                      ).chain(CurveTween(curve: curve));
+                      var offsetAnimation = animation.drive(tween);
+                      var fadeAnimation = Tween<double>(
+                        begin: 0.0,
+                        end: 1.0,
+                      ).animate(
+                        CurvedAnimation(
+                          parent: animation,
+                          curve: Curves.easeOut,
+                        ),
+                      );
+                      return FadeTransition(
+                        opacity: fadeAnimation,
+                        child: SlideTransition(
+                          position: offsetAnimation,
+                          child: child,
+                        ),
+                      );
+                    },
                   ),
-              transitionsBuilder: (
-                context,
-                animation,
-                secondaryAnimation,
-                child,
-              ) {
-                const begin = Offset(0.0, 0.1);
-                const end = Offset.zero;
-                const curve = Curves.easeOutCubic;
-                var tween = Tween(
-                  begin: begin,
-                  end: end,
-                ).chain(CurveTween(curve: curve));
-                var offsetAnimation = animation.drive(tween);
-                var fadeAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
-                  CurvedAnimation(parent: animation, curve: Curves.easeOut),
-                );
-                return FadeTransition(
-                  opacity: fadeAnimation,
-                  child: SlideTransition(
-                    position: offsetAnimation,
-                    child: child,
-                  ),
-                );
-              },
-            ),
-          );
+                )
+                .whenComplete(() {
+                  if (mounted) {
+                    setState(() => _suppressVisibility = false);
+                  }
+                });
+          });
         }
       },
       child: AnimatedBuilder(
         animation: _pageController,
-        builder: (context, child) {
+        builder: (context, _) {
           final double pageNow =
               _pageController.hasClients
                   ? (_pageController.page ?? _currentIndex.toDouble())
                   : _currentIndex.toDouble();
           final double ad = (pageNow - index).abs().clamp(0.0, 1.0);
-          final double t = 1.0 - ad;
+          final double t = 1.0 - ad; // 0.0~1.0 노출 비율 근사치
           final double eased = Curves.easeOutCubic.transform(t);
           final double scale = 0.85 + 0.15 * eased;
-          return Transform.scale(scale: scale, child: child);
+          final bool isMainVisible =
+              widget.isTabActive &&
+              !_suppressVisibility &&
+              t >= 0.7; // 70% 이상 노출일 때만 재생
+
+          return Transform.scale(
+            scale: scale,
+            child: Center(
+              child: AspectRatio(
+                aspectRatio: 4 / 5,
+                child:
+                    widget.showCardShimmer
+                        ? _buildImageAreaShimmer()
+                        : PostCard(
+                          containerWidth: widget.containerWidth,
+                          thumbnailImageUrl: post.thumbnailImageUrl,
+                          heroTag: 'post-hero-${post.id}-$index',
+                          title: post.title,
+                          author: post.author,
+                          authorProfileImageUrl: post.authorProfileImageUrl,
+                          content: post.parsedContent,
+                          isVisible: isMainVisible,
+                          postId: post.id.toString(),
+                          isLiked: _likeService.isPostLiked(post.id.toString()),
+                          likeCount: _likeService.getPostLikeCount(
+                            post.id.toString(),
+                          ),
+                          onLikePressed: () async {
+                            final id = post.id.toString();
+                            if (id.isEmpty) return;
+
+                            if (_likingInFlight.contains(id)) return;
+                            setState(() => _likingInFlight.add(id));
+
+                            try {
+                              await _likeService.togglePostLike(id);
+                            } catch (e) {
+                              if (mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text('좋아요 처리 중 오류가 발생했습니다'),
+                                    behavior: SnackBarBehavior.floating,
+                                    duration: Duration(milliseconds: 900),
+                                  ),
+                                );
+                              }
+                            } finally {
+                              if (mounted) {
+                                setState(() => _likingInFlight.remove(id));
+                              }
+                            }
+                          },
+                        ),
+              ),
+            ),
+          );
         },
-        child: Center(
-          child: AspectRatio(
-            aspectRatio: 4 / 5,
-            child:
-                widget.showCardShimmer
-                    ? _buildImageAreaShimmer()
-                    : PostCard(
-                      containerWidth: widget.containerWidth,
-                      thumbnailImageUrl: post.thumbnailImageUrl,
-                      heroTag: 'post-hero-${post.id}-$index',
-                      title: post.title,
-                      author: post.author,
-                      authorProfileImageUrl: post.authorProfileImageUrl,
-                      content: post.parsedContent,
-                      isVisible: _currentIndex == index,
-                      postId: post.id.toString(),
-                      isLiked: _likeService.isPostLiked(post.id.toString()),
-                      likeCount: _likeService.getPostLikeCount(
-                        post.id.toString(),
-                      ),
-                      onLikePressed: () async {
-                        final id = post.id.toString();
-                        if (id.isEmpty) return;
-
-                        if (_likingInFlight.contains(id)) return;
-                        setState(() => _likingInFlight.add(id));
-
-                        try {
-                          await _likeService.togglePostLike(id);
-                        } catch (e) {
-                          if (mounted) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text('좋아요 처리 중 오류가 발생했습니다'),
-                                behavior: SnackBarBehavior.floating,
-                                duration: Duration(milliseconds: 900),
-                              ),
-                            );
-                          }
-                        } finally {
-                          if (mounted) {
-                            setState(() => _likingInFlight.remove(id));
-                          }
-                        }
-                      },
-                    ),
-          ),
-        ),
       ),
     );
   }

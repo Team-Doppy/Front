@@ -2,7 +2,7 @@ import 'dart:ui' as ui;
 import 'package:doppy/editor/overlay/drawing_overlay.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:doppy/editor/image/native_image_picker.dart';
+import 'package:doppy/image/native_image_picker.dart';
 
 enum StickerKind { text, emoji, image, draw }
 

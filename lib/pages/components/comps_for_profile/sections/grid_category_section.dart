@@ -57,6 +57,11 @@ class _GridCategorySectionState extends State<GridCategorySection> {
     final int? catId = int.tryParse(widget.categoryId ?? '');
     if (catId == null) return;
 
+    // categoryId = 0 (기본 카테고리)은 수정/삭제 불가
+    if (catId == 0) {
+      return;
+    }
+
     final RenderBox button = iconContext.findRenderObject() as RenderBox;
     final RenderBox overlay =
         Navigator.of(iconContext).overlay!.context.findRenderObject()
@@ -117,7 +122,7 @@ class _GridCategorySectionState extends State<GridCategorySection> {
       final bool? confirmed = await DialogUtils.showConfirmDialog(
         iconContext,
         title: '카테고리 삭제',
-        message: '정말 삭제하시겠어요? 되돌릴 수 없어요.\n이 카테고리 안의 포스트는 지워지지 않아요.',
+        message: '정말 삭제하시겠어요? 되돌릴 수 없어요.\n이 카테고리의 포스트는 지워지지 않아요.',
         confirmText: '삭제',
         cancelText: '취소',
         isDestructive: true,
