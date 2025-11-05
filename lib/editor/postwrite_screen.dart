@@ -27,6 +27,7 @@ import 'package:doppy/editor/style/defualt_toolbar.dart';
 import 'package:doppy/editor/writer_sticker_canvas.dart';
 import 'package:doppy/theme/app_colors.dart';
 import 'package:doppy/theme/app_theme.dart';
+import 'package:doppy/l10n/app_localizations.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter/services.dart';
@@ -144,7 +145,9 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
         );
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted) {
-            ErrorHandler.showError(context, '게시물 데이터를 불러올 수 없습니다');
+            final translatedText = context.tr('load_failed');
+            print('[PostwriteScreen] 번역 테스트: load_failed = "$translatedText"');
+            ErrorHandler.showError(context, translatedText);
           }
         });
       }
@@ -756,6 +759,18 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // 로케일 디버깅
+    final currentLocale = Localizations.localeOf(context);
+    print('[PostwriteScreen] 현재 로케일: ${currentLocale.languageCode}');
+
+    // 번역 테스트
+    try {
+      final testTr = context.tr('visibility_public');
+      print('[PostwriteScreen] 번역 테스트 (tr): visibility_public = "$testTr"');
+    } catch (e) {
+      print('[PostwriteScreen] 번역 에러: $e');
+    }
+
     // 키보드 상태 변화 감지
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _onKeyboardVisibilityChanged();
@@ -786,10 +801,10 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
           // 변경사항이 있을 때만 다이얼로그 표시
           final shouldCancel = await DialogUtils.showConfirmDialog(
             context,
-            title: '수정 취소',
-            message: '수정 중인 내용이 사라집니다.\n정말 취소하시겠습니까?',
-            confirmText: '취소',
-            cancelText: '계속 수정',
+            title: context.tr('cancel_edit_title'),
+            message: context.tr('cancel_edit_message'),
+            confirmText: context.tr('cancel'),
+            cancelText: context.tr('continue_editing'),
             isDestructive: true,
           );
           if (shouldCancel == true) {
@@ -803,10 +818,10 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
         if (needPrompt) {
           final shouldSave = await DialogUtils.showConfirmDialog(
             context,
-            title: '작성 취소',
-            message: '작성 중인 내용을 임시저장할까요?',
-            confirmText: '임시저장',
-            cancelText: '저장 안 함',
+            title: context.tr('discard_or_save_title'),
+            message: context.tr('discard_or_save_message'),
+            confirmText: context.tr('save_and_exit'),
+            cancelText: context.tr('discard_without_save'),
             isDestructive: false,
           );
           if (shouldSave == true) {
@@ -1336,8 +1351,8 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
         if (mounted) {
           await DialogUtils.showInfoDialog(
             context,
-            title: '제목을 입력해주세요',
-            message: '제목을 입력해야 임시저장할 수 있습니다.',
+            title: context.tr('enter_title_first'),
+            message: context.tr('title_required_for_draft'),
           );
         }
         return false; // ✅ 실패 반환
@@ -1404,8 +1419,8 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     if (editorService.hasAnyPlaceholders()) {
       await DialogUtils.showInfoDialog(
         context,
-        title: '업로드 대기',
-        message: '아직 업로드가 완료되지 않은 미디어가 있어요. 잠시만 기다려주세요.',
+        title: context.tr('wait_for_media_upload'),
+        message: context.tr('media_still_uploading'),
       );
       return;
     }
@@ -1415,8 +1430,8 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     if (!hasTitle) {
       await DialogUtils.showInfoDialog(
         context,
-        title: '제목을 입력해주세요',
-        message: '제목을 입력해야 수정할 수 있습니다.',
+        title: context.tr('enter_title_first'),
+        message: context.tr('title_required_for_edit'),
       );
       return;
     }

@@ -2,6 +2,7 @@ import 'dart:ui' as ui;
 import 'package:doppy/data/models/user_model.dart';
 import 'package:doppy/pages/components/common_profile_avatar.dart';
 import 'package:doppy/pages/components/doppy_loading_logo.dart';
+import 'package:doppy/l10n/app_localizations.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../../providers/friend_provider.dart';
@@ -101,8 +102,8 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
     // 전체 친구 가상 그룹 생성
     final allFriendsGroup = Group(
       id: -1, // 특별한 ID로 구분
-      name: '전체 친구',
-      description: '모든 친구',
+      name: context.tr('all_friends'),
+      description: context.tr('all_friends'),
       ownerId: 'system',
       owner: User(id: 0, username: 'system'),
       createdAt: DateTime.now(),
@@ -451,7 +452,7 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      '그룹 추가',
+                      context.tr('add_group'),
                       style: TextStyle(
                         fontWeight: FontWeight.w600,
                         fontSize: 14,
@@ -460,7 +461,7 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      '새로운 그룹을 추가합니다',
+                      context.tr('add_new_group_description'),
                       style: TextStyle(
                         fontSize: 12,
                         color: Theme.of(
@@ -594,7 +595,7 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
                           decoration: InputDecoration(
                             filled: true,
                             fillColor: Colors.transparent,
-                            hintText: '그룹이나 친구를 검색해보세요',
+                            hintText: context.tr('search_groups_friends'),
                             hintStyle: TextStyle(
                               color: Theme.of(
                                 context,

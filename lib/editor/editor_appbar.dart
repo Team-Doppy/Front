@@ -8,6 +8,7 @@ import 'package:doppy/editor/service/sticker_service.dart';
 import 'package:doppy/editor/component/clip_component.dart';
 import 'package:doppy/utils/dialog_utils.dart';
 import 'package:doppy/utils/error_handler.dart';
+import 'package:doppy/l10n/app_localizations.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:doppy/providers/group_provider.dart';
@@ -73,6 +74,20 @@ class _EditModeAppBarState extends State<EditModeAppBar> {
     if (widget.postId != null) {
       _loadAllEditData();
     }
+
+    // 번역 테스트
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        try {
+          final testTranslation = context.tr('visibility_public');
+          print(
+            '[EditModeAppBar] 번역 테스트: visibility_public = "$testTranslation"',
+          );
+        } catch (e) {
+          print('[EditModeAppBar] 번역 에러: $e');
+        }
+      }
+    });
   }
 
   /// 수정 모드 진입 시 필요한 모든 데이터를 한번에 로드
@@ -412,7 +427,10 @@ class _EditModeAppBarState extends State<EditModeAppBar> {
                   // 변경 없음 가드
                   if (_selectedCategoryId == id) {
                     print('[EditModeAppBar] 카테고리 변경 없음 - API 호출 생략');
-                    ErrorHandler.showInfo(context, '이미 선택된 카테고리예요');
+                    ErrorHandler.showInfo(
+                      context,
+                      context.tr('already_selected_category'),
+                    );
                     return;
                   }
 
@@ -427,7 +445,10 @@ class _EditModeAppBarState extends State<EditModeAppBar> {
                       setState(() {
                         _selectedCategoryId = id;
                       });
-                      ErrorHandler.showInfo(context, '카테고리가 변경되었습니다');
+                      ErrorHandler.showInfo(
+                        context,
+                        context.tr('category_changed'),
+                      );
                       print('[EditModeAppBar] 카테고리 변경 성공: $name (ID: $id)');
                       widget.onCategoryChanged?.call();
                     }
@@ -456,7 +477,7 @@ class _EditModeAppBarState extends State<EditModeAppBar> {
           value: 'private',
           child: _buildDropdownItemWithDivider(
             context: context,
-            title: '나만보기',
+            title: context.tr('visibility_private'),
             isSelected: _selectedVisibility == 'private',
           ),
           onTap: () {
@@ -469,7 +490,7 @@ class _EditModeAppBarState extends State<EditModeAppBar> {
               // 변경 없음 가드
               if (_selectedVisibility == 'private') {
                 print('[EditModeAppBar] 공개범위 변경 없음(private) - API 호출 생략');
-                ErrorHandler.showInfo(context, '이미 나만보기예요');
+                ErrorHandler.showInfo(context, context.tr('already_private'));
                 return;
               }
 
@@ -489,7 +510,10 @@ class _EditModeAppBarState extends State<EditModeAppBar> {
                     _selectedVisibility,
                     _selectedGroupIds,
                   );
-                  ErrorHandler.showInfo(context, '공개범위가 나만보기로 변경되었습니다');
+                  ErrorHandler.showInfo(
+                    context,
+                    context.tr('visibility_changed_private'),
+                  );
                   print('[EditModeAppBar] 공개범위 변경 성공: PRIVATE');
                 }
               } catch (e) {
@@ -507,7 +531,7 @@ class _EditModeAppBarState extends State<EditModeAppBar> {
           value: 'public',
           child: _buildDropdownItemWithDivider(
             context: context,
-            title: '전체공개',
+            title: context.tr('visibility_public'),
             isSelected: _selectedVisibility == 'public',
           ),
           onTap: () {
@@ -558,7 +582,7 @@ class _EditModeAppBarState extends State<EditModeAppBar> {
           value: 'friends',
           child: _buildDropdownItemWithDivider(
             context: context,
-            title: '친구공개',
+            title: context.tr('visibility_friends'),
             isSelected: _selectedVisibility == 'friends',
           ),
           onTap: () {
@@ -608,7 +632,7 @@ class _EditModeAppBarState extends State<EditModeAppBar> {
           value: 'partial',
           child: _buildDropdownItemWithDivider(
             context: context,
-            title: '그룹공개',
+            title: context.tr('visibility_group'),
             isSelected: _selectedVisibility == 'partial',
             hasExpansion: true,
             isExpanded: false,
@@ -1035,8 +1059,8 @@ class EditorAppBar extends StatelessWidget {
     if (editorService.hasAnyPlaceholders()) {
       await DialogUtils.showInfoDialog(
         context,
-        title: '업로드 대기',
-        message: '아직 업로드가 완료되지 않은 미디어가 있어요. 잠시만 기다려주세요.',
+        title: context.tr('wait_for_media_upload'),
+        message: context.tr('media_still_uploading'),
       );
       return;
     }
@@ -1049,16 +1073,16 @@ class EditorAppBar extends StatelessWidget {
       // 제목 또는 본문이 비어있으면 다이얼로그 표시
       String message;
       if (!hasTitle && !hasBody) {
-        message = '제목과 본문을 입력해주세요.';
+        message = context.tr('title_and_body_required');
       } else if (!hasTitle) {
-        message = '제목을 입력해주세요.';
+        message = context.tr('title_required');
       } else {
-        message = '본문을 입력해주세요.';
+        message = context.tr('body_required');
       }
 
       await DialogUtils.showInfoDialog(
         context,
-        title: '내용을 작성해주세요',
+        title: context.tr('enter_content_first'),
         message: message,
       );
       return;
@@ -1150,7 +1174,10 @@ class EditorAppBar extends StatelessWidget {
                           final success = await onSaveDraft?.call();
                           // 명시적 임시저장 시 성공했을 때만 사용자 알림
                           if (success == true) {
-                            ErrorHandler.showInfo(context, '임시저장되었습니다');
+                            ErrorHandler.showInfo(
+                              context,
+                              context.tr('draft_saved'),
+                            );
                           }
                         }
                       },
@@ -1161,7 +1188,7 @@ class EditorAppBar extends StatelessWidget {
                               child: Row(
                                 children: [
                                   Text(
-                                    '임시저장 불러오기',
+                                    context.tr('load_draft'),
                                     style: TextStyle(
                                       color:
                                           Theme.of(
@@ -1178,7 +1205,7 @@ class EditorAppBar extends StatelessWidget {
                               child: Row(
                                 children: [
                                   Text(
-                                    '임시저장',
+                                    context.tr('save_draft'),
                                     style: TextStyle(
                                       color:
                                           Theme.of(
@@ -1202,7 +1229,7 @@ class EditorAppBar extends StatelessWidget {
                           vertical: 8,
                         ),
                         child: Text(
-                          '다음',
+                          context.tr('next'),
                           style: TextStyle(
                             color: Theme.of(
                               context,

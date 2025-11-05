@@ -5,11 +5,12 @@ import 'package:doppy/data/models/post_data.dart';
 import 'package:doppy/data/services/home_data_service.dart';
 import 'package:doppy/data/services/search_service.dart';
 import 'package:doppy/pages/components/shimmer_box.dart';
-import 'package:doppy/pages/screens/search_screen_overlay.dart';
+import 'package:doppy/pages/screens/search_screen.dart';
 import 'package:doppy/providers/user_provider.dart';
 import 'package:doppy/pages/components/error_state_widget.dart';
 import 'package:doppy/providers/search_provider.dart';
 import 'package:doppy/utils/network_utils.dart';
+import 'package:doppy/l10n/app_localizations.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'dart:ui' as ui;
@@ -899,7 +900,7 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               isRetryable: true,
             ),
         onRetry: _retryFriendsPosts,
-        customTitle: '친구글을 불러올 수 없습니다',
+        customTitle: context.tr('friends_posts_load_failed'),
         isRetrying: _friendsIsRetrying,
       );
     }
@@ -948,7 +949,7 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       isShowingFriendsOnly: true,
       onFilterTap: _handleSectionSwitch,
       showAppBar: true,
-      sectionLabel: '전체글',
+      sectionLabel: context.tr('all_posts'),
       appBarOpacity: _appBarOpacity, // 앱바 투명도 전달
       networkError: _friendsError, // 에러 상태 전달
       onRetryError: () => _loadFriendsPosts(refresh: true), // 에러 재시도 콜백
@@ -1020,7 +1021,7 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       isShowingFriendsOnly: false,
       onFilterTap: _handleSectionSwitch,
       showAppBar: true,
-      sectionLabel: '친구글',
+      sectionLabel: context.tr('friends_posts'),
       appBarOpacity: _appBarOpacity, // 앱바 투명도 전달
       networkError: _allError, // 에러 상태 전달
       onRetryError: () => _loadAllPosts(refresh: true), // 에러 재시도 콜백

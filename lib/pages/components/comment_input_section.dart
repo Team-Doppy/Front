@@ -34,75 +34,10 @@ class CommentInputSection extends StatelessWidget {
     final Color fgColor = foregroundColor ?? scheme.onSurface;
 
     return Container(
-      padding: EdgeInsets.only(
-        left: 16,
-        right: 16,
-        top: 0,
-        bottom: bottomInset + 4,
-      ),
+      padding: EdgeInsets.only(left: 0, right: 0, top: 0, bottom: bottomInset),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // 답글 대상 표시
-          if (replyTarget != null)
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
-              decoration: BoxDecoration(
-                color: bgColor,
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      '@${replyTarget!.author} : ${replyTarget!.content}',
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(color: fgColor, fontSize: 16),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  GestureDetector(
-                    onTap: onCancelReply,
-                    child: Icon(
-                      Icons.close,
-                      size: 18,
-                      color: fgColor.withOpacity(0.6),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-
-          // 편집 중 표시
-          if (editingComment != null)
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
-              decoration: BoxDecoration(
-                color: bgColor,
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      '수정 중: ${editingComment!.content}',
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(color: fgColor, fontSize: 16),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  GestureDetector(
-                    onTap: onCancelEdit,
-                    child: Icon(
-                      Icons.close,
-                      size: 16,
-                      color: fgColor.withOpacity(0.6),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-
           // 입력창
           Row(
             children: [
@@ -118,7 +53,7 @@ class CommentInputSection extends StatelessWidget {
                             ? '수정할 내용을 입력하세요'
                             : replyTarget != null
                             ? '답글을 입력하세요'
-                            : '댓글을 입력하세요',
+                            : '이 글에 대해 채팅하기',
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(35),
                       borderSide: BorderSide.none,
@@ -131,19 +66,12 @@ class CommentInputSection extends StatelessWidget {
                       horizontal: 16,
                       vertical: 0,
                     ),
+                    suffixIcon: IconButton(
+                      onPressed: onSubmit,
+                      icon: Icon(Icons.send_rounded, size: 24, color: fgColor),
+                    ),
                   ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              GestureDetector(
-                onTap: onSubmit,
-                child: Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: bgColor,
-                    shape: BoxShape.circle,
-                  ),
-                  child: Icon(Icons.send_rounded, size: 24, color: fgColor),
+                  onSubmitted: (value) => onSubmit(),
                 ),
               ),
             ],

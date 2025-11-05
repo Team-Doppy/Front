@@ -5,6 +5,7 @@ import 'package:doppy/data/services/video_cache_service.dart';
 import 'package:doppy/pages/components/shimmer_box.dart';
 import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
+import 'package:doppy/utils/format_utils.dart';
 
 class ImageView extends StatefulWidget {
   const ImageView({
@@ -202,7 +203,7 @@ class _ImageViewState extends State<ImageView> {
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           Text(
-                            '${widget.post.viewCount}',
+                            formatCount(widget.post.viewCount),
                             style: const TextStyle(
                               fontSize: 12,
                               fontWeight: FontWeight.w500,

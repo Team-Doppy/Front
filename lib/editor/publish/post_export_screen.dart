@@ -10,6 +10,7 @@ import 'package:doppy/pages/screens/post_reader_screen.dart';
 import 'package:doppy/providers/feed_provider/my_profile_feed_provider.dart';
 import 'package:doppy/providers/user_provider.dart';
 import 'package:doppy/theme/app_colors.dart';
+import 'package:doppy/l10n/app_localizations.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -1285,7 +1286,7 @@ class _PostExportScreenState extends State<PostExportScreen>
               FocusScope.of(context).unfocus();
             },
             child: Text(
-              '수정완료',
+              context.tr('modify_complete'),
               style: TextStyle(
                 color: AppColors.darkTextPrimary,
                 fontWeight: FontWeight.w500,
@@ -1305,6 +1306,7 @@ class _PostExportScreenState extends State<PostExportScreen>
       elevation: 0,
       scrolledUnderElevation: 0,
       automaticallyImplyLeading: false,
+      leadingWidth: 80, // 이전 버튼이 잘리지 않도록 너비 확장
       leading: GestureDetector(
         onTap: () async {
           if (_currentStep > 0) {
@@ -1317,7 +1319,7 @@ class _PostExportScreenState extends State<PostExportScreen>
         child: Padding(
           padding: const EdgeInsets.only(left: 20, top: 16),
           child: Text(
-            '이전',
+            context.tr('previous'),
             style: TextStyle(
               color: AppColors.darkTextPrimary.withOpacity(0.9),
               fontSize: 15,
@@ -1332,7 +1334,7 @@ class _PostExportScreenState extends State<PostExportScreen>
           TextButton(
             onPressed: _canProceedToNextStep() ? _nextStep : null,
             child: Text(
-              '다음',
+              context.tr('next'),
               style: TextStyle(
                 color:
                     _canProceedToNextStep()
@@ -1380,7 +1382,7 @@ class _PostExportScreenState extends State<PostExportScreen>
                           ),
                         )
                         : Text(
-                          '업로드',
+                          context.tr('publish'),
                           key: const ValueKey('text'),
                           style: TextStyle(
                             color: Colors.white.withOpacity(0.9),
@@ -2354,7 +2356,7 @@ class _PostExportScreenState extends State<PostExportScreen>
           child: Row(
             children: [
               Text(
-                '편집하기',
+                context.tr('edit_thumbnail'),
                 style: TextStyle(
                   color: AppColors.darkTextPrimary,
                   fontSize: 14,
@@ -2914,7 +2916,7 @@ class _EmptyImagePlaceholder extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(
-              '눌러서 썸네일을 선택해주세요',
+              context.tr('tap_to_select_thumbnail'),
               style: TextStyle(color: AppColors.darkTextPrimary, fontSize: 15),
             ),
           ],

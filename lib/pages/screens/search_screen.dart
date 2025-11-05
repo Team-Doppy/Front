@@ -2,6 +2,7 @@ import 'package:doppy/data/models/user_model.dart';
 import 'package:doppy/pages/components/common_profile_avatar.dart';
 import 'package:doppy/pages/screens/user_profile_screen.dart';
 import 'package:doppy/data/models/post_data.dart';
+import 'package:doppy/l10n/app_localizations.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:provider/provider.dart';
@@ -49,7 +50,6 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
         if (widget.initialQuery != null && widget.initialQuery!.isNotEmpty) {
           context.read<SearchService>().onSearchChanged(widget.initialQuery!);
         }
-        _searchFocusNode.requestFocus();
       }
     });
 
@@ -600,7 +600,7 @@ class _SearchTopBar extends StatelessWidget {
                       isDark
                           ? Colors.white.withOpacity(0.1)
                           : Colors.black.withOpacity(0.1),
-                  hintText: '무엇이든 검색해보세요',
+                  hintText: context.tr('search_placeholder'),
                   hintStyle: TextStyle(
                     color:
                         isDark
@@ -612,7 +612,7 @@ class _SearchTopBar extends StatelessWidget {
                   suffixIcon:
                       query.isNotEmpty
                           ? IconButton(
-                            tooltip: '검색',
+                            tooltip: context.tr('search_hint'),
                             onPressed: () {
                               FocusScope.of(context).unfocus();
                               onSubmitted();

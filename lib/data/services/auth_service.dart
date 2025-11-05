@@ -32,9 +32,11 @@ class AuthService {
     required String username,
     required String password,
     String? alias,
+    String? region, // 'KR' 또는 'US'
   }) async {
     final body = {'username': username, 'password': password};
     if (alias != null) body['alias'] = alias;
+    if (region != null) body['region'] = region;
 
     try {
       final url = Uri.parse('$baseUrl/api/auth/register');
@@ -46,7 +48,7 @@ class AuthService {
 
       if (response.statusCode == 200 || response.statusCode == 201) {
         // 회원가입 성공 후 자동 로그인
-        final loginResult = await login(username, password);
+        final loginResult = await login(username, password, region: region);
         return loginResult != null;
       }
       return false;
@@ -61,8 +63,11 @@ class AuthService {
     String username,
     String password, {
     bool setAsCurrent = true,
+    String? region, // 'KR' 또는 'US'
   }) async {
     final body = {'username': username, 'password': password};
+    if (region != null) body['region'] = region;
+
     try {
       final url = Uri.parse('$baseUrl/api/auth/login');
       final response = await http.post(
@@ -191,6 +196,38 @@ class AuthService {
       }
     } catch (e) {
       print('[AuthService] Token validation error: $e');
+      return false;
+    }
+  }
+
+  /// 사용자 region 업데이트 (언어 변경 시)
+  Future<bool> updateUserRegion(String region) async {
+    try {
+      final token = await getToken();
+      if (token == null) {
+        print('[AuthService] 토큰이 없습니다');
+        return false;
+      }
+
+      final url = Uri.parse('$baseUrl/api/auth/update-region');
+      final response = await http.patch(
+        url,
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+        body: jsonEncode({'region': region}),
+      );
+
+      if (response.statusCode == 200) {
+        print('[AuthService] Region 업데이트 성공: $region');
+        return true;
+      } else {
+        print('[AuthService] Region 업데이트 실패: ${response.statusCode}');
+        return false;
+      }
+    } catch (e) {
+      print('[AuthService] Region 업데이트 오류: $e');
       return false;
     }
   }

@@ -1,5 +1,6 @@
 import 'dart:ui';
 
+import 'package:doppy/l10n/app_localizations.dart';
 import 'package:doppy/pages/components/common_profile_avatar.dart';
 import 'package:flutter/material.dart';
 import 'package:doppy/theme/app_colors.dart';
@@ -457,7 +458,7 @@ class _MentionOverlayState extends State<MentionOverlay> {
                                     )
                                     : Center(
                                       child: Text(
-                                        '검색 결과가 없습니다',
+                                        context.tr('no_search_results'),
                                         style: const TextStyle(
                                           color: Colors.white70,
                                         ),

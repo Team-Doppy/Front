@@ -3,6 +3,7 @@ import 'package:doppy/pages/components/post_card.dart';
 import 'package:doppy/pages/components/shimmer_box.dart';
 import 'package:doppy/pages/components/custom_refresh_indicator.dart';
 import 'package:doppy/pages/screens/post_reader_screen.dart';
+import 'package:doppy/l10n/app_localizations.dart';
 import 'package:flutter/material.dart';
 import 'package:doppy/data/models/post_data.dart';
 import 'package:doppy/data/services/like_service.dart';
@@ -767,8 +768,8 @@ class _PostListState extends State<PostList> {
     bool showRecommendButton = false;
 
     if (widget.isShowingSearchResults) {
-      message = '검색 결과가 없어요';
-      subtitle = '"${widget.searchQuery}"에 대한 결과가 없어요';
+      message = context.tr('no_search_results_short');
+      subtitle = '"${widget.searchQuery}"${context.tr('no_results_for_query')}';
       showRecommendButton = false; // 검색 중에는 추천글 이동 버튼 숨김
     } else if (widget.isShowingFriendsOnly) {
       message = '친구포스트가 없어요';

@@ -51,11 +51,13 @@ class AuthProvider extends ChangeNotifier {
     String username,
     String password, {
     bool setAsCurrent = true,
+    String? region,
   }) async {
     final result = await _authService.login(
       username,
       password,
       setAsCurrent: setAsCurrent,
+      region: region,
     );
     if (result != null) {
       _isLoggedIn = true;
@@ -140,5 +142,9 @@ class AuthProvider extends ChangeNotifier {
     _username = username;
     notifyListeners();
     print('[-] [AuthProvider] 인증 상태 업데이트: $username');
+  }
+
+  Future<void> updateUserRegionAndRefreshToken(String region) async {
+    await _authService.updateUserRegion(region);
   }
 }

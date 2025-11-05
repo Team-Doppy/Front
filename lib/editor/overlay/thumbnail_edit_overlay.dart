@@ -10,6 +10,7 @@ import 'package:doppy/editor/service/node_component_service.dart';
 import 'package:doppy/editor/utils/video_upload_utils.dart';
 import 'package:doppy/utils/error_handler.dart';
 import 'package:doppy/utils/dialog_utils.dart';
+import 'package:doppy/l10n/app_localizations.dart';
 import 'package:doppy/pages/components/shimmer_box.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -368,11 +369,11 @@ class _ThumbnailEditOverlayState extends State<ThumbnailEditOverlay> {
                     const SizedBox(height: 8),
                     ListTile(
                       onTap: () => Navigator.of(context).pop('image'),
-                      title: const Text('이미지 선택'),
+                      title: Text(context.tr('select_image')),
                     ),
                     ListTile(
                       onTap: () => Navigator.of(context).pop('video'),
-                      title: const Text('short clip 선택'),
+                      title: Text(context.tr('select_video')),
                     ),
                   ],
                 ),
@@ -603,7 +604,7 @@ class _ThumbnailEditOverlayState extends State<ThumbnailEditOverlay> {
           child: Row(
             children: [
               Text(
-                '편집하기',
+                context.tr('edit_thumbnail'),
                 style: TextStyle(
                   color: Theme.of(context).colorScheme.onSurface,
                   fontSize: 14,
@@ -733,10 +734,10 @@ class _ThumbnailEditOverlayState extends State<ThumbnailEditOverlay> {
                     if (_isUploadingThumb) {
                       final shouldExit = await DialogUtils.showConfirmDialog(
                         context,
-                        title: '업로드 중',
-                        message: '아직 업로드 중입니다.\n취소하고 나가시겠어요?',
-                        confirmText: '취소하고 나가기',
-                        cancelText: '계속 업로드',
+                        title: context.tr('uploading_title'),
+                        message: context.tr('uploading_message'),
+                        confirmText: context.tr('cancel_and_exit'),
+                        cancelText: context.tr('continue_upload'),
                       );
                       if (shouldExit == true && mounted) {
                         // 업로드 중이므로 컨트롤러는 정리하지 않고 그냥 나가기
@@ -756,10 +757,10 @@ class _ThumbnailEditOverlayState extends State<ThumbnailEditOverlay> {
                     if (thumbnailChanged) {
                       final shouldExit = await DialogUtils.showConfirmDialog(
                         context,
-                        title: '변경사항이 있습니다',
-                        message: '썸네일 변경사항을 두고 나가시겠어요?',
-                        confirmText: '나가기',
-                        cancelText: '취소',
+                        title: context.tr('has_changes_title'),
+                        message: context.tr('has_changes_message'),
+                        confirmText: context.tr('exit'),
+                        cancelText: context.tr('cancel'),
                       );
                       if (shouldExit != true) return;
 
@@ -786,7 +787,7 @@ class _ThumbnailEditOverlayState extends State<ThumbnailEditOverlay> {
                     ? _exitEditMode // 편집모드 종료
                     : (_isUploadingThumb ? null : _saveChanges), // 업로드 중이면 비활성화
             child: Text(
-              _editMode ? '완료' : '수정 완료',
+              _editMode ? context.tr('done') : context.tr('modify_complete'),
               style: TextStyle(
                 fontSize: 16,
                 fontWeight: FontWeight.w500,

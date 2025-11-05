@@ -868,6 +868,9 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer>
                                                 },
                                                 targetComment: null,
                                                 globalKey: GlobalKey(),
+                                                onSwipeReply: () {
+                                                  // TODO: Implement swipe reply
+                                                },
                                               );
                                             },
                                           ),

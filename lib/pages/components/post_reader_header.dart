@@ -1,7 +1,9 @@
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
+import 'package:flutter_svg/svg.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:doppy/pages/components/common_profile_avatar.dart';
+import 'package:doppy/utils/format_utils.dart';
 
 class PostReaderHeader extends StatelessWidget {
   const PostReaderHeader({
@@ -15,6 +17,11 @@ class PostReaderHeader extends StatelessWidget {
     this.horizontalPadding = 20,
     this.topSpacing = 90,
     this.gapHeight = 24,
+    required this.isMyPost,
+    required this.likeCount,
+    required this.commentCount,
+    required this.onLikeTap,
+    required this.onCommentTap,
   });
 
   final Map<String, dynamic> exportedRoot;
@@ -27,6 +34,12 @@ class PostReaderHeader extends StatelessWidget {
   final double horizontalPadding;
   final double topSpacing;
   final double gapHeight;
+
+  final bool isMyPost;
+  final int likeCount;
+  final int commentCount;
+  final VoidCallback onLikeTap;
+  final VoidCallback onCommentTap;
 
   Map<String, dynamic>? get _contentRoot {
     final root = currentExportedData ?? exportedRoot;
@@ -348,6 +361,12 @@ class PostReaderAppBar extends StatelessWidget {
     required this.onEdit,
     required this.onDelete,
     required this.onShowComments,
+    required this.title,
+    required this.likeCount,
+    required this.commentCount,
+    required this.onLikeTap,
+    required this.onCommentTap,
+    required this.isLiked,
   });
 
   final bool showAppBar;
@@ -357,6 +376,12 @@ class PostReaderAppBar extends StatelessWidget {
   final VoidCallback onEdit;
   final VoidCallback onDelete;
   final VoidCallback onShowComments;
+  final String title;
+  final int likeCount;
+  final int commentCount;
+  final VoidCallback onLikeTap;
+  final VoidCallback onCommentTap;
+  final bool isLiked;
 
   @override
   Widget build(BuildContext context) {
@@ -382,7 +407,7 @@ class PostReaderAppBar extends StatelessWidget {
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
-                    const SizedBox(width: 17),
+                    const SizedBox(width: 22),
                     GestureDetector(
                       onTap: onBack,
                       child: Icon(
@@ -391,6 +416,8 @@ class PostReaderAppBar extends StatelessWidget {
                         size: 22,
                       ),
                     ),
+                    SizedBox(width: 15),
+
                     const Spacer(),
                     if (isMyPost) ...[
                       GestureDetector(
@@ -404,13 +431,15 @@ class PostReaderAppBar extends StatelessWidget {
                             '수정',
                             style: TextStyle(
                               fontSize: 16,
-                              fontWeight: FontWeight.w500,
-                              color: Theme.of(context).colorScheme.onSurface,
+                              fontWeight: FontWeight.w600,
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.onSurface.withOpacity(0.7),
                             ),
                           ),
                         ),
                       ),
-                      const SizedBox(width: 12),
+                      const SizedBox(width: 6),
                       GestureDetector(
                         onTap: onDelete,
                         child: Container(
@@ -422,8 +451,10 @@ class PostReaderAppBar extends StatelessWidget {
                             '삭제',
                             style: TextStyle(
                               fontSize: 16,
-                              fontWeight: FontWeight.w500,
-                              color: Theme.of(context).colorScheme.onSurface,
+                              fontWeight: FontWeight.w600,
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.onSurface.withOpacity(0.7),
                             ),
                           ),
                         ),
@@ -431,21 +462,68 @@ class PostReaderAppBar extends StatelessWidget {
                       const SizedBox(width: 15),
                     ] else ...[
                       GestureDetector(
-                        onTap: onShowComments,
+                        onTap: onLikeTap,
                         child: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            Icon(
-                              Icons.chat_bubble_outline_rounded,
-                              color: Theme.of(
-                                context,
-                              ).colorScheme.onSurface.withOpacity(0.7),
-                              size: 24,
+                            SvgPicture.asset(
+                              'assets/icons/heart.svg',
+                              width: 24,
+                              height: 24,
+                              color:
+                                  isLiked
+                                      ? Colors.red
+                                      : Theme.of(
+                                        context,
+                                      ).colorScheme.onSurface.withOpacity(0.7),
                             ),
-                            const SizedBox(width: 15),
+                            const SizedBox(width: 5),
+                            Text(
+                              formatCount(likeCount),
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w500,
+                                color:
+                                    isLiked
+                                        ? Colors.red
+                                        : Theme.of(context)
+                                            .colorScheme
+                                            .onSurface
+                                            .withOpacity(0.7),
+                              ),
+                            ),
                           ],
                         ),
                       ),
+                      const SizedBox(width: 15),
+                      GestureDetector(
+                        onTap: onCommentTap,
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            SvgPicture.asset(
+                              'assets/icons/comment.svg',
+                              width: 22,
+                              height: 22,
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.onSurface.withOpacity(0.7),
+                            ),
+                            const SizedBox(width: 5),
+                            Text(
+                              formatCount(commentCount),
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w500,
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.onSurface.withOpacity(0.7),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 15),
                     ],
                   ],
                 ),
@@ -455,5 +533,11 @@ class PostReaderAppBar extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+class DateFormat {
+  static String format(DateTime date) {
+    return '${date.year}.${date.month}.${date.day}';
   }
 }

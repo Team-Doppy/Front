@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 import 'package:doppy/data/models/post_data.dart';
+import 'package:doppy/l10n/app_localizations.dart';
 import 'package:doppy/providers/feed_provider/feed_ui_service.dart';
 import 'package:doppy/pages/components/comps_for_profile/sections/category_model.dart';
 import 'package:doppy/pages/components/comps_for_profile/sections/image_view.dart';
@@ -385,6 +386,7 @@ class _GridCategorySectionState extends State<GridCategorySection> {
                                                   Expanded(
                                                     child: Text(
                                                       _getCategoryDisplayTitle(
+                                                        context,
                                                         widget.title,
                                                         widget.categoryId,
                                                         username,
@@ -954,14 +956,15 @@ class _GridCategorySectionState extends State<GridCategorySection> {
   }
 
   String _getCategoryDisplayTitle(
+    BuildContext context,
     String title,
     String? categoryId,
     String? username,
   ) {
     if (categoryId == '0') {
       return (username != null && username.isNotEmpty)
-          ? '${username}의 다른 글'
-          : '다른 글';
+          ? '$username${context.tr('other_posts_by')}'
+          : context.tr('all_posts');
     }
     return title;
   }

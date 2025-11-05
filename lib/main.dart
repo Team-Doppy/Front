@@ -2,9 +2,9 @@ import 'package:doppy/data/services/upload_service.dart';
 import 'package:doppy/editor/postwrite_screen.dart';
 import 'package:doppy/editor/service/node_component_service.dart';
 import 'package:doppy/editor/service/sticker_service.dart';
+import 'package:doppy/pages/screens/search_screen.dart';
 import 'package:doppy/providers/feed_provider/feed_ui_service.dart';
 import 'package:doppy/pages/screens/home_screen.dart';
-import 'package:doppy/pages/screens/search_screen_overlay.dart';
 import 'package:doppy/data/services/home_data_service.dart';
 import 'package:doppy/pages/components/custom_bottom_navigation_bar.dart';
 import 'package:doppy/pages/onboarding/splash.dart';
@@ -17,12 +17,15 @@ import 'package:doppy/providers/group_provider.dart';
 import 'package:doppy/providers/feed_provider/other_profile_feed_provider.dart';
 import 'package:doppy/providers/theme_provider.dart';
 import 'package:doppy/providers/user_provider.dart';
+import 'package:doppy/providers/locale_provider.dart';
 // import 'package:doppy/providers/feed_provider.dart';
 import 'package:doppy/providers/feed_provider/my_profile_feed_provider.dart';
 import 'package:doppy/providers/search_provider.dart';
 import 'package:doppy/data/services/search_service.dart';
 import 'package:doppy/utils/network_utils.dart';
+import 'package:doppy/l10n/app_localizations.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'theme/theme.dart';
@@ -48,6 +51,7 @@ Future<void> main() async {
   runApp(
     MultiProvider(
       providers: [
+        ChangeNotifierProvider(create: (_) => LocaleProvider()),
         ChangeNotifierProvider(create: (_) => ThemeProvider()),
         ChangeNotifierProvider(create: (_) => AuthProvider()),
         ChangeNotifierProvider(create: (_) => FriendProvider()),
@@ -87,25 +91,40 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      navigatorKey: navigatorKey,
-      title: 'Doppy',
-      debugShowCheckedModeBanner: false,
-      theme: AppTheme.lightTheme,
-      darkTheme: AppTheme.darkTheme,
-      themeMode: context.watch<ThemeProvider>().themeMode,
-      home: const SplashScreen(),
-      navigatorObservers: [routeObserver],
-      routes: {
-        '/home': (_) => const RootShell(initialIndex: 0),
-        '/login': (_) => const LoginScreen(),
-        '/search': (_) => const RootShell(initialIndex: 1),
-        '/profile': (context) => const RootShell(initialIndex: 3),
-        '/post-write': (_) => PostwriteScreen(isEditingMode: false),
-      },
+    return Consumer<LocaleProvider>(
+      builder: (context, localeProvider, child) {
+        return MaterialApp(
+          navigatorKey: navigatorKey,
+          title: 'Doppy',
+          debugShowCheckedModeBanner: false,
 
-      onUnknownRoute:
-          (_) => MaterialPageRoute(builder: (_) => const HomeScreen()),
+          // 다국어 설정
+          locale: localeProvider.locale,
+          supportedLocales: AppLocalizations.supportedLocales,
+          localizationsDelegates: [
+            const AppLocalizationsDelegate(),
+            GlobalMaterialLocalizations.delegate,
+            GlobalWidgetsLocalizations.delegate,
+            GlobalCupertinoLocalizations.delegate,
+          ],
+
+          theme: AppTheme.lightTheme,
+          darkTheme: AppTheme.darkTheme,
+          themeMode: context.watch<ThemeProvider>().themeMode,
+          home: const SplashScreen(),
+          navigatorObservers: [routeObserver],
+          routes: {
+            '/home': (_) => const RootShell(initialIndex: 0),
+            '/login': (_) => const LoginScreen(),
+            '/search': (_) => const RootShell(initialIndex: 1),
+            '/profile': (context) => const RootShell(initialIndex: 3),
+            '/post-write': (_) => PostwriteScreen(isEditingMode: false),
+          },
+
+          onUnknownRoute:
+              (_) => MaterialPageRoute(builder: (_) => const HomeScreen()),
+        );
+      },
     );
   }
 }

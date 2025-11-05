@@ -9,6 +9,7 @@ import 'package:doppy/providers/feed_provider/other_profile_feed_provider.dart';
 import 'package:doppy/utils/network_utils.dart';
 import 'package:doppy/utils/error_handler.dart';
 import 'package:doppy/utils/dialog_utils.dart';
+import 'package:doppy/l10n/app_localizations.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:doppy/data/services/upload_service.dart';
@@ -688,12 +689,17 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
         children: [
           Expanded(
             child: _buildGlassyButton(
-              text: '내 친구들',
+              text: context.tr('my_friends'),
               onTap: () => _navigateToManageGroup(),
             ),
           ),
           SizedBox(width: 4),
-          Expanded(child: _buildGlassyButton(text: '프로필 공유', onTap: () {})),
+          Expanded(
+            child: _buildGlassyButton(
+              text: context.tr('share_profile'),
+              onTap: () {},
+            ),
+          ),
         ],
       ),
     );

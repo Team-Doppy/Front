@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:doppy/common/widgets/image_error_placeholder.dart';
+import 'package:doppy/l10n/app_localizations.dart';
 import 'package:doppy/pages/components/comps_for_profile/sections/card_view.dart';
 import 'package:doppy/pages/components/shimmer_box.dart';
 import 'package:flutter/foundation.dart';
@@ -386,6 +387,7 @@ class _VerticalCategorySectionState extends State<VerticalCategorySection> {
                                       Expanded(
                                         child: Text(
                                           _getCategoryDisplayTitle(
+                                            context,
                                             widget.title,
                                             widget.categoryId,
                                             username,
@@ -796,14 +798,15 @@ class _VerticalCategorySectionState extends State<VerticalCategorySection> {
   }
 
   String _getCategoryDisplayTitle(
+    BuildContext context,
     String title,
     String? categoryId,
     String? username,
   ) {
     if (categoryId == '0') {
       return (username != null && username.isNotEmpty)
-          ? '${username}의 다른 글'
-          : '다른 글';
+          ? '$username${context.tr('other_posts_by')}'
+          : context.tr('all_posts');
     }
     return title;
   }
@@ -839,6 +842,7 @@ class _VerticalCategorySectionState extends State<VerticalCategorySection> {
             ),
             child: Text(
               _getCategoryDisplayTitle(
+                context,
                 categoryMetaData.title,
                 categoryMetaData.categoryId,
                 username,

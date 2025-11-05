@@ -1,5 +1,6 @@
 import 'package:doppy/providers/auth_provider.dart';
 import 'package:doppy/providers/user_provider.dart';
+import 'package:doppy/providers/locale_provider.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../data/services/auth_service.dart';
@@ -1002,8 +1003,9 @@ class _JoinScreenState extends State<JoinScreen> {
 
     final id = _idController.text.trim();
     final pw = _passwordController.text;
+    final region = context.read<LocaleProvider>().regionCode; // 'KR' or 'US'
 
-    final success = await AuthProvider().login(id, pw);
+    final success = await AuthProvider().login(id, pw, region: region);
 
     if (!mounted) return;
 
@@ -1031,10 +1033,13 @@ class _JoinScreenState extends State<JoinScreen> {
     });
 
     try {
+      final region = context.read<LocaleProvider>().regionCode; // 'KR' or 'US'
+
       final success = await _authService.register(
         username: _idController.text,
         password: _passwordController.text,
         alias: _idController.text, // username을 alias로 사용
+        region: region,
       );
 
       if (success) {

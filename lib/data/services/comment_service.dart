@@ -500,31 +500,36 @@ class CommentService extends ChangeNotifier {
 
       final comment = _comments[commentIndex];
       final hasThisReaction = comment.myEmotions.containsKey(emoji);
-      final hasAnyReaction = comment.myEmotions.isNotEmpty;
 
-      // 기존 반응이 있고 다른 이모지인 경우, 기존 반응 제거 후 새 반응 추가
-      if (hasAnyReaction && !hasThisReaction) {
-        // 기존 반응 제거
-        final existingEmoji = comment.myEmotions.keys.first;
-        await _removeReactionFromServer(commentId, existingEmoji);
+      print(
+        '[CommentService] 토글 전 - commentId: $commentId, hasThisReaction: $hasThisReaction, myEmotions: ${comment.myEmotions}',
+      );
 
-        // 새 반응 추가
-        await _addReactionToServer(commentId, emoji);
-      } else if (hasThisReaction) {
+      if (hasThisReaction) {
         // 같은 이모지인 경우 제거
+        print('[CommentService] DELETE 호출 - 하트 제거');
         await _removeReactionFromServer(commentId, emoji);
+        // 로컬에서 제거
+        _comments[commentIndex] = comment.copyWith(myEmotions: {});
       } else {
-        // 반응이 없는 경우 새 반응 추가
+        // 반응이 없거나 다른 경우 추가
+        print('[CommentService] POST 호출 - 하트 추가');
+
+        // 기존 다른 반응이 있으면 먼저 제거
+        if (comment.myEmotions.isNotEmpty) {
+          final existingEmoji = comment.myEmotions.keys.first;
+          await _removeReactionFromServer(commentId, existingEmoji);
+        }
+
         await _addReactionToServer(commentId, emoji);
+        // 로컬에 추가
+        _comments[commentIndex] = comment.copyWith(myEmotions: {emoji: '1'});
       }
 
-      // 로컬 상태 업데이트
-      _updateLocalReactionSingle(commentId, emoji);
+      notifyListeners();
       print('[CommentService] 반응 토글 성공');
     } catch (e) {
       print('[CommentService] 반응 토글 오류: $e');
-      // 오류 발생 시 로컬에서만 토글
-      _updateLocalReactionSingle(commentId, emoji);
     }
   }
 
@@ -553,27 +558,6 @@ class CommentService extends ChangeNotifier {
   }
 
   /// 로컬 반응 상태 업데이트 (사용자당 하나의 이모지만)
-  void _updateLocalReactionSingle(String commentId, String emoji) {
-    final commentIndex = _comments.indexWhere((c) => c.id == commentId);
-    if (commentIndex == -1) return;
-
-    final comment = _comments[commentIndex];
-    var newReactions = <String, String>{};
-
-    // 기존 반응이 있는지 확인
-    final hasThisReaction = comment.myEmotions.containsKey(emoji);
-
-    if (hasThisReaction) {
-      // 같은 이모지인 경우 제거 (빈 맵으로 설정)
-      newReactions = {};
-    } else {
-      // 다른 이모지이거나 반응이 없는 경우 새 이모지로 교체
-      newReactions[emoji] = '1';
-    }
-
-    _comments[commentIndex] = comment.copyWith(myEmotions: newReactions);
-    notifyListeners();
-  }
 
   /// 댓글 삭제 (API 호출)
   Future<void> deleteComment(String commentId) async {

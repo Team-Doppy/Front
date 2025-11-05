@@ -889,6 +889,14 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                               horizontalPadding: 20,
                               topSpacing: 90,
                               gapHeight: gapHeight,
+                              isMyPost: isMyPost,
+                              likeCount: _likeService.getPostLikeCount(
+                                widget.exported['id']?.toString() ?? '',
+                              ),
+                              commentCount:
+                                  _commentService.getAllComments().length,
+                              onLikeTap: _toggleLike,
+                              onCommentTap: _showCommentBottomSheet,
                             ),
                           ),
                         ),
@@ -1096,6 +1104,16 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                       },
                       onDelete: _deletePost,
                       onShowComments: _showCommentBottomSheet,
+                      title: widget.exported['title'] ?? '',
+                      likeCount: _likeService.getPostLikeCount(
+                        widget.exported['id']?.toString() ?? '',
+                      ),
+                      commentCount: _commentService.getAllComments().length,
+                      onLikeTap: _toggleLike,
+                      onCommentTap: _showCommentBottomSheet,
+                      isLiked: _likeService.isPostLiked(
+                        widget.exported['id']?.toString() ?? '',
+                      ),
                     );
                   },
                 ),
