@@ -347,6 +347,28 @@ class _ImageRowComponentState extends State<ImageRowComponent>
   }
 
   @override
+  void didUpdateWidget(ImageRowComponent oldWidget) {
+    super.didUpdateWidget(oldWidget);
+
+    // 이미지 URL이 변경되면 (추가/제거) 높이 재측정
+    if (oldWidget.imageUrls.length != widget.imageUrls.length ||
+        !_areUrlsEqual(oldWidget.imageUrls, widget.imageUrls)) {
+      setState(() {
+        _imageSizes.clear();
+        _unifiedHeight = null;
+      });
+    }
+  }
+
+  bool _areUrlsEqual(List<String> a, List<String> b) {
+    if (a.length != b.length) return false;
+    for (int i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
+  }
+
+  @override
   void dispose() {
     _controller.dispose();
     _scatterCtrl.dispose();
@@ -459,6 +481,9 @@ class _ImageRowComponentState extends State<ImageRowComponent>
                                                 ),
                                         child: Image.network(
                                           imageUrl,
+                                          key: ValueKey(
+                                            '$imageUrl-${Theme.of(context).brightness}',
+                                          ),
                                           fit: BoxFit.cover,
                                           frameBuilder: (
                                             context,
@@ -489,11 +514,14 @@ class _ImageRowComponentState extends State<ImageRowComponent>
                                             stack,
                                           ) {
                                             print('Image error: $error');
-                                            return ImageErrorPlaceholder(
-                                              width: 200,
+                                            return Builder(
+                                              builder:
+                                                  (context) =>
+                                                      ImageErrorPlaceholder(
+                                                        width: 200,
+                                                      ),
                                             );
                                           },
-                                          // 측정은 frameBuilder에서 처리
                                         ),
                                       ),
                                     ),

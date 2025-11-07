@@ -76,6 +76,12 @@ class StickerService extends ChangeNotifier {
   double _scaleDelta = 1.0;
   double _rotationDelta = 0.0;
   bool _dragOverDelete = false;
+  bool _isPanning = false; // 팬 제스처 진행 중 여부
+
+  // 드래그 중 실시간 위치 업데이트용 ValueNotifier (rebuild 없이)
+  final ValueNotifier<Offset?> dragPreviewPosNotifier = ValueNotifier(null);
+  final ValueNotifier<bool> isDraggingNotifier = ValueNotifier(false);
+  final ValueNotifier<bool> dragOverDeleteNotifier = ValueNotifier(false);
 
   List<Sticker> get stickers {
     final list = List<Sticker>.from(_stickers);
@@ -86,6 +92,7 @@ class StickerService extends ChangeNotifier {
   String? get selectedId => _selectedId;
   String? get draggingId => _draggingId;
   bool get isDragging => _draggingId != null;
+  bool get isPanning => _isPanning; // 팬 제스처 진행 중
   Offset get dragPreviewPos => _dragBasePos + _dragAccum;
   double get dragPreviewScale =>
       (_dragBaseScale * _scaleDelta).clamp(minScale, maxScale);
@@ -150,10 +157,19 @@ class StickerService extends ChangeNotifier {
   }
 
   /// 그리기 스티커 추가 (벡터 경로 기반)
-  void addDrawingSticker(List<Map<String, dynamic>> strokes, Offset at) {
+  void addDrawingSticker(
+    List<Map<String, dynamic>> strokes,
+    Offset at, {
+    int? groupIndex,
+  }) {
+    // groupIndex가 있으면 고유 ID 생성을 위해 추가
+    final timestamp = DateTime.now().millisecondsSinceEpoch;
+    final uniqueId =
+        groupIndex != null ? 'stk_${timestamp}_$groupIndex' : 'stk_$timestamp';
+
     addSticker(
       Sticker(
-        id: 'stk_${DateTime.now().millisecondsSinceEpoch}',
+        id: uniqueId,
         type: StickerType.drawing,
         content: {'strokes': strokes},
         position: at,
@@ -186,26 +202,29 @@ class StickerService extends ChangeNotifier {
             position: Offset.zero,
           ),
     );
+    // 이미 드래그 중이면 무시 (중복 beginDrag 방지)
+    if (_draggingId == id && _isPanning) {
+      // ignore: avoid_print
+      print('[StickerService] beginDrag ignored - already dragging $id');
+      return;
+    }
+
     _draggingId = id;
     _dragBasePos = s.position;
     _dragBaseScale = s.scale;
     _dragBaseRot = s.rotation;
     _dragAccum = Offset.zero; // 누적 델타 리셋
+    _isPanning = true; // 팬 제스처 시작
     _scaleDelta = 1.0; // 배율은 항상 1.0에서 시작(상대 배율)
     _rotationDelta = 0.0; // 회전도 상대값으로 시작
-    // LOG
-    // ignore: avoid_print
-    print(
-      '[StickerService] beginDrag id=' +
-          id +
-          ' basePos=' +
-          _dragBasePos.toString() +
-          ' scale=' +
-          _dragBaseScale.toString(),
-    );
-    // 드래그 시작을 알림 → 에디터 레이어가 IgnorePointer(ignoring: true)로 전환되어
-    // 이후 포인터 이벤트가 스티커 레이어로 전달되도록 한다.
-    notifyListeners();
+
+    // ValueNotifier 초기화
+    dragPreviewPosNotifier.value = _dragBasePos;
+    isDraggingNotifier.value = true;
+    dragOverDeleteNotifier.value = false;
+
+    // notifyListeners() 완전 제거: 제스처 취소 방지
+    // ValueNotifier 변경으로 UI는 자동 업데이트됨
   }
 
   void updateDrag(
@@ -215,28 +234,19 @@ class StickerService extends ChangeNotifier {
   }) {
     if (_draggingId == null) return;
     _dragAccum += delta;
-    _scaleDelta = scaleDelta;
-    _rotationDelta = rotationDelta;
-    // LOG
-    // ignore: avoid_print
-    print(
-      '[StickerService] updateDrag id=' +
-          (_draggingId ?? '') +
-          ' d=' +
-          delta.toString() +
-          ' scaleΔ=' +
-          scaleDelta.toString() +
-          ' rotΔ=' +
-          rotationDelta.toString() +
-          ' previewPos=' +
-          dragPreviewPos.toString(),
-    );
-    notifyListeners();
+    _scaleDelta *= scaleDelta; // 누적 곱셈
+    _rotationDelta += rotationDelta; // 누적 덧셈
+
+    // ValueNotifier로 실시간 위치 업데이트 (rebuild 없이)
+    dragPreviewPosNotifier.value = dragPreviewPos;
+
+    // notifyListeners() 제거: ValueNotifier로 대체하여 성능 향상
   }
 
   void endDrag() {
     if (_draggingId == null) return;
     final id = _draggingId!;
+
     if (_dragOverDelete) {
       // ignore: avoid_print
       print('[StickerService] endDrag delete id=' + id);
@@ -259,6 +269,8 @@ class StickerService extends ChangeNotifier {
             ' rot=' +
             newRot.toString(),
       );
+      // 드래그 종료 시 zIndex 업데이트 (최상단으로)
+      bringToFront(id, silent: true); // 아직 notify 안함
       transform(id, position: newPos, scale: newScale, rotation: newRot);
     }
     _draggingId = null;
@@ -266,9 +278,16 @@ class StickerService extends ChangeNotifier {
     _scaleDelta = 1.0;
     _rotationDelta = 0.0;
     _dragOverDelete = false;
+    _isPanning = false; // 팬 제스처 종료
+
+    // ValueNotifier 리셋
+    dragPreviewPosNotifier.value = null;
+    isDraggingNotifier.value = false;
+    dragOverDeleteNotifier.value = false;
+
     // ignore: avoid_print
     print('[StickerService] endDrag reset');
-    notifyListeners();
+    notifyListeners(); // 드래그 종료 시 한 번만 notify
   }
 
   bool isDraggingSticker(String id) => _draggingId == id;
@@ -276,7 +295,8 @@ class StickerService extends ChangeNotifier {
   void setDragOverDelete(bool over) {
     if (_dragOverDelete == over) return;
     _dragOverDelete = over;
-    notifyListeners();
+    dragOverDeleteNotifier.value = over; // ValueNotifier로 대체
+    // notifyListeners() 제거: 제스처 취소 방지
   }
 
   void transform(
@@ -296,12 +316,14 @@ class StickerService extends ChangeNotifier {
     notifyListeners();
   }
 
-  void bringToFront(String id) {
+  void bringToFront(String id, {bool silent = false}) {
     int maxZ = _stickers.fold<int>(0, (p, e) => e.zIndex > p ? e.zIndex : p);
     final i = _stickers.indexWhere((s) => s.id == id);
     if (i == -1) return;
     _stickers[i] = _stickers[i].copyWith(zIndex: maxZ + 1);
-    notifyListeners();
+    if (!silent) {
+      notifyListeners();
+    }
   }
 
   void removeAll() {

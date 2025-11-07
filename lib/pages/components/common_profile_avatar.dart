@@ -43,6 +43,9 @@ class CommonProfileAvatar extends StatelessWidget {
             height: size,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
+              color:
+                  backgroundColor ??
+                  Theme.of(context).colorScheme.surfaceVariant,
               border: Border.all(
                 color: borderColor ?? effectiveBorderColor,
                 width: effectiveBorderWidth,
@@ -100,7 +103,7 @@ class CommonProfileAvatar extends StatelessWidget {
         child: Text(
           firstLetter,
           style: TextStyle(
-            color: isDarkMode ? Colors.white : Colors.grey.shade700,
+            color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
             fontSize: size * 0.4,
             fontWeight: FontWeight.w600,
           ),

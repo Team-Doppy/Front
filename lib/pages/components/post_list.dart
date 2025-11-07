@@ -77,7 +77,7 @@ class _PostListState extends State<PostList> {
   bool _isGestureActive = false;
   bool _isHorizontalGesture = false; // 가로 제스처 감지 여부
   double _pullProgress = 0.0; // 당기는 진행률 (0.0 ~ 1.0)
-  double _verticalSwipeThreshold = 500.0;
+  double _verticalSwipeThreshold = 250.0; // 500.0에서 200.0으로 낮춤
 
   @override
   void initState() {
@@ -740,6 +740,80 @@ class _PostListState extends State<PostList> {
     );
   }
 
+  Widget _buildRefreshingShimmer() {
+    // 새로고침 중 PostList와 동일한 레이아웃의 shimmer 표시
+    return CustomScrollView(
+      controller: _scrollController,
+      physics: const NeverScrollableScrollPhysics(),
+      slivers: [
+        // AppBar 영역 (투명)
+        if (widget.showAppBar)
+          SliverAppBar(
+            toolbarHeight: 35,
+            backgroundColor: Colors.transparent,
+            elevation: 0,
+            scrolledUnderElevation: 0,
+            pinned: false,
+            floating: true,
+          ),
+        SliverToBoxAdapter(child: Container(height: 35)),
+
+        // PageView 영역의 shimmer
+        SliverToBoxAdapter(
+          child: Container(
+            height: 400,
+            child: Center(
+              child: AspectRatio(
+                aspectRatio: 4 / 5,
+                child: _buildImageAreaShimmer(),
+              ),
+            ),
+          ),
+        ),
+
+        // 텍스트 영역 shimmer
+        SliverFillRemaining(
+          hasScrollBody: false,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              mainAxisAlignment: MainAxisAlignment.start,
+              children: [
+                const SizedBox(height: 10),
+                // 제목 shimmer
+                ShimmerBox(
+                  width: 200,
+                  height: 32,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                const SizedBox(height: 10),
+                // 내용 shimmer (여러 줄)
+                ShimmerBox(
+                  width: double.infinity,
+                  height: 14,
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                const SizedBox(height: 6),
+                ShimmerBox(
+                  width: double.infinity,
+                  height: 14,
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                const SizedBox(height: 6),
+                ShimmerBox(
+                  width: MediaQuery.of(context).size.width * 0.6,
+                  height: 14,
+                  borderRadius: BorderRadius.circular(4),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
   Widget _buildImageAreaShimmer() {
     // PostCard의 이미지 영역과 동일 크기로 보이도록, 이미지 자체만 쉬머 느낌으로
     return Container(
@@ -772,12 +846,12 @@ class _PostListState extends State<PostList> {
       subtitle = '"${widget.searchQuery}"${context.tr('no_results_for_query')}';
       showRecommendButton = false; // 검색 중에는 추천글 이동 버튼 숨김
     } else if (widget.isShowingFriendsOnly) {
-      message = '친구포스트가 없어요';
-      subtitle = '오늘은 내가 먼저 포스트를 올려볼까요?';
+      message = context.tr('no_friend_posts');
+      subtitle = context.tr('post_first_today');
       showRecommendButton = true; // 친구글 탭에서만 추천글 버튼 표시
     } else {
-      message = '아직 글이 없어요';
-      subtitle = '새로운 글들이 곧 올라올 거예요!';
+      message = context.tr('no_posts_yet');
+      subtitle = context.tr('new_posts_coming_soon');
     }
 
     return Center(
@@ -839,7 +913,7 @@ class _PostListState extends State<PostList> {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Text(
-                      '추천글 보러가기',
+                      context.tr('go_to_recommended'),
                       style: TextStyle(
                         color: Theme.of(context).colorScheme.onPrimary,
                         fontSize: 14,

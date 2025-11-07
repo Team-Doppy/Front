@@ -998,6 +998,50 @@ class BlogService {
     }
   }
 
+  /// 내가 좋아요한 게시물 목록을 가져옵니다.
+  Future<List<Map<String, dynamic>>> getMyLikedPosts({
+    int page = 0,
+    int size = 20,
+  }) async {
+    try {
+      print('[BlogService] Fetching my liked posts: page=$page, size=$size');
+
+      final response = await _dio.get(
+        '/api/posts/my/liked',
+        queryParameters: {'page': page, 'size': size},
+        options: Options(receiveTimeout: const Duration(seconds: 10)),
+      );
+
+      final data = response.data;
+      final posts = List<Map<String, dynamic>>.from(
+        data['content'] ?? data['posts'] ?? data as List? ?? [],
+      );
+      print('[BlogService] Successfully fetched ${posts.length} liked posts');
+      return posts;
+    } catch (e) {
+      if (e is DioException) {
+        if (e.response?.statusCode == 404) {
+          print('[BlogService] No liked posts found (404)');
+          return []; // 빈 리스트 반환
+        }
+        print(
+          '[BlogService] Error ${e.response?.statusCode}: ${e.response?.data}',
+        );
+        throw Exception(
+          'Failed to fetch liked posts: ${e.response?.statusCode}',
+        );
+      }
+
+      print('[BlogService] Exception: $e');
+      // 404 에러인 경우 빈 리스트 반환 (서버 문제 대응)
+      if (e.toString().contains('404')) {
+        print('[BlogService] Returning empty list due to 404 error');
+        return [];
+      }
+      throw Exception('Failed to fetch liked posts: $e');
+    }
+  }
+
   /// 특정 사용자의 블로그 목록을 가져옵니다.
   Future<List<Map<String, dynamic>>> getUserPosts({
     required String username,

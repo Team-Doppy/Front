@@ -9,6 +9,7 @@ class CommentItem extends StatefulWidget {
   const CommentItem({
     super.key,
     required this.comment,
+    required this.commentService,
     required this.currentUser,
     required this.isMe,
     required this.showProfile,
@@ -24,6 +25,7 @@ class CommentItem extends StatefulWidget {
   });
 
   final Comment comment;
+  final CommentService commentService;
   final User? currentUser;
   final bool isMe;
   final bool showProfile;
@@ -174,7 +176,6 @@ class _CommentItemState extends State<CommentItem> {
 
                       // 반응 표시
                       if (hasReactions) _buildReactions(context),
-
                       // 시간 표시
                       if (widget.showAuthorInfo) _buildTimeStamp(context),
                     ],
@@ -198,18 +199,28 @@ class _CommentItemState extends State<CommentItem> {
 
   Widget _buildProfileImage(BuildContext context) {
     return CommonProfileAvatar(
+      backgroundColor: Colors.transparent,
       imageUrl: widget.comment.authorProfileImageUrl,
       username: widget.comment.author,
       size: 34,
       borderWidth: 1,
-      borderColor: Theme.of(
-        context,
-      ).colorScheme.onSurfaceVariant.withOpacity(0.3),
     );
   }
 
   Widget _buildCommentBubble(BuildContext context, bool hasReactions) {
     return GestureDetector(
+      onDoubleTap: () {
+        HapticFeedback.lightImpact();
+        // 어떤 이모지든 있으면 취소, 없으면 ❤️ 추가
+        if (widget.comment.myEmotions.isNotEmpty) {
+          // 기존 이모지 취소
+          final currentEmoji = widget.comment.myEmotions.keys.first;
+          widget.onReactionToggle(widget.comment.id, currentEmoji);
+        } else {
+          // ❤️ 추가
+          widget.onReactionToggle(widget.comment.id, '❤️');
+        }
+      },
       onLongPressStart: (details) {
         HapticFeedback.mediumImpact();
         widget.onLongPress(details.globalPosition, widget.comment);
@@ -295,16 +306,69 @@ class _CommentItemState extends State<CommentItem> {
                   12,
                   8,
                 ),
-                child: Text(
-                  widget.comment.content,
-                  style: TextStyle(
-                    color:
-                        widget.isMe
-                            ? Colors.white
-                            : Theme.of(context).colorScheme.onSurface,
-                    fontSize: 15,
-                    height: 1.35,
-                  ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      widget.comment.content,
+                      style: TextStyle(
+                        color:
+                            widget.isMe
+                                ? Colors.white
+                                : Theme.of(context).colorScheme.onSurface,
+                        fontSize: 15,
+                        height: 1.35,
+                      ),
+                    ),
+                    // 전송 실패 시 재시도/삭제 버튼
+                    if (widget.comment.isFailed) ...[
+                      const SizedBox(height: 8),
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          GestureDetector(
+                            onTap: () {
+                              widget.commentService.retryComment(
+                                widget.comment.id,
+                              );
+                            },
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 4,
+                              ),
+
+                              child: Row(
+                                children: [
+                                  Icon(
+                                    Icons.refresh,
+                                    size: 14,
+                                    color: Colors.white,
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          GestureDetector(
+                            onTap: () {
+                              widget.commentService.removeFailedComment(
+                                widget.comment.id,
+                              );
+                            },
+                            child: Container(
+                              padding: const EdgeInsets.all(4),
+                              child: Icon(
+                                Icons.close,
+                                size: 14,
+                                color: Colors.red,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ],
                 ),
               ),
             ],
@@ -356,103 +420,48 @@ Future<String?> openCommentMenu(
   BuildContext context, {
   required Offset anchor,
   required Comment comment,
+  required bool isMyComment, // 내 댓글인지 여부
 }) async {
   return showMenu<String>(
     context: context,
     position: RelativeRect.fromLTRB(
-      anchor.dx - 100,
+      anchor.dx - 140,
       anchor.dy + 20,
       anchor.dx,
       anchor.dy,
     ),
-    constraints: BoxConstraints(maxWidth: 200),
-    color: Theme.of(context).colorScheme.background,
-    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
+    constraints: BoxConstraints(minWidth: 180, maxWidth: 180),
+
+    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
     elevation: 8,
 
     items: [
-      // 이모지 반응
+      // 이모지 반응 (가로 배치)
       PopupMenuItem<String>(
-        value: '❤️',
-        child: SizedBox(
-          height: 32,
-          child: Container(
-            padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
-            child: Text(
-              '❤️',
-              style: TextStyle(
-                fontSize: 20,
-                color: Theme.of(context).colorScheme.onSurface,
+        enabled: false, // 부모 아이템은 클릭 불가
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          mainAxisAlignment: MainAxisAlignment.spaceAround,
+          children: [
+            for (final emoji in ['❤️', '👍', '😆', '😮', '😭'])
+              GestureDetector(
+                onTap: () {
+                  HapticFeedback.lightImpact();
+                  Navigator.of(context).pop(emoji);
+                },
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 4,
+                    vertical: 2,
+                  ),
+                  child: Text(emoji, style: const TextStyle(fontSize: 24)),
+                ),
               ),
-            ),
-          ),
+          ],
         ),
       ),
-      PopupMenuItem<String>(
-        value: '👍',
-        child: SizedBox(
-          height: 32,
-          child: Container(
-            padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
-            child: Text(
-              '👍',
-              style: TextStyle(
-                fontSize: 20,
-                color: Theme.of(context).colorScheme.onSurface,
-              ),
-            ),
-          ),
-        ),
-      ),
-      PopupMenuItem<String>(
-        value: '😆',
-        child: SizedBox(
-          height: 32,
-          child: Container(
-            padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
-            child: Text(
-              '😆',
-              style: TextStyle(
-                fontSize: 20,
-                color: Theme.of(context).colorScheme.onSurface,
-              ),
-            ),
-          ),
-        ),
-      ),
-      PopupMenuItem<String>(
-        value: '😮',
-        child: SizedBox(
-          height: 32,
-          child: Container(
-            padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
-            child: Text(
-              '😮',
-              style: TextStyle(
-                fontSize: 20,
-                color: Theme.of(context).colorScheme.onSurface,
-              ),
-            ),
-          ),
-        ),
-      ),
-      PopupMenuItem<String>(
-        value: '😢',
-        child: SizedBox(
-          height: 32,
-          child: Container(
-            padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
-            child: Text(
-              '😢',
-              style: TextStyle(
-                fontSize: 20,
-                color: Theme.of(context).colorScheme.onSurface,
-              ),
-            ),
-          ),
-        ),
-      ),
-      const PopupMenuDivider(),
+
       // 답글
       PopupMenuItem<String>(
         value: 'reply',
@@ -462,42 +471,44 @@ Future<String?> openCommentMenu(
             '답글',
             style: TextStyle(
               color: Theme.of(context).colorScheme.onSurface,
-              fontSize: 13,
+              fontSize: 14,
               fontWeight: FontWeight.w500,
             ),
           ),
         ),
       ),
-      // 수정
-      PopupMenuItem<String>(
-        value: 'edit',
-        child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 2, horizontal: 8),
-          child: Text(
-            '수정',
-            style: TextStyle(
-              color: Theme.of(context).colorScheme.onSurface,
-              fontSize: 13,
-              fontWeight: FontWeight.w500,
+      // 수정 (내 댓글만)
+      if (isMyComment)
+        PopupMenuItem<String>(
+          value: 'edit',
+          child: Container(
+            padding: const EdgeInsets.symmetric(vertical: 2, horizontal: 8),
+            child: Text(
+              '수정',
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.onSurface,
+                fontSize: 14,
+                fontWeight: FontWeight.w500,
+              ),
             ),
           ),
         ),
-      ),
-      // 삭제
-      PopupMenuItem<String>(
-        value: 'delete',
-        child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 2, horizontal: 8),
-          child: Text(
-            '삭제',
-            style: TextStyle(
-              color: Theme.of(context).colorScheme.onSurface,
-              fontSize: 13,
-              fontWeight: FontWeight.w500,
+      // 삭제 (내 댓글만)
+      if (isMyComment)
+        PopupMenuItem<String>(
+          value: 'delete',
+          child: Container(
+            padding: const EdgeInsets.symmetric(vertical: 2, horizontal: 8),
+            child: Text(
+              '삭제',
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.onSurface,
+                fontSize: 14,
+                fontWeight: FontWeight.w500,
+              ),
             ),
           ),
         ),
-      ),
       // 복사
       PopupMenuItem<String>(
         value: 'copy',
@@ -507,7 +518,7 @@ Future<String?> openCommentMenu(
             '복사',
             style: TextStyle(
               color: Theme.of(context).colorScheme.onSurface,
-              fontSize: 13,
+              fontSize: 14,
               fontWeight: FontWeight.w500,
             ),
           ),

@@ -621,6 +621,11 @@ class SearchService extends ChangeNotifier {
   }
 
   /// 검색 기록 불러오기
+  /// 검색 기록 로드 (외부에서 호출 가능)
+  Future<void> loadSearchHistory() async {
+    await _loadSearchHistory();
+  }
+
   Future<void> _loadSearchHistory() async {
     try {
       final prefs = await SharedPreferences.getInstance();

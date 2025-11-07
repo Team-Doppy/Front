@@ -2,6 +2,7 @@ import 'package:doppy/main.dart';
 import 'package:doppy/pages/components/doppy_loading_logo.dart';
 import 'package:doppy/providers/auth_provider.dart';
 import 'package:doppy/data/services/home_data_service.dart';
+import 'package:doppy/data/services/search_service.dart';
 import 'package:doppy/utils/network_utils.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -18,7 +19,6 @@ class _SplashScreenState extends State<SplashScreen>
     with SingleTickerProviderStateMixin {
   late final AnimationController _controller;
   late final Animation<double> _opacity;
-  late final Animation<double> _scale;
 
   final HomeDataService _homeDataService = HomeDataService();
 
@@ -83,8 +83,9 @@ class _SplashScreenState extends State<SplashScreen>
         setState(() {
           _loadingStatus = '데이터를 불러오는 중...';
         });
-        // 실제 데이터 로드
-        await _loadHomeData();
+
+        // 홈 데이터와 검색 기록을 병렬로 로드
+        await Future.wait([_loadHomeData(), _loadSearchHistory()]);
       } else {
         // 토큰이 없거나 유효하지 않은 경우 빈 데이터로 설정
         setState(() {
@@ -147,6 +148,21 @@ class _SplashScreenState extends State<SplashScreen>
         _isDataLoaded = true;
         _loadingStatus = networkError.userMessage;
       });
+    }
+  }
+
+  Future<void> _loadSearchHistory() async {
+    try {
+      print('[SplashScreen] 검색 기록 로드 시작');
+
+      // SearchService를 통해 검색 기록 미리 로드
+      final searchService = SearchService();
+      await searchService.loadSearchHistory();
+
+      print('[SplashScreen] 검색 기록 로드 완료');
+    } catch (e) {
+      print('[SplashScreen] 검색 기록 로드 실패 (무시): $e');
+      // 검색 기록 로드 실패는 앱 시작을 막지 않음
     }
   }
 

@@ -85,7 +85,19 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
       body: Consumer<GroupProvider>(
         builder: (context, groupProv, child) {
           return groupProv.isLoading
-              ? DoppyLoadingLogo(showBackButton: true)
+              ? GestureDetector(
+                onHorizontalDragEnd: (details) {
+                  // 오른쪽으로 스와이프 (velocity.dx > 0)
+                  if (details.primaryVelocity != null &&
+                      details.primaryVelocity! > 300) {
+                    Navigator.of(context).pop();
+                  }
+                },
+                child: DoppyLoadingLogo(
+                  showBackButton: true,
+                  onBack: () => Navigator.of(context).pop(),
+                ),
+              )
               : Consumer<FriendProvider>(
                 builder: (context, friendProv, child) {
                   return _buildMainContent(groupProv, friendProv);
@@ -135,7 +147,13 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
             onTap: () => Navigator.pop(context),
             child: Padding(
               padding: const EdgeInsets.only(bottom: 9),
-              child: Icon(Icons.arrow_back_ios_new_rounded, size: 22),
+              child: Icon(
+                Icons.arrow_back_ios_new_rounded,
+                size: 24,
+                color: Theme.of(
+                  context,
+                ).colorScheme.onSurface.withOpacity(0.75),
+              ),
             ),
           ),
           title: Row(

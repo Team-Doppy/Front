@@ -64,6 +64,10 @@ class _PostExportScreenState extends State<PostExportScreen>
 
   bool _editMode = false;
 
+  // 키보드 상태 추적
+  double _previousKeyboardHeight = 0;
+  bool _isKeyboardRising = false;
+
   // Step 2: 공개 범위 선택
   final Set<int> _selectedAudienceGroupIds = {};
   bool _audienceSelectAll = false;
@@ -216,6 +220,17 @@ class _PostExportScreenState extends State<PostExportScreen>
       preview = preview.substring(_title.length).trim();
     }
     if (preview.isEmpty) preview = _excerpt;
+
+    // 4줄 분량 정도로 제한 (약 80-120자 정도)
+    if (preview.length > 100) {
+      // 마지막 공백 또는 마침표에서 자르기
+      int cutIndex = preview.lastIndexOf(' ', 100);
+      if (cutIndex == -1 || cutIndex < 80) {
+        cutIndex = 100;
+      }
+      preview = preview.substring(0, cutIndex).trim() + '...';
+    }
+
     _excerpt = preview;
     _excerptController.text = _excerpt;
 
@@ -817,8 +832,6 @@ class _PostExportScreenState extends State<PostExportScreen>
         final svc = NodeComponentService();
         svc.setTempVideoFile(_nsKey, videoFile.path);
         svc.setTempVideoThumbnail(_nsKey, thumbnail.path);
-        print('[PostExport] 영상 파일 persist: ${videoFile.path}');
-        print('[PostExport] 영상 썸네일 persist: ${thumbnail.path}');
       }
 
       // MOV/M4V를 MP4로 변환 (원본 화질 유지)
@@ -1040,7 +1053,7 @@ class _PostExportScreenState extends State<PostExportScreen>
                           (context, error, stackTrace) =>
                               Container(color: AppColors.darkSurface),
                     )
-                    : Container(color: AppColors.darkSurface),
+                    : Container(color: Theme.of(context).colorScheme.surface),
           ),
           // 블러 오버레이 (썸네일이 있을 때만)
           if (_localThumbnailFile != null ||
@@ -1138,6 +1151,24 @@ class _PostExportScreenState extends State<PostExportScreen>
   @override
   Widget build(BuildContext context) {
     final cardRadius = 12.0; // PostCard와 동일한 라운드
+
+    // 키보드 높이 변화 감지
+    final currentKeyboardHeight = MediaQuery.of(context).viewInsets.bottom;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (currentKeyboardHeight != _previousKeyboardHeight) {
+        setState(() {
+          if (currentKeyboardHeight > _previousKeyboardHeight &&
+              currentKeyboardHeight > 50) {
+            // 키보드가 올라오는 중
+            _isKeyboardRising = true;
+          } else if (currentKeyboardHeight < _previousKeyboardHeight) {
+            // 키보드가 내려가는 중
+            _isKeyboardRising = false;
+          }
+          _previousKeyboardHeight = currentKeyboardHeight;
+        });
+      }
+    });
 
     return WillPopScope(
       onWillPop: () async {
@@ -1267,6 +1298,12 @@ class _PostExportScreenState extends State<PostExportScreen>
 
   // 포커스 상태의 간단한 앱바 (완료 버튼만)
   PreferredSizeWidget _buildFocusAppBar() {
+    // 1단계(Step 0)이고 이미지가 없을 때만 테마 색상 사용
+    final textColor =
+        _currentStep == 0 && _exportedThumbnailImageUrl.isEmpty
+            ? Theme.of(context).colorScheme.onSurface
+            : AppColors.darkTextPrimary;
+
     return AppBar(
       toolbarHeight: 53,
       backgroundColor: Colors.transparent,
@@ -1287,10 +1324,7 @@ class _PostExportScreenState extends State<PostExportScreen>
             },
             child: Text(
               context.tr('modify_complete'),
-              style: TextStyle(
-                color: AppColors.darkTextPrimary,
-                fontWeight: FontWeight.w500,
-              ),
+              style: TextStyle(color: textColor, fontWeight: FontWeight.w500),
             ),
           ),
         ),
@@ -1300,6 +1334,12 @@ class _PostExportScreenState extends State<PostExportScreen>
 
   // 일반 상태의 앱바 (진행바와 다음/업로드 버튼)
   PreferredSizeWidget _buildNormalAppBar() {
+    // 1단계(Step 0)이고 이미지가 없을 때만 테마 색상 사용
+    final textColor =
+        _currentStep == 0 && _exportedThumbnailImageUrl.isEmpty
+            ? Theme.of(context).colorScheme.onSurface
+            : AppColors.darkTextPrimary;
+
     return AppBar(
       toolbarHeight: 50,
       backgroundColor: Colors.transparent,
@@ -1319,9 +1359,11 @@ class _PostExportScreenState extends State<PostExportScreen>
         child: Padding(
           padding: const EdgeInsets.only(left: 20, top: 16),
           child: Text(
-            context.tr('previous'),
+            context.tr('previous').length > 4
+                ? context.tr('previous').substring(0, 4)
+                : context.tr('previous'),
             style: TextStyle(
-              color: AppColors.darkTextPrimary.withOpacity(0.9),
+              color: textColor.withOpacity(0.9),
               fontSize: 15,
               fontWeight: FontWeight.w500,
             ),
@@ -1338,8 +1380,8 @@ class _PostExportScreenState extends State<PostExportScreen>
               style: TextStyle(
                 color:
                     _canProceedToNextStep()
-                        ? AppColors.darkTextPrimary.withOpacity(1)
-                        : AppColors.darkTextPrimary.withOpacity(0.3),
+                        ? textColor.withOpacity(1)
+                        : textColor.withOpacity(0.3),
                 fontWeight: FontWeight.w500,
               ),
             ),
@@ -1403,9 +1445,7 @@ class _PostExportScreenState extends State<PostExportScreen>
             backgroundColor: Theme.of(
               context,
             ).colorScheme.onSurface.withOpacity(0.1),
-            valueColor: AlwaysStoppedAnimation<Color>(
-              AppColors.darkTextPrimary,
-            ),
+            valueColor: AlwaysStoppedAnimation<Color>(textColor),
           ),
         ),
       ),
@@ -1414,314 +1454,344 @@ class _PostExportScreenState extends State<PostExportScreen>
 
   // Step 1: 썸네일 & 글 편집
   Widget _buildStep1ThumbnailAndEdit(double cardRadius) {
-    return AnimatedPadding(
-      duration: const Duration(milliseconds: 160),
-      curve: Curves.easeOut,
-      padding: EdgeInsets.only(bottom: 0),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          const Spacer(flex: 2),
-          // PostList와 동일한 카드 디자인
-          // 키보드 열리거나 그룹 바텀시트가 열리면 썸네일 카드 임시 숨김 → 오버플로우 방지
-          AnimatedCrossFade(
-            duration: const Duration(milliseconds: 100),
-            crossFadeState:
-                (MediaQuery.of(context).viewInsets.bottom > 0)
-                    ? CrossFadeState.showSecond
-                    : CrossFadeState.showFirst,
-            firstChild: Stack(
-              children: [
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 40.0),
-                  child: Center(
-                    child: AspectRatio(
-                      aspectRatio: 4 / 5, // PostList와 동일한 4:5 비율
-                      child: GestureDetector(
-                        onTap: _openGalleryPicker,
-                        onLongPress: _toggleEditMode,
-                        child: AnimatedBuilder(
-                          animation: _introCurve,
-                          builder: (context, _) {
-                            final double scale =
-                                0.85 +
-                                0.15 * _introCurve.value; // PostList와 동일한 스케일
-                            final double translateY =
-                                (1 - _introCurve.value) * 10;
-                            return Transform.translate(
-                              offset: Offset(0, translateY),
-                              child: Transform.scale(
-                                scale: scale,
-                                child: Container(
-                                  decoration: BoxDecoration(
-                                    borderRadius: BorderRadius.circular(
-                                      cardRadius + 2,
-                                    ),
-                                    border: Border.all(
-                                      color: AppColors.darkTextPrimary
-                                          .withOpacity(0.1),
-                                      width: 2,
-                                    ),
-                                  ),
-                                  child: ClipRRect(
-                                    borderRadius: BorderRadius.circular(
-                                      cardRadius,
-                                    ),
-                                    child: Stack(
-                                      children: [
-                                        // 배경 이미지 또는 비디오 (로컬 미리보기 또는 서버 URL)
-                                        Positioned.fill(
-                                          child:
-                                              _localVideoFile != null &&
-                                                      _videoController != null
-                                                  ? Stack(
-                                                    children: [
-                                                      // 배경: 로컬 썸네일 (비디오 초기화 전/중에도 항상 표시)
-                                                      if (_localThumbnailFile !=
-                                                          null)
-                                                        Positioned.fill(
-                                                          child: Image.file(
+    return Column(
+      children: [
+        // 상단: 스크롤 가능한 이미지 영역
+        Expanded(
+          child: ListView(
+            physics: const NeverScrollableScrollPhysics(),
+            padding: const EdgeInsets.symmetric(vertical: 20),
+            children: [
+              const SizedBox(height: 40),
+              // PostList와 동일한 카드 디자인
+              // 키보드 상태에 따라 애니메이션 다르게 적용
+              AnimatedOpacity(
+                // 키보드 올라갈 때: 빠르게 숨김, 내려갈 때: 천천히 나타남
+                duration: Duration(milliseconds: _isKeyboardRising ? 0 : 50),
+                curve: _isKeyboardRising ? Curves.easeIn : Curves.easeOut,
+                opacity:
+                    MediaQuery.of(context).viewInsets.bottom > 20 ? 0.0 : 1.0,
+                child:
+                    MediaQuery.of(context).viewInsets.bottom > 20
+                        ? const SizedBox(height: 8)
+                        : Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 40.0),
+                          child: Center(
+                            child: AspectRatio(
+                              aspectRatio: 4 / 5,
+                              child: GestureDetector(
+                                onTap: _openGalleryPicker,
+                                onLongPress: _toggleEditMode,
+                                child: AnimatedBuilder(
+                                  animation: _introCurve,
+                                  builder: (context, _) {
+                                    final double scale =
+                                        0.85 + 0.15 * _introCurve.value;
+                                    final double translateY =
+                                        (1 - _introCurve.value) * 10;
+                                    return Transform.translate(
+                                      offset: Offset(0, translateY),
+                                      child: Transform.scale(
+                                        scale: scale,
+                                        child: Container(
+                                          decoration: BoxDecoration(
+                                            borderRadius: BorderRadius.circular(
+                                              cardRadius + 2,
+                                            ),
+
+                                            border: Border.all(
+                                              color: Theme.of(context)
+                                                  .colorScheme
+                                                  .onSurface
+                                                  .withOpacity(0.1),
+                                              width: 2,
+                                            ),
+                                          ),
+                                          child: ClipRRect(
+                                            borderRadius: BorderRadius.circular(
+                                              cardRadius,
+                                            ),
+                                            child: Stack(
+                                              children: [
+                                                // 배경 이미지 또는 비디오 (로컬 미리보기 또는 서버 URL)
+                                                Positioned.fill(
+                                                  child:
+                                                      _localVideoFile != null &&
+                                                              _videoController !=
+                                                                  null
+                                                          ? Stack(
+                                                            children: [
+                                                              // 배경: 로컬 썸네일 (비디오 초기화 전/중에도 항상 표시)
+                                                              if (_localThumbnailFile !=
+                                                                  null)
+                                                                Positioned.fill(
+                                                                  child: Image.file(
+                                                                    _localThumbnailFile!,
+                                                                    fit:
+                                                                        BoxFit
+                                                                            .cover,
+                                                                  ),
+                                                                ),
+                                                              // 전경: 비디오 플레이어 (초기화되면 썸네일 위에 재생)
+                                                              if (_videoController!
+                                                                  .value
+                                                                  .isInitialized)
+                                                                Positioned.fill(
+                                                                  child: FittedBox(
+                                                                    fit:
+                                                                        BoxFit
+                                                                            .cover,
+                                                                    child: SizedBox(
+                                                                      width:
+                                                                          _videoController!
+                                                                              .value
+                                                                              .size
+                                                                              .width,
+                                                                      height:
+                                                                          _videoController!
+                                                                              .value
+                                                                              .size
+                                                                              .height,
+                                                                      child: VideoPlayer(
+                                                                        _videoController!,
+                                                                      ),
+                                                                    ),
+                                                                  ),
+                                                                ),
+                                                            ],
+                                                          )
+                                                          : _localThumbnailFile !=
+                                                              null
+                                                          ? Image.file(
                                                             _localThumbnailFile!,
                                                             fit: BoxFit.cover,
-                                                          ),
+                                                          )
+                                                          : (_exportedThumbnailImageUrl
+                                                                  .isEmpty
+                                                              ? const _EmptyImagePlaceholder()
+                                                              : Image.network(
+                                                                _exportedThumbnailImageUrl,
+                                                                fit:
+                                                                    BoxFit
+                                                                        .cover,
+                                                                errorBuilder:
+                                                                    (c, e, s) =>
+                                                                        const _EmptyImagePlaceholder(),
+                                                              )),
+                                                ),
+
+                                                // 업로드 중 로딩 오버레이
+                                                if (_isUploadingThumb)
+                                                  Positioned.fill(
+                                                    child: Container(
+                                                      color: Colors.black
+                                                          .withOpacity(0.3),
+                                                      child: const Center(
+                                                        child: CircularProgressIndicator(
+                                                          valueColor:
+                                                              AlwaysStoppedAnimation<
+                                                                Color
+                                                              >(Colors.white),
+                                                          strokeWidth: 3,
                                                         ),
-                                                      // 전경: 비디오 플레이어 (초기화되면 썸네일 위에 재생)
-                                                      if (_videoController!
-                                                          .value
-                                                          .isInitialized)
-                                                        Positioned.fill(
-                                                          child: FittedBox(
-                                                            fit: BoxFit.cover,
-                                                            child: SizedBox(
-                                                              width:
-                                                                  _videoController!
-                                                                      .value
-                                                                      .size
-                                                                      .width,
-                                                              height:
-                                                                  _videoController!
-                                                                      .value
-                                                                      .size
-                                                                      .height,
-                                                              child: VideoPlayer(
-                                                                _videoController!,
-                                                              ),
+                                                      ),
+                                                    ),
+                                                  ),
+
+                                                // 음소거 버튼 (영상일 때만 표시)
+                                                if (_localVideoFile != null &&
+                                                    _videoController != null &&
+                                                    _videoController!
+                                                        .value
+                                                        .isInitialized)
+                                                  Positioned(
+                                                    right: 12,
+                                                    bottom: 12,
+                                                    child: GestureDetector(
+                                                      onTap: () {
+                                                        setState(() {
+                                                          if (_videoController!
+                                                                  .value
+                                                                  .volume >
+                                                              0) {
+                                                            _videoController!
+                                                                .setVolume(0);
+                                                          } else {
+                                                            _videoController!
+                                                                .setVolume(1);
+                                                          }
+                                                        });
+                                                      },
+                                                      child: Container(
+                                                        padding:
+                                                            const EdgeInsets.all(
+                                                              8,
                                                             ),
-                                                          ),
+                                                        decoration:
+                                                            BoxDecoration(
+                                                              color: Colors
+                                                                  .black
+                                                                  .withOpacity(
+                                                                    0.5,
+                                                                  ),
+                                                              shape:
+                                                                  BoxShape
+                                                                      .circle,
+                                                            ),
+                                                        child: Icon(
+                                                          _videoController!
+                                                                      .value
+                                                                      .volume >
+                                                                  0
+                                                              ? Icons
+                                                                  .volume_up_rounded
+                                                              : Icons
+                                                                  .volume_off_rounded,
+                                                          color: Colors.white,
+                                                          size: 20,
                                                         ),
-                                                    ],
-                                                  )
-                                                  : _localThumbnailFile != null
-                                                  ? Image.file(
-                                                    _localThumbnailFile!,
-                                                    fit: BoxFit.cover,
-                                                  )
-                                                  : (_exportedThumbnailImageUrl
-                                                          .isEmpty
-                                                      ? const _EmptyImagePlaceholder()
-                                                      : Image.network(
-                                                        _exportedThumbnailImageUrl,
-                                                        fit: BoxFit.cover,
-                                                        errorBuilder:
-                                                            (c, e, s) =>
-                                                                const _EmptyImagePlaceholder(),
-                                                      )),
+                                                      ),
+                                                    ),
+                                                  ),
+
+                                                // 편집하기 버튼 (이미지일 때만 표시)
+                                                if (_localVideoFile == null)
+                                                  Positioned(
+                                                    left: 6,
+                                                    bottom: 6,
+                                                    child: GestureDetector(
+                                                      onTap: _editThumbnail,
+                                                      child: _buildEditButton(),
+                                                    ),
+                                                  ),
+                                              ],
+                                            ),
+                                          ),
                                         ),
-
-                                        // 업로드 중 로딩 오버레이
-                                        if (_isUploadingThumb)
-                                          Positioned.fill(
-                                            child: Container(
-                                              color: Colors.black.withOpacity(
-                                                0.3,
-                                              ),
-                                              child: const Center(
-                                                child: CircularProgressIndicator(
-                                                  valueColor:
-                                                      AlwaysStoppedAnimation<
-                                                        Color
-                                                      >(Colors.white),
-                                                  strokeWidth: 3,
-                                                ),
-                                              ),
-                                            ),
-                                          ),
-
-                                        // 음소거 버튼 (영상일 때만 표시)
-                                        if (_localVideoFile != null &&
-                                            _videoController != null &&
-                                            _videoController!
-                                                .value
-                                                .isInitialized)
-                                          Positioned(
-                                            right: 12,
-                                            bottom: 12,
-                                            child: GestureDetector(
-                                              onTap: () {
-                                                setState(() {
-                                                  if (_videoController!
-                                                          .value
-                                                          .volume >
-                                                      0) {
-                                                    _videoController!.setVolume(
-                                                      0,
-                                                    );
-                                                  } else {
-                                                    _videoController!.setVolume(
-                                                      1,
-                                                    );
-                                                  }
-                                                });
-                                              },
-                                              child: Container(
-                                                padding: const EdgeInsets.all(
-                                                  8,
-                                                ),
-                                                decoration: BoxDecoration(
-                                                  color: Colors.black
-                                                      .withOpacity(0.5),
-                                                  shape: BoxShape.circle,
-                                                ),
-                                                child: Icon(
-                                                  _videoController!
-                                                              .value
-                                                              .volume >
-                                                          0
-                                                      ? Icons.volume_up_rounded
-                                                      : Icons
-                                                          .volume_off_rounded,
-                                                  color: Colors.white,
-                                                  size: 20,
-                                                ),
-                                              ),
-                                            ),
-                                          ),
-
-                                        // 편집하기 버튼 (이미지일 때만 표시)
-                                        if (_localVideoFile == null)
-                                          Positioned(
-                                            left: 6,
-                                            bottom: 6,
-                                            child: GestureDetector(
-                                              onTap: _editThumbnail,
-                                              child: _buildEditButton(),
-                                            ),
-                                          ),
-                                      ],
-                                    ),
-                                  ),
+                                      ),
+                                    );
+                                  },
                                 ),
                               ),
-                            );
-                          },
+                            ),
+                          ),
                         ),
+              ),
+
+              // 하단: 고정된 텍스트 편집 영역
+              SafeArea(
+                top: false,
+                child: Container(
+                  decoration: BoxDecoration(
+                    // 이미지가 없을 때만 테마 배경색 사용
+                    color:
+                        _exportedThumbnailImageUrl.isEmpty
+                            ? Theme.of(context).colorScheme.surface
+                            : Colors.transparent,
+                    border: Border(
+                      top: BorderSide(
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.outline.withOpacity(0.1),
+                        width: 1,
                       ),
                     ),
                   ),
-                ),
-                /*
-                        if (_exportedThumbnailImageUrl.isEmpty)
-                          Positioned(
-                            right: 40,
-                            bottom: 0,
-                            child: Container(
-                              padding: const EdgeInsets.all(8),
-                              decoration: BoxDecoration(
-                                color: Theme.of(
-                                  context,
-                                ).colorScheme.onSurface.withOpacity(1),
-                                borderRadius: BorderRadius.circular(16),
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 30, 20, 16),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        // 제목 편집
+                        GestureDetector(
+                          onTap: () {
+                            setState(() => _editMode = true);
+                            FocusScope.of(
+                              context,
+                            ).requestFocus(_titleFocusNode);
+                          },
+                          child: AbsorbPointer(
+                            absorbing: false,
+                            child: TextField(
+                              controller: _titleController,
+                              focusNode: _titleFocusNode,
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                color: AppColors.darkTextPrimary,
+                                fontSize: 28,
+                                fontWeight: FontWeight.bold,
+                                letterSpacing: -0.2,
                               ),
-                              child: Icon(
-                                Icons.camera_alt,
-                                size: 18,
-                                color: AppColors.darkSurface,
+                              maxLines: 1,
+                              scrollPhysics:
+                                  const NeverScrollableScrollPhysics(),
+                              decoration: InputDecoration(
+                                hintText: '제목을 입력하세요',
+                                hintStyle: TextStyle(
+                                  color: Theme.of(
+                                    context,
+                                  ).colorScheme.onSurface.withOpacity(0.3),
+                                ),
+                                border: InputBorder.none,
+                                isCollapsed: true,
+                                contentPadding: EdgeInsets.zero,
                               ),
                             ),
-                          ),*/
-              ],
-            ),
-            secondChild: const SizedBox(height: 8),
-          ),
-
-          // 하단 텍스트 영역 (PostList의 StickyAuthor와 동일)
-          Padding(
-            padding: const EdgeInsets.symmetric(
-              horizontal: 20,
-              // 바텀시트가 열려있으면 텍스트 영역을 약간 위로 올려 겹침 최소화
-              vertical: 30,
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.center,
-              mainAxisAlignment: MainAxisAlignment.start,
-              children: [
-                // 제목 (탭 시 인라인 편집) - 바텀시트 중 편집 차단
-                GestureDetector(
-                  onTap: () {
-                    setState(() => _editMode = true);
-                    FocusScope.of(context).requestFocus(_titleFocusNode);
-                  },
-                  child: AbsorbPointer(
-                    absorbing: false,
-                    child: TextField(
-                      controller: _titleController,
-                      focusNode: _titleFocusNode,
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        color: AppColors.darkTextPrimary.withOpacity(0.9),
-                        fontSize: 35,
-                        fontWeight: FontWeight.bold,
-                        letterSpacing: -0.2,
-                      ),
-                      maxLines: 1,
-                      decoration: const InputDecoration(
-                        border: InputBorder.none,
-                        isCollapsed: true,
-                        contentPadding: EdgeInsets.zero,
-                      ),
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        // 내용 편집
+                        GestureDetector(
+                          onTap: () {
+                            setState(() => _editMode = true);
+                            FocusScope.of(
+                              context,
+                            ).requestFocus(_excerptFocusNode);
+                          },
+                          child: AbsorbPointer(
+                            absorbing: false,
+                            child: TextField(
+                              controller: _excerptController,
+                              focusNode: _excerptFocusNode,
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                color: AppColors.darkTextPrimary.withOpacity(
+                                  0.9,
+                                ),
+                                fontSize: 13,
+                                fontWeight: FontWeight.w300,
+                                height: 1.6,
+                                letterSpacing: -0.1,
+                              ),
+                              maxLines: 5,
+                              minLines: 2,
+                              keyboardType: TextInputType.multiline,
+                              scrollPhysics:
+                                  const NeverScrollableScrollPhysics(),
+                              decoration: InputDecoration(
+                                hintText: '내용을 입력하세요',
+                                hintStyle: TextStyle(
+                                  color: Theme.of(
+                                    context,
+                                  ).colorScheme.onSurface.withOpacity(0.3),
+                                ),
+                                border: InputBorder.none,
+                                isCollapsed: true,
+                                contentPadding: EdgeInsets.zero,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ),
-                const SizedBox(height: 8),
-                // 내용 (탭 시 인라인 편집 가능) - 바텀시트 중 편집 차단
-                GestureDetector(
-                  onTap: () {
-                    setState(() => _editMode = true);
-                    FocusScope.of(context).requestFocus(_excerptFocusNode);
-                  },
-                  child: AbsorbPointer(
-                    absorbing: false,
-                    child: TextField(
-                      controller: _excerptController,
-                      focusNode: _excerptFocusNode,
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        color: AppColors.darkTextPrimary.withOpacity(0.7),
-                        fontSize: 14,
-                        fontWeight: FontWeight.w300,
-                        height: 1.8,
-                        letterSpacing: -0.1,
-                      ),
-                      maxLines: 5,
-                      minLines: 5,
-                      keyboardType: TextInputType.multiline,
-                      decoration: const InputDecoration(
-                        border: InputBorder.none,
-                        isCollapsed: true,
-                        contentPadding: EdgeInsets.zero,
-                      ),
-                      scrollPhysics: NeverScrollableScrollPhysics(),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 10),
-              ],
-            ),
+              ),
+            ],
           ),
-          const Spacer(),
-          const SizedBox(height: 10),
-        ],
-      ),
+        ),
+      ],
     );
   }
 
@@ -2343,6 +2413,12 @@ class _PostExportScreenState extends State<PostExportScreen>
 
   // PostCard와 동일한 좌하단 작성자 정보
   Widget _buildEditButton() {
+    // 1단계(Step 0)이고 이미지가 없을 때만 테마 색상 사용
+    final buttonColor =
+        _currentStep == 0 && _exportedThumbnailImageUrl.isEmpty
+            ? Theme.of(context).colorScheme.onSurface
+            : AppColors.darkTextPrimary;
+
     return ClipRRect(
       borderRadius: BorderRadius.circular(35),
       child: BackdropFilter(
@@ -2350,7 +2426,7 @@ class _PostExportScreenState extends State<PostExportScreen>
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
           decoration: BoxDecoration(
-            color: AppColors.darkTextPrimary.withOpacity(0.2),
+            color: buttonColor.withOpacity(0.2),
             borderRadius: BorderRadius.circular(35),
           ),
           child: Row(
@@ -2358,7 +2434,7 @@ class _PostExportScreenState extends State<PostExportScreen>
               Text(
                 context.tr('edit_thumbnail'),
                 style: TextStyle(
-                  color: AppColors.darkTextPrimary,
+                  color: buttonColor,
                   fontSize: 14,
                   fontWeight: FontWeight.w300,
                 ),
@@ -2910,14 +2986,17 @@ class _EmptyImagePlaceholder extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      color: AppColors.darkSurface,
+      color: Theme.of(context).colorScheme.surfaceContainerHighest,
       child: Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(
               context.tr('tap_to_select_thumbnail'),
-              style: TextStyle(color: AppColors.darkTextPrimary, fontSize: 15),
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
+                fontSize: 15,
+              ),
             ),
           ],
         ),

@@ -182,6 +182,9 @@ class _CardViewState extends State<CardView> {
                                           ),
                                         )
                                     : CachedNetworkImage(
+                                      key: ValueKey(
+                                        '${widget.post.thumbnailImageUrl}-${theme.brightness}',
+                                      ),
                                       imageUrl: widget.post.thumbnailImageUrl,
                                       fit: BoxFit.cover,
                                       width: double.infinity,
@@ -204,8 +207,11 @@ class _CardViewState extends State<CardView> {
                                             ),
                                           ),
                                       errorWidget:
-                                          (context, url, error) =>
-                                              const ImageErrorPlaceholder(),
+                                          (context, url, error) => Builder(
+                                            builder:
+                                                (context) =>
+                                                    ImageErrorPlaceholder(),
+                                          ),
                                     ),
                           ),
                         ),

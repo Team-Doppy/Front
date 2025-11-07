@@ -17,18 +17,16 @@ class ImageErrorPlaceholder extends StatelessWidget {
   final double? height;
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     return Container(
       width: width ?? 100,
       height: height ?? 150,
-      color: backgroundColor,
       alignment: Alignment.center,
       decoration: BoxDecoration(
-        color: backgroundColor ?? theme.colorScheme.surface.withOpacity(0.03),
+        color: Theme.of(context).colorScheme.surface.withOpacity(0.9),
       ),
       child: Icon(
         Icons.error_outline,
-        color: theme.colorScheme.onSurface.withOpacity(1),
+        color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
         size: iconSize,
       ),
     );

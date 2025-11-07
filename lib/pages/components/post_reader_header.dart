@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_svg/svg.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:doppy/pages/components/common_profile_avatar.dart';
-import 'package:doppy/utils/format_utils.dart';
 
 class PostReaderHeader extends StatelessWidget {
   const PostReaderHeader({
@@ -22,6 +21,7 @@ class PostReaderHeader extends StatelessWidget {
     required this.commentCount,
     required this.onLikeTap,
     required this.onCommentTap,
+    required this.isLiked, // ← 추가
   });
 
   final Map<String, dynamic> exportedRoot;
@@ -40,6 +40,7 @@ class PostReaderHeader extends StatelessWidget {
   final int commentCount;
   final VoidCallback onLikeTap;
   final VoidCallback onCommentTap;
+  final bool isLiked; // ← 추가
 
   Map<String, dynamic>? get _contentRoot {
     final root = currentExportedData ?? exportedRoot;
@@ -323,9 +324,11 @@ class PostReaderHeader extends StatelessWidget {
           titleWidget,
           const SizedBox(height: 12),
           GestureDetector(
+            behavior: HitTestBehavior.opaque,
             onTap: enableAuthorTap ? onAuthorTap : null,
             child: Row(
               mainAxisAlignment: _toMainAxis(align),
+              mainAxisSize: MainAxisSize.min,
               children: [
                 CommonProfileAvatar(
                   username: postAuthor,
@@ -412,55 +415,83 @@ class PostReaderAppBar extends StatelessWidget {
                       onTap: onBack,
                       child: Icon(
                         Icons.arrow_back_ios_new_rounded,
-                        color: Theme.of(context).colorScheme.onSurface,
-                        size: 22,
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.onSurface.withOpacity(0.75),
+                        size: 24,
                       ),
                     ),
                     SizedBox(width: 15),
 
                     const Spacer(),
                     if (isMyPost) ...[
+                      // 공유
+                      GestureDetector(
+                        onTap: () {
+                          // TODO: 공유 기능
+                        },
+                        child: Padding(
+                          padding: const EdgeInsets.all(8.0),
+                          child: SvgPicture.asset(
+                            'assets/icons/share.svg',
+                            width: 22,
+                            height: 22,
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.onSurface.withOpacity(0.7),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                      // 수정
                       GestureDetector(
                         onTap: onEdit,
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 4,
-                          ),
-                          child: Text(
-                            '수정',
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w600,
-                              color: Theme.of(
-                                context,
-                              ).colorScheme.onSurface.withOpacity(0.7),
-                            ),
+                        child: Padding(
+                          padding: const EdgeInsets.all(8.0),
+                          child: SvgPicture.asset(
+                            'assets/icons/pen.svg',
+                            width: 22,
+                            height: 22,
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.onSurface.withOpacity(0.7),
                           ),
                         ),
                       ),
-                      const SizedBox(width: 6),
+                      const SizedBox(width: 4),
+                      // 삭제
                       GestureDetector(
                         onTap: onDelete,
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 4,
-                          ),
-                          child: Text(
-                            '삭제',
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w600,
-                              color: Theme.of(
-                                context,
-                              ).colorScheme.onSurface.withOpacity(0.7),
-                            ),
+                        child: Padding(
+                          padding: const EdgeInsets.all(8.0),
+                          child: SvgPicture.asset(
+                            'assets/icons/delete.svg',
+                            width: 22,
+                            height: 22,
+                            color: Colors.red.withOpacity(0.7),
                           ),
                         ),
                       ),
-                      const SizedBox(width: 15),
+                      const SizedBox(width: 8),
                     ] else ...[
+                      GestureDetector(
+                        onTap: () {
+                          // TODO: 공유 기능
+                        },
+                        child: Padding(
+                          padding: const EdgeInsets.all(8.0),
+                          child: SvgPicture.asset(
+                            'assets/icons/share.svg',
+                            width: 22,
+                            height: 22,
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.onSurface.withOpacity(0.7),
+                          ),
+                        ),
+                      ),
+
+                      /*
                       GestureDetector(
                         onTap: onLikeTap,
                         child: Row(
@@ -476,21 +507,6 @@ class PostReaderAppBar extends StatelessWidget {
                                       : Theme.of(
                                         context,
                                       ).colorScheme.onSurface.withOpacity(0.7),
-                            ),
-                            const SizedBox(width: 5),
-                            Text(
-                              formatCount(likeCount),
-                              style: TextStyle(
-                                fontSize: 14,
-                                fontWeight: FontWeight.w500,
-                                color:
-                                    isLiked
-                                        ? Colors.red
-                                        : Theme.of(context)
-                                            .colorScheme
-                                            .onSurface
-                                            .withOpacity(0.7),
-                              ),
                             ),
                           ],
                         ),
@@ -509,20 +525,9 @@ class PostReaderAppBar extends StatelessWidget {
                                 context,
                               ).colorScheme.onSurface.withOpacity(0.7),
                             ),
-                            const SizedBox(width: 5),
-                            Text(
-                              formatCount(commentCount),
-                              style: TextStyle(
-                                fontSize: 14,
-                                fontWeight: FontWeight.w500,
-                                color: Theme.of(
-                                  context,
-                                ).colorScheme.onSurface.withOpacity(0.7),
-                              ),
-                            ),
                           ],
                         ),
-                      ),
+                      ),*/
                       const SizedBox(width: 15),
                     ],
                   ],

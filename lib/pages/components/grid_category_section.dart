@@ -2,9 +2,9 @@ import 'dart:math' as math;
 import 'package:doppy/data/models/post_data.dart';
 import 'package:doppy/l10n/app_localizations.dart';
 import 'package:doppy/providers/feed_provider/feed_ui_service.dart';
-import 'package:doppy/pages/components/comps_for_profile/sections/category_model.dart';
-import 'package:doppy/pages/components/comps_for_profile/sections/image_view.dart';
-import 'package:doppy/pages/components/comps_for_profile/sections/post_action_sheet.dart';
+import 'package:doppy/pages/components/category_model.dart';
+import 'package:doppy/pages/components/image_view.dart';
+import 'package:doppy/pages/components/post_action_sheet.dart';
 import 'package:doppy/pages/screens/post_reader_screen.dart';
 import 'package:doppy/providers/feed_provider/base_feed_provider.dart';
 import 'package:doppy/providers/feed_provider/my_profile_feed_provider.dart';
@@ -975,6 +975,7 @@ class _GridCategorySectionState extends State<GridCategorySection> {
     CategoryMetaData categoryMetaData,
     FeedDisplayMode displayMode,
   ) {
+    final username = context.read<UserProvider>().currentUser?.username;
     return LayoutBuilder(
       builder: (context, constraints) {
         final text = categoryMetaData.title;
@@ -990,7 +991,7 @@ class _GridCategorySectionState extends State<GridCategorySection> {
         final textWidth = textPainter.size.width;
 
         return Transform.translate(
-          offset: Offset(-textWidth / 2, -20),
+          offset: Offset(-textWidth / 2 + 40, 0),
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             decoration: BoxDecoration(
@@ -998,7 +999,12 @@ class _GridCategorySectionState extends State<GridCategorySection> {
               borderRadius: BorderRadius.circular(8),
             ),
             child: Text(
-              categoryMetaData.title,
+              _getCategoryDisplayTitle(
+                context,
+                categoryMetaData.title,
+                categoryMetaData.categoryId,
+                username,
+              ),
               style: theme.textTheme.titleLarge?.copyWith(
                 fontWeight: FontWeight.w700,
                 fontSize: 16,

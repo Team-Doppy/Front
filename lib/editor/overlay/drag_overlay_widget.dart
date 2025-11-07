@@ -127,11 +127,16 @@ class _DragOverlayWidgetState extends State<DragOverlayWidget> {
                   ),
                   child: Image.network(
                     node.thumbnailUrl,
+                    key: ValueKey(
+                      '${node.thumbnailUrl}-${Theme.of(context).brightness}',
+                    ),
                     width: 100,
                     height: 100,
                     fit: BoxFit.cover,
                     errorBuilder:
-                        (context, error, stack) => ImageErrorPlaceholder(),
+                        (context, error, stack) => Builder(
+                          builder: (context) => ImageErrorPlaceholder(),
+                        ),
                   ),
                 )
               else
@@ -183,8 +188,11 @@ class _DragOverlayWidgetState extends State<DragOverlayWidget> {
         imageUrl.startsWith('https://')) {
       baseImage = Image.network(
         imageUrl,
+        key: ValueKey('$imageUrl-${Theme.of(context).brightness}'),
         fit: BoxFit.cover,
-        errorBuilder: (context, error, stack) => ImageErrorPlaceholder(),
+        errorBuilder:
+            (context, error, stack) =>
+                Builder(builder: (context) => ImageErrorPlaceholder()),
       );
     } else if (imageUrl.startsWith('file://')) {
       baseImage = Image.file(
@@ -286,8 +294,11 @@ class _DragOverlayWidgetState extends State<DragOverlayWidget> {
     } else if (node.url.isNotEmpty) {
       base = Image.network(
         node.url,
+        key: ValueKey('${node.url}-${Theme.of(context).brightness}'),
         fit: BoxFit.cover,
-        errorBuilder: (context, error, stack) => ImageErrorPlaceholder(),
+        errorBuilder:
+            (context, error, stack) =>
+                Builder(builder: (context) => ImageErrorPlaceholder()),
       );
     } else {
       base = Container(
@@ -345,9 +356,10 @@ class _DragOverlayWidgetState extends State<DragOverlayWidget> {
         borderRadius: BorderRadius.circular(2),
         child: Image.network(
           imageUrl,
+          key: ValueKey('$imageUrl-${Theme.of(context).brightness}'),
           fit: BoxFit.cover,
           errorBuilder: (context, error, stackTrace) {
-            return ImageErrorPlaceholder();
+            return Builder(builder: (context) => ImageErrorPlaceholder());
           },
         ),
       ),
@@ -467,8 +479,11 @@ class _ImageRowPreviewContentState extends State<_ImageRowPreviewContent> {
     if (isNetwork) {
       imageWidget = Image.network(
         imageUrl,
+        key: ValueKey('$imageUrl-${Theme.of(context).brightness}'),
         fit: BoxFit.cover,
-        errorBuilder: (context, error, stack) => ImageErrorPlaceholder(),
+        errorBuilder:
+            (context, error, stack) =>
+                Builder(builder: (context) => ImageErrorPlaceholder()),
         frameBuilder: (context, child, frame, wasSync) {
           if (frame == null) return child;
           WidgetsBinding.instance.addPostFrameCallback((_) {

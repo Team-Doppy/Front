@@ -740,6 +740,7 @@ class _SingleImageComponentState extends State<SingleImageComponent>
           final double w = MediaQuery.of(context).size.width;
           return Image.file(
             File(filePath),
+            key: ValueKey('$filePath-${Theme.of(context).brightness}'),
             fit: BoxFit.contain,
             cacheWidth: w.isFinite ? w.toInt() : null,
             filterQuality: FilterQuality.low,
@@ -752,8 +753,11 @@ class _SingleImageComponentState extends State<SingleImageComponent>
               return _lastRenderedChild ?? ShimmerBox(width: w, height: h);
             },
             errorBuilder:
-                (context, error, stack) => ImageErrorPlaceholder(
-                  width: MediaQuery.of(context).size.width,
+                (context, error, stack) => Builder(
+                  builder:
+                      (context) => ImageErrorPlaceholder(
+                        width: MediaQuery.of(context).size.width,
+                      ),
                 ),
           );
         }
@@ -763,15 +767,21 @@ class _SingleImageComponentState extends State<SingleImageComponent>
       final filePath = url.startsWith('file://') ? url.substring(7) : url;
       return Image.file(
         File(filePath),
+        key: ValueKey('$filePath-${Theme.of(context).brightness}'),
         fit: BoxFit.contain,
         errorBuilder:
-            (context, error, stack) =>
-                ImageErrorPlaceholder(width: MediaQuery.of(context).size.width),
+            (context, error, stack) => Builder(
+              builder:
+                  (context) => ImageErrorPlaceholder(
+                    width: MediaQuery.of(context).size.width,
+                  ),
+            ),
       );
     }
 
     return Image.network(
       url,
+      key: ValueKey('$url-${Theme.of(context).brightness}'),
       fit: BoxFit.contain,
       frameBuilder: (context, child, frame, wasSyncLoaded) {
         // 프리로드(캐시 히트)된 경우 즉시 child 렌더 → 쉬머 미노출
@@ -784,9 +794,12 @@ class _SingleImageComponentState extends State<SingleImageComponent>
         return _lastRenderedChild ?? ShimmerBox(width: w, height: h);
       },
       errorBuilder:
-          (context, error, stack) => ImageErrorPlaceholder(
-            width: MediaQuery.of(context).size.width,
-            height: MediaQuery.of(context).size.width / (4 / 5),
+          (context, error, stack) => Builder(
+            builder:
+                (context) => ImageErrorPlaceholder(
+                  width: MediaQuery.of(context).size.width,
+                  height: MediaQuery.of(context).size.width / (4 / 5),
+                ),
           ),
     );
   }

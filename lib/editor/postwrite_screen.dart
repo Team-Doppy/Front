@@ -103,8 +103,6 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
   @override
   void initState() {
     super.initState();
-    // 스포일러 렌더링 모드: 글쓰기화면
-    setSpoilerEditingMode(true);
 
     // 편집 모드이면 전달된 exportedDataForEdit를 기반으로 문서를 복원
     // 새 글 작성 모드이면 빈 문서 생성
@@ -729,8 +727,6 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
 
   @override
   void dispose() {
-    // 스포일러 모드 복구
-    setSpoilerEditingMode(false);
     // 이미지 선택 상태 초기화
     nodeComponentService.clearHighlightedSelectionSilently();
     nodeComponentService.clearSelectionSilently();
@@ -875,61 +871,70 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                                   data: AppTheme.lightTheme,
                                   child: Stack(
                                     children: [
-                                      SuperEditor(
-                                        gestureMode:
-                                            Platform.isIOS
-                                                ? DocumentGestureMode.iOS
-                                                : DocumentGestureMode.android,
-                                        editor: editor,
-                                        focusNode: _editorFocusNode,
-                                        stylesheet: _buildStylesheet(context),
-                                        selectionStyle: SelectionStyles(
-                                          selectionColor: AppColors.primary
-                                              .withValues(alpha: 0.3),
-                                          highlightEmptyTextBlocks: false,
+                                      RawScrollbar(
+                                        controller: scrollController,
+                                        thumbColor: Theme.of(context)
+                                            .colorScheme
+                                            .onSurface
+                                            .withOpacity(0.3),
+                                        thickness: 4,
+                                        radius: const Radius.circular(12),
+                                        child: SuperEditor(
+                                          gestureMode:
+                                              Platform.isIOS
+                                                  ? DocumentGestureMode.iOS
+                                                  : DocumentGestureMode.android,
+                                          editor: editor,
+                                          focusNode: _editorFocusNode,
+                                          stylesheet: _buildStylesheet(context),
+                                          selectionStyle: SelectionStyles(
+                                            selectionColor: AppColors.primary
+                                                .withValues(alpha: 0.3),
+                                            highlightEmptyTextBlocks: false,
+                                          ),
+                                          documentLayoutKey: _documentLayoutKey,
+                                          scrollController: scrollController,
+
+                                          componentBuilders: [
+                                            // 타이틀 문단 전용 빌더(드래그 없음)
+                                            TitleParagraphComponentBuilder(
+                                              editorService: editorService,
+                                            ),
+                                            // 커스텀 이미지 컴포넌트들
+                                            SingleImageComponentBuilder(
+                                              dragService: dragService,
+                                            ),
+                                            RowImageComponentBuilder(
+                                              dragService: dragService,
+                                            ),
+                                            CustomParagraphComponentBuilder(
+                                              dragService: dragService,
+                                              editorService: editorService,
+                                            ),
+
+                                            // 구분선 전용 컴포넌트
+                                            DividerComponentBuilder(
+                                              dragService: dragService,
+                                            ),
+
+                                            LinkComponentBuilder(
+                                              dragService: dragService,
+                                            ),
+
+                                            PinComponentBuilder(
+                                              dragService: dragService,
+                                              isEditing: true,
+                                            ),
+
+                                            // 기본 컴포넌트들 (Paragraph 제외)
+                                            ...defaultComponentBuilders.where(
+                                              (builder) =>
+                                                  builder.runtimeType
+                                                      .toString() !=
+                                                  'ParagraphComponentBuilder',
+                                            ),
+                                          ],
                                         ),
-                                        documentLayoutKey: _documentLayoutKey,
-                                        scrollController: scrollController,
-
-                                        componentBuilders: [
-                                          // 타이틀 문단 전용 빌더(드래그 없음)
-                                          TitleParagraphComponentBuilder(
-                                            editorService: editorService,
-                                          ),
-                                          // 커스텀 이미지 컴포넌트들
-                                          SingleImageComponentBuilder(
-                                            dragService: dragService,
-                                          ),
-                                          RowImageComponentBuilder(
-                                            dragService: dragService,
-                                          ),
-                                          CustomParagraphComponentBuilder(
-                                            dragService: dragService,
-                                            editorService: editorService,
-                                          ),
-
-                                          // 구분선 전용 컴포넌트
-                                          DividerComponentBuilder(
-                                            dragService: dragService,
-                                          ),
-
-                                          LinkComponentBuilder(
-                                            dragService: dragService,
-                                          ),
-
-                                          PinComponentBuilder(
-                                            dragService: dragService,
-                                            isEditing: true,
-                                          ),
-
-                                          // 기본 컴포넌트들 (Paragraph 제외)
-                                          ...defaultComponentBuilders.where(
-                                            (builder) =>
-                                                builder.runtimeType
-                                                    .toString() !=
-                                                'ParagraphComponentBuilder',
-                                          ),
-                                        ],
                                       ),
                                     ],
                                   ),
@@ -942,25 +947,31 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                     ),
                   ),
 
-                  // 에디터 노드 터치 감지 (항상 유지, 드래그 중에는 포인터만 무시)
+                  // 에디터 노드 터치 감지 (스티커 드래그 중에는 무시)
                   Positioned.fill(
-                    child: IgnorePointer(
-                      ignoring: stickerService.isDragging,
-                      child: GestureDetector(
-                        onTapDown: (details) {
-                          _lastTapPosition = details.globalPosition;
-                        },
-                        onTap: _handleTap,
-                        onLongPressStart:
-                            (details) => _handleLongPressStart(details),
-                        onLongPressMoveUpdate:
-                            (details) =>
-                                _handleDragMoveAndAutoScroll(context, details),
-                        onLongPressEnd: (details) {
-                          dragService.endDrag();
-                        },
-                        behavior: HitTestBehavior.translucent,
-                      ),
+                    child: ValueListenableBuilder<bool>(
+                      valueListenable: stickerService.isDraggingNotifier,
+                      builder: (context, isDragging, child) {
+                        return IgnorePointer(
+                          ignoring: isDragging,
+                          child: GestureDetector(
+                            onTapDown: (details) {
+                              _lastTapPosition = details.globalPosition;
+                            },
+                            onTap: _handleTap,
+                            onLongPressStart: _handleLongPressStart,
+                            onLongPressMoveUpdate:
+                                (details) => _handleDragMoveAndAutoScroll(
+                                  context,
+                                  details,
+                                ),
+                            onLongPressEnd: (details) {
+                              dragService.endDrag();
+                            },
+                            behavior: HitTestBehavior.translucent,
+                          ),
+                        );
+                      },
                     ),
                   ),
 
@@ -1051,22 +1062,36 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
           ],
         ),
 
-        bottomNavigationBar: AnimatedContainer(
-          duration: const Duration(milliseconds: 20),
-          curve: Curves.easeInOut,
-          padding: EdgeInsets.only(
-            bottom:
-                MediaQuery.of(context).viewInsets.bottom <= 30
-                    ? 20
-                    : MediaQuery.of(context).viewInsets.bottom,
-          ),
-          child: Consumer<NodeComponentService>(
-            builder: (context, nodeService, child) {
-              return nodeService.selectedNodeId != null
-                  ? _buildSelectedToolbar()
-                  : _buildDefaultToolbar();
-            },
-          ),
+        bottomNavigationBar: Consumer<StickerService>(
+          builder: (context, stickerService, child) {
+            return ValueListenableBuilder<bool>(
+              valueListenable: stickerService.isDraggingNotifier,
+              builder: (context, isDragging, child) {
+                // 스티커 드래그 중이면 툴바 숨김
+                if (isDragging) {
+                  return const SizedBox.shrink();
+                }
+
+                return AnimatedContainer(
+                  duration: const Duration(milliseconds: 20),
+                  curve: Curves.easeInOut,
+                  padding: EdgeInsets.only(
+                    bottom:
+                        MediaQuery.of(context).viewInsets.bottom <= 30
+                            ? 20
+                            : MediaQuery.of(context).viewInsets.bottom,
+                  ),
+                  child: Consumer<NodeComponentService>(
+                    builder: (context, nodeService, child) {
+                      return nodeService.selectedNodeId != null
+                          ? _buildSelectedToolbar()
+                          : _buildDefaultToolbar();
+                    },
+                  ),
+                );
+              },
+            );
+          },
         ),
       ),
     );
@@ -1341,6 +1366,39 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     }
   }
 
+  /// 문서에서 첫 번째 이미지 URL 찾기
+  String? _findFirstImageUrl() {
+    try {
+      final doc = editorService.document;
+      for (int i = 0; i < doc.nodeCount; i++) {
+        final node = doc.getNodeAt(i);
+
+        // ImageNode인 경우
+        if (node is ImageNode) {
+          final url = node.imageUrl;
+          if (url.isNotEmpty &&
+              (url.startsWith('http://') || url.startsWith('https://'))) {
+            return url;
+          }
+        }
+
+        // ImageRowNode인 경우 (첫 번째 이미지 사용)
+        if (node is ImageRowNode) {
+          if (node.imageUrls.isNotEmpty) {
+            final url = node.imageUrls.first;
+            if (url.isNotEmpty &&
+                (url.startsWith('http://') || url.startsWith('https://'))) {
+              return url;
+            }
+          }
+        }
+      }
+    } catch (e) {
+      print('[PostwriteScreen] 이미지 찾기 실패: $e');
+    }
+    return null;
+  }
+
   /// 수동 임시저장 (새 버전 생성)
   Future<bool> _saveDraft() async {
     try {
@@ -1366,7 +1424,8 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
 
       // 현재 draft ID를 sessionKey로 persist된 썸네일 및 영상 파일 가져오기
       final sessionKey = currentDraftId ?? draftIdByTitle;
-      final thumbnailUrl = nodeComponentService.getTempThumbnailUrl(sessionKey);
+      String thumbnailUrl =
+          nodeComponentService.getTempThumbnailUrl(sessionKey) ?? '';
       final thumbnailId = nodeComponentService.getTempThumbnailId(sessionKey);
       final videoFilePath = nodeComponentService.getTempVideoFilePath(
         sessionKey,
@@ -1374,6 +1433,22 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
       final videoThumbnailPath = nodeComponentService.getTempVideoThumbnailPath(
         sessionKey,
       );
+
+      // 기존 썸네일이 없으면 첫 번째 이미지를 자동으로 설정
+      if (thumbnailUrl.isEmpty) {
+        final firstImageUrl = _findFirstImageUrl();
+        if (firstImageUrl != null && firstImageUrl.isNotEmpty) {
+          nodeComponentService.setTempThumbnail(
+            sessionKey,
+            url: firstImageUrl,
+            id: null,
+          );
+          thumbnailUrl = firstImageUrl;
+          print(
+            '[PostwriteScreen] 임시저장 - 첫 번째 이미지를 썸네일로 자동 설정: $firstImageUrl',
+          );
+        }
+      }
 
       print('[PostwriteScreen] 임시저장 - sessionKey: $sessionKey');
       print('[PostwriteScreen] 임시저장 - 썸네일: $thumbnailUrl (ID: $thumbnailId)');
@@ -1385,7 +1460,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
         editorService: editorService,
         stickerService: stickerService,
         title: title,
-        thumbnailUrl: thumbnailUrl ?? '',
+        thumbnailUrl: thumbnailUrl,
         videoFilePath: videoFilePath,
         videoThumbnailPath: videoThumbnailPath,
         visibility: 'public', // 기본값

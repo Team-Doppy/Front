@@ -291,7 +291,7 @@ class _MentionOverlayState extends State<MentionOverlay> {
             decoration: InputDecoration(
               filled: true,
               fillColor: Colors.white.withOpacity(0.1),
-              hintText: '누구를 언급할까요?',
+              hintText: context.tr('who_to_mention'),
               hintStyle: TextStyle(
                 color: Colors.white.withOpacity(0.6),
                 fontSize: 16,

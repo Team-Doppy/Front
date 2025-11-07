@@ -1,12 +1,13 @@
 import 'package:doppy/data/models/post_data.dart';
 import 'package:doppy/providers/feed_provider/feed_ui_service.dart';
-import 'package:doppy/pages/components/comps_for_profile/sections/vertical_category_section.dart';
-import 'package:doppy/pages/components/comps_for_profile/sections/grid_category_section.dart';
-import 'package:doppy/pages/components/comps_for_profile/sections/category_model.dart';
+import 'package:doppy/pages/components/vertical_category_section.dart';
+import 'package:doppy/pages/components/grid_category_section.dart';
+import 'package:doppy/pages/components/category_model.dart';
 import 'package:doppy/providers/feed_provider/base_feed_provider.dart';
 import 'package:doppy/providers/feed_provider/my_profile_feed_provider.dart';
 import 'package:doppy/utils/network_utils.dart';
 import 'package:doppy/pages/components/error_state_widget.dart';
+import 'package:doppy/l10n/app_localizations.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -290,22 +291,15 @@ class Feed {
           return SliverToBoxAdapter(
             child: Column(
               children: [
-                SizedBox(height: 100),
-                Icon(
-                  Icons.search,
-                  size: 100,
-                  color: Theme.of(
-                    context,
-                  ).colorScheme.onSurface.withOpacity(0.3),
-                ),
-                SizedBox(height: 10),
+                SizedBox(height: 150),
+
                 Text(
-                  '아직은 포스트가 없어요!',
+                  context.tr('no_posts_on_profile'),
                   style: TextStyle(
-                    fontSize: 14,
+                    fontSize: 16,
                     color: Theme.of(
                       context,
-                    ).colorScheme.onSurface.withOpacity(0.5),
+                    ).colorScheme.onSurface.withOpacity(0.3),
                   ),
                 ),
                 SizedBox(height: 300),

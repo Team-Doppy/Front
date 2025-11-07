@@ -5,7 +5,6 @@ import 'package:doppy/data/models/post_data.dart';
 import 'package:doppy/data/services/home_data_service.dart';
 import 'package:doppy/data/services/search_service.dart';
 import 'package:doppy/pages/components/shimmer_box.dart';
-import 'package:doppy/pages/screens/search_screen.dart';
 import 'package:doppy/providers/user_provider.dart';
 import 'package:doppy/pages/components/error_state_widget.dart';
 import 'package:doppy/providers/search_provider.dart';
@@ -20,12 +19,14 @@ class HomeScreen extends StatefulWidget {
   final HomeData? preloadedHomeData;
   final ValueNotifier<bool>? searchResultsNotifier; // 검색 결과 표시 상태 알림용
   final bool isActive; // 현재 탭이 활성 상태인지
+  final Function(String?)? onOpenSearchScreen; // 검색 화면 열기 콜백 (검색어 전달)
 
   const HomeScreen({
     super.key,
     this.preloadedHomeData,
     this.searchResultsNotifier,
     this.isActive = true,
+    this.onOpenSearchScreen,
   });
 
   @override
@@ -82,7 +83,6 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
   // 새로고침 시 배경 이미지 유지용
   String? _previousBackgroundImageUrl;
-  bool _overlayObscured = false; // 검색 오버레이로 가려졌는지
 
   // SearchProvider 리스너 참조 (dispose용)
   VoidCallback? _searchProviderListener;
@@ -256,6 +256,7 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                   content: item.content ?? '',
                   accessLevel: AccessLevel.public,
                   viewCount: 0,
+                  commentCount: item.comments ?? 0,
                   likeCount: item.likes ?? 0,
                   isLiked: false,
                   createdAt: DateTime.now().toIso8601String(),
@@ -321,6 +322,7 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                   accessLevel: AccessLevel.public,
                   viewCount: 0,
                   likeCount: item.likes ?? 0,
+                  commentCount: item.comments ?? 0,
                   isLiked: false,
                   createdAt: DateTime.now().toIso8601String(),
                   updatedAt: DateTime.now().toIso8601String(),
@@ -384,46 +386,6 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         widget.searchResultsNotifier?.value = true;
       });
     }
-  }
-
-  // 검색 오버레이 열기 (독립 화면으로)
-  void openSearchOverlay({String? initialQuery}) {
-    setState(() => _overlayObscured = true);
-    Navigator.of(context)
-        .push(
-          PageRouteBuilder(
-            opaque: true,
-            pageBuilder: (context, animation, secondaryAnimation) {
-              return FadeTransition(
-                opacity: animation,
-                child: SearchScreenOverlay(
-                  initialQuery: initialQuery, // 초기 검색어 전달
-                  onSearchComplete: (results, query) {
-                    // 검색 결과를 받아서 홈화면으로 돌아가며 표시
-                    Navigator.of(context).pop(); // 검색 화면 닫기
-                    setSearchResults(results, query); // 검색 결과 설정
-                  },
-                  onClose: () {
-                    Navigator.of(context).pop();
-                  },
-                ),
-              );
-            },
-            transitionsBuilder: (
-              context,
-              animation,
-              secondaryAnimation,
-              child,
-            ) {
-              return child;
-            },
-            transitionDuration: const Duration(milliseconds: 200),
-            reverseTransitionDuration: const Duration(milliseconds: 200),
-          ),
-        )
-        .whenComplete(() {
-          if (mounted) setState(() => _overlayObscured = false);
-        });
   }
 
   void _resetFriendsFeed({bool showLoading = true}) {
@@ -928,7 +890,7 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       },
       isShowingSearchResults: _isShowingSearchResults,
       searchQuery: _searchQuery,
-      onSearchChipTap: () => openSearchOverlay(initialQuery: _searchQuery),
+      onSearchChipTap: () => widget.onOpenSearchScreen?.call(_searchQuery),
       onClearSearch: () {
         context.read<SearchProvider>().clearSearchResults();
         setState(() {
@@ -953,7 +915,7 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       appBarOpacity: _appBarOpacity, // 앱바 투명도 전달
       networkError: _friendsError, // 에러 상태 전달
       onRetryError: () => _loadFriendsPosts(refresh: true), // 에러 재시도 콜백
-      isTabActive: widget.isActive && !_overlayObscured, // 탭 활성 + 오버레이 미표시
+      isTabActive: widget.isActive, // 탭 활성
     );
   }
 
@@ -1000,7 +962,7 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       },
       isShowingSearchResults: _isShowingSearchResults,
       searchQuery: _searchQuery,
-      onSearchChipTap: () => openSearchOverlay(initialQuery: _searchQuery),
+      onSearchChipTap: () => widget.onOpenSearchScreen?.call(_searchQuery),
       onClearSearch: () {
         context.read<SearchProvider>().clearSearchResults();
         setState(() {
@@ -1025,7 +987,7 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       appBarOpacity: _appBarOpacity, // 앱바 투명도 전달
       networkError: _allError, // 에러 상태 전달
       onRetryError: () => _loadAllPosts(refresh: true), // 에러 재시도 콜백
-      isTabActive: widget.isActive && !_overlayObscured, // 탭 활성 + 오버레이 미표시
+      isTabActive: widget.isActive, // 탭 활성 + 오버레이 미표시
     );
   }
 }

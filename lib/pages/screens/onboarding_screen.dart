@@ -1,4 +1,4 @@
-import 'package:doppy/pages/user/join_screen.dart';
+import 'package:doppy/pages/screens/join_screen.dart';
 import 'package:flutter/material.dart';
 import 'dart:ui';
 

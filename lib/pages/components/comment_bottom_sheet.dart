@@ -21,7 +21,6 @@ class _CommentBottomSheetState extends State<CommentBottomSheet>
   final TextEditingController _textController = TextEditingController();
   final FocusNode _focusNode = FocusNode();
   final ScrollController _scrollController = ScrollController();
-  final Map<String, GlobalKey> _commentKeys = {};
 
   Comment? _replyTarget;
   Comment? _editingComment;
@@ -61,7 +60,26 @@ class _CommentBottomSheetState extends State<CommentBottomSheet>
   }
 
   void _onCommentsChanged() {
-    if (mounted) setState(() {});
+    if (mounted) {
+      setState(() {});
+      // 🎯 이모지 업데이트 시에는 스크롤 안 함
+      if (_commentService.shouldScrollOnNextUpdate) {
+        _scrollToBottom();
+      }
+    }
+  }
+
+  // 맨 아래로 스크롤 (새 댓글 추가 시)
+  void _scrollToBottom() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_scrollController.hasClients && mounted) {
+        _scrollController.animateTo(
+          0, // reverse:true → 0 = 맨 아래
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeOut,
+        );
+      }
+    });
   }
 
   void _submitComment() async {
@@ -92,22 +110,19 @@ class _CommentBottomSheetState extends State<CommentBottomSheet>
       _textController.clear();
       _replyTarget = null;
     });
-
-    // 새 댓글 추가 후 맨 아래로 스크롤
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_scrollController.hasClients) {
-        _scrollController.animateTo(
-          0, // reverse:true → 0 = 맨 아래
-          duration: const Duration(milliseconds: 300),
-          curve: Curves.easeOut,
-        );
-      }
-    });
   }
 
   void _onLongPress(Offset offset, Comment comment) {
     HapticFeedback.mediumImpact();
-    openCommentMenu(context, anchor: offset, comment: comment).then((value) {
+    final currentUser = context.read<UserProvider>().currentUser;
+    final isMyComment =
+        currentUser != null && comment.author == currentUser.username;
+    openCommentMenu(
+      context,
+      anchor: offset,
+      comment: comment,
+      isMyComment: isMyComment,
+    ).then((value) {
       if (value == null) return;
       if (value == 'reply') {
         setState(() => _replyTarget = comment);
@@ -130,39 +145,40 @@ class _CommentBottomSheetState extends State<CommentBottomSheet>
   }
 
   void _scrollToTargetComment(String commentId) {
-    final key = _commentKeys[commentId];
-    if (key?.currentContext == null) {
-      print('[CommentBottomSheet] GlobalKey 없음: $commentId');
+    if (!_scrollController.hasClients) return;
+
+    // commentId로 인덱스 찾기
+    final comments = _commentService.getAllComments();
+    final targetIndex = comments.indexWhere((c) => c.id == commentId);
+
+    if (targetIndex == -1) {
+      print('[CommentBottomSheet] 댓글을 찾을 수 없음: $commentId');
       return;
     }
 
     try {
-      Scrollable.ensureVisible(
-        key!.currentContext!,
-        duration: const Duration(milliseconds: 400),
-        curve: Curves.easeInOut,
-        alignment: 0.2,
-      ).then((_) {
-        // 스크롤 완료 후 바운싱 애니메이션 시작
-        setState(() => _bouncingCommentId = commentId);
-        _bounceController.forward(from: 0.0).then((_) {
-          _bounceController.reset();
-          setState(() => _bouncingCommentId = null);
-        });
-      });
+      // reverse:true이므로 역순 계산
+      const estimatedItemHeight = 80.0;
+      final reversedIndex = comments.length - 1 - targetIndex;
+      final targetOffset = reversedIndex * estimatedItemHeight;
+
+      _scrollController
+          .animateTo(
+            targetOffset.clamp(0.0, _scrollController.position.maxScrollExtent),
+            duration: const Duration(milliseconds: 400),
+            curve: Curves.easeInOut,
+          )
+          .then((_) {
+            // 스크롤 완료 후 바운싱 애니메이션 시작
+            setState(() => _bouncingCommentId = commentId);
+            _bounceController.forward(from: 0.0).then((_) {
+              _bounceController.reset();
+              setState(() => _bouncingCommentId = null);
+            });
+          });
     } catch (e) {
       print('[CommentBottomSheet] 스크롤 에러: $e');
     }
-  }
-
-  GlobalKey _getOrCreateKey(String commentId) {
-    if (!_commentKeys.containsKey(commentId)) {
-      _commentKeys[commentId] = GlobalKey();
-      print(
-        '[CommentBottomSheet] GlobalKey 생성: $commentId (총: ${_commentKeys.length})',
-      );
-    }
-    return _commentKeys[commentId]!;
   }
 
   Comment? _findTargetComment(String? parentId) {
@@ -186,79 +202,81 @@ class _CommentBottomSheetState extends State<CommentBottomSheet>
       children: [
         GestureDetector(
           onTap: () => _focusNode.unfocus(),
-          child: Container(
-            height: MediaQuery.of(context).size.height,
-            decoration: BoxDecoration(
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.2),
-                  blurRadius: 20,
-                  offset: const Offset(0, -5),
+          onHorizontalDragEnd: (details) {
+            // 오른쪽으로 스와이프 (velocity.dx > 0)
+            if (details.primaryVelocity != null &&
+                details.primaryVelocity! > 300) {
+              Navigator.of(context).maybePop();
+            }
+          },
+          child: ClipRRect(
+            child: BackdropFilter(
+              filter: ui.ImageFilter.blur(sigmaX: 30, sigmaY: 30),
+              child: Container(
+                decoration: const BoxDecoration(
+                  color: ui.Color.fromARGB(182, 65, 65, 65),
                 ),
-              ],
-            ),
-            child: ClipRRect(
-              child: BackdropFilter(
-                filter: ui.ImageFilter.blur(sigmaX: 30, sigmaY: 30),
-                child: Container(
-                  decoration: const BoxDecoration(
-                    color: ui.Color.fromARGB(182, 65, 65, 65),
-                  ),
-                  child: Scaffold(
-                    resizeToAvoidBottomInset: true, // ← 키보드 자동 회피
+                child: Scaffold(
+                  resizeToAvoidBottomInset: true, // ← 키보드 자동 회피
+                  backgroundColor: Colors.transparent,
+                  appBar: AppBar(
+                    automaticallyImplyLeading: false,
+                    toolbarHeight: 45,
+                    scrolledUnderElevation: 0,
                     backgroundColor: Colors.transparent,
-                    appBar: AppBar(
-                      automaticallyImplyLeading: false,
-                      toolbarHeight: 45,
-                      scrolledUnderElevation: 0,
-                      backgroundColor: Colors.transparent,
-                      elevation: 0,
-                      leading: GestureDetector(
-                        onTap: () => Navigator.of(context).maybePop(),
-                        child: const Icon(
+                    elevation: 0,
+                    leading: GestureDetector(
+                      onTap: () => Navigator.of(context).maybePop(),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 4),
+                        child: Icon(
                           Icons.arrow_back_ios_new,
-                          color: Colors.white,
-                          size: 20,
-                        ),
-                      ),
-                      title: Text(
-                        widget.title,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 18,
-                          fontWeight: FontWeight.w600,
+                          color: Colors.white.withOpacity(0.75),
+                          size: 24,
                         ),
                       ),
                     ),
-                    body: Column(
-                      children: [
-                        // 채팅 리스트 (reverse만 사용)
-                        Expanded(
-                          child: GestureDetector(
-                            onTap: () => _focusNode.unfocus(),
-                            child:
-                                _commentService.isLoading && comments.isEmpty
-                                    ? const Center(
-                                      child: CircularProgressIndicator(
-                                        color: Colors.white,
-                                      ),
-                                    )
-                                    : RawScrollbar(
+                    title: Text(
+                      widget.title,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 18,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                  body: Column(
+                    children: [
+                      // 채팅 리스트 (Align + shrinkWrap 사용)
+                      Expanded(
+                        child: GestureDetector(
+                          onTap: () => _focusNode.unfocus(),
+                          child:
+                              _commentService.isLoading && comments.isEmpty
+                                  ? const Center(
+                                    child: CircularProgressIndicator(
+                                      color: Colors.white,
+                                    ),
+                                  )
+                                  : Align(
+                                    alignment: Alignment.topCenter,
+                                    child: RawScrollbar(
                                       controller: _scrollController,
-                                      thumbColor: Colors.white.withOpacity(0.3),
+                                      thumbColor: Colors.white.withOpacity(0.4),
                                       radius: const Radius.circular(20),
-                                      thickness: 3,
+                                      thickness: 4,
                                       thumbVisibility: false,
                                       child: ListView.builder(
                                         controller: _scrollController,
-                                        reverse: true, // ← 아래에서 위로
+                                        reverse: true, // ✅ 키보드 변화 감지를 위해 true
+                                        shrinkWrap: true, // ✅ 내용에 맞게 크기 조정
                                         padding: const EdgeInsets.symmetric(
                                           horizontal: 8,
                                           vertical: 20,
                                         ),
                                         itemCount: comments.length,
                                         itemBuilder: (context, index) {
-                                          // reverse:true이므로 역순으로 접근
+                                          // reverse:true이므로 역순 접근
                                           final reversedIndex =
                                               comments.length - 1 - index;
                                           final comment =
@@ -294,9 +312,9 @@ class _CommentBottomSheetState extends State<CommentBottomSheet>
                                                 comment.parentId,
                                               );
 
-                                          final itemKey = _getOrCreateKey(
-                                            comment.id,
-                                          );
+                                          // ValueKey로 중복 방지 (id_timestamp_reversedIndex)
+                                          final uniqueKey =
+                                              '${comment.id}_${comment.createdAt}_$reversedIndex';
                                           final isThisBouncing =
                                               _bouncingCommentId == comment.id;
 
@@ -322,8 +340,9 @@ class _CommentBottomSheetState extends State<CommentBottomSheet>
                                                 );
                                               },
                                               child: CommentItem(
-                                                key: itemKey,
+                                                key: ValueKey(uniqueKey),
                                                 comment: comment,
+                                                commentService: _commentService,
                                                 currentUser: currentUser,
                                                 isMe: isMe,
                                                 showProfile: showProfile,
@@ -347,7 +366,7 @@ class _CommentBottomSheetState extends State<CommentBottomSheet>
                                                 onTapTargetComment:
                                                     _scrollToTargetComment,
                                                 targetComment: targetComment,
-                                                globalKey: itemKey,
+                                                globalKey: null,
                                                 bounceAnimationValue: 1.0,
                                                 isAnimating: false,
                                                 onSwipeReply: () {
@@ -363,13 +382,12 @@ class _CommentBottomSheetState extends State<CommentBottomSheet>
                                         },
                                       ),
                                     ),
-                          ),
+                                  ),
                         ),
-
-                        // 입력창 (고정)
-                        _buildInputSection(),
-                      ],
-                    ),
+                      ),
+                      // 입력창 (고정)
+                      _buildInputSection(),
+                    ],
                   ),
                 ),
               ),

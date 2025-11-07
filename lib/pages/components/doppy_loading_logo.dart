@@ -91,8 +91,10 @@ class DoppyLoadingLogo extends StatelessWidget {
             child: IconButton(
               icon: Icon(
                 Icons.arrow_back_ios_new_rounded,
-                color: Theme.of(context).colorScheme.onSurface,
-                size: 22,
+                color: Theme.of(
+                  context,
+                ).colorScheme.onSurface.withOpacity(0.75),
+                size: 24,
               ),
               onPressed: onBack ?? () => Navigator.of(context).pop(),
             ),

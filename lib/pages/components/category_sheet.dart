@@ -5,6 +5,7 @@ import 'package:doppy/providers/feed_provider/my_profile_feed_provider.dart';
 import 'package:doppy/theme/app_colors.dart';
 import 'package:doppy/utils/error_handler.dart';
 import 'package:doppy/utils/dialog_utils.dart';
+import 'package:doppy/l10n/app_localizations.dart';
 import 'package:flutter/material.dart';
 import 'package:doppy/data/services/blog_service.dart';
 
@@ -481,7 +482,7 @@ class CategoryDropDown {
         if (!_isCreatingCategory) ...[
           // 전체 탭
           _buildCategoryItem(
-            title: '전체',
+            title: context.tr('all'),
             count: totalPosts,
             isSelected:
                 feedProvider.selectedBase == BaseFilter.all &&
@@ -508,7 +509,7 @@ class CategoryDropDown {
                 );
                 if (privatePosts > 0) {
                   return _buildCategoryItem(
-                    title: '나만보기',
+                    title: context.tr('private'),
                     count: privatePosts,
                     isSelected:
                         feedProvider.selectedBase == BaseFilter.private &&
@@ -528,7 +529,7 @@ class CategoryDropDown {
             // 친구공유
             if (friendsPosts > 0)
               _buildCategoryItem(
-                title: '친구공유',
+                title: context.tr('friends'),
                 count: friendsPosts,
                 isSelected:
                     feedProvider.selectedBase == BaseFilter.friends &&
@@ -544,7 +545,7 @@ class CategoryDropDown {
             // 그룹공유
             if (groupPosts > 0)
               _buildCategoryItem(
-                title: '그룹공유',
+                title: context.tr('group'),
                 count: groupPosts,
                 isSelected:
                     feedProvider.selectedBase == BaseFilter.groups &&
@@ -560,7 +561,7 @@ class CategoryDropDown {
             // 전체공개
             if (publicPosts > 0)
               _buildCategoryItem(
-                title: '전체공개',
+                title: context.tr('public'),
                 count: publicPosts,
                 isSelected:
                     feedProvider.selectedBase == BaseFilter.public &&
@@ -680,7 +681,7 @@ class CategoryDropDown {
             children: [
               Expanded(
                 child: Text(
-                  '새 카테고리 만들기',
+                  context.tr('create_new_category'),
                   style: TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.w600,

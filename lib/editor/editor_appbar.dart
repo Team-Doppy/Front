@@ -6,6 +6,7 @@ import 'package:doppy/editor/service/editor_service.dart';
 import 'package:doppy/editor/service/node_component_service.dart';
 import 'package:doppy/editor/service/sticker_service.dart';
 import 'package:doppy/editor/component/clip_component.dart';
+import 'package:doppy/editor/component/row_image_component.dart';
 import 'package:doppy/utils/dialog_utils.dart';
 import 'package:doppy/utils/error_handler.dart';
 import 'package:doppy/l10n/app_localizations.dart';
@@ -16,6 +17,7 @@ import 'package:doppy/editor/overlay/thumbnail_edit_overlay.dart';
 import 'package:doppy/providers/user_provider.dart';
 import 'package:doppy/data/services/blog_service.dart';
 import 'package:doppy/providers/feed_provider/my_profile_feed_provider.dart';
+import 'package:super_editor/super_editor.dart';
 
 class EditModeAppBar extends StatefulWidget {
   final EditorService editorService;
@@ -936,10 +938,10 @@ class _EditModeAppBarState extends State<EditModeAppBar> {
                       ),
                       child: Icon(
                         Icons.arrow_back_ios_new_rounded,
+                        size: 24,
                         color: Theme.of(
                           context,
-                        ).colorScheme.onSurface.withOpacity(0.8),
-                        size: 20,
+                        ).colorScheme.onSurface.withOpacity(0.75),
                       ),
                     ),
                   ),
@@ -1054,6 +1056,39 @@ class EditorAppBar extends StatelessWidget {
     this.currentDraftId,
   });
 
+  /// 문서에서 첫 번째 이미지 URL 찾기
+  String? _findFirstImageUrl() {
+    try {
+      final doc = editorService.document;
+      for (int i = 0; i < doc.nodeCount; i++) {
+        final node = doc.getNodeAt(i);
+
+        // ImageNode인 경우
+        if (node is ImageNode) {
+          final url = node.imageUrl;
+          if (url.isNotEmpty &&
+              (url.startsWith('http://') || url.startsWith('https://'))) {
+            return url;
+          }
+        }
+
+        // ImageRowNode인 경우 (첫 번째 이미지 사용)
+        if (node is ImageRowNode) {
+          if (node.imageUrls.isNotEmpty) {
+            final url = node.imageUrls.first;
+            if (url.isNotEmpty &&
+                (url.startsWith('http://') || url.startsWith('https://'))) {
+              return url;
+            }
+          }
+        }
+      }
+    } catch (e) {
+      print('[EditorAppBar] 이미지 찾기 실패: $e');
+    }
+    return null;
+  }
+
   Future<void> _onNextButtonTapped(BuildContext context) async {
     // 플레이스홀더 기반 가드: 문서에 이미지/영상 플레이스홀더가 있으면 진행 차단
     if (editorService.hasAnyPlaceholders()) {
@@ -1088,6 +1123,24 @@ class EditorAppBar extends StatelessWidget {
       return;
     }
 
+    // 첫 번째 이미지를 자동으로 썸네일로 설정
+    final sessionKey = currentDraftId ?? 'default';
+    final existingThumbnail =
+        NodeComponentService().getTempThumbnailUrl(sessionKey) ?? '';
+
+    // 기존 썸네일이 없으면 첫 번째 이미지를 자동으로 설정
+    if (existingThumbnail.isEmpty) {
+      final firstImageUrl = _findFirstImageUrl();
+      if (firstImageUrl != null && firstImageUrl.isNotEmpty) {
+        NodeComponentService().setTempThumbnail(
+          sessionKey,
+          url: firstImageUrl,
+          id: null, // imageId는 나중에 export에서 처리
+        );
+        print('[EditorAppBar] 첫 번째 이미지를 썸네일로 자동 설정: $firstImageUrl');
+      }
+    }
+
     // 검증 통과 시 다음 화면으로 이동
     cleanupAllVideoPlayers();
     NodeComponentService().selectNode(null);
@@ -1100,8 +1153,7 @@ class EditorAppBar extends StatelessWidget {
         pageBuilder:
             (_, __, ___) => PostExportScreen(
               exported: json,
-              sessionKey:
-                  currentDraftId ?? 'default', // draft ID를 sessionKey로 사용
+              sessionKey: sessionKey, // draft ID를 sessionKey로 사용
             ),
       ),
     );
@@ -1134,10 +1186,10 @@ class EditorAppBar extends StatelessWidget {
                     ),
                     child: Icon(
                       Icons.arrow_back_ios_new_rounded,
+                      size: 24,
                       color: Theme.of(
                         context,
-                      ).colorScheme.onSurface.withOpacity(0.8),
-                      size: 20,
+                      ).colorScheme.onSurface.withOpacity(0.75),
                     ),
                   ),
                 ),

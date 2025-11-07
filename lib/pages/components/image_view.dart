@@ -164,6 +164,9 @@ class _ImageViewState extends State<ImageView> {
                                 ),
                               )
                           : CachedNetworkImage(
+                            key: ValueKey(
+                              '${widget.post.thumbnailImageUrl}-${theme.brightness}',
+                            ),
                             imageUrl: widget.post.thumbnailImageUrl,
                             fit: BoxFit.cover,
                             fadeInDuration: const Duration(milliseconds: 180),
@@ -181,8 +184,9 @@ class _ImageViewState extends State<ImageView> {
                                   ),
                                 ),
                             errorWidget:
-                                (context, url, error) =>
-                                    const ImageErrorPlaceholder(),
+                                (context, url, error) => Builder(
+                                  builder: (context) => ImageErrorPlaceholder(),
+                                ),
                           ),
                 ),
                 // 좋아요와 조회수 (내 피드일 때만)

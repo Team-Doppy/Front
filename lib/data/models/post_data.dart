@@ -16,6 +16,7 @@ class PostData {
   final AccessLevel accessLevel;
   final int viewCount;
   final int likeCount;
+  final int commentCount;
   final bool isLiked;
 
   PostData({
@@ -32,6 +33,7 @@ class PostData {
     required this.updatedAt,
     required this.viewCount,
     required this.likeCount,
+    required this.commentCount,
     required this.isLiked,
   });
 
@@ -99,6 +101,10 @@ class PostData {
           (data['likeCount'] is int)
               ? (data['likeCount'] as int)
               : int.tryParse('${data['likeCount'] ?? 0}') ?? 0,
+      commentCount:
+          (data['commentCount'] is int)
+              ? (data['commentCount'] as int)
+              : int.tryParse('${data['commentCount'] ?? 0}') ?? 0,
       isLiked: data['isLiked'] == true,
     );
   }
@@ -201,6 +207,7 @@ class PostData {
         'authorProfileImageUrl': authorProfileImageUrl,
         'content': contentData,
         'likeCount': likeCount,
+        'commentCount': commentCount,
         'isLiked': isLiked,
         'stickers': [], // 서버에서 가져온 데이터에는 스티커가 없음
       };
@@ -216,6 +223,7 @@ class PostData {
         'authorProfileImageUrl': authorProfileImageUrl,
         'content': {'nodes': []},
         'likeCount': likeCount,
+        'commentCount': commentCount,
         'isLiked': isLiked,
         'stickers': [],
       };

@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:ui' as ui;
 import 'package:doppy/utils/error_handler.dart';
+import 'package:doppy/l10n/app_localizations.dart';
 import 'package:flutter/material.dart';
 import 'package:doppy/theme/app_colors.dart';
 
@@ -144,7 +145,7 @@ class _LinkOverlayState extends State<LinkOverlay> {
             decoration: InputDecoration(
               filled: true,
               fillColor: Colors.white.withOpacity(0.1),
-              hintText: '링크 검색하기',
+              hintText: context.tr('search_link'),
               hintStyle: TextStyle(
                 color: Colors.white.withOpacity(0.6),
                 fontSize: 16,

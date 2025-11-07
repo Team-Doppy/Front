@@ -842,6 +842,7 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer>
 
                                               return CommentItem(
                                                 key: GlobalKey(),
+
                                                 comment: comment,
                                                 currentUser: currentUser,
                                                 isMe: isMe,
@@ -871,6 +872,8 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer>
                                                 onSwipeReply: () {
                                                   // TODO: Implement swipe reply
                                                 },
+                                                commentService:
+                                                    CommentService(),
                                               );
                                             },
                                           ),

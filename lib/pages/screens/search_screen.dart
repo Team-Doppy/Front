@@ -49,6 +49,9 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
         // 초기 검색어가 있으면 검색 실행
         if (widget.initialQuery != null && widget.initialQuery!.isNotEmpty) {
           context.read<SearchService>().onSearchChanged(widget.initialQuery!);
+        } else {
+          // 초기 검색어가 없으면 검색 기록을 표시
+          context.read<SearchService>().setFocused(true);
         }
       }
     });
@@ -169,6 +172,7 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
               accessLevel: AccessLevel.public,
               viewCount: 0,
               likeCount: item.likes ?? 0,
+              commentCount: item.comments ?? 0,
               isLiked: false,
               createdAt: item.createdAt ?? DateTime.now().toIso8601String(),
               updatedAt: item.createdAt ?? DateTime.now().toIso8601String(),
@@ -532,7 +536,7 @@ class _SearchTopBar extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
       child: Row(
         children: [
-          SizedBox(width: 8),
+          SizedBox(width: 12),
           // 닫기 버튼
           if (onClose != null)
             Container(
@@ -542,11 +546,11 @@ class _SearchTopBar extends StatelessWidget {
                 onTap: onClose,
                 child: Icon(
                   Icons.arrow_back_ios_new_rounded,
+                  size: 24,
                   color:
                       isDark
-                          ? Colors.white.withOpacity(0.9)
-                          : Colors.black.withOpacity(0.9),
-                  size: 20,
+                          ? Colors.white.withOpacity(0.75)
+                          : Colors.black.withOpacity(0.75),
                 ),
               ),
             )
@@ -565,11 +569,11 @@ class _SearchTopBar extends StatelessWidget {
                     onTap: onBack,
                     child: Icon(
                       Icons.arrow_back_ios_new_rounded,
+                      size: 24,
                       color:
                           isDark
-                              ? Colors.white.withOpacity(0.9)
-                              : Colors.black.withOpacity(0.9),
-                      size: 20,
+                              ? Colors.white.withOpacity(0.75)
+                              : Colors.black.withOpacity(0.75),
                     ),
                   ),
                 ),

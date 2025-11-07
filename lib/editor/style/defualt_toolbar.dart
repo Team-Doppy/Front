@@ -5,6 +5,7 @@ import 'package:doppy/editor/overlay/sticker_overlay.dart';
 import 'package:doppy/editor/overlay/font_overlay.dart';
 import 'package:doppy/editor/style/font_catalog.dart';
 import 'package:doppy/editor/utils/video_upload_utils.dart';
+import 'package:doppy/l10n/app_localizations.dart';
 import 'package:flutter/material.dart';
 import 'package:super_editor/super_editor.dart';
 import 'package:doppy/image/native_image_picker.dart';
@@ -436,12 +437,6 @@ class TextStylingService extends ChangeNotifier {
       return;
     }
 
-    // 스포일러 보존 여부 스냅샷
-    final existingAttrs = _getAttributionsInSelection(
-      selectionOverride: selection,
-    );
-    final bool hadSpoiler = existingAttrs.contains(spoilerAttribution);
-
     // 기존 폰트 크기 속성 제거
     _removeFontSizeAttributions();
 
@@ -453,16 +448,6 @@ class TextStylingService extends ChangeNotifier {
         attributions: {fontSizeAttribution},
       ),
     ]);
-
-    // 스포일러 재적용(레이아웃 변경 후 표시 이상 방지)
-    if (hadSpoiler) {
-      editor.execute([
-        AddTextAttributionsRequest(
-          documentRange: selection,
-          attributions: {spoilerAttribution},
-        ),
-      ]);
-    }
   }
 
   /// 기존 색상 속성 제거
@@ -1352,7 +1337,7 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
                                 return Navigator.of(context).pop(mode);
                               },
 
-                              title: Text('이미지 업로드'),
+                              title: Text(context.tr('upload_image')),
                             ),
                             ListTile(
                               onTap: () async {
@@ -1360,7 +1345,7 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
                                 return Navigator.of(context).pop(mode);
                               },
 
-                              title: Text('short clip 업로드'),
+                              title: Text(context.tr('upload_short_clip')),
                             ),
                           ],
                         ),
@@ -2443,12 +2428,13 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
                       (drawingData['strokes'] as List)
                           .cast<Map<String, dynamic>>();
                   final pos = drawingData['position'] as Map<String, dynamic>;
+                  final groupIndex = drawingData['groupIndex'] as int?;
                   // DrawingOverlay에서 이미 문서 좌표로 변환된 위치를 반환하므로 추가 보정 불필요
                   final at = Offset(
                     (pos['x'] as num).toDouble(),
                     (pos['y'] as num).toDouble(),
                   );
-                  svc.addDrawingSticker(strokes, at);
+                  svc.addDrawingSticker(strokes, at, groupIndex: groupIndex);
                 } else if (image != null) {
                   // 일반 이미지 스티커 - 화면 정가운데
                   final Size size = MediaQuery.of(context).size;

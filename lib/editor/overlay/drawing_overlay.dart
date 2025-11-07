@@ -6,8 +6,15 @@ import 'package:flutter_drawing_board/paint_contents.dart';
 // 확장 메뉴 종류(전역)
 enum _Menu { none, pen, eraser, color }
 
+// 펜 타입
+enum _PenType { simple, smooth, straight }
+
 class DrawingOverlay extends StatefulWidget {
-  final void Function(List<Map<String, dynamic>> strokes, Offset position)
+  final void Function(
+    List<Map<String, dynamic>> strokes,
+    Offset position, {
+    int? groupIndex,
+  })
   onSubmitDrawing;
   final List<Map<String, dynamic>>? initialStrokes;
   final ScrollController? scrollController;
@@ -38,6 +45,7 @@ class _DrawingOverlayState extends State<DrawingOverlay>
 
   // 확장 메뉴 상태
   _Menu _menu = _Menu.none;
+  _PenType _penType = _PenType.simple; // 현재 선택된 펜 타입
 
   final List<Color> _palette = const [
     Colors.red,
@@ -115,8 +123,14 @@ class _DrawingOverlayState extends State<DrawingOverlay>
 
   @override
   Widget build(BuildContext context) {
+    // 하단 툴바를 가리기 위해 불투명한 배경 사용
+    final bgColor =
+        Theme.of(context).brightness == Brightness.dark
+            ? const Color(0xFF121212)
+            : const Color(0xFFF5F5F5);
+
     return Scaffold(
-      backgroundColor: Colors.transparent,
+      backgroundColor: bgColor,
 
       body: Stack(
         children: [
@@ -131,7 +145,7 @@ class _DrawingOverlayState extends State<DrawingOverlay>
                     background: Container(
                       width: constraints.maxWidth,
                       height: constraints.maxHeight,
-                      color: Colors.transparent,
+                      color: bgColor, // Scaffold와 같은 배경색
                     ),
                     showDefaultActions: false,
                     showDefaultTools: false,
@@ -226,8 +240,8 @@ class _DrawingOverlayState extends State<DrawingOverlay>
           // 좌측 세로 펜 두께 슬라이더
           Positioned(
             left: 0,
-            top: MediaQuery.of(context).size.height * 0.25,
-            bottom: MediaQuery.of(context).size.height * 0.25,
+            top: MediaQuery.of(context).size.height * 0.3,
+            bottom: MediaQuery.of(context).size.height * 0.3,
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 250),
               curve: Curves.easeOut,
@@ -345,9 +359,9 @@ class _DrawingOverlayState extends State<DrawingOverlay>
                       Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          _toolButton(
-                            Icons.brush,
-                            active: !_eraser && _menu == _Menu.pen,
+                          _svgToolButton(
+                            'assets/icons/pen.svg',
+                            active: !_eraser, // 지우개가 아니면 펜 모드
                             onTap: () {
                               setState(() {
                                 _applyPenTool();
@@ -357,9 +371,9 @@ class _DrawingOverlayState extends State<DrawingOverlay>
                             },
                           ),
                           const SizedBox(width: 10),
-                          _toolButton(
-                            Icons.cleaning_services_outlined,
-                            active: _eraser || _menu == _Menu.eraser,
+                          _svgToolButton(
+                            'assets/icons/eraser.svg',
+                            active: _eraser, // 지우개 모드일 때만
                             onTap: () {
                               setState(() {
                                 _applyEraserTool();
@@ -369,18 +383,8 @@ class _DrawingOverlayState extends State<DrawingOverlay>
                             },
                           ),
                           const SizedBox(width: 10),
-                          _toolButton(
-                            Icons.color_lens_outlined,
-                            active: _menu == _Menu.color,
-                            onTap: () => _toggleMenu(_Menu.color),
-                          ),
+                          _buildColorButton(),
                           const SizedBox(width: 10),
-                          const SizedBox(width: 12),
-                          _toolButton(
-                            Icons.delete_outline,
-                            active: false,
-                            onTap: _clear,
-                          ),
                         ],
                       ),
                     ],
@@ -400,8 +404,11 @@ class _DrawingOverlayState extends State<DrawingOverlay>
         return Row(
           mainAxisSize: MainAxisSize.min,
           children: _palette
-              .map(
-                (c) => GestureDetector(
+              .map((c) {
+                final isSelected = _color == c && !_eraser;
+                // 밝은 색상인지 판단 (체크 표시 색상 결정용)
+                final isLightColor = c.computeLuminance() > 0.5;
+                return GestureDetector(
                   onTap: () {
                     setState(() {
                       _color = c;
@@ -416,101 +423,117 @@ class _DrawingOverlayState extends State<DrawingOverlay>
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
                       border: Border.all(
-                        color: Theme.of(
-                          context,
-                        ).colorScheme.onSurface.withOpacity(0.2),
+                        color:
+                            isSelected
+                                ? Colors
+                                    .white // 선택된 색상은 흰색 테두리
+                                : Theme.of(
+                                  context,
+                                ).colorScheme.onSurface.withOpacity(0.2),
+                        width: isSelected ? 2.5 : 1.0, // 선택된 색상은 더 두꺼운 테두리
                       ),
                       color: c,
                     ),
+                    // 선택된 색상에 체크 표시 추가 (밝은 색상은 검은색, 어두운 색상은 흰색)
+                    child:
+                        isSelected
+                            ? Icon(
+                              Icons.check,
+                              color: isLightColor ? Colors.black : Colors.white,
+                              size: 16,
+                            )
+                            : null,
                   ),
-                ),
-              )
+                );
+              })
               .toList(growable: false),
         );
       case _Menu.pen:
         return Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            _chip('Simple', () {
-              setState(() {
-                _applyPenTool();
-                try {
-                  _drawingController.setPaintContent(SimpleLine());
-                } catch (_) {}
-                _applyStyle();
-              });
-            }),
+            _chip(
+              'Simple',
+              isSelected: _penType == _PenType.simple,
+              onTap: () {
+                setState(() {
+                  _penType = _PenType.simple;
+                  _applyPenTool();
+                  try {
+                    _drawingController.setPaintContent(SimpleLine());
+                  } catch (_) {}
+                  _applyStyle();
+                });
+              },
+            ),
             const SizedBox(width: 6),
-            _chip('Smooth', () {
-              setState(() {
-                _applyPenTool();
-                try {
-                  _drawingController.setPaintContent(SmoothLine());
-                } catch (_) {}
-                _applyStyle();
-              });
-            }),
+            _chip(
+              'Smooth',
+              isSelected: _penType == _PenType.smooth,
+              onTap: () {
+                setState(() {
+                  _penType = _PenType.smooth;
+                  _applyPenTool();
+                  try {
+                    _drawingController.setPaintContent(SmoothLine());
+                  } catch (_) {}
+                  _applyStyle();
+                });
+              },
+            ),
             const SizedBox(width: 6),
-            _chip('Straight', () {
-              setState(() {
-                _applyPenTool();
-                try {
-                  _drawingController.setPaintContent(StraightLine());
-                } catch (_) {}
-                _applyStyle();
-              });
-            }),
+            _chip(
+              'Straight',
+              isSelected: _penType == _PenType.straight,
+              onTap: () {
+                setState(() {
+                  _penType = _PenType.straight;
+                  _applyPenTool();
+                  try {
+                    _drawingController.setPaintContent(StraightLine());
+                  } catch (_) {}
+                  _applyStyle();
+                });
+              },
+            ),
           ],
         );
       case _Menu.eraser:
-        return Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            _chip('Thin', () {
-              setState(() {
-                _width = 6;
-                _applyEraserTool();
-                _applyStyle();
-              });
-            }),
-            const SizedBox(width: 6),
-            _chip('Medium', () {
-              setState(() {
-                _width = 12;
-                _applyEraserTool();
-                _applyStyle();
-              });
-            }),
-            const SizedBox(width: 6),
-            _chip('Thick', () {
-              setState(() {
-                _width = 18;
-                _applyEraserTool();
-                _applyStyle();
-              });
-            }),
-          ],
-        );
       case _Menu.none:
         return const SizedBox.shrink();
     }
   }
 
-  Widget _chip(String label, VoidCallback onTap) {
+  Widget _chip(
+    String label, {
+    required bool isSelected,
+    required VoidCallback onTap,
+  }) {
     return GestureDetector(
-      onTap: onTap,
+      onTap: () {
+        onTap(); // 원래 동작 실행
+        setState(() => _menu = _Menu.none); // 메뉴 닫기
+      },
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
         decoration: BoxDecoration(
-          color: Theme.of(context).colorScheme.onSurface.withOpacity(0.12),
+          color:
+              isSelected
+                  ? Theme.of(context).colorScheme.onSurface.withOpacity(
+                    0.45,
+                  ) // 선택됨: 더 밝게
+                  : Theme.of(
+                    context,
+                  ).colorScheme.onSurface.withOpacity(0.1), // 기본
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-            color: Theme.of(context).colorScheme.onSurface.withOpacity(0.15),
-          ),
         ),
         child: Text(
           label,
-          style: const TextStyle(color: Colors.white, fontSize: 12),
+          style: TextStyle(
+            color: isSelected ? Colors.white : Colors.white.withOpacity(0.8),
+            fontSize: 12,
+            fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
+          ),
         ),
       ),
     );
@@ -518,12 +541,56 @@ class _DrawingOverlayState extends State<DrawingOverlay>
 
   void _undo() => _drawingController.undo();
   void _redo() => _drawingController.redo();
-  void _clear() => _drawingController.clear();
 
-  Widget _toolButton(
-    IconData icon, {
+  // 색상 버튼 (선택된 색상을 표시)
+  Widget _buildColorButton() {
+    final active = _menu == _Menu.color;
+    return GestureDetector(
+      onTap: () => _toggleMenu(_Menu.color),
+      child: Container(
+        padding: const EdgeInsets.all(10),
+        decoration: BoxDecoration(
+          color:
+              active
+                  ? Theme.of(context).colorScheme.onSurface.withOpacity(0.22)
+                  : Theme.of(context).colorScheme.onSurface.withOpacity(0.10),
+          borderRadius: BorderRadius.circular(30),
+        ),
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            Icon(
+              Icons.color_lens_outlined,
+              color: active ? Colors.white : Colors.white.withOpacity(0.5),
+              size: 24,
+            ),
+            // 선택된 색상을 작은 원으로 표시
+            if (!_eraser)
+              Positioned(
+                bottom: 0,
+                right: 0,
+                child: Container(
+                  width: 8,
+                  height: 8,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: _color,
+                    border: Border.all(color: Colors.white, width: 1),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _svgToolButton(
+    String svgPath, {
     required bool active,
     required VoidCallback onTap,
+    double? width,
+    double? height,
   }) {
     return GestureDetector(
       onTap: onTap,
@@ -534,10 +601,17 @@ class _DrawingOverlayState extends State<DrawingOverlay>
               active
                   ? Theme.of(context).colorScheme.onSurface.withOpacity(0.22)
                   : Theme.of(context).colorScheme.onSurface.withOpacity(0.10),
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: Colors.white24),
+          borderRadius: BorderRadius.circular(30),
         ),
-        child: Icon(icon, color: Colors.white, size: 18),
+        child: SvgPicture.asset(
+          svgPath,
+          width: width ?? 24,
+          height: height ?? 24,
+          colorFilter: ColorFilter.mode(
+            active ? Colors.white : Colors.white.withOpacity(0.5),
+            BlendMode.srcIn,
+          ),
+        ),
       ),
     );
   }
@@ -580,8 +654,90 @@ class _DrawingOverlayState extends State<DrawingOverlay>
       debugPrint('[DrawingOverlay] export: skip (empty strokes)');
       return;
     }
-    widget.onSubmitDrawing(strokesData, position);
+
+    // 스트로크를 공간적으로 그룹화 (떨어진 그림을 각각 스티커로)
+    final groups = _groupStrokesByProximity(strokesData);
+    debugPrint('[DrawingOverlay] export: ${groups.length} groups created');
+
+    // 각 그룹을 개별 스티커로 생성
+    for (int idx = 0; idx < groups.length; idx++) {
+      final group = groups[idx];
+      final groupBounds = _computeStrokeBoundsFromStrokes(group);
+      if (groupBounds != null) {
+        final groupPos = Offset(groupBounds.left, groupBounds.top + scrollY);
+        // groupIndex 전달하여 고유 ID 보장
+        widget.onSubmitDrawing(group, groupPos, groupIndex: idx);
+      }
+    }
+
     if (mounted) Navigator.of(context).pop();
+  }
+
+  // 스트로크를 공간적 근접도로 그룹화
+  List<List<Map<String, dynamic>>> _groupStrokesByProximity(
+    List<Map<String, dynamic>> strokes,
+  ) {
+    if (strokes.isEmpty) return [];
+    if (strokes.length == 1) return [strokes];
+
+    final List<List<Map<String, dynamic>>> groups = [];
+    final List<bool> assigned = List.filled(strokes.length, false);
+
+    for (int i = 0; i < strokes.length; i++) {
+      if (assigned[i]) continue;
+
+      final group = <Map<String, dynamic>>[strokes[i]];
+      assigned[i] = true;
+
+      // 이 스트로크와 가까운 다른 스트로크들을 찾기
+      final bounds1 = _getStrokeBounds(strokes[i]);
+      if (bounds1 == null) continue;
+
+      for (int j = i + 1; j < strokes.length; j++) {
+        if (assigned[j]) continue;
+
+        final bounds2 = _getStrokeBounds(strokes[j]);
+        if (bounds2 == null) continue;
+
+        // 두 스트로크의 거리 계산 (바운딩 박스 중심 기준)
+        final dist = (bounds1.center - bounds2.center).distance;
+
+        // 100px 이내면 같은 그룹으로 간주
+        if (dist < 100) {
+          group.add(strokes[j]);
+          assigned[j] = true;
+        }
+      }
+
+      groups.add(group);
+    }
+
+    return groups;
+  }
+
+  Rect? _getStrokeBounds(Map<String, dynamic> stroke) {
+    final points = stroke['points'] as List?;
+    if (points == null || points.isEmpty) return null;
+
+    double minX = double.infinity;
+    double minY = double.infinity;
+    double maxX = double.negativeInfinity;
+    double maxY = double.negativeInfinity;
+
+    for (final p in points) {
+      if (p is! Map) continue;
+      final x = (p['x'] as num?)?.toDouble();
+      final y = (p['y'] as num?)?.toDouble();
+      if (x == null || y == null) continue;
+
+      minX = minX < x ? minX : x;
+      minY = minY < y ? minY : y;
+      maxX = maxX > x ? maxX : x;
+      maxY = maxY > y ? maxY : y;
+    }
+
+    if (minX == double.infinity) return null;
+    return Rect.fromLTRB(minX, minY, maxX, maxY);
   }
 
   List<Map<String, dynamic>> _convertJsonToStrokes(List<dynamic> jsonList) {

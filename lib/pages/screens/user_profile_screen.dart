@@ -1,10 +1,10 @@
 import 'package:doppy/pages/components/common_profile_avatar.dart';
-import 'package:doppy/pages/components/comps_for_profile/category_sheet.dart';
-import 'package:doppy/pages/components/comps_for_profile/feed.dart';
+import 'package:doppy/pages/components/category_sheet.dart';
+import 'package:doppy/pages/components/feed.dart';
 import 'package:doppy/pages/components/custom_refresh_indicator.dart';
 import 'package:doppy/providers/feed_provider/feed_ui_service.dart';
 import 'package:doppy/pages/screens/manage_group_screen.dart';
-import 'package:doppy/pages/user/setting_screen.dart';
+import 'package:doppy/pages/screens/setting_screen.dart';
 import 'package:doppy/providers/feed_provider/other_profile_feed_provider.dart';
 import 'package:doppy/utils/network_utils.dart';
 import 'package:doppy/utils/error_handler.dart';
@@ -315,7 +315,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                         controller: _scrollController,
                         slivers: [
                           SliverAppBar(
-                            expandedHeight: topPadding + 100,
+                            expandedHeight: topPadding + 30,
                             toolbarHeight: 50,
                             backgroundColor: Colors.transparent,
                             automaticallyImplyLeading: false,
@@ -333,11 +333,11 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                                           children: [
                                             Icon(
                                               Icons.arrow_back_ios_new_rounded,
-                                              color:
-                                                  Theme.of(
-                                                    context,
-                                                  ).colorScheme.onSurface,
-                                              size: 22,
+                                              size: 24,
+                                              color: Theme.of(context)
+                                                  .colorScheme
+                                                  .onSurface
+                                                  .withOpacity(0.75),
                                             ),
                                             SizedBox(width: 14),
                                           ],
@@ -497,25 +497,6 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                           // Feed 컨텐츠 (네트워크 에러 처리 포함)
                           Consumer<BaseFeedProvider>(
                             builder: (context, feedProvider, _) {
-                              // 디버그 로그
-                              print('[UserProfileScreen] ==========');
-                              print(
-                                '[UserProfileScreen] networkError: ${feedProvider.networkError}',
-                              );
-                              print(
-                                '[UserProfileScreen] NetworkManager.isOnline: ${NetworkManager.isOnline}',
-                              );
-                              print(
-                                '[UserProfileScreen] categories: ${feedProvider.categories.length}',
-                              );
-                              print(
-                                '[UserProfileScreen] isLoading: ${feedProvider.isLoading}',
-                              );
-
-                              // 네트워크 에러 시에도 헤더는 유지하고,
-                              // 피드 영역 내부에서만 오프라인 메시지를 표시하도록 위임 (feed.dart에서 처리)
-
-                              print('[UserProfileScreen] 정상 상태 - Feed 표시');
                               // 정상 상태일 때 Feed 컨텐츠 표시
                               return _feed.buildFeedContent(
                                 scrollController: _scrollController,
@@ -611,7 +592,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                     ? Consumer<MyProfileFeedProvider>(
                       builder:
                           (context, provider, _) => Text(
-                            provider.selectedLabel,
+                            context.tr(provider.selectedLabel),
                             style: TextStyle(
                               fontSize: 16,
                               fontWeight: FontWeight.w300,
@@ -624,7 +605,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                     : Consumer<OtherProfileFeedProvider>(
                       builder:
                           (context, provider, _) => Text(
-                            provider.selectedLabel,
+                            context.tr(provider.selectedLabel),
                             style: TextStyle(
                               fontSize: 16,
                               fontWeight: FontWeight.w300,

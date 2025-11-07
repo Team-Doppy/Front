@@ -43,10 +43,16 @@ class CommentInputSection extends StatelessWidget {
             children: [
               Expanded(
                 child: TextField(
-                  cursorColor: fgColor,
                   controller: commentController,
                   focusNode: focusNode,
-                  minLines: 1,
+                  cursorColor: fgColor,
+
+                  // ✅ 여러 줄 입력 설정
+                  keyboardType: TextInputType.multiline,
+                  textInputAction: TextInputAction.newline, // 엔터 시 줄바꿈
+                  maxLines: null, // 무제한 줄
+
+                  style: TextStyle(color: fgColor),
                   decoration: InputDecoration(
                     hintText:
                         editingComment != null
@@ -61,17 +67,18 @@ class CommentInputSection extends StatelessWidget {
                     filled: true,
                     fillColor: bgColor,
                     hintStyle: TextStyle(color: fgColor.withOpacity(0.5)),
-
                     contentPadding: const EdgeInsets.symmetric(
                       horizontal: 16,
-                      vertical: 0,
+                      vertical: 12, // 높이 확보
                     ),
                     suffixIcon: IconButton(
                       onPressed: onSubmit,
                       icon: Icon(Icons.send_rounded, size: 24, color: fgColor),
                     ),
                   ),
-                  onSubmitted: (value) => onSubmit(),
+
+                  // ❌ onSubmitted 제거 (엔터를 줄바꿈으로 쓰기 위해)
+                  // onSubmitted: (value) => onSubmit(),
                 ),
               ),
             ],

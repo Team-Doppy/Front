@@ -1,4 +1,5 @@
 import 'package:doppy/theme/app_colors.dart';
+import 'package:doppy/l10n/app_localizations.dart';
 import 'package:flutter/material.dart';
 import 'package:super_editor/super_editor.dart';
 import 'package:doppy/editor/service/editor_service.dart';
@@ -81,14 +82,17 @@ class TitleParagraphComponentBuilder implements ComponentBuilder {
                 alignment: overlayAlign,
                 child: Padding(
                   padding: const EdgeInsets.only(top: 0),
-                  child: Text(
-                    '제목을 입력하세요',
-                    textAlign: resolvedAlign,
-                    style: const TextStyle(
-                      fontSize: 25,
-                      fontWeight: FontWeight.w500,
-                      color: AppColors.darkTextSecondary,
-                    ),
+                  child: Builder(
+                    builder:
+                        (context) => Text(
+                          context.tr('enter_title'),
+                          textAlign: resolvedAlign,
+                          style: const TextStyle(
+                            fontSize: 25,
+                            fontWeight: FontWeight.w500,
+                            color: AppColors.darkTextSecondary,
+                          ),
+                        ),
                   ),
                 ),
               ),

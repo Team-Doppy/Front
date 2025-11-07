@@ -7,10 +7,10 @@ import 'package:doppy/providers/feed_provider/feed_ui_service.dart';
 import 'package:doppy/pages/screens/home_screen.dart';
 import 'package:doppy/data/services/home_data_service.dart';
 import 'package:doppy/pages/components/custom_bottom_navigation_bar.dart';
-import 'package:doppy/pages/onboarding/splash.dart';
+import 'package:doppy/pages/screens/splash_screen.dart';
 import 'package:doppy/pages/screens/user_profile_screen.dart';
 
-import 'package:doppy/pages/onboarding/onboarding_screen.dart';
+import 'package:doppy/pages/screens/onboarding_screen.dart';
 import 'package:doppy/providers/auth_provider.dart';
 import 'package:doppy/providers/friend_provider.dart';
 import 'package:doppy/providers/group_provider.dart';
@@ -146,23 +146,6 @@ class _RootShellState extends State<RootShell> {
   final ValueNotifier<bool> _isShowingSearchResults = ValueNotifier(false);
   bool _isObscuredByOverlay = false; // 검색/글쓰기 오버레이에 가려졌는지
 
-  // 탭별 페이지를 한 번 생성해 유지 (상태 보존)
-  List<Widget> _pages = const [];
-  String? _pagesForUsername;
-
-  // 계정별로 재생성되도록 페이지 빌더 사용 (캐시)
-  void _ensurePagesBuilt(String? username) {
-    if (_pagesForUsername == username && _pages.isNotEmpty) return;
-    _pagesForUsername = username;
-    _pages = [
-      // HomeScreen은 탭 활성 상태를 build 시점에 주입하기 위해 build에서 다시 구성
-      const SizedBox.shrink(),
-      const SizedBox.shrink(),
-      const SizedBox.shrink(), // 작성은 라우트로 별도 push
-      UserProfileScreen(key: ValueKey('profile_$username')),
-    ];
-  }
-
   @override
   void initState() {
     super.initState();
@@ -173,6 +156,43 @@ class _RootShellState extends State<RootShell> {
   void dispose() {
     _isShowingSearchResults.dispose();
     super.dispose();
+  }
+
+  // 검색 화면 열기
+  void _openSearchScreen([String? initialQuery]) {
+    if (!mounted) return;
+
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder:
+            (context) => SearchScreenOverlay(
+              initialQuery: initialQuery, // 초기 검색어 전달
+              onSearchComplete: (results, query) {
+                // 검색 결과를 받아서 홈화면으로 전환하며 표시
+                Navigator.of(context).pop(); // 검색 화면 닫기
+
+                if (mounted) {
+                  // SearchProvider에 검색 결과 저장
+                  context.read<SearchProvider>().setSearchResults(
+                    results,
+                    query,
+                  );
+
+                  // 홈화면에 검색 결과 전달
+                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                    final homeState = _homeScreenKey.currentState;
+                    if (homeState != null && homeState.mounted) {
+                      homeState.setSearchResults(results, query);
+                    }
+                  });
+                }
+              },
+              onClose: () {
+                Navigator.of(context).pop();
+              },
+            ),
+      ),
+    );
   }
 
   @override
@@ -186,58 +206,6 @@ class _RootShellState extends State<RootShell> {
         });
       }
     });
-  }
-
-  // 검색 화면 열기 (현재 화면에서 바로)
-  void _openSearchScreen({String? initialQuery}) {
-    setState(() => _isObscuredByOverlay = true);
-    Navigator.of(context)
-        .push(
-          PageRouteBuilder(
-            opaque: true,
-            pageBuilder: (context, animation, secondaryAnimation) {
-              return FadeTransition(
-                opacity: animation,
-                child: SearchScreenOverlay(
-                  initialQuery: initialQuery,
-                  onSearchComplete: (results, query) {
-                    // 검색 결과를 받아서 홈화면으로 전환하며 표시
-                    Navigator.of(context).pop(); // 검색 화면 닫기
-
-                    // 홈 탭으로 전환 후 검색 결과 설정
-                    if (mounted) {
-                      setState(() => _index = 0);
-
-                      // 홈화면이 빌드된 후 검색 결과 전달
-                      WidgetsBinding.instance.addPostFrameCallback((_) {
-                        final homeState = _homeScreenKey.currentState;
-                        if (homeState != null && homeState.mounted) {
-                          homeState.setSearchResults(results, query);
-                        }
-                      });
-                    }
-                  },
-                  onClose: () {
-                    Navigator.of(context).pop();
-                  },
-                ),
-              );
-            },
-            transitionsBuilder: (
-              context,
-              animation,
-              secondaryAnimation,
-              child,
-            ) {
-              return child;
-            },
-            transitionDuration: const Duration(milliseconds: 200),
-            reverseTransitionDuration: const Duration(milliseconds: 200),
-          ),
-        )
-        .whenComplete(() {
-          if (mounted) setState(() => _isObscuredByOverlay = false);
-        });
   }
 
   void _onTap(int i) {
@@ -259,9 +227,8 @@ class _RootShellState extends State<RootShell> {
       return;
     }
 
-    // 검색 버튼 클릭 시: 현재 화면에서 바로 SearchOverlay 열기
+    // 검색 버튼 클릭 시: 검색 화면 열기
     if (i == 1) {
-      // 탭 전환 없이 바로 검색 화면 열기 (현재 화면 위에서)
       _openSearchScreen();
       return;
     }
@@ -298,24 +265,27 @@ class _RootShellState extends State<RootShell> {
 
   @override
   Widget build(BuildContext context) {
-    final auth = context.watch<AuthProvider>();
-    _ensurePagesBuilt(auth.username);
-
-    // HomeScreen을 현재 탭 활성 상태와 함께 구성 (리스너 없이 단순 전달)
+    // HomeScreen을 현재 탭 활성 상태와 함께 구성
     final homeScreen = HomeScreen(
       preloadedHomeData: widget.preloadedHomeData,
       key: _homeScreenKey,
       searchResultsNotifier: _isShowingSearchResults,
       isActive: _index == 0 && !_isObscuredByOverlay,
+      onOpenSearchScreen: (query) => _openSearchScreen(query),
     );
 
     return Material(
       child: Stack(
         children: [
-          // 상태 보존을 위해 IndexedStack 사용
+          // 메인 화면들
           IndexedStack(
             index: _index,
-            children: [homeScreen, _pages[1], _pages[2], _pages[3]],
+            children: [
+              homeScreen,
+              const SizedBox.shrink(), // 검색은 별도 라우트로 push
+              const SizedBox.shrink(), // 작성은 라우트로 별도 push
+              const UserProfileScreen(),
+            ],
           ),
           // 플로팅 바텀 네비게이션 바
           Positioned(
@@ -325,12 +295,13 @@ class _RootShellState extends State<RootShell> {
             child: ValueListenableBuilder<bool>(
               valueListenable: _isShowingSearchResults,
               builder: (context, isShowingSearchResults, child) {
-                // 검색 결과를 표시 중일 때는 검색 아이콘(1번)을 활성화
+                // 검색 결과를 표시 중일 때는 홈(0)에서만 검색 아이콘(1번) 활성화
                 final displayIndex =
                     (_index == 0 && isShowingSearchResults) ? 1 : _index;
 
                 return CustomBottomNavigationBar(
                   currentIndex: displayIndex,
+                  actualIndex: _index, // 실제 화면 인덱스 전달
                   onTap: _onTap,
                   isSearching: context.watch<SearchProvider>().isSearchActive,
                 );

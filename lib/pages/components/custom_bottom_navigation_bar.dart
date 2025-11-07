@@ -12,11 +12,15 @@ class CustomBottomNavigationBar extends StatelessWidget {
   /// 검색 중인지 여부 (검색 중일 때 검색 아이콘을 primary 색상으로 표시)
   final bool isSearching;
 
+  /// 실제 화면 인덱스 (배경색 결정용, currentIndex와 다를 수 있음)
+  final int? actualIndex;
+
   const CustomBottomNavigationBar({
     Key? key,
     required this.currentIndex,
     required this.onTap,
     this.isSearching = false,
+    this.actualIndex,
   }) : super(key: key);
 
   @override
@@ -36,7 +40,7 @@ class CustomBottomNavigationBar extends StatelessWidget {
           height: 72,
           decoration: BoxDecoration(
             color:
-                currentIndex == 3
+                (actualIndex ?? currentIndex) == 3
                     ? Theme.of(context).colorScheme.background
                     : Colors.transparent,
           ),
@@ -64,18 +68,12 @@ class CustomBottomNavigationBar extends StatelessWidget {
                         width: iconSize,
                         height: iconSize,
                         color:
-                            // 검색 중일 때: 검색 아이콘만 primary, 나머지는 기본 색상
-                            isSearching
-                                ? (index == 1
-                                    ? Theme.of(context).colorScheme.primary
-                                    : Theme.of(
-                                      context,
-                                    ).colorScheme.onSurface.withOpacity(0.7))
-                                : (index == currentIndex
-                                    ? Theme.of(context).colorScheme.primary
-                                    : Theme.of(
-                                      context,
-                                    ).colorScheme.onSurface.withOpacity(0.7)),
+                            // 현재 선택된 아이콘만 primary, 나머지는 기본 색상
+                            index == currentIndex
+                                ? Theme.of(context).colorScheme.primary
+                                : Theme.of(
+                                  context,
+                                ).colorScheme.onSurface.withOpacity(0.7),
                       ),
                     ),
                   ),
