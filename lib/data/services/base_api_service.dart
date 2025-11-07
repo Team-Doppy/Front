@@ -18,7 +18,7 @@ class BaseApiService {
     _setupInterceptors();
   }
 
-  static const String baseUrl = "http://13.125.227.178:5000";
+  static const String baseUrl = "https://www.nbillion.co.kr";
   final AuthService _authService = AuthService();
 
   late final Dio _dio = Dio(

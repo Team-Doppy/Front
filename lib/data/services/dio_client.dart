@@ -2,6 +2,7 @@
 
 import 'dart:async';
 import 'package:dio/dio.dart';
+import 'package:doppy/data/services/base_api_service.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'auth_service.dart';
@@ -14,7 +15,7 @@ class DioClient {
     _setupInterceptors();
   }
 
-  static const String baseUrl = "http://13.125.227.178:5000";
+  static const String baseUrl = BaseApiService.baseUrl;
   final AuthService _authService = AuthService();
 
   late final Dio _dio = Dio(

@@ -1,3 +1,4 @@
+import 'package:doppy/data/services/base_api_service.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
@@ -12,7 +13,7 @@ class AuthService {
   final String _tokenKey = 'auth_token';
   final String _refreshTokenKey = 'refresh_token';
   final String _usernameKey = 'username';
-  static const String baseUrl = "http://13.125.227.178:5000";
+  static const String baseUrl = BaseApiService.baseUrl;
 
   // 앱 시작 시 1회 로드되어 메모리에 보관되는 동기 접근용 사용자명
   static String? _cachedUsername;
