@@ -124,13 +124,9 @@ class _DrawingOverlayState extends State<DrawingOverlay>
   @override
   Widget build(BuildContext context) {
     // 하단 툴바를 가리기 위해 불투명한 배경 사용
-    final bgColor =
-        Theme.of(context).brightness == Brightness.dark
-            ? const Color(0xFF121212)
-            : const Color(0xFFF5F5F5);
 
     return Scaffold(
-      backgroundColor: bgColor,
+      backgroundColor: Colors.transparent,
 
       body: Stack(
         children: [
@@ -145,7 +141,7 @@ class _DrawingOverlayState extends State<DrawingOverlay>
                     background: Container(
                       width: constraints.maxWidth,
                       height: constraints.maxHeight,
-                      color: bgColor, // Scaffold와 같은 배경색
+                      color: Colors.transparent, // Scaffold와 같은 배경색
                     ),
                     showDefaultActions: false,
                     showDefaultTools: false,
@@ -328,9 +324,11 @@ class _DrawingOverlayState extends State<DrawingOverlay>
             child: FadeTransition(
               opacity: _fadeAnimation,
               child: SingleChildScrollView(
+                physics: const NeverScrollableScrollPhysics(),
                 scrollDirection: Axis.horizontal,
                 padding: const EdgeInsets.symmetric(horizontal: 16),
                 child: Container(
+                  width: MediaQuery.of(context).size.width,
                   padding: const EdgeInsets.symmetric(
                     vertical: 12,
                     horizontal: 12,
@@ -357,7 +355,6 @@ class _DrawingOverlayState extends State<DrawingOverlay>
                       ),
                       // 메인 툴바
                       Row(
-                        mainAxisSize: MainAxisSize.min,
                         children: [
                           _svgToolButton(
                             'assets/icons/pen.svg',
@@ -402,7 +399,6 @@ class _DrawingOverlayState extends State<DrawingOverlay>
     switch (_menu) {
       case _Menu.color:
         return Row(
-          mainAxisSize: MainAxisSize.min,
           children: _palette
               .map((c) {
                 final isSelected = _color == c && !_eraser;
@@ -545,6 +541,8 @@ class _DrawingOverlayState extends State<DrawingOverlay>
   // 색상 버튼 (선택된 색상을 표시)
   Widget _buildColorButton() {
     final active = _menu == _Menu.color;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
     return GestureDetector(
       onTap: () => _toggleMenu(_Menu.color),
       child: Container(
@@ -552,8 +550,12 @@ class _DrawingOverlayState extends State<DrawingOverlay>
         decoration: BoxDecoration(
           color:
               active
-                  ? Theme.of(context).colorScheme.onSurface.withOpacity(0.22)
-                  : Theme.of(context).colorScheme.onSurface.withOpacity(0.10),
+                  ? (isDark
+                      ? Colors.white.withOpacity(0.35) // 다크 모드: 더 밝은 회색
+                      : Colors.black.withOpacity(0.25)) // 라이트 모드: 더 어두운 회색
+                  : (isDark
+                      ? Colors.white.withOpacity(0.10)
+                      : Colors.black.withOpacity(0.08)),
           borderRadius: BorderRadius.circular(30),
         ),
         child: Stack(
@@ -592,6 +594,8 @@ class _DrawingOverlayState extends State<DrawingOverlay>
     double? width,
     double? height,
   }) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
     return GestureDetector(
       onTap: onTap,
       child: Container(
@@ -599,8 +603,12 @@ class _DrawingOverlayState extends State<DrawingOverlay>
         decoration: BoxDecoration(
           color:
               active
-                  ? Theme.of(context).colorScheme.onSurface.withOpacity(0.22)
-                  : Theme.of(context).colorScheme.onSurface.withOpacity(0.10),
+                  ? (isDark
+                      ? Colors.white.withOpacity(0.35) // 다크 모드: 더 밝은 회색
+                      : Colors.black.withOpacity(0.25)) // 라이트 모드: 더 어두운 회색
+                  : (isDark
+                      ? Colors.white.withOpacity(0.10)
+                      : Colors.black.withOpacity(0.08)),
           borderRadius: BorderRadius.circular(30),
         ),
         child: SvgPicture.asset(
@@ -624,7 +632,12 @@ class _DrawingOverlayState extends State<DrawingOverlay>
       '[DrawingOverlay] export: json=${jsonList.length}, strokes=${strokesData.length}',
     );
 
-    // 2) 바운딩 박스 계산
+    if (strokesData.isEmpty) {
+      debugPrint('[DrawingOverlay] export: skip (empty strokes)');
+      return;
+    }
+
+    // 2) 모든 스트로크의 바운딩 박스 계산
     Rect? bounds = _computeStrokeBoundsFromStrokes(strokesData);
 
     // 3) 바운드가 없으면 PNG로 폴백
@@ -650,94 +663,11 @@ class _DrawingOverlayState extends State<DrawingOverlay>
     debugPrint(
       '[DrawingOverlay] export: bounds=$bounds, scrollY=$scrollY, docPos=$position',
     );
-    if (strokesData.isEmpty) {
-      debugPrint('[DrawingOverlay] export: skip (empty strokes)');
-      return;
-    }
 
-    // 스트로크를 공간적으로 그룹화 (떨어진 그림을 각각 스티커로)
-    final groups = _groupStrokesByProximity(strokesData);
-    debugPrint('[DrawingOverlay] export: ${groups.length} groups created');
-
-    // 각 그룹을 개별 스티커로 생성
-    for (int idx = 0; idx < groups.length; idx++) {
-      final group = groups[idx];
-      final groupBounds = _computeStrokeBoundsFromStrokes(group);
-      if (groupBounds != null) {
-        final groupPos = Offset(groupBounds.left, groupBounds.top + scrollY);
-        // groupIndex 전달하여 고유 ID 보장
-        widget.onSubmitDrawing(group, groupPos, groupIndex: idx);
-      }
-    }
+    // 모든 스트로크를 하나의 드로잉으로 통합하여 추출
+    widget.onSubmitDrawing(strokesData, position, groupIndex: 0);
 
     if (mounted) Navigator.of(context).pop();
-  }
-
-  // 스트로크를 공간적 근접도로 그룹화
-  List<List<Map<String, dynamic>>> _groupStrokesByProximity(
-    List<Map<String, dynamic>> strokes,
-  ) {
-    if (strokes.isEmpty) return [];
-    if (strokes.length == 1) return [strokes];
-
-    final List<List<Map<String, dynamic>>> groups = [];
-    final List<bool> assigned = List.filled(strokes.length, false);
-
-    for (int i = 0; i < strokes.length; i++) {
-      if (assigned[i]) continue;
-
-      final group = <Map<String, dynamic>>[strokes[i]];
-      assigned[i] = true;
-
-      // 이 스트로크와 가까운 다른 스트로크들을 찾기
-      final bounds1 = _getStrokeBounds(strokes[i]);
-      if (bounds1 == null) continue;
-
-      for (int j = i + 1; j < strokes.length; j++) {
-        if (assigned[j]) continue;
-
-        final bounds2 = _getStrokeBounds(strokes[j]);
-        if (bounds2 == null) continue;
-
-        // 두 스트로크의 거리 계산 (바운딩 박스 중심 기준)
-        final dist = (bounds1.center - bounds2.center).distance;
-
-        // 100px 이내면 같은 그룹으로 간주
-        if (dist < 100) {
-          group.add(strokes[j]);
-          assigned[j] = true;
-        }
-      }
-
-      groups.add(group);
-    }
-
-    return groups;
-  }
-
-  Rect? _getStrokeBounds(Map<String, dynamic> stroke) {
-    final points = stroke['points'] as List?;
-    if (points == null || points.isEmpty) return null;
-
-    double minX = double.infinity;
-    double minY = double.infinity;
-    double maxX = double.negativeInfinity;
-    double maxY = double.negativeInfinity;
-
-    for (final p in points) {
-      if (p is! Map) continue;
-      final x = (p['x'] as num?)?.toDouble();
-      final y = (p['y'] as num?)?.toDouble();
-      if (x == null || y == null) continue;
-
-      minX = minX < x ? minX : x;
-      minY = minY < y ? minY : y;
-      maxX = maxX > x ? maxX : x;
-      maxY = maxY > y ? maxY : y;
-    }
-
-    if (minX == double.infinity) return null;
-    return Rect.fromLTRB(minX, minY, maxX, maxY);
   }
 
   List<Map<String, dynamic>> _convertJsonToStrokes(List<dynamic> jsonList) {

@@ -764,24 +764,44 @@ class EditorService extends ChangeNotifier {
     try {
       if (usernames.isEmpty) return;
 
-      // 이전 문단 정렬을 승계
-      final int caretIndex = _getCaretNodeIndexSafe();
-      final String inheritedAlign = _getPreviousParagraphAlign(caretIndex);
+      final doc = editor.document;
+      final safeIndex = _getCaretNodeIndexSafe();
+      int insertIndex = safeIndex;
 
-      // 각 멘션을 개별 노드로 생성
-      int insertIndex = _getCaretNodeIndexSafe();
-
-      // 현재 커서 위치의 다음 줄에 삽입
+      // 🎯 제목 노드(index 0)에 커서가 있으면 강제로 다음 라인에 삽입
       if (insertIndex == 0) {
         insertIndex = 1;
+        print('🎯 [Mention] 제목 노드에 커서가 있음, 다음 라인(index 1)에 삽입');
+
+        // 제목 다음에 빈 문단이 없으면 먼저 생성
+        if (doc.nodeCount < 2) {
+          final paragraphId = 'p_${DateTime.now().millisecondsSinceEpoch}';
+          final ParagraphNode newParagraph = ParagraphNode(
+            id: paragraphId,
+            text: AttributedText(''),
+            metadata: {'textAlign': 'center'},
+          );
+          doc.insertNodeAt(1, newParagraph);
+          print('📝 [Mention] 제목 다음에 빈 문단 생성');
+        }
       } else {
-        // 현재 커서가 있는 문단에 텍스트가 있으면 다음 줄에 삽입
-        final currentNode = document.getNodeAt(insertIndex);
-        if (currentNode is ParagraphNode &&
-            currentNode.text.text.trim().isNotEmpty) {
-          insertIndex = insertIndex + 1;
+        // 🎯 현재 커서가 있는 문단에 텍스트가 있으면 다음 줄에 삽입
+        if (insertIndex < doc.nodeCount) {
+          final currentNode = doc.getNodeAt(insertIndex);
+          if (currentNode is ParagraphNode) {
+            final hasText = currentNode.text.text.trim().isNotEmpty;
+            if (hasText) {
+              insertIndex = insertIndex + 1;
+              print('🎯 [Mention] 현재 문단에 텍스트가 있음, 다음 줄(index $insertIndex)에 삽입');
+            }
+          }
         }
       }
+
+      if (insertIndex > doc.nodeCount) insertIndex = doc.nodeCount;
+
+      // 이전 문단 정렬을 승계
+      final String inheritedAlign = _getPreviousParagraphAlign(insertIndex);
 
       // 각 username을 개별 노드로 삽입
       for (int i = 0; i < usernames.length; i++) {
@@ -806,11 +826,8 @@ class EditorService extends ChangeNotifier {
           },
         );
 
-        // 각 노드를 순서대로 삽입
-        final doc = document;
-        if (insertIndex > doc.nodeCount) {
-          insertIndex = doc.nodeCount;
-        }
+        final bool isLastMention = (i == usernames.length - 1);
+        final bool insertingAtEnd = insertIndex == doc.nodeCount;
 
         final edits = <EditRequest>[
           InsertNodeAtIndexRequest(
@@ -819,8 +836,8 @@ class EditorService extends ChangeNotifier {
           ),
         ];
 
-        // 마지막 노드가 문서 끝에 삽입되면 빈 문단 추가
-        if (insertIndex == doc.nodeCount) {
+        // 🎯 마지막 멘션이 문서 끝에 삽입되면 빈 문단 추가
+        if (isLastMention && insertingAtEnd) {
           final String paragraphId =
               'p_${DateTime.now().millisecondsSinceEpoch}';
           final ParagraphNode newParagraph = ParagraphNode(
@@ -834,6 +851,22 @@ class EditorService extends ChangeNotifier {
               newNode: newParagraph,
             ),
           );
+
+          // 커서를 새 빈 문단으로 이동
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            editor.execute([
+              ChangeSelectionRequest(
+                DocumentSelection.collapsed(
+                  position: DocumentPosition(
+                    nodeId: paragraphId,
+                    nodePosition: const TextNodePosition(offset: 0),
+                  ),
+                ),
+                SelectionChangeType.placeCaret,
+                SelectionReason.userInteraction,
+              ),
+            ]);
+          });
         }
 
         editor.execute(edits);
@@ -859,10 +892,7 @@ class EditorService extends ChangeNotifier {
       localPath: localPath,
       thumbnailPath: thumbnailPath ?? '',
     );
-    final int safeIndex = _getCaretNodeIndexSafe();
-    editor.execute([
-      InsertNodeAtIndexRequest(nodeIndex: safeIndex, newNode: node),
-    ]);
+    _insertComponentNodeAtNextLine(node);
     return id;
   }
 
@@ -919,16 +949,13 @@ class EditorService extends ChangeNotifier {
     String colorHex = '#FF5252',
     required String url,
   }) {
-    final int safeIndex = _getCaretNodeIndexSafe();
     final node = ClipNode(
       id: 'clip_${DateTime.now().millisecondsSinceEpoch}',
       label: label,
       colorHex: colorHex,
       url: url,
     );
-    editor.execute([
-      InsertNodeAtIndexRequest(nodeIndex: safeIndex, newNode: node),
-    ]);
+    _insertComponentNodeAtNextLine(node);
   }
 
   DocumentNode? findNodeAtPosition(Offset position) {

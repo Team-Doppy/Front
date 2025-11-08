@@ -19,6 +19,7 @@ class CustomImageEditorScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final nodeService = context.read<NodeComponentService>();
     final selectedId = nodeService.selectedImageId;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
 
     final theme = ThemeData(
       colorScheme: ColorScheme.fromSeed(
@@ -27,6 +28,12 @@ class CustomImageEditorScreen extends StatelessWidget {
       ),
       useMaterial3: true,
     );
+
+    // 테마에 따른 색상 설정
+    final bgColor = isDark ? Colors.black : Colors.white;
+    final fgColor = isDark ? Colors.white : Colors.black;
+    final barBgColor =
+        isDark ? Colors.black.withOpacity(0.9) : Colors.white.withOpacity(0.95);
 
     final configs = ProImageEditorConfigs(
       designMode:
@@ -98,10 +105,11 @@ class CustomImageEditorScreen extends StatelessWidget {
       ),
       mainEditor: MainEditorConfigs(
         style: MainEditorStyle(
-          appBarBackground: Theme.of(context).colorScheme.background,
-          appBarColor: Theme.of(context).colorScheme.onSurface,
-          bottomBarBackground: Theme.of(context).colorScheme.background,
-          background: Theme.of(context).colorScheme.background,
+          appBarBackground: barBgColor,
+          appBarColor: fgColor,
+          bottomBarBackground: barBgColor,
+          bottomBarColor: fgColor,
+          background: bgColor,
         ),
         icons: MainEditorIcons(
           closeEditor: Icons.close,
@@ -116,9 +124,9 @@ class CustomImageEditorScreen extends StatelessWidget {
       textEditor: TextEditorConfigs(
         customTextStyles: [GoogleFonts.roboto(), GoogleFonts.lato()],
         style: TextEditorStyle(
-          appBarBackground: Theme.of(context).colorScheme.background,
-          appBarColor: Theme.of(context).colorScheme.onSurface,
-          bottomBarBackground: Theme.of(context).colorScheme.background,
+          appBarBackground: barBgColor,
+          appBarColor: fgColor,
+          bottomBarBackground: barBgColor,
           background: Colors.transparent,
         ),
         icons: const TextEditorIcons(
@@ -134,14 +142,12 @@ class CustomImageEditorScreen extends StatelessWidget {
       ),
       paintEditor: PaintEditorConfigs(
         style: PaintEditorStyle(
-          appBarBackground: Theme.of(context).colorScheme.background,
-          appBarColor: Theme.of(context).colorScheme.onSurface,
-          bottomBarBackground: Theme.of(context).colorScheme.background,
-          background: Theme.of(context).colorScheme.background,
-          bottomBarActiveItemColor: Theme.of(context).colorScheme.onSurface,
-          bottomBarInactiveItemColor: Theme.of(
-            context,
-          ).colorScheme.onSurface.withOpacity(0.4),
+          appBarBackground: barBgColor,
+          appBarColor: fgColor,
+          bottomBarBackground: barBgColor,
+          background: bgColor,
+          bottomBarActiveItemColor: fgColor,
+          bottomBarInactiveItemColor: fgColor.withOpacity(0.5),
         ),
         icons: PaintEditorIcons(
           backButton: Icons.arrow_back_ios_new,
@@ -159,9 +165,9 @@ class CustomImageEditorScreen extends StatelessWidget {
       ),
       filterEditor: FilterEditorConfigs(
         style: FilterEditorStyle(
-          appBarBackground: Theme.of(context).colorScheme.background,
-          appBarColor: Theme.of(context).colorScheme.onSurface,
-          background: Theme.of(context).colorScheme.background,
+          appBarBackground: barBgColor,
+          appBarColor: fgColor,
+          background: bgColor,
         ),
         icons: FilterEditorIcons(
           backButton: Icons.arrow_back_ios_new,
@@ -208,10 +214,9 @@ class CustomImageEditorScreen extends StatelessWidget {
 
       blurEditor: BlurEditorConfigs(
         style: BlurEditorStyle(
-          appBarBackgroundColor: Theme.of(context).colorScheme.background,
-          appBarForegroundColor: Theme.of(context).colorScheme.onSurface,
-
-          background: Theme.of(context).colorScheme.background,
+          appBarBackgroundColor: barBgColor,
+          appBarForegroundColor: fgColor,
+          background: bgColor,
         ),
         icons: BlurEditorIcons(
           backButton: Icons.arrow_back_ios_new,
@@ -236,17 +241,89 @@ class CustomImageEditorScreen extends StatelessWidget {
   }
 }
 
+// 중복 클릭 방지를 위한 전역 플래그
+bool _isImageEditorOpening = false;
+
 /// 헬퍼: 에디터를 열고 결과 바이트를 돌려받는다. (취소 시 null)
+/// 네트워크 이미지 로딩 중 로딩 인디케이터를 표시하고 중복 클릭을 방지합니다.
 Future<Uint8List?> openImageEditorPlus(
   BuildContext context, {
   required Uint8List imageBytes,
 }) async {
-  final edited = await Navigator.push<Uint8List?>(
-    context,
-    MaterialPageRoute(
-      builder: (context) => CustomImageEditorScreen(imageBytes: imageBytes),
-      fullscreenDialog: true,
-    ),
-  );
-  return edited;
+  if (_isImageEditorOpening) {
+    debugPrint('[ImageEditor] 이미 열리는 중입니다. 중복 클릭 무시됨.');
+    return null;
+  }
+
+  _isImageEditorOpening = true;
+
+  try {
+    // 로딩 다이얼로그 표시
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      barrierColor: Colors.black.withOpacity(0.5),
+      builder: (BuildContext dialogContext) {
+        return PopScope(
+          canPop: false,
+          child: Center(
+            child: Container(
+              padding: const EdgeInsets.all(24),
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.surface,
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  CircularProgressIndicator(
+                    valueColor: AlwaysStoppedAnimation<Color>(
+                      Theme.of(context).colorScheme.primary,
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    '이미지 불러오는 중...',
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.onSurface,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+
+    // 최소 로딩 시간 보장 (너무 빠르게 깜빡이는 것 방지)
+    await Future.delayed(const Duration(milliseconds: 300));
+
+    // 로딩 다이얼로그 닫기
+    if (context.mounted) {
+      Navigator.of(context, rootNavigator: true).pop();
+    }
+
+    // 에디터 열기
+    final edited = await Navigator.push<Uint8List?>(
+      context,
+      MaterialPageRoute(
+        builder: (context) => CustomImageEditorScreen(imageBytes: imageBytes),
+        fullscreenDialog: true,
+      ),
+    );
+
+    return edited;
+  } catch (e) {
+    debugPrint('[ImageEditor] 에러 발생: $e');
+    // 에러 발생 시 로딩 다이얼로그 닫기
+    if (context.mounted) {
+      Navigator.of(context, rootNavigator: true).pop();
+    }
+    return null;
+  } finally {
+    _isImageEditorOpening = false;
+  }
 }

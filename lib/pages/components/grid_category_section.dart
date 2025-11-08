@@ -991,7 +991,7 @@ class _GridCategorySectionState extends State<GridCategorySection> {
         final textWidth = textPainter.size.width;
 
         return Transform.translate(
-          offset: Offset(-textWidth / 2 + 40, 0),
+          offset: Offset(-textWidth / 2 + 40, -30),
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             decoration: BoxDecoration(

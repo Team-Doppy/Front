@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:doppy/data/models/user_model.dart';
+import 'package:doppy/l10n/app_localizations.dart';
 import 'package:flutter/material.dart';
 import 'native_image_picker.dart';
 
@@ -44,7 +45,7 @@ class ProfileImageBottomSheet extends StatelessWidget {
               title: Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16),
                 child: Text(
-                  '갤러리에서 선택',
+                  AppLocalizations.of(context).translate('select_from_gallery'),
                   style: TextStyle(
                     fontSize: 17,
                     fontWeight: FontWeight.w600,
@@ -76,7 +77,7 @@ class ProfileImageBottomSheet extends StatelessWidget {
               title: Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16),
                 child: Text(
-                  '기본 이미지로 변경',
+                  AppLocalizations.of(context).translate('change_to_default'),
                   style: TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.w600,
@@ -97,7 +98,9 @@ class ProfileImageBottomSheet extends StatelessWidget {
                     Navigator.pop(context);
                     ScaffoldMessenger.of(context).showSnackBar(
                       SnackBar(
-                        content: Text('변경 실패: $e'),
+                        content: Text(
+                          '${AppLocalizations.of(context).translate('change_failed')}: $e',
+                        ),
                         backgroundColor: theme.colorScheme.error,
                       ),
                     );
@@ -285,7 +288,7 @@ class _ProfileInfoEditBottomSheetState
                     ),
                   ),*/
                   Text(
-                    '별명',
+                    AppLocalizations.of(context).translate('nickname'),
                     style: TextStyle(
                       color: Theme.of(
                         context,
@@ -306,7 +309,9 @@ class _ProfileInfoEditBottomSheetState
                       fontWeight: FontWeight.w400,
                     ),
                     decoration: InputDecoration(
-                      hintText: '별명을 입력하세요 (필수)',
+                      hintText: AppLocalizations.of(
+                        context,
+                      ).translate('nickname_hint'),
                       hintStyle: TextStyle(color: Colors.grey[600]),
                       filled: true,
                       fillColor: Theme.of(context).colorScheme.surfaceVariant,
@@ -342,13 +347,15 @@ class _ProfileInfoEditBottomSheetState
                       ),
                       errorText:
                           widget.nameController.text.trim().isEmpty
-                              ? '별명은 필수입니다'
+                              ? AppLocalizations.of(
+                                context,
+                              ).translate('nickname_required')
                               : null,
                     ),
                   ),
                   const SizedBox(height: 16),
                   Text(
-                    '소개',
+                    AppLocalizations.of(context).translate('introduction'),
                     style: TextStyle(
                       color: Theme.of(
                         context,
@@ -370,7 +377,9 @@ class _ProfileInfoEditBottomSheetState
                       fontWeight: FontWeight.w400,
                     ),
                     decoration: InputDecoration(
-                      hintText: '새로운 소개글을 입력하세요',
+                      hintText: AppLocalizations.of(
+                        context,
+                      ).translate('introduction_hint'),
                       hintStyle: TextStyle(color: Colors.grey[600]),
                       filled: true,
                       fillColor: Theme.of(context).colorScheme.surfaceVariant,
@@ -401,7 +410,9 @@ class _ProfileInfoEditBottomSheetState
                     _buildActionButton(
                       context: context,
                       icon: Icons.save,
-                      label: '저장하기',
+                      label: AppLocalizations.of(
+                        context,
+                      ).translate('save_profile'),
                       onTap: () async {
                         final hasChanges = _hasChanges;
                         if (!hasChanges) return;
@@ -427,7 +438,9 @@ class _ProfileInfoEditBottomSheetState
                             ScaffoldMessenger.of(context).showSnackBar(
                               SnackBar(
                                 content: Text(
-                                  '저장 중 오류가 발생했습니다.',
+                                  AppLocalizations.of(
+                                    context,
+                                  ).translate('save_error'),
                                   style: TextStyle(
                                     color:
                                         Theme.of(context).colorScheme.onError,

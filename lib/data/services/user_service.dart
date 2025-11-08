@@ -135,4 +135,63 @@ class UserService {
       rethrow;
     }
   }
+
+  /// 설정 조회
+  Future<Map<String, bool>> getSettings() async {
+    try {
+      print('[UserService] GET /api/profile/settings');
+      final response = await _dio.get('/api/profile/settings');
+      if (response.statusCode == 200) {
+        final data = response.data;
+        return {
+          'marketingConsent': data['marketingConsent'] as bool? ?? false,
+          'notificationEnabled': data['notificationEnabled'] as bool? ?? true,
+        };
+      }
+      throw Exception('설정 조회 실패: ${response.statusCode}');
+    } catch (e) {
+      if (e is DioException) {
+        throw Exception('설정 조회 실패: ${e.response?.statusCode}');
+      }
+      rethrow;
+    }
+  }
+
+  /// 마케팅 정보 수신 동의 토글
+  Future<bool> toggleMarketingConsent() async {
+    try {
+      print('[UserService] PUT /api/profile/marketing-consent');
+      final response = await _dio.put('/api/profile/marketing-consent');
+      if (response.statusCode == 200) {
+        final newValue = response.data['marketingConsent'] as bool;
+        print('[UserService] marketingConsent toggled to: $newValue');
+        return newValue;
+      }
+      throw Exception('마케팅 동의 토글 실패: ${response.statusCode}');
+    } catch (e) {
+      if (e is DioException) {
+        throw Exception('마케팅 동의 토글 실패: ${e.response?.statusCode}');
+      }
+      rethrow;
+    }
+  }
+
+  /// 알림 허용 토글
+  Future<bool> toggleNotificationEnabled() async {
+    try {
+      print('[UserService] PUT /api/profile/notification-enabled');
+      final response = await _dio.put('/api/profile/notification-enabled');
+      if (response.statusCode == 200) {
+        final newValue = response.data['notificationEnabled'] as bool;
+        print('[UserService] notificationEnabled toggled to: $newValue');
+        return newValue;
+      }
+      throw Exception('알림 토글 실패: ${response.statusCode}');
+    } catch (e) {
+      if (e is DioException) {
+        throw Exception('알림 토글 실패: ${e.response?.statusCode}');
+      }
+      rethrow;
+    }
+  }
 }

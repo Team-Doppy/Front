@@ -1568,8 +1568,7 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
                 // 비동기 대기 제거: 리스너가 터미널에서 스스로 정리
               } catch (e) {
                 debugPrint('video pick/upload error: $e');
-              } finally {
-                // 영상 처리 완료/실패 후 키보드 내리기 보장
+                // 에러 발생 시에만 키보드 내리기
                 if (context.mounted) {
                   FocusManager.instance.primaryFocus?.unfocus();
                 }

@@ -833,7 +833,7 @@ class _VerticalCategorySectionState extends State<VerticalCategorySection> {
         final textWidth = textPainter.size.width;
 
         return Transform.translate(
-          offset: Offset(-textWidth / 2 + 40, 0), // 왼쪽으로 텍스트 중앙만큼 이동
+          offset: Offset(-textWidth / 2 + 40, -30), // 왼쪽으로 텍스트 중앙만큼 이동
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             decoration: BoxDecoration(

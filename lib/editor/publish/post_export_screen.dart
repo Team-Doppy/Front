@@ -1684,18 +1684,7 @@ class _PostExportScreenState extends State<PostExportScreen>
                 child: Container(
                   decoration: BoxDecoration(
                     // 이미지가 없을 때만 테마 배경색 사용
-                    color:
-                        _exportedThumbnailImageUrl.isEmpty
-                            ? Theme.of(context).colorScheme.surface
-                            : Colors.transparent,
-                    border: Border(
-                      top: BorderSide(
-                        color: Theme.of(
-                          context,
-                        ).colorScheme.outline.withOpacity(0.1),
-                        width: 1,
-                      ),
-                    ),
+                    color: Colors.transparent,
                   ),
                   child: Padding(
                     padding: const EdgeInsets.fromLTRB(20, 30, 20, 16),

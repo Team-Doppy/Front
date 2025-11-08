@@ -510,7 +510,7 @@ class _PostListState extends State<PostList> {
                                 exported:
                                     _items[_currentIndex].toExportedData(),
                                 heroTag:
-                                    'post-hero-${_items[_currentIndex].id}-$_currentIndex',
+                                    'post-hero-${widget.sectionLabel ?? "main"}-${_items[_currentIndex].id}-$_currentIndex',
                               ),
                           transitionsBuilder: (
                             context,
@@ -579,7 +579,10 @@ class _PostListState extends State<PostList> {
             _pullProgress = progress;
           });
         },
-        child: _buildScrollView(context),
+        child:
+            widget.showCardShimmer
+                ? _buildRefreshingShimmer()
+                : _buildScrollView(context),
       ),
     );
   }
@@ -625,7 +628,8 @@ class _PostListState extends State<PostList> {
                     pageBuilder:
                         (_, __, ___) => PostReaderScreen(
                           exported: post.toExportedData(),
-                          heroTag: 'post-hero-${post.id}-$index',
+                          heroTag:
+                              'post-hero-${widget.sectionLabel ?? "main"}-${post.id}-$index',
                         ),
                     transitionsBuilder: (
                       context,
@@ -695,7 +699,8 @@ class _PostListState extends State<PostList> {
                         : PostCard(
                           containerWidth: widget.containerWidth,
                           thumbnailImageUrl: post.thumbnailImageUrl,
-                          heroTag: 'post-hero-${post.id}-$index',
+                          heroTag:
+                              'post-hero-${widget.sectionLabel ?? "main"}-${post.id}-$index',
                           title: post.title,
                           author: post.author,
                           authorProfileImageUrl: post.authorProfileImageUrl,
@@ -817,13 +822,8 @@ class _PostListState extends State<PostList> {
   Widget _buildImageAreaShimmer() {
     // PostCard의 이미지 영역과 동일 크기로 보이도록, 이미지 자체만 쉬머 느낌으로
     return Container(
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: Theme.of(context).colorScheme.surfaceVariant,
-          width: 1.5,
-        ),
-      ),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(borderRadius: BorderRadius.circular(12)),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(12),
         child: ShimmerBox(

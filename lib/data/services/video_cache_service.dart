@@ -34,15 +34,19 @@ class VideoCacheService {
       _evictLeastRecentlyUsed();
     }
 
-    print('[VideoCache] 새로 생성: $key');
     final controller = VideoPlayerController.networkUrl(Uri.parse(url));
 
-    controller.initialize().then((_) {
-      // 초기화만 하고, 재생/정지는 각 위젯에서 결정
-      controller.setLooping(true);
-      controller.setVolume(0); // 기본 음소거
-      // pause()를 호출하지 않음 - 각 위젯이 isVisible 상태에 따라 제어
-    });
+    controller
+        .initialize()
+        .then((_) {
+          // 초기화만 하고, 재생/정지는 각 위젯에서 결정
+          controller.setLooping(true);
+          controller.setVolume(0); // 기본 음소거
+          print('[VideoCache] ✅ 초기화 성공: $key');
+        })
+        .catchError((e) {
+          print('[VideoCache] ❌ 초기화 실패: $key');
+        });
 
     _controllers[key] = controller;
     _refCounts[key] = 1;

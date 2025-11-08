@@ -34,6 +34,11 @@ import 'utils/route_observer.dart';
 // Global NavigatorKey for accessing context from anywhere
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
+// 앱 버전
+class AppConstants {
+  static const String appVersion = '1.0.0';
+}
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 

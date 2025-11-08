@@ -290,7 +290,7 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
         child: RawScrollbar(
           controller: _scrollController,
           thumbColor: Theme.of(context).colorScheme.onSurface.withOpacity(0.3),
-          thickness: 3,
+          thickness: 4,
           radius: const Radius.circular(8),
           child: CustomScrollView(
             controller: _scrollController,

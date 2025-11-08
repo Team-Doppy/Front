@@ -238,6 +238,16 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
   Future<void> _refreshSearchResults() async {
     if (_searchQuery.trim().isEmpty) return;
+
+    // 새로고침 시 shimmer 표시
+    setState(() {
+      if (_currentSectionIndex == 0) {
+        _friendsIsCardShimmering = true;
+      } else {
+        _allIsCardShimmering = true;
+      }
+    });
+
     try {
       final svc = context.read<SearchService>();
       await svc.startBlogsSearch(_searchQuery, size: 20);
@@ -274,6 +284,7 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           _friendsHasMoreData = false;
           _friendsCurrentPostIndex = 0;
           _friendsRefreshCount++; // 강제 새로고침
+          _friendsIsCardShimmering = false; // shimmer 해제
         } else {
           _allPosts = refreshed;
           _allIsLoading = false;
@@ -281,6 +292,7 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           _allHasMoreData = false;
           _allCurrentPostIndex = 0;
           _allRefreshCount++; // 강제 새로고침
+          _allIsCardShimmering = false; // shimmer 해제
         }
         _searchHasMore = svc.blogsHasMore;
       });
@@ -289,6 +301,16 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       context.read<SearchProvider>().setSearchResults(refreshed, _searchQuery);
     } catch (e) {
       debugPrint('[HomeScreen] 검색 새로고침 실패: $e');
+      // 에러 발생 시에도 shimmer 해제
+      if (mounted) {
+        setState(() {
+          if (_currentSectionIndex == 0) {
+            _friendsIsCardShimmering = false;
+          } else {
+            _allIsCardShimmering = false;
+          }
+        });
+      }
     }
   }
 
@@ -494,6 +516,10 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     try {
       if (refresh) {
         _resetFriendsFeed(showLoading: true);
+        // 새로고침 시 shimmer 표시
+        setState(() {
+          _friendsIsCardShimmering = true;
+        });
       } else if (!_friendsIsRetrying) {
         // 재시도 중이 아닐 때만 로딩 상태 변경
         setState(() {
@@ -529,7 +555,7 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         _friendsIsLoadingMore = false;
         _friendsHasMoreData = posts.length == 10;
         _friendsCurrentPage++;
-        _friendsIsCardShimmering = false;
+        _friendsIsCardShimmering = false; // 데이터 로드 완료 즉시 shimmer 해제
         _friendsError = null; // 성공 시 에러 클리어
       });
 
@@ -544,6 +570,7 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         _friendsError = networkError;
         _friendsIsLoading = false;
         _friendsIsLoadingMore = false;
+        _friendsIsCardShimmering = false; // 에러 시에도 shimmer 해제
       });
     }
   }
@@ -572,6 +599,10 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     try {
       if (refresh) {
         _resetAllFeed(showLoading: true);
+        // 새로고침 시 shimmer 표시
+        setState(() {
+          _allIsCardShimmering = true;
+        });
       } else if (!_allIsRetrying) {
         // 재시도 중이 아닐 때만 로딩 상태 변경
         setState(() {
@@ -607,7 +638,7 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         _allIsLoadingMore = false;
         _allHasMoreData = posts.length == 10;
         _allCurrentPage++;
-        _allIsCardShimmering = false;
+        _allIsCardShimmering = false; // 데이터 로드 완료 즉시 shimmer 해제
         _allError = null; // 성공 시 에러 클리어
       });
 
@@ -622,6 +653,7 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         _allError = networkError;
         _allIsLoading = false;
         _allIsLoadingMore = false;
+        _allIsCardShimmering = false; // 에러 시에도 shimmer 해제
       });
     }
   }

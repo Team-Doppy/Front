@@ -132,6 +132,17 @@ class _ParagraphWithDropLinesState extends State<_ParagraphWithDropLines>
         if (mounted) setState(() => _scatterActive = false);
       }
     });
+
+    // 🎯 읽기 모드에서 스포일러 블러 렌더링을 위한 초기 리빌드
+    // 첫 프레임에서는 RenderBox가 아직 레이아웃되지 않아 _collectSpoilerBoxes가 빈 리스트 반환
+    // 두 번째 프레임에서 레이아웃 완료 후 정확한 박스 계산
+    if (!widget.isEditing) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          setState(() {});
+        }
+      });
+    }
   }
 
   @override

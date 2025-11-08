@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:doppy/data/models/user_model.dart';
 import 'package:doppy/data/services/comment_service.dart';
+import 'package:doppy/l10n/app_localizations.dart';
 
 /// 개별 댓글 아이템 위젯
 class CommentItem extends StatefulWidget {
@@ -468,7 +469,7 @@ Future<String?> openCommentMenu(
         child: Container(
           padding: const EdgeInsets.symmetric(vertical: 2, horizontal: 8),
           child: Text(
-            '답글',
+            AppLocalizations.of(context).translate('reply'),
             style: TextStyle(
               color: Theme.of(context).colorScheme.onSurface,
               fontSize: 14,
@@ -484,7 +485,7 @@ Future<String?> openCommentMenu(
           child: Container(
             padding: const EdgeInsets.symmetric(vertical: 2, horizontal: 8),
             child: Text(
-              '수정',
+              AppLocalizations.of(context).translate('edit'),
               style: TextStyle(
                 color: Theme.of(context).colorScheme.onSurface,
                 fontSize: 14,
@@ -500,7 +501,7 @@ Future<String?> openCommentMenu(
           child: Container(
             padding: const EdgeInsets.symmetric(vertical: 2, horizontal: 8),
             child: Text(
-              '삭제',
+              AppLocalizations.of(context).translate('delete'),
               style: TextStyle(
                 color: Theme.of(context).colorScheme.onSurface,
                 fontSize: 14,
@@ -515,7 +516,7 @@ Future<String?> openCommentMenu(
         child: Container(
           padding: const EdgeInsets.symmetric(vertical: 2, horizontal: 8),
           child: Text(
-            '복사',
+            AppLocalizations.of(context).translate('copy'),
             style: TextStyle(
               color: Theme.of(context).colorScheme.onSurface,
               fontSize: 14,

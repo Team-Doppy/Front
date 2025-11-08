@@ -155,7 +155,7 @@ class _PostReaderScreenState extends State<PostReaderScreen>
             _allImageUrls = [clipNode.url];
             _isVideoViewer = true;
             _showImageViewer = true;
-            _showFloatingButtons = false; // 🎯 플로팅 버튼 숨기기
+            _showFloatingButtons = false;
           });
         }
         break;
@@ -515,11 +515,16 @@ class _PostReaderScreenState extends State<PostReaderScreen>
     // WebSocket 연결 (백그라운드, 실패해도 무시)
     _commentService.connectWebSocketForCurrentPost().catchError((e) {});
 
-    // 댓글 로드 (페이지네이션)
-    await _commentService.loadComments();
+    // 🎯 댓글창 열 때는 항상 최신 댓글부터 다시 로드 (refresh)
+    await _commentService.refreshComments();
   }
 
   void _closeCommentsOverlay() {
+    // 댓글창 닫기 시작 시 플로팅 버튼 즉시 숨김
+    setState(() {
+      _showFloatingButtons = false;
+    });
+
     _commentOverlayCtrl.reverse().whenComplete(() {
       if (!mounted) return;
       // 댓글 닫을 때 스크롤 위치 확인 후 플로팅 버튼 복원
@@ -570,7 +575,6 @@ class _PostReaderScreenState extends State<PostReaderScreen>
           await _postReaderService
               .preloadClips(context, [clipUrls.first], maxCount: 1)
               .timeout(const Duration(milliseconds: 1000));
-          print('[PostReaderScreen] 첫 클립 동기 프리로드 완료');
         } catch (e) {
           print('[PostReaderScreen] 첫 클립 동기 프리로드 타임아웃/실패: $e');
         }
@@ -613,20 +617,6 @@ class _PostReaderScreenState extends State<PostReaderScreen>
     _readOnlyFocus = FocusNode(canRequestFocus: false);
     _scrollCtrl.addListener(_onScroll);
 
-    // 전체 이미지 URL 저장 (프리캐싱은 _loadContentWithPreloadedMedia에서 처리)
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted && _contentFuture != null) {
-        _contentFuture!.then((content) {
-          if (mounted) {
-            final imageUrls = _postReaderService.extractImageUrls(content);
-            setState(() {
-              _allImageUrls = imageUrls;
-            });
-          }
-        });
-      }
-    });
-
     // PostReaderScreen은 StickerService를 사용하지 않고
     // widget.exported에서 stickers를 직접 읽어 PostReaderStickers에 전달
 
@@ -645,8 +635,8 @@ class _PostReaderScreenState extends State<PostReaderScreen>
     if (postId != null && postId.isNotEmpty) {
       _commentService.setPostId(postId);
 
-      // 초기 댓글 로드 (미리보기용으로 소량만)
-      _commentService.loadComments(size: 10);
+      // 🎯 초기 댓글 로드 제거 (댓글창 열 때만 로드)
+      // _commentService.loadComments(size: 10);
 
       // 초기 좋아요 상태와 수 설정
       final initialLikeCount = widget.exported['likeCount'] ?? 0;
@@ -720,10 +710,14 @@ class _PostReaderScreenState extends State<PostReaderScreen>
       nextShowFloating = false;
     }
 
-    // 댓글이 없고 끝부분(300px 이내)에 도달하면 플로팅 버튼 자동 표시
-    if (_scrollCtrl.hasClients && _commentService.getAllComments().isEmpty) {
+    // 끝부분(300px 이내)에 도달하면 플로팅 버튼 자동 표시
+    // 단, 댓글 미리보기가 있으면 표시하지 않음
+    if (_scrollCtrl.hasClients) {
       final pos = _scrollCtrl.position;
-      if (pos.extentAfter <= 300) {
+      final recentComments = _commentService.getRecentComments();
+      final hasCommentPreview = recentComments.isNotEmpty;
+
+      if (pos.extentAfter <= 300 && !hasCommentPreview) {
         nextShowFloating = true;
       }
     }
@@ -1203,6 +1197,7 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                       builder: (context, _) {
                         return CommentBottomSheet(
                           title: widget.exported['title'] ?? '',
+                          commentService: _commentService,
                         );
                       },
                     ),
@@ -1215,7 +1210,6 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                       allImageUrls: _allImageUrls,
                       mediaId: _currentMediaId,
                       allMediaIds: _allMediaIds,
-
                       initialIndex:
                           _currentImageUrl != null && _allImageUrls.isNotEmpty
                               ? _allImageUrls.indexOf(_currentImageUrl!)
@@ -1228,6 +1222,30 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                               )
                               : null,
                       onClose: _closeImageViewer,
+                      postTitle: () {
+                        final title = widget.exported['title'] as String?;
+                        print('[PostReader] postTitle: $title');
+                        return title;
+                      }(),
+                      postAuthor: () {
+                        final author = widget.exported['author'] as String?;
+                        print('[PostReader] postAuthor: $author');
+                        return author;
+                      }(),
+                      postAuthorProfileUrl: () {
+                        final url =
+                            widget.exported['authorProfileImageUrl'] as String?;
+                        print('[PostReader] postAuthorProfileUrl: $url');
+                        return url;
+                      }(),
+                      commentCount: () {
+                        final count = widget.exported['commentCount'] as int?;
+                        print('[PostReader] commentCount: $count');
+                        print(
+                          '[PostReader] exported keys: ${widget.exported.keys.toList()}',
+                        );
+                        return count;
+                      }(),
                     ),
                   ),
                 Positioned(
@@ -1262,12 +1280,7 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                               decoration: BoxDecoration(
                                 color: Theme.of(context).colorScheme.surface,
                                 borderRadius: BorderRadius.circular(20),
-                                border: Border.all(
-                                  color: Theme.of(
-                                    context,
-                                  ).colorScheme.onSurface.withOpacity(0.1),
-                                  width: 1,
-                                ),
+
                                 boxShadow: [
                                   BoxShadow(
                                     color: Colors.black.withOpacity(0.15),
@@ -1307,7 +1320,7 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                                               ).colorScheme.onSurface,
                                     ),
                                   ),
-                                  const SizedBox(width: 16),
+                                  const SizedBox(width: 20),
                                   GestureDetector(
                                     onTap: _showCommentBottomSheet,
                                     child: SvgPicture.asset(

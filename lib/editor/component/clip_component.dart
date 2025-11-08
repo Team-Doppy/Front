@@ -3,6 +3,7 @@ import 'dart:ui';
 import 'dart:io';
 
 import 'package:doppy/data/services/video_cache_service.dart';
+import 'package:doppy/l10n/app_localizations.dart';
 import 'package:flutter/material.dart';
 import 'package:super_editor/super_editor.dart';
 import 'package:doppy/editor/service/drag_service.dart';
@@ -1031,12 +1032,13 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
 
   Future<void> _initializeVideo() async {
     try {
+      print('[VideoPlayer] 초기화 시작: ${widget.url}');
       if (widget.isEditing) {
         // 수정 모드: 항상 새 컨트롤러 생성
         _controller = VideoPlayerController.networkUrl(Uri.parse(widget.url));
         _isPreloaded = false;
         await _controller!.initialize();
-        print('[ClipComponent] (편집) 새 컨트롤러 생성: ${widget.url}');
+        print('[ClipComponent] (편집) 새 컨트롤러 생성 완료: ${widget.url}');
       } else {
         // 읽기 모드: 프리로드 컨트롤러가 있으면 재사용, 없으면 새로 생성
         final preloaded = PostReaderService.getPreloadedController(widget.url);
@@ -1053,7 +1055,7 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
           _controller = VideoPlayerController.networkUrl(Uri.parse(widget.url));
           _isPreloaded = false;
           await _controller!.initialize();
-          print('[ClipComponent] (읽기) 새 컨트롤러 생성: ${widget.url}');
+          print('[ClipComponent] (읽기) 새 컨트롤러 생성 완료: ${widget.url}');
         }
       }
 
@@ -1162,14 +1164,24 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
       return AspectRatio(
         aspectRatio: 16 / 9, // 기본 비율
         child: Container(
-          color: Colors.black,
+          color: Theme.of(context).colorScheme.surface,
           child: Center(
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Icon(Icons.error_outline, size: 48, color: Colors.white),
+                Icon(
+                  Icons.error_outline,
+                  size: 38,
+                  color: Theme.of(context).colorScheme.onSurface,
+                ),
                 SizedBox(height: 8),
-                Text('영상을 불러올 수 없습니다', style: TextStyle(color: Colors.white)),
+                Text(
+                  context.tr('video_load_failed'),
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.onSurface,
+                    fontSize: 16,
+                  ),
+                ),
               ],
             ),
           ),

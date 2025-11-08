@@ -37,6 +37,9 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
   bool _isSearchExpanded = false;
   final FocusNode _searchFocusNode = FocusNode();
 
+  // 그룹 생성 상태
+  bool _isCreatingGroup = false;
+
   @override
   void initState() {
     super.initState();
@@ -257,8 +260,8 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
       body: Stack(
         children: [
           body,
-          // 플로팅 액션 버튼
-          _buildFloatingActionButton(),
+          // 플로팅 액션 버튼 (그룹 생성 중이 아닐 때만 표시)
+          if (!_isCreatingGroup) _buildFloatingActionButton(),
         ],
       ),
     );
@@ -267,8 +270,11 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
   // 검색 필터링 로직
 
   // 그룹 드롭다운 위젯
+  final GlobalKey _groupDropdownKey = GlobalKey();
+
   Widget _buildGroupDropdown(List<Group> groups) {
     return GestureDetector(
+      key: _groupDropdownKey,
       onTap: () => _showGroupDropdown(groups),
       child: Container(
         height: 44,
@@ -328,12 +334,12 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
               child: Material(
                 color: Colors.transparent,
                 child: ClipRRect(
-                  borderRadius: BorderRadius.circular(10),
+                  borderRadius: BorderRadius.circular(20),
                   child: Container(
-                    width: 280,
+                    width: 300,
                     decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.15),
-                      borderRadius: BorderRadius.circular(10),
+                      color: Theme.of(context).colorScheme.surface,
+                      borderRadius: BorderRadius.circular(20),
                     ),
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
@@ -344,14 +350,6 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
                             group: _selectedGroup!,
                             isSelected: true,
                             onTap: () => Navigator.of(context).pop(),
-                          ),
-
-                        // 구분선
-                        if (_selectedGroup != null)
-                          Container(
-                            height: 1,
-                            margin: EdgeInsets.symmetric(horizontal: 16),
-                            color: Colors.white.withOpacity(0.1),
                           ),
 
                         // 다른 그룹 목록
@@ -376,6 +374,14 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
                               ),
                             )
                             .toList(),
+                        // 구분선 (Add Group 위)
+                        Container(
+                          height: 1,
+                          margin: EdgeInsets.symmetric(horizontal: 16),
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.onSurface.withOpacity(0.1),
+                        ),
                         _addGroupDropdownItem(
                           onTap: () => Navigator.of(context).pop(),
                         ),
@@ -398,10 +404,7 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
     required VoidCallback onTap,
   }) {
     return Material(
-      color:
-          isSelected
-              ? Theme.of(context).colorScheme.surface.withOpacity(1)
-              : Theme.of(context).colorScheme.onSurface.withOpacity(0.8),
+      color: Theme.of(context).colorScheme.surface,
       child: InkWell(
         onTap: onTap,
         borderRadius: BorderRadius.circular(12),
@@ -419,10 +422,7 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
                         fontWeight:
                             isSelected ? FontWeight.w700 : FontWeight.w600,
                         fontSize: 14,
-                        color:
-                            !isSelected
-                                ? Theme.of(context).colorScheme.surface
-                                : Theme.of(context).colorScheme.onSurface,
+                        color: Theme.of(context).colorScheme.onSurface,
                       ),
                     ),
                     const SizedBox(height: 2),
@@ -430,12 +430,9 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
                       group.description,
                       style: TextStyle(
                         fontSize: 12,
-                        color:
-                            !isSelected
-                                ? Theme.of(context).colorScheme.surface
-                                : Theme.of(
-                                  context,
-                                ).colorScheme.onSurface.withOpacity(0.6),
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.onSurface.withOpacity(0.6),
                       ),
                     ),
                   ],
@@ -457,12 +454,22 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
   /// 드롭다운 아이템 빌드
   Widget _addGroupDropdownItem({required VoidCallback onTap}) {
     return Material(
-      color: Theme.of(context).colorScheme.onSurface.withOpacity(0.8),
+      color: Theme.of(context).colorScheme.surface,
       child: InkWell(
-        onTap: onTap,
+        onTap: () {
+          // 현재 드롭다운 닫기
+          Navigator.of(context).pop();
+          // 그룹 생성 입력 드롭다운 열기
+          _showCreateGroupDialog();
+        },
         borderRadius: BorderRadius.circular(12),
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          padding: const EdgeInsets.only(
+            top: 12,
+            bottom: 16,
+            left: 16,
+            right: 16,
+          ),
           child: Row(
             children: [
               Expanded(
@@ -474,32 +481,191 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
                       style: TextStyle(
                         fontWeight: FontWeight.w600,
                         fontSize: 14,
-                        color: Theme.of(context).colorScheme.surface,
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      context.tr('add_new_group_description'),
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: Theme.of(
-                          context,
-                        ).colorScheme.surface.withOpacity(0.6),
+                        color: Theme.of(context).colorScheme.primary,
                       ),
                     ),
                   ],
                 ),
-              ),
-              Icon(
-                Icons.add,
-                size: 20,
-                color: Theme.of(context).colorScheme.surface.withOpacity(0.8),
               ),
             ],
           ),
         ),
       ),
     );
+  }
+
+  /// 그룹 생성 입력 드롭다운 표시
+  void _showCreateGroupDialog() {
+    final TextEditingController controller = TextEditingController();
+    final FocusNode focusNode = FocusNode();
+
+    // 그룹 생성 중 상태로 변경
+    setState(() {
+      _isCreatingGroup = true;
+    });
+
+    // 다음 프레임에서 포커스 요청
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      focusNode.requestFocus();
+    });
+
+    showDialog(
+      context: context,
+      barrierDismissible: true,
+      builder: (BuildContext dialogContext) {
+        return Stack(
+          children: [
+            // 배경 터치로 닫기
+            Positioned.fill(
+              child: GestureDetector(
+                onTap: () => Navigator.of(dialogContext).pop(),
+                child: Container(color: Colors.transparent),
+              ),
+            ),
+            // 드롭다운 컨텐츠 (버튼 바로 아래에 위치)
+            Positioned(
+              top: 55,
+              right: 20,
+              child: Material(
+                color: Colors.transparent,
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(20),
+                  child: Container(
+                    width: 300,
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).colorScheme.surface,
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 12,
+                    ),
+                    child: Row(
+                      children: [
+                        // 텍스트 필드
+                        Expanded(
+                          child: TextField(
+                            controller: controller,
+                            focusNode: focusNode,
+                            style: TextStyle(
+                              color: Theme.of(context).colorScheme.onSurface,
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                            ),
+                            decoration: InputDecoration(
+                              hintText: context.tr('enter_group_name'),
+                              hintStyle: TextStyle(
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.onSurface.withOpacity(0.4),
+                                fontWeight: FontWeight.w500,
+                              ),
+                              border: InputBorder.none,
+                              enabledBorder: InputBorder.none,
+                              focusedBorder: InputBorder.none,
+                              contentPadding: EdgeInsets.zero,
+                            ),
+                            onSubmitted: (value) async {
+                              if (value.trim().isNotEmpty) {
+                                await _createNewGroup(value.trim());
+                                Navigator.of(dialogContext).pop();
+                              }
+                            },
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        // 체크 아이콘
+                        GestureDetector(
+                          onTap: () async {
+                            final groupName = controller.text.trim();
+                            if (groupName.isNotEmpty) {
+                              await _createNewGroup(groupName);
+                              Navigator.of(dialogContext).pop();
+                            }
+                          },
+                          child: Icon(
+                            Icons.check,
+                            color: Theme.of(context).colorScheme.primary,
+                          ),
+                        ),
+                        const SizedBox(width: 15),
+                        // X 아이콘
+                        GestureDetector(
+                          onTap: () {
+                            Navigator.of(dialogContext).pop();
+                          },
+                          child: Icon(
+                            Icons.close,
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.onSurface.withOpacity(0.6),
+                            size: 20,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    ).whenComplete(() {
+      // 다이얼로그가 닫힐 때 리소스 정리 및 상태 복원
+      controller.dispose();
+      focusNode.dispose();
+      if (mounted) {
+        setState(() {
+          _isCreatingGroup = false;
+        });
+      }
+    });
+  }
+
+  // 그룹 생성
+  Future<void> _createNewGroup(String groupName) async {
+    if (groupName.trim().isEmpty) return;
+
+    try {
+      final groupProvider = context.read<GroupProvider>();
+      final success = await groupProvider.createGroup(groupName.trim());
+
+      if (success) {
+        // 그룹 목록 새로고침
+        await groupProvider.fetchMyGroups();
+
+        // 성공 메시지
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('그룹 "$groupName"이(가) 생성되었습니다'),
+              backgroundColor: Theme.of(context).colorScheme.primary,
+            ),
+          );
+        }
+      } else {
+        // 그룹 생성 실패
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('그룹 생성에 실패했습니다'),
+              backgroundColor: Theme.of(context).colorScheme.error,
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('오류가 발생했습니다: $e'),
+            backgroundColor: Theme.of(context).colorScheme.error,
+          ),
+        );
+      }
+    }
   }
 
   // 검색 필터링 로직

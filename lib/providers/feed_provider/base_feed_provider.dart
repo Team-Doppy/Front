@@ -286,22 +286,22 @@ abstract class BaseFeedProvider extends ChangeNotifier {
     if (_selectedCategoryId != null) {
       final category = _categories.firstWhere(
         (c) => c['id'].toString() == _selectedCategoryId,
-        orElse: () => {'name': '전체'},
+        orElse: () => {'name': 'all'},
       );
-      return category['name'] ?? '전체';
+      return category['name'] ?? 'all';
     }
 
     switch (_selectedBase) {
       case BaseFilter.all:
-        return '전체';
+        return 'all';
       case BaseFilter.private:
-        return '나만보기';
+        return 'private';
       case BaseFilter.friends:
-        return '친구공유';
+        return 'friends';
       case BaseFilter.groups:
-        return '그룹공유';
+        return 'group';
       case BaseFilter.public:
-        return '전체공개';
+        return 'public';
     }
   }
 

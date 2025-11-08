@@ -1,4 +1,6 @@
+import 'package:doppy/pages/components/doppy_loading_logo.dart';
 import 'package:doppy/pages/screens/favorites_screen.dart';
+import 'package:doppy/pages/components/license_screen.dart';
 import 'package:doppy/providers/auth_provider.dart';
 import 'package:doppy/providers/theme_provider.dart';
 import 'package:doppy/providers/locale_provider.dart';
@@ -6,8 +8,12 @@ import 'package:doppy/l10n/app_localizations.dart';
 import 'package:doppy/theme/app_colors.dart';
 import 'package:doppy/utils/dialog_utils.dart';
 import 'package:doppy/pages/components/account_deletion_confirm.dart';
+import 'package:doppy/data/services/user_service.dart';
+import 'package:doppy/main.dart' show AppConstants;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:webview_flutter/webview_flutter.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 class SettingScreen extends StatefulWidget {
   const SettingScreen({super.key});
@@ -19,6 +25,80 @@ class SettingScreen extends StatefulWidget {
 class _SettingScreenState extends State<SettingScreen> {
   bool _notificationEnabled = true;
   bool _marketingEnabled = false;
+
+  final UserService _userService = UserService();
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSettings();
+  }
+
+  Future<void> _loadSettings() async {
+    try {
+      final settings = await _userService.getSettings();
+      if (mounted) {
+        setState(() {
+          _notificationEnabled = settings['notificationEnabled'] ?? true;
+          _marketingEnabled = settings['marketingConsent'] ?? false;
+        });
+      }
+    } catch (e) {
+      print('[SettingScreen] 설정 로드 실패: $e');
+    }
+  }
+
+  Future<void> _toggleNotification() async {
+    // 낙관적 업데이트
+    final oldValue = _notificationEnabled;
+    setState(() {
+      _notificationEnabled = !_notificationEnabled;
+    });
+
+    try {
+      final newValue = await _userService.toggleNotificationEnabled();
+      // 서버 응답으로 최종 확인
+      if (mounted) {
+        setState(() {
+          _notificationEnabled = newValue;
+        });
+      }
+    } catch (e) {
+      print('[SettingScreen] 알림 토글 실패: $e');
+      // 롤백
+      if (mounted) {
+        setState(() {
+          _notificationEnabled = oldValue;
+        });
+      }
+    }
+  }
+
+  Future<void> _toggleMarketing() async {
+    // 낙관적 업데이트
+    final oldValue = _marketingEnabled;
+    setState(() {
+      _marketingEnabled = !_marketingEnabled;
+    });
+
+    try {
+      final newValue = await _userService.toggleMarketingConsent();
+      // 서버 응답으로 최종 확인
+      if (mounted) {
+        setState(() {
+          _marketingEnabled = newValue;
+        });
+      }
+    } catch (e) {
+      print('[SettingScreen] 마케팅 토글 실패: $e');
+      // 롤백
+      if (mounted) {
+        setState(() {
+          _marketingEnabled = oldValue;
+        });
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -67,6 +147,7 @@ class _SettingScreenState extends State<SettingScreen> {
                     ).colorScheme.onSurface.withOpacity(0.6),
                   ),
                 ),
+                showArrow: false,
                 onTap: () {},
               ),
               _SettingTile(
@@ -102,11 +183,7 @@ class _SettingScreenState extends State<SettingScreen> {
                     fontWeight: FontWeight.w500,
                   ),
                 ),
-                onTap: () {
-                  setState(() {
-                    _notificationEnabled = !_notificationEnabled;
-                  });
-                },
+                onTap: _toggleNotification,
               ),
               _SettingTile(
                 icon: Icons.campaign_outlined,
@@ -119,11 +196,7 @@ class _SettingScreenState extends State<SettingScreen> {
                     fontWeight: FontWeight.w500,
                   ),
                 ),
-                onTap: () {
-                  setState(() {
-                    _marketingEnabled = !_marketingEnabled;
-                  });
-                },
+                onTap: _toggleMarketing,
               ),
               _SettingTile(
                 icon: Icons.brightness_6_outlined,
@@ -183,7 +256,7 @@ class _SettingScreenState extends State<SettingScreen> {
                 icon: Icons.info_outline,
                 label: context.tr('app_version'),
                 trailing: Text(
-                  '1.0.0',
+                  AppConstants.appVersion,
                   style: TextStyle(
                     fontSize: 14,
                     color: Theme.of(
@@ -191,6 +264,7 @@ class _SettingScreenState extends State<SettingScreen> {
                     ).colorScheme.onSurface.withOpacity(0.6),
                   ),
                 ),
+                showArrow: false,
                 onTap: () {},
               ),
             ],
@@ -206,12 +280,31 @@ class _SettingScreenState extends State<SettingScreen> {
               _SettingTile(
                 icon: Icons.article_outlined,
                 label: context.tr('license'),
-                onTap: () {},
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => const LicenseScreen(),
+                    ),
+                  );
+                },
               ),
               _SettingTile(
                 icon: Icons.description_outlined,
                 label: context.tr('terms_of_service'),
-                onTap: () {},
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder:
+                          (context) => const WebViewScreen(
+                            url:
+                                'https://www.notion.so/doppy-2a594e338df780e1b6b9fddb9753e728',
+                            title: '이용약관',
+                          ),
+                    ),
+                  );
+                },
               ),
             ],
           ),
@@ -226,7 +319,35 @@ class _SettingScreenState extends State<SettingScreen> {
               _SettingTile(
                 icon: Icons.help_outline,
                 label: context.tr('inquiry'),
-                onTap: () {},
+                onTap: () async {
+                  final Uri emailUri = Uri(
+                    scheme: 'mailto',
+                    path: 'support@doppy.app',
+                    query: 'subject=Doppy 문의&body=',
+                  );
+
+                  if (await canLaunchUrl(emailUri)) {
+                    await launchUrl(emailUri);
+                  } else {
+                    // 이메일 앱이 없으면 웹 Gmail로 대체
+                    if (context.mounted) {
+                      final gmailWebUrl = Uri.parse(
+                        'https://mail.google.com/mail/?view=cm&fs=1&to=support@doppy.app&su=Doppy 문의',
+                      );
+
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder:
+                              (context) => WebViewScreen(
+                                url: gmailWebUrl.toString(),
+                                title: context.tr('inquiry'),
+                              ),
+                        ),
+                      );
+                    }
+                  }
+                },
               ),
             ],
           ),
@@ -345,12 +466,14 @@ class _SettingTile extends StatelessWidget {
   final String label;
   final VoidCallback? onTap;
   final Widget? trailing;
+  final bool showArrow;
 
   const _SettingTile({
     required this.icon,
     required this.label,
     this.onTap,
     this.trailing,
+    this.showArrow = true,
   });
 
   @override
@@ -384,13 +507,84 @@ class _SettingTile extends StatelessWidget {
               ),
             ),
             if (trailing != null) ...[trailing!, const SizedBox(width: 12)],
-            Icon(
-              Icons.chevron_right,
-              color: Theme.of(context).colorScheme.onSurface.withOpacity(0.3),
-              size: 20,
-            ),
+            if (showArrow)
+              Icon(
+                Icons.chevron_right,
+                color: Theme.of(context).colorScheme.onSurface.withOpacity(0.3),
+                size: 20,
+              ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class WebViewScreen extends StatefulWidget {
+  final String url;
+  final String title;
+
+  const WebViewScreen({super.key, required this.url, required this.title});
+
+  @override
+  State<WebViewScreen> createState() => _WebViewScreenState();
+}
+
+class _WebViewScreenState extends State<WebViewScreen> {
+  late final WebViewController _controller;
+  bool _isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller =
+        WebViewController()
+          ..setJavaScriptMode(JavaScriptMode.unrestricted)
+          ..setNavigationDelegate(
+            NavigationDelegate(
+              onPageStarted: (url) {
+                setState(() {
+                  _isLoading = true;
+                });
+              },
+              onPageFinished: (url) {
+                setState(() {
+                  _isLoading = false;
+                });
+              },
+            ),
+          )
+          ..loadRequest(Uri.parse(widget.url));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        backgroundColor: Theme.of(context).colorScheme.surface,
+        elevation: 0,
+        leading: IconButton(
+          onPressed: () => Navigator.pop(context),
+          icon: Icon(
+            Icons.arrow_back_ios_new_rounded,
+            color: Theme.of(context).colorScheme.onBackground.withOpacity(0.75),
+            size: 24,
+          ),
+        ),
+        title: Text(
+          widget.title,
+          style: TextStyle(
+            fontSize: 17,
+            fontWeight: FontWeight.w600,
+            color: Theme.of(context).colorScheme.onSurface,
+          ),
+        ),
+      ),
+      body: Stack(
+        children: [
+          WebViewWidget(controller: _controller),
+          if (_isLoading) const DoppyLoadingLogo(),
+        ],
       ),
     );
   }
