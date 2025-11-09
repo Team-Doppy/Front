@@ -1,6 +1,8 @@
 import 'dart:ui' as ui;
 import 'dart:async';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:doppy/editor/component/single_image_component.dart';
+import 'package:doppy/l10n/app_localizations.dart';
 import 'package:doppy/pages/components/post_reader_header.dart';
 import 'package:doppy/pages/screens/user_profile_screen.dart';
 import 'package:doppy/utils/error_handler.dart';
@@ -171,7 +173,8 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                 : 'https://$raw';
         final uri = Uri.tryParse(normalized);
         if (uri == null) {
-          if (mounted) ErrorHandler.showError(context, '유효하지 않은 링크예요');
+          if (mounted)
+            ErrorHandler.showError(context, context.tr('invalid_link'));
           break;
         }
         try {
@@ -184,7 +187,8 @@ class _PostReaderScreenState extends State<PostReaderScreen>
             ),
           );
         } catch (_) {
-          if (mounted) ErrorHandler.showError(context, '링크를 열 수 없어요');
+          if (mounted)
+            ErrorHandler.showError(context, context.tr('cannot_open_link'));
         }
         break;
 
@@ -226,9 +230,35 @@ class _PostReaderScreenState extends State<PostReaderScreen>
         String? mediaId;
         try {
           final meta = (imageNode as dynamic).metadata as Map<String, dynamic>?;
-          final v = meta != null ? meta['mediaId'] : null;
-          if (v != null) mediaId = v.toString();
-        } catch (_) {}
+          print('[PostReaderScreen] 🔍 ImageNode metadata: $meta');
+
+          // 🎯 서버 응답: data.mediaId 구조 확인
+          if (meta != null) {
+            // data 안에 mediaId가 있는 경우
+            if (meta.containsKey('mediaId')) {
+              mediaId = meta['mediaId']?.toString();
+              print(
+                '[PostReaderScreen] ✅ mediaId from meta[mediaId]: $mediaId',
+              );
+            }
+            // 또는 data 객체가 있는 경우
+            else if (meta.containsKey('data')) {
+              final data = meta['data'] as Map<String, dynamic>?;
+              mediaId = data?['mediaId']?.toString();
+              print(
+                '[PostReaderScreen] ✅ mediaId from meta[data][mediaId]: $mediaId',
+              );
+            } else {
+              print('[PostReaderScreen] ⚠️ metadata에 mediaId나 data 키가 없음');
+            }
+          } else {
+            print('[PostReaderScreen] ⚠️ metadata가 null');
+          }
+        } catch (e) {
+          print('[PostReaderScreen] ❌ ImageNode mediaId 추출 실패: $e');
+        }
+
+        print('[PostReaderScreen] 최종 mediaId: $mediaId');
 
         setState(() {
           _currentImageUrl = imageNode.imageUrl;
@@ -239,11 +269,16 @@ class _PostReaderScreenState extends State<PostReaderScreen>
           _currentMediaId = mediaId;
           _allMediaIds = mediaId != null ? [mediaId] : [];
         });
+
+        print(
+          '[PostReaderScreen] setState 완료 - _currentMediaId: $_currentMediaId, _allMediaIds: $_allMediaIds',
+        );
         break;
 
       case ImageRowNode:
         final imageRowNode = node as ImageRowNode;
         print('  - ImageRow: ${imageRowNode.imageUrls}');
+        print('[PostReaderScreen] 🔍 ImageRowNode 클릭 감지: ${imageRowNode.id}');
 
         // 스포일러 상태 확인
         final nodeService = NodeComponentService();
@@ -285,15 +320,48 @@ class _PostReaderScreenState extends State<PostReaderScreen>
             imageCount - 1,
           );
 
+          // 🎯 ImageRowNode의 메타데이터에서 각 이미지의 mediaId 추출
+          List<String> mediaIds = [];
+          try {
+            final meta = imageRowNode.metadata;
+            print('[PostReaderScreen] 🔍 ImageRowNode metadata: $meta');
+            print(
+              '[PostReaderScreen] 🔍 ImageRowNode metadata keys: ${meta.keys}',
+            );
+
+            final mediaIdList = meta['mediaIds'] as List?;
+            print(
+              '[PostReaderScreen] 🔍 mediaIdList from meta[mediaIds]: $mediaIdList',
+            );
+
+            if (mediaIdList != null) {
+              mediaIds = mediaIdList.map((e) => e?.toString() ?? '').toList();
+              print('[PostReaderScreen] ✅ ImageRow mediaIds 추출 성공: $mediaIds');
+            } else {
+              print('[PostReaderScreen] ⚠️ meta[mediaIds]가 null');
+            }
+          } catch (e) {
+            print('[PostReaderScreen] ❌ ImageRow mediaId 추출 실패: $e');
+          }
+
+          print(
+            '[PostReaderScreen] clickedIndex: $clickedIndex, mediaIds: $mediaIds',
+          );
+
           setState(() {
             _allImageUrls = imageRowNode.imageUrls;
             _currentImageUrl = imageRowNode.imageUrls[clickedIndex];
             _isVideoViewer = false;
             _showImageViewer = true;
             _showFloatingButtons = false; // 🎯 플로팅 버튼 숨기기
-            _currentMediaId = null;
-            _allMediaIds = List.filled(_allImageUrls.length, '');
+            _currentMediaId =
+                mediaIds.isNotEmpty ? mediaIds[clickedIndex] : null;
+            _allMediaIds = mediaIds;
           });
+
+          print(
+            '[PostReaderScreen] setState 완료 - _currentMediaId: $_currentMediaId, _allMediaIds: $_allMediaIds',
+          );
         }
         break;
 
@@ -490,7 +558,7 @@ class _PostReaderScreenState extends State<PostReaderScreen>
       }
     } catch (e) {
       if (mounted) {
-        ErrorHandler.showError(context, '게시물 삭제 중 오류가 발생했습니다');
+        ErrorHandler.showError(context, context.tr('post_delete_failed'));
       }
     }
   }
@@ -506,7 +574,7 @@ class _PostReaderScreenState extends State<PostReaderScreen>
     });
     _commentOverlayCtrl.forward(from: 0.0);
 
-    // WebSocket 연결 및 댓글 로드 (백그라운드, 비동기)
+    // WebSocket 연결 (백그라운드, 비동기)
     _initCommentsAsync();
   }
 
@@ -515,8 +583,8 @@ class _PostReaderScreenState extends State<PostReaderScreen>
     // WebSocket 연결 (백그라운드, 실패해도 무시)
     _commentService.connectWebSocketForCurrentPost().catchError((e) {});
 
-    // 🎯 댓글창 열 때는 항상 최신 댓글부터 다시 로드 (refresh)
-    await _commentService.refreshComments();
+    // 🎯 댓글이 이미 로드되어 있으면 로딩 스킵 (initState에서 이미 로드됨)
+    // 댓글창은 이미 로드된 데이터를 즉시 표시
   }
 
   void _closeCommentsOverlay() {
@@ -559,7 +627,26 @@ class _PostReaderScreenState extends State<PostReaderScreen>
   Future<Map<String, dynamic>> _loadContentWithPreloadedMedia(
     String postId,
   ) async {
-    final content = await _blogService.getPostContent(postId);
+    final response = await _blogService.getPostContent(postId);
+
+    // 🎯 서버 응답 구조: { isLiked, likeCount, commentCount, postId, content: {...} }
+    final actualLikeCount = response['likeCount'] as int? ?? 0;
+    final actualIsLiked = response['isLiked'] == true;
+    final actualCommentCount = response['commentCount'] as int? ?? 0;
+
+    _likeService.setInitialLikeData(postId, actualIsLiked, actualLikeCount);
+
+    print(
+      '[PostReaderScreen] 실제 데이터 - 좋아요: $actualLikeCount, 좋아요 상태: $actualIsLiked, 댓글: $actualCommentCount',
+    );
+
+    // content 객체 추출
+    final content = response['content'] as Map<String, dynamic>? ?? {};
+
+    // 메타데이터를 content에 병합 (UI에서 사용)
+    content['likeCount'] = actualLikeCount;
+    content['isLiked'] = actualIsLiked;
+    content['commentCount'] = actualCommentCount;
 
     // 이미지와 클립 URL 추출 및 미리 로드 (비동기, 화면 그린 뒤 시작)
     if (mounted) {
@@ -635,18 +722,10 @@ class _PostReaderScreenState extends State<PostReaderScreen>
     if (postId != null && postId.isNotEmpty) {
       _commentService.setPostId(postId);
 
-      // 🎯 초기 댓글 로드 제거 (댓글창 열 때만 로드)
-      // _commentService.loadComments(size: 10);
+      // 🎯 초기 댓글 로드 (타이밍 시어 없이 즉시 로드)
+      _commentService.loadComments(size: 10);
 
-      // 초기 좋아요 상태와 수 설정
-      final initialLikeCount = widget.exported['likeCount'] ?? 0;
-      final initialIsLiked = widget.exported['isLiked'] == true;
-      _likeService.setInitialLikeData(postId, initialIsLiked, initialLikeCount);
-
-      print(
-        '[PostReaderScreen] 초기 좋아요 상태: $initialIsLiked, 카운트: $initialLikeCount',
-      );
-      // 본문 로드 + 상위 6개 이미지 미리 디코딩
+      // 본문 로드 시 실제 데이터로 좋아요/댓글 초기화 (_loadContentWithPreloadedMedia에서 처리)
       _contentFuture = _loadContentWithPreloadedMedia(postId);
 
       // 0.5초 후 로딩 로고 표시
@@ -1220,6 +1299,10 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                               ? PostReaderService.getPreloadedController(
                                 _currentImageUrl!,
                               )
+                              : null,
+                      imageProvider:
+                          !_isVideoViewer
+                              ? CachedNetworkImageProvider(_currentImageUrl!)
                               : null,
                       onClose: _closeImageViewer,
                       postTitle: () {

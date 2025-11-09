@@ -3,6 +3,7 @@ import 'package:doppy/providers/feed_provider/feed_ui_service.dart';
 import 'package:doppy/pages/components/vertical_category_section.dart';
 import 'package:doppy/pages/components/grid_category_section.dart';
 import 'package:doppy/pages/components/category_model.dart';
+import 'package:doppy/pages/components/card_view_shimmer.dart';
 import 'package:doppy/providers/feed_provider/base_feed_provider.dart';
 import 'package:doppy/providers/feed_provider/my_profile_feed_provider.dart';
 import 'package:doppy/utils/network_utils.dart';
@@ -85,11 +86,10 @@ class Feed {
         print('[Feed] isLoading: ${feedProvider.isLoading}');
         print('[Feed] posts.length: ${feedProvider.posts.length}');
 
-        // 로딩 중이면 이전 컨텐츠 유지 (깜빡임 방지)
-        // 단, 초기 로딩이고 데이터가 없을 때만 비워두기
+        // 로딩 중이면 shimmer 표시
         if (feedProvider.isLoading && feedProvider.categories.isEmpty) {
-          print('[Feed] ✅ 로딩 중 - 빈 위젯 반환');
-          return const SliverToBoxAdapter(child: SizedBox.shrink());
+          print('[Feed] ✅ 로딩 중 - shimmer 표시');
+          return _buildLoadingShimmer(context);
         }
 
         // 카테고리 → 섹션 메타 구성
@@ -378,5 +378,48 @@ class Feed {
       mainScrollController: _mainScrollController,
       onDragStateChanged: onDragStateChanged,
     );
+  }
+
+  /// 로딩 중 shimmer 표시
+  Widget _buildLoadingShimmer(BuildContext context) {
+    final displayMode = FeedDisplayModeManager().value;
+    final isCardView = displayMode == FeedDisplayMode.card;
+
+    if (isCardView) {
+      // CardView 모드 shimmer
+      return SliverPadding(
+        padding: const EdgeInsets.symmetric(horizontal: 12.0),
+        sliver: SliverList(
+          delegate: SliverChildBuilderDelegate(
+            (context, index) {
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 12.0),
+                child: CardViewShimmer(),
+              );
+            },
+            childCount: 5, // 5개의 shimmer 카드 표시
+          ),
+        ),
+      );
+    } else {
+      // ImageView (그리드) 모드 shimmer
+      return SliverPadding(
+        padding: const EdgeInsets.all(4.0),
+        sliver: SliverGrid(
+          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: 3,
+            crossAxisSpacing: 4,
+            mainAxisSpacing: 4,
+            childAspectRatio: 4 / 5,
+          ),
+          delegate: SliverChildBuilderDelegate(
+            (context, index) {
+              return ImageViewShimmer(isFirst: index == 0, isLast: index == 8);
+            },
+            childCount: 9, // 9개의 shimmer 이미지 표시
+          ),
+        ),
+      );
+    }
   }
 }

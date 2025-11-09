@@ -1219,15 +1219,49 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     }
   }
 
+  // 이미지 편집 중 플래그 (이중 클릭 방지)
+  bool _isEditingImage = false;
+
   /// 이미지 편집
   Future<void> _editImage(String imageId, ImageNode node) async {
+    // 이미 편집 중이면 무시
+    if (_isEditingImage) return;
+    _isEditingImage = true;
+
     try {
       FocusScope.of(context).unfocus();
+
+      // 로딩 다이얼로그 표시
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder:
+            (context) => PopScope(
+              canPop: false,
+              child: Center(
+                child: SizedBox(
+                  width: 80,
+                  height: 80,
+
+                  child: Center(
+                    child: CircularProgressIndicator(
+                      color: Theme.of(context).colorScheme.onSurface,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+      );
+
       final response = await http.get(Uri.parse(node.imageUrl));
+
+      // 로딩 다이얼로그 닫기
+      if (mounted) Navigator.of(context, rootNavigator: true).pop();
+
       if (response.statusCode != 200) {
         if (mounted) {
           ScaffoldMessenger.of(context).hideCurrentSnackBar();
-          ErrorHandler.showError(context, '이미지를 불러올 수 없습니다');
+          ErrorHandler.showError(context, context.tr('image_load_failed'));
         }
         return;
       }
@@ -1271,7 +1305,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
       if (tasks.isEmpty || tasks.first.state != UploadState.success) {
         if (mounted) {
           ScaffoldMessenger.of(context).hideCurrentSnackBar();
-          ErrorHandler.showError(context, '이미지 업로드에 실패했습니다');
+          ErrorHandler.showError(context, context.tr('image_upload_failed'));
         }
         return;
       }
@@ -1280,7 +1314,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
       if (newUrl == null || newUrl.isEmpty) {
         if (mounted) {
           ScaffoldMessenger.of(context).hideCurrentSnackBar();
-          ErrorHandler.showError(context, '이미지 URL을 받을 수 없습니다');
+          ErrorHandler.showError(context, context.tr('image_url_failed'));
         }
         return;
       }
@@ -1299,10 +1333,17 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
       }
     } catch (e) {
       print('이미지 편집 중 오류: $e');
+      // 로딩 다이얼로그가 열려있을 수 있으므로 닫기 시도
       if (mounted) {
+        Navigator.of(
+          context,
+          rootNavigator: true,
+        ).popUntil((route) => route.isFirst);
         ScaffoldMessenger.of(context).hideCurrentSnackBar();
-        ErrorHandler.showError(context, '이미지 편집 중 오류가 발생했습니다');
+        ErrorHandler.showError(context, context.tr('image_edit_failed'));
       }
+    } finally {
+      _isEditingImage = false;
     }
   }
 
@@ -1328,7 +1369,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
       document.deleteNode(selectedId);
       setState(() {});
     } catch (e) {
-      ErrorHandler.showError(context, '삭제할 수 없습니다');
+      ErrorHandler.showError(context, context.tr('cannot_delete'));
     }
   }
 
@@ -1477,7 +1518,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
       return true; // ✅ 성공 반환
     } catch (e) {
       if (mounted) {
-        ErrorHandler.showError(context, '임시저장에 실패했습니다');
+        ErrorHandler.showError(context, context.tr('draft_save_failed'));
       }
       return false; // ✅ 실패 반환
     }
@@ -1695,7 +1736,10 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                     editorService.markSavedSnapshot();
                     stickerService.saveInitialState();
                   } else if (!success && mounted) {
-                    ErrorHandler.showError(context, '임시저장을 불러올 수 없습니다');
+                    ErrorHandler.showError(
+                      context,
+                      context.tr('draft_load_failed'),
+                    );
                   }
                 },
               ),
@@ -1703,7 +1747,10 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
       );
     } catch (e) {
       if (mounted) {
-        ErrorHandler.showError(context, '임시저장 목록을 불러올 수 없습니다: $e');
+        ErrorHandler.showError(
+          context,
+          '${context.tr('draft_list_failed')}: $e',
+        );
       }
     }
   }

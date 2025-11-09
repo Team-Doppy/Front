@@ -102,6 +102,36 @@ class MediaCommentService {
     print('[MediaCommentService] DELETE success');
   }
 
+  Future<MediaComment> updateImageComment({
+    required String imageId,
+    required String commentId,
+    required String text,
+  }) async {
+    print('[MediaCommentService] PUT image comment id=$commentId');
+    final res = await _dio.put(
+      '/api/media/image/$imageId/comments/$commentId',
+      data: {'text': text},
+      options: Options(receiveTimeout: const Duration(seconds: 10)),
+    );
+    print('[MediaCommentService] <- status=${res.statusCode}');
+    return MediaComment.fromJson(res.data as Map<String, dynamic>);
+  }
+
+  Future<MediaComment> updateVideoComment({
+    required String videoId,
+    required String commentId,
+    required String text,
+  }) async {
+    print('[MediaCommentService] PUT video comment id=$commentId');
+    final res = await _dio.put(
+      '/api/media/video/$videoId/comments/$commentId',
+      data: {'text': text},
+      options: Options(receiveTimeout: const Duration(seconds: 10)),
+    );
+    print('[MediaCommentService] <- status=${res.statusCode}');
+    return MediaComment.fromJson(res.data as Map<String, dynamic>);
+  }
+
   Future<MediaComment> toggleImageCommentEmotion({
     required String imageId,
     required String commentId,

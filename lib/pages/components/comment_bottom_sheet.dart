@@ -38,6 +38,7 @@ class _CommentBottomSheetState extends State<CommentBottomSheet>
   bool _showScrollToBottomButton = false; // 맨 아래로 버튼 표시 여부
   bool _showNewMessageBadge = false; // 새 메시지 알림 표시 여부
   int _lastCommentCount = 0; // 마지막 댓글 수
+  bool _isKeyboardActive = false; // 키보드 활성화 상태
 
   @override
   void initState() {
@@ -46,6 +47,9 @@ class _CommentBottomSheetState extends State<CommentBottomSheet>
     _commentService.addListener(_onCommentsChanged);
     _scrollController.addListener(_onScroll);
     _lastCommentCount = _commentService.getAllComments().length;
+
+    // 키보드 상태 감지
+    _focusNode.addListener(_onFocusChanged);
 
     print('[CommentBottomSheet] 초기화 - 기존 댓글 ${_lastCommentCount}개');
 
@@ -62,6 +66,14 @@ class _CommentBottomSheetState extends State<CommentBottomSheet>
     ]).animate(
       CurvedAnimation(parent: _bounceController, curve: Curves.easeInOut),
     );
+  }
+
+  void _onFocusChanged() {
+    if (mounted) {
+      setState(() {
+        _isKeyboardActive = _focusNode.hasFocus;
+      });
+    }
   }
 
   void _onScroll() {
@@ -111,33 +123,44 @@ class _CommentBottomSheetState extends State<CommentBottomSheet>
     _commentKeys.removeWhere((id, key) => !currentCommentIds.contains(id));
 
     // 🎯 새 댓글이 추가되었는지 확인 (페이지네이션 제외)
+    // 로딩 중이 아니고, 댓글 수가 증가했을 때만 체크
     if (currentCount > _lastCommentCount && !_commentService.isLoading) {
-      // 최신 댓글(index 0)이 새로 추가된 것인지 확인
       final allComments = _commentService.getAllComments();
       if (allComments.isNotEmpty) {
+        // 🔍 진짜 새 댓글인지 확인: 최신 댓글의 생성 시간이 최근인지 체크
         final latestComment = allComments.first; // reverse:true이므로 first가 최신
-        final isMyComment = latestComment.author == currentUser?.username;
+        final now = DateTime.now();
+        final commentAge = now.difference(
+          DateTime.parse(latestComment.createdAt),
+        );
 
-        // 내가 작성한 댓글이면 맨 아래로 스크롤
-        if (isMyComment) {
-          // 프레임 렌더링 후 스크롤
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted) _scrollToBottom();
-          });
-        } else {
-          // 타인의 새 댓글이고 내가 위쪽을 보고 있으면 새 메시지 배지 표시
-          if (_showScrollToBottomButton) {
-            setState(() {
-              _showNewMessageBadge = true;
+        // 3초 이내에 생성된 댓글만 "새 댓글"로 간주 (로드모어는 오래된 댓글)
+        final isRecentComment = commentAge.inSeconds < 3;
+
+        if (isRecentComment) {
+          final isMyComment = latestComment.author == currentUser?.username;
+
+          // 내가 작성한 댓글이면 맨 아래로 스크롤
+          if (isMyComment) {
+            // 프레임 렌더링 후 스크롤
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted) _scrollToBottom();
             });
-            // 5초 후 자동으로 배지 숨김
-            Future.delayed(const Duration(seconds: 5), () {
-              if (mounted) {
-                setState(() {
-                  _showNewMessageBadge = false;
-                });
-              }
-            });
+          } else {
+            // 타인의 새 댓글이고 내가 위쪽을 보고 있으면 새 메시지 배지 표시
+            if (_showScrollToBottomButton) {
+              setState(() {
+                _showNewMessageBadge = true;
+              });
+              // 5초 후 자동으로 배지 숨김
+              Future.delayed(const Duration(seconds: 5), () {
+                if (mounted) {
+                  setState(() {
+                    _showNewMessageBadge = false;
+                  });
+                }
+              });
+            }
           }
         }
       }
@@ -418,6 +441,7 @@ class _CommentBottomSheetState extends State<CommentBottomSheet>
                                   ? const Center(
                                     child: CircularProgressIndicator(
                                       color: Colors.white,
+                                      strokeWidth: 2,
                                     ),
                                   )
                                   : Align(
@@ -568,9 +592,11 @@ class _CommentBottomSheetState extends State<CommentBottomSheet>
         ),
         // 🎯 맨 아래로 버튼 (오른쪽 하단)
         if (_showScrollToBottomButton)
-          Positioned(
+          AnimatedPositioned(
+            duration: const Duration(milliseconds: 300),
+            curve: Curves.easeOut,
             right: 16,
-            bottom: 100,
+            bottom: _isKeyboardActive ? 60 : 100,
             child: GestureDetector(
               onTap: _scrollToBottom,
               child: Container(

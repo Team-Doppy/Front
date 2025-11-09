@@ -635,7 +635,7 @@ class _LinkOverlayState extends State<LinkOverlay> {
 
       if (mounted && !hasMeta && !target.warned) {
         target.warned = true;
-        ErrorHandler.showInfo(context, '링크가 올바르지 않을 수 있어요.');
+        ErrorHandler.showInfo(context, context.tr('link_may_invalid'));
       }
     }
   }

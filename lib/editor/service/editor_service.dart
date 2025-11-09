@@ -606,22 +606,44 @@ class EditorService extends ChangeNotifier {
 
     if (draggingIndex == -1 || targetIndex == -1) return;
 
+    // 🎯 각 이미지의 mediaId 추출
+    String? draggingMediaId;
+    String? targetMediaId;
+    try {
+      final draggingMeta =
+          (draggingNode as dynamic).metadata as Map<String, dynamic>?;
+      draggingMediaId = draggingMeta?['mediaId']?.toString();
+    } catch (_) {}
+    try {
+      final targetMeta =
+          (targetNode as dynamic).metadata as Map<String, dynamic>?;
+      targetMediaId = targetMeta?['mediaId']?.toString();
+    } catch (_) {}
+
     // 방향에 따라 이미지 순서 결정
+    List<String> mediaIds = [];
     if (isFromLeft) {
       // 왼쪽에서 오는 경우: 드래그 이미지가 왼쪽에
       imageUrls.add(draggingNode.imageUrl);
       imageUrls.add(targetNode.imageUrl);
+      if (draggingMediaId != null) mediaIds.add(draggingMediaId);
+      if (targetMediaId != null) mediaIds.add(targetMediaId);
     } else {
       // 오른쪽에서 오는 경우: 타겟 이미지가 왼쪽에
       imageUrls.add(targetNode.imageUrl);
       imageUrls.add(draggingNode.imageUrl);
+      if (targetMediaId != null) mediaIds.add(targetMediaId);
+      if (draggingMediaId != null) mediaIds.add(draggingMediaId);
     }
+
+    print('[EditorService] ImageRow 생성 - mediaIds: $mediaIds');
 
     // ImageRowNode 생성 (이미 3개 제한이 적용됨)
     final imageRowNode = ImageRowNode(
       id: 'imageRow_${DateTime.now().millisecondsSinceEpoch}',
       imageUrls: imageUrls,
       spacing: 8.0,
+      metadata: mediaIds.isNotEmpty ? {'mediaIds': mediaIds} : null,
     );
 
     // 기존 이미지들 삭제
@@ -654,17 +676,47 @@ class EditorService extends ChangeNotifier {
     // 이미 3개가 있으면 추가하지 않음
     if (rowNode.imageUrls.length >= 3) return;
 
+    // 🎯 추가되는 이미지의 mediaId 추출
+    String? newImageMediaId;
+    try {
+      final imageMeta =
+          (imageNode as dynamic).metadata as Map<String, dynamic>?;
+      newImageMediaId = imageMeta?['mediaId']?.toString();
+    } catch (_) {}
+
+    // 🎯 기존 row의 mediaIds 추출
+    List<String> existingMediaIds = [];
+    try {
+      final rowMeta = rowNode.metadata;
+      final mediaIdList = rowMeta['mediaIds'] as List?;
+      if (mediaIdList != null) {
+        existingMediaIds = mediaIdList.map((e) => e?.toString() ?? '').toList();
+      }
+    } catch (_) {}
+
     // 새로운 이미지 URL 리스트 생성
     final newImageUrls = List<String>.from(rowNode.imageUrls);
+    final newMediaIds = List<String>.from(existingMediaIds);
 
     if (isFromLeft) {
       newImageUrls.insert(0, imageNode.imageUrl);
+      if (newImageMediaId != null) {
+        newMediaIds.insert(0, newImageMediaId);
+      }
     } else {
       newImageUrls.add(imageNode.imageUrl);
+      if (newImageMediaId != null) {
+        newMediaIds.add(newImageMediaId);
+      }
     }
 
+    print('[EditorService] ImageRow에 이미지 추가 - mediaIds: $newMediaIds');
+
     // ImageRowNode 업데이트 (이미 3개 제한이 적용됨)
-    final updatedRowNode = rowNode.copyWith(imageUrls: newImageUrls);
+    final updatedRowNode = rowNode.copyWith(
+      imageUrls: newImageUrls,
+      metadata: newMediaIds.isNotEmpty ? {'mediaIds': newMediaIds} : null,
+    );
     document.replaceNodeById(rowId, updatedRowNode);
 
     // 기존 이미지 삭제
@@ -792,7 +844,9 @@ class EditorService extends ChangeNotifier {
             final hasText = currentNode.text.text.trim().isNotEmpty;
             if (hasText) {
               insertIndex = insertIndex + 1;
-              print('🎯 [Mention] 현재 문단에 텍스트가 있음, 다음 줄(index $insertIndex)에 삽입');
+              print(
+                '🎯 [Mention] 현재 문단에 텍스트가 있음, 다음 줄(index $insertIndex)에 삽입',
+              );
             }
           }
         }

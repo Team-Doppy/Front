@@ -1,3 +1,4 @@
+import 'package:doppy/l10n/app_localizations.dart';
 import 'package:doppy/utils/error_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/material.dart';
@@ -169,7 +170,10 @@ class UserProvider with ChangeNotifier {
       return true;
     } catch (e) {
       debugPrint('[UserProvider] deleteProfileImage failed: $e');
-      ErrorHandler.showError(context, '프로필 이미지 삭제에 실패했습니다');
+      ErrorHandler.showError(
+        context,
+        context.tr('profile_image_delete_failed'),
+      );
       return false;
     }
   }

@@ -9,6 +9,7 @@ import 'package:doppy/editor/service/node_component_service.dart';
 import 'package:doppy/pages/components/shimmer_box.dart';
 import 'package:doppy/theme/app_colors.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_svg/svg.dart';
 import 'package:provider/provider.dart';
 import 'dart:ui' as ui;
 import 'dart:math' as math;
@@ -217,29 +218,34 @@ class _SingleImageComponentState extends State<SingleImageComponent>
                       image,
                       if (hasCommentsFlag)
                         Positioned(
-                          top: -4,
-                          right: -4,
+                          top: 4,
+                          right: 5,
                           child: IgnorePointer(
                             child: Container(
                               padding: const EdgeInsets.symmetric(
-                                horizontal: 7,
-                                vertical: 7,
+                                horizontal: 6,
+                                vertical: 6,
                               ),
                               decoration: BoxDecoration(
                                 color: Theme.of(
                                   context,
-                                ).colorScheme.surface.withOpacity(1),
-                                borderRadius: BorderRadius.circular(14),
+                                ).colorScheme.onSurface.withOpacity(1),
+                                borderRadius: BorderRadius.circular(20),
+                                border: Border.all(
+                                  color: Theme.of(
+                                    context,
+                                  ).colorScheme.surface.withOpacity(0.1),
+                                  width: 1,
+                                ),
                               ),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Icon(
-                                    Icons.chat_bubble_rounded,
-                                    color: AppColors.primary,
-                                    size: 14,
-                                  ),
-                                ],
+                              child: SvgPicture.asset(
+                                'assets/icons/comment.svg',
+                                width: 12,
+                                height: 12,
+                                colorFilter: ColorFilter.mode(
+                                  Theme.of(context).colorScheme.surface,
+                                  BlendMode.srcIn,
+                                ),
                               ),
                             ),
                           ),

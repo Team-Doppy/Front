@@ -1,6 +1,7 @@
 // lib/data/services/dio_client.dart
 
 import 'package:dio/dio.dart';
+import 'package:doppy/l10n/app_localizations.dart';
 import 'package:doppy/utils/error_handler.dart';
 import 'package:doppy/utils/dialog_utils.dart';
 import 'package:http/http.dart' as http;
@@ -194,7 +195,7 @@ class BaseApiService {
           ).pushNamedAndRemoveUntil('/login', (route) => false);
         } else {
           // 머무름: 필요시 스낵바 안내
-          ErrorHandler.showInfo(context, '일부 기능이 제한될 수 있어요');
+          ErrorHandler.showInfo(context, context.tr('some_features_limited'));
         }
       });
     }

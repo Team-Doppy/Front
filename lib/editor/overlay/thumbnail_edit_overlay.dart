@@ -242,7 +242,7 @@ class _ThumbnailEditOverlayState extends State<ThumbnailEditOverlay> {
   /// 이미지 편집기 열기
   Future<void> _editCurrentImage() async {
     if (_thumbnailUrl.isEmpty) {
-      ErrorHandler.showInfo(context, '먼저 썸네일을 선택해주세요');
+      ErrorHandler.showInfo(context, context.tr('thumbnail_select_first'));
       return;
     }
 
@@ -253,7 +253,7 @@ class _ThumbnailEditOverlayState extends State<ThumbnailEditOverlay> {
       final response = await http.get(Uri.parse(_thumbnailUrl));
       if (response.statusCode != 200) {
         if (mounted) {
-          ErrorHandler.showError(context, '이미지를 불러올 수 없습니다');
+          ErrorHandler.showError(context, context.tr('image_load_failed'));
         }
         return;
       }
@@ -292,7 +292,10 @@ class _ThumbnailEditOverlayState extends State<ThumbnailEditOverlay> {
 
       if (tasks.isEmpty || tasks.first.state != UploadState.success) {
         if (mounted) {
-          ErrorHandler.showError(context, '썸네일 업로드에 실패했습니다');
+          ErrorHandler.showError(
+            context,
+            context.tr('thumbnail_upload_failed'),
+          );
           setState(() => _isUploadingThumb = false);
         }
         return;
@@ -303,7 +306,7 @@ class _ThumbnailEditOverlayState extends State<ThumbnailEditOverlay> {
 
       if (newUrl == null || newUrl.isEmpty) {
         if (mounted) {
-          ErrorHandler.showError(context, '업로드 URL을 받지 못했습니다');
+          ErrorHandler.showError(context, context.tr('upload_url_failed'));
           setState(() => _isUploadingThumb = false);
         }
         return;
@@ -434,7 +437,10 @@ class _ThumbnailEditOverlayState extends State<ThumbnailEditOverlay> {
             // 업로드 완료 시점에는 콜백 호출하지 않음 (수정 완료 버튼 클릭 시에만 호출)
           } else {
             if (mounted) {
-              ErrorHandler.showError(context, '썸네일 업로드에 실패했어요. 다시 시도해주세요.');
+              ErrorHandler.showError(
+                context,
+                context.tr('thumbnail_upload_failed'),
+              );
             }
           }
         }
@@ -519,7 +525,7 @@ class _ThumbnailEditOverlayState extends State<ThumbnailEditOverlay> {
 
           if (videoUrl == null || videoUrl.isEmpty) {
             if (mounted) {
-              ErrorHandler.showError(context, '영상 URL을 받지 못했습니다');
+              ErrorHandler.showError(context, context.tr('video_url_failed'));
               setState(() => _isUploadingThumb = false);
             }
             return;

@@ -6,6 +6,7 @@ import 'package:doppy/editor/service/drag_service.dart';
 import 'package:doppy/pages/components/shimmer_box.dart';
 import 'package:doppy/theme/app_colors.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_svg/svg.dart';
 import 'package:provider/provider.dart';
 import 'dart:ui' as ui;
 import 'package:super_editor/super_editor.dart';
@@ -539,40 +540,37 @@ class _ImageRowComponentState extends State<ImageRowComponent>
                                     // 댓글 배지
                                     if (hasComments)
                                       Positioned(
-                                        top: 4,
+                                        top: 2,
                                         right: 4,
                                         child: IgnorePointer(
                                           child: Container(
                                             padding: const EdgeInsets.symmetric(
                                               horizontal: 6,
-                                              vertical: 2,
+                                              vertical: 6,
                                             ),
                                             decoration: BoxDecoration(
-                                              color: Colors.black.withOpacity(
-                                                0.55,
-                                              ),
+                                              color: Theme.of(context)
+                                                  .colorScheme
+                                                  .onSurface
+                                                  .withOpacity(1),
                                               borderRadius:
-                                                  BorderRadius.circular(12),
+                                                  BorderRadius.circular(10),
+                                              border: Border.all(
+                                                color: Theme.of(context)
+                                                    .colorScheme
+                                                    .surface
+                                                    .withOpacity(0.1),
+                                                width: 1,
+                                              ),
                                             ),
-                                            child: Row(
-                                              mainAxisSize: MainAxisSize.min,
-                                              children: [
-                                                const Icon(
-                                                  Icons
-                                                      .chat_bubble_outline_rounded,
-                                                  color: Colors.white,
-                                                  size: 12,
-                                                ),
-                                                const SizedBox(width: 3),
-                                                Text(
-                                                  commentCount.toString(),
-                                                  style: const TextStyle(
-                                                    color: Colors.white,
-                                                    fontSize: 11,
-                                                    fontWeight: FontWeight.w600,
-                                                  ),
-                                                ),
-                                              ],
+                                            child: SvgPicture.asset(
+                                              'assets/icons/comment.svg',
+                                              width: 12,
+                                              height: 12,
+                                              colorFilter: ColorFilter.mode(
+                                                Colors.white,
+                                                BlendMode.srcIn,
+                                              ),
                                             ),
                                           ),
                                         ),

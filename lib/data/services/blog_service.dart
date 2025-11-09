@@ -684,7 +684,7 @@ class BlogService {
     }
   }
 
-  /// 단일 포스트의 content만 조회한다 (피드에서 메타만 있을 때 본문 로딩용)
+  /// 단일 포스트의 content + 메타데이터 조회 (isLiked, likeCount, commentCount 포함)
   Future<Map<String, dynamic>> getPostContent(String postId) async {
     try {
       final response = await _dio.get(
@@ -694,17 +694,10 @@ class BlogService {
 
       final decoded = response.data;
       if (decoded is Map<String, dynamic>) {
-        // 서버가 { content: {...} } 형태로 줄 수도 있고, content 자체를 줄 수도 있음
-        final dynamic c = decoded['content'] ?? decoded;
-        if (c is String) {
-          try {
-            final m = json.decode(c);
-            return (m is Map<String, dynamic>) ? m : <String, dynamic>{};
-          } catch (_) {
-            return <String, dynamic>{};
-          }
-        }
-        if (c is Map<String, dynamic>) return c;
+        print('[BlogService] getPostContent 응답 키: ${decoded.keys}');
+
+        // 🎯 전체 응답 반환 (isLiked, likeCount, commentCount, content 모두 포함)
+        return decoded;
       }
       return <String, dynamic>{};
     } catch (e) {

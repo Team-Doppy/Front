@@ -1123,7 +1123,10 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
       if (task.state == UploadState.failed ||
           task.state == UploadState.cancelled) {
         if (mounted) {
-          ErrorHandler.showError(context, '프로필 이미지 업로드에 실패했습니다');
+          ErrorHandler.showError(
+            context,
+            context.tr('profile_image_upload_failed'),
+          );
         }
         if (_profileTaskListener != null) {
           task.removeListener(_profileTaskListener!);

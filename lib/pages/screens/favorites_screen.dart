@@ -29,6 +29,8 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
   bool _hasMore = true;
   int _currentPage = 0;
   final int _pageSize = 20;
+  bool _isRefreshing = false; // 새로고침 중
+  double _pullProgress = 0.0; // 당기는 진행률
 
   bool _isGridMode = false; // false = CardView (list), true = ImageView (grid)
 
@@ -144,7 +146,17 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
   }
 
   Future<void> _onRefresh() async {
+    setState(() {
+      _isRefreshing = true;
+    });
+
     await _loadInitialPosts();
+
+    if (mounted) {
+      setState(() {
+        _isRefreshing = false;
+      });
+    }
   }
 
   void _toggleDisplayMode(bool isGrid) {
@@ -192,186 +204,255 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
 
     return Scaffold(
       backgroundColor: Theme.of(context).colorScheme.background,
-      appBar: AppBar(
-        backgroundColor: Colors.transparent,
-        scrolledUnderElevation: 0,
-        elevation: 0,
-        leading: IconButton(
-          icon: Icon(
-            Icons.arrow_back_ios_new_rounded,
-            color: Theme.of(context).colorScheme.onSurface.withOpacity(0.75),
-            size: 24,
-          ),
-          onPressed: () => Navigator.pop(context),
-        ),
-        title: SizedBox(
-          height: 44,
-          child: TextField(
-            controller: _searchController,
-            focusNode: _searchFocusNode,
-            cursorColor: Theme.of(context).colorScheme.onSurface,
-            onChanged: _onSearchChanged,
-            style: TextStyle(color: Theme.of(context).colorScheme.onSurface),
-            decoration: InputDecoration(
-              filled: true,
-              fillColor:
-                  isDark
-                      ? Colors.white.withOpacity(0.1)
-                      : Colors.black.withOpacity(0.05),
-              hintText: context.tr('search_favorites'),
-              hintStyle: TextStyle(
-                color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
-                fontSize: 16,
-              ),
-
-              suffixIcon:
-                  _searchQuery.isNotEmpty
-                      ? IconButton(
-                        icon: Icon(
-                          Icons.cancel_rounded,
-                          color: Theme.of(
-                            context,
-                          ).colorScheme.onSurface.withOpacity(0.5),
-                          size: 20,
+      body: SafeArea(
+        child: Stack(
+          children: [
+            CustomRefreshIndicator(
+              onRefresh: _onRefresh,
+              top: 60,
+              onPullProgress: (progress) {
+                setState(() {
+                  _pullProgress = progress;
+                });
+              },
+              child: RawScrollbar(
+                controller: _scrollController,
+                thumbColor: Theme.of(
+                  context,
+                ).colorScheme.onSurface.withOpacity(0.3),
+                thickness: 4,
+                radius: const Radius.circular(8),
+                child: CustomScrollView(
+                  controller: _scrollController,
+                  slivers: [
+                    // SliverAppBar
+                    SliverAppBar(
+                      expandedHeight: 0,
+                      toolbarHeight: kToolbarHeight,
+                      backgroundColor: Colors.transparent,
+                      elevation: 0,
+                      pinned: false,
+                      floating: true,
+                      snap: false,
+                      leading: Opacity(
+                        opacity: 1.0 - _pullProgress,
+                        child: IconButton(
+                          icon: Icon(
+                            Icons.arrow_back_ios_new_rounded,
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.onSurface.withOpacity(0.75),
+                            size: 24,
+                          ),
+                          onPressed: () => Navigator.pop(context),
                         ),
-                        onPressed: _clearSearch,
-                      )
-                      : null,
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(16),
-                borderSide: BorderSide.none,
-              ),
-              enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(16),
-                borderSide: BorderSide.none,
-              ),
-              focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(16),
-                borderSide: BorderSide.none,
-              ),
-              contentPadding: const EdgeInsets.symmetric(
-                vertical: 8,
-                horizontal: 20,
-              ),
-              isDense: true,
-            ),
-          ),
-        ),
-        actions: [
-          if (!_isGridMode)
-            GestureDetector(
-              onTap: () => _toggleDisplayMode(true),
-              child: Icon(
-                Icons.grid_view_rounded,
-                size: 24,
-                color: Theme.of(
-                  context,
-                ).colorScheme.onSurface.withOpacity(0.25),
-              ),
-            ),
-          SizedBox(width: 8),
-          if (_isGridMode)
-            GestureDetector(
-              onTap: () => _toggleDisplayMode(false),
-              child: Icon(
-                Icons.view_list_rounded,
-                size: 24,
-                color: Theme.of(
-                  context,
-                ).colorScheme.onSurface.withOpacity(0.25),
-              ),
-            ),
-          SizedBox(width: 16),
-        ],
-      ),
-      body: CustomRefreshIndicator(
-        onRefresh: _onRefresh,
-        top: 100, // AppBar 아래로 표시
-        child: RawScrollbar(
-          controller: _scrollController,
-          thumbColor: Theme.of(context).colorScheme.onSurface.withOpacity(0.3),
-          thickness: 4,
-          radius: const Radius.circular(8),
-          child: CustomScrollView(
-            controller: _scrollController,
-            slivers: [
-              if (_isLoading)
-                ..._buildShimmer()
-              else if (_posts.isEmpty)
-                SliverFillRemaining(child: _buildEmptyState())
-              else if (_filteredPosts.isEmpty && _searchQuery.isNotEmpty)
-                SliverFillRemaining(child: _buildNoSearchResults())
-              else ...[
-                if (!_isGridMode)
-                  // 리스트 모드 - CardView
-                  SliverPadding(
-                    padding: const EdgeInsets.symmetric(horizontal: 12.0),
-                    sliver: SliverList(
-                      delegate: SliverChildBuilderDelegate((context, index) {
-                        final post = _filteredPosts[index];
-                        return Padding(
-                          padding: const EdgeInsets.only(bottom: 12.0),
-                          child: GestureDetector(
-                            onTap: () {
-                              Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder:
-                                      (context) => PostReaderScreen(
-                                        exported: post.toExportedData(),
-                                      ),
-                                ),
-                              );
-                            },
-                            child: CardView(
-                              post: post,
-                              isLast: index == _filteredPosts.length - 1,
+                      ),
+                      title: Opacity(
+                        opacity: 1.0 - _pullProgress,
+                        child: SizedBox(
+                          height: 44,
+                          child: TextField(
+                            controller: _searchController,
+                            focusNode: _searchFocusNode,
+                            cursorColor:
+                                Theme.of(context).colorScheme.onSurface,
+                            onChanged: _onSearchChanged,
+                            style: TextStyle(
+                              color: Theme.of(context).colorScheme.onSurface,
+                            ),
+                            decoration: InputDecoration(
+                              filled: true,
+                              fillColor:
+                                  isDark
+                                      ? Colors.white.withOpacity(0.1)
+                                      : Colors.black.withOpacity(0.05),
+                              hintText: context.tr('search_favorites'),
+                              hintStyle: TextStyle(
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.onSurface.withOpacity(0.5),
+                                fontSize: 16,
+                              ),
+                              suffixIcon:
+                                  _searchQuery.isNotEmpty
+                                      ? IconButton(
+                                        icon: Icon(
+                                          Icons.cancel_rounded,
+                                          color: Theme.of(context)
+                                              .colorScheme
+                                              .onSurface
+                                              .withOpacity(0.5),
+                                          size: 20,
+                                        ),
+                                        onPressed: _clearSearch,
+                                      )
+                                      : null,
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(16),
+                                borderSide: BorderSide.none,
+                              ),
+                              enabledBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(16),
+                                borderSide: BorderSide.none,
+                              ),
+                              focusedBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(16),
+                                borderSide: BorderSide.none,
+                              ),
+                              contentPadding: const EdgeInsets.symmetric(
+                                vertical: 8,
+                                horizontal: 20,
+                              ),
+                              isDense: true,
                             ),
                           ),
-                        );
-                      }, childCount: _filteredPosts.length),
+                        ),
+                      ),
+                      actions: [
+                        Opacity(
+                          opacity: 1.0 - _pullProgress,
+                          child: Row(
+                            children: [
+                              if (!_isGridMode)
+                                GestureDetector(
+                                  onTap: () => _toggleDisplayMode(true),
+                                  child: Icon(
+                                    Icons.grid_view_rounded,
+                                    size: 24,
+                                    color: Theme.of(
+                                      context,
+                                    ).colorScheme.onSurface.withOpacity(0.25),
+                                  ),
+                                ),
+                              SizedBox(width: 8),
+                              if (_isGridMode)
+                                GestureDetector(
+                                  onTap: () => _toggleDisplayMode(false),
+                                  child: Icon(
+                                    Icons.view_list_rounded,
+                                    size: 24,
+                                    color: Theme.of(
+                                      context,
+                                    ).colorScheme.onSurface.withOpacity(0.25),
+                                  ),
+                                ),
+                              SizedBox(width: 16),
+                            ],
+                          ),
+                        ),
+                      ],
                     ),
-                  )
-                else
-                  // 그리드 모드 - ImageView
-                  SliverPadding(
-                    padding: const EdgeInsets.all(4.0),
-                    sliver: SliverGrid(
-                      gridDelegate:
-                          const SliverGridDelegateWithFixedCrossAxisCount(
-                            crossAxisCount: 3,
-                            crossAxisSpacing: 4,
-                            mainAxisSpacing: 4,
-                            childAspectRatio: 0.8,
-                          ),
-                      delegate: SliverChildBuilderDelegate((context, index) {
-                        final post = _filteredPosts[index];
-                        return GestureDetector(
-                          onTap: () {
-                            Navigator.push(
+
+                    // 콘텐츠
+                    if (_isRefreshing)
+                      ..._buildShimmer()
+                    else if (_isLoading)
+                      ..._buildShimmer()
+                    else if (_posts.isEmpty)
+                      SliverFillRemaining(child: _buildEmptyState())
+                    else if (_filteredPosts.isEmpty && _searchQuery.isNotEmpty)
+                      SliverFillRemaining(child: _buildNoSearchResults())
+                    else ...[
+                      if (!_isGridMode)
+                        // 리스트 모드 - CardView
+                        SliverPadding(
+                          padding: const EdgeInsets.symmetric(horizontal: 12.0),
+                          sliver: SliverList(
+                            delegate: SliverChildBuilderDelegate((
                               context,
-                              MaterialPageRoute(
-                                builder:
-                                    (context) => PostReaderScreen(
-                                      exported: post.toExportedData(),
-                                    ),
-                              ),
-                            );
-                          },
-                          child: ImageView(
-                            post: post,
-                            isLast: index == _filteredPosts.length - 1,
+                              index,
+                            ) {
+                              final post = _filteredPosts[index];
+                              return Padding(
+                                padding: const EdgeInsets.only(bottom: 12.0),
+                                child: GestureDetector(
+                                  onTap: () {
+                                    Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder:
+                                            (context) => PostReaderScreen(
+                                              exported: post.toExportedData(),
+                                            ),
+                                      ),
+                                    );
+                                  },
+                                  child: CardView(
+                                    post: post,
+                                    isLast: index == _filteredPosts.length - 1,
+                                  ),
+                                ),
+                              );
+                            }, childCount: _filteredPosts.length),
                           ),
-                        );
-                      }, childCount: _filteredPosts.length),
+                        )
+                      else
+                        // 그리드 모드 - ImageView
+                        SliverPadding(
+                          padding: const EdgeInsets.all(4.0),
+                          sliver: SliverGrid(
+                            gridDelegate:
+                                const SliverGridDelegateWithFixedCrossAxisCount(
+                                  crossAxisCount: 3,
+                                  crossAxisSpacing: 4,
+                                  mainAxisSpacing: 4,
+                                  childAspectRatio: 0.8,
+                                ),
+                            delegate: SliverChildBuilderDelegate((
+                              context,
+                              index,
+                            ) {
+                              final post = _filteredPosts[index];
+                              return GestureDetector(
+                                onTap: () {
+                                  Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder:
+                                          (context) => PostReaderScreen(
+                                            exported: post.toExportedData(),
+                                          ),
+                                    ),
+                                  );
+                                },
+                                child: ImageView(
+                                  post: post,
+                                  isLast: index == _filteredPosts.length - 1,
+                                ),
+                              );
+                            }, childCount: _filteredPosts.length),
+                          ),
+                        ),
+
+                      // 하단 여백
+                      const SliverToBoxAdapter(child: SizedBox(height: 100)),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+            // 로딩 스피너 오버레이 (AppBar 위치)
+            if (_isRefreshing)
+              Positioned(
+                top: MediaQuery.of(context).padding.top,
+                left: 0,
+                right: 0,
+                height: kToolbarHeight,
+                child: Container(
+                  color: Theme.of(
+                    context,
+                  ).colorScheme.background.withOpacity(0.7),
+                  child: Center(
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2.5,
+                      valueColor: AlwaysStoppedAnimation<Color>(
+                        Theme.of(context).colorScheme.primary,
+                      ),
                     ),
                   ),
-
-                // 하단 여백
-                const SliverToBoxAdapter(child: SizedBox(height: 100)),
-              ],
-            ],
-          ),
+                ),
+              ),
+          ],
         ),
       ),
     );

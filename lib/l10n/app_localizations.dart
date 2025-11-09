@@ -280,6 +280,61 @@ class AppLocalizations {
       'file_too_large': '파일이 너무 큽니다',
       'upload_failed': '업로드 실패',
       'video_load_failed': '영상을 불러올 수 없습니다',
+
+      // 댓글 관련 에러
+      'comment_delete_failed': '댓글 삭제에 실패했습니다',
+      'comment_edit_failed': '댓글 수정에 실패했습니다',
+      'comment_send_failed': '댓글 전송에 실패했습니다',
+      'message_send_error': '메시지 전송 중 오류가 발생했어요',
+
+      // 이미지 관련
+      'image_saved': '이미지가 저장되었습니다',
+      'image_save_failed': '이미지 저장 중 오류가 발생했습니다',
+      'image_download_failed': '이미지 다운로드에 실패했습니다',
+      'image_load_failed': '이미지를 불러올 수 없습니다',
+      'image_upload_failed': '이미지 업로드에 실패했습니다',
+      'image_url_failed': '이미지 URL을 받을 수 없습니다',
+      'image_edit_failed': '이미지 편집 중 오류가 발생했습니다',
+      'cannot_delete': '삭제할 수 없습니다',
+
+      // 링크 관련
+      'invalid_link': '유효하지 않은 링크예요',
+      'cannot_open_link': '링크를 열 수 없어요',
+      'link_may_invalid': '링크가 올바르지 않을 수 있어요.',
+
+      // 게시물 관련
+      'post_delete_failed': '게시물 삭제 중 오류가 발생했습니다',
+      'title_required': '제목을 입력해주세요.',
+      'content_required': '본문 내용을 입력해주세요.',
+      'thumbnail_required': '썸네일 이미지를 먼저 선택하세요.',
+      'group_required': '그룹 공유를 선택했을 경우 최소 1개 이상의 그룹을 선택해주세요.',
+      'thumbnail_upload_failed': '썸네일 업로드에 실패했어요. 다시 시도해주세요.',
+      'video_url_failed': '영상 URL을 받지 못했습니다',
+      'thumbnail_select_first': '먼저 썸네일을 선택해주세요',
+      'upload_url_failed': '업로드 URL을 받지 못했습니다',
+      'category_name_required': '카테고리 이름을 입력하세요.',
+
+      // 임시저장 관련
+      'draft_save_failed': '임시저장에 실패했습니다',
+      'draft_load_failed': '임시저장을 불러올 수 없습니다',
+      'draft_list_failed': '임시저장 목록을 불러올 수 없습니다',
+
+      // 프로필 관련
+      'profile_image_upload_failed': '프로필 이미지 업로드에 실패했습니다',
+      'profile_image_delete_failed': '프로필 이미지 삭제에 실패했습니다',
+
+      // 공개범위 변경
+      'already_public': '이미 전체공개예요',
+      'already_private': '이미 나만보기예요',
+      'already_friends': '이미 친구공개예요',
+      'already_selected_group': '이미 선택된 그룹이에요',
+      'visibility_changed_public': '공개범위가 전체공개로 변경되었습니다',
+      'visibility_changed_friends': '공개범위가 친구공개로 변경되었습니다',
+      'group_changed': '공개 그룹이 변경되었습니다',
+      'category_changed': '카테고리가 변경되었습니다',
+
+      // 기타
+      'some_features_limited': '일부 기능이 제한될 수 있어요',
     },
     'en': {
       // Common
@@ -546,6 +601,61 @@ class AppLocalizations {
       'file_too_large': 'File is too large',
       'upload_failed': 'Upload failed',
       'video_load_failed': 'Failed to load video',
+
+      // Comment Errors
+      'comment_delete_failed': 'Failed to delete comment',
+      'comment_edit_failed': 'Failed to edit comment',
+      'comment_send_failed': 'Failed to send comment',
+      'message_send_error': 'An error occurred while sending message',
+
+      // Image Related
+      'image_saved': 'Image saved',
+      'image_save_failed': 'Failed to save image',
+      'image_download_failed': 'Failed to download image',
+      'image_load_failed': 'Failed to load image',
+      'image_upload_failed': 'Failed to upload image',
+      'image_url_failed': 'Failed to get image URL',
+      'image_edit_failed': 'An error occurred while editing image',
+      'cannot_delete': 'Cannot delete',
+
+      // Link Related
+      'invalid_link': 'Invalid link',
+      'cannot_open_link': 'Cannot open link',
+      'link_may_invalid': 'Link may be invalid.',
+
+      // Post Related
+      'post_delete_failed': 'Failed to delete post',
+      'title_required': 'Please enter a title.',
+      'content_required': 'Please enter content.',
+      'thumbnail_required': 'Please select a thumbnail image first.',
+      'group_required': 'Please select at least one group for group sharing.',
+      'thumbnail_upload_failed': 'Thumbnail upload failed. Please try again.',
+      'video_url_failed': 'Failed to get video URL',
+      'thumbnail_select_first': 'Please select a thumbnail first',
+      'upload_url_failed': 'Failed to get upload URL',
+      'category_name_required': 'Please enter a category name.',
+
+      // Draft Related
+      'draft_save_failed': 'Failed to save draft',
+      'draft_load_failed': 'Failed to load draft',
+      'draft_list_failed': 'Failed to load draft list',
+
+      // Profile Related
+      'profile_image_upload_failed': 'Failed to upload profile image',
+      'profile_image_delete_failed': 'Failed to delete profile image',
+
+      // Visibility Changes
+      'already_public': 'Already public',
+      'already_private': 'Already private',
+      'already_friends': 'Already friends only',
+      'already_selected_group': 'Group already selected',
+      'visibility_changed_public': 'Visibility changed to public',
+      'visibility_changed_friends': 'Visibility changed to friends only',
+      'group_changed': 'Group changed',
+      'category_changed': 'Category changed',
+
+      // Others
+      'some_features_limited': 'Some features may be limited',
     },
   };
 

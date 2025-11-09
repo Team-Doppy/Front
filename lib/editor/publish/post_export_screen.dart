@@ -426,19 +426,19 @@ class _PostExportScreenState extends State<PostExportScreen>
 
       // 1. 제목 검증 (모든 공개 범위에서 필수)
       if (finalTitle.isEmpty) {
-        ErrorHandler.showError(context, '제목을 입력해주세요.');
+        ErrorHandler.showError(context, context.tr('title_required'));
         return;
       }
 
       // 2. 컨텐츠 검증 (모든 공개 범위에서 필수)
       if (finalExcerpt.isEmpty) {
-        ErrorHandler.showError(context, '본문 내용을 입력해주세요.');
+        ErrorHandler.showError(context, context.tr('content_required'));
         return;
       }
 
       // 3. 썸네일 검증 (모든 공개 범위에서 필수)
       if (_exportedThumbnailImageUrl.trim().isEmpty) {
-        ErrorHandler.showError(context, '썸네일 이미지를 먼저 선택하세요.');
+        ErrorHandler.showError(context, context.tr('thumbnail_required'));
         return;
       }
 
@@ -447,7 +447,7 @@ class _PostExportScreenState extends State<PostExportScreen>
           !_audiencePrivateOnly &&
           !_audienceFriendsOnly &&
           _selectedAudienceGroupIds.isEmpty) {
-        ErrorHandler.showError(context, '그룹 공유를 선택했을 경우 최소 1개 이상의 그룹을 선택해주세요.');
+        ErrorHandler.showError(context, context.tr('group_required'));
         return;
       }
 
@@ -766,7 +766,10 @@ class _PostExportScreenState extends State<PostExportScreen>
             }
           } else {
             if (mounted) {
-              ErrorHandler.showError(context, '썸네일 업로드에 실패했어요. 다시 시도해주세요.');
+              ErrorHandler.showError(
+                context,
+                context.tr('thumbnail_upload_failed'),
+              );
               setState(() {
                 _localThumbnailFile = null;
               });
@@ -870,7 +873,7 @@ class _PostExportScreenState extends State<PostExportScreen>
 
           if (videoUrl == null || videoUrl.isEmpty) {
             if (mounted) {
-              ErrorHandler.showError(context, '영상 URL을 받지 못했습니다');
+              ErrorHandler.showError(context, context.tr('video_url_failed'));
               _videoController?.dispose();
               _videoController = null;
               setState(() {
@@ -952,7 +955,7 @@ class _PostExportScreenState extends State<PostExportScreen>
   /// 썸네일 편집 (커스텀 이미지 에디터 사용)
   Future<void> _editThumbnail() async {
     if (_exportedThumbnailImageUrl.isEmpty) {
-      ErrorHandler.showInfo(context, '먼저 썸네일을 선택해주세요');
+      ErrorHandler.showInfo(context, context.tr('thumbnail_select_first'));
       return;
     }
 
@@ -963,7 +966,7 @@ class _PostExportScreenState extends State<PostExportScreen>
       final response = await http.get(Uri.parse(_exportedThumbnailImageUrl));
       if (response.statusCode != 200) {
         if (mounted) {
-          ErrorHandler.showError(context, '이미지를 불러올 수 없습니다');
+          ErrorHandler.showError(context, context.tr('image_load_failed'));
         }
         return;
       }
@@ -1001,7 +1004,10 @@ class _PostExportScreenState extends State<PostExportScreen>
 
       if (tasks.isEmpty || tasks.first.state != UploadState.success) {
         if (mounted) {
-          ErrorHandler.showError(context, '썸네일 업로드에 실패했습니다');
+          ErrorHandler.showError(
+            context,
+            context.tr('thumbnail_upload_failed'),
+          );
         }
         return;
       }
@@ -1011,7 +1017,7 @@ class _PostExportScreenState extends State<PostExportScreen>
 
       if (newUrl == null || newUrl.isEmpty) {
         if (mounted) {
-          ErrorHandler.showError(context, '업로드 URL을 받지 못했습니다');
+          ErrorHandler.showError(context, context.tr('upload_url_failed'));
         }
         return;
       }
@@ -2328,7 +2334,7 @@ class _PostExportScreenState extends State<PostExportScreen>
   Future<void> _createNewCategory() async {
     final name = _newCategoryController.text.trim();
     if (name.isEmpty) {
-      ErrorHandler.showError(context, '카테고리 이름을 입력하세요.');
+      ErrorHandler.showError(context, context.tr('category_name_required'));
       return;
     }
 

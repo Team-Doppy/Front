@@ -546,7 +546,7 @@ class _EditModeAppBarState extends State<EditModeAppBar> {
               // 변경 없음 가드
               if (_selectedVisibility == 'public') {
                 print('[EditModeAppBar] 공개범위 변경 없음(public) - API 호출 생략');
-                ErrorHandler.showInfo(context, '이미 전체공개예요');
+                ErrorHandler.showInfo(context, context.tr('already_public'));
                 return;
               }
 
@@ -566,7 +566,10 @@ class _EditModeAppBarState extends State<EditModeAppBar> {
                     _selectedVisibility,
                     _selectedGroupIds,
                   );
-                  ErrorHandler.showInfo(context, '공개범위가 전체공개로 변경되었습니다');
+                  ErrorHandler.showInfo(
+                    context,
+                    context.tr('visibility_changed_public'),
+                  );
                   print('[EditModeAppBar] 공개범위 변경 성공: PUBLIC');
                 }
               } catch (e) {
@@ -597,7 +600,7 @@ class _EditModeAppBarState extends State<EditModeAppBar> {
               // 변경 없음 가드
               if (_selectedVisibility == 'friends') {
                 print('[EditModeAppBar] 공개범위 변경 없음(friends) - API 호출 생략');
-                ErrorHandler.showInfo(context, '이미 친구공개예요');
+                ErrorHandler.showInfo(context, context.tr('already_friends'));
                 return;
               }
 
@@ -616,7 +619,10 @@ class _EditModeAppBarState extends State<EditModeAppBar> {
                     _selectedVisibility,
                     _selectedGroupIds,
                   );
-                  ErrorHandler.showInfo(context, '공개범위가 친구공개로 변경되었습니다');
+                  ErrorHandler.showInfo(
+                    context,
+                    context.tr('visibility_changed_friends'),
+                  );
                   print('[EditModeAppBar] 공개범위 변경 성공: FRIENDS');
                 }
               } catch (e) {
@@ -753,7 +759,10 @@ class _EditModeAppBarState extends State<EditModeAppBar> {
                     beforeSet.length == afterSet.length &&
                     beforeSet.containsAll(afterSet)) {
                   print('[EditModeAppBar] 공개 그룹 변경 없음 - API 호출 생략');
-                  ErrorHandler.showInfo(context, '이미 선택된 그룹이에요');
+                  ErrorHandler.showInfo(
+                    context,
+                    context.tr('already_selected_group'),
+                  );
                   // 드롭다운을 다시 열기
                   Future.delayed(const Duration(milliseconds: 100), () {
                     final RenderBox button =
@@ -781,7 +790,7 @@ class _EditModeAppBarState extends State<EditModeAppBar> {
                       _selectedVisibility,
                       _selectedGroupIds,
                     );
-                    ErrorHandler.showInfo(context, '공개 그룹이 변경되었습니다');
+                    ErrorHandler.showInfo(context, context.tr('group_changed'));
                     print('[EditModeAppBar] 그룹 변경 성공: $newGroupIds');
                   }
                 } catch (e) {
