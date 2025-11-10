@@ -1,5 +1,6 @@
 import 'dart:typed_data';
 import 'dart:io' show Platform;
+import 'package:doppy/theme/app_colors.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:flutter/material.dart';
 import 'package:pro_image_editor/pro_image_editor.dart';
@@ -30,10 +31,14 @@ class CustomImageEditorScreen extends StatelessWidget {
     );
 
     // 테마에 따른 색상 설정
-    final bgColor = isDark ? Colors.black : Colors.white;
-    final fgColor = isDark ? Colors.white : Colors.black;
+    final bgColor =
+        isDark ? AppColors.darkBackground : AppColors.lightBackground;
+    final fgColor =
+        isDark ? AppColors.darkTextPrimary : AppColors.lightTextPrimary;
     final barBgColor =
-        isDark ? Colors.black.withOpacity(0.9) : Colors.white.withOpacity(0.95);
+        isDark
+            ? AppColors.darkBackground.withOpacity(0.9)
+            : AppColors.lightBackground.withOpacity(0.95);
 
     final configs = ProImageEditorConfigs(
       designMode:

@@ -22,11 +22,30 @@ class GroupService {
   }
 
   /// 17. 그룹 생성
-  Future<void> createGroup(String name) async {
+  Future<void> createGroup(
+    String name, {
+    String? description, // 🎯 그룹 설명
+    String? profileImageUrl, // 🎯 프로필 이미지 URL
+  }) async {
     try {
-      final response = await _dio.post('/api/groups', data: {'name': name});
+      print(
+        '🔍 [GroupService] 그룹 생성 요청: name=$name, description=$description, profileImageUrl=$profileImageUrl',
+      );
+
+      final Map<String, dynamic> data = {
+        'name': name,
+        if (description != null && description.isNotEmpty)
+          'description': description,
+        if (profileImageUrl != null && profileImageUrl.isNotEmpty)
+          'groupImage': profileImageUrl,
+      };
+
+      final response = await _dio.post('/api/groups', data: data);
+      print('📡 [GroupService] 그룹 생성 응답: ${response.statusCode}');
+
       if (response.statusCode != 200) throw Exception('그룹 생성 실패');
     } catch (e) {
+      print('❌ [GroupService] 그룹 생성 에러: $e');
       if (e is DioException) {
         throw Exception('그룹 생성 실패: ${e.response?.statusCode}');
       }

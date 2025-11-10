@@ -431,27 +431,6 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
                 ),
               ),
             ),
-            // 로딩 스피너 오버레이 (AppBar 위치)
-            if (_isRefreshing)
-              Positioned(
-                top: MediaQuery.of(context).padding.top,
-                left: 0,
-                right: 0,
-                height: kToolbarHeight,
-                child: Container(
-                  color: Theme.of(
-                    context,
-                  ).colorScheme.background.withOpacity(0.7),
-                  child: Center(
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2.5,
-                      valueColor: AlwaysStoppedAnimation<Color>(
-                        Theme.of(context).colorScheme.primary,
-                      ),
-                    ),
-                  ),
-                ),
-              ),
           ],
         ),
       ),

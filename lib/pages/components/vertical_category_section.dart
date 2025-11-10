@@ -14,7 +14,7 @@ import 'package:doppy/providers/feed_provider/feed_ui_service.dart';
 import 'package:doppy/providers/feed_provider/base_feed_provider.dart';
 import 'package:doppy/providers/feed_provider/my_profile_feed_provider.dart';
 import 'package:doppy/providers/user_provider.dart';
-import 'package:doppy/pages/components/category_model.dart';
+import 'package:doppy/data/models/category_model.dart';
 import 'package:doppy/pages/components/image_view.dart';
 import 'package:doppy/pages/components/post_action_sheet.dart';
 import 'package:doppy/pages/screens/post_reader_screen.dart';

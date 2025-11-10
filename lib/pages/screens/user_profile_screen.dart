@@ -3,7 +3,7 @@ import 'package:doppy/pages/components/category_sheet.dart';
 import 'package:doppy/pages/components/feed.dart';
 import 'package:doppy/pages/components/custom_refresh_indicator.dart';
 import 'package:doppy/providers/feed_provider/feed_ui_service.dart';
-import 'package:doppy/pages/screens/manage_group_screen.dart';
+import 'package:doppy/pages/screens/group_selection_screen.dart';
 import 'package:doppy/pages/screens/setting_screen.dart';
 import 'package:doppy/providers/feed_provider/other_profile_feed_provider.dart';
 import 'package:doppy/utils/network_utils.dart';
@@ -721,7 +721,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     if (mounted) {
       Navigator.of(
         context,
-      ).push(MaterialPageRoute(builder: (_) => ManageGroupScreen()));
+      ).push(MaterialPageRoute(builder: (_) => const GroupSelectionScreen()));
     }
 
     // 이미지 프리캐싱: 백그라운드에서 1회만 수행(체감 지연 제거)

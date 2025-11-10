@@ -335,10 +335,10 @@ class _SingleImageComponentState extends State<SingleImageComponent>
                               color: Colors.black.withOpacity(0.6),
                               alignment: Alignment.center,
                               child: SizedBox(
-                                width: 28,
-                                height: 28,
+                                width: 20,
+                                height: 20,
                                 child: CircularProgressIndicator(
-                                  strokeWidth: 2,
+                                  strokeWidth: 4,
                                   color: Colors.white.withOpacity(1),
                                 ),
                               ),

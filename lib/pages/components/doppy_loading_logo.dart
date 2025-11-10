@@ -13,6 +13,7 @@ class DoppyLoadingLogo extends StatelessWidget {
     this.dTextSize,
     this.ppyTextSize,
     this.spinnerStrokeWidth,
+    this.color,
   });
 
   /// 로고 투명도 (0.0 ~ 1.0)
@@ -34,6 +35,7 @@ class DoppyLoadingLogo extends StatelessWidget {
   final double? ppyTextSize;
 
   final double? spinnerStrokeWidth;
+  final Color? color;
 
   @override
   Widget build(BuildContext context) {
@@ -52,7 +54,7 @@ class DoppyLoadingLogo extends StatelessWidget {
                   style: TextStyle(
                     fontSize: dTextSize ?? 32,
                     fontWeight: FontWeight.w800,
-                    color: Theme.of(context).colorScheme.onSurface,
+                    color: color ?? Theme.of(context).colorScheme.onSurface,
                     letterSpacing: 1.2,
                   ),
                 ),
@@ -64,7 +66,9 @@ class DoppyLoadingLogo extends StatelessWidget {
                     child: CircularProgressIndicator(
                       strokeWidth: spinnerStrokeWidth ?? 3,
                       valueColor: AlwaysStoppedAnimation<Color>(
-                        spinnerColor ?? Theme.of(context).colorScheme.onSurface,
+                        color ??
+                            spinnerColor ??
+                            Theme.of(context).colorScheme.onSurface,
                       ),
                     ),
                   ),
@@ -74,7 +78,7 @@ class DoppyLoadingLogo extends StatelessWidget {
                   style: TextStyle(
                     fontSize: ppyTextSize ?? 32,
                     fontWeight: FontWeight.w800,
-                    color: Theme.of(context).colorScheme.onSurface,
+                    color: color ?? Theme.of(context).colorScheme.onSurface,
                     letterSpacing: 1.2,
                   ),
                 ),

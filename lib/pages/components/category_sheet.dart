@@ -110,13 +110,10 @@ class _CategoryItemWithActionsState extends State<_CategoryItemWithActions> {
                       context,
                     ).colorScheme.primary.withOpacity(0.2),
                   ),
-                  child: Text(
-                    '수정',
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w700,
-                      color: Theme.of(context).colorScheme.primary,
-                    ),
+                  child: Icon(
+                    Icons.edit,
+                    color: Theme.of(context).colorScheme.primary,
+                    size: 20,
                   ),
                 ),
               ),
@@ -141,13 +138,10 @@ class _CategoryItemWithActionsState extends State<_CategoryItemWithActions> {
                       context,
                     ).colorScheme.error.withOpacity(0.12),
                   ),
-                  child: Text(
-                    '삭제',
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w700,
-                      color: Theme.of(context).colorScheme.error,
-                    ),
+                  child: Icon(
+                    Icons.delete,
+                    color: Theme.of(context).colorScheme.error,
+                    size: 20,
                   ),
                 ),
               ),
@@ -335,12 +329,21 @@ class CategoryDropDown {
 
                                 // 카테고리 리스트
                                 Expanded(
-                                  child: SingleChildScrollView(
+                                  child: RawScrollbar(
                                     controller: scrollController,
-                                    child: _buildCategoryContent(
+                                    thumbColor: Theme.of(
                                       context,
-                                      feedProvider,
-                                      setModalState,
+                                    ).colorScheme.onSurface.withOpacity(0.3),
+                                    radius: const Radius.circular(20),
+                                    thickness: 4,
+                                    thumbVisibility: false,
+                                    child: SingleChildScrollView(
+                                      controller: scrollController,
+                                      child: _buildCategoryContent(
+                                        context,
+                                        feedProvider,
+                                        setModalState,
+                                      ),
                                     ),
                                   ),
                                 ),
