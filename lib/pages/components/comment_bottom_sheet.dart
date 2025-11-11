@@ -39,6 +39,8 @@ class _CommentBottomSheetState extends State<CommentBottomSheet>
   bool _showNewMessageBadge = false; // 새 메시지 알림 표시 여부
   int _lastCommentCount = 0; // 마지막 댓글 수
   bool _isKeyboardActive = false; // 키보드 활성화 상태
+  bool _useReverseScroll = true; // 🎯 초기 댓글 수에 따라 결정되는 스크롤 방향 (기본값 true)
+  bool _isInitialLoad = true; // 🎯 처음 열었을 때만 페이드인 적용
 
   @override
   void initState() {
@@ -46,12 +48,37 @@ class _CommentBottomSheetState extends State<CommentBottomSheet>
     _commentService = widget.commentService;
     _commentService.addListener(_onCommentsChanged);
     _scrollController.addListener(_onScroll);
-    _lastCommentCount = _commentService.getAllComments().length;
+
+    // 🎯 초기 댓글 수 확인 (프레임 렌더링 후 정확한 개수로 판단)
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _lastCommentCount = _commentService.getAllComments().length;
+
+        // 🎯 초기 댓글 수에 따라 스크롤 방향 결정
+        // 18개 미만: reverse=false (위에서부터, 페이지네이션 불필요)
+        // 18개 이상: reverse=true (아래에서부터, 채팅 앱 방식)
+        _useReverseScroll = _lastCommentCount >= 18;
+
+        print(
+          '[CommentBottomSheet] 초기화 완료 - 댓글 ${_lastCommentCount}개, reverse: $_useReverseScroll',
+        );
+
+        // 스크롤 방향이 결정된 후 setState로 UI 업데이트
+        setState(() {});
+
+        // 🎯 초기 로드 완료 후 페이드인 비활성화 (500ms 후)
+        Future.delayed(const Duration(milliseconds: 500), () {
+          if (mounted) {
+            setState(() {
+              _isInitialLoad = false;
+            });
+          }
+        });
+      }
+    });
 
     // 키보드 상태 감지
     _focusNode.addListener(_onFocusChanged);
-
-    print('[CommentBottomSheet] 초기화 - 기존 댓글 ${_lastCommentCount}개');
 
     // 바운싱 애니메이션 초기화 (2번 바운스)
     _bounceController = AnimationController(
@@ -82,21 +109,38 @@ class _CommentBottomSheetState extends State<CommentBottomSheet>
     final offset = _scrollController.offset;
     final maxScroll = _scrollController.position.maxScrollExtent;
 
-    // 맨 아래로 버튼 표시 여부 (reverse:true이므로 offset > 100이면 위로 스크롤한 것)
-    final isAtBottom = offset < 100;
+    // 🎯 맨 아래로 버튼 표시 여부 (스크롤 방향에 따라 다름)
+    final bool isAtBottom;
+    if (_useReverseScroll) {
+      // reverse:true이면 offset < 100이면 아래
+      isAtBottom = offset < 100;
+    } else {
+      // reverse:false이면 maxScroll - offset < 100이면 아래
+      isAtBottom = maxScroll > 0 ? (maxScroll - offset < 100) : true;
+    }
+
     if (_showScrollToBottomButton != !isAtBottom) {
       setState(() {
         _showScrollToBottomButton = !isAtBottom;
       });
     }
 
-    // 🎯 로드 타이밍: 상단에서 200px 이내로 접근하면 로드
-    // reverse:true이므로 maxScroll에 가까워질수록 과거 댓글(상단)
-    if (maxScroll > 0 &&
-        maxScroll - offset < 200 && // 상단에서 200px 이내
-        !_commentService.isLoading &&
-        _commentService.hasMoreComments) {
-      _commentService.loadComments();
+    // 🎯 페이지네이션: 상단 300px 이내에서 로드
+    if (_useReverseScroll) {
+      // reverse:true: maxScroll 가까이 = 과거 댓글(상단)
+      if (maxScroll > 0 &&
+          maxScroll - offset < 400 &&
+          !_commentService.isLoading &&
+          _commentService.hasMoreComments) {
+        _commentService.loadComments();
+      }
+    } else {
+      // reverse:false: offset < 300 = 과거 댓글(상단)
+      if (offset < 400 &&
+          !_commentService.isLoading &&
+          _commentService.hasMoreComments) {
+        _commentService.loadComments();
+      }
     }
   }
 
@@ -128,7 +172,12 @@ class _CommentBottomSheetState extends State<CommentBottomSheet>
       final allComments = _commentService.getAllComments();
       if (allComments.isNotEmpty) {
         // 🔍 진짜 새 댓글인지 확인: 최신 댓글의 생성 시간이 최근인지 체크
-        final latestComment = allComments.first; // reverse:true이므로 first가 최신
+        // 스크롤 방향에 무관하게 시간순으로 정렬된 리스트에서 마지막이 최신
+        final sortedComments =
+            allComments.toList()
+              ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+        final latestComment = sortedComments.last;
+
         final now = DateTime.now();
         final commentAge = now.difference(
           DateTime.parse(latestComment.createdAt),
@@ -214,6 +263,7 @@ class _CommentBottomSheetState extends State<CommentBottomSheet>
     _commentService.addComment(
       username: currentUser.username,
       content: text,
+      authorProfileImageUrl: currentUser.profileImageUrl, // 🎯 프로필 이미지 즉시 전달
       parentId: replyTargetId,
     );
   }
@@ -254,8 +304,15 @@ class _CommentBottomSheetState extends State<CommentBottomSheet>
     // 🎯 맨 아래(최신 댓글)로 스크롤
     if (!_scrollController.hasClients) return;
 
+    final targetOffset =
+        _useReverseScroll
+            ? 0.0 // reverse:true이면 0이 맨 아래
+            : _scrollController
+                .position
+                .maxScrollExtent; // reverse:false이면 maxScrollExtent가 맨 아래
+
     _scrollController.animateTo(
-      0.0, // reverse:true이므로 0이 맨 아래
+      targetOffset,
       duration: const Duration(milliseconds: 300),
       curve: Curves.easeOut,
     );
@@ -444,80 +501,86 @@ class _CommentBottomSheetState extends State<CommentBottomSheet>
                                       strokeWidth: 2,
                                     ),
                                   )
-                                  : Align(
-                                    alignment: Alignment.topCenter,
-                                    child: RawScrollbar(
+                                  : RawScrollbar(
+                                    controller: _scrollController,
+                                    thumbColor: Theme.of(
+                                      context,
+                                    ).colorScheme.onSurface.withOpacity(0.3),
+                                    thickness: 4,
+                                    radius: const Radius.circular(2),
+                                    thumbVisibility: false,
+                                    child: ListView.builder(
+                                      key: const PageStorageKey('comment_list'),
                                       controller: _scrollController,
-                                      thumbColor: Theme.of(
-                                        context,
-                                      ).colorScheme.onSurface.withOpacity(0.3),
-                                      thickness: 4,
-                                      radius: const Radius.circular(2),
-                                      thumbVisibility: false,
-                                      child: ListView.builder(
-                                        key: const PageStorageKey(
-                                          'comment_list',
-                                        ),
-                                        controller: _scrollController,
-                                        reverse: true, // ✅ 최신 댓글이 아래
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 8,
-                                          vertical: 20,
-                                        ),
-                                        itemCount: comments.length,
-                                        cacheExtent: 500, // 캐시 확장으로 부드러운 스크롤
-                                        itemBuilder: (context, index) {
-                                          // reverse:true이므로 역순 접근
-                                          final reversedIndex =
-                                              comments.length - 1 - index;
-                                          final comment =
-                                              comments[reversedIndex];
+                                      reverse:
+                                          _useReverseScroll, // 🎯 동적 스크롤 방향
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 8,
+                                        vertical: 20,
+                                      ),
+                                      itemCount: comments.length,
+                                      cacheExtent: 500,
+                                      itemBuilder: (context, index) {
+                                        // 🎯 댓글 인덱스 계산 (스크롤 방향에 따라 다름)
+                                        final commentIndex =
+                                            _useReverseScroll
+                                                ? comments.length -
+                                                    1 -
+                                                    index // reverse:true일 때 역순
+                                                : index; // reverse:false일 때 순방향
 
-                                          // GlobalKey 생성 (높이 측정용, 지연 생성으로 최적화)
-                                          final commentKey = _commentKeys
-                                              .putIfAbsent(
-                                                comment.id,
-                                                () => GlobalKey(),
-                                              );
+                                        final comment = comments[commentIndex];
 
-                                          final currentUser =
-                                              context
-                                                  .read<UserProvider>()
-                                                  .currentUser;
-                                          final isMe =
-                                              currentUser != null &&
-                                              comment.author ==
-                                                  currentUser.username;
+                                        // GlobalKey 생성 (높이 측정용, 지연 생성으로 최적화)
+                                        final commentKey = _commentKeys
+                                            .putIfAbsent(
+                                              comment.id,
+                                              () => GlobalKey(),
+                                            );
 
-                                          final bool isSameAuthorAsPrevious =
-                                              reversedIndex > 0 &&
-                                              comments[reversedIndex - 1]
-                                                      .author ==
-                                                  comment.author;
-                                          final bool showProfile =
-                                              !isSameAuthorAsPrevious;
+                                        final currentUser =
+                                            context
+                                                .read<UserProvider>()
+                                                .currentUser;
+                                        final isMe =
+                                            currentUser != null &&
+                                            comment.author ==
+                                                currentUser.username;
 
-                                          final bool isSameAuthorAsNext =
-                                              reversedIndex <
-                                                  comments.length - 1 &&
-                                              comments[reversedIndex + 1]
-                                                      .author ==
-                                                  comment.author;
-                                          final bool showAuthorInfo =
-                                              !isSameAuthorAsNext;
+                                        // 🎯 이전/다음 댓글 비교 (시간순 기준, 스크롤 방향 무관)
+                                        final bool isSameAuthorAsPrevious =
+                                            commentIndex > 0 &&
+                                            comments[commentIndex - 1].author ==
+                                                comment.author;
+                                        final bool showProfile =
+                                            !isSameAuthorAsPrevious;
 
-                                          final targetComment =
-                                              _findTargetComment(
-                                                comment.parentId,
-                                              );
+                                        final bool isSameAuthorAsNext =
+                                            commentIndex <
+                                                comments.length - 1 &&
+                                            comments[commentIndex + 1].author ==
+                                                comment.author;
+                                        final bool showAuthorInfo =
+                                            !isSameAuthorAsNext;
 
-                                          final isThisBouncing =
-                                              _bouncingCommentId == comment.id;
+                                        final targetComment =
+                                            _findTargetComment(
+                                              comment.parentId,
+                                            );
 
-                                          return Padding(
-                                            padding: const EdgeInsets.only(
-                                              bottom: 0,
+                                        final isThisBouncing =
+                                            _bouncingCommentId == comment.id;
+
+                                        return Padding(
+                                          padding: const EdgeInsets.only(
+                                            bottom: 0,
+                                          ),
+                                          child: AnimatedOpacity(
+                                            opacity: _isInitialLoad ? 0.0 : 1.0,
+                                            duration: const Duration(
+                                              milliseconds: 300,
                                             ),
+                                            curve: Curves.easeOut,
                                             child: AnimatedBuilder(
                                               animation: _bounceAnimation,
                                               builder: (context, child) {
@@ -574,9 +637,9 @@ class _CommentBottomSheetState extends State<CommentBottomSheet>
                                                 },
                                               ),
                                             ),
-                                          );
-                                        },
-                                      ),
+                                          ),
+                                        );
+                                      },
                                     ),
                                   ),
                         ),
@@ -596,7 +659,12 @@ class _CommentBottomSheetState extends State<CommentBottomSheet>
             duration: const Duration(milliseconds: 300),
             curve: Curves.easeOut,
             right: 16,
-            bottom: _isKeyboardActive ? 60 : 100,
+            bottom:
+                (_isKeyboardActive &&
+                        _replyTarget == null &&
+                        _editingComment == null)
+                    ? 70
+                    : 100, // ✅ 일반 키보드: 70, 답글/수정: 100
             child: GestureDetector(
               onTap: _scrollToBottom,
               child: Container(

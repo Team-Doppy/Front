@@ -370,6 +370,7 @@ class PostReaderAppBar extends StatelessWidget {
     required this.onLikeTap,
     required this.onCommentTap,
     required this.isLiked,
+    required this.animationDuration, // 🎯 바텀바와 동일한 속도
   });
 
   final bool showAppBar;
@@ -385,11 +386,12 @@ class PostReaderAppBar extends StatelessWidget {
   final VoidCallback onLikeTap;
   final VoidCallback onCommentTap;
   final bool isLiked;
+  final int animationDuration; // 🎯 바텀바와 동일한 속도
 
   @override
   Widget build(BuildContext context) {
     return AnimatedPositioned(
-      duration: const Duration(milliseconds: 180),
+      duration: Duration(milliseconds: animationDuration), // 🎯 동적 속도
       curve: Curves.easeInOut,
       top: showAppBar ? 0 : -barHeight,
       left: 0,
@@ -425,24 +427,6 @@ class PostReaderAppBar extends StatelessWidget {
 
                     const Spacer(),
                     if (isMyPost) ...[
-                      // 공유
-                      GestureDetector(
-                        onTap: () {
-                          // TODO: 공유 기능
-                        },
-                        child: Padding(
-                          padding: const EdgeInsets.all(8.0),
-                          child: SvgPicture.asset(
-                            'assets/icons/share.svg',
-                            width: 22,
-                            height: 22,
-                            color: Theme.of(
-                              context,
-                            ).colorScheme.onSurface.withOpacity(0.7),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 4),
                       // 수정
                       GestureDetector(
                         onTap: onEdit,
@@ -473,62 +457,6 @@ class PostReaderAppBar extends StatelessWidget {
                         ),
                       ),
                       const SizedBox(width: 8),
-                    ] else ...[
-                      GestureDetector(
-                        onTap: () {
-                          // TODO: 공유 기능
-                        },
-                        child: Padding(
-                          padding: const EdgeInsets.all(8.0),
-                          child: SvgPicture.asset(
-                            'assets/icons/share.svg',
-                            width: 22,
-                            height: 22,
-                            color: Theme.of(
-                              context,
-                            ).colorScheme.onSurface.withOpacity(0.7),
-                          ),
-                        ),
-                      ),
-
-                      /*
-                      GestureDetector(
-                        onTap: onLikeTap,
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            SvgPicture.asset(
-                              'assets/icons/heart.svg',
-                              width: 24,
-                              height: 24,
-                              color:
-                                  isLiked
-                                      ? Colors.red
-                                      : Theme.of(
-                                        context,
-                                      ).colorScheme.onSurface.withOpacity(0.7),
-                            ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(width: 15),
-                      GestureDetector(
-                        onTap: onCommentTap,
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            SvgPicture.asset(
-                              'assets/icons/comment.svg',
-                              width: 22,
-                              height: 22,
-                              color: Theme.of(
-                                context,
-                              ).colorScheme.onSurface.withOpacity(0.7),
-                            ),
-                          ],
-                        ),
-                      ),*/
-                      const SizedBox(width: 15),
                     ],
                   ],
                 ),

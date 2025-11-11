@@ -1,9 +1,11 @@
 import 'dart:ui' as ui;
 import 'dart:async';
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:doppy/data/services/auth_service.dart';
 import 'package:doppy/editor/component/single_image_component.dart';
 import 'package:doppy/l10n/app_localizations.dart';
 import 'package:doppy/pages/components/post_reader_header.dart';
+import 'package:doppy/pages/components/share_post_overlay.dart';
 import 'package:doppy/pages/screens/user_profile_screen.dart';
 import 'package:doppy/utils/error_handler.dart';
 import 'package:doppy/utils/format_utils.dart';
@@ -37,7 +39,7 @@ import 'package:doppy/editor/component/clip_component.dart'
 import 'package:doppy/editor/service/editor_service.dart';
 import 'package:doppy/editor/service/drag_service.dart';
 import 'package:doppy/editor/service/post_reader_service.dart';
-import 'package:doppy/editor/service/post_reader_stickers.dart';
+import 'package:doppy/editor/post_reader_stickers.dart';
 import 'package:doppy/editor/service/node_component_service.dart';
 
 /// 읽기 전용: 작성 화면에서 Export된 Map을 받아 그대로 복원하여 보여준다.
@@ -76,9 +78,8 @@ class _PostReaderScreenState extends State<PostReaderScreen>
 
   // 앱바 표시/숨김을 위한 변수들
   bool _showAppBar = true; // 상단 이미지 제거 → 기본 표시
-
-  // FloatingActionButton 표시 여부 (스크롤 위치 기반)
-  bool _showFloatingButtons = true;
+  int _bottomBarAnimationDuration = 300; // 하단 바 애니메이션 속도 (ms)
+  bool _previousAppBarState = true; // 🎯 풀스크린/댓글 진입 전 앱바 상태 저장
 
   // 순차 애니메이션 제거
 
@@ -136,9 +137,6 @@ class _PostReaderScreenState extends State<PostReaderScreen>
           );
 
           if (controller == null) {
-            print('[PostReaderScreen] ⚠️ 비디오가 프리로드되지 않음: ${clipNode.url}');
-            print('[PostReaderScreen] 즉시 프리로드 시작...');
-
             try {
               // 프리로드 안 되어 있으면 즉시 프리로드
               await _postReaderService.preloadClips(context, [
@@ -153,11 +151,13 @@ class _PostReaderScreenState extends State<PostReaderScreen>
           }
 
           setState(() {
+            _previousAppBarState = _showAppBar; // 🎯 현재 상태 저장
             _currentImageUrl = clipNode.url;
             _allImageUrls = [clipNode.url];
             _isVideoViewer = true;
             _showImageViewer = true;
-            _showFloatingButtons = false;
+            _showAppBar = false; // 하단 바 숨김
+            _bottomBarAnimationDuration = 50; // 빠르게 숨김
           });
         }
         break;
@@ -261,13 +261,15 @@ class _PostReaderScreenState extends State<PostReaderScreen>
         print('[PostReaderScreen] 최종 mediaId: $mediaId');
 
         setState(() {
+          _previousAppBarState = _showAppBar; // 🎯 현재 상태 저장
           _currentImageUrl = imageNode.imageUrl;
           _allImageUrls = [_currentImageUrl!];
           _isVideoViewer = false;
           _showImageViewer = true;
-          _showFloatingButtons = false; // 🎯 플로팅 버튼 숨기기
           _currentMediaId = mediaId;
           _allMediaIds = mediaId != null ? [mediaId] : [];
+          _showAppBar = false; // 하단 바 숨김
+          _bottomBarAnimationDuration = 50; // 빠르게 숨김
         });
 
         print(
@@ -349,19 +351,17 @@ class _PostReaderScreenState extends State<PostReaderScreen>
           );
 
           setState(() {
+            _previousAppBarState = _showAppBar; // 🎯 현재 상태 저장
             _allImageUrls = imageRowNode.imageUrls;
             _currentImageUrl = imageRowNode.imageUrls[clickedIndex];
             _isVideoViewer = false;
             _showImageViewer = true;
-            _showFloatingButtons = false; // 🎯 플로팅 버튼 숨기기
             _currentMediaId =
                 mediaIds.isNotEmpty ? mediaIds[clickedIndex] : null;
             _allMediaIds = mediaIds;
+            _showAppBar = false; // 하단 바 숨김
+            _bottomBarAnimationDuration = 50; // 빠르게 숨김
           });
-
-          print(
-            '[PostReaderScreen] setState 완료 - _currentMediaId: $_currentMediaId, _allMediaIds: $_allMediaIds',
-          );
         }
         break;
 
@@ -502,17 +502,12 @@ class _PostReaderScreenState extends State<PostReaderScreen>
   }
 
   void _closeImageViewer() {
-    // 플로팅 버튼 복원 여부 확인 (스크롤 위치 기반)
-    bool shouldShowFloating = false;
-    if (_scrollCtrl.hasClients) {
-      final pos = _scrollCtrl.position;
-      shouldShowFloating = pos.extentAfter <= 300;
-    }
-
     setState(() {
       _showImageViewer = false;
       _currentImageUrl = null;
-      _showFloatingButtons = shouldShowFloating; // 🎯 플로팅 버튼 복원
+      _showAppBar = _previousAppBarState; // 🎯 이전 상태로 복원
+      _bottomBarAnimationDuration =
+          _previousAppBarState ? 0 : 300; // 🎯 열려있었으면 즉시(0), 닫혀있었으면 일반 속도
     });
   }
 
@@ -569,8 +564,10 @@ class _PostReaderScreenState extends State<PostReaderScreen>
     _commentService.setPostId(id);
 
     setState(() {
+      _previousAppBarState = _showAppBar; // 🎯 현재 상태 저장
       _showCommentsOverlay = true;
-      _showFloatingButtons = false; // 플로팅 버튼 숨기기
+      _showAppBar = false; // 하단 바 숨김
+      _bottomBarAnimationDuration = 50; // 빠르게 숨김
     });
     _commentOverlayCtrl.forward(from: 0.0);
 
@@ -588,22 +585,13 @@ class _PostReaderScreenState extends State<PostReaderScreen>
   }
 
   void _closeCommentsOverlay() {
-    // 댓글창 닫기 시작 시 플로팅 버튼 즉시 숨김
-    setState(() {
-      _showFloatingButtons = false;
-    });
-
     _commentOverlayCtrl.reverse().whenComplete(() {
       if (!mounted) return;
-      // 댓글 닫을 때 스크롤 위치 확인 후 플로팅 버튼 복원
-      bool shouldShowFloating = false;
-      if (_scrollCtrl.hasClients) {
-        final pos = _scrollCtrl.position;
-        shouldShowFloating = pos.extentAfter <= 300;
-      }
       setState(() {
         _showCommentsOverlay = false;
-        _showFloatingButtons = shouldShowFloating;
+        _showAppBar = _previousAppBarState; // 🎯 이전 상태로 복원
+        _bottomBarAnimationDuration =
+            _previousAppBarState ? 0 : 300; // 🎯 열려있었으면 즉시(0), 닫혀있었으면 일반 속도
       });
       // WebSocket 연결 해제
       _commentService.disconnectWebSocket();
@@ -635,6 +623,7 @@ class _PostReaderScreenState extends State<PostReaderScreen>
     final actualCommentCount = response['commentCount'] as int? ?? 0;
 
     _likeService.setInitialLikeData(postId, actualIsLiked, actualLikeCount);
+    _commentService.setInitialCommentCount(actualCommentCount); // 🎯 초기 댓글 수 설정
 
     print(
       '[PostReaderScreen] 실제 데이터 - 좋아요: $actualLikeCount, 좋아요 상태: $actualIsLiked, 댓글: $actualCommentCount',
@@ -722,8 +711,12 @@ class _PostReaderScreenState extends State<PostReaderScreen>
     if (postId != null && postId.isNotEmpty) {
       _commentService.setPostId(postId);
 
+      // 🎯 widget.exported에서 초기 댓글 수 설정 (포스트 목록에서 가져온 값)
+      final initialCommentCount = widget.exported['commentCount'] as int? ?? 0;
+      _commentService.setInitialCommentCount(initialCommentCount);
+
       // 🎯 초기 댓글 로드 (타이밍 시어 없이 즉시 로드)
-      _commentService.loadComments(size: 10);
+      _commentService.loadComments(size: 20);
 
       // 본문 로드 시 실제 데이터로 좋아요/댓글 초기화 (_loadContentWithPreloadedMedia에서 처리)
       _contentFuture = _loadContentWithPreloadedMedia(postId);
@@ -776,35 +769,20 @@ class _PostReaderScreenState extends State<PostReaderScreen>
     const double threshold = 4.0; // 미세 스크롤 무시
 
     bool nextShow = _showAppBar;
-    bool nextShowFloating = _showFloatingButtons;
 
     if (delta < -threshold) {
-      // 위로 스크롤 → 앱바 표시, 플로팅 버튼도 표시
+      // 위로 스크롤 → 앱바 표시
       nextShow = true;
-      nextShowFloating = true;
     } else if (delta > threshold) {
-      // 아래로 스크롤 → 앱바 숨김, 플로팅 버튼은 조건부
+      // 아래로 스크롤 → 앱바 숨김
       nextShow = false;
-      // 플로팅 버튼 숨기기
-      nextShowFloating = false;
     }
 
-    // 끝부분(300px 이내)에 도달하면 플로팅 버튼 자동 표시
-    // 단, 댓글 미리보기가 있으면 표시하지 않음
-    if (_scrollCtrl.hasClients) {
-      final pos = _scrollCtrl.position;
-      final recentComments = _commentService.getRecentComments();
-      final hasCommentPreview = recentComments.isNotEmpty;
-
-      if (pos.extentAfter <= 300 && !hasCommentPreview) {
-        nextShowFloating = true;
-      }
-    }
-
-    if (nextShow != _showAppBar || nextShowFloating != _showFloatingButtons) {
+    if (nextShow != _showAppBar) {
       setState(() {
         _showAppBar = nextShow;
-        _showFloatingButtons = nextShowFloating;
+        _previousAppBarState = nextShow; // 🎯 스크롤로 변경된 상태도 저장
+        _bottomBarAnimationDuration = 300; // 일반 속도
       });
     }
 
@@ -965,7 +943,7 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                     return false;
                   },
                   child: GestureDetector(
-                    behavior: HitTestBehavior.translucent,
+                    behavior: HitTestBehavior.deferToChild,
                     onTapUp: (details) {
                       _lastTapPosition = details.globalPosition;
                       _handleTap();
@@ -997,22 +975,16 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                             top: true,
                             bottom: false,
                             sliver: SliverToBoxAdapter(
-                              child: PostReaderHeader(
-                                exportedRoot: widget.exported,
-                                currentExportedData: _currentExportedData,
-                                postAuthor: postAuthor,
-                                authorProfileImageUrl:
-                                    widget.exported['authorProfileImageUrl']
-                                        as String?,
-                                enableAuthorTap:
-                                    !isMyPost &&
-                                    widget.exported['authorId'] != null,
-                                onAuthorTap: () {
-                                  if (isMyPost ||
-                                      widget.exported['authorId'] == null) {
+                              child: GestureDetector(
+                                onTap: () {
+                                  print('postAuthor: $postAuthor');
+
+                                  if (postAuthor.isEmpty ||
+                                      postAuthor ==
+                                          AuthService().currentUsernameSync) {
                                     return;
                                   }
-                                  final authorId = widget.exported['authorId'];
+
                                   final authorProfileImageUrl =
                                       widget.exported['authorProfileImageUrl']
                                           as String?;
@@ -1021,7 +993,6 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                                       builder:
                                           (_) => UserProfileScreen(
                                             otherUser: User(
-                                              id: authorId,
                                               username: postAuthor,
                                               profileImageUrl:
                                                   authorProfileImageUrl,
@@ -1030,21 +1001,32 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                                     ),
                                   );
                                 },
-                                horizontalPadding: 20,
-                                topSpacing: 90,
-                                gapHeight: gapHeight,
-                                isMyPost: isMyPost,
-                                likeCount: _likeService.getPostLikeCount(
-                                  widget.exported['id']?.toString() ?? '',
+                                child: PostReaderHeader(
+                                  exportedRoot: widget.exported,
+                                  currentExportedData: _currentExportedData,
+                                  postAuthor: postAuthor,
+                                  authorProfileImageUrl:
+                                      widget.exported['authorProfileImageUrl']
+                                          as String?,
+                                  enableAuthorTap:
+                                      !isMyPost &&
+                                      widget.exported['authorId'] != null,
+                                  onAuthorTap: () {},
+                                  horizontalPadding: 20,
+                                  topSpacing: 90,
+                                  gapHeight: gapHeight,
+                                  isMyPost: isMyPost,
+                                  likeCount: _likeService.getPostLikeCount(
+                                    widget.exported['id']?.toString() ?? '',
+                                  ),
+                                  commentCount:
+                                      _commentService.getTotalCommentCount(),
+                                  onLikeTap: _toggleLike,
+                                  onCommentTap: _showCommentBottomSheet,
+                                  isLiked: _likeService.isPostLiked(
+                                    widget.exported['id']?.toString() ?? '',
+                                  ), // ← 추가
                                 ),
-                                commentCount:
-                                    widget.exported['commentCount'] as int? ??
-                                    0,
-                                onLikeTap: _toggleLike,
-                                onCommentTap: _showCommentBottomSheet,
-                                isLiked: _likeService.isPostLiked(
-                                  widget.exported['id']?.toString() ?? '',
-                                ), // ← 추가
                               ),
                             ),
                           ),
@@ -1258,13 +1240,14 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                       likeCount: _likeService.getPostLikeCount(
                         widget.exported['id']?.toString() ?? '',
                       ),
-                      commentCount:
-                          widget.exported['commentCount'] as int? ?? 0,
+                      commentCount: _commentService.getTotalCommentCount(),
                       onLikeTap: _toggleLike,
                       onCommentTap: _showCommentBottomSheet,
                       isLiked: _likeService.isPostLiked(
                         widget.exported['id']?.toString() ?? '',
                       ),
+                      animationDuration:
+                          _bottomBarAnimationDuration, // 🎯 바텀바와 동일한 속도
                     );
                   },
                 ),
@@ -1331,109 +1314,171 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                       }(),
                     ),
                   ),
-                Positioned(
-                  bottom: 35,
-                  right: 25,
-                  child: AnimatedOpacity(
-                    opacity: _showFloatingButtons ? 1.0 : 0.0,
-                    duration: const Duration(milliseconds: 300),
-                    curve: Curves.easeInOut,
-                    child: AnimatedScale(
-                      scale: _showFloatingButtons ? 1.0 : 0.8,
-                      duration: const Duration(milliseconds: 300),
-                      curve: Curves.easeInOut,
-                      child: IgnorePointer(
-                        ignoring: !_showFloatingButtons,
-                        // AnimatedBuilder로 _likeService 명시적 구독
-                        child: AnimatedBuilder(
-                          animation: _likeService,
-                          builder: (context, child) {
-                            final postId =
-                                widget.exported['id']?.toString() ?? '';
-                            final isLiked = _likeService.isPostLiked(postId);
-                            final likeCount = _likeService.getPostLikeCount(
-                              postId,
-                            );
+                // 하단 바 (Medium 스타일)
+                AnimatedPositioned(
+                  duration: Duration(milliseconds: _bottomBarAnimationDuration),
+                  curve: Curves.easeInOut,
+                  bottom: _showAppBar ? 0 : -100,
+                  left: 0,
+                  right: 0,
+                  child: AnimatedBuilder(
+                    animation: Listenable.merge([
+                      _likeService,
+                      _commentService,
+                    ]), // 🎯 두 서비스 모두 감지
+                    builder: (context, child) {
+                      final postId = widget.exported['id']?.toString() ?? '';
+                      final isLiked = _likeService.isPostLiked(postId);
+                      final likeCount = _likeService.getPostLikeCount(postId);
+                      final commentCount =
+                          _commentService.getTotalCommentCount();
 
-                            return Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 14,
-                                vertical: 12,
-                              ),
-                              decoration: BoxDecoration(
-                                color: Theme.of(context).colorScheme.surface,
-                                borderRadius: BorderRadius.circular(20),
+                      return Container(
+                        height: 74,
+                        decoration: BoxDecoration(
+                          color: Theme.of(context).colorScheme.background,
 
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: Colors.black.withOpacity(0.15),
-                                    blurRadius: 12,
-                                    offset: const Offset(0, 4),
-                                  ),
-                                ],
-                              ),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  GestureDetector(
-                                    onTap: _toggleLike,
+                          border: Border(
+                            top: BorderSide(
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.onSurface.withOpacity(0.1),
+                              width: 1,
+                            ),
+                          ),
+                        ),
+
+                        child: SafeArea(
+                          top: false,
+                          child: Padding(
+                            padding: const EdgeInsets.only(
+                              left: 20,
+                              right: 20,
+                              top: 15,
+                            ),
+                            child: Row(
+                              children: [
+                                GestureDetector(
+                                  onTap: () {
+                                    SharePostOverlay.show(
+                                      context,
+                                      postId:
+                                          widget.exported['id']?.toString() ??
+                                          '',
+                                      title: widget.exported['title'] ?? '',
+                                      summary:
+                                          (widget.exported['summary'] ??
+                                                  widget.exported['excerpt'] ??
+                                                  '')
+                                              as String, // 🎯 summary 우선, excerpt 폴백
+                                      authorUsername:
+                                          widget.exported['author'] ?? '',
+                                      authorProfileImageUrl:
+                                          widget.exported['authorProfileImageUrl']
+                                              as String?, // 🎯 프로필 이미지
+                                      thumbnailUrl:
+                                          widget.exported['thumbnailImageUrl']
+                                              as String?, // 🎯 썸네일
+                                      readTime:
+                                          widget.exported['readTime'] ?? 0,
+                                    );
+                                  },
+                                  child: Padding(
+                                    padding: const EdgeInsets.only(left: 8.0),
                                     child: SvgPicture.asset(
-                                      'assets/icons/heart.svg',
-                                      width: 25,
-                                      height: 25,
-                                      color:
-                                          isLiked
-                                              ? Colors.red
-                                              : Theme.of(
-                                                context,
-                                              ).colorScheme.onSurface,
-                                    ),
-                                  ),
-                                  const SizedBox(width: 4),
-                                  Text(
-                                    formatCount(likeCount),
-                                    style: TextStyle(
-                                      fontSize: 14,
-                                      fontWeight: FontWeight.w500,
-                                      color:
-                                          isLiked
-                                              ? Colors.red
-                                              : Theme.of(
-                                                context,
-                                              ).colorScheme.onSurface,
-                                    ),
-                                  ),
-                                  const SizedBox(width: 20),
-                                  GestureDetector(
-                                    onTap: _showCommentBottomSheet,
-                                    child: SvgPicture.asset(
-                                      'assets/icons/comment.svg',
+                                      'assets/icons/share.svg',
                                       width: 24,
                                       height: 24,
-                                      color:
-                                          Theme.of(
-                                            context,
-                                          ).colorScheme.onSurface,
+                                      color: Theme.of(
+                                        context,
+                                      ).colorScheme.onSurface.withOpacity(0.7),
                                     ),
                                   ),
-                                  const SizedBox(width: 4),
-                                  Text(
-                                    formatCount(
-                                      widget.exported['commentCount'] as int? ??
-                                          0,
-                                    ),
-                                    style: const TextStyle(
-                                      fontSize: 14,
-                                      fontWeight: FontWeight.w500,
-                                    ),
+                                ),
+
+                                const Spacer(),
+                                // 우측: 좋아요 + 댓글
+                                GestureDetector(
+                                  onTap: _toggleLike,
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      SvgPicture.asset(
+                                        'assets/icons/heart.svg',
+                                        width: 25,
+                                        height: 25,
+                                        color:
+                                            isLiked
+                                                ? const ui.Color.fromARGB(
+                                                  255,
+                                                  255,
+                                                  89,
+                                                  89,
+                                                )
+                                                : Theme.of(context)
+                                                    .colorScheme
+                                                    .onSurface
+                                                    .withOpacity(0.8),
+                                      ),
+                                      const SizedBox(width: 4),
+                                      Text(
+                                        formatCount(likeCount),
+                                        style: TextStyle(
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.w500,
+                                          color:
+                                              isLiked
+                                                  ? const ui.Color.fromARGB(
+                                                    255,
+                                                    255,
+                                                    89,
+                                                    89,
+                                                  )
+                                                  : Theme.of(context)
+                                                      .colorScheme
+                                                      .onSurface
+                                                      .withOpacity(0.8),
+                                        ),
+                                      ),
+                                    ],
                                   ),
-                                ],
-                              ),
-                            );
-                          },
+                                ),
+                                const SizedBox(width: 20),
+                                GestureDetector(
+                                  onTap: _showCommentBottomSheet,
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      SvgPicture.asset(
+                                        'assets/icons/comment.svg',
+                                        width: 24,
+                                        height: 24,
+                                        color: Theme.of(context)
+                                            .colorScheme
+                                            .onSurface
+                                            .withOpacity(0.8),
+                                      ),
+                                      const SizedBox(width: 4),
+                                      Text(
+                                        formatCount(commentCount),
+                                        style: TextStyle(
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.w500,
+                                          color: Theme.of(context)
+                                              .colorScheme
+                                              .onSurface
+                                              .withOpacity(0.8),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
                         ),
-                      ),
-                    ),
+                      );
+                    },
                   ),
                 ),
               ],
@@ -1458,9 +1503,7 @@ class _PostReaderScreenState extends State<PostReaderScreen>
     if (username.isEmpty) return;
     Navigator.of(context).push(
       MaterialPageRoute(
-        builder:
-            (_) =>
-                UserProfileScreen(otherUser: User(id: 0, username: username)),
+        builder: (_) => UserProfileScreen(otherUser: User(username: username)),
       ),
     );
   }

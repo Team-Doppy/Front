@@ -1,7 +1,10 @@
+import 'dart:typed_data';
+import 'package:doppy/data/services/upload_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/svg.dart';
 import 'package:flutter_drawing_board/flutter_drawing_board.dart';
 import 'package:flutter_drawing_board/paint_contents.dart';
+import 'package:image/image.dart' as img;
 
 // 확장 메뉴 종류(전역)
 enum _Menu { none, pen, eraser, color }
@@ -36,12 +39,12 @@ class _DrawingOverlayState extends State<DrawingOverlay>
   double _width = 8;
   bool _eraser = false;
   bool _isAdjustingWidth = false; // 펜 두께 조절 중 여부
+  bool _isUploading = false; // 업로드 중 여부
 
   late AnimationController _animationController;
-  late Animation<double> _fadeAnimation;
 
-  // flutter_drawing_board
-  final DrawingController _drawingController = DrawingController();
+  // flutter_drawing_board (🎯 late로 변경하여 initState에서 초기화)
+  late DrawingController _drawingController;
 
   // 확장 메뉴 상태
   _Menu _menu = _Menu.none;
@@ -74,8 +77,17 @@ class _DrawingOverlayState extends State<DrawingOverlay>
       duration: const Duration(milliseconds: 400),
       vsync: this,
     );
-    _fadeAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
-      CurvedAnimation(parent: _animationController, curve: Curves.easeOut),
+
+    // 🎯 DrawingController를 새로 생성 (완전히 깨끗한 상태로 시작)
+    _drawingController = DrawingController();
+    debugPrint('[DrawingOverlay] DrawingController 새로 생성');
+
+    // 🔍 BlendMode enum 값 확인
+    debugPrint(
+      '[DrawingOverlay] BlendMode.srcOver.index = ${BlendMode.srcOver.index}',
+    );
+    debugPrint(
+      '[DrawingOverlay] BlendMode.clear.index = ${BlendMode.clear.index}',
     );
 
     // 초기 도구/스타일 세팅 (펜)
@@ -84,6 +96,11 @@ class _DrawingOverlayState extends State<DrawingOverlay>
       _drawingController.setPaintContent(SimpleLine());
     } catch (_) {}
     _applyStyle();
+
+    // 🔍 디버깅: 초기화 후 상태 확인
+    debugPrint(
+      '[DrawingOverlay] 초기화 완료: _eraser=$_eraser, _color=$_color, _width=$_width, blendMode=srcOver',
+    );
 
     _animationController.forward();
   }
@@ -96,29 +113,43 @@ class _DrawingOverlayState extends State<DrawingOverlay>
   }
 
   void _applyStyle() {
+    // 🎯 지우개 모드일 때는 투명색 + clear 블렌드 모드
+    final effectiveColor = _eraser ? Colors.transparent : _color;
+    final effectiveBlendMode = _eraser ? BlendMode.clear : BlendMode.srcOver;
+
+    debugPrint(
+      '[DrawingOverlay] _applyStyle 호출: _eraser=$_eraser, color=$effectiveColor, blendMode=$effectiveBlendMode',
+    );
+
     _drawingController.setStyle(
-      color: _color,
+      color: effectiveColor,
       strokeWidth: _width,
       isAntiAlias: true,
       strokeCap: StrokeCap.round,
       strokeJoin: StrokeJoin.round,
       style: PaintingStyle.stroke,
-      blendMode: _eraser ? BlendMode.clear : BlendMode.srcOver,
+      blendMode: effectiveBlendMode, // 🎯 지우개는 clear 모드
     );
   }
 
   void _applyPenTool() {
+    debugPrint('[DrawingOverlay] 펜 모드로 전환');
     _eraser = false;
     try {
       _drawingController.setPaintContent(SimpleLine());
     } catch (_) {}
+    _applyStyle(); // 🎯 펜 모드로 전환 시 즉시 스타일 적용
+    debugPrint('[DrawingOverlay] 펜 모드 적용 완료: blendMode=srcOver');
   }
 
   void _applyEraserTool() {
+    debugPrint('[DrawingOverlay] 지우개 모드로 전환 (투명하게 지우기)');
     _eraser = true;
     try {
-      _drawingController.setPaintContent(Eraser());
+      _drawingController.setPaintContent(Eraser()); // 🎯 진짜 지우개 사용
     } catch (_) {}
+    _applyStyle(); // 🎯 투명색 + BlendMode.clear 적용
+    debugPrint('[DrawingOverlay] 지우개 모드 적용 완료: BlendMode.clear');
   }
 
   @override
@@ -138,10 +169,10 @@ class _DrawingOverlayState extends State<DrawingOverlay>
                 builder: (context, constraints) {
                   return DrawingBoard(
                     controller: _drawingController,
-                    background: Container(
+                    background: SizedBox(
                       width: constraints.maxWidth,
                       height: constraints.maxHeight,
-                      color: Colors.transparent, // Scaffold와 같은 배경색
+                      // 🎯 color 없음 = 진짜 투명 배경
                     ),
                     showDefaultActions: false,
                     showDefaultTools: false,
@@ -209,23 +240,35 @@ class _DrawingOverlayState extends State<DrawingOverlay>
                     ),
                     const Spacer(),
                     TextButton(
-                      onPressed: _export,
+                      onPressed: _isUploading ? null : _export,
                       style: TextButton.styleFrom(
                         padding: const EdgeInsets.symmetric(
                           horizontal: 16,
                           vertical: 8,
                         ),
                       ),
-                      child: Text(
-                        '완료',
-                        style: TextStyle(
-                          color: Theme.of(
-                            context,
-                          ).colorScheme.onSurface.withOpacity(0.9),
-                          fontWeight: FontWeight.w700,
-                          fontSize: 16,
-                        ),
-                      ),
+                      child:
+                          _isUploading
+                              ? const SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  valueColor: AlwaysStoppedAnimation<Color>(
+                                    Colors.white,
+                                  ),
+                                ),
+                              )
+                              : Text(
+                                '완료',
+                                style: TextStyle(
+                                  color: Theme.of(
+                                    context,
+                                  ).colorScheme.onSurface.withOpacity(0.9),
+                                  fontWeight: FontWeight.w700,
+                                  fontSize: 16,
+                                ),
+                              ),
                     ),
                   ],
                 ),
@@ -321,71 +364,66 @@ class _DrawingOverlayState extends State<DrawingOverlay>
             bottom: 12,
             left: 0,
             right: 0,
-            child: FadeTransition(
-              opacity: _fadeAnimation,
-              child: SingleChildScrollView(
-                physics: const NeverScrollableScrollPhysics(),
-                scrollDirection: Axis.horizontal,
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: Container(
-                  width: MediaQuery.of(context).size.width,
-                  padding: const EdgeInsets.symmetric(
-                    vertical: 12,
-                    horizontal: 12,
-                  ),
-                  decoration: BoxDecoration(
-                    color: Theme.of(context).colorScheme.background,
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      // 확장 영역
-                      AnimatedSize(
-                        duration: const Duration(milliseconds: 160),
-                        curve: Curves.easeOut,
-                        child:
-                            (_menu == _Menu.none)
-                                ? const SizedBox.shrink()
-                                : Padding(
-                                  padding: const EdgeInsets.only(bottom: 8.0),
-                                  child: _buildExpandedRow(),
-                                ),
-                      ),
-                      // 메인 툴바
-                      Row(
-                        children: [
-                          _svgToolButton(
-                            'assets/icons/pen.svg',
-                            active: !_eraser, // 지우개가 아니면 펜 모드
-                            onTap: () {
-                              setState(() {
-                                _applyPenTool();
-                                _applyStyle();
-                              });
-                              _toggleMenu(_Menu.pen);
-                            },
-                          ),
-                          const SizedBox(width: 10),
-                          _svgToolButton(
-                            'assets/icons/eraser.svg',
-                            active: _eraser, // 지우개 모드일 때만
-                            onTap: () {
-                              setState(() {
-                                _applyEraserTool();
-                                _applyStyle();
-                              });
-                              _toggleMenu(_Menu.eraser);
-                            },
-                          ),
-                          const SizedBox(width: 10),
-                          _buildColorButton(),
-                          const SizedBox(width: 10),
-                        ],
-                      ),
-                    ],
-                  ),
+            child: SingleChildScrollView(
+              physics: const NeverScrollableScrollPhysics(),
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Container(
+                width: MediaQuery.of(context).size.width,
+                padding: const EdgeInsets.symmetric(
+                  vertical: 12,
+                  horizontal: 12,
+                ),
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.background,
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // 확장 영역
+                    AnimatedSize(
+                      duration: const Duration(milliseconds: 160),
+                      curve: Curves.easeOut,
+                      child:
+                          (_menu == _Menu.none)
+                              ? const SizedBox.shrink()
+                              : Padding(
+                                padding: const EdgeInsets.only(bottom: 8.0),
+                                child: _buildExpandedRow(),
+                              ),
+                    ),
+                    // 메인 툴바
+                    Row(
+                      children: [
+                        _svgToolButton(
+                          'assets/icons/pen.svg',
+                          active: !_eraser, // 지우개가 아니면 펜 모드
+                          onTap: () {
+                            setState(() {
+                              _applyPenTool(); // 이미 내부에서 _applyStyle() 호출
+                            });
+                            _toggleMenu(_Menu.pen);
+                          },
+                        ),
+                        const SizedBox(width: 10),
+                        _svgToolButton(
+                          'assets/icons/eraser.svg',
+                          active: _eraser, // 지우개 모드일 때만
+                          onTap: () {
+                            setState(() {
+                              _applyEraserTool(); // 이미 내부에서 _applyStyle() 호출
+                            });
+                            _toggleMenu(_Menu.eraser);
+                          },
+                        ),
+                        const SizedBox(width: 10),
+                        _buildColorButton(),
+                        const SizedBox(width: 10),
+                      ],
+                    ),
+                  ],
                 ),
               ),
             ),
@@ -408,8 +446,9 @@ class _DrawingOverlayState extends State<DrawingOverlay>
                   onTap: () {
                     setState(() {
                       _color = c;
-                      _eraser = false;
+                      _eraser = false; // 🎯 색상 선택 시 펜 모드로 전환
                       _applyStyle();
+                      debugPrint('[DrawingOverlay] 색상 변경: $_color, 펜 모드로 전환');
                     });
                   },
                   child: Container(
@@ -454,11 +493,11 @@ class _DrawingOverlayState extends State<DrawingOverlay>
               onTap: () {
                 setState(() {
                   _penType = _PenType.simple;
-                  _applyPenTool();
+                  _eraser = false; // 🎯 명시적으로 펜 모드 설정
                   try {
                     _drawingController.setPaintContent(SimpleLine());
                   } catch (_) {}
-                  _applyStyle();
+                  _applyStyle(); // 🎯 스타일 적용
                 });
               },
             ),
@@ -469,11 +508,11 @@ class _DrawingOverlayState extends State<DrawingOverlay>
               onTap: () {
                 setState(() {
                   _penType = _PenType.smooth;
-                  _applyPenTool();
+                  _eraser = false; // 🎯 명시적으로 펜 모드 설정
                   try {
                     _drawingController.setPaintContent(SmoothLine());
                   } catch (_) {}
-                  _applyStyle();
+                  _applyStyle(); // 🎯 스타일 적용
                 });
               },
             ),
@@ -484,11 +523,11 @@ class _DrawingOverlayState extends State<DrawingOverlay>
               onTap: () {
                 setState(() {
                   _penType = _PenType.straight;
-                  _applyPenTool();
+                  _eraser = false; // 🎯 명시적으로 펜 모드 설정
                   try {
                     _drawingController.setPaintContent(StraightLine());
                   } catch (_) {}
-                  _applyStyle();
+                  _applyStyle(); // 🎯 스타일 적용
                 });
               },
             ),
@@ -625,259 +664,200 @@ class _DrawingOverlayState extends State<DrawingOverlay>
   }
 
   Future<void> _export() async {
-    // 1) JSON 추출 (벡터)
-    final jsonList = _drawingController.getJsonList();
-    final strokesData = _convertJsonToStrokes(jsonList);
-    debugPrint(
-      '[DrawingOverlay] export: json=${jsonList.length}, strokes=${strokesData.length}',
-    );
+    // 🎯 PNG 이미지로 추출 (지우개 정확하게 반영)
+    setState(() => _isUploading = true);
 
-    if (strokesData.isEmpty) {
-      debugPrint('[DrawingOverlay] export: skip (empty strokes)');
-      return;
-    }
+    try {
+      debugPrint('[DrawingOverlay] PNG 이미지 추출 시작');
+      final byteData = await _drawingController.getImageData();
 
-    // 2) 모든 스트로크의 바운딩 박스 계산
-    Rect? bounds = _computeStrokeBoundsFromStrokes(strokesData);
+      if (byteData == null) {
+        debugPrint('[DrawingOverlay] export: skip (null image data)');
+        return;
+      }
 
-    // 3) 바운드가 없으면 PNG로 폴백
-    if (bounds == null) {
-      try {
-        final data = await _drawingController.getImageData();
-        if (data != null) {
-          // 보드 전체를 하나의 이미지 스티커로 등록 (좌표는 (0,0) 가정)
-          bounds = Rect.fromLTWH(
-            0,
-            0,
-            MediaQuery.of(context).size.width,
-            MediaQuery.of(context).size.height,
-          );
+      // ByteData를 Uint8List로 변환
+      final imageData = byteData.buffer.asUint8List();
+
+      if (imageData.isEmpty) {
+        debugPrint('[DrawingOverlay] export: skip (empty image data)');
+        return;
+      }
+
+      debugPrint(
+        '[DrawingOverlay] PNG 추출 완료: ${imageData.lengthInBytes} bytes',
+      );
+
+      // 🎯 실제 화면 크기 (MediaQuery)
+      final screenWidth = MediaQuery.of(context).size.width.toInt();
+      final screenHeight = MediaQuery.of(context).size.height.toInt();
+
+      // 🎯 디바이스 픽셀 비율 (예: iPhone 3.0x)
+      final pixelRatio = MediaQuery.of(context).devicePixelRatio;
+
+      debugPrint(
+        '[DrawingOverlay] 💡 MediaQuery 화면 크기: ${screenWidth}x$screenHeight',
+      );
+      debugPrint('[DrawingOverlay] 💡 디바이스 픽셀 비율: ${pixelRatio}x');
+
+      final croppedResult = await _cropTransparentPixels(
+        imageData,
+        screenWidth,
+        screenHeight,
+      );
+
+      if (croppedResult == null) {
+        debugPrint('[DrawingOverlay] export: skip (크롭 실패 또는 빈 이미지)');
+        return;
+      }
+
+      final croppedImageData = croppedResult['imageData'] as Uint8List;
+      final cropBounds = croppedResult['bounds'] as Rect;
+
+      debugPrint(
+        '[DrawingOverlay] 크롭 완료: ${croppedImageData.lengthInBytes} bytes, bounds=$cropBounds',
+      );
+
+      // 🎯 물리 픽셀 좌표를 논리 픽셀로 변환
+      final logicalLeft = cropBounds.left / pixelRatio;
+      final logicalTop = cropBounds.top / pixelRatio;
+      final logicalWidth = cropBounds.width / pixelRatio;
+      final logicalHeight = cropBounds.height / pixelRatio;
+
+      final double scrollY = widget.scrollController?.offset ?? 0.0;
+      final position = Offset(logicalLeft, logicalTop + scrollY);
+
+      debugPrint(
+        '[DrawingOverlay] 📐 물리→논리 변환: ($cropBounds) → (${logicalLeft.toStringAsFixed(1)}, ${logicalTop.toStringAsFixed(1)}, ${logicalWidth.toStringAsFixed(1)}x${logicalHeight.toStringAsFixed(1)})',
+      );
+      debugPrint('[DrawingOverlay] export: scrollY=$scrollY, docPos=$position');
+
+      // 🎯 PNG를 서버에 업로드하고 URL 받기
+      final uploadService = UploadService();
+      final task = uploadService.enqueueBytes(
+        croppedImageData,
+        kind: UploadKind.editorImage,
+        fileName: 'drawing_${DateTime.now().millisecondsSinceEpoch}.png',
+      );
+
+      debugPrint('[DrawingOverlay] 업로드 시작, 대기 중...');
+
+      // 🎯 업로드 완료 대기
+      await _waitForUpload(task);
+
+      if (task.state == UploadState.success && task.url != null) {
+        debugPrint('[DrawingOverlay] ✅ 업로드 완료: ${task.url}');
+
+        // URL로 전달
+        final pngStrokeWithUrl = {
+          'type': 'png_image',
+          'url': task.url!, // ✅ URL
+          'width': logicalWidth,
+          'height': logicalHeight,
+        };
+
+        widget.onSubmitDrawing([pngStrokeWithUrl], position, groupIndex: 0);
+
+        if (mounted) Navigator.of(context).pop();
+      } else {
+        debugPrint('[DrawingOverlay] ❌ 업로드 실패');
+        if (mounted) {
+          setState(() => _isUploading = false);
+          // 에러 표시 (선택사항)
         }
-      } catch (_) {}
+      }
+    } catch (e) {
+      debugPrint('[DrawingOverlay] PNG 추출/업로드 에러: $e');
+      if (mounted) setState(() => _isUploading = false);
     }
-
-    if (bounds == null) return;
-
-    final double scrollY = widget.scrollController?.offset ?? 0.0;
-    final position = Offset(bounds.left, bounds.top + scrollY);
-    debugPrint(
-      '[DrawingOverlay] export: bounds=$bounds, scrollY=$scrollY, docPos=$position',
-    );
-
-    // 모든 스트로크를 하나의 드로잉으로 통합하여 추출
-    widget.onSubmitDrawing(strokesData, position, groupIndex: 0);
-
-    if (mounted) Navigator.of(context).pop();
   }
 
-  List<Map<String, dynamic>> _convertJsonToStrokes(List<dynamic> jsonList) {
-    final List<Map<String, dynamic>> out = [];
-    for (final item in jsonList) {
-      try {
-        final map = (item as Map).cast<String, dynamic>();
-        final type = (map['type'] ?? '').toString();
-        final paint = (map['paint'] as Map?)?.cast<String, dynamic>() ?? {};
-        final double width = (paint['strokeWidth'] as num?)?.toDouble() ?? 8.0;
-        final int colorVal = (paint['color'] as int?) ?? 0xFFFFFFFF;
-        final String colorHex =
-            '#${colorVal.toRadixString(16).padLeft(8, '0').toUpperCase()}';
-        final bool isEraser =
-            type == 'Eraser' ||
-            (paint['blendMode'] != null &&
-                paint['blendMode'] == BlendMode.clear.index);
-
-        List<Offset> points = [];
-        // 1) flutter_drawing_board 포맷: path(List|Map) 우선 파싱
-        final dynamic pathData = map['path'];
-        if (pathData is List) {
-          for (final p in pathData) {
-            if (p is Map) {
-              final mp = p.cast<String, dynamic>();
-              final double? dx =
-                  (mp['dx'] as num?)?.toDouble() ??
-                  (mp['x'] as num?)?.toDouble();
-              final double? dy =
-                  (mp['dy'] as num?)?.toDouble() ??
-                  (mp['y'] as num?)?.toDouble();
-              if (dx != null && dy != null) points.add(Offset(dx, dy));
-            } else if (p is List) {
-              if (p.length >= 2 && p[0] is num && p[1] is num) {
-                points.add(
-                  Offset((p[0] as num).toDouble(), (p[1] as num).toDouble()),
-                );
-              }
-            }
-          }
-        } else if (pathData is Map && pathData['points'] is List) {
-          for (final p in (pathData['points'] as List)) {
-            if (p is Map) {
-              final mp = p.cast<String, dynamic>();
-              final double? dx =
-                  (mp['dx'] as num?)?.toDouble() ??
-                  (mp['x'] as num?)?.toDouble();
-              final double? dy =
-                  (mp['dy'] as num?)?.toDouble() ??
-                  (mp['y'] as num?)?.toDouble();
-              if (dx != null && dy != null) points.add(Offset(dx, dy));
-            }
-          }
-        } else if (pathData is Map && pathData['steps'] is List) {
-          // flutter_drawing_board Path 직렬화: steps 기반 (moveTo/lineTo/relative*)
-          Offset current = Offset.zero;
-          bool hasCurrent = false;
-          for (final step in (pathData['steps'] as List)) {
-            if (step is! Map) continue;
-            final m = step.cast<String, dynamic>();
-            final String op =
-                (m['type'] ?? m['op'] ?? m['name'] ?? '').toString();
-            double? x = (m['x'] as num?)?.toDouble();
-            double? y = (m['y'] as num?)?.toDouble();
-            final double? dx = (m['dx'] as num?)?.toDouble();
-            final double? dy = (m['dy'] as num?)?.toDouble();
-
-            if (op == 'moveTo' || op == 'M') {
-              if (x != null && y != null) {
-                current = Offset(x, y);
-                points.add(current);
-                hasCurrent = true;
-              }
-              continue;
-            }
-            if (op == 'relativeMoveTo' || op == 'm') {
-              if (dx != null && dy != null) {
-                current =
-                    hasCurrent ? current + Offset(dx, dy) : Offset(dx, dy);
-                points.add(current);
-                hasCurrent = true;
-              }
-              continue;
-            }
-            if (op == 'lineTo' || op == 'L') {
-              if (x != null && y != null) {
-                current = Offset(x, y);
-                points.add(current);
-                hasCurrent = true;
-              }
-              continue;
-            }
-            if (op == 'relativeLineTo' || op == 'l') {
-              if (dx != null && dy != null) {
-                current =
-                    hasCurrent ? current + Offset(dx, dy) : Offset(dx, dy);
-                points.add(current);
-                hasCurrent = true;
-              }
-              continue;
-            }
-            // 기타 곡선류: 종점(x,y) 또는 상대(dx,dy)만 취득
-            if (x != null && y != null) {
-              current = Offset(x, y);
-              points.add(current);
-              hasCurrent = true;
-            } else if (dx != null && dy != null) {
-              current = hasCurrent ? current + Offset(dx, dy) : Offset(dx, dy);
-              points.add(current);
-              hasCurrent = true;
-            }
-          }
-        }
-
-        // 2) 과거 포맷: points(List)
-        if (points.isEmpty && map['points'] is List) {
-          for (final p in (map['points'] as List)) {
-            final mp = (p as Map).cast<String, dynamic>();
-            final double? dx =
-                (mp['dx'] as num?)?.toDouble() ?? (mp['x'] as num?)?.toDouble();
-            final double? dy =
-                (mp['dy'] as num?)?.toDouble() ?? (mp['y'] as num?)?.toDouble();
-            if (dx != null && dy != null) points.add(Offset(dx, dy));
-          }
-        }
-
-        // 3) 도형 계열 호환 (startPoint/endPoint, A/B/C 등)
-        if (points.isEmpty &&
-            map['startPoint'] != null &&
-            map['endPoint'] != null) {
-          final sp = (map['startPoint'] as Map).cast<String, dynamic>();
-          final ep = (map['endPoint'] as Map).cast<String, dynamic>();
-          points.add(
-            Offset((sp['dx'] as num).toDouble(), (sp['dy'] as num).toDouble()),
-          );
-          points.add(
-            Offset((ep['dx'] as num).toDouble(), (ep['dy'] as num).toDouble()),
-          );
-        } else if (points.isEmpty &&
-            map.containsKey('A') &&
-            map.containsKey('B') &&
-            map.containsKey('C')) {
-          final a = (map['A'] as Map).cast<String, dynamic>();
-          final b = (map['B'] as Map).cast<String, dynamic>();
-          final c = (map['C'] as Map).cast<String, dynamic>();
-          points.add(
-            Offset((a['dx'] as num).toDouble(), (a['dy'] as num).toDouble()),
-          );
-          points.add(
-            Offset((b['dx'] as num).toDouble(), (b['dy'] as num).toDouble()),
-          );
-          points.add(
-            Offset((c['dx'] as num).toDouble(), (c['dy'] as num).toDouble()),
-          );
-        }
-
-        if (points.isEmpty) {
-          try {
-            final pd = map['path'];
-            debugPrint(
-              '[DrawingOverlay] points 파싱 실패: type=$type, path.runtimeType=${pd.runtimeType}, sample=${pd is String
-                  ? (pd.length > 120 ? pd.substring(0, 120) + '...' : pd)
-                  : pd is Map
-                  ? (pd.keys.toList())
-                  : pd is List
-                  ? (pd.isNotEmpty ? pd.first.runtimeType : '[]')
-                  : 'null'}',
-            );
-          } catch (_) {}
-          continue;
-        }
-
-        out.add({
-          'points': points
-              .map((p) => {'x': p.dx, 'y': p.dy})
-              .toList(growable: false),
-          'color': colorHex,
-          'width': width,
-          'erase': isEraser,
-        });
-      } catch (_) {
-        continue;
-      }
+  Future<void> _waitForUpload(UploadTask task) async {
+    // 업로드 완료 또는 실패까지 대기
+    while (task.state != UploadState.success &&
+        task.state != UploadState.failed &&
+        task.state != UploadState.cancelled) {
+      await Future.delayed(const Duration(milliseconds: 100));
     }
-    return out;
   }
 
-  Rect? _computeStrokeBoundsFromStrokes(List<Map<String, dynamic>> strokes) {
-    if (strokes.isEmpty) return null;
-    double? minX, minY, maxX, maxY;
-    for (final s in strokes) {
-      final pts = (s['points'] as List).cast<Map<String, dynamic>>();
-      final w = (s['width'] as num?)?.toDouble() ?? 8.0;
-      final half = w / 2;
-      for (final p in pts) {
-        final x = (p['x'] as num).toDouble();
-        final y = (p['y'] as num).toDouble();
-        final x1 = x - half;
-        final y1 = y - half;
-        final x2 = x + half;
-        final y2 = y + half;
-        minX = (minX == null) ? x1 : (x1 < minX ? x1 : minX);
-        minY = (minY == null) ? y1 : (y1 < minY ? y1 : minY);
-        maxX = (maxX == null) ? x2 : (x2 > maxX ? x2 : maxX);
-        maxY = (maxY == null) ? y2 : (y2 > maxY ? y2 : maxY);
+  /// PNG 이미지에서 투명한 부분 제거하고 크롭
+  Future<Map<String, dynamic>?> _cropTransparentPixels(
+    Uint8List pngBytes,
+    int width,
+    int height,
+  ) async {
+    try {
+      // image 패키지로 디코딩
+      final image = img.decodeImage(pngBytes);
+      if (image == null) return null;
+
+      debugPrint(
+        '[DrawingOverlay] 🖼️ PNG 실제 크기: ${image.width}x${image.height}',
+      );
+
+      // 투명하지 않은 픽셀의 바운딩 박스 찾기
+      int? minX, minY, maxX, maxY;
+
+      for (int y = 0; y < image.height; y++) {
+        for (int x = 0; x < image.width; x++) {
+          final pixel = image.getPixel(x, y);
+          final alpha = pixel.a.toInt();
+
+          // 완전히 투명하지 않은 픽셀 (alpha > 10)
+          if (alpha > 10) {
+            minX = (minX == null) ? x : (x < minX ? x : minX);
+            minY = (minY == null) ? y : (y < minY ? y : minY);
+            maxX = (maxX == null) ? x : (x > maxX ? x : maxX);
+            maxY = (maxY == null) ? y : (y > maxY ? y : maxY);
+          }
+        }
       }
-    }
-    if (minX == null || minY == null || maxX == null || maxY == null)
+
+      // 드로잉이 없으면 (모두 투명)
+      if (minX == null || minY == null || maxX == null || maxY == null) {
+        debugPrint('[DrawingOverlay] 모든 픽셀이 투명함');
+        return null;
+      }
+
+      // 약간의 패딩 추가 (잘리지 않도록)
+      const padding = 2;
+      minX = (minX - padding).clamp(0, image.width - 1);
+      minY = (minY - padding).clamp(0, image.height - 1);
+      maxX = (maxX + padding).clamp(0, image.width - 1);
+      maxY = (maxY + padding).clamp(0, image.height - 1);
+
+      final cropWidth = maxX - minX + 1;
+      final cropHeight = maxY - minY + 1;
+
+      debugPrint(
+        '[DrawingOverlay] 바운딩 박스: x=$minX, y=$minY, w=$cropWidth, h=$cropHeight',
+      );
+
+      // 이미지 크롭
+      final croppedImage = img.copyCrop(
+        image,
+        x: minX,
+        y: minY,
+        width: cropWidth,
+        height: cropHeight,
+      );
+
+      // PNG로 인코딩 (리사이즈 안 함 = 최고 화질)
+      final croppedBytes = img.encodePng(croppedImage, level: 6);
+
+      return {
+        'imageData': Uint8List.fromList(croppedBytes),
+        'bounds': Rect.fromLTWH(
+          minX.toDouble(),
+          minY.toDouble(),
+          cropWidth.toDouble(),
+          cropHeight.toDouble(),
+        ),
+      };
+    } catch (e) {
+      debugPrint('[DrawingOverlay] 크롭 에러: $e');
       return null;
-    const double pad = 0.5;
-    return Rect.fromLTRB(minX - pad, minY - pad, maxX + pad, maxY + pad);
+    }
   }
 }

@@ -329,38 +329,24 @@ class PostExporter {
         },
       };
 
-      switch (s.type) {
-        case StickerType.text:
-          if (s.content is Map) {
-            // 이미 {text, style} 형태로 보관된 경우 그대로 사용
-            final m = (s.content as Map).cast<String, dynamic>();
-            base['content'] = {
-              'text': (m['text'] ?? '').toString(),
-              'style': (m['style'] as Map?)?.cast<String, dynamic>(),
-            };
-            print(base['content']);
-          } else {
-            base['content'] = {'text': s.content.toString(), 'style': null};
-          }
-          break;
-        case StickerType.emoji:
-          base['content'] = s.content.toString();
-          break;
-        case StickerType.drawing:
-          // 벡터 그리기 데이터를 그대로 저장
-          if (s.content is Map) {
-            base['content'] = (s.content as Map).cast<String, dynamic>();
-          }
-          break;
-        case StickerType.image:
-          if (s.content is Uint8List) {
-            base['content'] = {
-              'bytes': s.content, // JsonExport가 base64 문자열로 직렬화
-            };
-          } else {
-            base['content'] = {'url': s.content.toString()};
-          }
-          break;
+      // 🎯 PNG 드로잉만 지원 (StickerType.image만 처리)
+      if (s.type == StickerType.image) {
+        if (s.content is Map) {
+          // ✅ URL + 크기 정보 (PNG 드로잉)
+          base['content'] = s.content; // {url, width, height}
+        } else if (s.content is String) {
+          // 레거시: URL만 있음
+          base['content'] = {'url': s.content};
+        } else if (s.content is Uint8List) {
+          // ⚠️ 업로드가 완료되지 않은 경우 (에러)
+          print('❌ [PostExporter] 스티커 ${s.id}의 이미지가 아직 업로드 중입니다!');
+          base['content'] = {
+            'bytes': s.content, // 임시로 base64로 저장
+          };
+        }
+      } else {
+        // text, emoji, drawing 타입은 무시
+        continue;
       }
 
       // Anchor 계산: 문서 레이아웃이 있을 경우, 스티커의 문서 좌표와 가장 가까운 노드 rect를 찾고 상대 좌표를 기록
@@ -551,16 +537,8 @@ class PostExporter {
   }
 
   static String _stickerTypeString(StickerType t) {
-    switch (t) {
-      case StickerType.text:
-        return 'text';
-      case StickerType.emoji:
-        return 'emoji';
-      case StickerType.drawing:
-        return 'drawing';
-      case StickerType.image:
-        return 'image';
-    }
+    // 🎯 PNG 드로잉만 지원
+    return 'image';
   }
 
   /// 기본 내보내기 결과(base)에 공개 범위/썸네일/최종 제목/요약/생성시각 등을 덧붙여
@@ -694,9 +672,32 @@ class PostExporter {
         }
       }
 
-      // 썸네일 URL도 포함(이전 로직에서 썸네일 ID를 병합했었음)
+      // 썸네일 URL도 포함
       if (thumbnailImageUrl.trim().isNotEmpty) {
         usedUrls.add(thumbnailImageUrl.trim());
+      }
+
+      // 🎯 스티커 이미지 URL도 포함 (PNG 드로잉 포함)
+      final List<dynamic> contentStickers = List<dynamic>.from(
+        (content is Map ? content['stickers'] : null) as List? ?? const [],
+      );
+      print('[PostExporter] 📌 content.stickers 개수: ${contentStickers.length}');
+      for (final s in contentStickers) {
+        if (s is! Map) continue;
+        final String stickerType = (s['type'] ?? '').toString();
+        print('[PostExporter] 📌 스티커 타입: $stickerType');
+        if (stickerType == 'image') {
+          final contentMap = s['content'] as Map<String, dynamic>?;
+          print('[PostExporter] 📌 content: $contentMap');
+          if (contentMap != null) {
+            final String url = (contentMap['url'] ?? '').toString();
+            print('[PostExporter] 📌 URL: $url');
+            if (url.isNotEmpty) {
+              usedUrls.add(url);
+              print('[PostExporter] ✅ 스티커 URL 추가: $url');
+            }
+          }
+        }
       }
 
       // 결과 키는 기존과 동일하게 유지(호환)하되 값은 URL 문자열 목록로 제공

@@ -280,7 +280,7 @@ class _CardViewState extends State<CardView> {
                       const SizedBox(height: 8),
                       // 요약
                       Text(
-                        widget.post.parsedContent,
+                        widget.post.summary,
                         style: TextStyle(
                           fontSize: 12,
                           fontWeight: FontWeight.w400,

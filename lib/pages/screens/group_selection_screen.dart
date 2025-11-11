@@ -22,6 +22,7 @@ class _GroupSelectionScreenState extends State<GroupSelectionScreen>
   final GroupDropDown _groupDropDown = GroupDropDown();
   late final PageController _pageController;
   int _currentGroupIndex = 0;
+  double _headerOpacity = 1.0; // 🎯 헤더 투명도 추적
 
   // 멤버 썸네일 애니메이션 컨트롤러
   late final AnimationController _memberAnimationController;
@@ -53,13 +54,41 @@ class _GroupSelectionScreenState extends State<GroupSelectionScreen>
       curve: Curves.easeOutBack,
     );
 
-    // 첫 빌드 후 그룹 데이터 로드
+    // 첫 페이지 애니메이션 시작
+    // 그룹 데이터는 이미 SplashScreen에서 로드되었으므로 여기서 다시 호출하지 않음
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      context.read<GroupProvider>().fetchMyGroups();
-      // 첫 페이지 애니메이션 시작
       _memberAnimationController.forward();
     });
+
+    // 🎯 PageController 리스너 추가 (스크롤 진행률 감지)
+    _pageController.addListener(_onPageScroll);
+  }
+
+  // 🎯 페이지 스크롤 리스너
+  void _onPageScroll() {
+    if (!_pageController.hasClients) return;
+
+    final page = _pageController.page ?? 0;
+
+    // 첫 페이지에서 조금만 스크롤해도 빠르게 사라지도록
+    // 0.15 이상 스크롤되면 사라짐 시작 (15% 스크롤)
+    if (page < 0.15) {
+      setState(() {
+        _headerOpacity = 1.0 - (page / 0.15);
+      });
+    } else if (_headerOpacity > 0.0) {
+      setState(() {
+        _headerOpacity = 0.0;
+      });
+    }
+
+    // 다시 첫 페이지로 돌아올 때
+    if (page >= 0.0 && page < 0.01 && _headerOpacity < 1.0) {
+      setState(() {
+        _headerOpacity = 1.0;
+      });
+    }
   }
 
   @override
@@ -94,7 +123,7 @@ class _GroupSelectionScreenState extends State<GroupSelectionScreen>
                   name: context.tr('all_friends'),
                   description: context.tr('all_friends'),
                   ownerId: 'system',
-                  owner: User(id: 0, username: 'system'),
+                  owner: User(username: 'system'),
                   createdAt: DateTime.now(),
                 );
 
@@ -148,6 +177,7 @@ class _GroupSelectionScreenState extends State<GroupSelectionScreen>
         PageView.builder(
           controller: _pageController,
           scrollDirection: Axis.vertical,
+          physics: const PageScrollPhysics(), // 🎯 딱딱 스냅되는 물리 효과
           itemCount: groups.length + 1, // +1 for create group button
           onPageChanged: (index) {
             setState(() {
@@ -167,6 +197,42 @@ class _GroupSelectionScreenState extends State<GroupSelectionScreen>
 
             return _buildGroupDisc(group, index);
           },
+        ),
+
+        // 🎯 스크롤 시 사라지는 상단 헤더 텍스트
+        Positioned(
+          top: 70,
+          left: 0,
+          right: 0,
+          child: IgnorePointer(
+            child: Opacity(
+              opacity: _headerOpacity,
+              child: Column(
+                children: [
+                  Text(
+                    context.tr('my_groups'),
+                    style: TextStyle(
+                      fontSize: 24,
+                      fontWeight: FontWeight.w700,
+                      color: Theme.of(context).colorScheme.onSurface,
+                      letterSpacing: -0.5,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    context.tr('scroll_to_explore'),
+                    style: TextStyle(
+                      fontSize: 15,
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.onSurface.withOpacity(0.6),
+                      letterSpacing: -0.2,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
         ),
 
         // 🎯 우측 인덱스 (가로 라인) - 독립적으로 터치 인식
@@ -277,104 +343,151 @@ class _GroupSelectionScreenState extends State<GroupSelectionScreen>
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             // 디스크 형태의 그룹 아바타
-            Container(
-              width: 240,
-              height: 240,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.1),
-                    blurRadius: 20,
-                    spreadRadius: 5,
-                  ),
-                ],
-              ),
-              child: Stack(
-                children: [
-                  // 🎯 Hero 애니메이션으로 감싸기
-                  Container(
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: Theme.of(context).colorScheme.surface,
-                      border: Border.all(
-                        color: Theme.of(
-                          context,
-                        ).colorScheme.onSurface.withOpacity(0.1),
-                        width: 2,
-                      ),
+            AnimatedScale(
+              scale: groupIndex == _currentGroupIndex ? 1.1 : 1.0,
+              duration: const Duration(milliseconds: 300),
+              curve: Curves.easeOutCubic,
+              child: Container(
+                width: 200,
+                height: 200,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.1),
+                      blurRadius: 20,
+                      spreadRadius: 5,
                     ),
-                    child: ClipOval(
-                      child:
-                          group.profileImageUrl != null &&
-                                  group.profileImageUrl!.isNotEmpty
-                              ? Image.network(
-                                group.profileImageUrl!,
-                                fit: BoxFit.cover,
-                                width: 240,
-                                height: 240,
-                              )
-                              : Container(
-                                decoration: BoxDecoration(
-                                  shape: BoxShape.circle,
-                                  gradient: LinearGradient(
-                                    begin: Alignment.topLeft,
-                                    end: Alignment.bottomRight,
-                                    colors: [
-                                      // 🎯 절제된 그라디언트
-                                      GroupColorPalette.getColor(
-                                        group.id,
-                                      ).withOpacity(0.55),
-                                      GroupColorPalette.getColor(group.id),
-                                      GroupColorPalette.getColor(
-                                        group.id,
-                                      ).withOpacity(0.95),
-                                    ],
-                                    stops: const [0.0, 0.5, 1.0],
-                                  ),
-                                ),
-                                child: Container(
-                                  decoration: BoxDecoration(
-                                    shape: BoxShape.circle,
-                                    gradient: RadialGradient(
-                                      center: Alignment(-0.4, -0.4),
-                                      radius: 1.0,
-                                      colors: [
-                                        Colors.white.withOpacity(0.12),
-                                        Colors.transparent,
-                                      ],
+                  ],
+                ),
+                child: Stack(
+                  children: [
+                    // 🎯 Hero 애니메이션으로 감싸기
+                    Hero(
+                      tag: 'group-${group.id}',
+                      child: Container(
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: Theme.of(context).colorScheme.surface,
+                          border: Border.all(
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.onSurface.withOpacity(0.1),
+                            width: 1,
+                          ),
+                        ),
+                        child: ClipOval(
+                          child:
+                              group.profileImageUrl != null &&
+                                      group.profileImageUrl!.isNotEmpty
+                                  ? Image.network(
+                                    group.profileImageUrl!,
+                                    fit: BoxFit.cover,
+                                    width: 200,
+                                    height: 200,
+                                  )
+                                  : Container(
+                                    decoration: BoxDecoration(
+                                      shape: BoxShape.circle,
+                                      gradient: LinearGradient(
+                                        begin: Alignment.topLeft,
+                                        end: Alignment.bottomRight,
+                                        colors: [
+                                          // 🎯 절제된 그라디언트
+                                          GroupColorPalette.getColor(
+                                            group.id,
+                                          ).withOpacity(0.55),
+                                          GroupColorPalette.getColor(group.id),
+                                          GroupColorPalette.getColor(
+                                            group.id,
+                                          ).withOpacity(0.95),
+                                        ],
+                                        stops: const [0.0, 0.5, 1.0],
+                                      ),
+                                    ),
+                                    child: Container(
+                                      decoration: BoxDecoration(
+                                        shape: BoxShape.circle,
+                                        gradient: RadialGradient(
+                                          center: Alignment(-0.4, -0.4),
+                                          radius: 1.0,
+                                          colors: [
+                                            Colors.white.withOpacity(0.12),
+                                            Colors.transparent,
+                                          ],
+                                        ),
+                                      ),
                                     ),
                                   ),
-                                ),
-                              ),
-                    ),
-                  ),
-
-                  // 재생 버튼 (오른쪽)
-                  Positioned(
-                    right: 10,
-                    top: 0,
-                    bottom: 0,
-                    child: Center(
-                      child: Container(
-                        width: 44,
-                        height: 44,
-                        child: Icon(
-                          Icons.arrow_forward_ios,
-                          size: 18,
-                          color: Colors.white,
                         ),
                       ),
                     ),
-                  ),
-                  // 멤버 프로필 썸네일 (우측 하단) - 현재 페이지일 때만 표시
-                  if (groupIndex == _currentGroupIndex)
-                    Positioned(
-                      right: 10,
-                      bottom: 0,
-                      child: _buildMemberThumbnails(group),
-                    ),
-                ],
+
+                    // 🎯 중앙에 멤버 수 표시 (전체 친구 그룹은 제외)
+                    if (group.id == -1)
+                      // 🐱 전체 친구 그룹: 고양이 이미지 표시
+                      Center(
+                        child: Padding(
+                          padding: const EdgeInsets.only(left: 4.0),
+                          child: ClipOval(
+                            child: Image.asset(
+                              'assets/images/doppy_nobg.png',
+                              width: 40,
+                              height: 40,
+                              color: Colors.white,
+                              fit: BoxFit.contain,
+                            ),
+                          ),
+                        ),
+                      )
+                    else
+                      // 일반 그룹: 멤버 수 표시
+                      Center(
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 8,
+                          ),
+                          child: Text(
+                            '${group.memberCount ?? 0}',
+                            style: TextStyle(
+                              fontSize: 24,
+                              fontWeight: FontWeight.w700,
+                              color: Colors.white,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ),
+
+                    // 재생 버튼 (오른쪽)
+                    if (group.id != -1)
+                      Positioned(
+                        right: 10,
+                        top: 0,
+                        bottom: 0,
+                        child: Center(
+                          child: Container(
+                            width: 44,
+                            height: 44,
+                            child: Icon(
+                              Icons.arrow_forward_ios,
+                              size: 18,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ),
+                      ),
+                    // 멤버 프로필 썸네일 (우측 하단) - 현재 페이지일 때만 표시
+                    if (groupIndex == _currentGroupIndex)
+                      Positioned(
+                        right: 10,
+                        bottom: 0,
+                        child: _buildMemberThumbnails(group),
+                      ),
+                  ],
+                ),
               ),
             ),
             const SizedBox(height: 16),
@@ -391,13 +504,16 @@ class _GroupSelectionScreenState extends State<GroupSelectionScreen>
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 6),
-            // 멤버 수
+            // 그룹 설명
             Text(
-              '${group.members.length} ${context.tr('members')}',
+              group.description,
               style: TextStyle(
                 fontSize: 15,
                 color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
               ),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
             ),
           ],
         ),
@@ -438,94 +554,105 @@ class _GroupSelectionScreenState extends State<GroupSelectionScreen>
     final thumbnails = group.memberThumbnails ?? [];
     final totalMembers = group.memberCount ?? 0;
 
-    if (totalMembers == 0 || thumbnails.isEmpty) {
+    if (totalMembers == 0) {
       return const SizedBox.shrink();
     }
 
-    // 최대 3명까지 썸네일, 나머지는 +N 표시
-    final displayCount = thumbnails.length > 3 ? 4 : thumbnails.length;
-    final remainingCount = totalMembers > 3 ? totalMembers - 3 : 0;
+    // 🎯 최대 3명까지 썸네일 표시, 나머지는 +N으로 표시
+    final thumbnailsToShow = thumbnails.take(3).toList();
+    final showPlusN = totalMembers > thumbnailsToShow.length;
+    final remainingCount = totalMembers - thumbnailsToShow.length;
 
-    return SizedBox(
-      width: 40 + 3 * 24.0, // 최대 너비 고정 (4개 기준: 40 + 72 = 112)
-      height: 40,
-      child: Stack(
-        children: List.generate(displayCount, (index) {
-          // 마지막이 +N인 경우
-          if (index == 3 && remainingCount > 0) {
+    // 표시할 아이템 개수 (썸네일 + +N)
+    final displayCount = thumbnailsToShow.length + (showPlusN ? 1 : 0);
+
+    // 🎯 실제 표시될 너비 계산 (멤버 수에 따라 동적 조정)
+    final actualWidth = 40.0 + (displayCount - 1) * 24.0;
+
+    return Container(
+      // 🎯 1명일 때 왼쪽으로 이동하기 위한 마진
+      margin: EdgeInsets.only(right: displayCount == 1 ? 15 : 0),
+      child: SizedBox(
+        width: actualWidth + 10,
+        height: 40,
+        child: Stack(
+          children: List.generate(displayCount, (index) {
+            // 🎯 마지막이 +N인 경우
+            if (showPlusN && index == thumbnailsToShow.length) {
+              return AnimatedBuilder(
+                animation: _memberAnimation,
+                builder: (context, child) {
+                  final positionProgress = _memberAnimation.value;
+                  final targetLeft = index * 24.0;
+
+                  return Positioned(
+                    left: targetLeft * positionProgress,
+                    child: SizedBox(
+                      width: 40,
+                      height: 40,
+                      child: Center(
+                        child: Padding(
+                          padding: const EdgeInsets.only(top: 15.0),
+                          child: Text(
+                            '+$remainingCount',
+                            style: TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.bold,
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.onSurface.withOpacity(0.6),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              );
+            }
+
+            // 일반 멤버 썸네일 (서버 데이터 사용)
+            final thumbnailUrl = thumbnailsToShow[index];
+
             return AnimatedBuilder(
               animation: _memberAnimation,
               builder: (context, child) {
+                // 위치는 동시에 이동
                 final positionProgress = _memberAnimation.value;
-                final targetLeft = index * 24.0;
+                final targetLeft = index * 24.0; // 최종 위치
 
                 return Positioned(
-                  left: targetLeft * positionProgress,
+                  left: targetLeft * positionProgress, // 동시에 이동
                   child: Container(
                     width: 40,
                     height: 40,
-                    child: Center(
-                      child: Padding(
-                        padding: const EdgeInsets.only(top: 15.0),
-                        child: Text(
-                          '+$remainingCount',
-                          style: TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.bold,
-                            color: Theme.of(
-                              context,
-                            ).colorScheme.onSurface.withOpacity(0.6),
-                          ),
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      border: Border.all(color: Colors.white, width: 2),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.2),
+                          blurRadius: 4,
+                          offset: const Offset(0, 2),
                         ),
+                      ],
+                    ),
+                    child: ClipOval(
+                      child: Image.network(
+                        thumbnailUrl,
+                        fit: BoxFit.cover,
+                        errorBuilder: (context, error, stackTrace) {
+                          // 이미지 로드 실패 시 이니셜 표시
+                          return _buildInitialAvatar('User${index + 1}');
+                        },
                       ),
                     ),
                   ),
                 );
               },
             );
-          }
-
-          // 일반 멤버 썸네일 (서버 데이터 사용)
-          final thumbnailUrl = thumbnails[index];
-
-          return AnimatedBuilder(
-            animation: _memberAnimation,
-            builder: (context, child) {
-              // 위치는 동시에 이동
-              final positionProgress = _memberAnimation.value;
-              final targetLeft = index * 24.0; // 최종 위치
-
-              return Positioned(
-                left: targetLeft * positionProgress, // 동시에 이동
-                child: Container(
-                  width: 40,
-                  height: 40,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    border: Border.all(color: Colors.white, width: 2.5),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.2),
-                        blurRadius: 4,
-                        offset: const Offset(0, 2),
-                      ),
-                    ],
-                  ),
-                  child: ClipOval(
-                    child: Image.network(
-                      thumbnailUrl,
-                      fit: BoxFit.cover,
-                      errorBuilder: (context, error, stackTrace) {
-                        // 이미지 로드 실패 시 이니셜 표시
-                        return _buildInitialAvatar('User${index + 1}');
-                      },
-                    ),
-                  ),
-                ),
-              );
-            },
-          );
-        }),
+          }),
+        ),
       ),
     );
   }
@@ -550,8 +677,8 @@ class _GroupSelectionScreenState extends State<GroupSelectionScreen>
               );
             },
             child: Container(
-              width: 240,
-              height: 240,
+              width: 200,
+              height: 200,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
                 color: Theme.of(context).colorScheme.surface,

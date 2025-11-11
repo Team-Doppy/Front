@@ -1,17 +1,14 @@
 import 'dart:io';
-import 'dart:ui';
 
 import 'package:doppy/data/models/group_model.dart';
-import 'package:doppy/data/services/upload_service.dart'; // 🎯 UploadService 추가
+import 'package:doppy/data/services/upload_service.dart';
 import 'package:doppy/image/profile_image_bottom_sheet.dart';
-import 'package:doppy/providers/group_provider.dart';
-import 'package:doppy/theme/app_colors.dart';
 import 'package:doppy/l10n/app_localizations.dart';
+import 'package:doppy/theme/app_colors.dart';
 import 'package:doppy/utils/dialog_utils.dart';
-import 'package:doppy/utils/error_handler.dart'; // 🎯 ErrorHandler 추가
+import 'package:doppy/utils/error_handler.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/svg.dart';
-import 'package:provider/provider.dart';
 
 // 그룹 아이템 (스와이프 액션 포함)
 class _GroupItemWithActions extends StatefulWidget {
@@ -210,26 +207,113 @@ class _GroupItemWithActionsState extends State<_GroupItemWithActions> {
   }
 }
 
+// 🎯 그룹 생성/수정 전체 화면 페이지
+class _GroupCreateEditPage extends StatefulWidget {
+  final GroupDropDown groupDropDown;
+  final List<Group> groups;
+  final Group? selectedGroup;
+  final Function(Group?) onGroupSelected;
+  final Future<void> Function(
+    String name,
+    String? description,
+    String? imageUrl,
+  )
+  onCreateGroup;
+  final bool editMode;
+  final VoidCallback? onDeleteGroup;
+
+  const _GroupCreateEditPage({
+    required this.groupDropDown,
+    required this.groups,
+    required this.selectedGroup,
+    required this.onGroupSelected,
+    required this.onCreateGroup,
+    required this.editMode,
+    this.onDeleteGroup,
+  });
+
+  @override
+  State<_GroupCreateEditPage> createState() => _GroupCreateEditPageState();
+}
+
+class _GroupCreateEditPageState extends State<_GroupCreateEditPage> {
+  @override
+  void initState() {
+    super.initState();
+    // 🎯 페이지 로드 후 키보드 포커스
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (widget.groupDropDown._createGroupFocusNode.canRequestFocus) {
+        widget.groupDropDown._createGroupFocusNode.requestFocus();
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Theme.of(context).colorScheme.background,
+      appBar: AppBar(
+        backgroundColor: Theme.of(context).colorScheme.background,
+        elevation: 0,
+        leading: IconButton(
+          icon: Icon(
+            Icons.close,
+            color: Theme.of(context).colorScheme.onSurface,
+          ),
+          onPressed: () => Navigator.of(context).pop(),
+        ),
+        actions: [
+          // 🎯 수정 모드일 때만 삭제 버튼 표시
+          if (widget.editMode && widget.onDeleteGroup != null)
+            IconButton(
+              icon: SvgPicture.asset(
+                'assets/icons/delete.svg',
+                width: 24,
+                height: 24,
+                color: Theme.of(context).colorScheme.error.withOpacity(0.7),
+              ),
+              onPressed: () async {
+                final confirmed = await DialogUtils.showConfirmDialog(
+                  context,
+                  title: context.tr('delete'),
+                  message:
+                      '${widget.groupDropDown._createGroupController.text} 그룹을 삭제하시겠습니까?',
+                  confirmText: context.tr('delete'),
+                  cancelText: context.tr('cancel'),
+                );
+
+                if (confirmed == true && context.mounted) {
+                  Navigator.of(context).pop();
+                  widget.onDeleteGroup!();
+                }
+              },
+            ),
+        ],
+      ),
+      body: SingleChildScrollView(
+        child: widget.groupDropDown._buildCreateGroupField(
+          context,
+          widget.onCreateGroup,
+          setState,
+        ),
+      ),
+    );
+  }
+}
+
 class GroupDropDown {
-  VoidCallback? _onGroupChanged;
-  bool _isCreatingGroup = false;
+  bool _isCreatingLoading = false; // 생성 중 로딩 상태
   final TextEditingController _createGroupController = TextEditingController();
   final TextEditingController _createGroupDescriptionController =
-      TextEditingController(); // 🎯 그룹 설명
+      TextEditingController();
   final FocusNode _createGroupFocusNode = FocusNode();
-  final FocusNode _createGroupDescriptionFocusNode =
-      FocusNode(); // 🎯 그룹 설명 포커스
+  final FocusNode _createGroupDescriptionFocusNode = FocusNode();
 
   // 그룹 프로필 이미지 상태
   String? _selectedGroupImageUrl;
-  UploadTask? _groupImageUploadTask; // 🎯 업로드 태스크
-  VoidCallback? _uploadTaskListener; // 🎯 업로드 리스너
-  bool _isEditMode = false; // 🎯 수정 모드 플래그
-
-  /// 그룹 변경 콜백 설정
-  void setOnGroupChanged(VoidCallback? callback) {
-    _onGroupChanged = callback;
-  }
+  UploadTask? _groupImageUploadTask;
+  VoidCallback? _uploadTaskListener;
+  bool _isEditMode = false;
 
   /// 리소스 정리
   void dispose() {
@@ -244,7 +328,7 @@ class GroupDropDown {
     }
   }
 
-  /// 그룹 드롭다운 표시 (BottomSheet)
+  /// 그룹 생성/수정 페이지 표시 (전체 화면)
   void showGroupDropdown(
     BuildContext context,
     GlobalKey buttonKey,
@@ -261,8 +345,8 @@ class GroupDropDown {
     VoidCallback? onDeleteGroup, // 🎯 그룹 삭제 콜백 (수정 모드)
   }) async {
     // 상태 초기화
-    _isCreatingGroup = startWithCreate; // 🎯 파라미터에 따라 초기 상태 설정
-    _isEditMode = editMode; // 🎯 수정 모드 플래그 저장
+    _isEditMode = editMode;
+    _isCreatingLoading = false;
 
     // 🎯 수정 모드인 경우 기존 값으로 초기화
     if (editMode) {
@@ -275,395 +359,37 @@ class GroupDropDown {
       _selectedGroupImageUrl = null;
     }
 
-    await showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      isDismissible: true,
-      enableDrag: true,
-      backgroundColor: Colors.transparent,
-      barrierColor: Colors.black.withOpacity(0.5), // 🎯 surfaceColor로 변경
-      builder: (BuildContext sheetContext) {
-        return StatefulBuilder(
-          builder: (context, setModalState) {
-            return Stack(
-              children: [
-                // 배경 영역 (바깥 부분) - 탭하면 닫힘
-                Positioned.fill(
-                  child: GestureDetector(
-                    onTap: () {
-                      Navigator.of(context).pop();
-                    },
-                    child: Container(color: Colors.transparent),
-                  ),
-                ),
-                // 바텀시트 컨텐츠
-                DraggableScrollableSheet(
-                  initialChildSize: 0.85, // 🎯 85%로 더 높게
-                  minChildSize: 0.6,
-                  maxChildSize: 0.95,
-                  builder: (context, scrollController) {
-                    return GestureDetector(
-                      onTap: () {
-                        // 바텀시트 내부를 탭해도 닫히지 않도록 이벤트 소비
-                      },
-                      child: ClipRRect(
-                        borderRadius: const BorderRadius.vertical(
-                          top: Radius.circular(24),
-                        ),
-                        child: BackdropFilter(
-                          filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-                          child: Container(
-                            decoration: BoxDecoration(
-                              color: Theme.of(
-                                context,
-                              ).colorScheme.background.withOpacity(0.95),
-                              border: Border.all(
-                                color: Theme.of(
-                                  context,
-                                ).colorScheme.onSurface.withOpacity(0.1),
-                                width: 0.5,
-                              ),
-                            ),
-                            child: Column(
-                              children: [
-                                // 핸들 바 + 삭제 버튼 (수정 모드일 때만)
-                                SizedBox(
-                                  height: 56, // 🎯 충분한 높이 확보
-                                  child: Stack(
-                                    clipBehavior: Clip.none, // 🎯 클리핑 방지
-                                    children: [
-                                      // 중앙 핸들 바
-                                      Center(
-                                        child: Container(
-                                          margin: const EdgeInsets.only(
-                                            top: 12,
-                                            bottom: 8,
-                                          ),
-                                          width: 38,
-                                          height: 4,
-                                          decoration: BoxDecoration(
-                                            color: Colors.grey.withOpacity(0.8),
-                                            borderRadius: BorderRadius.circular(
-                                              2,
-                                            ),
-                                          ),
-                                        ),
-                                      ),
-                                      // 🎯 오른쪽 상단 삭제 버튼 (수정 모드일 때만)
-                                      if (editMode && onDeleteGroup != null)
-                                        Positioned(
-                                          top: 12, // 🎯 8 → 12로 조정
-                                          right: 8, // 🎯 12 → 8로 조정
-                                          child: IconButton(
-                                            icon: SvgPicture.asset(
-                                              'assets/icons/delete.svg',
-                                              width: 24,
-                                              height: 24,
-                                              color: Theme.of(context)
-                                                  .colorScheme
-                                                  .error
-                                                  .withOpacity(0.7),
-                                            ),
-                                            onPressed: () async {
-                                              // 🎯 삭제 확인 다이얼로그
-                                              final confirmed =
-                                                  await DialogUtils.showConfirmDialog(
-                                                    context,
-                                                    title: context.tr('delete'),
-                                                    message:
-                                                        '${_createGroupController.text} 그룹을 삭제하시겠습니까?',
-                                                    confirmText: context.tr(
-                                                      'delete',
-                                                    ),
-                                                    cancelText: context.tr(
-                                                      'cancel',
-                                                    ),
-                                                  );
-
-                                              if (confirmed == true &&
-                                                  context.mounted) {
-                                                Navigator.of(
-                                                  context,
-                                                ).pop(); // 바텀시트 닫기
-                                                onDeleteGroup(); // 삭제 콜백 실행
-                                              }
-                                            },
-                                            padding: EdgeInsets.zero,
-                                            constraints: const BoxConstraints(
-                                              minWidth: 44,
-                                              minHeight: 44,
-                                            ),
-                                          ),
-                                        ),
-                                    ],
-                                  ),
-                                ),
-
-                                Expanded(
-                                  child: SingleChildScrollView(
-                                    controller: scrollController,
-                                    child: _buildGroupContent(
-                                      context,
-                                      sheetContext,
-                                      groups,
-                                      selectedGroup,
-                                      onGroupSelected,
-                                      onCreateGroup,
-                                      setModalState,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ),
-                    );
-                  },
-                ),
-              ],
-            );
-          },
-        );
-      },
-    );
-  }
-
-  /// 그룹 드롭다운 내용 빌드 (생성/수정만)
-  Widget _buildGroupContent(
-    BuildContext context,
-    BuildContext sheetContext,
-    List<Group> groups,
-    Group? selectedGroup,
-    Function(Group?) onGroupSelected,
-    Future<void> Function(String name, String? description, String? imageUrl)
-    onCreateGroup, // 🎯 시그니처 변경
-    StateSetter setModalState,
-  ) {
-    // 🎯 그룹 생성/수정 UI만 반환 (리스트 제거)
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        _buildCreateGroupField(context, onCreateGroup, setModalState),
-        const SizedBox(height: 20),
-      ],
-    );
-  }
-
-  /// 🎯 미사용 (이제 필요 없음)
-  Widget _buildGroupContentOld(
-    BuildContext context,
-    BuildContext sheetContext,
-    List<Group> groups,
-    Group? selectedGroup,
-    Function(Group?) onGroupSelected,
-    Future<void> Function(String name, String? description, String? imageUrl)
-    onCreateGroup,
-    StateSetter setModalState,
-  ) {
-    final groupProvider = context.read<GroupProvider>();
-
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        // 그룹 생성/수정 필드
-        if (_isCreatingGroup)
-          _buildCreateGroupField(context, onCreateGroup, setModalState),
-
-        // 🎯 그룹 목록은 생성/수정 모드가 아니고, 수정 모드가 아닐 때만 표시
-        if (!_isCreatingGroup && !_isEditMode) ...[
-          // 그룹 생성 버튼
-          _buildCreateGroupButton(context, setModalState),
-
-          // 전체 그룹 아이템
-          _buildGroupItem(
-            title: context.tr('all_groups'),
-            count: groups.length,
-            isSelected: selectedGroup == null,
-            context: context,
-            onTap: () {
-              onGroupSelected(null);
-              Navigator.of(context).pop();
-              _onGroupChanged?.call();
-            },
-          ),
-
-          // 사용자가 만든 그룹들
-          ...groups.map(
-            (group) => _GroupItemWithActions(
-              group: group,
-              isSelected: selectedGroup?.id == group.id,
-              onTap: () {
-                onGroupSelected(group);
-                Navigator.of(context).pop();
-                _onGroupChanged?.call();
-              },
-              onEdit: () async {
-                final newName = await _showEditGroupNameDialog(
-                  context,
-                  group.name,
-                );
-                if (newName != null && newName.trim().isNotEmpty) {
-                  try {
-                    // TODO: GroupProvider에 updateGroupName 메서드 추가 필요
-                    // await groupProvider.updateGroupName(group.id, newName.trim());
-                    if (context.mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text(context.tr('group_name_updated')),
-                        ),
-                      );
-                    }
-                  } catch (e) {
-                    if (context.mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text(context.tr('group_update_failed')),
-                        ),
-                      );
-                    }
-                  }
-                }
-              },
-              onDelete: () async {
-                final confirmed = await _showDeleteConfirmDialog(
-                  context,
-                  group.name,
-                );
-                if (confirmed == true) {
-                  // 🎯 바텀시트를 먼저 닫음
-                  if (Navigator.of(sheetContext).canPop()) {
-                    Navigator.of(sheetContext).pop();
-                  }
-
-                  try {
-                    await groupProvider.deleteGroup(group.id);
-                    if (selectedGroup?.id == group.id) {
-                      onGroupSelected(null);
-                    }
-                    if (context.mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text(context.tr('group_deleted'))),
-                      );
-                    }
-                    _onGroupChanged?.call();
-                  } catch (e) {
-                    if (context.mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text(context.tr('group_delete_failed')),
-                        ),
-                      );
-                    }
-                  }
-                }
-              },
-            ),
-          ),
-        ],
-
-        // BottomSheet 하단 여백
-        const SizedBox(height: 20),
-      ],
-    );
-  }
-
-  /// 그룹 아이템 빌드 (일반)
-  Widget _buildGroupItem({
-    required String title,
-    required int count,
-    required bool isSelected,
-    required BuildContext context,
-    required VoidCallback onTap,
-  }) {
-    final isDarkMode = Theme.of(context).brightness == Brightness.dark;
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 0),
-      child: Material(
-        borderRadius: BorderRadius.circular(12),
-        color:
-            isSelected
-                ? Theme.of(context).colorScheme.onSurface.withOpacity(0.9)
-                : Colors.transparent,
-        child: InkWell(
-          onTap: onTap,
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    title,
-                    style: TextStyle(
-                      fontWeight:
-                          isSelected ? FontWeight.w700 : FontWeight.w400,
-                      fontSize: 16,
-                      color:
-                          isSelected && isDarkMode
-                              ? Theme.of(context).colorScheme.surface
-                              : isSelected && !isDarkMode
-                              ? Colors.white
-                              : Theme.of(context).colorScheme.onSurface,
-                    ),
-                  ),
-                ),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 4,
-                  ),
-                  child: Text(
-                    count.toString(),
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w700,
-                      color:
-                          isSelected && isDarkMode
-                              ? Theme.of(context).colorScheme.surface
-                              : isSelected && !isDarkMode
-                              ? Colors.white
-                              : Theme.of(context).colorScheme.onSurface,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  /// 그룹 생성 버튼
-  Widget _buildCreateGroupButton(
-    BuildContext context,
-    StateSetter setModalState,
-  ) {
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: () {
-          setModalState(() {
-            _isCreatingGroup = true;
-          });
+    // 🎯 전체 화면 페이지로 이동
+    await Navigator.of(context).push(
+      PageRouteBuilder(
+        pageBuilder: (context, animation, secondaryAnimation) {
+          return _GroupCreateEditPage(
+            groupDropDown: this,
+            groups: groups,
+            selectedGroup: selectedGroup,
+            onGroupSelected: onGroupSelected,
+            onCreateGroup: onCreateGroup,
+            editMode: editMode,
+            onDeleteGroup: onDeleteGroup,
+          );
         },
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-          child: Row(
-            children: [
-              Expanded(
-                child: Text(
-                  context.tr('create_new_group'),
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
-                    color: Theme.of(context).colorScheme.onSurface,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
+        transitionsBuilder: (context, animation, secondaryAnimation, child) {
+          // 아래에서 위로 슬라이드 애니메이션
+          const begin = Offset(0.0, 1.0);
+          const end = Offset.zero;
+          const curve = Curves.easeOutCubic;
+
+          var tween = Tween(
+            begin: begin,
+            end: end,
+          ).chain(CurveTween(curve: curve));
+
+          return SlideTransition(
+            position: animation.drive(tween),
+            child: child,
+          );
+        },
+        transitionDuration: const Duration(milliseconds: 300),
       ),
     );
   }
@@ -775,7 +501,7 @@ class GroupDropDown {
                   color: Theme.of(context).colorScheme.onSurface,
                 ),
                 decoration: InputDecoration(
-                  hintText: '그룹 설명 (선택)',
+                  hintText: context.tr('group_description_optional'),
                   hintStyle: TextStyle(
                     fontSize: 14,
                     color: Theme.of(
@@ -824,38 +550,70 @@ class GroupDropDown {
               const SizedBox(width: 12),
               Expanded(
                 child: TextButton(
-                  onPressed: () async {
-                    final groupName = nameController.text.trim();
-                    final groupDescription =
-                        descriptionController.text.trim(); // 🎯 설명 가져오기
-                    if (groupName.isNotEmpty) {
-                      await onCreateGroup(
-                        groupName,
-                        groupDescription.isEmpty
-                            ? null
-                            : groupDescription, // 🎯 설명 전달
-                        _selectedGroupImageUrl, // 🎯 이미지 URL 전달
-                      );
-                      setModalState(() {
-                        _isCreatingGroup = false;
-                        _selectedGroupImageUrl = null;
-                      });
-                      Navigator.of(context).pop();
-                    }
-                  },
+                  onPressed:
+                      _isCreatingLoading
+                          ? null
+                          : () async {
+                            final groupName = nameController.text.trim();
+                            final groupDescription =
+                                descriptionController.text.trim(); // 🎯 설명 가져오기
+                            if (groupName.isNotEmpty) {
+                              // 🎯 로딩 시작
+                              setModalState(() {
+                                _isCreatingLoading = true;
+                              });
+
+                              try {
+                                await onCreateGroup(
+                                  groupName,
+                                  groupDescription.isEmpty
+                                      ? null
+                                      : groupDescription, // 🎯 설명 전달
+                                  _selectedGroupImageUrl, // 🎯 이미지 URL 전달
+                                );
+
+                                setModalState(() {
+                                  _isCreatingLoading = false;
+                                  _selectedGroupImageUrl = null;
+                                });
+
+                                if (context.mounted) {
+                                  Navigator.of(context).pop();
+                                }
+                              } catch (e) {
+                                // 🎯 에러 발생 시 로딩 해제
+                                setModalState(() {
+                                  _isCreatingLoading = false;
+                                });
+                                rethrow;
+                              }
+                            }
+                          },
                   style: TextButton.styleFrom(
                     padding: const EdgeInsets.symmetric(vertical: 12),
                   ),
-                  child: Text(
-                    _isEditMode
-                        ? '수정완료'
-                        : context.tr('create'), // 🎯 수정 모드에 따라 텍스트 변경
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.w700,
-                      color: Theme.of(context).colorScheme.onSurface,
-                    ),
-                  ),
+                  child:
+                      _isCreatingLoading
+                          ? SizedBox(
+                            height: 24,
+                            width: 24,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2.5,
+                              valueColor: AlwaysStoppedAnimation<Color>(
+                                Theme.of(context).colorScheme.onSurface,
+                              ),
+                            ),
+                          )
+                          : Text(
+                            _isEditMode
+                                ? '수정완료'
+                                : context.tr('create'), // 🎯 수정 모드에 따라 텍스트 변경
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.w700,
+                              color: Theme.of(context).colorScheme.onSurface,
+                            ),
+                          ),
                 ),
               ),
             ],
@@ -939,7 +697,7 @@ class GroupDropDown {
             final uploadService = UploadService();
             final task = uploadService.enqueueFile(
               file,
-              kind: UploadKind.profile, // 프로필 이미지 업로드와 동일
+              kind: UploadKind.group, // 🎯 그룹 이미지 업로드
             );
 
             _groupImageUploadTask = task;
@@ -987,62 +745,6 @@ class GroupDropDown {
           },
         );
       },
-    );
-  }
-
-  /// 그룹 이름 수정 다이얼로그
-  Future<String?> _showEditGroupNameDialog(
-    BuildContext context,
-    String currentName,
-  ) async {
-    final controller = TextEditingController(text: currentName);
-    String? result;
-
-    await showDialog(
-      context: context,
-      builder: (dialogContext) {
-        return AlertDialog(
-          title: Text(context.tr('edit_group_name')),
-          content: TextField(
-            controller: controller,
-            decoration: InputDecoration(
-              hintText: context.tr('enter_group_name'),
-            ),
-            autofocus: true,
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(),
-              child: Text(context.tr('cancel')),
-            ),
-            TextButton(
-              onPressed: () {
-                result = controller.text;
-                Navigator.of(dialogContext).pop();
-              },
-              child: Text(context.tr('save')),
-            ),
-          ],
-        );
-      },
-    );
-
-    controller.dispose();
-    return result;
-  }
-
-  /// 그룹 삭제 확인 다이얼로그
-  Future<bool?> _showDeleteConfirmDialog(
-    BuildContext context,
-    String groupName,
-  ) async {
-    return await DialogUtils.showConfirmDialog(
-      context,
-      title: context.tr('delete_group'),
-      message: context.tr('group_delete_confirmation'),
-      confirmText: context.tr('delete'),
-      cancelText: context.tr('cancel'),
-      isDestructive: true,
     );
   }
 }

@@ -404,7 +404,13 @@ class EditorService extends ChangeNotifier {
   }
 
   /// 본문(제목 제외)에 유의미한 내용이 있는지 판단
-  bool hasNonEmptyBody() {
+  bool hasNonEmptyBody({BuildContext? context}) {
+    // 🎯 스티커가 있으면 본문이 있다고 간주
+    if (context != null) {
+      final stickerService = context.read<StickerService>();
+      if (stickerService.stickers.isNotEmpty) return true;
+    }
+
     for (int i = 1; i < document.length; i++) {
       final node = document.getNodeAt(i);
       if (node == null) continue;
@@ -507,7 +513,8 @@ class EditorService extends ChangeNotifier {
   bool shouldPromptSaveOnExit(BuildContext context) {
     final hasStickerChanges = context.read<StickerService>().hasChanges;
     // 제목 또는 본문 중 하나라도 유효한 입력이 있어야 함
-    final bool anyContent = hasNonEmptyTitle() || hasNonEmptyBody();
+    final bool anyContent =
+        hasNonEmptyTitle() || hasNonEmptyBody(context: context);
     if (!anyContent) return false;
     final now = computeDocumentFingerprint();
     if (_lastSavedFingerprint == null || hasStickerChanges) {
@@ -1186,7 +1193,7 @@ class EditorService extends ChangeNotifier {
       } catch (_) {}
 
       // 1) iOS 핸들 NPE 방지: 교체 중 selection 비우기
-      final prevSelection = editor.composer.selectionNotifier.value;
+      // final prevSelection = editor.composer.selectionNotifier.value;
       try {
         editor.composer.clearSelection();
       } catch (_) {}
@@ -1208,42 +1215,24 @@ class EditorService extends ChangeNotifier {
       // 업로드 성공 URL ↔ imageId 매핑을 등록할 수 있게끔 업로드 흐름에서 호출할 API 제공
       // (이 메서드에서는 URL만 교체하고, ID는 업로드 서비스 쪽에서 NodeComponentService에 등록)
 
-      // ImageRowNode들 중 로컬 경로(file:// 또는 localPath) 포함된 URL을 신규 네트워크 URL로 교체
-      try {
-        for (int i = 0; i < editor.document.length; i++) {
-          final n = editor.document.getNodeAt(i);
-          if (n is ImageRowNode) {
-            final urls = List<String>.from(n.imageUrls);
-            bool changed = false;
-            for (int k = 0; k < urls.length; k++) {
-              final u = urls[k];
-              if ((localPath != null && u == localPath) ||
-                  u.startsWith('file://')) {
-                urls[k] = url;
-                changed = true;
-              }
-            }
-            if (changed) {
-              final updated = n.copyWith(imageUrls: urls);
-              editor.document.replaceNodeById(n.id, updated);
+      for (int i = 0; i < editor.document.length; i++) {
+        final n = editor.document.getNodeAt(i);
+        if (n is ImageRowNode) {
+          final urls = List<String>.from(n.imageUrls);
+          bool changed = false;
+          for (int k = 0; k < urls.length; k++) {
+            final u = urls[k];
+            if ((localPath != null && u == localPath) ||
+                u.startsWith('file://')) {
+              urls[k] = url;
+              changed = true;
             }
           }
+          if (changed) {
+            final updated = n.copyWith(imageUrls: urls);
+            editor.document.replaceNodeById(n.id, updated);
+          }
         }
-      } catch (_) {}
-
-      // 3) 다음 프레임에서 selection 복원
-      if (prevSelection != null) {
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          try {
-            editor.execute([
-              ChangeSelectionRequest(
-                prevSelection,
-                SelectionChangeType.placeCaret,
-                SelectionReason.userInteraction,
-              ),
-            ]);
-          } catch (_) {}
-        });
       }
     } catch (e) {
       debugPrint('replacePlaceholderWithUrl failed: $e');

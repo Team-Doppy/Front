@@ -202,6 +202,7 @@ class PostData {
         'id': id,
         'thumbnailImageUrl': thumbnailImageUrl,
         'title': title,
+        'summary': summary, // 🎯 summary 추가
         'author': author,
         'authorId': authorId,
         'authorProfileImageUrl': authorProfileImageUrl,
@@ -218,6 +219,7 @@ class PostData {
         'id': id,
         'thumbnailImageUrl': thumbnailImageUrl,
         'title': title,
+        'summary': summary, // 🎯 summary 추가
         'author': author,
         'authorId': authorId,
         'authorProfileImageUrl': authorProfileImageUrl,

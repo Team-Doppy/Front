@@ -2,7 +2,7 @@ import 'package:doppy/editor/overlay/drawing_overlay.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-enum StickerKind { text, emoji, image, draw }
+enum StickerKind { draw }
 
 enum ImageEditState {
   selecting, // 이미지 선택 중
@@ -45,18 +45,11 @@ class _StickerOverlayState extends State<StickerOverlay> {
   final TextEditingController _text = TextEditingController();
   final FocusNode _focus = FocusNode();
 
-  Uint8List? _selectedImageBytes;
-
   @override
   void initState() {
     super.initState();
     // 툴바에서 항상 initialKind가 제공됨
     _kind = widget.initialKind;
-
-    // 초기 이미지가 있으면 편집 모드로 시작
-    if (_kind == StickerKind.image && widget.initialImage != null) {
-      _selectedImageBytes = widget.initialImage;
-    }
   }
 
   @override
@@ -74,12 +67,13 @@ class _StickerOverlayState extends State<StickerOverlay> {
         initialStrokes: widget.initialDrawingStrokes,
         scrollController: widget.scrollController,
         onSubmitDrawing: (strokes, position, {int? groupIndex}) {
-          // 벡터 데이터를 전달 (groupIndex도 포함)
+          // 🎯 PNG 또는 벡터 데이터 전달
           widget.onSubmit(
             text: '',
             textStyle: {
               'drawingData': {
-                'strokes': strokes,
+                'strokes':
+                    strokes, // PNG일 경우 [{'type': 'png_image', 'imageData': Uint8List, ...}]
                 'position': {'x': position.dx, 'y': position.dy},
                 'groupIndex': groupIndex,
               },

@@ -59,6 +59,13 @@ class AppLocalizations {
       'logout_confirm': '로그아웃 하시겠습니까?',
       'delete_account': '회원탈퇴',
 
+      // 세션 만료
+      'session_expired': '세션 만료',
+      'session_expired_message': '로그인 세션이 만료되었습니다. 다시 로그인하시겠어요?',
+      'session_expired_error': '로그인 세션이 만료되었습니다. 다시 로그인해주세요.',
+      'session_expired_snackbar': '로그인 세션이 만료되었습니다.',
+      'later': '나중에',
+
       // 회원탈퇴
       'delete_account_warning': '모든 데이터가 영구적으로 삭제되며, 복구할 수 없습니다.',
       'reason_not_useful': '서비스가 유용하지 않아요',
@@ -104,7 +111,7 @@ class AppLocalizations {
       'no_posts_on_profile': '아직은 포스트가 없어요',
       'no_favorite_posts': '좋아요한 글이 없어요',
       'no_favorite_posts_subtitle': '마음에 드는 글에 좋아요를 눌러보세요',
-      'search_groups_friends': '그룹이나 친구를 검색해보세요',
+      'search_groups_friends': '친구를 검색하기',
       'load_failed': '불러올 수 없습니다',
       'friends_posts_load_failed': '친구글을 불러올 수 없습니다',
       'all_posts_load_failed': '전체글을 불러올 수 없습니다',
@@ -281,6 +288,7 @@ class AppLocalizations {
       'manage_groups': '그룹 관리',
       'group_name': '그룹 이름',
       'group_description': '그룹 설명',
+      'group_description_optional': '그룹 설명 (선택)',
       'add_members': '멤버 추가',
       'remove_member': '멤버 삭제',
       'cancel_friend_request': '친구 요청 취소',
@@ -356,6 +364,31 @@ class AppLocalizations {
 
       // 기타
       'some_features_limited': '일부 기능이 제한될 수 있어요',
+
+      // 공유 관련
+      'copy_link': '링크 복사',
+      'share_via': '공유하기',
+      'save_image': '이미지 저장',
+      'link_copied': '링크가 복사되었습니다',
+      'more': '더보기',
+      'share_failed': '공유 실패',
+
+      // 테마
+      'theme_dark_blur': '어두운 블러',
+      'theme_light_blur': '밝은 블러',
+      'theme_dark': '어두운',
+      'theme_light': '밝은',
+
+      // Instagram
+      'instagram_story': 'Instagram Stories',
+      'instagram_story_subtitle': '스토리에 공유',
+      'instagram_feed': 'Instagram Feed',
+      'instagram_feed_subtitle': '게시물로 공유',
+      'instagram_not_installed': 'Instagram 앱이 설치되어 있지 않습니다',
+
+      // 그룹 선택 화면
+      'my_groups': '내 그룹들',
+      'scroll_to_explore': '스크롤해서 탐색하기',
     },
     'en': {
       // Common
@@ -396,6 +429,15 @@ class AppLocalizations {
       'logout': 'Logout',
       'logout_confirm': 'Are you sure you want to logout?',
       'delete_account': 'Delete Account',
+
+      // Session Expired
+      'session_expired': 'Session Expired',
+      'session_expired_message':
+          'Your login session has expired. Would you like to log in again?',
+      'session_expired_error':
+          'Your login session has expired. Please log in again.',
+      'session_expired_snackbar': 'Login session has expired.',
+      'later': 'Later',
 
       // Account Deletion
       'delete_account_warning':
@@ -444,7 +486,7 @@ class AppLocalizations {
       'no_posts_on_profile': 'No posts yet',
       'no_favorite_posts': 'No favorite posts',
       'no_favorite_posts_subtitle': 'Like posts you enjoy',
-      'search_groups_friends': 'Search for groups or friends',
+      'search_groups_friends': 'Search for friends',
       'load_failed': 'Failed to load',
       'friends_posts_load_failed': 'Failed to load friends posts',
       'all_posts_load_failed': 'Failed to load all posts',
@@ -625,6 +667,7 @@ class AppLocalizations {
       'manage_groups': 'Manage Groups',
       'group_name': 'Group Name',
       'group_description': 'Group Description',
+      'group_description_optional': 'Group description (optional)',
       'add_members': 'Add Members',
       'remove_member': 'Remove Member',
       'cancel_friend_request': 'Cancel Friend Request',
@@ -699,6 +742,31 @@ class AppLocalizations {
 
       // Others
       'some_features_limited': 'Some features may be limited',
+
+      // Share Related
+      'copy_link': 'Copy Link',
+      'share_via': 'Share',
+      'save_image': 'Save Image',
+      'link_copied': 'Link copied',
+      'more': 'More',
+      'share_failed': 'Share failed',
+
+      // Theme
+      'theme_dark_blur': 'Dark Blur',
+      'theme_light_blur': 'Light Blur',
+      'theme_dark': 'Dark',
+      'theme_light': 'Light',
+
+      // Instagram
+      'instagram_story': 'Instagram Stories',
+      'instagram_story_subtitle': 'Share to story',
+      'instagram_feed': 'Instagram Feed',
+      'instagram_feed_subtitle': 'Share to feed',
+      'instagram_not_installed': 'Instagram app is not installed',
+
+      // Group Selection Screen
+      'my_groups': 'My Groups',
+      'scroll_to_explore': 'Scroll to explore',
     },
   };
 

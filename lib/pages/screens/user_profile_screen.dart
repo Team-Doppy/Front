@@ -2,6 +2,7 @@ import 'package:doppy/pages/components/common_profile_avatar.dart';
 import 'package:doppy/pages/components/category_sheet.dart';
 import 'package:doppy/pages/components/feed.dart';
 import 'package:doppy/pages/components/custom_refresh_indicator.dart';
+import 'package:doppy/pages/components/share_profile_bottom_sheet.dart';
 import 'package:doppy/providers/feed_provider/feed_ui_service.dart';
 import 'package:doppy/pages/screens/group_selection_screen.dart';
 import 'package:doppy/pages/screens/setting_screen.dart';
@@ -678,7 +679,18 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
           Expanded(
             child: _buildGlassyButton(
               text: context.tr('share_profile'),
-              onTap: () {},
+              onTap: () {
+                final me = context.read<UserProvider>().currentUser;
+                if (me == null) return;
+                // 공유 버튼
+                ShareProfileBottomSheet.show(
+                  context,
+                  username: me.username,
+                  profileImageUrl: me.profileImageUrl,
+                  bio: me.selfIntroduction,
+                  friendCount: me.friendCount ?? 0,
+                );
+              },
             ),
           ),
         ],

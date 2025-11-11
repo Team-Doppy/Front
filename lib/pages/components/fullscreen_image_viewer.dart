@@ -14,9 +14,8 @@ import 'package:doppy/data/models/user_model.dart';
 import 'package:flutter_svg/svg.dart';
 import 'package:provider/provider.dart';
 import 'package:http/http.dart' as http;
-import 'package:path_provider/path_provider.dart';
 import 'package:video_player/video_player.dart';
-import 'dart:io';
+import 'package:image_gallery_saver/image_gallery_saver.dart';
 
 class FullscreenImageViewer extends StatefulWidget {
   final String imageUrl;
@@ -462,7 +461,7 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer>
     if (username == null || username.isEmpty) return;
 
     // User 객체로 변환
-    final user = User(username: username, profileImageUrl: '', id: 0);
+    final user = User(username: username, profileImageUrl: '');
 
     Navigator.of(context).push(
       MaterialPageRoute(
@@ -701,30 +700,22 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer>
       final response = await http.get(Uri.parse(_currentImageUrl));
 
       if (response.statusCode == 200) {
-        // 임시 파일로 저장
-        final tempDir = await getTemporaryDirectory();
-        final fileName = '${DateTime.now().millisecondsSinceEpoch}.jpg';
-        final tempFile = File('${tempDir.path}/$fileName');
-        await tempFile.writeAsBytes(response.bodyBytes);
+        // 🎯 갤러리에 직접 저장
+        final result = await ImageGallerySaver.saveImage(
+          response.bodyBytes,
+          quality: 100,
+          name: 'doppy_image_${DateTime.now().millisecondsSinceEpoch}',
+        );
 
-        // 이미지 갤러리에 저장 (image_gallery_saver 사용)
-        // TODO: pubspec.yaml에 image_gallery_saver 추가 필요
-        // iOS: NSPhotoLibraryAddUsageDescription 권한 필요
-        // Android: WRITE_EXTERNAL_STORAGE 권한 필요
-
-        // 실제 구현 예시:
-        // final result = await ImageGallerySaver.saveFile(tempFile.path);
-        // if (result['isSuccess'] == true) {
-        //   if (mounted) {
-        //     setState(() => _isDownloading = false);
-        //     ErrorHandler.showInfo(context, '이미지가 갤러리에 저장되었습니다');
-        //   }
-        // }
-
-        // 임시 구현: 파일 저장 후 사용자에게 알림
         if (mounted) {
           setState(() => _isDownloading = false);
-          ErrorHandler.showInfo(context, context.tr('image_saved'));
+
+          // 저장 성공 여부 확인
+          if (result != null && result['isSuccess'] == true) {
+            ErrorHandler.showInfo(context, context.tr('image_saved'));
+          } else {
+            ErrorHandler.showError(context, context.tr('image_save_failed'));
+          }
         }
       } else {
         if (mounted) {
@@ -901,17 +892,7 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer>
             AnimatedBuilder(
               animation: _commentsController,
               builder: (context, child) {
-                final p = _commentsController.value;
-                final baseColor = const Color.fromARGB(
-                  255,
-                  55,
-                  55,
-                  55,
-                ).withOpacity(0.9);
-                final commentColor = Theme.of(
-                  context,
-                ).colorScheme.surface.withOpacity(0.3);
-
+                final baseColor = Colors.black.withOpacity(0.75);
                 return Positioned.fill(
                   child: ClipRRect(
                     child: BackdropFilter(
@@ -919,7 +900,7 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer>
                       child: AnimatedContainer(
                         duration: const Duration(milliseconds: 100),
                         curve: Curves.easeInOut,
-                        color: Color.lerp(baseColor, commentColor, p),
+                        color: baseColor,
                       ),
                     ),
                   ),
@@ -1000,6 +981,8 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer>
                                 zoomController: _videoZoomController,
                                 lockInteraction:
                                     _commentsController.value > 0.05,
+                                hasBottomBar:
+                                    widget.postTitle != null, // 🎯 바텀바 유무 전달
                               ),
                             );
                           }
@@ -1273,8 +1256,10 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer>
                                                             horizontal: 14,
                                                             vertical: 10,
                                                           ),
-                                                      child: const Text(
-                                                        '처음으로 반응을 남겨보세요!',
+                                                      child: Text(
+                                                        context.tr(
+                                                          'first_comment',
+                                                        ),
                                                         style: TextStyle(
                                                           color: Colors.white70,
                                                           fontSize: 15,
@@ -1560,7 +1545,7 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer>
                 final bottomOffset = widget.postTitle != null ? 100 : 60;
 
                 return Positioned(
-                  bottom: bottomOffset.toDouble() + 10,
+                  bottom: bottomOffset.toDouble() + 12,
                   left: 10,
                   right: 16,
                   child: Column(
@@ -1748,7 +1733,6 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer>
                                       builder:
                                           (context) => UserProfileScreen(
                                             otherUser: User(
-                                              id: 0,
                                               username: widget.postAuthor!,
                                               profileImageUrl:
                                                   widget.postAuthorProfileUrl!,
@@ -1875,6 +1859,7 @@ class _VideoPlayerWidget extends StatefulWidget {
   final bool hideScrubber; // 댓글 올라왔을 때 시크바 숨김
   final TransformationController? zoomController; // 확대 제어 전달용
   final bool lockInteraction; // 상위 시트 열림 시 인터랙션 잠금
+  final bool hasBottomBar; // 🎯 바텀바 유무
 
   const _VideoPlayerWidget({
     required this.url,
@@ -1883,6 +1868,7 @@ class _VideoPlayerWidget extends StatefulWidget {
     this.hideScrubber = false,
     this.zoomController,
     this.lockInteraction = false,
+    this.hasBottomBar = false, // 🎯 기본값 false
   });
 
   @override
@@ -2119,7 +2105,7 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
         // 댓글이 열려있지 않을 때만 시크바 표시
         if (!widget.hideScrubber)
           Positioned(
-            bottom: 30,
+            bottom: widget.hasBottomBar ? 76 : 30, // ✅ 바텀바 있으면 110, 없으면 30
             left: 20,
             right: 20,
             child: GestureDetector(

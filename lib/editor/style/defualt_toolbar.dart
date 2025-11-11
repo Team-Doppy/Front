@@ -2445,17 +2445,8 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
                     scrollY + size.height / 2 - 200,
                   );
                   svc.addImageSticker(image, at);
-                } else if ((emoji ?? '').isNotEmpty) {
-                  final Size size = MediaQuery.of(context).size;
-                  final scrollY = widget.scrollController?.offset ?? 0.0;
-                  final at = Offset(size.width * 0.5 - 60, scrollY + 200);
-                  svc.addEmojiSticker(emoji!, at);
-                } else if (text.trim().isNotEmpty) {
-                  final Size size = MediaQuery.of(context).size;
-                  final scrollY = widget.scrollController?.offset ?? 0.0;
-                  final at = Offset(size.width * 0.5 - 60, scrollY + 200);
-                  svc.addTextStickerWithStyle(text.trim(), textStyle, at);
                 }
+                // 🎯 emoji, text 스티커 제거됨 (PNG 드로잉만 지원)
                 // 스티커 추가 후 상단 두번째 툴바 자동 닫기
                 _toggle(ToolbarSection.none);
               },

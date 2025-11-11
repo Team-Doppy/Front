@@ -104,7 +104,7 @@ class CommentPreviewSection extends StatelessWidget {
                 // 미리보기에서는 스와이프 답글 없음
               },
             );
-          }).toList(),
+          }),
 
           // "모든 댓글 보기" 버튼
           const SizedBox(height: 12),
@@ -114,7 +114,7 @@ class CommentPreviewSection extends StatelessWidget {
               child: Container(
                 padding: const EdgeInsets.symmetric(
                   horizontal: 20,
-                  vertical: 10,
+                  vertical: 6,
                 ),
                 decoration: BoxDecoration(
                   color: Theme.of(context).colorScheme.surface.withOpacity(0.5),
@@ -137,7 +137,7 @@ class CommentPreviewSection extends StatelessWidget {
               ),
             ),
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 30),
         ],
       ),
     );

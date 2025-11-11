@@ -10,7 +10,7 @@ class CommonProfileAvatar extends StatelessWidget {
   final Color? borderColor;
   final bool isUploading;
   final VoidCallback? onTap;
-  Color? backgroundColor;
+  final Color? backgroundColor;
   // 이미지 대신 중앙에 임의 위젯을 표시하고 싶을 때 사용 (예: 검색 아이콘)
   final Widget? centerWidget;
 
@@ -68,8 +68,8 @@ class CommonProfileAvatar extends StatelessWidget {
                                 _buildPlaceholder(context, isDarkMode),
                         memCacheWidth: (size * 2).round(),
                         maxWidthDiskCache: (size * 2).round(),
-                        fadeInDuration: const Duration(milliseconds: 200),
-                        fadeOutDuration: const Duration(milliseconds: 200),
+                        fadeInDuration: const Duration(milliseconds: 0), // 🎯 즉시 표시
+                        fadeOutDuration: const Duration(milliseconds: 0), // 🎯 즉시 표시
                       )
                       : _buildPlaceholder(context, isDarkMode),
             ),

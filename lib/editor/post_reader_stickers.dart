@@ -115,46 +115,10 @@ class PostReaderStickers extends StatelessWidget {
               }
 
               Widget body;
-              Size? bodySize; // 드로잉 등 크기 중심 보정용
-              if (type == 'text') {
-                final content =
-                    (m['content'] as Map?)?.cast<String, dynamic>() ?? {};
-                final text = (content['text'] ?? '').toString();
-                final style =
-                    (content['style'] as Map?)?.cast<String, dynamic>() ?? {};
-                body = RepaintBoundary(
-                  child: Text(
-                    text,
-                    style: TextStyle(
-                      color: _toColor(style['color']) ?? Colors.white,
-                      fontSize: (style['fontSize'] as num?)?.toDouble() ?? 32,
-                      fontWeight:
-                          (style['bold'] == true)
-                              ? FontWeight.w800
-                              : FontWeight.w500,
-                      fontStyle:
-                          (style['italic'] == true)
-                              ? FontStyle.italic
-                              : FontStyle.normal,
-                      decoration:
-                          (style['underline'] == true)
-                              ? TextDecoration.underline
-                              : TextDecoration.none,
-                      letterSpacing:
-                          (style['letterSpacing'] as num?)?.toDouble() ?? 0,
-                    ),
-                  ),
-                );
-              } else if (type == 'emoji') {
-                final content = (m['content'] ?? '').toString();
-                body = const RepaintBoundary(
-                  child: Text('🙂', style: TextStyle(fontSize: 40)),
-                );
-                // 실제 이모지 표시
-                body = RepaintBoundary(
-                  child: Text(content, style: const TextStyle(fontSize: 40)),
-                );
-              } else if (type == 'image') {
+              Size? bodySize;
+
+              // 🎯 PNG 드로잉만 지원 (type == 'image'만 처리)
+              if (type == 'image') {
                 final content =
                     (m['content'] as Map?)?.cast<String, dynamic>() ?? {};
                 final dynamic raw = content['bytes'];
@@ -162,16 +126,14 @@ class PostReaderStickers extends StatelessWidget {
                   try {
                     final bytes =
                         raw is String ? base64Decode(raw) : raw as Uint8List;
+
+                    // 🎯 PNG 드로잉 (고화질 원본)
                     body = RepaintBoundary(
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(4),
-                        child: ConstrainedBox(
-                          constraints: const BoxConstraints(
-                            maxWidth: 200,
-                            maxHeight: 200,
-                          ),
-                          child: Image.memory(bytes, fit: BoxFit.contain),
-                        ),
+                      child: Image.memory(
+                        bytes,
+                        fit: BoxFit.contain,
+                        filterQuality: FilterQuality.high,
+                        isAntiAlias: true,
                       ),
                     );
                   } catch (_) {
@@ -183,24 +145,35 @@ class PostReaderStickers extends StatelessWidget {
                   }
                 } else if ((content['url'] ?? '').toString().isNotEmpty) {
                   final url = (content['url'] ?? '').toString();
-                  body = RepaintBoundary(
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(4),
-                      child: ConstrainedBox(
-                        constraints: const BoxConstraints(
-                          maxWidth: 200,
-                          maxHeight: 200,
-                        ),
+                  final width = (content['width'] as num?)?.toDouble();
+                  final height = (content['height'] as num?)?.toDouble();
+
+                  // 🎯 PNG 드로잉 (URL + 크기 정보)
+                  if (width != null && height != null) {
+                    bodySize = Size(width, height); // 크기 정보 사용
+                    body = RepaintBoundary(
+                      child: SizedBox(
+                        width: width,
+                        height: height,
                         child: Image.network(
                           url,
-                          fit: BoxFit.contain,
-                          cacheWidth: 300,
-                          cacheHeight: 300,
-                          filterQuality: FilterQuality.medium,
+                          fit: BoxFit.fill, // 정확한 크기
+                          filterQuality: FilterQuality.high,
+                          isAntiAlias: true,
                         ),
                       ),
-                    ),
-                  );
+                    );
+                  } else {
+                    // 레거시: 크기 정보 없음
+                    body = RepaintBoundary(
+                      child: Image.network(
+                        url,
+                        fit: BoxFit.contain,
+                        filterQuality: FilterQuality.high,
+                        isAntiAlias: true,
+                      ),
+                    );
+                  }
                 } else {
                   body = Container(
                     width: 140,
@@ -208,23 +181,9 @@ class PostReaderStickers extends StatelessWidget {
                     color: Colors.grey[700],
                   );
                 }
-              } else if (type == 'drawing') {
-                // drawing 타입 스티커 렌더링
-                final content =
-                    (m['content'] as Map?)?.cast<String, dynamic>() ?? {};
-                final strokes = (content['strokes'] as List?) ?? [];
-                // 드로잉 바운딩 박스 계산하여 중심 보정에 사용
-                final bounds = _computeDrawingBounds(strokes);
-                if (bounds != null) {
-                  bodySize = Size(bounds.width, bounds.height);
-                }
-                body = RepaintBoundary(
-                  child: DrawingStickerRenderer(
-                    strokes: strokes.cast<Map<String, dynamic>>(),
-                  ),
-                );
               } else {
-                body = const SizedBox.shrink();
+                // 🎯 text, emoji, drawing 타입은 무시
+                continue;
               }
 
               final double topPos =
@@ -284,35 +243,6 @@ class PostReaderStickers extends StatelessWidget {
     }
   }
 
-  // 드로잉 바운딩 박스 계산 (렌더러와 동일 로직)
-  Rect? _computeDrawingBounds(List strokes) {
-    if (strokes.isEmpty) return null;
-    double? minX, minY, maxX, maxY;
-    for (final strokeData in strokes) {
-      final points =
-          (strokeData['points'] as List?)?.cast<Map<String, dynamic>>() ??
-          const [];
-      final width = (strokeData['width'] as num?)?.toDouble() ?? 8.0;
-      final half = width / 2;
-      for (final p in points) {
-        final x = (p['x'] as num).toDouble();
-        final y = (p['y'] as num).toDouble();
-        final x1 = x - half;
-        final y1 = y - half;
-        final x2 = x + half;
-        final y2 = y + half;
-        minX = (minX == null) ? x1 : (x1 < minX ? x1 : minX);
-        minY = (minY == null) ? y1 : (y1 < minY ? y1 : minY);
-        maxX = (maxX == null) ? x2 : (x2 > maxX ? x2 : maxX);
-        maxY = (maxY == null) ? y2 : (y2 > maxY ? y2 : maxY);
-      }
-    }
-    if (minX == null || minY == null || maxX == null || maxY == null)
-      return null;
-    const double pad = 0.5;
-    return Rect.fromLTRB(minX - pad, minY - pad, maxX + pad, maxY + pad);
-  }
-
   Offset? _resolveAnchor(Map<String, dynamic> anchor) {
     final nodeId = (anchor['nodeId'] ?? '').toString();
     final hasLocal =
@@ -345,142 +275,6 @@ class PostReaderStickers extends StatelessWidget {
       return null;
     }
   }
-
-  Color? _toColor(dynamic v) {
-    if (v is String && v.startsWith('#')) {
-      var hex = v.substring(1);
-      if (hex.length == 6) hex = 'FF$hex';
-      return Color(int.parse(hex, radix: 16));
-    }
-    return null;
-  }
 }
 
-/// 벡터 기반 그리기 렌더러
-/// 에디터와 PostReaderScreen에서 공유
-class DrawingStickerRenderer extends StatelessWidget {
-  final List<Map<String, dynamic>> strokes;
-
-  const DrawingStickerRenderer({super.key, required this.strokes});
-
-  @override
-  Widget build(BuildContext context) {
-    // 스트로크 경계 계산
-    final bounds = _computeBounds();
-    if (bounds == null) {
-      return const SizedBox.shrink();
-    }
-
-    // 저장된 좌표는 이미 (0,0) 기준 상대 좌표이므로,
-    // bounds의 left, top이 0이 아닐 수 있지만 (패딩이나 음수 선 두께 반영)
-    // 실제 그리기는 bounds.left, bounds.top을 고려해서 offset 조정 필요
-    final offset = Offset(bounds.left, bounds.top);
-
-    return RepaintBoundary(
-      child: CustomPaint(
-        painter: _VectorDrawingPainter(strokes: strokes, offset: offset),
-        size: Size(bounds.width, bounds.height),
-        isComplex: true,
-        willChange: false,
-      ),
-    );
-  }
-
-  Rect? _computeBounds() {
-    if (strokes.isEmpty) return null;
-    double? minX, minY, maxX, maxY;
-
-    for (final strokeData in strokes) {
-      final points =
-          (strokeData['points'] as List).cast<Map<String, dynamic>>();
-      final width = (strokeData['width'] as num?)?.toDouble() ?? 8.0;
-      final half = width / 2;
-
-      for (final p in points) {
-        // 저장된 좌표는 이미 bounds 기준 상대 좌표이므로 그대로 사용
-        final x = (p['x'] as num).toDouble();
-        final y = (p['y'] as num).toDouble();
-
-        final x1 = x - half;
-        final y1 = y - half;
-        final x2 = x + half;
-        final y2 = y + half;
-
-        minX = (minX == null) ? x1 : (x1 < minX ? x1 : minX);
-        minY = (minY == null) ? y1 : (y1 < minY ? y1 : minY);
-        maxX = (maxX == null) ? x2 : (x2 > maxX ? x2 : maxX);
-        maxY = (maxY == null) ? y2 : (y2 > maxY ? y2 : maxY);
-      }
-    }
-
-    if (minX == null || minY == null || maxX == null || maxY == null) {
-      return null;
-    }
-
-    // 패딩 최소화 (선 두께가 이미 반영되어 있음)
-    // minX, minY가 0 근처일 수 있지만, 음수일 수도 있으므로 그대로 사용
-    const double pad = 0.5;
-    // bounds는 상대 좌표 기준이므로, (0,0)을 기준으로 하는 Rect 생성
-    // 하지만 실제로는 최소값이 음수일 수 있으므로 그대로 사용
-    return Rect.fromLTRB(minX - pad, minY - pad, maxX + pad, maxY + pad);
-  }
-}
-
-/// 벡터 그리기 페인터
-class _VectorDrawingPainter extends CustomPainter {
-  final List<Map<String, dynamic>> strokes;
-  final Offset offset; // bounds의 최소값 (minX, minY)
-
-  _VectorDrawingPainter({required this.strokes, required this.offset});
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    // bounds의 offset만큼 이동 (bounds의 좌상단이 (0,0)이 되도록)
-    canvas.translate(-offset.dx, -offset.dy);
-
-    for (final strokeData in strokes) {
-      final points =
-          (strokeData['points'] as List).cast<Map<String, dynamic>>();
-      if (points.isEmpty) continue;
-
-      final colorHex = strokeData['color'] as String? ?? '#FFFFFFFF';
-      final width = (strokeData['width'] as num?)?.toDouble() ?? 8.0;
-      final erase = strokeData['erase'] as bool? ?? false;
-
-      // Hex 색상 파싱
-      final colorValue = int.parse(colorHex.replaceAll('#', ''), radix: 16);
-      final color = Color(colorValue);
-
-      final paint =
-          Paint()
-            ..color = erase ? Colors.transparent : color
-            ..blendMode = erase ? BlendMode.clear : BlendMode.srcOver
-            ..strokeWidth = width
-            ..style = PaintingStyle.stroke
-            ..strokeCap = StrokeCap.round
-            ..strokeJoin = StrokeJoin.round
-            ..isAntiAlias = true;
-
-      final path = Path();
-      final firstPoint = points.first;
-      // 저장된 좌표는 이미 상대 좌표이므로 그대로 사용
-      path.moveTo(
-        (firstPoint['x'] as num).toDouble(),
-        (firstPoint['y'] as num).toDouble(),
-      );
-
-      for (int i = 1; i < points.length; i++) {
-        final p = points[i];
-        path.lineTo((p['x'] as num).toDouble(), (p['y'] as num).toDouble());
-      }
-
-      canvas.drawPath(path, paint);
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant _VectorDrawingPainter oldDelegate) {
-    // 스트로크 리스트의 참조가 바뀌었을 때만 다시 그림
-    return strokes != oldDelegate.strokes;
-  }
-}
+// 🎯 벡터 드로잉 제거됨 (PNG만 지원)

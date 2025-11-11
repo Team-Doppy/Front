@@ -54,7 +54,7 @@ class GroupProvider with ChangeNotifier {
       _cachedGroups = groups;
       _isGroupsCached = true;
 
-      print('✅ [GroupProvider] 그룹 목록 캐시 완료 - ${groups.length}개');
+      print('✅ [GroupProvider] 그룹 목록 캐시 완료 - ${_cachedGroups.length}개');
     } catch (e) {
       print('❌ [GroupProvider] 그룹 목록 조회 에러: $e');
       _isGroupsCached = false;
@@ -206,6 +206,27 @@ class GroupProvider with ChangeNotifier {
       return true;
     } catch (e) {
       print('❌ [GroupProvider] 멤버 제거 에러: $e');
+      return false;
+    }
+  }
+
+  /// ➖ 여러 멤버 일괄 제거 (배치) → 그룹 스키마 & 멤버 캐시 무효화
+  Future<bool> removeMembersBatch(int groupId, List<String> usernames) async {
+    try {
+      print('🔄 [GroupProvider] 그룹 $groupId에서 멤버 일괄 제거: ${usernames.length}명');
+      await _groupService.removeMembersFromGroupBatch(groupId, usernames);
+
+      // 🎯 그룹 스키마 무효화 (memberCount 변경)
+      await _invalidateAndRefreshGroups();
+
+      // 🎯 해당 그룹의 멤버 캐시 무효화
+      _isMembersCached[groupId] = false;
+      await fetchGroupMembers(groupId, forceRefresh: true);
+
+      print('✅ [GroupProvider] 멤버 일괄 제거 완료');
+      return true;
+    } catch (e) {
+      print('❌ [GroupProvider] 멤버 일괄 제거 에러: $e');
       return false;
     }
   }

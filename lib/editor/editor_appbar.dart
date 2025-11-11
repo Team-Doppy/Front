@@ -1020,7 +1020,7 @@ class _EditModeAppBarState extends State<EditModeAppBar> {
                                       children: [
                                         const SizedBox(width: 4),
                                         Text(
-                                          '수정 완료  ',
+                                          context.tr('modify_complete'),
                                           style: TextStyle(
                                             fontSize: 15,
                                             fontWeight: FontWeight.w600,
@@ -1030,6 +1030,7 @@ class _EditModeAppBarState extends State<EditModeAppBar> {
                                                 ).colorScheme.primary,
                                           ),
                                         ),
+                                        const SizedBox(width: 12),
                                       ],
                                     ),
                           ),
@@ -1109,19 +1110,19 @@ class EditorAppBar extends StatelessWidget {
       return;
     }
 
-    // 제목과 본문 검증
+    // 제목과 본문(또는 스티커) 검증
     final hasTitle = editorService.hasNonEmptyTitle();
-    final hasBody = editorService.hasNonEmptyBody();
+    final hasBody = editorService.hasNonEmptyBody(context: context);
 
     if (!hasTitle || !hasBody) {
       // 제목 또는 본문이 비어있으면 다이얼로그 표시
       String message;
       if (!hasTitle && !hasBody) {
-        message = context.tr('title_and_body_required');
+        message = '제목과 본문(또는 드로잉)이 필요합니다.';
       } else if (!hasTitle) {
         message = context.tr('title_required');
       } else {
-        message = context.tr('body_required');
+        message = '본문 또는 드로잉 중 하나는 필요합니다.';
       }
 
       await DialogUtils.showInfoDialog(

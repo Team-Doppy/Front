@@ -71,7 +71,6 @@ class AuthProvider extends ChangeNotifier {
         final userProv = UserProvider();
         userProv.updateCurrentUser(
           User(
-            id: 0,
             username: _username ?? username,
             role: null,
             alias: '',

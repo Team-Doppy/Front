@@ -119,6 +119,39 @@ class FriendService {
     }
   }
 
+  /// 12-1. 다중 친구 삭제 (일괄 해제)
+  Future<void> deleteFriendsBatch(List<String> usernames) async {
+    try {
+      print('🔍 [FriendService] 친구 일괄 삭제 시작: ${usernames.length}명');
+
+      final response = await _dio.delete(
+        '/api/friends/delete/batch',
+        data: usernames, // username 배열을 body로 전달
+      );
+
+      print('📡 [FriendService] API 응답 상태: ${response.statusCode}');
+      print('📡 [FriendService] API 응답 데이터: ${response.data}');
+
+      if (response.statusCode == 200) {
+        print('✅ [FriendService] 친구 일괄 삭제 성공');
+        return;
+      } else {
+        print(
+          '❌ [FriendService] API 오류: ${response.statusCode} - ${response.data}',
+        );
+        throw Exception('친구 일괄 삭제 실패: ${response.statusCode}');
+      }
+    } catch (e) {
+      print('❌ [FriendService] 친구 일괄 삭제 중 예외 발생: $e');
+      if (e is DioException) {
+        print(
+          '❌ [FriendService] Dio 에러: ${e.response?.statusCode} - ${e.response?.data}',
+        );
+      }
+      rethrow;
+    }
+  }
+
   /// 13. 사용자 검색
   Future<List<User>> searchUsers(String query) async {
     try {
@@ -126,9 +159,7 @@ class FriendService {
       if (response.statusCode == 200) {
         final List<dynamic> data = response.data;
         // API 응답이 {"username": "..."} 이므로 User 모델로 변환
-        return data
-            .map((item) => User(id: 0, username: item['username']))
-            .toList();
+        return data.map((item) => User(username: item['username'])).toList();
       }
       throw Exception('사용자 검색 실패');
     } catch (e) {

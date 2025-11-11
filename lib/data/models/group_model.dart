@@ -62,7 +62,6 @@ class Group {
       description: (json['description'] ?? '').toString(),
       ownerId: (json['ownerId'] ?? json['owner_id'] ?? '').toString(),
       owner: User(
-        id: 0,
         username: (json['ownerId'] ?? json['owner_id'] ?? '').toString(),
         alias: (json['ownerId'] ?? json['owner_id'] ?? '').toString(),
       ),

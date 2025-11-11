@@ -3,7 +3,7 @@ import 'dart:typed_data';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 
-enum StickerType { image, text, emoji, drawing }
+enum StickerType { image } // 🎯 PNG 드로잉만 지원
 
 class Sticker {
   // 공통 속성: 컨텐츠, 위치, 스케일, 회전, 투명도, zIndex, 잠금
@@ -112,38 +112,6 @@ class StickerService extends ChangeNotifier {
     notifyListeners();
   }
 
-  void addTextSticker(String text, Offset at) {
-    addTextStickerWithStyle(text, null, at);
-  }
-
-  void addTextStickerWithStyle(
-    String text,
-    Map<String, dynamic>? style,
-    Offset at,
-  ) {
-    addSticker(
-      Sticker(
-        id: 'stk_${DateTime.now().millisecondsSinceEpoch}',
-        type: StickerType.text,
-        content: <String, dynamic>{'text': text, 'style': style},
-        position: at,
-        scale: 1.4,
-      ),
-    );
-  }
-
-  void addEmojiSticker(String emoji, Offset at) {
-    addSticker(
-      Sticker(
-        id: 'stk_${DateTime.now().millisecondsSinceEpoch}',
-        type: StickerType.emoji,
-        content: emoji,
-        position: at,
-        scale: 1.6,
-      ),
-    );
-  }
-
   void addImageSticker(Uint8List bytes, Offset at) {
     addSticker(
       Sticker(
@@ -156,7 +124,7 @@ class StickerService extends ChangeNotifier {
     );
   }
 
-  /// 그리기 스티커 추가 (벡터 경로 기반)
+  /// 그리기 스티커 추가 (PNG 또는 벡터)
   void addDrawingSticker(
     List<Map<String, dynamic>> strokes,
     Offset at, {
@@ -167,15 +135,41 @@ class StickerService extends ChangeNotifier {
     final uniqueId =
         groupIndex != null ? 'stk_${timestamp}_$groupIndex' : 'stk_$timestamp';
 
-    addSticker(
-      Sticker(
-        id: uniqueId,
-        type: StickerType.drawing,
-        content: {'strokes': strokes},
-        position: at,
-        scale: 1.0, // 벡터는 원본 크기 그대로
-      ),
-    );
+    // 🎯 PNG 이미지인지 확인 (type: 'png_image')
+    if (strokes.length == 1 && strokes[0]['type'] == 'png_image') {
+      final pngData = strokes[0];
+      final url = pngData['url'] as String?; // DrawingOverlay에서 업로드 완료된 URL
+      final width = pngData['width']; // 논리 픽셀 크기
+      final height = pngData['height']; // 논리 픽셀 크기
+
+      if (url != null) {
+        // ✅ 이미 업로드 완료된 URL + 크기 정보
+        addSticker(
+          Sticker(
+            id: uniqueId,
+            type: StickerType.image,
+            content: {'url': url, 'width': width, 'height': height},
+            position: at,
+            scale: 1.0,
+          ),
+        );
+      } else {
+        // ⚠️ URL이 없으면 (레거시 또는 에러)
+        final imageData = pngData['imageData'] as Uint8List?;
+        if (imageData != null) {
+          addSticker(
+            Sticker(
+              id: uniqueId,
+              type: StickerType.image,
+              content: imageData,
+              position: at,
+              scale: 1.0,
+            ),
+          );
+        }
+      }
+    }
+    // 🎯 벡터 드로잉 제거됨 (PNG만 지원)
   }
 
   void updateContent(String id, dynamic content) {
@@ -197,7 +191,7 @@ class StickerService extends ChangeNotifier {
       orElse:
           () => Sticker(
             id: id,
-            type: StickerType.text,
+            type: StickerType.image,
             content: '',
             position: Offset.zero,
           ),
@@ -328,6 +322,7 @@ class StickerService extends ChangeNotifier {
 
   void removeAll() {
     _stickers.clear();
+    _initialStickers.clear(); // 🎯 초기 상태도 함께 초기화
     _selectedId = null;
     notifyListeners();
   }
@@ -413,38 +408,27 @@ class StickerService extends ChangeNotifier {
       final opacity = (stickerData['opacity'] ?? 1.0).toDouble();
       final zIndex = (stickerData['zIndex'] ?? 0).toInt();
 
-      // 컨텐츠 복원
+      // 🎯 PNG 드로잉만 지원
       dynamic content;
-      switch (type) {
-        case StickerType.text:
-          final contentData = stickerData['content'];
-          if (contentData is Map) {
-            content = contentData; // {text, style} 형태 그대로 저장
-          } else {
-            content = {'text': contentData?.toString() ?? '', 'style': null};
-          }
-          break;
-        case StickerType.emoji:
-          content = stickerData['content']?.toString() ?? '😀';
-          break;
-        case StickerType.drawing:
-          final contentData = stickerData['content'];
-          if (contentData is Map && contentData['strokes'] != null) {
-            content = contentData; // {strokes: [...]} 형태 그대로 저장
-          } else {
-            return; // 그리기 데이터가 없으면 스킵
-          }
-          break;
-        case StickerType.image:
-          final contentData = stickerData['content'];
-          if (contentData is Map && contentData['bytes'] != null) {
-            // base64 문자열을 Uint8List로 복원
+      if (type == StickerType.image) {
+        final contentData = stickerData['content'];
+        if (contentData is Map) {
+          // URL + 크기 정보 또는 bytes
+          if (contentData['url'] != null) {
+            content = contentData; // {url, width, height} 그대로
+          } else if (contentData['bytes'] != null) {
+            // base64 문자열을 Uint8List로 복원 (레거시)
             final base64String = contentData['bytes'].toString();
             content = base64Decode(base64String);
           } else {
-            return; // 이미지 데이터가 없으면 스킵
+            return;
           }
-          break;
+        } else {
+          return;
+        }
+      } else {
+        // text, emoji, drawing 타입은 무시
+        return;
       }
 
       final sticker = Sticker(
@@ -466,18 +450,8 @@ class StickerService extends ChangeNotifier {
   }
 
   StickerType _parseStickerType(String typeString) {
-    switch (typeString) {
-      case 'text':
-        return StickerType.text;
-      case 'emoji':
-        return StickerType.emoji;
-      case 'image':
-        return StickerType.image;
-      case 'drawing':
-        return StickerType.drawing;
-      default:
-        return StickerType.text;
-    }
+    // 🎯 PNG 드로잉만 지원
+    return StickerType.image;
   }
 
   void remove(String id) {

@@ -12,7 +12,7 @@ import 'package:image/image.dart' as img;
 
 enum UploadState { pending, uploading, success, failed, cancelled }
 
-enum UploadKind { editorImage, thumbnail, profile, video }
+enum UploadKind { editorImage, thumbnail, profile, video, group }
 
 class UploadTask extends ChangeNotifier {
   final String id;
@@ -246,7 +246,7 @@ class UploadService with ChangeNotifier {
               ? await _uploadProfileImage(task)
               : task.kind == UploadKind.video
               ? await _uploadVideo(task)
-              : await _uploadSingle(task);
+              : await _uploadSingle(task); // group도 _uploadSingle 사용
       task.url = result['accessUrl'] as String?;
       task.imageId = result['imageId']?.toString();
       task._setProgress(1);
@@ -291,7 +291,7 @@ class UploadService with ChangeNotifier {
       }
 
       // 재시도 금지: 어떤 오류든 즉시 실패 처리
-        task._setState(UploadState.failed);
+      task._setState(UploadState.failed);
       print('[Upload] failed (no-retry) id=${task.id}');
     } finally {
       _inflight--;
@@ -550,6 +550,7 @@ class UploadService with ChangeNotifier {
         'bytes': raw,
         'maxSide': 1440,
         'quality': 82,
+        'fileName': task.fileName, // 🎯 파일명 전달 (PNG 감지용)
       });
       return out;
     } catch (_) {
@@ -562,11 +563,21 @@ class UploadService with ChangeNotifier {
     final bytes = args['bytes'] as Uint8List;
     final int maxSide = (args['maxSide'] as int?) ?? 1440;
     final int quality = (args['quality'] as int?) ?? 82;
+    final String? fileName = args['fileName'] as String?;
+    final bool isPng = fileName?.toLowerCase().endsWith('.png') ?? false;
+
     try {
       final decoded = img.decodeImage(bytes);
       if (decoded == null) return bytes;
       final w = decoded.width;
       final h = decoded.height;
+
+      // 🎯 PNG 드로잉은 그대로 업로드 (투명도 유지)
+      if (isPng && w <= maxSide && h <= maxSide) {
+        print('[Upload] PNG 드로잉 원본 유지: ${w}x$h');
+        return bytes; // 원본 그대로
+      }
+
       if (w <= maxSide && h <= maxSide) {
         return Uint8List.fromList(img.encodeJpg(decoded, quality: quality));
       }
@@ -579,7 +590,13 @@ class UploadService with ChangeNotifier {
         height: newH,
         interpolation: img.Interpolation.average,
       );
-      return Uint8List.fromList(img.encodeJpg(resized, quality: quality));
+
+      // 🎯 PNG는 PNG로, 나머지는 JPG로 인코딩
+      if (isPng) {
+        return Uint8List.fromList(img.encodePng(resized, level: 6));
+      } else {
+        return Uint8List.fromList(img.encodeJpg(resized, quality: quality));
+      }
     } catch (_) {
       return bytes;
     }

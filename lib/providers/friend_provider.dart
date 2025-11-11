@@ -57,6 +57,7 @@ class FriendProvider with ChangeNotifier {
       _acceptedFriends = results[0];
       _receivedRequests = results[1];
       _sentRequests = results[2];
+
       print('[FriendProvider] 서버에서 데이터 새로고침 완료');
     } catch (e) {
       _errorMessage = "데이터 로딩에 실패했습니다: $e";
@@ -153,10 +154,33 @@ class FriendProvider with ChangeNotifier {
     }
   }
 
+  /// 여러 이웃(친구) 일괄 해제
+  Future<bool> deleteFriendsBatch(List<String> usernames) async {
+    try {
+      print('🔄 [FriendProvider] 친구 일괄 해제: ${usernames.length}명');
+      await _friendService.deleteFriendsBatch(usernames);
+
+      // 목록에서 일괄 제거
+      for (final username in usernames) {
+        _acceptedFriends.removeWhere((f) => f.username == username);
+        _receivedRequests.removeWhere((f) => f.username == username);
+        _sentRequests.removeWhere((f) => f.username == username);
+      }
+
+      notifyListeners();
+      print('✅ [FriendProvider] 친구 일괄 해제 완료');
+      return true;
+    } catch (e) {
+      print('❌ [FriendProvider] 친구 일괄 해제 실패: $e');
+      return false;
+    }
+  }
+
   /// 특정 사용자와의 친구 상태 확인
   Future<void> checkFriendStatus(String targetUsername) async {
     _isLoadingStatus = true;
-    notifyListeners();
+    // initState에서 호출될 수 있으므로 notifyListeners() 제거
+    // notifyListeners();
     try {
       final results = await Future.wait([
         _friendService.getSentFriendRequests(),

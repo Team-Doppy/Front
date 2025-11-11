@@ -180,12 +180,13 @@ class BaseApiService {
     if (context != null) {
       if (_sessionDialogVisible) return;
       _sessionDialogVisible = true;
+      final localization = AppLocalizations.of(context);
       DialogUtils.showConfirmDialog(
         context,
-        title: '세션 만료',
-        message: '로그인 세션이 만료되었습니다. 다시 로그인하시겠어요?',
-        confirmText: '로그인',
-        cancelText: '나중에',
+        title: localization.translate('session_expired'),
+        message: localization.translate('session_expired_message'),
+        confirmText: localization.translate('login'),
+        cancelText: localization.translate('later'),
         isDestructive: false,
       ).then((goLogin) {
         _sessionDialogVisible = false;

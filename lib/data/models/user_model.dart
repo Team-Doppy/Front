@@ -1,5 +1,4 @@
 class User {
-  final int id;
   final String username;
   final String? role;
   final String? alias; // alias 필드 추가
@@ -8,7 +7,6 @@ class User {
   final int? friendCount;
 
   User({
-    required this.id,
     required this.username,
     this.role,
     this.alias,
@@ -19,7 +17,6 @@ class User {
 
   factory User.fromJson(Map<String, dynamic> json) {
     return User(
-      id: (json['id'] as num?)?.toInt() ?? 0,
       username: (json['username'] ?? json['userId'] ?? '').toString(),
       role: json['role']?.toString(),
       alias: json['alias']?.toString(),
@@ -40,7 +37,6 @@ class User {
     int? friendCount,
   }) {
     return User(
-      id: id ?? this.id,
       username: username ?? this.username,
       role: role ?? this.role,
       alias: alias ?? this.alias,

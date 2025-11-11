@@ -1,6 +1,8 @@
 import 'package:doppy/main.dart';
 import 'package:doppy/pages/components/doppy_loading_logo.dart';
 import 'package:doppy/providers/auth_provider.dart';
+import 'package:doppy/providers/group_provider.dart';
+import 'package:doppy/providers/user_provider.dart';
 import 'package:doppy/data/services/home_data_service.dart';
 import 'package:doppy/data/services/search_service.dart';
 import 'package:doppy/utils/network_utils.dart';
@@ -81,11 +83,16 @@ class _SplashScreenState extends State<SplashScreen>
       // 2. 토큰이 유효한 경우에만 데이터 로딩
       if (_isTokenValidated) {
         setState(() {
-          _loadingStatus = '데이터를 불러오는 중...';
+          _loadingStatus = '사용자 데이터를 불러오는 중...';
         });
 
-        // 홈 데이터와 검색 기록을 병렬로 로드
-        await Future.wait([_loadHomeData(), _loadSearchHistory()]);
+        // 홈 데이터, 검색 기록, 유저 정보, 그룹 데이터를 병렬로 로드
+        await Future.wait([
+          _loadHomeData(),
+          _loadSearchHistory(),
+          _loadUserData(),
+          _loadGroupData(),
+        ]);
       } else {
         // 토큰이 없거나 유효하지 않은 경우 빈 데이터로 설정
         setState(() {
@@ -163,6 +170,39 @@ class _SplashScreenState extends State<SplashScreen>
     } catch (e) {
       print('[SplashScreen] 검색 기록 로드 실패 (무시): $e');
       // 검색 기록 로드 실패는 앱 시작을 막지 않음
+    }
+  }
+
+  Future<void> _loadUserData() async {
+    try {
+      print('[SplashScreen] 유저 정보 로드 시작');
+
+      final userProvider = context.read<UserProvider>();
+
+      // 먼저 로컬 캐시 로드
+      await userProvider.loadCurrentUserFromPrefs();
+
+      // 그 다음 서버에서 최신 정보 가져오기
+      await userProvider.fetchMyProfile();
+
+      print('[SplashScreen] 유저 정보 로드 완료');
+    } catch (e) {
+      print('[SplashScreen] 유저 정보 로드 실패 (무시): $e');
+      // 유저 정보 로드 실패는 앱 시작을 막지 않음
+    }
+  }
+
+  Future<void> _loadGroupData() async {
+    try {
+      print('[SplashScreen] 그룹 데이터 로드 시작');
+
+      final groupProvider = context.read<GroupProvider>();
+      await groupProvider.fetchMyGroups();
+
+      print('[SplashScreen] 그룹 데이터 로드 완료');
+    } catch (e) {
+      print('[SplashScreen] 그룹 데이터 로드 실패 (무시): $e');
+      // 그룹 데이터 로드 실패는 앱 시작을 막지 않음
     }
   }
 

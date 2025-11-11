@@ -3,7 +3,6 @@ import 'dart:typed_data';
 import 'package:provider/provider.dart';
 import 'package:super_editor/super_editor.dart';
 import 'package:doppy/editor/service/sticker_service.dart';
-import 'package:doppy/editor/service/post_reader_stickers.dart';
 import 'package:doppy/editor/service/editor_service.dart';
 import 'package:doppy/theme/app_colors.dart';
 
@@ -166,10 +165,6 @@ class _StickerView extends StatefulWidget {
 }
 
 class _StickerViewState extends State<_StickerView> {
-  Offset _lastGlobal = Offset.zero;
-  double _lastScale = 1.0;
-  double _lastRotation = 0.0;
-
   @override
   Widget build(BuildContext context) {
     final svc = context.read<StickerService>();
@@ -219,87 +214,46 @@ class _StickerViewState extends State<_StickerView> {
       left: pos.dx - touchPadding,
       top: pos.dy - scrollY - touchPadding,
       child: GestureDetector(
-        behavior: HitTestBehavior.translucent, // 빈 영역도 터치 가능
-        // onScaleStart: 1개 손가락=드래그, 2개 손가락=핀치
-        onScaleStart: (details) {
-          _lastGlobal = details.focalPoint;
-          _lastScale = 1.0;
-          _lastRotation = 0.0;
-          debugPrint(
-            '[Sticker] onScaleStart: pointerCount=${details.pointerCount}, scale=$scale',
-          );
+        behavior: HitTestBehavior.translucent,
+        // 🎯 드래그만 지원 (핀치 비활성화)
+        onPanStart: (details) {
+          debugPrint('[Sticker] 드래그 시작');
           try {
             context.read<EditorService>().editor.composer.clearSelection();
           } catch (e) {}
           svc.beginDrag(widget.sticker.id);
         },
-        onScaleUpdate: (details) {
+        onPanUpdate: (details) {
           if (!svc.isPanning) return;
 
-          // 위치 이동 계산
-          final delta = details.focalPoint - _lastGlobal;
-          _lastGlobal = details.focalPoint;
-
-          // 확대/축소 계산
-          final scaleDelta = details.scale / _lastScale;
-          _lastScale = details.scale;
-
-          // 회전 계산
-          final rotationDelta = details.rotation - _lastRotation;
-          _lastRotation = details.rotation;
-
-          debugPrint(
-            '[Sticker] onScaleUpdate: scale=${details.scale.toStringAsFixed(2)}, scaleDelta=${scaleDelta.toStringAsFixed(2)}, rotation=${details.rotation.toStringAsFixed(2)}, rotDelta=${rotationDelta.toStringAsFixed(2)}, currentScale=${svc.dragPreviewScale.toStringAsFixed(2)}, pointers=${details.pointerCount}',
-          );
-
-          // 업데이트 (화면 경계 체크 포함)
           final currentPos = svc.dragPreviewPos;
-          var newPos = currentPos + delta;
+          var newPos = currentPos + details.delta;
 
           // 화면 경계 제한
-          // 좌측/우측: 최소 50px는 화면 안에 유지
-          // 상단: 최소 0 (앱바 아래)
-          // 하단: 제한 없음 (스크롤 가능)
           const minVisible = 50.0;
           newPos = Offset(
-            newPos.dx.clamp(
-              minVisible - 200,
-              screenSize.width - minVisible,
-            ), // 200은 대략 스티커 최대 너비
+            newPos.dx.clamp(minVisible - 200, screenSize.width - minVisible),
             newPos.dy.clamp(0, double.infinity),
           );
 
-          // 델타 재계산 (경계 제한 후)
           final adjustedDelta = newPos - currentPos;
-
-          // 2개 손가락일 때만 확대/축소 및 회전 적용
-          final finalScaleDelta = details.pointerCount >= 2 ? scaleDelta : 1.0;
-          final finalRotationDelta =
-              details.pointerCount >= 2 ? rotationDelta : 0.0;
 
           svc.updateDrag(
             adjustedDelta,
-            scaleDelta: finalScaleDelta,
-            rotationDelta: finalRotationDelta,
+            scaleDelta: 1.0, // 확대 없음
+            rotationDelta: 0.0, // 회전 없음
           );
 
           // 휴지통 영역 체크
-          final centerLocal = Offset(
-            newPos.dx + 70, // 대략적인 중심
-            newPos.dy - scrollY + 90,
-          );
+          final centerLocal = Offset(newPos.dx + 70, newPos.dy - scrollY + 90);
           final overTrash = _TrashBinState.isOverTrashLocal(
             context,
             centerLocal,
           );
           svc.setDragOverDelete(overTrash);
         },
-        onScaleEnd: (details) {
-          debugPrint(
-            '[Sticker] onScaleEnd: finalScale=${svc.dragPreviewScale.toStringAsFixed(2)}, finalRotation=${svc.dragPreviewRotation.toStringAsFixed(2)}',
-          );
-          _lastScale = 1.0;
-          _lastRotation = 0.0;
+        onPanEnd: (details) {
+          debugPrint('[Sticker] 드래그 종료');
           svc.endDrag();
         },
         child: Padding(
@@ -323,52 +277,49 @@ class _StickerViewState extends State<_StickerView> {
 
   Widget _buildBody(Sticker sticker, bool isDragging) {
     Widget body;
+    // 🎯 PNG 드로잉만 지원
     switch (sticker.type) {
-      case StickerType.text:
-        final c = sticker.content;
-        final text = c is Map ? (c['text']?.toString() ?? '') : c.toString();
-        body = Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          decoration: BoxDecoration(
-            color: Colors.white.withOpacity(0.1),
-            borderRadius: BorderRadius.circular(8),
-          ),
-          child: Text(
-            text,
-            style: const TextStyle(
-              color: AppColors.darkTextPrimary,
-              fontSize: 18,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-        );
-        break;
-      case StickerType.emoji:
-        body = Container(
-          padding: const EdgeInsets.all(8),
-          child: Text(
-            sticker.content as String,
-            style: const TextStyle(fontSize: 40),
-          ),
-        );
-        break;
-      case StickerType.drawing:
-        final content = sticker.content as Map<String, dynamic>;
-        final strokes =
-            (content['strokes'] as List).cast<Map<String, dynamic>>();
-        body = DrawingStickerRenderer(strokes: strokes);
-        break;
       case StickerType.image:
         final content = sticker.content;
-        if (content is Uint8List) {
-          body = SizedBox(
-            width: 200,
-            child: Image.memory(content, fit: BoxFit.contain),
+        if (content is Map) {
+          // 🎯 PNG 드로잉 (URL + 크기 정보)
+          final url = (content['url'] ?? '').toString();
+          final width = (content['width'] as num?)?.toDouble();
+          final height = (content['height'] as num?)?.toDouble();
+
+          if (url.isNotEmpty) {
+            body = SizedBox(
+              width: width,
+              height: height,
+              child: Image.network(
+                url,
+                fit: BoxFit.fill, // 정확한 크기로 채우기
+                filterQuality: FilterQuality.high,
+                isAntiAlias: true,
+              ),
+            );
+          } else {
+            body = Container(
+              width: 140,
+              height: 140,
+              color: Colors.grey.shade700,
+            );
+          }
+        } else if (content is Uint8List) {
+          // 🎯 PNG 드로잉 (고화질, 업로드 전 - 레거시)
+          body = Image.memory(
+            content,
+            fit: BoxFit.contain,
+            filterQuality: FilterQuality.high,
+            isAntiAlias: true,
           );
-        } else if (content is String && content.startsWith('http')) {
-          body = SizedBox(
-            width: 200,
-            child: Image.network(content, fit: BoxFit.contain),
+        } else if (content is String) {
+          // 🎯 URL 이미지 (크기 정보 없음 - 레거시)
+          body = Image.network(
+            content,
+            fit: BoxFit.contain,
+            filterQuality: FilterQuality.high,
+            isAntiAlias: true,
           );
         } else {
           body = Container(
@@ -380,11 +331,11 @@ class _StickerViewState extends State<_StickerView> {
         break;
     }
 
-    // 드래그 중일 때만 녹색 테두리 표시
+    // 🎯 드래그 중일 때 녹색 테두리 표시
     if (isDragging) {
       return Container(
         decoration: BoxDecoration(
-          border: Border.all(color: Colors.greenAccent, width: 2),
+          border: Border.all(color: AppColors.primary, width: 2),
           borderRadius: BorderRadius.circular(4),
         ),
         child: body,

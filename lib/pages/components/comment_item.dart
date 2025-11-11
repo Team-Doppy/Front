@@ -187,7 +187,13 @@ class _CommentItemState extends State<CommentItem> {
               if (widget.isMe) ...[
                 const SizedBox(width: 4),
                 if (widget.showProfile)
-                  _buildProfileImage(context)
+                  CommonProfileAvatar(
+                    backgroundColor: Colors.transparent,
+                    imageUrl: widget.comment.authorProfileImageUrl,
+                    username: widget.comment.author,
+                    size: 34,
+                    borderWidth: 1,
+                  )
                 else
                   const SizedBox(width: 34),
               ],

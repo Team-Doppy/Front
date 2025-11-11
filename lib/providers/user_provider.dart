@@ -102,7 +102,6 @@ class UserProvider with ChangeNotifier {
       if (_currentUser != null) {
         final u = _currentUser!;
         _currentUser = User(
-          id: u.id,
           username: u.username,
           role: u.role,
           alias: u.alias,
@@ -116,7 +115,6 @@ class UserProvider with ChangeNotifier {
           _viewedUser!.username == _currentUser!.username) {
         final v = _viewedUser!;
         _viewedUser = User(
-          id: v.id,
           username: v.username,
           role: v.role,
           alias: v.alias,
@@ -143,7 +141,6 @@ class UserProvider with ChangeNotifier {
       if (_currentUser != null) {
         final u = _currentUser!;
         _currentUser = User(
-          id: u.id,
           username: u.username,
           role: u.role,
           alias: u.alias,
@@ -157,7 +154,6 @@ class UserProvider with ChangeNotifier {
           _viewedUser!.username == _currentUser!.username) {
         final v = _viewedUser!;
         _viewedUser = User(
-          id: v.id,
           username: v.username,
           role: v.role,
           alias: v.alias,
@@ -204,7 +200,6 @@ class UserProvider with ChangeNotifier {
       final u = _currentUser;
       if (u == null) return;
       final prefs = await SharedPreferences.getInstance();
-      await prefs.setInt(_kUserId, u.id);
       await prefs.setString(_kUsername, u.username);
       await prefs.setString(_kAlias, u.alias ?? '');
       await prefs.setString(_kProfileImageUrl, u.profileImageUrl ?? '');
@@ -223,7 +218,6 @@ class UserProvider with ChangeNotifier {
         return;
       }
       final user = User(
-        id: prefs.getInt(_kUserId) ?? 0,
         username: prefs.getString(_kUsername) ?? '',
         role: null,
         alias: prefs.getString(_kAlias),
@@ -242,7 +236,6 @@ class UserProvider with ChangeNotifier {
   Future<void> _clearPersistedUser() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      await prefs.remove(_kUserId);
       await prefs.remove(_kUsername);
       await prefs.remove(_kAlias);
       await prefs.remove(_kProfileImageUrl);

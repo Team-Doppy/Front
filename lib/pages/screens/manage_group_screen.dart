@@ -6,6 +6,8 @@ import 'package:doppy/pages/components/doppy_loading_logo.dart';
 import 'package:doppy/pages/components/group_sheet.dart'; // 🎯 GroupDropDown 사용
 import 'package:doppy/pages/components/shimmer_box.dart'; // 🎯 ShimmerBox 추가
 import 'package:doppy/l10n/app_localizations.dart';
+import 'package:doppy/theme/app_colors.dart';
+import 'package:doppy/utils/dialog_utils.dart'; // 🎯 DialogUtils 추가
 import 'package:doppy/utils/error_handler.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -43,10 +45,15 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
   Group? _selectedGroup;
 
   // 검색 관련 상태
-  final TextEditingController _searchController = TextEditingController();
+  final TextEditingController _appbarSearchController =
+      TextEditingController(); // 🎯 앱바 검색용
   String _searchQuery = '';
-  bool _isSearchExpanded = false;
-  final FocusNode _searchFocusNode = FocusNode();
+  bool _isAppbarSearchExpanded = false; // 🎯 앱바 검색 확장 여부
+  final FocusNode _appbarSearchFocusNode = FocusNode(); // 🎯 앱바 검색 포커스
+
+  // 🎯 다중 선택 모드
+  bool _isMultiSelectMode = false;
+  final Set<String> _selectedMembers = {};
 
   @override
   void initState() {
@@ -92,414 +99,351 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
 
     _scrollController.dispose();
     _selectionAnimationController.dispose();
-    _searchController.dispose();
-    _searchFocusNode.dispose();
+    _appbarSearchController.dispose(); // 🎯 앱바 검색 컨트롤러 정리
+    _appbarSearchFocusNode.dispose(); // 🎯 앱바 검색 포커스 정리
     _groupDropDown.dispose(); // 🎯 GroupDropDown 정리
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.transparent,
-      body: Stack(
-        children: [
-          // 🎯 배경 레이어
-          Positioned.fill(
-            child:
-                _selectedGroup?.profileImageUrl != null &&
-                        _selectedGroup!.profileImageUrl!.isNotEmpty
-                    ? Image.network(
-                      _selectedGroup!.profileImageUrl!,
-                      fit: BoxFit.cover,
-                    )
-                    : Container(
-                      decoration: BoxDecoration(
-                        gradient: RadialGradient(
-                          center: Alignment(-0.5, -0.7),
-                          radius: 1.5,
-                          colors: [
-                            GroupColorPalette.getColor(
-                              _selectedGroup?.id ?? 0,
-                            ).withOpacity(0.4),
-                            GroupColorPalette.getColor(
-                              _selectedGroup?.id ?? 0,
-                            ).withOpacity(0.6),
-                            GroupColorPalette.getColor(
-                              (_selectedGroup?.id ?? 0) +
-                                  3 % GroupColorPalette.colors.length,
-                            ).withOpacity(0.4),
-                            GroupColorPalette.getColor(
-                              (_selectedGroup?.id ?? 0) +
-                                  3 % GroupColorPalette.colors.length,
-                            ).withOpacity(0.3),
-                          ],
-                          stops: const [0.0, 0.4, 0.7, 1.0],
-                        ),
-                      ),
-                    ),
-          ),
-
-          // 🎯 콘텐츠 레이어
-          Consumer<GroupProvider>(
-            builder: (context, groupProv, child) {
-              // 🎯 그룹 스키마 로딩 중
-              if (groupProv.isLoading) {
-                return GestureDetector(
-                  onHorizontalDragEnd: (details) {
-                    if (details.primaryVelocity != null &&
-                        details.primaryVelocity! > 300) {
-                      Navigator.of(context).pop();
-                    }
-                  },
-                  child: DoppyLoadingLogo(
-                    showBackButton: true,
-                    onBack: () => Navigator.of(context).pop(),
-                  ),
-                );
-              }
-
-              // 🎯 선택된 그룹의 멤버 로딩 중 (전체 친구 제외)
-              if (_selectedGroup != null &&
-                  _selectedGroup!.id != -1 &&
-                  groupProv.isLoadingMembers(_selectedGroup!.id) &&
-                  !groupProv.isMembersCached(_selectedGroup!.id)) {
-                return GestureDetector(
-                  onHorizontalDragEnd: (details) {
-                    if (details.primaryVelocity != null &&
-                        details.primaryVelocity! > 300) {
-                      Navigator.of(context).pop();
-                    }
-                  },
-                  child: DoppyLoadingLogo(
-                    showBackButton: true,
-                    onBack: () => Navigator.of(context).pop(),
-                  ),
-                );
-              }
-
-              return Consumer<FriendProvider>(
-                builder: (context, friendProv, child) {
-                  // 🎯 HomeScreen 스타일: Stack으로 배경 + 콘텐츠 분리
-                  return Stack(
-                    children: [
-                      _buildDynamicBackground(), // 배경
-                      _buildMainContent(groupProv, friendProv), // 콘텐츠
-                    ],
-                  );
-                },
-              );
-            },
-          ),
-        ],
-      ),
-    );
-  }
-
-  // 🎯 동적 배경 (그룹 이미지 또는 그라디언트 + 블러)
-  Widget _buildDynamicBackground() {
-    final hasImage =
-        _selectedGroup?.profileImageUrl != null &&
-        _selectedGroup!.profileImageUrl!.isNotEmpty;
-
-    return Positioned.fill(
-      child: Stack(
-        children: [
-          // 1️⃣ 배경 이미지 또는 그라디언트 (블러 전 원본)
-          Positioned.fill(
-            child:
-                hasImage
-                    ? Image.network(
-                      _selectedGroup!.profileImageUrl!,
-                      fit: BoxFit.cover,
-                      key: ValueKey('group-bg-${_selectedGroup!.id}'),
-                    )
-                    : _buildGradientBackground(),
-          ),
-          // 2️⃣ 블러 필터 + 오버레이
-          Positioned.fill(
-            child: BackdropFilter(
-              filter: ui.ImageFilter.blur(
-                sigmaX: 25,
-                sigmaY: 25,
-              ), // 30 → 20으로 감소
-              child: Container(
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                    colors:
-                        Theme.of(context).brightness == Brightness.dark ||
-                                _selectedGroup?.profileImageUrl != null &&
-                                    _selectedGroup!.profileImageUrl!.isNotEmpty
-                            ? [
-                              Colors.black.withOpacity(0.5),
-                              Colors.black.withOpacity(0.6),
-                              Colors.black.withOpacity(0.5),
-                            ]
-                            : [
-                              Colors.white.withOpacity(0.2),
-                              Colors.white.withOpacity(0.4),
-                              Colors.white.withOpacity(0.6),
-                            ],
-                    stops: const [0.0, 0.5, 1.0],
-                  ),
-                ),
+    return Consumer<GroupProvider>(
+      builder: (context, groupProv, child) {
+        // 🎯 그룹 스키마 로딩 중
+        if (groupProv.isLoading) {
+          return Scaffold(
+            backgroundColor: Theme.of(context).colorScheme.background,
+            body: GestureDetector(
+              onHorizontalDragEnd: (details) {
+                if (details.primaryVelocity != null &&
+                    details.primaryVelocity! > 300) {
+                  Navigator.of(context).pop();
+                }
+              },
+              child: DoppyLoadingLogo(
+                showBackButton: true,
+                onBack: () => Navigator.of(context).pop(),
               ),
             ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // 🎯 복잡한 그라디언트 배경 (이미지 느낌)
-  Widget _buildGradientBackground() {
-    final groupColor = GroupColorPalette.getColor(_selectedGroup?.id ?? 0);
-    final accentColor = GroupColorPalette.getColor(
-      (_selectedGroup?.id ?? 0) + 3 % GroupColorPalette.colors.length,
-    );
-
-    return Container(
-      width: double.infinity,
-      height: double.infinity,
-      decoration: BoxDecoration(
-        gradient: RadialGradient(
-          center: Alignment(-0.5, -0.7),
-          radius: 1.5,
-          colors: [
-            groupColor.withOpacity(0.4),
-            groupColor.withOpacity(0.5),
-            accentColor.withOpacity(0.3),
-            accentColor.withOpacity(0.2),
-          ],
-          stops: const [0.0, 0.4, 0.7, 1.0],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildMainContent(GroupProvider groupProv, FriendProvider friendProv) {
-    List<Group> groups = groupProv.myGroups;
-
-    // 전체 친구 가상 그룹 생성
-    final allFriendsGroup = Group(
-      id: -1, // 특별한 ID로 구분
-      name: context.tr('all_friends'),
-      description: context.tr('all_friends'),
-      ownerId: 'system',
-      owner: User(id: 0, username: 'system'),
-      createdAt: DateTime.now(),
-    );
-
-    // 전체 친구 그룹을 맨 앞에 추가
-    groups = [allFriendsGroup, ...groups];
-
-    // 기본 선택을 전체 친구로 설정
-    _selectedGroup ??= allFriendsGroup;
-
-    // 검색 필터링 로직
-    final filteredGroups = _filterGroups(groups, _searchQuery, friendProv);
-    final List<Widget> slivers = [];
-    final size = MediaQuery.of(context).size;
-    final double friendsAreaH = size.height * (2 / 3); // flex 2
-
-    // 상단 헤더는 단독 화면일 때만 포함(탭 임베드 시 상위 공통 AppBar 사용)
-    if (!widget.embedded) {
-      slivers.add(
-        SliverAppBar(
-          backgroundColor: Colors.transparent,
-          elevation: 0,
-          surfaceTintColor: Colors.transparent,
-          floating: false,
-          pinned: true,
-          expandedHeight: 0,
-          collapsedHeight: 70,
-          toolbarHeight: 70,
-
-          leading: GestureDetector(
-            onTap: () => Navigator.pop(context),
-            child: Padding(
-              padding: const EdgeInsets.only(bottom: 9),
-              child: Icon(
-                Icons.arrow_back_ios_new_rounded,
-                size: 24,
-                color: Colors.white, // 🎯 흰색
-              ),
-            ),
-          ),
-          title: Padding(
-            padding: const EdgeInsets.only(bottom: 9),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Text(
-                        _selectedGroup?.name ?? context.tr('manage_groups'),
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w700,
-                          color: Colors.white, // 🎯 흰색
-                          letterSpacing: -0.4,
-                          height: 1.2,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      const SizedBox(height: 2),
-                      if (_selectedGroup != null && _selectedGroup!.id != -1)
-                        Text(
-                          '${context.tr('members')} · ${context.read<GroupProvider>().membersOf(_selectedGroup!.id).length}',
-                          style: TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w500,
-                            color: Colors.white.withOpacity(0.7), // 🎯 흰색 투명
-                            letterSpacing: -0.2,
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-          centerTitle: false,
-          // 🎯 그룹 수정 버튼 - 모든 그룹에 표시 (전체 친구 포함)
-          actions:
-              _selectedGroup != null
-                  ? [
-                    Container(
-                      margin: const EdgeInsets.only(
-                        right: 0,
-                        top: 0,
-                        bottom: 12,
-                      ),
-                      child: Center(
-                        child: Container(
-                          width: 70,
-                          height: 40,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: Colors.white.withOpacity(0.2), // 🎯 반투명 흰색
-                          ),
-                          child: TextButton(
-                            onPressed: _showEditGroupSheet,
-                            child: Text(
-                              context.tr('edit'),
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: Colors.white, // 🎯 흰색
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ]
-                  : null,
-        ),
-      );
-    } else {
-      // 임베드일 때는 상단 여백 추가
-      slivers.add(const SliverToBoxAdapter(child: SizedBox(height: 20)));
-    }
-
-    // 하단: 친구들 (flex 2) - 검색 결과가 있을 때만 표시
-    if (filteredGroups.isNotEmpty) {
-      slivers.add(
-        SliverToBoxAdapter(
-          child: SizedBox(
-            height: friendsAreaH,
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(12, 30, 12, 16),
-              child: _FriendsGrid(
-                friendProv: friendProv,
-                selectedGroup: _selectedGroup,
-                groupProv: groupProv,
-                searchQuery: _searchQuery,
-              ),
-            ),
-          ),
-        ),
-      );
-    } else if (_searchQuery.isNotEmpty) {
-      // 검색 결과가 없을 때 메시지 표시
-      slivers.add(
-        SliverToBoxAdapter(
-          child: SizedBox(
-            height: 300,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(vertical: 40),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.start,
-                children: [
-                  const SizedBox(height: 10),
-
-                  Text(
-                    '해당하는 멤버나 그룹이 없어요',
-                    style: TextStyle(
-                      fontSize: 16,
-                      color: Colors.white.withOpacity(0.7), // 🎯 흰색
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      );
-    }
-
-    final Widget body = GestureDetector(
-      onTap: () {
-        // 검색창이 열려있으면 닫기
-        if (_isSearchExpanded) {
-          _toggleSearch();
+          );
         }
-        // 키보드 포커스 해제
-        FocusScope.of(context).unfocus();
+
+        // 🎯 선택된 그룹의 멤버 로딩 중 (전체 친구 제외)
+        if (_selectedGroup != null &&
+            _selectedGroup!.id != -1 &&
+            groupProv.isLoadingMembers(_selectedGroup!.id) &&
+            !groupProv.isMembersCached(_selectedGroup!.id)) {
+          return Scaffold(
+            backgroundColor: Theme.of(context).colorScheme.background,
+            body: GestureDetector(
+              onHorizontalDragEnd: (details) {
+                if (details.primaryVelocity != null &&
+                    details.primaryVelocity! > 300) {
+                  Navigator.of(context).pop();
+                }
+              },
+              child: DoppyLoadingLogo(
+                showBackButton: true,
+                onBack: () => Navigator.of(context).pop(),
+              ),
+            ),
+          );
+        }
+
+        return Consumer<FriendProvider>(
+          builder: (context, friendProv, child) {
+            return _buildScaffold(groupProv, friendProv);
+          },
+        );
       },
-      child: RawScrollbar(
-        controller: _scrollController,
-        thumbColor: Theme.of(context).colorScheme.onSurface.withOpacity(0.1),
-        radius: const Radius.circular(8),
-        thickness: 4,
-        thumbVisibility: true, // 항상 표시
-        child: CustomScrollView(
-          controller: _scrollController,
-          slivers: slivers,
-        ),
-      ),
     );
+  }
 
-    if (widget.embedded) {
-      return body;
-    }
-
-    // 🎯 스와이프 제스처로 뒤로 가기
+  // 🎯 Scaffold 빌드
+  Widget _buildScaffold(GroupProvider groupProv, FriendProvider friendProv) {
     return GestureDetector(
-      onHorizontalDragUpdate: (details) {
-        // 오른쪽으로 드래그 감지
-        if (details.primaryDelta != null && details.primaryDelta! > 0) {
-          // 드래그 중
-        }
-      },
       onHorizontalDragEnd: (details) {
-        // 오른쪽으로 스와이프 (velocity.dx > 300)
         if (details.primaryVelocity != null && details.primaryVelocity! > 300) {
           Navigator.of(context).pop();
         }
       },
-      child: Stack(
+      child: Scaffold(
+        backgroundColor: Theme.of(context).colorScheme.background,
+        appBar: widget.embedded ? null : _buildAppBarWidget(),
+        body: Stack(
+          children: [
+            _buildBody(groupProv, friendProv),
+            _buildFloatingActionButton(),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // 🎯 AppBar 위젯
+  PreferredSizeWidget _buildAppBarWidget() {
+    return PreferredSize(
+      preferredSize: const Size.fromHeight(70),
+      child: SafeArea(child: _buildAppBar()),
+    );
+  }
+
+  // 🎯 Body 위젯
+  Widget _buildBody(GroupProvider groupProv, FriendProvider friendProv) {
+    List<Group> groups = groupProv.myGroups;
+
+    // 전체 친구 가상 그룹 생성
+    final allFriendsGroup = Group(
+      id: -1,
+      name: context.tr('all_friends'),
+      description: context.tr('all_friends'),
+      ownerId: 'system',
+      owner: User(username: 'system'),
+      createdAt: DateTime.now(),
+    );
+
+    groups = [allFriendsGroup, ...groups];
+    _selectedGroup ??= allFriendsGroup;
+
+    final filteredGroups = _filterGroups(groups, _searchQuery, friendProv);
+
+    return _buildFriendsList(friendProv, groupProv, filteredGroups);
+  }
+
+  // 🎯 앱바 위젯
+  Widget _buildAppBar() {
+    return Container(
+      height: 70,
+      padding: const EdgeInsets.only(bottom: 9),
+      child: Row(
         children: [
-          body,
-          // 플로팅 액션 버튼
-          _buildFloatingActionButton(),
+          const SizedBox(width: 18),
+          // 뒤로가기 버튼
+          GestureDetector(
+            onTap: () => Navigator.pop(context),
+            child: Padding(
+              padding: const EdgeInsets.only(bottom: 0),
+              child: Icon(
+                Icons.arrow_back_ios_new_rounded,
+                size: 24,
+                color: Theme.of(context).colorScheme.onSurface,
+              ),
+            ),
+          ),
+          const SizedBox(width: 20),
+          // 타이틀
+          Expanded(
+            child: GestureDetector(
+              onTap: _showEditGroupSheet,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    _selectedGroup?.name ?? context.tr('manage_groups'),
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
+                      color: Theme.of(context).colorScheme.onSurface,
+                      letterSpacing: -0.4,
+                      height: 1.2,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: 2),
+                  if (_selectedGroup != null && _selectedGroup!.id != -1)
+                    Text(
+                      '${context.tr('members')} · ${context.read<GroupProvider>().membersOf(_selectedGroup!.id).length}',
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w500,
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.onSurface.withOpacity(0.7),
+                        letterSpacing: -0.2,
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+          // 검색 필드
+          if (_selectedGroup != null) _buildSearchField(),
+          // 다중 선택 버튼
+          if (_selectedGroup != null) _buildMultiSelectButton(),
+          const SizedBox(width: 8),
         ],
       ),
+    );
+  }
+
+  // 🎯 검색 필드 위젯
+  Widget _buildSearchField() {
+    return GestureDetector(
+      onTap: () {
+        if (!_isAppbarSearchExpanded) {
+          setState(() {
+            _isAppbarSearchExpanded = true;
+          });
+          Future.delayed(const Duration(milliseconds: 100), () {
+            _appbarSearchFocusNode.requestFocus();
+          });
+        }
+      },
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeInOut,
+        width: _isAppbarSearchExpanded ? 200 : 45,
+        height: 45,
+        margin: EdgeInsets.only(right: _isAppbarSearchExpanded ? 8 : 0),
+        decoration: BoxDecoration(
+          color:
+              _isAppbarSearchExpanded
+                  ? Theme.of(context).colorScheme.onSurface.withOpacity(0.1)
+                  : null,
+          borderRadius: BorderRadius.circular(
+            _isAppbarSearchExpanded ? 21 : 22.5,
+          ),
+        ),
+        child:
+            _isAppbarSearchExpanded
+                ? TextField(
+                  controller: _appbarSearchController,
+                  focusNode: _appbarSearchFocusNode,
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.onSurface,
+                    fontSize: 14,
+                  ),
+                  cursorColor: Theme.of(
+                    context,
+                  ).colorScheme.onSurface.withOpacity(0.5),
+                  textAlignVertical: TextAlignVertical.center,
+                  onChanged: (value) {
+                    setState(() {
+                      _searchQuery = value.trim().toLowerCase();
+                    });
+                  },
+                  decoration: InputDecoration(
+                    hintText: context.tr('search_members'),
+                    hintStyle: TextStyle(
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.onSurface.withOpacity(0.5),
+                      fontSize: 14,
+                    ),
+                    suffixIcon: IconButton(
+                      icon: Icon(
+                        Icons.close,
+                        size: 16,
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.onSurface.withOpacity(0.5),
+                      ),
+                      onPressed: () {
+                        _appbarSearchController.clear();
+                        _appbarSearchFocusNode.unfocus();
+                        setState(() {
+                          _searchQuery = '';
+                          _isAppbarSearchExpanded = false;
+                        });
+                      },
+                    ),
+                    border: InputBorder.none,
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 8,
+                    ),
+                  ),
+                )
+                : Center(
+                  child: Icon(
+                    Icons.search,
+                    size: 24,
+                    color: Theme.of(
+                      context,
+                    ).colorScheme.onSurface.withOpacity(0.5),
+                  ),
+                ),
+      ),
+    );
+  }
+
+  // 🎯 다중 선택 버튼 위젯
+  Widget _buildMultiSelectButton() {
+    return Container(
+      width: 45,
+      height: 45,
+      decoration: BoxDecoration(
+        color:
+            _isMultiSelectMode
+                ? Theme.of(context).colorScheme.onSurface.withOpacity(0.1)
+                : null,
+        shape: BoxShape.circle,
+      ),
+      child: IconButton(
+        onPressed: () {
+          setState(() {
+            _isMultiSelectMode = !_isMultiSelectMode;
+            if (!_isMultiSelectMode) {
+              _selectedMembers.clear();
+            }
+          });
+        },
+        icon: Padding(
+          padding: const EdgeInsets.only(right: 0, bottom: 2),
+          child: Icon(
+            Icons.check,
+            size: 24,
+            color:
+                _isMultiSelectMode
+                    ? Theme.of(context).colorScheme.onSurface
+                    : Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
+          ),
+        ),
+      ),
+    );
+  }
+
+  // 🎯 친구 목록 위젯
+  Widget _buildFriendsList(
+    FriendProvider friendProv,
+    GroupProvider groupProv,
+    List<Group> filteredGroups,
+  ) {
+    if (filteredGroups.isEmpty && _searchQuery.isNotEmpty) {
+      return Center(
+        child: Text(
+          context.tr('no_matching_members_or_groups'),
+          style: TextStyle(
+            fontSize: 16,
+            color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
+          ),
+        ),
+      );
+    }
+
+    if (filteredGroups.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    return _FriendsGrid(
+      friendProv: friendProv,
+      selectedGroup: _selectedGroup,
+      groupProv: groupProv,
+      searchQuery: _searchQuery,
+      isMultiSelectMode: _isMultiSelectMode,
+      selectedMembers: _selectedMembers,
+      scrollController: _scrollController,
+      onMemberToggle: (username) {
+        setState(() {
+          if (_selectedMembers.contains(username)) {
+            _selectedMembers.remove(username);
+          } else {
+            _selectedMembers.add(username);
+          }
+        });
+      },
     );
   }
 
@@ -566,6 +510,60 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
     final double keyboardInset = MediaQuery.of(context).viewInsets.bottom;
     final double bottomGap = keyboardInset > 0 ? 10 : 30;
 
+    // 🎯 다중 선택 모드일 때는 하단에 액션바 표시
+    if (_isMultiSelectMode) {
+      // 전체 친구 탭인지 확인
+      final isAllFriendsTab =
+          _selectedGroup == null || _selectedGroup!.id == -1;
+
+      return Positioned(
+        left: 0,
+        right: 0,
+        bottom: 0,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.background,
+          ),
+          child: SafeArea(
+            top: false,
+            child: GestureDetector(
+              onTap: () {
+                _removeSelectedMembers();
+              },
+              child: Container(
+                padding: const EdgeInsets.symmetric(vertical: 0),
+
+                child: Text(
+                  textAlign: TextAlign.center,
+                  isAllFriendsTab
+                      ? context
+                          .tr('unfriend_selected')
+                          .replaceAll('{count}', '${_selectedMembers.length}')
+                      : context
+                          .tr('delete_selected_members')
+                          .replaceAll('{count}', '${_selectedMembers.length}'),
+                  style: TextStyle(
+                    color:
+                        _selectedMembers.isEmpty
+                            ? Theme.of(
+                              context,
+                            ).colorScheme.onSurface.withOpacity(0.5)
+                            : Theme.of(context).colorScheme.error,
+                    fontSize: 16,
+                    fontWeight:
+                        _selectedMembers.isEmpty
+                            ? FontWeight.normal
+                            : FontWeight.bold,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
     return AnimatedPositioned(
       right: 25,
       bottom: bottomGap + 10,
@@ -575,102 +573,8 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
         crossAxisAlignment: CrossAxisAlignment.end,
         mainAxisSize: MainAxisSize.min,
         children: [
-          // 전체 친구 그룹 여부
-          if (_selectedGroup != null && _selectedGroup!.id == -1) ...[
-            // 검색 플로팅 버튼(전체 친구일 때만 표시)
-            Container(
-              height: 58,
-              decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.onSurface.withOpacity(1),
-                borderRadius: BorderRadius.circular(50),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (_isSearchExpanded)
-                    GestureDetector(
-                      onTap: () {},
-                      child: AnimatedContainer(
-                        duration: const Duration(milliseconds: 300),
-                        curve: Curves.easeInOut,
-                        width: 280,
-                        child: TextField(
-                          style: TextStyle(
-                            color: Theme.of(
-                              context,
-                            ).colorScheme.surface.withOpacity(0.8),
-                          ),
-                          cursorColor: Theme.of(
-                            context,
-                          ).colorScheme.surface.withOpacity(0.8),
-                          controller: _searchController,
-                          focusNode: _searchFocusNode,
-                          textAlignVertical: TextAlignVertical.center,
-                          onChanged: (value) {
-                            setState(() {
-                              _searchQuery = value.trim().toLowerCase();
-                            });
-                          },
-                          decoration: InputDecoration(
-                            filled: true,
-                            fillColor: Colors.transparent,
-                            hintText: context.tr('search_groups_friends'),
-                            hintStyle: TextStyle(
-                              color: Theme.of(
-                                context,
-                              ).colorScheme.surfaceVariant.withOpacity(0.6),
-                              fontSize: 16,
-                            ),
-                            contentPadding: const EdgeInsets.symmetric(
-                              vertical: 6,
-                              horizontal: 20,
-                            ),
-                            border: const OutlineInputBorder(
-                              borderRadius: BorderRadius.all(
-                                Radius.circular(28),
-                              ),
-                              borderSide: BorderSide.none,
-                            ),
-                            enabledBorder: const OutlineInputBorder(
-                              borderRadius: BorderRadius.all(
-                                Radius.circular(28),
-                              ),
-                              borderSide: BorderSide.none,
-                            ),
-                            focusedBorder: const OutlineInputBorder(
-                              borderRadius: BorderRadius.all(
-                                Radius.circular(28),
-                              ),
-                              borderSide: BorderSide.none,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  GestureDetector(
-                    onTap: _toggleSearch,
-                    child: Container(
-                      width: 58,
-                      height: 58,
-                      decoration: BoxDecoration(
-                        color: Theme.of(
-                          context,
-                        ).colorScheme.onSurface.withOpacity(0.6),
-                        shape: BoxShape.circle,
-                      ),
-                      child: Icon(
-                        _isSearchExpanded
-                            ? Icons.keyboard_arrow_down
-                            : Icons.search,
-                        color: Theme.of(context).colorScheme.surface,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ] else ...[
-            // + 버튼 (멤버 추가) - 전체 친구가 아닐 때만 표시
+          // + 버튼 (멤버 추가) - 전체 친구가 아닐 때만 표시
+          if (_selectedGroup != null && _selectedGroup!.id != -1) ...[
             GestureDetector(
               onTap: _showAddMemberBottomSheet,
               child: Container(
@@ -680,9 +584,10 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
                 decoration: BoxDecoration(
                   color: Colors.white, // ✅ 항상 흰색
                   shape: BoxShape.circle,
+
                   boxShadow: [
                     BoxShadow(
-                      color: Colors.black.withOpacity(0.15),
+                      color: Colors.black.withOpacity(0.25),
                       blurRadius: 15,
                       offset: const Offset(0, 5),
                     ),
@@ -724,24 +629,102 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
     });
   }
 
-  // 검색 토글
-  void _toggleSearch() {
-    setState(() {
-      _isSearchExpanded = !_isSearchExpanded;
-    });
+  // 🎯 선택된 멤버들을 그룹에서 제거 또는 친구 해제 (배치 API 사용)
+  Future<void> _removeSelectedMembers() async {
+    if (_selectedMembers.isEmpty) {
+      return;
+    }
 
-    if (_isSearchExpanded) {
-      // 검색창이 확장되면 포커스
-      Future.delayed(const Duration(milliseconds: 100), () {
-        _searchFocusNode.requestFocus();
-      });
-    } else {
-      // 검색창이 축소되면 포커스 해제 및 텍스트 초기화
-      _searchFocusNode.unfocus();
-      _searchController.clear();
-      setState(() {
-        _searchQuery = '';
-      });
+    final usernamesToRemove = _selectedMembers.toList();
+
+    // 🎯 전체 친구 탭인지 확인
+    final isAllFriendsTab = _selectedGroup == null || _selectedGroup!.id == -1;
+
+    // 이중 확인 다이얼로그
+    final confirmed = await DialogUtils.showConfirmDialog(
+      context,
+      title:
+          isAllFriendsTab
+              ? context.tr('unfriend')
+              : context.tr('remove_member'),
+      message:
+          isAllFriendsTab
+              ? context
+                  .tr('unfriend_confirm_message')
+                  .replaceAll('{count}', '${usernamesToRemove.length}')
+              : context
+                  .tr('remove_members_confirm')
+                  .replaceAll('{count}', '${usernamesToRemove.length}'),
+      confirmText:
+          isAllFriendsTab ? context.tr('unfriend') : context.tr('remove'),
+      cancelText: context.tr('cancel'),
+      isDestructive: true,
+    );
+
+    if (confirmed != true) return;
+
+    try {
+      bool success = false;
+
+      if (isAllFriendsTab) {
+        // 🎯 전체 친구: 친구 일괄 해제
+        print(
+          '🔄 [ManageGroupScreen] 친구 일괄 해제 시작: ${usernamesToRemove.length}명',
+        );
+        final friendProv = context.read<FriendProvider>();
+        success = await friendProv.deleteFriendsBatch(usernamesToRemove);
+      } else {
+        // 🎯 특정 그룹: 그룹에서 멤버 일괄 제거
+
+        final groupProv = context.read<GroupProvider>();
+        success = await groupProv.removeMembersBatch(
+          _selectedGroup!.id,
+          usernamesToRemove,
+        );
+      }
+
+      if (mounted) {
+        setState(() {
+          _selectedMembers.clear();
+          _isMultiSelectMode = false; // 삭제 후 다중 선택 모드 해제
+        });
+
+        if (success) {
+          ErrorHandler.showInfo(
+            context,
+            isAllFriendsTab
+                ? context
+                    .tr('unfriend_success')
+                    .replaceAll('{count}', '${usernamesToRemove.length}')
+                : context
+                    .tr('members_removed')
+                    .replaceAll('{count}', '${usernamesToRemove.length}'),
+          );
+        } else {
+          ErrorHandler.showError(
+            context,
+            isAllFriendsTab
+                ? context.tr('unfriend_failed')
+                : context.tr('remove_member_failed'),
+          );
+        }
+      }
+    } catch (e) {
+      print('❌ [ManageGroupScreen] 일괄 작업 에러: $e');
+
+      if (mounted) {
+        setState(() {
+          _selectedMembers.clear();
+          _isMultiSelectMode = false;
+        });
+
+        ErrorHandler.showError(
+          context,
+          isAllFriendsTab
+              ? context.tr('unfriend_failed')
+              : context.tr('remove_member_failed'),
+        );
+      }
     }
   }
 
@@ -969,8 +952,13 @@ class _AddMemberBottomSheetState extends State<_AddMemberBottomSheet> {
                 const SizedBox(height: 30),
                 // 친구 그리드
                 Expanded(child: _buildFriendsGrid(scrollController)),
-                // 하단 액션바
-                _buildActionBar(),
+                // 🎯 하단 액션바 - SafeArea로 키보드 위에 위치
+                Padding(
+                  padding: EdgeInsets.only(
+                    bottom: MediaQuery.of(context).viewInsets.bottom + 2,
+                  ),
+                  child: _buildActionBar(),
+                ),
               ],
             ),
           ),
@@ -1086,7 +1074,7 @@ class _AddMemberBottomSheetState extends State<_AddMemberBottomSheet> {
             Text(
               context.tr('select_group_please'),
               style: TextStyle(
-                color: Colors.white.withOpacity(0.7), // 🎯 흰색
+                color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
                 fontSize: 16,
                 fontWeight: FontWeight.w500,
               ),
@@ -1146,9 +1134,9 @@ class _AddMemberBottomSheetState extends State<_AddMemberBottomSheet> {
       if (_searchedUsers.isEmpty) {
         return Center(
           child: Text(
-            '검색 결과가 없습니다',
+            context.tr('no_search_results'),
             style: TextStyle(
-              color: Colors.white.withOpacity(0.7), // 🎯 흰색
+              color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
               fontSize: 16,
             ),
           ),
@@ -1244,7 +1232,9 @@ class _AddMemberBottomSheetState extends State<_AddMemberBottomSheet> {
               Text(
                 context.tr('no_friends_to_add'),
                 style: TextStyle(
-                  color: Colors.white.withOpacity(0.7), // 🎯 흰색
+                  color: Theme.of(
+                    context,
+                  ).colorScheme.onSurface.withOpacity(0.7),
                   fontSize: 16,
                   fontWeight: FontWeight.w500,
                 ),
@@ -1287,6 +1277,7 @@ class _AddMemberBottomSheetState extends State<_AddMemberBottomSheet> {
               });
             },
             child: Column(
+              mainAxisSize: MainAxisSize.min,
               children: [
                 Stack(
                   children: [
@@ -1294,12 +1285,33 @@ class _AddMemberBottomSheetState extends State<_AddMemberBottomSheet> {
                       imageUrl: friend.profileImageUrl,
                       username: friend.username,
                       size: 110,
-                      borderWidth: isSelected ? 4 : 0, // 선택 시만 테두리
-                      borderColor:
-                          isSelected
-                              ? Theme.of(context).colorScheme.onSurface
-                              : null,
+                      borderWidth: 0,
+                      borderColor: null,
                     ),
+                    // 🎯 선택 시 체크 표시
+                    if (isSelected)
+                      Positioned.fill(
+                        child: Container(
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: Colors.white.withOpacity(0.7),
+                          ),
+                          child: Center(
+                            child: Icon(
+                              Icons.check,
+                              color: Colors.black,
+                              size: 40,
+                              shadows: const [
+                                Shadow(
+                                  blurRadius: 2,
+                                  color: Colors.white,
+                                  offset: Offset(0, 0),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
                   ],
                 ),
                 const SizedBox(height: 8),
@@ -1341,38 +1353,22 @@ class _AddMemberBottomSheetState extends State<_AddMemberBottomSheet> {
               size: 110,
               borderWidth:
                   isPending
-                      ? (isSelected
-                          ? 4
-                          : 2) // 🎯 pending: 선택 시 두껍게(4), 기본은 얇게(2)
-                      : (isSelected ? 4 : 0), // 일반: 선택 시만 테두리
+                      ? 2 // 🎯 pending: 얇은 테두리
+                      : 0, // 일반: 테두리 없음
               borderColor:
-                  (isSelected || isPending)
-                      ? isPending
-                          ? (isSelected
-                              ? Theme.of(context)
-                                  .colorScheme
-                                  .onSurface // 🎯 pending 선택: 두꺼운 onSurface
-                              : Theme.of(context)
-                                  .colorScheme
-                                  .primary) // 🎯 pending 미선택: 얇은 primary
-                          : Theme.of(context)
-                              .colorScheme
-                              .onSurface // 친구 선택: onSurface
-                      : null,
+                  isPending ? Theme.of(context).colorScheme.primary : null,
             ),
-            // 🎯 선택 시 체크 표시 (친구만, pending 아닐 때)
-            if (isSelected && !isAlreadyMember && !isPending && isFriend)
-              Positioned(
-                top: 1,
-                right: 1,
+            // 🎯 선택 시 체크 표시 (pending 아닐 때, 이미 멤버 아닐 때)
+            if (isSelected && !isAlreadyMember && !isPending)
+              Positioned.fill(
                 child: Container(
-                  width: 28,
-                  height: 28,
                   decoration: BoxDecoration(
-                    color: Theme.of(context).colorScheme.onSurface,
                     shape: BoxShape.circle,
+                    color: Colors.white.withOpacity(0.7),
                   ),
-                  child: Icon(Icons.check, color: Colors.white, size: 16),
+                  child: Center(
+                    child: Icon(Icons.check, color: Colors.black, size: 30),
+                  ),
                 ),
               ),
 
@@ -1481,9 +1477,14 @@ class _AddMemberBottomSheetState extends State<_AddMemberBottomSheet> {
       });
 
       if (successCount > 0) {
-        ErrorHandler.showInfo(context, '$successCount명에게 친구 요청을 보냈습니다');
+        ErrorHandler.showInfo(
+          context,
+          context
+              .tr('friend_request_sent')
+              .replaceAll('{count}', '$successCount'),
+        );
       } else {
-        ErrorHandler.showError(context, '친구 요청 보내기에 실패했습니다');
+        ErrorHandler.showError(context, context.tr('friend_request_failed'));
       }
     }
   }
@@ -1522,14 +1523,18 @@ class _AddMemberBottomSheetState extends State<_AddMemberBottomSheet> {
       if (successCount > 0) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('$successCount명의 친구 요청을 취소했습니다'),
+            content: Text(
+              context
+                  .tr('friend_request_cancelled')
+                  .replaceAll('{count}', '$successCount'),
+            ),
             backgroundColor: Theme.of(context).colorScheme.primary,
           ),
         );
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('요청 취소에 실패했습니다'),
+            content: Text(context.tr('cancel_request_failed')),
             backgroundColor: Theme.of(context).colorScheme.error,
           ),
         );
@@ -1557,7 +1562,9 @@ class _AddMemberBottomSheetState extends State<_AddMemberBottomSheet> {
           .replaceAll('{count}', '${_selectedPendingCancels.length}');
     } else if (hasSelectedNonFriends) {
       // 친구가 아닌 사람이 선택되면 "친구 요청 보내기"
-      buttonText = '친구 요청 보내기 (${_selectedNonFriends.length})';
+      buttonText = context
+          .tr('send_friend_request')
+          .replaceAll('{count}', '${_selectedNonFriends.length}');
     } else if (hasSelectedFriends) {
       // 친구만 선택되면 "추가하기"
       buttonText = context
@@ -1647,12 +1654,9 @@ class _AddMemberBottomSheetState extends State<_AddMemberBottomSheet> {
       }
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              context.tr('members_added').replaceAll('{count}', '$success'),
-            ),
-          ),
+        ErrorHandler.showInfo(
+          context,
+          context.tr('members_added').replaceAll('{count}', '$success'),
         );
         widget.onClose();
       }
@@ -1663,109 +1667,189 @@ class _AddMemberBottomSheetState extends State<_AddMemberBottomSheet> {
 }
 
 // --- 하단 친구 그리드 (요청/대기/확정 순으로 정렬, 대기는 블러 처리) ---
-class _FriendsGrid extends StatelessWidget {
+class _FriendsGrid extends StatefulWidget {
   final FriendProvider friendProv;
   final Group? selectedGroup;
   final GroupProvider groupProv;
   final String searchQuery;
+  final bool isMultiSelectMode; // 🎯 다중 선택 모드
+  final Set<String> selectedMembers; // 🎯 선택된 멤버
+  final ScrollController scrollController; // 🎯 스크롤 컨트롤러
+  final Function(String) onMemberToggle; // 🎯 멤버 선택/해제 콜백
+
   const _FriendsGrid({
     required this.friendProv,
     required this.selectedGroup,
     required this.groupProv,
     required this.searchQuery,
+    required this.isMultiSelectMode,
+    required this.selectedMembers,
+    required this.scrollController,
+    required this.onMemberToggle,
   });
 
   @override
+  State<_FriendsGrid> createState() => _FriendsGridState();
+}
+
+class _FriendsGridState extends State<_FriendsGrid> {
+  bool _showLoading = false;
+  DateTime? _loadingStartTime;
+
+  @override
+  void didUpdateWidget(_FriendsGrid oldWidget) {
+    super.didUpdateWidget(oldWidget);
+
+    // 🎯 로딩 상태가 변경되었을 때
+    if (widget.friendProv.isLoading != oldWidget.friendProv.isLoading) {
+      if (widget.friendProv.isLoading) {
+        // 로딩 시작: 타이머 설정
+        _loadingStartTime = DateTime.now();
+        Future.delayed(const Duration(milliseconds: 500), () {
+          if (mounted &&
+              widget.friendProv.isLoading &&
+              _loadingStartTime != null &&
+              DateTime.now().difference(_loadingStartTime!) >=
+                  const Duration(milliseconds: 500)) {
+            setState(() {
+              _showLoading = true;
+            });
+          }
+        });
+      } else {
+        // 로딩 종료: 초기화
+        _loadingStartTime = null;
+        if (_showLoading) {
+          setState(() {
+            _showLoading = false;
+          });
+        }
+      }
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
-    List<Friend> accepted = friendProv.acceptedFriends;
-    List<Friend> received = friendProv.receivedRequests; // 받은 요청(상단 우선)
-    // List<Friend> sent = friendProv.sentRequests; // 내가 보낸 요청은 제외
+    // 🎯 0.5초 이상 로딩 중일 때만 로딩 표시
+    if (widget.friendProv.isLoading && _showLoading) {
+      return DoppyLoadingLogo(showBackButton: false, opacity: 1.0);
+    } else {
+      List<Friend> accepted = widget.friendProv.acceptedFriends;
+      List<Friend> received =
+          widget.friendProv.receivedRequests; // 받은 요청(상단 우선)
+      // List<Friend> sent = widget.friendProv.sentRequests; // 내가 보낸 요청은 제외
 
-    // 그룹이 선택된 경우 해당 그룹의 멤버만 필터링
-    if (selectedGroup != null) {
-      // 전체 친구 그룹인 경우 필터링하지 않음
-      if (selectedGroup!.id != -1) {
-        final groupMembers = groupProv.membersOf(selectedGroup!.id);
-        final memberUsernames = groupMembers.map((m) => m.userId).toSet();
+      // 그룹이 선택된 경우 해당 그룹의 멤버만 필터링
+      if (widget.selectedGroup != null) {
+        // 전체 친구 그룹인 경우 필터링하지 않음
+        if (widget.selectedGroup!.id != -1) {
+          final groupMembers = widget.groupProv.membersOf(
+            widget.selectedGroup!.id,
+          );
+          final memberUsernames = groupMembers.map((m) => m.userId).toSet();
 
+          accepted =
+              accepted
+                  .where((f) => memberUsernames.contains(f.username))
+                  .toList();
+          received =
+              received
+                  .where((f) => memberUsernames.contains(f.username))
+                  .toList();
+          // sent 상태는 제외
+        }
+        // selectedGroup.id == -1 (전체 친구)인 경우 모든 친구 표시
+      }
+
+      // 🎯 검색어가 있으면 친구 이름 또는 별명으로 필터링
+      if (widget.searchQuery.isNotEmpty) {
+        final query = widget.searchQuery.toLowerCase();
         accepted =
             accepted
-                .where((f) => memberUsernames.contains(f.username))
+                .where(
+                  (f) =>
+                      f.username.toLowerCase().contains(query) ||
+                      f.alias.toLowerCase().contains(query),
+                )
                 .toList();
         received =
             received
-                .where((f) => memberUsernames.contains(f.username))
+                .where(
+                  (f) =>
+                      f.username.toLowerCase().contains(query) ||
+                      f.alias.toLowerCase().contains(query),
+                )
                 .toList();
         // sent 상태는 제외
       }
-      // selectedGroup.id == -1 (전체 친구)인 경우 모든 친구 표시
-    }
 
-    // 검색어가 있으면 친구 이름으로 필터링
-    if (searchQuery.isNotEmpty) {
-      final query = searchQuery.toLowerCase();
-      accepted =
-          accepted
-              .where((f) => f.username.toLowerCase().contains(query))
-              .toList();
-      received =
-          received
-              .where((f) => f.username.toLowerCase().contains(query))
-              .toList();
-      // sent 상태는 제외
-    }
-
-    final List<_FriendTileData> tiles = [];
-    for (final f in received) {
-      tiles.add(
-        _FriendTileData(
-          username: f.username,
-          url: f.profileImageUrl,
-          state: _FriendState.requestReceived,
-        ),
-      );
-    }
-    // sent 상태는 제외
-    for (final f in accepted) {
-      tiles.add(
-        _FriendTileData(
-          username: f.username,
-          url: f.profileImageUrl,
-          state: _FriendState.accepted,
-        ),
-      );
-    }
-
-    if (tiles.isEmpty) {
-      return Center(
-        child: Text(
-          selectedGroup != null
-              ? context
-                  .tr('no_friends_in_group')
-                  .replaceAll('{groupName}', selectedGroup!.name)
-              : context.tr('no_friends_to_display'),
-          style: TextStyle(
-            color: Colors.white.withOpacity(0.7), // 🎯 흰색
+      final List<_FriendTileData> tiles = [];
+      for (final f in received) {
+        tiles.add(
+          _FriendTileData(
+            username: f.username,
+            url: f.profileImageUrl,
+            state: _FriendState.requestReceived,
           ),
+        );
+      }
+      // sent 상태는 제외
+      for (final f in accepted) {
+        tiles.add(
+          _FriendTileData(
+            username: f.username,
+            url: f.profileImageUrl,
+            state: _FriendState.accepted,
+          ),
+        );
+      }
+
+      // 🎯 로딩 완료 후에만 "친구 없음" 메시지 표시
+      if (tiles.isEmpty) {
+        return Center(
+          child: Text(
+            widget.selectedGroup != null
+                ? context
+                    .tr('no_friends_in_group')
+                    .replaceAll('{groupName}', widget.selectedGroup!.name)
+                : context.tr('no_friends_to_display'),
+            style: TextStyle(
+              color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
+            ),
+          ),
+        );
+      }
+
+      return RawScrollbar(
+        controller: widget.scrollController,
+        thumbColor: Theme.of(context).colorScheme.onSurface.withOpacity(0.15),
+        radius: const Radius.circular(8),
+        thickness: 4,
+        thumbVisibility: true,
+        child: GridView.builder(
+          controller: widget.scrollController,
+          padding: const EdgeInsets.fromLTRB(12, 10, 12, 100),
+          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: 3,
+            mainAxisSpacing: 12,
+            crossAxisSpacing: 6,
+            childAspectRatio: 0.82,
+          ),
+          itemCount: tiles.length,
+          itemBuilder: (context, i) {
+            final t = tiles[i];
+            return _FriendTile(
+              data: t,
+              isMultiSelectMode: widget.isMultiSelectMode, // 🎯 다중 선택 모드 전달
+              isSelected: widget.selectedMembers.contains(
+                t.username,
+              ), // 🎯 선택 여부 전달
+              onToggle: () => widget.onMemberToggle(t.username), // 🎯 선택 토글 콜백
+            );
+          },
         ),
       );
     }
-
-    return GridView.builder(
-      padding: EdgeInsets.zero,
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 3,
-        mainAxisSpacing: 12,
-        crossAxisSpacing: 6,
-        childAspectRatio: 0.82,
-      ),
-      itemCount: tiles.length,
-      physics: const ClampingScrollPhysics(),
-      itemBuilder: (context, i) {
-        final t = tiles[i];
-        return _FriendTile(data: t);
-      },
-    );
   }
 }
 
@@ -1784,7 +1868,16 @@ class _FriendTileData {
 
 class _FriendTile extends StatelessWidget {
   final _FriendTileData data;
-  const _FriendTile({required this.data});
+  final bool isMultiSelectMode; // 🎯 다중 선택 모드
+  final bool isSelected; // 🎯 선택 여부
+  final VoidCallback onToggle; // 🎯 선택 토글 콜백
+
+  const _FriendTile({
+    required this.data,
+    required this.isMultiSelectMode,
+    required this.isSelected,
+    required this.onToggle,
+  });
 
   static void _showFriendRequestBottomSheet(
     BuildContext context,
@@ -1841,7 +1934,7 @@ class _FriendTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final Color textColor = Colors.white; // 🎯 흰색
+    final Color textColor = Theme.of(context).colorScheme.onSurface;
     final bool blur = data.state != _FriendState.accepted;
     final groupProv = context.watch<GroupProvider>();
     final selectedGroup =
@@ -1849,6 +1942,12 @@ class _FriendTile extends StatelessWidget {
 
     Widget avatar = GestureDetector(
       onTap: () {
+        // 🎯 다중 선택 모드일 때는 선택/해제만
+        if (isMultiSelectMode) {
+          onToggle();
+          return;
+        }
+
         if (data.state == _FriendState.requestReceived) {
           // 받은 요청인 경우 수락/거절 바텀시트 표시
           _showFriendRequestBottomSheet(context, data.username);
@@ -1859,7 +1958,7 @@ class _FriendTile extends StatelessWidget {
             MaterialPageRoute(
               builder:
                   (_) => UserProfileScreen(
-                    otherUser: User(id: 0, username: data.username),
+                    otherUser: User(username: data.username),
                   ),
             ),
           );
@@ -1877,10 +1976,44 @@ class _FriendTile extends StatelessWidget {
                 );
               }
               : null,
-      child: CommonProfileAvatar(
-        imageUrl: data.url,
-        username: data.username,
-        size: 110,
+      child: Stack(
+        children: [
+          CommonProfileAvatar(
+            imageUrl: data.url,
+            username: data.username,
+            size: 110,
+
+            borderWidth: 0,
+          ),
+          // 🎯 다중 선택 모드일 때 체크 표시
+          if (isMultiSelectMode)
+            Positioned.fill(
+              child: Container(
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color:
+                      isSelected
+                          ? Colors.white.withOpacity(0.7)
+                          : Colors.transparent,
+                ),
+                child:
+                    isSelected
+                        ? Center(
+                          child: Container(
+                            width: 36,
+                            height: 36,
+
+                            child: Icon(
+                              Icons.check,
+                              color: Colors.black,
+                              size: 40,
+                            ),
+                          ),
+                        )
+                        : null,
+              ),
+            ),
+        ],
       ),
     );
 
@@ -1971,7 +2104,7 @@ class _FriendRequestBottomSheetState extends State<_FriendRequestBottomSheet> {
                   MaterialPageRoute(
                     builder:
                         (_) => UserProfileScreen(
-                          otherUser: User(id: 0, username: widget.username),
+                          otherUser: User(username: widget.username),
                         ),
                   ),
                 );
@@ -2020,6 +2153,7 @@ class _FriendRequestBottomSheetState extends State<_FriendRequestBottomSheet> {
                       imageUrl: widget.profileImageUrl ?? '',
                       username: widget.username,
                       size: 130,
+                      borderWidth: 0,
                     ),
                   ),
                 ],
@@ -2059,7 +2193,7 @@ class _FriendRequestBottomSheetState extends State<_FriendRequestBottomSheet> {
                               context.tr('reject'),
                               style: TextStyle(
                                 fontSize: 16,
-                                color: Colors.white,
+                                color: Theme.of(context).colorScheme.onSurface,
                                 fontWeight: FontWeight.w500,
                               ),
                             ),
@@ -2138,7 +2272,7 @@ class _FriendRequestBottomSheetState extends State<_FriendRequestBottomSheet> {
             SnackBar(
               content: Text(
                 context.tr('error_occurred_simple'),
-                style: const TextStyle(color: Colors.white),
+                style: TextStyle(color: Theme.of(context).colorScheme.surface),
               ),
               backgroundColor: Colors.red,
             ),
@@ -2152,7 +2286,7 @@ class _FriendRequestBottomSheetState extends State<_FriendRequestBottomSheet> {
           SnackBar(
             content: Text(
               context.tr('error_occurred_simple'),
-              style: const TextStyle(color: Colors.white),
+              style: TextStyle(color: Theme.of(context).colorScheme.surface),
             ),
             backgroundColor: Colors.red,
           ),
@@ -2191,7 +2325,10 @@ class _MemberActionMenuOverlay extends StatelessWidget {
         child: GestureDetector(
           onTap: () => Navigator.of(context).pop(),
           child: Container(
-            color: Colors.black.withOpacity(0.3),
+            color:
+                Theme.of(context).colorScheme.brightness == Brightness.dark
+                    ? Colors.black.withOpacity(0.2)
+                    : Colors.black.withOpacity(0.5),
             child: Center(
               child: ScaleTransition(
                 scale: CurvedAnimation(
@@ -2212,7 +2349,7 @@ class _MemberActionMenuOverlay extends StatelessWidget {
                           color: Theme.of(context).colorScheme.surface,
                           boxShadow: [
                             BoxShadow(
-                              color: Colors.black.withOpacity(0.3),
+                              color: Colors.black.withOpacity(0.2),
                               blurRadius: 30,
                               offset: const Offset(0, 10),
                             ),
@@ -2224,6 +2361,7 @@ class _MemberActionMenuOverlay extends StatelessWidget {
                             imageUrl: profileImageUrl,
                             username: username,
                             size: 240,
+                            borderWidth: 0,
                           ),
                         ),
                       ),
@@ -2235,28 +2373,15 @@ class _MemberActionMenuOverlay extends StatelessWidget {
                           color: Colors.white,
                           fontSize: 20,
                           fontWeight: FontWeight.w700,
-                          shadows: [
-                            Shadow(
-                              color: Colors.black.withOpacity(0.5),
-                              blurRadius: 10,
-                            ),
-                          ],
                         ),
                       ),
                       const SizedBox(height: 32),
                       // 🎯 액션 버튼들
                       Container(
-                        margin: const EdgeInsets.symmetric(horizontal: 40),
+                        margin: const EdgeInsets.symmetric(horizontal: 60),
                         decoration: BoxDecoration(
-                          color: Theme.of(context).colorScheme.surface,
+                          color: AppColors.darkSurface,
                           borderRadius: BorderRadius.circular(20),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withOpacity(0.2),
-                              blurRadius: 20,
-                              offset: const Offset(0, 10),
-                            ),
-                          ],
                         ),
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
@@ -2264,8 +2389,8 @@ class _MemberActionMenuOverlay extends StatelessWidget {
                             // 프로필 방문
                             _buildActionButton(
                               context,
-                              icon: Icons.person_outline,
-                              label: '프로필 방문',
+                              icon: Icons.person,
+                              label: context.tr('visit_profile'),
                               onTap: () {
                                 Navigator.of(context).pop();
                                 Navigator.push(
@@ -2273,10 +2398,7 @@ class _MemberActionMenuOverlay extends StatelessWidget {
                                   MaterialPageRoute(
                                     builder:
                                         (_) => UserProfileScreen(
-                                          otherUser: User(
-                                            id: 0,
-                                            username: username,
-                                          ),
+                                          otherUser: User(username: username),
                                         ),
                                   ),
                                 );
@@ -2286,15 +2408,13 @@ class _MemberActionMenuOverlay extends StatelessWidget {
                             Divider(
                               height: 1,
                               thickness: 0.5,
-                              color: Theme.of(
-                                context,
-                              ).colorScheme.onSurface.withOpacity(0.1),
+                              color: AppColors.lightBorder.withOpacity(0.2),
                             ),
                             // 그룹에서 제거
                             _buildActionButton(
                               context,
                               icon: Icons.person_remove_outlined,
-                              label: '그룹에서 제거',
+                              label: context.tr('remove_from_group'),
                               onTap: () async {
                                 Navigator.of(context).pop();
                                 await _removeMemberFromGroup(
@@ -2339,9 +2459,9 @@ class _MemberActionMenuOverlay extends StatelessWidget {
                 color:
                     isDestructive
                         ? Theme.of(context).colorScheme.error
-                        : Theme.of(context).colorScheme.onSurface,
+                        : Colors.white,
                 fontSize: 16,
-                fontWeight: FontWeight.w600,
+                fontWeight: FontWeight.w500,
               ),
             ),
           ],
@@ -2364,11 +2484,16 @@ class _MemberActionMenuOverlay extends StatelessWidget {
       await groupProv.removeMember(selectedGroup.id, username);
 
       if (context.mounted) {
-        ErrorHandler.showInfo(context, '$username님을 그룹에서 제거했습니다');
+        ErrorHandler.showInfo(
+          context,
+          context
+              .tr('member_removed_from_group')
+              .replaceAll('{username}', username),
+        );
       }
     } catch (e) {
       if (context.mounted) {
-        ErrorHandler.showError(context, '멤버 제거에 실패했습니다');
+        ErrorHandler.showError(context, context.tr('remove_member_failed'));
       }
     }
   }

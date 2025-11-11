@@ -168,6 +168,7 @@ class CommentService extends ChangeNotifier {
   bool _isLoading = false;
   bool _hasMoreComments = true;
   int _currentPage = 0;
+  int _serverCommentCount = 0; // 🎯 서버에서 받아온 실제 댓글 총 개수
 
   // 타이밍 시어 관련
   bool _isTimingSheerActive = false;
@@ -179,11 +180,26 @@ class CommentService extends ChangeNotifier {
   bool get hasMoreComments => _hasMoreComments;
   bool get isTimingSheerActive => _isTimingSheerActive;
 
+  /// 🎯 전체 댓글 수 반환 (서버 값과 로드된 댓글 수 중 큰 값 사용)
+  int getTotalCommentCount() {
+    return _serverCommentCount > _comments.length
+        ? _serverCommentCount
+        : _comments.length;
+  }
+
+  /// 🎯 서버에서 받아온 초기 댓글 수 설정 (본문 로드 시)
+  void setInitialCommentCount(int count) {
+    _serverCommentCount = count;
+    print('[CommentService] 초기 댓글 수 설정: $count');
+    notifyListeners();
+  }
+
   /// 포스트 ID 설정 및 댓글 초기화
   void setPostId(String postId, {List<Comment>? initialComments}) {
     if (_currentPostId != postId) {
       _currentPostId = postId;
       _comments.clear();
+      _serverCommentCount = 0; // 🎯 서버 댓글 수도 초기화
 
       // 초기 댓글 데이터가 있으면 사용 (page=0 재사용)
       if (initialComments != null && initialComments.isNotEmpty) {
@@ -369,6 +385,7 @@ class CommentService extends ChangeNotifier {
 
     // 완전히 새로운 댓글 추가
     _comments.add(comment);
+    _serverCommentCount++; // 🎯 전체 댓글 수 증가
 
     notifyListeners();
   }
@@ -426,6 +443,7 @@ class CommentService extends ChangeNotifier {
       print('[CommentService] 다른 사용자가 삭제했거나 동기화 지연');
 
       _comments.removeAt(index);
+      _serverCommentCount--; // 🎯 전체 댓글 수 감소
 
       notifyListeners();
     } else {
@@ -789,6 +807,7 @@ class CommentService extends ChangeNotifier {
   Future<void> addComment({
     required String username,
     required String content,
+    String? authorProfileImageUrl, // 🎯 프로필 이미지 URL 추가
     String? parentId,
     String? imageUrl,
   }) async {
@@ -802,7 +821,7 @@ class CommentService extends ChangeNotifier {
       id: tempId,
       author: username,
       content: content,
-      authorProfileImageUrl: '', // 내 프로필 이미지는 나중에 로드
+      authorProfileImageUrl: authorProfileImageUrl ?? '', // 🎯 프로필 이미지 즉시 설정
       postId: _currentPostId!,
       parentId: parentId,
       imageUrl: imageUrl,
@@ -814,6 +833,7 @@ class CommentService extends ChangeNotifier {
     );
 
     _comments.add(optimisticComment);
+    _serverCommentCount++; // 🎯 전체 댓글 수 증가
     notifyListeners(); // ⚡ UI 즉시 업데이트
     print('[CommentService] 낙관적 댓글 추가: $tempId');
 
@@ -1028,6 +1048,7 @@ class CommentService extends ChangeNotifier {
 
     final deletedComment = _comments[commentIndex]; // 롤백용 백업
     _comments.removeAt(commentIndex);
+    _serverCommentCount--; // 🎯 전체 댓글 수 감소
 
     // 삭제는 스크롤 안 함
 

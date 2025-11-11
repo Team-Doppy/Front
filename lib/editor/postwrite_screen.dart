@@ -28,6 +28,7 @@ import 'package:doppy/editor/writer_sticker_canvas.dart';
 import 'package:doppy/theme/app_colors.dart';
 import 'package:doppy/theme/app_theme.dart';
 import 'package:doppy/l10n/app_localizations.dart';
+import 'package:doppy/data/services/upload_service.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter/services.dart';
@@ -35,7 +36,6 @@ import 'package:super_editor/super_editor.dart';
 import 'package:doppy/editor/overlay/draft_list_overlay.dart';
 import 'package:doppy/editor/publish/post_exporter.dart';
 import 'package:doppy/data/services/draft_service.dart';
-import 'package:doppy/data/services/upload_service.dart';
 import 'package:doppy/data/services/blog_service.dart';
 import 'package:doppy/image/custom_image_editor_screen.dart';
 import 'package:doppy/providers/feed_provider/my_profile_feed_provider.dart';
@@ -1457,6 +1457,19 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
         return false; // ✅ 실패 반환
       }
 
+      // 🎯 PNG 드로잉 업로드 중이면 차단
+      final uploadService = UploadService();
+      if (uploadService.hasActiveUploads(kinds: {UploadKind.editorImage})) {
+        if (mounted) {
+          await DialogUtils.showInfoDialog(
+            context,
+            title: '드로잉 업로드 중',
+            message: '드로잉 이미지가 아직 업로드 중입니다. 잠시만 기다려주세요.',
+          );
+        }
+        return false;
+      }
+
       final title = PostExporter.getTitleFromDocument(document);
 
       // 제목 기반으로 draftId 생성 (같은 제목이면 덮어쓰기)
@@ -1541,6 +1554,17 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
       return;
     }
 
+    // 🎯 PNG 드로잉 업로드 중이면 차단
+    final uploadService = UploadService();
+    if (uploadService.hasActiveUploads(kinds: {UploadKind.editorImage})) {
+      await DialogUtils.showInfoDialog(
+        context,
+        title: '드로잉 업로드 중',
+        message: '드로잉 이미지가 아직 업로드 중입니다. 잠시만 기다려주세요.',
+      );
+      return;
+    }
+
     // 1. 제목 검증
     final hasTitle = editorService.hasNonEmptyTitle();
     if (!hasTitle) {
@@ -1612,6 +1636,14 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
       if (mounted) {
         setState(() => _isSaving = false);
         _shouldRefreshMyFeed = true;
+
+        // 🎯 스티커 및 드로잉 데이터 정리
+        try {
+          stickerService.select(null);
+          stickerService.removeAll();
+          debugPrint('[PostwriteScreen] 드로잉 캔버스 정리 완료');
+        } catch (_) {}
+
         Navigator.of(context).pop();
       }
     } catch (e) {
@@ -1622,7 +1654,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
         setState(() => _isSaving = false);
         ErrorHandler.handleError(context, e);
       }
-    }
+    } finally {}
   }
 
   /// 사용된 이미지/비디오 URL 수집
@@ -1676,16 +1708,19 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
         }
       }
 
-      // 스티커에서 이미지 URL 수집
+      // 🎯 스티커에서 이미지 URL 수집 (PNG 드로잉 포함)
       final stickers = exported['stickers'] as List?;
       if (stickers != null) {
         print('  - 스티커 개수: ${stickers.length}');
         for (final sticker in stickers) {
           if (sticker is Map && sticker['type'] == 'image') {
-            final imageUrl = sticker['imageUrl'];
-            if (imageUrl != null && imageUrl.toString().isNotEmpty) {
-              usedUrls.add(imageUrl.toString());
-              print('    → 스티커 URL 추가: $imageUrl');
+            final contentMap = sticker['content'] as Map<String, dynamic>?;
+            if (contentMap != null) {
+              final String url = (contentMap['url'] ?? '').toString();
+              if (url.isNotEmpty) {
+                usedUrls.add(url);
+                print('    → 스티커 URL 추가: $url');
+              }
             }
           }
         }

@@ -330,6 +330,44 @@ class GroupService {
     }
   }
 
+  /// 25. 그룹에서 여러 멤버 일괄 제거 (배치)
+  Future<void> removeMembersFromGroupBatch(
+    int groupId,
+    List<String> usernames,
+  ) async {
+    try {
+      print(
+        '🔍 [GroupService] 그룹 멤버 일괄 제거 시작 - 그룹ID: $groupId, 사용자 수: ${usernames.length}',
+      );
+
+      final response = await _dio.delete(
+        '/api/groups/$groupId/members/batch',
+        data: usernames, // username 배열을 body로 전달
+      );
+
+      print('📡 [GroupService] API 응답 상태: ${response.statusCode}');
+      print('📡 [GroupService] API 응답 데이터: ${response.data}');
+
+      if (response.statusCode == 200) {
+        print('✅ [GroupService] 그룹 멤버 일괄 제거 성공');
+        return;
+      } else {
+        print(
+          '❌ [GroupService] API 오류: ${response.statusCode} - ${response.data}',
+        );
+        throw Exception('그룹 멤버 일괄 제거 실패: ${response.statusCode}');
+      }
+    } catch (e) {
+      print('❌ [GroupService] 그룹 멤버 일괄 제거 중 예외 발생: $e');
+      if (e is DioException) {
+        print(
+          '❌ [GroupService] Dio 에러: ${e.response?.statusCode} - ${e.response?.data}',
+        );
+      }
+      rethrow;
+    }
+  }
+
   /// 3. 그룹 수정 (이름 및 설명)
   Future<Map<String, dynamic>> updateGroup(
     int groupId,

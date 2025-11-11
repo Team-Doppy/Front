@@ -234,7 +234,6 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
                     builder:
                         (_) => UserProfileScreen(
                           otherUser: User(
-                            id: 0,
                             username: username,
                             alias: item.alias,
                             profileImageUrl: item.profileImageUrl,
@@ -286,7 +285,6 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
                 builder:
                     (_) => UserProfileScreen(
                       otherUser: User(
-                        id: 0,
                         username: item.username ?? '',
                         alias: item.alias,
                         profileImageUrl: item.profileImageUrl,
