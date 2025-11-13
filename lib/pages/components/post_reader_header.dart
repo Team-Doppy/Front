@@ -407,12 +407,12 @@ class PostReaderAppBar extends StatelessWidget {
               child: Padding(
                 padding: EdgeInsets.only(
                   top: MediaQuery.of(context).padding.top,
-                  bottom: 5.0,
+                  bottom: 8.0,
                 ),
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
-                    const SizedBox(width: 22),
+                    const SizedBox(width: 16),
                     GestureDetector(
                       onTap: onBack,
                       child: Icon(

@@ -13,6 +13,8 @@ import 'package:share_plus/share_plus.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:image_gallery_saver/image_gallery_saver.dart';
 import 'package:doppy/l10n/app_localizations.dart';
+import 'package:video_thumbnail/video_thumbnail.dart';
+import 'package:image/image.dart' as img;
 
 /// 📝 포스트 공유 오버레이 (Medium 스타일)
 class SharePostOverlay extends StatefulWidget {
@@ -83,7 +85,115 @@ class _SharePostOverlayState extends State<SharePostOverlay> {
   final GlobalKey _fullScreenKey = GlobalKey(); // 🎯 전체 화면 캡처용
   bool _isSaving = false;
   bool _isCopied = false; // 🎯 복사 완료 상태
+  bool _isBottomSheetCopied = false; // 🎯 바텀시트 내 복사 상태
   ShareTheme _currentTheme = ShareTheme.darkBlur; // 🎯 기본 테마
+  String? _extractedThumbnailPath; // 🎯 비디오에서 추출한 썸네일 경로
+  bool _isExtractingThumbnail = false; // 🎯 썸네일 추출 중
+
+  @override
+  void initState() {
+    super.initState();
+    _checkAndExtractVideoThumbnail();
+  }
+
+  @override
+  void dispose() {
+    // 추출한 썸네일 파일 정리
+    if (_extractedThumbnailPath != null) {
+      try {
+        File(_extractedThumbnailPath!).delete();
+      } catch (_) {}
+    }
+    super.dispose();
+  }
+
+  /// 🎯 비디오 URL인지 확인하고 썸네일 추출
+  Future<void> _checkAndExtractVideoThumbnail() async {
+    if (widget.thumbnailUrl == null || widget.thumbnailUrl!.isEmpty) return;
+
+    final url = widget.thumbnailUrl!.toLowerCase();
+    final isVideo =
+        url.endsWith('.mp4') ||
+        url.endsWith('.mov') ||
+        url.endsWith('.avi') ||
+        url.contains('/video/') ||
+        url.contains('video');
+
+    if (!isVideo) return;
+
+    print('[SharePostOverlay] 비디오 URL 감지 - 썸네일 추출 시작: ${widget.thumbnailUrl}');
+
+    setState(() => _isExtractingThumbnail = true);
+
+    try {
+      final thumbnailPath = await VideoThumbnail.thumbnailFile(
+        video: widget.thumbnailUrl!,
+        thumbnailPath: (await getTemporaryDirectory()).path,
+        imageFormat: ImageFormat.PNG,
+        maxHeight: 1920,
+        quality: 90,
+      );
+
+      if (mounted && thumbnailPath != null) {
+        setState(() {
+          _extractedThumbnailPath = thumbnailPath;
+          _isExtractingThumbnail = false;
+        });
+        print('[SharePostOverlay] 썸네일 추출 완료: $thumbnailPath');
+      }
+    } catch (e) {
+      print('[SharePostOverlay] 썸네일 추출 실패: $e');
+      if (mounted) {
+        setState(() => _isExtractingThumbnail = false);
+      }
+    }
+  }
+
+  /// 🎯 표시할 썸네일 URL/경로 가져오기
+  String? get _displayThumbnail {
+    // 추출된 썸네일이 있으면 우선 사용
+    if (_extractedThumbnailPath != null) {
+      return _extractedThumbnailPath;
+    }
+    // 아니면 원본 URL
+    return widget.thumbnailUrl;
+  }
+
+  /// 🎯 썸네일이 로컬 파일인지 확인
+  bool get _isThumbnailLocal => _extractedThumbnailPath != null;
+
+  /// 🎯 썸네일 이미지 빌더 (로컬/네트워크 자동 판단)
+  Widget _buildThumbnailImage({
+    required BoxFit fit,
+    required Widget errorWidget,
+  }) {
+    if (_isExtractingThumbnail) {
+      // 썸네일 추출 중이면 로딩 표시
+      return Center(
+        child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+      );
+    }
+
+    final thumbnail = _displayThumbnail;
+    if (thumbnail == null || thumbnail.isEmpty) {
+      return errorWidget;
+    }
+
+    // 로컬 파일이면 Image.file, 네트워크면 Image.network
+    if (_isThumbnailLocal) {
+      return Image.file(
+        File(thumbnail),
+        fit: fit,
+        errorBuilder: (context, error, stackTrace) => errorWidget,
+      );
+    } else {
+      return Image.network(
+        thumbnail,
+        fit: fit,
+        errorBuilder: (context, error, stackTrace) => errorWidget,
+      );
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -101,20 +211,17 @@ class _SharePostOverlayState extends State<SharePostOverlay> {
                   children: [
                     // 배경: 썸네일 이미지
                     Positioned.fill(
-                      child: Image.network(
-                        widget.thumbnailUrl!,
+                      child: _buildThumbnailImage(
                         fit: BoxFit.cover,
-                        errorBuilder: (context, error, stackTrace) {
-                          return Container(
-                            decoration: BoxDecoration(
-                              gradient: LinearGradient(
-                                begin: Alignment.topCenter,
-                                end: Alignment.bottomCenter,
-                                colors: [Color(0xFF667EEA), Color(0xFF764BA2)],
-                              ),
+                        errorWidget: Container(
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              begin: Alignment.topCenter,
+                              end: Alignment.bottomCenter,
+                              colors: [Color(0xFF667EEA), Color(0xFF764BA2)],
                             ),
-                          );
-                        },
+                          ),
+                        ),
                       ),
                     ),
 
@@ -164,7 +271,6 @@ class _SharePostOverlayState extends State<SharePostOverlay> {
     );
   }
 
-  /// 🎯 헤더 (X 버튼 + 테마 선택)
   Widget _buildHeader() {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
@@ -321,7 +427,7 @@ class _SharePostOverlayState extends State<SharePostOverlay> {
       children: [
         // 콘텐츠
         Padding(
-          padding: const EdgeInsets.all(18),
+          padding: const EdgeInsets.all(30),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -365,13 +471,13 @@ class _SharePostOverlayState extends State<SharePostOverlay> {
                 child: Text(
                   widget.title,
                   style: TextStyle(
-                    fontSize: 35,
+                    fontSize: 28,
                     fontWeight: FontWeight.w800,
                     color: _getTextColor(), // 🎯 테마별 색상
                     height: 1.3,
                     letterSpacing: -0.5,
                   ),
-                  maxLines: 3,
+                  maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
@@ -387,7 +493,7 @@ class _SharePostOverlayState extends State<SharePostOverlay> {
                       color: _getSecondaryTextColor(), // 🎯 테마별 색상
                       height: 1.5,
                     ),
-                    maxLines: 3,
+                    maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
@@ -396,21 +502,20 @@ class _SharePostOverlayState extends State<SharePostOverlay> {
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  // 🎯 4:5 비율 프로필 이미지
+                  // 🎯 3:4 비율 프로필 이미지
                   Expanded(
                     child: ClipRRect(
                       borderRadius: BorderRadius.circular(20),
                       child: AspectRatio(
                         aspectRatio: 4 / 5,
                         child:
-                            widget.thumbnailUrl != null &&
-                                    widget.thumbnailUrl!.isNotEmpty
-                                ? Image.network(
-                                  widget.thumbnailUrl!,
+                            _displayThumbnail != null &&
+                                    _displayThumbnail!.isNotEmpty
+                                ? _buildThumbnailImage(
                                   fit: BoxFit.cover,
-                                  errorBuilder: (context, error, stackTrace) {
-                                    return Container(color: Color(0xFF667EEA));
-                                  },
+                                  errorWidget: Container(
+                                    color: Color(0xFF667EEA),
+                                  ),
                                 )
                                 : Container(
                                   color: Color(0xFF667EEA),
@@ -508,149 +613,161 @@ class _SharePostOverlayState extends State<SharePostOverlay> {
   /// 🎯 공유 바텀시트 (iOS 스타일)
   Widget _buildShareBottomSheet() {
     final shareUrl = 'https://doppy.app/post/${widget.postId}';
+    final isDark = Theme.of(context).brightness == Brightness.dark;
 
-    return Container(
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surface,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      child: SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const SizedBox(height: 8),
-            // 핸들
-            Container(
-              width: 36,
-              height: 4,
-              decoration: BoxDecoration(
-                color: Colors.grey.shade300,
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-            const SizedBox(height: 16),
+    return StatefulBuilder(
+      builder: (context, setModalState) {
+        return Container(
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.surface,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+          ),
+          child: SafeArea(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const SizedBox(height: 8),
+                // 핸들
+                Container(
+                  width: 36,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: isDark ? Colors.grey.shade600 : Colors.grey.shade300,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+                const SizedBox(height: 16),
 
-            // URL 바
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20),
-              child: Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 10,
-                ),
-                decoration: BoxDecoration(
-                  color: Colors.grey.shade100,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        shareUrl,
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: Colors.grey.shade700,
-                        ),
-                        overflow: TextOverflow.ellipsis,
-                      ),
+                // URL 바
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 20),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 10,
                     ),
-                    const SizedBox(width: 8),
-                    GestureDetector(
-                      onTap: () async {
-                        await Clipboard.setData(ClipboardData(text: shareUrl));
-                        if (mounted) {
-                          setState(() => _isCopied = true);
-
-                          // 0.8초 후 시트 닫기
-                          Future.delayed(const Duration(milliseconds: 800), () {
+                    decoration: BoxDecoration(
+                      color:
+                          isDark
+                              ? Colors
+                                  .grey
+                                  .shade800 // 🎯 다크: 어둡게
+                              : Colors.grey.shade100, // 라이트: 기존 유지
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            shareUrl,
+                            style: TextStyle(
+                              fontSize: 12,
+                              color:
+                                  isDark
+                                      ? Colors
+                                          .white // 🎯 다크: 희게
+                                      : Colors.grey.shade700, // 라이트: 기존 유지
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        GestureDetector(
+                          onTap: () async {
+                            await Clipboard.setData(
+                              ClipboardData(text: shareUrl),
+                            );
                             if (mounted) {
-                              Navigator.pop(context);
-                              // 시트 닫힌 후 상태 복귀
-                              Future.delayed(
-                                const Duration(milliseconds: 300),
-                                () {
-                                  if (mounted)
-                                    setState(() => _isCopied = false);
-                                },
-                              );
+                              setState(() => _isBottomSheetCopied = true);
+                              setModalState(() {}); // 바텀시트 리빌드
+
+                              // 2초 후 아이콘만 복귀 (시트는 열린 상태 유지)
+                              Future.delayed(const Duration(seconds: 2), () {
+                                if (mounted) {
+                                  setState(() => _isBottomSheetCopied = false);
+                                  setModalState(() {}); // 아이콘 복귀
+                                }
+                              });
                             }
-                          });
-                        }
-                      },
-                      child: AnimatedSwitcher(
-                        duration: const Duration(milliseconds: 200),
-                        child: Icon(
-                          _isCopied ? Icons.check : Icons.copy,
-                          key: ValueKey(_isCopied),
-                          size: 16,
-                          color:
-                              _isCopied
-                                  ? AppColors.primary
-                                  : Colors.grey.shade600,
+                          },
+                          child: AnimatedSwitcher(
+                            duration: const Duration(milliseconds: 200),
+                            child: Icon(
+                              _isBottomSheetCopied ? Icons.check : Icons.copy,
+                              key: ValueKey(_isBottomSheetCopied),
+                              size: 16,
+                              color:
+                                  _isBottomSheetCopied
+                                      ? Theme.of(context).colorScheme.onSurface
+                                      : (isDark
+                                          ? Colors.white70
+                                          : Colors.grey.shade600),
+                            ),
+                          ),
                         ),
-                      ),
+                      ],
                     ),
-                  ],
+                  ),
                 ),
-              ),
+
+                const SizedBox(height: 20),
+
+                // SNS 공유 버튼들
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 20),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                    children: [
+                      _SNSShareButton(
+                        imagePath: 'assets/images/instagram_logo.jpg',
+                        label: 'Instagram',
+                        onTap: () {
+                          Navigator.pop(context);
+                          _shareToInstagram();
+                        },
+                      ),
+                      _SNSShareButton(
+                        imagePath: 'assets/images/facebook_logo.jpg',
+                        label: 'Facebook',
+                        onTap: () {
+                          Navigator.pop(context);
+                          _shareToSNS('facebook');
+                        },
+                      ),
+                      _SNSShareButton(
+                        imagePath: 'assets/images/x_logo.jpg',
+                        label: 'X',
+                        onTap: () {
+                          Navigator.pop(context);
+                          _shareToSNS('x');
+                        },
+                      ),
+                      _SNSShareButton(
+                        imagePath: 'assets/images/thread_logo.jpg',
+                        label: 'Threads',
+                        onTap: () {
+                          Navigator.pop(context);
+                          _shareToSNS('threads');
+                        },
+                      ),
+                      _SNSShareButton(
+                        icon: Icons.more_horiz,
+                        label: context.tr('more'),
+                        onTap: () {
+                          Navigator.pop(context);
+                          _shareViaSystemNative();
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+
+                const SizedBox(height: 20),
+              ],
             ),
-
-            const SizedBox(height: 20),
-
-            // SNS 공유 버튼들
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                children: [
-                  _SNSShareButton(
-                    imagePath: 'assets/images/instagram_logo.jpg',
-                    label: 'Instagram',
-                    onTap: () {
-                      Navigator.pop(context);
-                      _shareToInstagram();
-                    },
-                  ),
-                  _SNSShareButton(
-                    imagePath: 'assets/images/facebook_logo.jpg',
-                    label: 'Facebook',
-                    onTap: () {
-                      Navigator.pop(context);
-                      _shareToSNS('facebook');
-                    },
-                  ),
-                  _SNSShareButton(
-                    imagePath: 'assets/images/x_logo.jpg',
-                    label: 'X',
-                    onTap: () {
-                      Navigator.pop(context);
-                      _shareToSNS('x');
-                    },
-                  ),
-                  _SNSShareButton(
-                    imagePath: 'assets/images/thread_logo.jpg',
-                    label: 'Threads',
-                    onTap: () {
-                      Navigator.pop(context);
-                      _shareToSNS('threads');
-                    },
-                  ),
-                  _SNSShareButton(
-                    icon: Icons.more_horiz,
-                    label: context.tr('more'),
-                    onTap: () {
-                      Navigator.pop(context);
-                      _shareViaSystemNative();
-                    },
-                  ),
-                ],
-              ),
-            ),
-
-            const SizedBox(height: 20),
-          ],
-        ),
-      ),
+          ),
+        );
+      },
     );
   }
 
@@ -815,7 +932,7 @@ class _SharePostOverlayState extends State<SharePostOverlay> {
     }
   }
 
-  /// 🎯 전체 화면을 이미지로 캡처 (배경 + 블러 + 카드)
+  /// 🎯 전체 화면을 캡처하고 4:5 비율로 crop
   Future<File?> _captureCardAsImage() async {
     try {
       // 🎯 렌더링 완료 대기
@@ -839,14 +956,52 @@ class _SharePostOverlayState extends State<SharePostOverlay> {
         return null;
       }
 
+      // 🎯 이미지를 디코드하여 crop
+      final originalImage = img.decodeImage(byteData.buffer.asUint8List());
+      if (originalImage == null) {
+        print('❌ 이미지 디코딩 실패');
+        return null;
+      }
+
+      print('📏 원본 이미지 크기: ${originalImage.width}x${originalImage.height}');
+
+      // 🎯 3:4 비율 계산 (너비 기준) - 더 세로로 길게
+      final targetWidth = originalImage.width;
+      final targetHeight = (targetWidth * 4 / 3).round(); // 3:4 비율
+
+      // 🎯 상하를 균등하게 잘라냄 (중앙 정렬)
+      final cropY = ((originalImage.height - targetHeight) / 2).round().clamp(
+        0,
+        originalImage.height,
+      );
+      final cropHeight = targetHeight.clamp(0, originalImage.height);
+
+      print(
+        '✂️ Crop 영역 (3:4): x=0, y=$cropY, width=$targetWidth, height=$cropHeight',
+      );
+
+      // 🎯 이미지 crop
+      final croppedImage = img.copyCrop(
+        originalImage,
+        x: 0,
+        y: cropY,
+        width: targetWidth,
+        height: cropHeight,
+      );
+
+      print('✅ Crop 완료: ${croppedImage.width}x${croppedImage.height}');
+
+      // 🎯 PNG로 인코딩
+      final pngBytes = img.encodePng(croppedImage);
+
       final tempDir = await getTemporaryDirectory();
       final fileName =
           'doppy_post_${DateTime.now().millisecondsSinceEpoch}.png';
       final filePath = '${tempDir.path}/$fileName';
       final file = File(filePath);
 
-      await file.writeAsBytes(byteData.buffer.asUint8List());
-      print('✅ 공유 이미지 생성 완료: $filePath (배경 + 블러 포함, 헤더/버튼 제외)');
+      await file.writeAsBytes(pngBytes);
+      print('✅ 공유 이미지 생성 완료 (3:4 비율): $filePath');
 
       return file;
     } catch (e) {
@@ -979,7 +1134,7 @@ class _SNSShareButton extends StatelessWidget {
             label,
             style: TextStyle(
               fontSize: 11,
-              color: Colors.black87,
+              color: Theme.of(context).colorScheme.onSurface,
               fontWeight: FontWeight.w500,
             ),
             textAlign: TextAlign.center,

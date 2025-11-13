@@ -709,13 +709,13 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                       colors: [
                         Theme.of(
                           context,
-                        ).colorScheme.background.withOpacity(0.8),
+                        ).colorScheme.background.withOpacity(0.7),
                         Theme.of(
                           context,
-                        ).colorScheme.background.withOpacity(0.8),
+                        ).colorScheme.background.withOpacity(0.7),
                         Theme.of(
                           context,
-                        ).colorScheme.background.withOpacity(0.8),
+                        ).colorScheme.background.withOpacity(0.7),
                       ],
                       stops: const [0.0, 0.7, 1.0],
                     ),

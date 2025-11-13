@@ -69,16 +69,16 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer>
   MediaComment? _editingComment; // 현재 수정 중인 댓글
 
   late AnimationController _commentsController;
+  late AnimationController _bottomBarController; // 🎯 바텀바 페이드 애니메이션
+  late Animation<double> _bottomBarFade;
   double _dragOffset = 0.0;
   double _commentDragOffset = 0.0;
   List<AnimationController> _commentPreviewControllers = [];
   int _currentImageIndex = 0;
   bool _isSheetDraggingDown = false; // 바텀시트 드래그 방향 (내림 감지)
-  bool _showEmptyCommentPrompt = true; // 빈 댓글 안내 표시 여부
-  Timer? _hidePromptTimer; // 안내 메시지 자동 숨김 타이머
   double _hDragOffset = 0.0; // 오른쪽 스와이프로 닫기 제스처 오프셋
   bool _isDownloading = false; // 이미지 다운로드 중 상태
-  // 확대/이동 제어용
+  final Set<String> _previewShownForImages = {}; // 🎯 댓글 미리보기를 이미 보여준 이미지들
   final Map<int, TransformationController> _imageZoomControllers = {};
   final TransformationController _videoZoomController =
       TransformationController();
@@ -95,12 +95,37 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer>
     // 바텀시트 애니메이션을 Builder로 그리므로, 값 변화마다 수동으로 리빌드
     _commentsController.addListener(() {
       if (mounted) setState(() {});
+
+      // 🎯 바텀시트가 완전히 닫히면 바텀바 페이드 인
+      if (_commentsController.value == 0.0) {
+        Future.delayed(const Duration(milliseconds: 300), () {
+          if (mounted && _commentsController.value == 0.0) {
+            _bottomBarController.forward();
+          }
+        });
+      } else {
+        // 바텀시트가 조금이라도 열리면 바텀바 즉시 숨김
+        _bottomBarController.value = 0.0;
+      }
     });
 
     _fadeController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 300),
     );
+
+    // 🎯 바텀바 페이드 애니메이션 초기화
+    _bottomBarController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 300),
+    );
+    _bottomBarFade = CurvedAnimation(
+      parent: _bottomBarController,
+      curve: Curves.easeOut,
+    );
+
+    // 초기 바텀바 표시
+    _bottomBarController.value = 1.0;
 
     // 현재 미디어 인덱스 초기화
     if (widget.allImageUrls.isNotEmpty) {
@@ -113,19 +138,8 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer>
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _loadImageComments();
+      // 🎯 첫 번째 이미지는 initState에서 미리보기 표시 시도
       _initCommentPreviewAnimations();
-      _startHidePromptTimer();
-    });
-  }
-
-  void _startHidePromptTimer() {
-    _hidePromptTimer?.cancel();
-    _hidePromptTimer = Timer(const Duration(seconds: 4), () {
-      if (mounted) {
-        setState(() {
-          _showEmptyCommentPrompt = false;
-        });
-      }
     });
   }
 
@@ -229,6 +243,12 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer>
 
   void showComments({Duration duration = const Duration(milliseconds: 260)}) {
     _resetMediaScale();
+
+    // 🎯 바텀시트 올라갈 때 미리보기 즉시 숨기기
+    for (final controller in _commentPreviewControllers) {
+      controller.reverse();
+    }
+
     _commentsController.animateTo(
       1.0,
       duration: duration,
@@ -271,6 +291,21 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer>
   }
 
   void _initCommentPreviewAnimations() {
+    // 🎯 이미 미리보기를 본 이미지면 표시하지 않음
+    if (_previewShownForImages.contains(_currentImageUrl)) {
+      print('[FIV] 이미 미리보기를 본 이미지: $_currentImageUrl');
+      return;
+    }
+
+    // 댓글이 없으면 미리보기 표시 안 함
+    if (_imageComments.isEmpty) {
+      return;
+    }
+
+    // 🎯 미리보기 표시 기록
+    _previewShownForImages.add(_currentImageUrl);
+    print('[FIV] 미리보기 표시: $_currentImageUrl');
+
     // 댓글 수만큼 애니메이션 컨트롤러 생성 (최대 2개)
     final commentCount = _imageComments.length > 2 ? 2 : _imageComments.length;
     for (int i = 0; i < commentCount; i++) {
@@ -343,10 +378,12 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer>
         _hasMoreCommentsByImage[_currentImageUrl] = list.length >= 20;
         _isLoadingMoreByImage[_currentImageUrl] = false;
         _isCommentsLoaded[_currentImageUrl] = true; // 🎯 로딩 완료 플래그
-        _disposeCommentPreviewControllers();
-        _commentPreviewControllers.clear();
-        _initCommentPreviewAnimations();
       });
+
+      // 🎯 미리보기 초기화 (이미 본 이미지가 아닐 때만)
+      _disposeCommentPreviewControllers();
+      _commentPreviewControllers.clear();
+      _initCommentPreviewAnimations();
     } catch (e) {
       print('[FIV] fetch failed: $e');
       setState(() {
@@ -386,58 +423,44 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer>
       if (mediaId == null) return;
 
       final svc = MediaCommentService();
-      final emoji = '❤️';
 
-      final newMyEmotions =
-          comment.isLiked
-              ? comment.myEmotions.where((e) => e != emoji).toList()
-              : [...comment.myEmotions, emoji];
-
-      final newEmotionCounts = {...comment.emotionCounts};
-      if (comment.isLiked) {
-        newEmotionCounts[emoji] = (newEmotionCounts[emoji] ?? 1) - 1;
-        if (newEmotionCounts[emoji]! <= 0) {
-          newEmotionCounts.remove(emoji);
-        }
-      } else {
-        newEmotionCounts[emoji] = (newEmotionCounts[emoji] ?? 0) + 1;
-      }
+      // 🎯 낙관적 업데이트 (즉시 UI 반영)
+      final newIsLiked = !comment.isLiked;
+      final newLikeCount =
+          comment.isLiked ? comment.likeCount - 1 : comment.likeCount + 1;
 
       setState(() {
         final currentComments = _commentsByImage[_currentImageUrl] ?? [];
         final index = currentComments.indexWhere((c) => c.id == comment.id);
         if (index != -1) {
           currentComments[index] = currentComments[index].copyWith(
-            emotionCounts: newEmotionCounts,
-            myEmotions: newMyEmotions,
+            isLiked: newIsLiked,
+            likeCount: newLikeCount,
           );
         }
       });
 
-      // 서버 요청 (서버 응답으로 검증)
+      // 🎯 서버 요청 (간소화된 API)
       final updatedComment =
           widget.isVideo
-              ? await svc.toggleVideoCommentEmotion(
+              ? await svc.toggleVideoCommentLike(
                 videoId: mediaId,
                 commentId: comment.id,
-                emoji: emoji,
               )
-              : await svc.toggleImageCommentEmotion(
+              : await svc.toggleImageCommentLike(
                 imageId: mediaId,
                 commentId: comment.id,
-                emoji: emoji,
               );
 
-      // 서버 응답으로 업데이트 (createdAt, updatedAt은 유지)
+      // 서버 응답으로 최종 확정
       if (mounted) {
         setState(() {
           final currentComments = _commentsByImage[_currentImageUrl] ?? [];
           final index = currentComments.indexWhere((c) => c.id == comment.id);
           if (index != -1) {
-            // 🎯 emotionCounts와 myEmotions만 업데이트, 시간 정보는 유지
             currentComments[index] = currentComments[index].copyWith(
-              emotionCounts: updatedComment.emotionCounts,
-              myEmotions: updatedComment.myEmotions,
+              isLiked: updatedComment.isLiked,
+              likeCount: updatedComment.likeCount,
             );
           }
         });
@@ -484,11 +507,19 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer>
             _imageComments.where((c) => c.id != comment.id).toList();
       });
 
+      print('[FIV] 댓글 낙관적 삭제 - 새 개수: ${_imageComments.length}');
+
       // 서버 요청
       final svc = MediaCommentService();
       widget.isVideo
-          ? await svc.deleteVideoComment(commentId: comment.id)
-          : await svc.deleteImageComment(commentId: comment.id);
+          ? await svc.deleteVideoComment(
+            videoId: mediaId,
+            commentId: comment.id,
+          )
+          : await svc.deleteImageComment(
+            imageId: mediaId,
+            commentId: comment.id,
+          );
 
       print('[FIV] delete comment success id=${comment.id}');
     } catch (e) {
@@ -594,11 +625,11 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer>
   void dispose() {
     // 모든 컨트롤러와 리스너 정리
     try {
-      _hidePromptTimer?.cancel();
       _commentScrollController.removeListener(_onCommentScroll);
       _commentScrollController.dispose();
       _fadeController.dispose();
       _commentsController.dispose();
+      _bottomBarController.dispose();
       _commentController.dispose();
       _commentFocus.dispose();
       _disposeCommentPreviewControllers();
@@ -665,11 +696,7 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer>
         }
       });
 
-      // 🎯 댓글 미리보기 애니메이션 재초기화 및 타이머 시작
-      _disposeCommentPreviewControllers();
-      _commentPreviewControllers.clear();
-      _initCommentPreviewAnimations();
-      _startHidePromptTimer();
+      // 🎯 댓글 제출 후에는 미리보기 재초기화 안 함 (한 번만 표시)
     } catch (e) {
       print('[FIV] POST failed: $e');
       if (!mounted) return;
@@ -750,16 +777,25 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer>
 
                 if (details.primaryDelta! < 0 &&
                     _commentsController.value < 1.0) {
-                  // 위로 드래그: 메시지 창 열기
-                  final delta = -details.primaryDelta! / 300; // 민감도 조절
+                  // 🎯 위로 드래그 시작하면 미리보기 즉시 숨기기
+                  if (_commentsController.value < 0.05) {
+                    for (final controller in _commentPreviewControllers) {
+                      controller.reverse();
+                    }
+                  }
+
+                  // 위로 드래그: 메시지 창 열기 (둔감하게: 600으로 증가)
+                  final delta =
+                      -details.primaryDelta! / 600; // 🎯 민감도 낮춤 (300 → 600)
                   setState(() {
                     _commentsController.value =
                         (_commentsController.value + delta).clamp(0.0, 1.0);
                   });
                 } else if (details.primaryDelta! > 0 &&
                     _commentsController.value > 0.0) {
-                  // 아래로 드래그: 메시지 창 닫기
-                  final delta = details.primaryDelta! / 300;
+                  // 아래로 드래그: 메시지 창 닫기 (둔감하게: 600으로 증가)
+                  final delta =
+                      details.primaryDelta! / 600; // 🎯 민감도 낮춤 (300 → 600)
                   setState(() {
                     _commentsController.value =
                         (_commentsController.value - delta).clamp(0.0, 1.0);
@@ -955,6 +991,11 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer>
                                 ? widget.allImageUrls.length
                                 : 1,
                         onPageChanged: (index) {
+                          // 🎯 페이지 전환 시 미리보기 즉시 숨기기
+                          for (final controller in _commentPreviewControllers) {
+                            controller.reverse();
+                          }
+
                           setState(() {
                             _currentImageIndex = index;
                           });
@@ -1121,6 +1162,13 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer>
                       final dy = details.primaryDelta ?? 0.0;
                       _isSheetDraggingDown = dy > 0;
 
+                      // 🎯 위로 드래그 시작하면 미리보기 즉시 숨기기
+                      if (dy < 0 && _commentsController.value < 0.05) {
+                        for (final controller in _commentPreviewControllers) {
+                          controller.reverse();
+                        }
+                      }
+
                       // 아래로 드래그 시작 시 수정 모드 취소
                       if (dy > 0 && _editingComment != null) {
                         _cancelEdit();
@@ -1128,7 +1176,8 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer>
 
                       // 바텀시트를 끌면 p값을 직접 조정 → 이미지와 상호 연동
                       // 양수(down)일수록 p 감소(닫힘), 음수(up)일수록 p 증가(열림)
-                      final sensitivity = 300.0; // 더 민감: 300px에 1.0 변화
+                      final sensitivity =
+                          600.0; // 🎯 둔감하게: 600px에 1.0 변화 (300 → 600)
                       final next = (_commentsController.value -
                               dy / sensitivity)
                           .clamp(0.0, 1.0);
@@ -1164,7 +1213,8 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer>
                         _visibleHeight > 100
                             ? Container(
                               decoration: BoxDecoration(
-                                color: Theme.of(context).colorScheme.surface,
+                                color: Theme.of(context).colorScheme.surface
+                                    .withOpacity(p), // 🎯 p값에 따라 불투명도 변화
                                 borderRadius: BorderRadius.only(
                                   topLeft: Radius.circular(30),
                                   topRight: Radius.circular(30),
@@ -1380,9 +1430,8 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer>
                                               ),
                                             ),
                                   ),
-                                  // 댓글 입력창 (충분히 올라왔고 내리는 중이 아닐 때만 표시)
-                                  if (_visibleHeight > 150 &&
-                                      !_isSheetDraggingDown)
+                                  // 댓글 입력창 (p값이 0.3 이상일 때만 표시 - 안정적)
+                                  if (p >= 0.3)
                                     Container(
                                       padding: const EdgeInsets.symmetric(
                                         horizontal: 16,
@@ -1545,50 +1594,13 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer>
                 final bottomOffset = widget.postTitle != null ? 100 : 60;
 
                 return Positioned(
-                  bottom: bottomOffset.toDouble() + 12,
+                  bottom: bottomOffset.toDouble() + 18,
                   left: 10,
                   right: 16,
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.end,
                     children: [
-                      // 메시지 개수 표시 또는 안내 메시지
-                      // 🎯 댓글 로딩 완료 후에만 표시
-                      if (_imageComments.isEmpty &&
-                          (_isCommentsLoaded[_currentImageUrl] ?? false))
-                        AnimatedOpacity(
-                          opacity: _showEmptyCommentPrompt ? 1.0 : 0.0,
-                          duration: const Duration(milliseconds: 500),
-                          child: Padding(
-                            padding: const EdgeInsets.only(bottom: 0),
-                            child: GestureDetector(
-                              onTap: () => showComments(),
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 16,
-                                  vertical: 10,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: Colors.white,
-                                  borderRadius: BorderRadius.circular(20),
-                                ),
-                                child: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Text(
-                                      context.tr('first_reaction'),
-                                      style: TextStyle(
-                                        color: Colors.black,
-                                        fontSize: 14,
-                                        fontWeight: FontWeight.w500,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
                       // 댓글 미리보기 (최대 2개) - 애니메이션 적용
                       ...List.generate(
                         _imageComments.length > 2 ? 2 : _imageComments.length,
@@ -1693,7 +1705,7 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer>
                 ),
               ),
 
-            // 포스트 정보 바텀바 (댓글이 열려있지 않을 때만 표시)
+            // 포스트 정보 바텀바 (댓글이 열려있지 않을 때만 표시, 페이드 애니메이션)
             if (widget.postTitle != null || widget.postAuthor != null)
               Builder(
                 builder: (context) {
@@ -1704,111 +1716,116 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer>
                     bottom: 0,
                     left: 0,
                     right: 0,
-                    child: Container(
-                      padding: EdgeInsets.only(
-                        left: 16,
-                        right: 16,
-                        top: 16,
-                        bottom: MediaQuery.of(context).padding.bottom + 16,
-                      ),
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          begin: Alignment.topCenter,
-                          end: Alignment.bottomCenter,
-                          colors: [
-                            Colors.transparent,
-                            Colors.black.withOpacity(0.7),
-                          ],
+                    child: FadeTransition(
+                      opacity: _bottomBarFade,
+                      child: Container(
+                        padding: EdgeInsets.only(
+                          left: 16,
+                          right: 16,
+                          top: 16,
+                          bottom: MediaQuery.of(context).padding.bottom + 16,
                         ),
-                      ),
-                      child: Row(
-                        children: [
-                          // 프로필 사진
-                          if (widget.postAuthorProfileUrl != null)
-                            GestureDetector(
-                              onTap:
-                                  () => Navigator.push(
-                                    context,
-                                    MaterialPageRoute(
-                                      builder:
-                                          (context) => UserProfileScreen(
-                                            otherUser: User(
-                                              username: widget.postAuthor!,
-                                              profileImageUrl:
-                                                  widget.postAuthorProfileUrl!,
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            begin: Alignment.topCenter,
+                            end: Alignment.bottomCenter,
+                            colors: [
+                              Colors.transparent,
+                              Colors.black.withOpacity(0.7),
+                            ],
+                          ),
+                        ),
+                        child: Row(
+                          children: [
+                            // 프로필 사진
+                            if (widget.postAuthorProfileUrl != null)
+                              GestureDetector(
+                                onTap:
+                                    () => Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder:
+                                            (context) => UserProfileScreen(
+                                              otherUser: User(
+                                                username: widget.postAuthor!,
+                                                profileImageUrl:
+                                                    widget
+                                                        .postAuthorProfileUrl!,
+                                              ),
                                             ),
-                                          ),
+                                      ),
                                     ),
-                                  ),
-                              child: CommonProfileAvatar(
-                                imageUrl: widget.postAuthorProfileUrl!,
-                                username: widget.postAuthor!,
-                                size: 45,
-                                borderWidth: 1,
+                                child: CommonProfileAvatar(
+                                  imageUrl: widget.postAuthorProfileUrl!,
+                                  username: widget.postAuthor!,
+                                  size: 45,
+                                  borderWidth: 1,
+                                ),
+                              ),
+                            const SizedBox(width: 12),
+                            // 제목 + 저자
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  if (widget.postTitle != null)
+                                    Text(
+                                      widget.postTitle!,
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 15,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  if (widget.postAuthor != null)
+                                    Text(
+                                      widget.postAuthor!,
+                                      style: TextStyle(
+                                        color: Colors.white.withOpacity(0.7),
+                                        fontSize: 13,
+                                      ),
+                                    ),
+                                ],
                               ),
                             ),
-                          const SizedBox(width: 12),
-                          // 제목 + 저자
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                if (widget.postTitle != null)
-                                  Text(
-                                    widget.postTitle!,
-                                    style: const TextStyle(
+                            const SizedBox(width: 12),
+                            // 댓글 아이콘 + 개수 (로드 완료 후에만 표시)
+                            if (_isCommentsLoaded[_currentImageUrl] == true)
+                              GestureDetector(
+                                onTap: showComments,
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    SvgPicture.asset(
+                                      'assets/icons/comment.svg',
                                       color: Colors.white,
-                                      fontSize: 15,
-                                      fontWeight: FontWeight.w600,
+                                      width: 24,
+                                      height: 24,
                                     ),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                if (widget.postAuthor != null)
-                                  Text(
-                                    widget.postAuthor!,
-                                    style: TextStyle(
-                                      color: Colors.white.withOpacity(0.7),
-                                      fontSize: 13,
+                                    const SizedBox(width: 6),
+                                    Text(
+                                      '${_imageComments.length}',
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 15,
+                                        fontWeight: FontWeight.w600,
+                                      ),
                                     ),
-                                  ),
-                              ],
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          // 댓글 아이콘 + 개수
-                          GestureDetector(
-                            onTap: showComments,
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                SvgPicture.asset(
-                                  'assets/icons/comment.svg',
-                                  color: Colors.white,
-                                  width: 24,
-                                  height: 24,
+                                  ],
                                 ),
-                                const SizedBox(width: 6),
-                                Text(
-                                  '${_imageComments.length}',
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 15,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
+                              ),
+                          ],
+                        ),
                       ),
                     ),
                   );
                 },
               ),
 
-            // 닷 인디케이터 (스와이프 가능 표시, 댓글이 열려있으면 숨김)
+            // 닷 인디케이터 (스와이프 가능 표시, 댓글이 열려있으면 숨김, 페이드 애니메이션)
             if (widget.allImageUrls.length > 1)
               Builder(
                 builder: (context) {
@@ -1816,25 +1833,30 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer>
                     return const SizedBox.shrink();
                   }
                   return Positioned(
-                    bottom: widget.postTitle != null ? 100 : 30,
+                    bottom: widget.postTitle != null ? 120 : 30,
                     left: 0,
                     right: 0,
-                    child: Center(
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: List.generate(
-                          widget.allImageUrls.length,
-                          (index) => Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 4),
-                            child: Container(
-                              width: 8,
-                              height: 8,
-                              decoration: BoxDecoration(
-                                color:
-                                    index == _currentImageIndex
-                                        ? Colors.white
-                                        : Colors.white.withOpacity(0.3),
-                                shape: BoxShape.circle,
+                    child: FadeTransition(
+                      opacity: _bottomBarFade,
+                      child: Center(
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: List.generate(
+                            widget.allImageUrls.length,
+                            (index) => Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 4,
+                              ),
+                              child: Container(
+                                width: 8,
+                                height: 8,
+                                decoration: BoxDecoration(
+                                  color:
+                                      index == _currentImageIndex
+                                          ? Colors.white
+                                          : Colors.white.withOpacity(0.3),
+                                  shape: BoxShape.circle,
+                                ),
                               ),
                             ),
                           ),
@@ -2105,7 +2127,7 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
         // 댓글이 열려있지 않을 때만 시크바 표시
         if (!widget.hideScrubber)
           Positioned(
-            bottom: widget.hasBottomBar ? 76 : 30, // ✅ 바텀바 있으면 110, 없으면 30
+            bottom: widget.hasBottomBar ? 65 : 30, // ✅ 바텀바 있으면 110, 없으면 30
             left: 20,
             right: 20,
             child: GestureDetector(
@@ -2163,14 +2185,14 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
                 _targetSeekPosition = null;
               },
               child: Container(
-                height: 40, // 터치 영역 확대
+                height: 80, // 터치 영역 확대
                 color: Colors.transparent,
                 child: Stack(
                   alignment: Alignment.center,
                   children: [
                     // 배경 트랙 (전체)
                     Container(
-                      height: 8,
+                      height: 6,
                       decoration: BoxDecoration(
                         color: Colors.white.withOpacity(0.2),
                         borderRadius: BorderRadius.circular(3),
@@ -2183,7 +2205,7 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
                         widthFactor:
                             maxMs > 0 ? (posMs / maxMs).clamp(0.0, 1.0) : 0.0,
                         child: Container(
-                          height: 8,
+                          height: 6,
                           decoration: BoxDecoration(
                             color: Colors.white,
                             borderRadius: BorderRadius.circular(3),

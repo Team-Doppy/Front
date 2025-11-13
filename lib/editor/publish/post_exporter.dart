@@ -213,9 +213,15 @@ class PostExporter {
           hasSpoiler = nodeService.isSpoiler(node.id);
         }
 
+        print('[PostExporter] 🔍 ImageRowNode 저장 시작: ${node.id}');
+        print('[PostExporter] 🔍 URLs: ${node.imageUrls}');
+        print('[PostExporter] 🔍 metadata: ${meta.keys.toList()}');
+
         // 각 이미지별 mediaId 추출 (댓글 정보는 제외)
         final imageCommentInfo =
             meta['imageCommentInfo'] as Map<String, dynamic>?;
+        print('[PostExporter] 🔍 imageCommentInfo: $imageCommentInfo');
+
         final List<Map<String, dynamic>> images = [];
         bool hasMediaId = false;
 
@@ -228,15 +234,25 @@ class PostExporter {
                   imageCommentInfo[imageUrl] as Map<String, dynamic>;
               final mediaId = imgInfo['mediaId']?.toString();
 
+              print('[PostExporter] 🔍 URL: $imageUrl → mediaId: $mediaId');
+
               if (mediaId != null && mediaId.isNotEmpty) {
                 imgData['mediaId'] = int.tryParse(mediaId) ?? mediaId;
                 hasMediaId = true;
+                print('[PostExporter] ✅ mediaId 저장: $mediaId');
+              } else {
+                print('[PostExporter] ❌ mediaId 없음');
               }
+            } else {
+              print('[PostExporter] ❌ imageCommentInfo[$imageUrl] not a Map');
             }
 
             images.add(imgData);
           }
         } else {
+          print(
+            '[PostExporter] ⚠️ imageCommentInfo가 null이거나 비어있음 - 기본 URL만 저장',
+          );
           // mediaId 정보가 없으면 기본 URL만
           for (final imageUrl in node.imageUrls) {
             images.add({'url': imageUrl});
@@ -254,11 +270,15 @@ class PostExporter {
         }
         if (hasMediaId) {
           nodeMap['data'] = {'images': images};
+          print('[PostExporter] ✅ ImageRow data 저장: ${nodeMap['data']}');
+        } else {
+          print('[PostExporter] ⚠️ ImageRow mediaId 없어서 data 필드 생략');
         }
         if (hasSpoiler) {
           nodeMap['spoiler'] = true;
         }
 
+        print('[PostExporter] 🔍 최종 nodeMap: $nodeMap');
         nodes.add(nodeMap);
         continue;
       }
@@ -383,11 +403,38 @@ class PostExporter {
     }
 
     final title = getTitleFromDocument(doc);
+
+    // 🎯 첫 번째 이미지를 썸네일로 자동 설정
+    String? thumbnailImageUrl;
+    for (final nodeMap in nodes) {
+      final type = nodeMap['type']?.toString() ?? '';
+      if (type == 'image') {
+        final data = nodeMap['data'] as Map<String, dynamic>?;
+        final url = (data?['url'] ?? nodeMap['url'] ?? '').toString();
+        if (url.isNotEmpty &&
+            (url.startsWith('http://') || url.startsWith('https://'))) {
+          thumbnailImageUrl = url;
+          break;
+        }
+      } else if (type == 'imageRow') {
+        final urls = List<dynamic>.from(nodeMap['urls'] ?? []);
+        if (urls.isNotEmpty) {
+          final url = urls.first.toString();
+          if (url.isNotEmpty &&
+              (url.startsWith('http://') || url.startsWith('https://'))) {
+            thumbnailImageUrl = url;
+            break;
+          }
+        }
+      }
+    }
+
     //초안 뽑기
     final Map<String, dynamic> result = {
       'title': title,
       'author': author,
       'content': {'nodes': nodes, 'stickers': stickers},
+      if (thumbnailImageUrl != null) 'thumbnailImageUrl': thumbnailImageUrl,
     };
 
     return result;

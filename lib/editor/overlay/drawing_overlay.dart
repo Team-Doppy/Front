@@ -40,6 +40,7 @@ class _DrawingOverlayState extends State<DrawingOverlay>
   bool _eraser = false;
   bool _isAdjustingWidth = false; // 펜 두께 조절 중 여부
   bool _isUploading = false; // 업로드 중 여부
+  bool _hasDrawing = false; // 그림이 그려졌는지 여부
 
   late AnimationController _animationController;
 
@@ -82,6 +83,9 @@ class _DrawingOverlayState extends State<DrawingOverlay>
     _drawingController = DrawingController();
     debugPrint('[DrawingOverlay] DrawingController 새로 생성');
 
+    // 🎯 DrawingController 변경 감지 리스너 추가
+    _drawingController.addListener(_onDrawingChanged);
+
     // 🔍 BlendMode enum 값 확인
     debugPrint(
       '[DrawingOverlay] BlendMode.srcOver.index = ${BlendMode.srcOver.index}',
@@ -107,9 +111,20 @@ class _DrawingOverlayState extends State<DrawingOverlay>
 
   @override
   void dispose() {
+    _drawingController.removeListener(_onDrawingChanged);
     _animationController.dispose();
     _drawingController.dispose();
     super.dispose();
+  }
+
+  // 🎯 그림 변경 감지 (undo/redo 버튼 상태도 업데이트)
+  void _onDrawingChanged() {
+    final jsonList = _drawingController.getJsonList();
+    final hasContent = jsonList.isNotEmpty;
+    // 🎯 항상 setState 호출하여 undo/redo 버튼 상태 업데이트
+    setState(() {
+      _hasDrawing = hasContent;
+    });
   }
 
   void _applyStyle() {
@@ -184,63 +199,69 @@ class _DrawingOverlayState extends State<DrawingOverlay>
 
           // 상단 툴바
           Positioned(
-            top: 45,
+            top: 0,
             left: 0,
             right: 0,
             child: Container(
-              height: 60,
+              height: 95,
               decoration: BoxDecoration(
                 color: Theme.of(context).colorScheme.background,
               ),
               child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 8.0),
+                padding: const EdgeInsets.only(left: 11.0, right: 8.0, top: 53),
                 child: Row(
                   children: [
-                    IconButton(
-                      onPressed: () => Navigator.of(context).pop(),
-                      icon: Icon(
-                        Icons.close,
-                        color: Theme.of(
-                          context,
-                        ).colorScheme.onSurface.withOpacity(0.4),
-                        size: 23,
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 4.0),
+                      child: IconButton(
+                        onPressed: () => Navigator.of(context).pop(),
+                        icon: Icon(
+                          Icons.close,
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.onSurface.withOpacity(0.4),
+                          size: 25,
+                        ),
+                        style: IconButton.styleFrom(),
                       ),
-                      style: IconButton.styleFrom(),
                     ),
                     const SizedBox(width: 5),
 
                     GestureDetector(
-                      onTap: _undo,
+                      onTap: _canUndo() ? _undo : null,
                       child: SvgPicture.asset(
                         'assets/icons/editor_undo.svg',
-                        width: 24,
-                        height: 24,
+                        width: 26,
+                        height: 26,
                         colorFilter: ColorFilter.mode(
-                          Theme.of(
-                            context,
-                          ).colorScheme.onSurface.withOpacity(0.9),
+                          Theme.of(context).colorScheme.onSurface.withOpacity(
+                            _canUndo() ? 0.9 : 0.2, // 🎯 활성화 상태에 따라 색상 조절
+                          ),
                           BlendMode.srcIn,
                         ),
                       ),
                     ),
                     const SizedBox(width: 15),
                     GestureDetector(
-                      onTap: _redo,
+                      onTap: _canRedo() ? _redo : null,
                       child: SvgPicture.asset(
                         'assets/icons/editor_redo.svg',
-                        width: 24,
-                        height: 24,
+                        width: 26,
+                        height: 26,
                         colorFilter: ColorFilter.mode(
-                          Theme.of(
-                            context,
-                          ).colorScheme.onSurface.withOpacity(0.9),
+                          Theme.of(context).colorScheme.onSurface.withOpacity(
+                            _canRedo() ? 0.9 : 0.2, // 🎯 활성화 상태에 따라 색상 조절
+                          ),
                           BlendMode.srcIn,
                         ),
                       ),
                     ),
                     const Spacer(),
                     TextButton(
-                      onPressed: _isUploading ? null : _export,
+                      onPressed:
+                          (_isUploading || !_hasDrawing)
+                              ? null
+                              : _export, // 🎯 그림이 없으면 비활성화
                       style: TextButton.styleFrom(
                         padding: const EdgeInsets.symmetric(
                           horizontal: 16,
@@ -264,7 +285,9 @@ class _DrawingOverlayState extends State<DrawingOverlay>
                                 style: TextStyle(
                                   color: Theme.of(
                                     context,
-                                  ).colorScheme.onSurface.withOpacity(0.9),
+                                  ).colorScheme.onSurface.withOpacity(
+                                    _hasDrawing ? 0.9 : 0.3, // 🎯 그림이 없으면 흐리게
+                                  ),
                                   fontWeight: FontWeight.w700,
                                   fontSize: 16,
                                 ),
@@ -574,8 +597,35 @@ class _DrawingOverlayState extends State<DrawingOverlay>
     );
   }
 
-  void _undo() => _drawingController.undo();
-  void _redo() => _drawingController.redo();
+  void _undo() {
+    _drawingController.undo();
+    // 🎯 undo/redo 버튼 상태 업데이트를 위해 명시적으로 setState 호출
+    setState(() {});
+  }
+
+  void _redo() {
+    _drawingController.redo();
+    // 🎯 undo/redo 버튼 상태 업데이트를 위해 명시적으로 setState 호출
+    setState(() {});
+  }
+
+  // 🎯 Undo/Redo 가능 여부 확인
+  bool _canUndo() {
+    try {
+      return _drawingController.currentIndex > 0;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  bool _canRedo() {
+    try {
+      final history = _drawingController.getHistory;
+      return _drawingController.currentIndex < history.length;
+    } catch (_) {
+      return false;
+    }
+  }
 
   // 색상 버튼 (선택된 색상을 표시)
   Widget _buildColorButton() {
@@ -673,6 +723,8 @@ class _DrawingOverlayState extends State<DrawingOverlay>
 
       if (byteData == null) {
         debugPrint('[DrawingOverlay] export: skip (null image data)');
+        setState(() => _isUploading = false);
+        if (mounted) Navigator.of(context).pop();
         return;
       }
 
@@ -681,12 +733,10 @@ class _DrawingOverlayState extends State<DrawingOverlay>
 
       if (imageData.isEmpty) {
         debugPrint('[DrawingOverlay] export: skip (empty image data)');
+        setState(() => _isUploading = false);
+        if (mounted) Navigator.of(context).pop();
         return;
       }
-
-      debugPrint(
-        '[DrawingOverlay] PNG 추출 완료: ${imageData.lengthInBytes} bytes',
-      );
 
       // 🎯 실제 화면 크기 (MediaQuery)
       final screenWidth = MediaQuery.of(context).size.width.toInt();
@@ -694,11 +744,6 @@ class _DrawingOverlayState extends State<DrawingOverlay>
 
       // 🎯 디바이스 픽셀 비율 (예: iPhone 3.0x)
       final pixelRatio = MediaQuery.of(context).devicePixelRatio;
-
-      debugPrint(
-        '[DrawingOverlay] 💡 MediaQuery 화면 크기: ${screenWidth}x$screenHeight',
-      );
-      debugPrint('[DrawingOverlay] 💡 디바이스 픽셀 비율: ${pixelRatio}x');
 
       final croppedResult = await _cropTransparentPixels(
         imageData,
@@ -708,6 +753,9 @@ class _DrawingOverlayState extends State<DrawingOverlay>
 
       if (croppedResult == null) {
         debugPrint('[DrawingOverlay] export: skip (크롭 실패 또는 빈 이미지)');
+        setState(() => _isUploading = false);
+        // 🎯 그림이 실제로 없으므로 화면 닫기
+        if (mounted) Navigator.of(context).pop();
         return;
       }
 

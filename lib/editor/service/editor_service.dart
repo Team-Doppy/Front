@@ -4,8 +4,10 @@ import 'package:doppy/editor/component/app_image_node.dart';
 import 'package:doppy/editor/component/link_component.dart';
 import 'package:doppy/editor/component/row_image_component.dart';
 import 'package:doppy/editor/component/clip_component.dart';
+import 'package:doppy/editor/component/divider_component.dart';
 import 'package:doppy/editor/postwrite_screen.dart';
 import 'package:doppy/editor/service/sticker_service.dart';
+import 'package:doppy/editor/service/node_component_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:provider/provider.dart';
@@ -27,9 +29,252 @@ class EditorService extends ChangeNotifier {
   // ignore: unused_field
   int _lastTitleTextLength = 0;
 
-  EditorService({required this.editor, required this.document}) {
+  // 🎯 Undo/Redo 히스토리 (전체 스냅샷)
+  final List<_DocumentSnapshot> _undoStack = [];
+  final List<_DocumentSnapshot> _redoStack = [];
+  bool _isExecutingHistory = false;
+  Timer? _historyTimer;
+
+  // 🎯 NodeComponentService 참조 (노드 선택 해제용)
+  BuildContext? _context;
+
+  EditorService({
+    required this.editor,
+    required this.document,
+    BuildContext? context,
+  }) : _context = context {
     document.addListener(_onDocumentChanged);
     editor.composer.selectionNotifier.addListener(_onSelectionChanged);
+
+    // 초기 상태 저장
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _saveInitialState();
+    });
+  }
+
+  // 🎯 BuildContext 설정 (initState 이후에 설정 가능)
+  void setContext(BuildContext context) {
+    _context = context;
+  }
+
+  // 🎯 초기 상태 저장
+  void _saveInitialState() {
+    if (_isExecutingHistory) return;
+
+    final snapshot = _copyAllNodes();
+    _undoStack.add(snapshot);
+    print('[EditorService] 📸 초기 상태 저장 (nodes: ${snapshot.nodes.length})');
+  }
+
+  // 🎯 현재 상태를 히스토리에 저장
+  void _saveCurrentState({bool immediate = false}) {
+    if (_isExecutingHistory) return;
+
+    if (immediate) {
+      // 즉시 저장 (엔터, 삭제, 이동 등)
+      _historyTimer?.cancel();
+      final snapshot = _copyAllNodes();
+
+      _undoStack.add(snapshot);
+      _redoStack.clear();
+
+      // 최대 30개까지만 유지
+      if (_undoStack.length > 30) {
+        _undoStack.removeAt(0);
+      }
+
+      print(
+        '[EditorService] 📸 즉시 저장 (total: ${_undoStack.length}, nodes: ${snapshot.nodes.length})',
+      );
+
+      // 🎯 Undo/Redo 버튼 상태 업데이트
+      notifyListeners();
+    } else {
+      // 디바운싱 (텍스트 입력)
+      _historyTimer?.cancel();
+      _historyTimer = Timer(const Duration(milliseconds: 500), () {
+        final snapshot = _copyAllNodes();
+
+        // 중복 방지
+        if (_undoStack.isNotEmpty &&
+            _areSnapshotsEqual(_undoStack.last, snapshot)) {
+          return;
+        }
+
+        _undoStack.add(snapshot);
+        _redoStack.clear();
+
+        // 최대 30개까지만 유지
+        if (_undoStack.length > 30) {
+          _undoStack.removeAt(0);
+        }
+
+        print('[EditorService] 📸 디바운싱 저장 (total: ${_undoStack.length})');
+
+        // 🎯 Undo/Redo 버튼 상태 업데이트
+        notifyListeners();
+      });
+    }
+  }
+
+  // 🎯 스냅샷 비교
+  bool _areSnapshotsEqual(_DocumentSnapshot a, _DocumentSnapshot b) {
+    if (a.order.length != b.order.length) return false;
+    if (a.order.join(',') != b.order.join(',')) return false;
+
+    for (final id in a.nodes.keys) {
+      if (!b.nodes.containsKey(id)) return false;
+      final nodeA = a.nodes[id];
+      final nodeB = b.nodes[id];
+      if (nodeA is ParagraphNode && nodeB is ParagraphNode) {
+        if (nodeA.text.text != nodeB.text.text) return false;
+      }
+    }
+
+    return true;
+  }
+
+  // 🎯 ChangeLog에서 변경 추적
+  void _trackChangeFromLog(DocumentChange change) {
+    if (_isExecutingHistory) return;
+
+    try {
+      // TextInsertionEvent, TextDeletedEvent - 디바운싱 적용
+      if (change is TextInsertionEvent || change is TextDeletedEvent) {
+        _saveCurrentState(immediate: false); // 500ms 디바운싱
+        return;
+      }
+
+      // 🎯 NodeInsertedEvent (엔터), NodeRemoved, NodeChanged - 즉시 저장!
+      if (change is NodeInsertedEvent ||
+          change is NodeRemovedEvent ||
+          change is NodeChangeEvent) {
+        _saveCurrentState(immediate: true);
+        return;
+      }
+    } catch (e) {
+      print('[EditorService] 변경 추적 실패: $e');
+    }
+  }
+
+  // 🎯 모든 노드를 deep copy (커서는 저장하지 않음)
+  _DocumentSnapshot _copyAllNodes() {
+    final nodes = <String, DocumentNode>{};
+    final order = <String>[];
+
+    for (int i = 0; i < document.nodeCount; i++) {
+      final node = document.getNodeAt(i);
+      if (node != null) {
+        // 🎯 빈 문단은 저장하지 않음 (제목 제외)
+        if (node is ParagraphNode) {
+          final isTitle = node.metadata['isTitle'] == true;
+          final isEmpty = node.text.text.trim().isEmpty;
+
+          // 제목이 아니고 비어있으면 스킵
+          if (!isTitle && isEmpty) {
+            continue;
+          }
+        }
+
+        // 🎯 플레이스홀더(업로드 중)는 저장하지 않음
+        if (node is ImageNode) {
+          final isPlaceholder = node.metadata['isPlaceholder'] == true;
+          if (isPlaceholder) {
+            continue;
+          }
+        }
+
+        if (node is ClipNode) {
+          final isPlaceholder = node.url.isEmpty && node.localPath.isNotEmpty;
+          if (isPlaceholder) {
+            continue;
+          }
+        }
+
+        nodes[node.id] = _copyNode(node);
+        order.add(node.id);
+      }
+    }
+
+    return _DocumentSnapshot(
+      nodes: nodes,
+      order: order,
+      selection: null, // 🎯 커서 숨기기
+    );
+  }
+
+  // 🎯 노드 deep copy
+  DocumentNode _copyNode(DocumentNode node) {
+    if (node is ParagraphNode) {
+      // metadata에는 textAlign, isTitle, fontFamily 등이 포함됨
+      final copiedMetadata = Map<String, dynamic>.from(node.metadata);
+      final isMention = copiedMetadata['mention'] == true;
+
+      // 🎯 AttributedText 전체 복사 (모든 스타일 유지: bold, italic, color, font, highlight, spoiler 등)
+      final AttributedText attributed = node.text.copyText(0, node.text.length);
+
+      // 🎯 멘션 노드인데 볼드가 없으면 추가
+      if (isMention && node.text.text.isNotEmpty) {
+        final hasBold =
+            attributed
+                .getAttributionSpansInRange(
+                  attributionFilter: (attr) => attr == boldAttribution,
+                  range: SpanRange(0, node.text.text.length - 1),
+                )
+                .isNotEmpty;
+
+        if (!hasBold) {
+          attributed.addAttribution(
+            boldAttribution,
+            SpanRange(0, node.text.text.length - 1),
+          );
+        }
+      }
+
+      return ParagraphNode(
+        id: node.id,
+        text: attributed,
+        metadata: copiedMetadata, // ✅ 정렬, 제목 여부 등 모두 복사됨
+      );
+    }
+    if (node is ImageNode) {
+      return AppImageNode(
+        id: node.id,
+        imageUrl: node.imageUrl,
+        altText: node.altText,
+        metadata: Map<String, dynamic>.from(node.metadata),
+      );
+    }
+    if (node is ImageRowNode) {
+      return ImageRowNode(
+        id: node.id,
+        imageUrls: List<String>.from(node.imageUrls),
+        metadata: Map<String, dynamic>.from(node.metadata),
+      );
+    }
+    if (node is LinkNode) {
+      return LinkNode(
+        id: node.id,
+        url: node.url,
+        title: node.title,
+        description: node.description,
+        thumbnailUrl: node.thumbnailUrl,
+      );
+    }
+    if (node is ClipNode) {
+      return ClipNode(
+        id: node.id,
+        url: node.url,
+        label: node.label,
+        colorHex: node.colorHex,
+        metadata: Map<String, dynamic>.from(node.metadata),
+      );
+    }
+    if (node is DividerNode) {
+      return DividerNode(id: node.id);
+    }
+    // 기본: 그대로 반환
+    return node;
   }
 
   void setDocumentLayoutKey(GlobalKey key) {
@@ -38,10 +283,147 @@ class EditorService extends ChangeNotifier {
 
   GlobalKey? get documentLayoutKey => _documentLayoutKey;
 
+  // 🎯 Undo 가능 여부
+  bool get canUndo => _undoStack.length > 1;
+
+  // 🎯 Redo 가능 여부
+  bool get canRedo => _redoStack.isNotEmpty;
+
+  // 🎯 즉시 히스토리 저장 (외부에서 호출 가능)
+  void saveHistoryNow() {
+    _historyTimer?.cancel();
+    _saveCurrentState(immediate: true);
+  }
+
+  // 🎯 Undo 실행
+  void undo() {
+    if (!canUndo) {
+      print('[EditorService] ❌ Undo 불가 (첫 상태)');
+      return;
+    }
+
+    try {
+      _isExecutingHistory = true;
+      _historyTimer?.cancel(); // 대기 중인 저장 취소
+
+      // 현재 상태를 redo 스택에 저장
+      final currentSnapshot = _undoStack.removeLast();
+      _redoStack.add(currentSnapshot);
+
+      // 이전 상태로 복원
+      final previousSnapshot = _undoStack.last;
+      _restoreFromSnapshot(previousSnapshot);
+
+      print('[EditorService] ⬅️ Undo 완료 (남은: ${_undoStack.length})');
+    } catch (e) {
+      print('[EditorService] Undo 실패: $e');
+    } finally {
+      _isExecutingHistory = false;
+      // 🎯 Undo/Redo 버튼 상태 업데이트
+      notifyListeners();
+    }
+  }
+
+  // 🎯 Redo 실행
+  void redo() {
+    if (!canRedo) {
+      print('[EditorService] ❌ Redo 불가 (없음)');
+      return;
+    }
+
+    try {
+      _isExecutingHistory = true;
+      _historyTimer?.cancel();
+
+      // Redo 스택에서 다음 상태 가져오기
+      final nextSnapshot = _redoStack.removeLast();
+      _undoStack.add(nextSnapshot);
+
+      // 다음 상태로 복원
+      _restoreFromSnapshot(nextSnapshot);
+
+      print('[EditorService] ➡️ Redo 완료 (남은 redo: ${_redoStack.length})');
+    } catch (e) {
+      print('[EditorService] Redo 실패: $e');
+    } finally {
+      _isExecutingHistory = false;
+      // 🎯 Undo/Redo 버튼 상태 업데이트
+      notifyListeners();
+    }
+  }
+
+  // 🎯 스냅샷으로 문서 복원
+  void _restoreFromSnapshot(_DocumentSnapshot snapshot) {
+    // 🎯 1. Selection 먼저 클리어 (iOS 핸들 에러 방지)
+    try {
+      editor.composer.clearSelection();
+    } catch (e) {
+      print('[EditorService] Selection 클리어 실패: $e');
+    }
+
+    // 🎯 2. 모든 노드 삭제
+    while (document.nodeCount > 0) {
+      final node = document.getNodeAt(0);
+      if (node != null) {
+        document.deleteNode(node.id);
+      }
+    }
+
+    // 🎯 3. 저장된 순서대로 노드 복원
+    for (final id in snapshot.order) {
+      final node = snapshot.nodes[id];
+      if (node != null) {
+        document.insertNodeAt(document.nodeCount, _copyNode(node));
+      }
+    }
+
+    // 🎯 4. 제목 보호 - 제목이 없으면 빈 제목 추가
+    if (document.nodeCount == 0 ||
+        (document.getNodeAt(0) is! ParagraphNode) ||
+        ((document.getNodeAt(0) as ParagraphNode).metadata['isTitle'] !=
+            true)) {
+      final titleNode = ParagraphNode(
+        id: '1',
+        text: AttributedText(''),
+        metadata: {'textAlign': 'center', 'isTitle': true},
+      );
+      document.insertNodeAt(0, titleNode);
+      print('[EditorService] 🛡️ 제목 복원 (빈 제목 추가)');
+    }
+
+    // 🎯 UI 갱신 강제
+    notifyListeners();
+
+    // 🎯 5. 커서 숨기기
+    try {
+      editor.composer.clearSelection();
+      print('[EditorService] ✅ 커서 숨김');
+    } catch (e) {
+      print('[EditorService] 커서 숨기기 실패: $e');
+    }
+  }
+
   // 문서 변경 리스너: 구조가 변했을 때만 마진 재계산
   void _onDocumentChanged(DocumentChangeLog changeLog) {
     final change = changeLog.changes[0];
     print('changeLog.changes[0]: $change');
+
+    // 🎯 변경된 노드 추적
+    _trackChangeFromLog(change);
+
+    // 🎯 텍스트 입력/삭제 시 노드 선택 자동 해제 (가볍게 처리)
+    if ((change is TextInsertionEvent || change is TextDeletedEvent) &&
+        _context != null) {
+      try {
+        final nodeService = _context!.read<NodeComponentService>();
+        if (nodeService.selectedNodeId != null) {
+          nodeService.clearSelectionSilently(); // 조용히 해제 (불필요한 리빌드 방지)
+          print('[EditorService] 텍스트 변경 감지 -> 노드 선택 자동 해제');
+        }
+      } catch (e) {
+        // NodeComponentService가 없을 수 있음 (무시)
+      }
+    }
 
     // 멘션 문단(ParagraphNode with metadata.mention == true)에서 일부 삭제가 발생하면
     // 텍스트를 한 번에 비우도록 처리 (가장 먼저 체크)
@@ -80,15 +462,9 @@ class EditorService extends ChangeNotifier {
 
           if (node is ParagraphNode) {
             final isMention = node.metadata['mention'] == true;
-            print(
-              '[EditorService] 노드 확인: nodeId=$targetNodeId, isParagraph=true, isMention=$isMention, text="${node.text.text}"',
-            );
 
             if (isMention && node.text.text.isNotEmpty) {
               _isClearingMention = true;
-
-              // 삭제 전 텍스트 저장 (로깅용)
-              final originalText = node.text.text;
 
               // usernames 메타데이터에서 첫 번째 멘션 찾기
               final List<dynamic> currentUsernames =
@@ -130,18 +506,12 @@ class EditorService extends ChangeNotifier {
                 }
               }
 
-              // IME 위치 매핑 오류 방지: 문서 변경 전에 selection을 먼저 클리어
-              try {
-                editor.composer.clearSelection();
-              } catch (e) {
-                print('[EditorService] 멘션 삭제 전 selection 클리어 실패: $e');
-              }
-
-              // 문서 변경을 다음 마이크로태스크로 지연하여 IME가 selection 클리어를 처리할 시간을 줌
+              // 🎯 키보드 상태를 유지하기 위해 clearSelection을 제거하고 즉시 처리
               final nodeIdForAsync = targetNodeId;
               final nodeIndex = document.getNodeIndexById(nodeIdForAsync);
 
-              Future.microtask(() {
+              // 즉시 처리 (microtask 제거)
+              (() {
                 try {
                   // 문서 변경 전에 플래그 유지
                   final wasClearing = _isClearingMention;
@@ -300,14 +670,9 @@ class EditorService extends ChangeNotifier {
                 }
               });
 
-              print(
-                '[EditorService] 멘션 처리 완료 - 원본: "$originalText", 삭제 후: "$newText", 노드 삭제: $shouldDeleteNode',
-              );
               return; // 이벤트 처리 중단
             }
           }
-        } else {
-          print('[EditorService] 멘션 삭제 감지: nodeId를 찾을 수 없음');
         }
       } catch (e) {
         _isClearingMention = false;
@@ -379,6 +744,13 @@ class EditorService extends ChangeNotifier {
 
   @override
   void dispose() {
+    _historyTimer?.cancel(); // 🎯 타이머 정리
+
+    // 🎯 Undo/Redo 스택 정리
+    _undoStack.clear();
+    _redoStack.clear();
+    print('[EditorService] 🧹 히스토리 스택 정리 완료');
+
     try {
       document.removeListener(_onDocumentChanged);
       editor.composer.selectionNotifier.removeListener(_onSelectionChanged);
@@ -542,26 +914,38 @@ class EditorService extends ChangeNotifier {
     // 같은 위치면 이동하지 않음
     if (currentIndex == targetIndex) return;
 
-    // 문서 끝에 삽입하는 경우 처리
-    if (targetIndex >= document.length) {
-      // 노드 삭제 후 문서 끝에 삽입
+    // 🎯 reorder 작업 중에는 히스토리 추적 일시 중단
+    _isExecutingHistory = true;
+
+    try {
+      // 문서 끝에 삽입하는 경우 처리
+      if (targetIndex >= document.length) {
+        // 노드 삭제 후 문서 끝에 삽입
+        document.deleteNode(nodeId);
+        document.insertNodeAt(document.length, node);
+        notifyListeners();
+        return;
+      }
+
+      // 노드 삭제 후 새 위치에 삽입
       document.deleteNode(nodeId);
-      document.insertNodeAt(document.length, node);
+
+      // targetIndex가 현재 인덱스보다 작으면 그대로 삽입
+      final insertIndex =
+          targetIndex > currentIndex ? targetIndex - 1 : targetIndex;
+      document.insertNodeAt(insertIndex, node);
+      // 문서 구조 변경 → 주변만 마진 재계산(O(1))
+      //_recomputeParagraphMarginsAround(insertIndex);
+      //_recomputeParagraphMarginsAround(currentIndex);
       notifyListeners();
-      return;
+    } finally {
+      // 🎯 작업 완료 후 히스토리 추적 재개 + 한 번만 저장
+      _isExecutingHistory = false;
+      _saveCurrentState(immediate: true);
+      print(
+        '[EditorService] 🔄 노드 순서 변경 완료 (${currentIndex} → ${targetIndex})',
+      );
     }
-
-    // 노드 삭제 후 새 위치에 삽입
-    document.deleteNode(nodeId);
-
-    // targetIndex가 현재 인덱스보다 작으면 그대로 삽입
-    final insertIndex =
-        targetIndex > currentIndex ? targetIndex - 1 : targetIndex;
-    document.insertNodeAt(insertIndex, node);
-    // 문서 구조 변경 → 주변만 마진 재계산(O(1))
-    //_recomputeParagraphMarginsAround(insertIndex);
-    //_recomputeParagraphMarginsAround(currentIndex);
-    notifyListeners();
   }
 
   /// 두 이미지를 가로 배치로 합치는 함수
@@ -645,25 +1029,53 @@ class EditorService extends ChangeNotifier {
 
     print('[EditorService] ImageRow 생성 - mediaIds: $mediaIds');
 
+    // 🎯 imageCommentInfo 맵 생성 (PostExporter가 기대하는 형식)
+    final imageCommentInfo = <String, Map<String, dynamic>>{};
+    for (int i = 0; i < imageUrls.length; i++) {
+      final url = imageUrls[i];
+      if (i < mediaIds.length && mediaIds[i].isNotEmpty) {
+        imageCommentInfo[url] = {
+          'mediaId': mediaIds[i],
+          'hasComments': false,
+          'commentCount': 0,
+        };
+      }
+    }
+
+    print('[EditorService] 🔍 생성된 imageCommentInfo: $imageCommentInfo');
+
     // ImageRowNode 생성 (이미 3개 제한이 적용됨)
     final imageRowNode = ImageRowNode(
       id: 'imageRow_${DateTime.now().millisecondsSinceEpoch}',
       imageUrls: imageUrls,
       spacing: 8.0,
-      metadata: mediaIds.isNotEmpty ? {'mediaIds': mediaIds} : null,
+      metadata:
+          imageCommentInfo.isNotEmpty
+              ? {'imageCommentInfo': imageCommentInfo}
+              : null,
     );
 
-    // 기존 이미지들 삭제
-    document.deleteNode(draggingImageId);
-    document.deleteNode(targetImageId);
+    // 🎯 이미지 병합 작업 중에는 히스토리 추적 일시 중단
+    _isExecutingHistory = true;
 
-    // ImageRowNode 삽입 (더 작은 인덱스 위치에)
-    final insertIndex =
-        draggingIndex < targetIndex ? draggingIndex : targetIndex;
-    document.insertNodeAt(insertIndex, imageRowNode);
-    // 문서 구조 변경 → 주변만 마진 재계산(O(1))
-    // _recomputeParagraphMarginsAround(insertIndex);
-    notifyListeners();
+    try {
+      // 기존 이미지들 삭제
+      document.deleteNode(draggingImageId);
+      document.deleteNode(targetImageId);
+
+      // ImageRowNode 삽입 (더 작은 인덱스 위치에)
+      final insertIndex =
+          draggingIndex < targetIndex ? draggingIndex : targetIndex;
+      document.insertNodeAt(insertIndex, imageRowNode);
+      // 문서 구조 변경 → 주변만 마진 재계산(O(1))
+      // _recomputeParagraphMarginsAround(insertIndex);
+      notifyListeners();
+    } finally {
+      // 🎯 작업 완료 후 히스토리 추적 재개 + 한 번만 저장
+      _isExecutingHistory = false;
+      _saveCurrentState(immediate: true);
+      print('[EditorService] 🖼️ 이미지 병합 완료');
+    }
   }
 
   void _addImageToRow(String imageId, String rowId, bool isFromLeft) {
@@ -691,49 +1103,72 @@ class EditorService extends ChangeNotifier {
       newImageMediaId = imageMeta?['mediaId']?.toString();
     } catch (_) {}
 
-    // 🎯 기존 row의 mediaIds 추출
-    List<String> existingMediaIds = [];
+    // 🎯 기존 row의 imageCommentInfo 추출
+    Map<String, Map<String, dynamic>> existingCommentInfo = {};
     try {
       final rowMeta = rowNode.metadata;
-      final mediaIdList = rowMeta['mediaIds'] as List?;
-      if (mediaIdList != null) {
-        existingMediaIds = mediaIdList.map((e) => e?.toString() ?? '').toList();
+      final commentInfo = rowMeta['imageCommentInfo'] as Map<String, dynamic>?;
+      if (commentInfo != null) {
+        existingCommentInfo = commentInfo.map(
+          (key, value) => MapEntry(key, (value as Map).cast<String, dynamic>()),
+        );
       }
     } catch (_) {}
 
     // 새로운 이미지 URL 리스트 생성
     final newImageUrls = List<String>.from(rowNode.imageUrls);
-    final newMediaIds = List<String>.from(existingMediaIds);
+    final newImageCommentInfo = Map<String, Map<String, dynamic>>.from(
+      existingCommentInfo,
+    );
 
     if (isFromLeft) {
       newImageUrls.insert(0, imageNode.imageUrl);
-      if (newImageMediaId != null) {
-        newMediaIds.insert(0, newImageMediaId);
+      if (newImageMediaId != null && newImageMediaId.isNotEmpty) {
+        newImageCommentInfo[imageNode.imageUrl] = {
+          'mediaId': newImageMediaId,
+          'hasComments': false,
+          'commentCount': 0,
+        };
       }
     } else {
       newImageUrls.add(imageNode.imageUrl);
-      if (newImageMediaId != null) {
-        newMediaIds.add(newImageMediaId);
+      if (newImageMediaId != null && newImageMediaId.isNotEmpty) {
+        newImageCommentInfo[imageNode.imageUrl] = {
+          'mediaId': newImageMediaId,
+          'hasComments': false,
+          'commentCount': 0,
+        };
       }
     }
 
-    print('[EditorService] ImageRow에 이미지 추가 - mediaIds: $newMediaIds');
+    // 🎯 이미지 행 추가 작업 중에는 히스토리 추적 일시 중단
+    _isExecutingHistory = true;
 
-    // ImageRowNode 업데이트 (이미 3개 제한이 적용됨)
-    final updatedRowNode = rowNode.copyWith(
-      imageUrls: newImageUrls,
-      metadata: newMediaIds.isNotEmpty ? {'mediaIds': newMediaIds} : null,
-    );
-    document.replaceNodeById(rowId, updatedRowNode);
+    try {
+      // ImageRowNode 업데이트 (이미 3개 제한이 적용됨)
+      final updatedRowNode = rowNode.copyWith(
+        imageUrls: newImageUrls,
+        metadata:
+            newImageCommentInfo.isNotEmpty
+                ? {'imageCommentInfo': newImageCommentInfo}
+                : null,
+      );
+      document.replaceNodeById(rowId, updatedRowNode);
 
-    // 기존 이미지 삭제
-    document.deleteNode(imageId);
-    // 문서 구조 변경 → 행 주변만 마진 재계산(O(1))
-    final int rowIndex = document.getNodeIndexById(rowId);
-    if (rowIndex != -1) {
-      //_recomputeParagraphMarginsAround(rowIndex);
+      // 기존 이미지 삭제
+      document.deleteNode(imageId);
+      // 문서 구조 변경 → 행 주변만 마진 재계산(O(1))
+      final int rowIndex = document.getNodeIndexById(rowId);
+      if (rowIndex != -1) {
+        //_recomputeParagraphMarginsAround(rowIndex);
+      }
+      notifyListeners();
+    } finally {
+      // 🎯 작업 완료 후 히스토리 추적 재개 + 한 번만 저장
+      _isExecutingHistory = false;
+      _saveCurrentState(immediate: true);
+      print('[EditorService] 🖼️ ImageRow에 이미지 추가 완료');
     }
-    notifyListeners();
   }
 
   NodeType getNodeType(String nodeId) {
@@ -784,6 +1219,7 @@ class EditorService extends ChangeNotifier {
 
       final String align = _getPreviousParagraphAlign(insertIndex);
       final String paragraphId = 'p_${DateTime.now().millisecondsSinceEpoch}';
+
       final ParagraphNode newParagraph = ParagraphNode(
         id: paragraphId,
         text: AttributedText(''),
@@ -820,9 +1256,12 @@ class EditorService extends ChangeNotifier {
   /// - 컴포넌트처럼 현재 라인 다음 슬롯에 삽입(필요 시 끝에 빈 문단 생성)
   /// - 각 멘션은 개별 노드로 생성되어 세로로 표시됨
   void addMentionNode(List<String> usernames) {
-    try {
-      if (usernames.isEmpty) return;
+    if (usernames.isEmpty) return;
 
+    // 🎯 멘션 추가 작업 중에는 히스토리 추적 일시 중단
+    _isExecutingHistory = true;
+
+    try {
       final doc = editor.document;
       final safeIndex = _getCaretNodeIndexSafe();
       int insertIndex = safeIndex;
@@ -871,6 +1310,7 @@ class EditorService extends ChangeNotifier {
         final String id =
             'p_mention_${DateTime.now().millisecondsSinceEpoch}_$i';
 
+        // 🎯 볼드 attribution 추가 (히스토리 추적은 _isExecutingHistory = true로 제외됨)
         final AttributedText attributed = AttributedText(text);
         attributed.addAttribution(
           boldAttribution,
@@ -935,7 +1375,14 @@ class EditorService extends ChangeNotifier {
       }
 
       notifyListeners();
-    } catch (_) {}
+    } catch (e) {
+      print('[EditorService] 멘션 추가 실패: $e');
+    } finally {
+      // 🎯 작업 완료 후 히스토리 추적 재개 + 한 번만 저장
+      _isExecutingHistory = false;
+      _saveCurrentState(immediate: true);
+      print('[EditorService] 📝 멘션 추가 완료');
+    }
   }
 
   /// Video clip placeholder 노드 추가
@@ -963,6 +1410,7 @@ class EditorService extends ChangeNotifier {
     String id,
     String url, {
     String? fallbackLocalPath,
+    String? mediaId, // 🎯 mediaId 추가
   }) async {
     try {
       DocumentNode? nodeFound = editor.document.getNodeById(id);
@@ -992,6 +1440,8 @@ class EditorService extends ChangeNotifier {
         url: url,
         localPath: '', // placeholder 해제
         thumbnailPath: nodeFound.thumbnailPath, // 썸네일 경로 유지
+        metadata:
+            mediaId != null && mediaId.isNotEmpty ? {'mediaId': mediaId} : null,
       );
 
       editor.execute([
@@ -1094,31 +1544,41 @@ class EditorService extends ChangeNotifier {
     final remainingUrls = List<String>.from(rowNode.imageUrls);
     remainingUrls.removeAt(imageIndex);
 
-    if (remainingUrls.length == 1) {
-      // 이미지가 1개만 남으면 단일 이미지로 변경
-      final singleImageNode = AppImageNode(
-        id: rowId,
-        imageUrl: remainingUrls.first,
-      );
-      document.replaceNodeById(rowId, singleImageNode);
-    } else if (remainingUrls.isEmpty) {
-      // 이미지가 없으면 행 삭제
-      document.deleteNode(rowId);
-    } else {
-      // 이미지 행 업데이트
-      final updatedRowNode = rowNode.copyWith(imageUrls: remainingUrls);
-      document.replaceNodeById(rowId, updatedRowNode);
+    // 🎯 이미지 분리 작업 중에는 히스토리 추적 일시 중단
+    _isExecutingHistory = true;
+
+    try {
+      if (remainingUrls.length == 1) {
+        // 이미지가 1개만 남으면 단일 이미지로 변경
+        final singleImageNode = AppImageNode(
+          id: rowId,
+          imageUrl: remainingUrls.first,
+        );
+        document.replaceNodeById(rowId, singleImageNode);
+      } else if (remainingUrls.isEmpty) {
+        // 이미지가 없으면 행 삭제
+        document.deleteNode(rowId);
+      } else {
+        // 이미지 행 업데이트
+        final updatedRowNode = rowNode.copyWith(imageUrls: remainingUrls);
+        document.replaceNodeById(rowId, updatedRowNode);
+      }
+
+      // 분리된 이미지를 원하는 위치에 삽입 (기본: 원래 행의 위치)
+      final int targetInsertIndex = insertIndex ?? rowIndex;
+      document.insertNodeAt(targetInsertIndex, newImageNode);
+      // 문서 구조 변경 → 분리 삽입 위치와 원래 행 주변만 마진 재계산(O(1))
+      // _recomputeParagraphMarginsAround(targetInsertIndex);
+      //_recomputeParagraphMarginsAround(rowIndex);
+      notifyListeners();
+
+      return newImageId;
+    } finally {
+      // 🎯 작업 완료 후 히스토리 추적 재개 + 한 번만 저장
+      _isExecutingHistory = false;
+      _saveCurrentState(immediate: true);
+      print('[EditorService] 🖼️ 이미지 분리 완료');
     }
-
-    // 분리된 이미지를 원하는 위치에 삽입 (기본: 원래 행의 위치)
-    final int targetInsertIndex = insertIndex ?? rowIndex;
-    document.insertNodeAt(targetInsertIndex, newImageNode);
-    // 문서 구조 변경 → 분리 삽입 위치와 원래 행 주변만 마진 재계산(O(1))
-    // _recomputeParagraphMarginsAround(targetInsertIndex);
-    //_recomputeParagraphMarginsAround(rowIndex);
-    notifyListeners();
-
-    return newImageId;
   }
 
   /// 이미지 추가: 현재 커서 다음 줄에 로컬 경로 기반 이미지 노드 삽입
@@ -1343,7 +1803,6 @@ class EditorService extends ChangeNotifier {
     editor.execute(edits);
   }
 
-  /// insertIndex 이전의 가장 가까운 문단 정렬을 찾아 반환. 기본값은 'center'
   String _getPreviousParagraphAlign(int beforeIndex) {
     for (int i = beforeIndex - 1; i >= 0; i--) {
       final node = editor.document.getNodeAt(i);
@@ -1487,4 +1946,13 @@ class EditorService extends ChangeNotifier {
       }
     } catch (_) {}
   }
+}
+
+// 🎯 문서 스냅샷 (전체 노드 + 순서 + 커서)
+class _DocumentSnapshot {
+  final Map<String, DocumentNode> nodes; // nodeId -> node
+  final List<String> order; // 노드 순서
+  final DocumentSelection? selection; // 커서 위치
+
+  _DocumentSnapshot({required this.nodes, required this.order, this.selection});
 }

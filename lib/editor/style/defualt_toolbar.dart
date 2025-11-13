@@ -1136,14 +1136,26 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
     final selection = widget.stylingService.composer.selection;
     final hasSelection = selection != null && !selection.isCollapsed;
 
+    // 🎯 멘션 노드에서 선택이면 툴바 열지 않음
+    bool isMentionNode = false;
+    if (hasSelection) {
+      try {
+        final nodeId = selection.extent.nodeId;
+        final node = widget.editorService.document.getNodeById(nodeId);
+        if (node is ParagraphNode) {
+          isMentionNode = node.metadata['mention'] == true;
+        }
+      } catch (_) {}
+    }
+
     if (_hasTextSelection != hasSelection) {
       setState(() {
         _hasTextSelection = hasSelection;
-        if (hasSelection) {
-          // 텍스트가 선택되면 자동으로 텍스트 툴바 열기
+        if (hasSelection && !isMentionNode) {
+          // 텍스트가 선택되면 자동으로 텍스트 툴바 열기 (멘션 노드 제외)
           _expanded = ToolbarSection.text;
         } else {
-          // 선택이 해제되면 툴바 닫기
+          // 선택이 해제되거나 멘션 노드면 툴바 닫기
           _expanded = ToolbarSection.none;
         }
       });
@@ -1542,6 +1554,7 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
                       placeholderId,
                       task.url!,
                       fallbackLocalPath: file.path,
+                      mediaId: task.imageId, // 🎯 mediaId 전달
                     );
                     _forceCloseToolbar();
                     FocusManager.instance.primaryFocus?.unfocus();
@@ -2589,13 +2602,17 @@ class _KeyboardDependentButtons extends StatelessWidget {
       children: [
         // 키보드가 올라와 있을 때만 키보드 내리기 버튼 표시
         if (isKeyboardVisible)
-          _buildMainIcon(
-            context: context,
-            icon: Icons.keyboard_arrow_down,
-            isActive: false,
-            onTap: () {
-              onDismissKeyboard?.call();
-            },
+          Padding(
+            padding: const EdgeInsets.only(right: 4),
+            child: _buildMainIcon(
+              context: context,
+              icon: Icons.keyboard_arrow_down,
+              isActive: false,
+              size: 30,
+              onTap: () {
+                onDismissKeyboard?.call();
+              },
+            ),
           ),
       ],
     );
@@ -2605,6 +2622,7 @@ class _KeyboardDependentButtons extends StatelessWidget {
     required BuildContext context,
     required IconData icon,
     required bool isActive,
+    double? size,
     required VoidCallback onTap,
     Color? activeColor,
   }) {
@@ -2620,7 +2638,7 @@ class _KeyboardDependentButtons extends StatelessWidget {
           width: 36,
           height: 50,
           alignment: Alignment.center,
-          child: Icon(icon, size: isActive ? 26 : 22, color: color),
+          child: Icon(icon, size: size ?? (isActive ? 26 : 22), color: color),
         ),
       ),
     );

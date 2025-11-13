@@ -101,8 +101,8 @@ Stylesheet buildCustomStylesheet(BuildContext context) {
             return {
               Styles.textStyle: mentionStyle,
               Styles.padding: CascadingPadding.only(
-                top: 1,
-                bottom: 1,
+                top: 0,
+                bottom: 0,
                 left: 20,
                 right: 20,
               ),

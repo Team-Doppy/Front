@@ -11,6 +11,7 @@ import 'package:doppy/utils/dialog_utils.dart';
 import 'package:doppy/utils/error_handler.dart';
 import 'package:doppy/l10n/app_localizations.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import 'package:provider/provider.dart';
 import 'package:doppy/providers/group_provider.dart';
 import 'package:doppy/editor/overlay/thumbnail_edit_overlay.dart';
@@ -64,11 +65,6 @@ class _EditModeAppBarState extends State<EditModeAppBar> {
     super.initState();
     _selectedVisibility = widget.currentVisibility;
     _selectedGroupIds = List.from(widget.currentGroupIds);
-
-    // 썸네일 초기화 - NodeComponentService에서 persist된 값 사용 (post_export_screen과 동일)
-    final nodeService = NodeComponentService();
-    _thumbnailUrl = nodeService.getTempThumbnailUrl('default');
-    _thumbnailId = nodeService.getTempThumbnailId('default');
 
     print('[EditModeAppBar] 썸네일 초기화: $_thumbnailUrl (ID: $_thumbnailId)');
 
@@ -189,16 +185,6 @@ class _EditModeAppBarState extends State<EditModeAppBar> {
 
         _isLoading = false;
       });
-
-      // NodeComponentService에도 썸네일 정보 저장
-      if (_thumbnailUrl != null && _thumbnailUrl!.isNotEmpty) {
-        final nodeService = NodeComponentService();
-        nodeService.setTempThumbnail(
-          'default',
-          url: _thumbnailUrl!,
-          id: _thumbnailId,
-        );
-      }
 
       print('[EditModeAppBar] 데이터 로드 완료');
       print('  - 썸네일: $_thumbnailUrl (ID: $_thumbnailId)');
@@ -927,32 +913,97 @@ class _EditModeAppBarState extends State<EditModeAppBar> {
             decoration: BoxDecoration(
               color: Theme.of(context).colorScheme.background.withOpacity(1),
             ),
-            height: 55,
+            height: 50,
             width: MediaQuery.of(context).size.width,
             child: Stack(
               children: [
-                // 뒤로가기 버튼 (왼쪽)
+                // 왼쪽 버튼들 (뒤로가기 + 언두/리두)
                 Positioned(
                   left: 0,
-                  top: 0,
+                  top: 10,
                   bottom: 0,
-                  child: GestureDetector(
-                    onTap: () async {
-                      Navigator.of(context).maybePop();
-                    },
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 20,
-                        vertical: 8,
+                  child: Row(
+                    children: [
+                      // 뒤로가기 버튼
+                      GestureDetector(
+                        onTap: () async {
+                          Navigator.of(context).maybePop();
+                        },
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 8,
+                          ),
+                          child: Icon(
+                            Icons.arrow_back_ios_new_rounded,
+                            size: 24,
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.onSurface.withOpacity(0.75),
+                          ),
+                        ),
                       ),
-                      child: Icon(
-                        Icons.arrow_back_ios_new_rounded,
-                        size: 24,
-                        color: Theme.of(
-                          context,
-                        ).colorScheme.onSurface.withOpacity(0.75),
+
+                      // 언두 버튼
+                      AnimatedBuilder(
+                        animation: widget.editorService,
+                        builder:
+                            (context, _) => GestureDetector(
+                              onTap: () {
+                                widget.editorService.undo();
+                              },
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                  vertical: 8,
+                                ),
+                                child: SvgPicture.asset(
+                                  'assets/icons/editor_undo.svg',
+                                  width: 26,
+                                  height: 26,
+                                  colorFilter: ColorFilter.mode(
+                                    Theme.of(
+                                      context,
+                                    ).colorScheme.onSurface.withOpacity(
+                                      widget.editorService.canUndo ? 0.6 : 0.15,
+                                    ),
+                                    BlendMode.srcIn,
+                                  ),
+                                ),
+                              ),
+                            ),
                       ),
-                    ),
+
+                      // 리두 버튼
+                      AnimatedBuilder(
+                        animation: widget.editorService,
+                        builder:
+                            (context, _) => GestureDetector(
+                              onTap: () {
+                                widget.editorService.redo();
+                              },
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                  vertical: 8,
+                                ),
+                                child: SvgPicture.asset(
+                                  'assets/icons/editor_redo.svg',
+                                  width: 26,
+                                  height: 26,
+                                  colorFilter: ColorFilter.mode(
+                                    Theme.of(
+                                      context,
+                                    ).colorScheme.onSurface.withOpacity(
+                                      widget.editorService.canRedo ? 0.6 : 0.15,
+                                    ),
+                                    BlendMode.srcIn,
+                                  ),
+                                ),
+                              ),
+                            ),
+                      ),
+                    ],
                   ),
                 ),
 
@@ -1133,23 +1184,11 @@ class EditorAppBar extends StatelessWidget {
       return;
     }
 
-    // 첫 번째 이미지를 자동으로 썸네일로 설정
-    final sessionKey = currentDraftId ?? 'default';
-    final existingThumbnail =
-        NodeComponentService().getTempThumbnailUrl(sessionKey) ?? '';
-
-    // 기존 썸네일이 없으면 첫 번째 이미지를 자동으로 설정
-    if (existingThumbnail.isEmpty) {
-      final firstImageUrl = _findFirstImageUrl();
-      if (firstImageUrl != null && firstImageUrl.isNotEmpty) {
-        NodeComponentService().setTempThumbnail(
-          sessionKey,
-          url: firstImageUrl,
-          id: null, // imageId는 나중에 export에서 처리
-        );
-        print('[EditorAppBar] 첫 번째 이미지를 썸네일로 자동 설정: $firstImageUrl');
-      }
-    }
+    // 🎯 sessionKey 계산 (_saveDraft와 동일한 방식)
+    final title = PostExporter.getTitleFromDocument(editorService.document);
+    final titleHash = title.hashCode.abs();
+    final draftIdByTitle = 'draft_$titleHash';
+    final sessionKey = currentDraftId ?? draftIdByTitle;
 
     // 검증 통과 시 다음 화면으로 이동
     cleanupAllVideoPlayers();
@@ -1179,29 +1218,94 @@ class EditorAppBar extends StatelessWidget {
             decoration: BoxDecoration(
               color: Theme.of(context).colorScheme.background.withOpacity(1),
             ),
-            height: 55,
+            height: 50,
             width: MediaQuery.of(context).size.width,
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                // 뒤로가기 버튼
-                GestureDetector(
-                  onTap: () async {
-                    Navigator.of(context).maybePop();
-                  },
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 20,
-                      vertical: 8,
+                // 왼쪽 버튼들 (뒤로가기 + 언두/리두)
+                Row(
+                  children: [
+                    // 뒤로가기 버튼
+                    GestureDetector(
+                      onTap: () async {
+                        Navigator.of(context).maybePop();
+                      },
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 8,
+                        ),
+                        child: Icon(
+                          Icons.arrow_back_ios_new_rounded,
+                          size: 24,
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.onSurface.withOpacity(0.75),
+                        ),
+                      ),
                     ),
-                    child: Icon(
-                      Icons.arrow_back_ios_new_rounded,
-                      size: 24,
-                      color: Theme.of(
-                        context,
-                      ).colorScheme.onSurface.withOpacity(0.75),
+
+                    // 언두 버튼
+                    AnimatedBuilder(
+                      animation: editorService,
+                      builder:
+                          (context, _) => GestureDetector(
+                            onTap: () {
+                              editorService.undo();
+                            },
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 8,
+                              ),
+                              child: SvgPicture.asset(
+                                'assets/icons/editor_undo.svg',
+                                width: 26,
+                                height: 26,
+                                colorFilter: ColorFilter.mode(
+                                  Theme.of(
+                                    context,
+                                  ).colorScheme.onSurface.withOpacity(
+                                    editorService.canUndo ? 0.6 : 0.15,
+                                  ),
+                                  BlendMode.srcIn,
+                                ),
+                              ),
+                            ),
+                          ),
                     ),
-                  ),
+
+                    // 리두 버튼
+                    AnimatedBuilder(
+                      animation: editorService,
+                      builder:
+                          (context, _) => GestureDetector(
+                            onTap: () {
+                              editorService.redo();
+                            },
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 8,
+                              ),
+                              child: SvgPicture.asset(
+                                'assets/icons/editor_redo.svg',
+                                width: 26,
+                                height: 26,
+                                colorFilter: ColorFilter.mode(
+                                  Theme.of(
+                                    context,
+                                  ).colorScheme.onSurface.withOpacity(
+                                    editorService.canRedo ? 0.6 : 0.15,
+                                  ),
+                                  BlendMode.srcIn,
+                                ),
+                              ),
+                            ),
+                          ),
+                    ),
+                  ],
                 ),
 
                 // 오른쪽 버튼들

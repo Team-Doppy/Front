@@ -2,6 +2,7 @@ import 'dart:ui' as ui;
 import 'dart:async';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:doppy/data/services/auth_service.dart';
+import 'package:doppy/editor/component/app_image_node.dart';
 import 'package:doppy/editor/component/single_image_component.dart';
 import 'package:doppy/l10n/app_localizations.dart';
 import 'package:doppy/pages/components/post_reader_header.dart';
@@ -19,6 +20,7 @@ import 'package:doppy/editor/component/row_image_component.dart'
     show RowImageComponentBuilder, ImageRowNode;
 import 'package:doppy/editor/postwrite_screen.dart';
 import 'package:doppy/providers/user_provider.dart';
+import 'package:doppy/providers/theme_provider.dart';
 import 'package:doppy/data/models/user_model.dart';
 import 'package:doppy/data/services/comment_service.dart';
 import 'package:doppy/data/services/blog_service.dart';
@@ -88,6 +90,16 @@ class _PostReaderScreenState extends State<PostReaderScreen>
   late final AnimationController _commentOverlayCtrl;
   late final Animation<double> _commentFade;
 
+  // 전체화면 이미지 뷰어 상태/애니메이션
+  bool _showImageViewer = false;
+  bool _isVideoViewer = false;
+  String? _currentImageUrl;
+  List<String> _allImageUrls = [];
+  String? _currentMediaId;
+  List<String> _allMediaIds = [];
+  late final AnimationController _imageViewerCtrl;
+  late final Animation<double> _imageViewerFade;
+
   // 좋아요/댓글 데이터
   final CommentService _commentService = CommentService();
   final LikeService _likeService = LikeService();
@@ -95,384 +107,364 @@ class _PostReaderScreenState extends State<PostReaderScreen>
   // 마지막 탭 위치 저장
   Offset? _lastTapPosition;
 
-  // 전체화면 이미지 뷰어 상태
-  bool _showImageViewer = false;
-  bool _isVideoViewer = false;
-  String? _currentImageUrl;
-  List<String> _allImageUrls = [];
-  String? _currentMediaId;
-  List<String> _allMediaIds = [];
-
   // 제목 정렬/폰트 파싱은 헤더 컴포넌트 내부에서 처리
 
   void _handleTap() async {
     if (_lastTapPosition == null) return;
 
     final node = _editorService.findNodeAtPosition(_lastTapPosition!);
+    print(
+      '[PostReaderScreen] 🔍 찾은 노드: ${node?.runtimeType} (ID: ${node?.id})',
+    );
+
     if (node == null) {
+      print('[PostReaderScreen] ⚠️ 노드를 찾을 수 없음');
       return;
     }
 
     // 노드 타입에 따른 분기 처리
-    switch (node.runtimeType) {
-      case ClipNode:
-        final clipNode = node as ClipNode;
-        print('  - Clip: ${clipNode.url}');
+    print('[PostReaderScreen] 🎯 노드 타입 분기: ${node.runtimeType}');
 
-        // 1) 읽기모드: 빈 영역 탭이면 fullscreen, 특정 영역(중앙/모서리) 탭이면 액션
-        final action = _dragService.handleClipNodeTap(
-          clipNode.id,
-          _lastTapPosition!,
+    // 🎯 switch 대신 if-else 사용 (AppImageNode는 ImageNode 상속이지만 runtimeType이 다름)
+    if (node is ClipNode) {
+      final clipNode = node;
+      print('  - Clip: ${clipNode.url}');
+
+      // 1) 읽기모드: 빈 영역 탭이면 fullscreen, 특정 영역(중앙/모서리) 탭이면 액션
+      final action = _dragService.handleClipNodeTap(
+        clipNode.id,
+        _lastTapPosition!,
+      );
+      if (action != null) {
+        _triggerClipNodeAction(clipNode.id, action);
+        return;
+      }
+
+      // 2) 액션이 없으면 전체화면으로 열기 (프리로드 보장)
+      if (clipNode.url.isNotEmpty) {
+        // 프리로드 컨트롤러 확인
+        final controller = PostReaderService.getPreloadedController(
+          clipNode.url,
         );
-        if (action != null) {
-          _triggerClipNodeAction(clipNode.id, action);
-          break;
-        }
 
-        // 2) 액션이 없으면 전체화면으로 열기 (프리로드 보장)
-        if (clipNode.url.isNotEmpty) {
-          // 프리로드 컨트롤러 확인
-          final controller = PostReaderService.getPreloadedController(
-            clipNode.url,
-          );
-
-          if (controller == null) {
-            try {
-              // 프리로드 안 되어 있으면 즉시 프리로드
-              await _postReaderService.preloadClips(context, [
-                clipNode.url,
-              ], maxCount: 1);
-              print('[PostReaderScreen] 즉시 프리로드 완료');
-            } catch (e) {
-              print('[PostReaderScreen] 즉시 프리로드 실패: $e');
-            }
-          } else {
-            print('[PostReaderScreen] ✅ 비디오가 이미 프리로드됨');
+        if (controller == null) {
+          try {
+            // 프리로드 안 되어 있으면 즉시 프리로드
+            await _postReaderService.preloadClips(context, [
+              clipNode.url,
+            ], maxCount: 1);
+            print('[PostReaderScreen] 즉시 프리로드 완료');
+          } catch (e) {
+            print('[PostReaderScreen] 즉시 프리로드 실패: $e');
           }
-
-          setState(() {
-            _previousAppBarState = _showAppBar; // 🎯 현재 상태 저장
-            _currentImageUrl = clipNode.url;
-            _allImageUrls = [clipNode.url];
-            _isVideoViewer = true;
-            _showImageViewer = true;
-            _showAppBar = false; // 하단 바 숨김
-            _bottomBarAnimationDuration = 50; // 빠르게 숨김
-          });
-        }
-        break;
-
-      case LinkNode:
-        final linkNode = node as LinkNode;
-        print('  - Link: ${linkNode.url}');
-        final raw = linkNode.url.trim();
-        if (raw.isEmpty) break;
-        final String normalized =
-            raw.startsWith('http://') || raw.startsWith('https://')
-                ? raw
-                : 'https://$raw';
-        final uri = Uri.tryParse(normalized);
-        if (uri == null) {
-          if (mounted)
-            ErrorHandler.showError(context, context.tr('invalid_link'));
-          break;
-        }
-        try {
-          await launchUrl(
-            uri,
-            mode: LaunchMode.inAppWebView,
-            webViewConfiguration: const WebViewConfiguration(
-              enableJavaScript: true,
-              enableDomStorage: true,
-            ),
-          );
-        } catch (_) {
-          if (mounted)
-            ErrorHandler.showError(context, context.tr('cannot_open_link'));
-        }
-        break;
-
-      case ImageNode:
-        final imageNode = node as ImageNode;
-        print('  - Image: ${imageNode.imageUrl}');
-
-        // 스포일러 상태 확인
-        final nodeService = NodeComponentService();
-        bool hasSpoiler = false;
-        try {
-          // ✅ NodeComponentService에서 먼저 확인 (해제된 상태가 저장되어 있음)
-          final isDisabled = nodeService.isSpoilerDisabled(imageNode.id);
-
-          if (!isDisabled) {
-            // NodeComponentService에서 해제 안 했으면 실제 스포일러 상태 확인
-            hasSpoiler = nodeService.isSpoiler(imageNode.id);
-
-            // metadata에서도 확인 (초기 상태)
-            if (!hasSpoiler) {
-              final meta =
-                  (imageNode as dynamic).metadata as Map<String, dynamic>?;
-              hasSpoiler = meta != null && (meta['spoiler'] == true);
-            }
-          }
-          // isDisabled가 true면 hasSpoiler는 false 유지
-        } catch (_) {}
-
-        // 스포일러가 있으면 해제
-        if (hasSpoiler) {
-          nodeService.setSpoiler(imageNode.id, false);
-          setState(() {}); // UI 즉시 업데이트
-          print('[PostReaderScreen] 이미지 스포일러 해제: ${imageNode.id}');
-          return; // 스포일러 해제만 하고 종료
+        } else {
+          print('[PostReaderScreen] ✅ 비디오가 이미 프리로드됨');
         }
 
-        // 스포일러가 없으면 full viewer 열기
-        // mediaId 메타 추출
+        // 🎯 ClipNode의 metadata에서 mediaId 추출
         String? mediaId;
         try {
-          final meta = (imageNode as dynamic).metadata as Map<String, dynamic>?;
-          print('[PostReaderScreen] 🔍 ImageNode metadata: $meta');
-
-          // 🎯 서버 응답: data.mediaId 구조 확인
-          if (meta != null) {
-            // data 안에 mediaId가 있는 경우
-            if (meta.containsKey('mediaId')) {
-              mediaId = meta['mediaId']?.toString();
-              print(
-                '[PostReaderScreen] ✅ mediaId from meta[mediaId]: $mediaId',
-              );
-            }
-            // 또는 data 객체가 있는 경우
-            else if (meta.containsKey('data')) {
-              final data = meta['data'] as Map<String, dynamic>?;
-              mediaId = data?['mediaId']?.toString();
-              print(
-                '[PostReaderScreen] ✅ mediaId from meta[data][mediaId]: $mediaId',
-              );
-            } else {
-              print('[PostReaderScreen] ⚠️ metadata에 mediaId나 data 키가 없음');
-            }
-          } else {
-            print('[PostReaderScreen] ⚠️ metadata가 null');
-          }
+          final meta = clipNode.metadata;
+          mediaId = meta['mediaId']?.toString();
+          print('[PostReaderScreen] 🎬 ClipNode mediaId: $mediaId');
         } catch (e) {
-          print('[PostReaderScreen] ❌ ImageNode mediaId 추출 실패: $e');
+          print('[PostReaderScreen] ❌ ClipNode mediaId 추출 실패: $e');
         }
-
-        print('[PostReaderScreen] 최종 mediaId: $mediaId');
 
         setState(() {
           _previousAppBarState = _showAppBar; // 🎯 현재 상태 저장
-          _currentImageUrl = imageNode.imageUrl;
-          _allImageUrls = [_currentImageUrl!];
-          _isVideoViewer = false;
+          _currentImageUrl = clipNode.url;
+          _allImageUrls = [clipNode.url];
+          _isVideoViewer = true;
           _showImageViewer = true;
-          _currentMediaId = mediaId;
-          _allMediaIds = mediaId != null ? [mediaId] : [];
+          _currentMediaId = mediaId; // 🎯 mediaId 설정
+          _allMediaIds = mediaId != null ? [mediaId] : []; // 🎯 mediaIds 배열 설정
           _showAppBar = false; // 하단 바 숨김
           _bottomBarAnimationDuration = 50; // 빠르게 숨김
         });
+        _imageViewerCtrl.forward(from: 0.0);
+      }
+    } else if (node is LinkNode) {
+      final linkNode = node;
+      print('  - Link: ${linkNode.url}');
+      final raw = linkNode.url.trim();
+      if (raw.isEmpty) return;
+      final String normalized =
+          raw.startsWith('http://') || raw.startsWith('https://')
+              ? raw
+              : 'https://$raw';
+      final uri = Uri.tryParse(normalized);
+      if (uri == null) {
+        if (mounted)
+          ErrorHandler.showError(context, context.tr('invalid_link'));
+        return;
+      }
+      try {
+        await launchUrl(
+          uri,
+          mode: LaunchMode.inAppWebView,
+          webViewConfiguration: const WebViewConfiguration(
+            enableJavaScript: true,
+            enableDomStorage: true,
+          ),
+        );
+      } catch (_) {
+        if (mounted)
+          ErrorHandler.showError(context, context.tr('cannot_open_link'));
+      }
+    } else if (node is AppImageNode) {
+      final imageNode = node;
+      print('  - Image: ${imageNode.imageUrl}');
+
+      // 스포일러 상태 확인
+      final nodeService = NodeComponentService();
+      bool hasSpoiler = false;
+      try {
+        // ✅ NodeComponentService에서 먼저 확인 (해제된 상태가 저장되어 있음)
+        final isDisabled = nodeService.isSpoilerDisabled(imageNode.id);
+
+        if (!isDisabled) {
+          // NodeComponentService에서 해제 안 했으면 실제 스포일러 상태 확인
+          hasSpoiler = nodeService.isSpoiler(imageNode.id);
+
+          // metadata에서도 확인 (초기 상태)
+          if (!hasSpoiler) {
+            final meta =
+                (imageNode as dynamic).metadata as Map<String, dynamic>?;
+            hasSpoiler = meta != null && (meta['spoiler'] == true);
+          }
+        }
+        // isDisabled가 true면 hasSpoiler는 false 유지
+      } catch (_) {}
+
+      // 스포일러가 있으면 해제
+      if (hasSpoiler) {
+        nodeService.setSpoiler(imageNode.id, false);
+        setState(() {}); // UI 즉시 업데이트
+        print('[PostReaderScreen] 이미지 스포일러 해제: ${imageNode.id}');
+        return; // 스포일러 해제만 하고 종료
+      }
+
+      // 스포일러가 없으면 full viewer 열기
+      // mediaId 메타 추출
+      String? mediaId;
+      try {
+        final meta = (imageNode as dynamic).metadata as Map<String, dynamic>?;
+        print('[PostReaderScreen] 🔍 ImageNode metadata: $meta');
+
+        // 🎯 서버 응답: data.mediaId 구조 확인
+        if (meta != null) {
+          // data 안에 mediaId가 있는 경우
+          if (meta.containsKey('mediaId')) {
+            mediaId = meta['mediaId']?.toString();
+            print('[PostReaderScreen] ✅ mediaId from meta[mediaId]: $mediaId');
+          }
+          // 또는 data 객체가 있는 경우
+          else if (meta.containsKey('data')) {
+            final data = meta['data'] as Map<String, dynamic>?;
+            mediaId = data?['mediaId']?.toString();
+          }
+        }
+      } catch (e) {}
+
+      setState(() {
+        _previousAppBarState = _showAppBar; // 🎯 현재 상태 저장
+        _currentImageUrl = imageNode.imageUrl;
+        _allImageUrls = [_currentImageUrl!];
+        _isVideoViewer = false;
+        _showImageViewer = true;
+        _currentMediaId = mediaId;
+        _allMediaIds = mediaId != null ? [mediaId] : [];
+        _showAppBar = false; // 하단 바 숨김
+        _bottomBarAnimationDuration = 50; // 빠르게 숨김
+      });
+      _imageViewerCtrl.forward(from: 0.0);
+    } else if (node is ImageRowNode) {
+      final imageRowNode = node;
+
+      // 스포일러 상태 확인
+      final nodeService = NodeComponentService();
+      bool hasSpoiler = false;
+      try {
+        // ✅ NodeComponentService에서 먼저 확인 (해제된 상태가 저장되어 있음)
+        final isDisabled = nodeService.isSpoilerDisabled(imageRowNode.id);
+
+        if (!isDisabled) {
+          // NodeComponentService에서 해제 안 했으면 실제 스포일러 상태 확인
+          hasSpoiler = nodeService.isSpoiler(imageRowNode.id);
+
+          // metadata에서도 확인 (초기 상태)
+          if (!hasSpoiler) {
+            final meta = imageRowNode.metadata;
+            hasSpoiler = meta['spoiler'] == true;
+          }
+        }
+        // isDisabled가 true면 hasSpoiler는 false 유지
+      } catch (_) {}
+
+      // 스포일러가 있으면 해제
+      if (hasSpoiler) {
+        nodeService.setSpoiler(imageRowNode.id, false);
+        setState(() {}); // UI 즉시 업데이트
+        print('[PostReaderScreen] 이미지 행 스포일러 해제: ${imageRowNode.id}');
+        return; // 스포일러 해제만 하고 종료
+      }
+
+      // 스포일러가 없으면 full viewer 열기
+      // 클릭한 위치의 이미지 인덱스 계산
+      final nodeRect = _dragService.getNodeGlobalRect(imageRowNode.id);
+      if (nodeRect != null) {
+        final localX = _lastTapPosition!.dx - nodeRect.left;
+        final imageCount = imageRowNode.imageUrls.length;
+        final imageWidth = nodeRect.width / imageCount;
+        final clickedIndex = (localX / imageWidth).floor().clamp(
+          0,
+          imageCount - 1,
+        );
+
+        // 🎯 ImageRowNode의 메타데이터에서 각 이미지의 mediaId 추출
+        List<String> mediaIds = [];
+        try {
+          final meta = imageRowNode.metadata;
+          print('[PostReaderScreen] 🔍 ImageRowNode metadata: $meta');
+          print(
+            '[PostReaderScreen] 🔍 ImageRowNode metadata keys: ${meta.keys}',
+          );
+
+          final mediaIdList = meta['mediaIds'] as List?;
+          print(
+            '[PostReaderScreen] 🔍 mediaIdList from meta[mediaIds]: $mediaIdList',
+          );
+
+          if (mediaIdList != null) {
+            mediaIds = mediaIdList.map((e) => e?.toString() ?? '').toList();
+            print('[PostReaderScreen] ✅ ImageRow mediaIds 추출 성공: $mediaIds');
+          } else {
+            print('[PostReaderScreen] ⚠️ meta[mediaIds]가 null');
+          }
+        } catch (e) {
+          print('[PostReaderScreen] ❌ ImageRow mediaId 추출 실패: $e');
+        }
 
         print(
-          '[PostReaderScreen] setState 완료 - _currentMediaId: $_currentMediaId, _allMediaIds: $_allMediaIds',
+          '[PostReaderScreen] clickedIndex: $clickedIndex, mediaIds: $mediaIds',
         );
-        break;
 
-      case ImageRowNode:
-        final imageRowNode = node as ImageRowNode;
-        print('  - ImageRow: ${imageRowNode.imageUrls}');
-        print('[PostReaderScreen] 🔍 ImageRowNode 클릭 감지: ${imageRowNode.id}');
+        setState(() {
+          _previousAppBarState = _showAppBar; // 🎯 현재 상태 저장
+          _allImageUrls = imageRowNode.imageUrls;
+          _currentImageUrl = imageRowNode.imageUrls[clickedIndex];
+          _isVideoViewer = false;
+          _showImageViewer = true;
+          _currentMediaId = mediaIds.isNotEmpty ? mediaIds[clickedIndex] : null;
+          _allMediaIds = mediaIds;
+          _showAppBar = false; // 하단 바 숨김
+          _bottomBarAnimationDuration = 50; // 빠르게 숨김
+        });
+        _imageViewerCtrl.forward(from: 0.0);
+      }
+    } else if (node is DividerNode) {
+      print('  - Divider');
+    } else if (node is ParagraphNode) {
+      final paragraphNode = node;
 
-        // 스포일러 상태 확인
-        final nodeService = NodeComponentService();
-        bool hasSpoiler = false;
-        try {
-          // ✅ NodeComponentService에서 먼저 확인 (해제된 상태가 저장되어 있음)
-          final isDisabled = nodeService.isSpoilerDisabled(imageRowNode.id);
+      // 멘션 노드 처리: 탭 시 프로필로 이동
+      final isMention = (paragraphNode.metadata['mention'] == true);
+      if (isMention) {
+        // 우선 메타의 usernames 사용; 없으면 텍스트에서 파싱
+        final List<String> names =
+            ((paragraphNode.metadata['usernames'] as List?)
+                ?.map((e) => e.toString())
+                .toList()) ??
+            _extractUsernamesFromText(paragraphNode.text.text);
 
-          if (!isDisabled) {
-            // NodeComponentService에서 해제 안 했으면 실제 스포일러 상태 확인
-            hasSpoiler = nodeService.isSpoiler(imageRowNode.id);
-
-            // metadata에서도 확인 (초기 상태)
-            if (!hasSpoiler) {
-              final meta = imageRowNode.metadata;
-              hasSpoiler = meta['spoiler'] == true;
-            }
-          }
-          // isDisabled가 true면 hasSpoiler는 false 유지
-        } catch (_) {}
-
-        // 스포일러가 있으면 해제
-        if (hasSpoiler) {
-          nodeService.setSpoiler(imageRowNode.id, false);
-          setState(() {}); // UI 즉시 업데이트
-          print('[PostReaderScreen] 이미지 행 스포일러 해제: ${imageRowNode.id}');
-          return; // 스포일러 해제만 하고 종료
-        }
-
-        // 스포일러가 없으면 full viewer 열기
-        // 클릭한 위치의 이미지 인덱스 계산
-        final nodeRect = _dragService.getNodeGlobalRect(imageRowNode.id);
-        if (nodeRect != null) {
-          final localX = _lastTapPosition!.dx - nodeRect.left;
-          final imageCount = imageRowNode.imageUrls.length;
-          final imageWidth = nodeRect.width / imageCount;
-          final clickedIndex = (localX / imageWidth).floor().clamp(
-            0,
-            imageCount - 1,
-          );
-
-          // 🎯 ImageRowNode의 메타데이터에서 각 이미지의 mediaId 추출
-          List<String> mediaIds = [];
-          try {
-            final meta = imageRowNode.metadata;
-            print('[PostReaderScreen] 🔍 ImageRowNode metadata: $meta');
-            print(
-              '[PostReaderScreen] 🔍 ImageRowNode metadata keys: ${meta.keys}',
-            );
-
-            final mediaIdList = meta['mediaIds'] as List?;
-            print(
-              '[PostReaderScreen] 🔍 mediaIdList from meta[mediaIds]: $mediaIdList',
-            );
-
-            if (mediaIdList != null) {
-              mediaIds = mediaIdList.map((e) => e?.toString() ?? '').toList();
-              print('[PostReaderScreen] ✅ ImageRow mediaIds 추출 성공: $mediaIds');
-            } else {
-              print('[PostReaderScreen] ⚠️ meta[mediaIds]가 null');
-            }
-          } catch (e) {
-            print('[PostReaderScreen] ❌ ImageRow mediaId 추출 실패: $e');
-          }
-
-          print(
-            '[PostReaderScreen] clickedIndex: $clickedIndex, mediaIds: $mediaIds',
-          );
-
-          setState(() {
-            _previousAppBarState = _showAppBar; // 🎯 현재 상태 저장
-            _allImageUrls = imageRowNode.imageUrls;
-            _currentImageUrl = imageRowNode.imageUrls[clickedIndex];
-            _isVideoViewer = false;
-            _showImageViewer = true;
-            _currentMediaId =
-                mediaIds.isNotEmpty ? mediaIds[clickedIndex] : null;
-            _allMediaIds = mediaIds;
-            _showAppBar = false; // 하단 바 숨김
-            _bottomBarAnimationDuration = 50; // 빠르게 숨김
-          });
-        }
-        break;
-
-      case DividerNode:
-        print('  - Divider');
-        break;
-
-      case ParagraphNode:
-        final paragraphNode = node as ParagraphNode;
-
-        // 멘션 노드 처리: 탭 시 프로필로 이동
-        final isMention = (paragraphNode.metadata['mention'] == true);
-        if (isMention) {
-          // 우선 메타의 usernames 사용; 없으면 텍스트에서 파싱
-          final List<String> names =
-              ((paragraphNode.metadata['usernames'] as List?)
-                  ?.map((e) => e.toString())
-                  .toList()) ??
-              _extractUsernamesFromText(paragraphNode.text.text);
-
-          if (names.isEmpty) return;
-          if (names.length == 1) {
-            _openUserProfile(names.first);
-            return;
-          }
-
-          if (!mounted) return;
-          // 여러 명이면 선택 바텀시트
-          showModalBottomSheet(
-            context: context,
-            backgroundColor: Colors.transparent,
-            builder: (_) {
-              return Container(
-                decoration: BoxDecoration(
-                  color: Theme.of(context).colorScheme.surface,
-                  borderRadius: const BorderRadius.vertical(
-                    top: Radius.circular(16),
-                  ),
-                ),
-                child: SafeArea(
-                  top: false,
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const SizedBox(height: 8),
-                      Container(
-                        width: 40,
-                        height: 4,
-                        decoration: BoxDecoration(
-                          color: Theme.of(
-                            context,
-                          ).colorScheme.onSurface.withOpacity(0.2),
-                          borderRadius: BorderRadius.circular(2),
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      ...names.map(
-                        (u) => ListTile(
-                          title: Text(
-                            '@$u',
-                            style: TextStyle(
-                              color: Theme.of(context).colorScheme.onSurface,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                          onTap: () {
-                            Navigator.of(context).pop();
-                            _openUserProfile(u);
-                          },
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                    ],
-                  ),
-                ),
-              );
-            },
-          );
+        if (names.isEmpty) return;
+        if (names.length == 1) {
+          _openUserProfile(names.first);
           return;
         }
 
-        // 스포일러 확인: 텍스트에 spoiler attribution이 있는지 확인
-        final text = paragraphNode.text;
-        bool hasSpoiler = false;
-        try {
-          // 텍스트 전체를 확인하여 spoiler attribution이 있는지 체크
-          for (int i = 0; i < text.text.length; i++) {
-            final attrs = text.getAllAttributionsAt(i);
-            if (attrs.any((a) => a is NamedAttribution && a.id == 'spoiler')) {
-              hasSpoiler = true;
-              break;
-            }
+        if (!mounted) return;
+        // 여러 명이면 선택 바텀시트
+        showModalBottomSheet(
+          context: context,
+          backgroundColor: Colors.transparent,
+          builder: (_) {
+            return Container(
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.surface,
+                borderRadius: const BorderRadius.vertical(
+                  top: Radius.circular(16),
+                ),
+              ),
+              child: SafeArea(
+                top: false,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const SizedBox(height: 8),
+                    Container(
+                      width: 40,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.onSurface.withOpacity(0.2),
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    ...names.map(
+                      (u) => ListTile(
+                        title: Text(
+                          '@$u',
+                          style: TextStyle(
+                            color: Theme.of(context).colorScheme.onSurface,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        onTap: () {
+                          Navigator.of(context).pop();
+                          _openUserProfile(u);
+                        },
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+        return;
+      }
+
+      // 스포일러 확인: 텍스트에 spoiler attribution이 있는지 확인
+      final text = paragraphNode.text;
+      bool hasSpoiler = false;
+      try {
+        // 텍스트 전체를 확인하여 spoiler attribution이 있는지 체크
+        for (int i = 0; i < text.text.length; i++) {
+          final attrs = text.getAllAttributionsAt(i);
+          if (attrs.any((a) => a is NamedAttribution && a.id == 'spoiler')) {
+            hasSpoiler = true;
+            break;
           }
-        } catch (_) {}
-
-        // 스포일러가 있으면 NodeComponentService를 통해 해제하고 문서에서도 제거
-        if (hasSpoiler) {
-          final nodeService = NodeComponentService();
-
-          // NodeComponentService에 "스포일러 해제됨" 상태 저장
-          // 문서는 수정하지 않고 UI에서만 일시적으로 해제
-          nodeService.setSpoiler(paragraphNode.id, false);
-          // setState를 호출하여 UI 업데이트 (NodeComponentService 변경 감지)
-          setState(() {});
         }
-        break;
+      } catch (_) {}
 
-      default:
-        // 알 수 없는 노드 타입
-        break;
+      // 스포일러가 있으면 NodeComponentService를 통해 해제하고 문서에서도 제거
+      if (hasSpoiler) {
+        final nodeService = NodeComponentService();
+
+        // NodeComponentService에 "스포일러 해제됨" 상태 저장
+        // 문서는 수정하지 않고 UI에서만 일시적으로 해제
+        nodeService.setSpoiler(paragraphNode.id, false);
+        // setState를 호출하여 UI 업데이트 (NodeComponentService 변경 감지)
+        setState(() {});
+      }
     }
+    // default: 알 수 없는 노드 타입 (처리 안 함)
   }
 
   void _triggerClipNodeAction(String nodeId, String action) {
@@ -501,14 +493,17 @@ class _PostReaderScreenState extends State<PostReaderScreen>
     }
   }
 
-  void _closeImageViewer() {
-    setState(() {
-      _showImageViewer = false;
-      _currentImageUrl = null;
-      _showAppBar = _previousAppBarState; // 🎯 이전 상태로 복원
-      _bottomBarAnimationDuration =
-          _previousAppBarState ? 0 : 300; // 🎯 열려있었으면 즉시(0), 닫혀있었으면 일반 속도
-    });
+  void _closeImageViewer() async {
+    await _imageViewerCtrl.reverse();
+    if (mounted) {
+      setState(() {
+        _showImageViewer = false;
+        _currentImageUrl = null;
+        _showAppBar = _previousAppBarState; // 🎯 이전 상태로 복원
+        _bottomBarAnimationDuration =
+            _previousAppBarState ? 0 : 300; // 🎯 열려있었으면 즉시(0), 닫혀있었으면 일반 속도
+      });
+    }
   }
 
   void _toggleLike() async {
@@ -632,6 +627,24 @@ class _PostReaderScreenState extends State<PostReaderScreen>
     // content 객체 추출
     final content = response['content'] as Map<String, dynamic>? ?? {};
 
+    // 🎯 서버에서 받은 content 데이터 로그
+    print('[PostReaderScreen] 🔍 서버 응답 content 키: ${content.keys}');
+    if (content.containsKey('nodes')) {
+      final nodes = content['nodes'] as List?;
+      print('[PostReaderScreen] 🔍 nodes 개수: ${nodes?.length}');
+      // video 노드 찾기
+      if (nodes != null) {
+        for (final node in nodes) {
+          if (node is Map && node['type'] == 'video') {
+            print('[PostReaderScreen] 🎬 서버 응답 video 노드: $node');
+            final data = node['data'] as Map?;
+            print('[PostReaderScreen] 🎬 video data: $data');
+            print('[PostReaderScreen] 🎬 video mediaId: ${data?['mediaId']}');
+          }
+        }
+      }
+    }
+
     // 메타데이터를 content에 병합 (UI에서 사용)
     content['likeCount'] = actualLikeCount;
     content['isLiked'] = actualIsLiked;
@@ -705,6 +718,16 @@ class _PostReaderScreenState extends State<PostReaderScreen>
       curve: Curves.easeOutCubic,
     );
 
+    // 🎯 이미지 뷰어 애니메이션 초기화
+    _imageViewerCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 200),
+    );
+    _imageViewerFade = CurvedAnimation(
+      parent: _imageViewerCtrl,
+      curve: Curves.easeOut,
+    );
+
     // 포스트 ID 설정 및 서비스 초기화
 
     final postId = widget.exported['id']?.toString();
@@ -751,6 +774,7 @@ class _PostReaderScreenState extends State<PostReaderScreen>
     _readOnlyFocus.dispose();
     _scrollCtrl.removeListener(_onScroll);
     _commentOverlayCtrl.dispose();
+    _imageViewerCtrl.dispose();
 
     // 프리로드된 비디오 컨트롤러 정리
     PostReaderService.disposeAllPreloaded();
@@ -943,9 +967,13 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                     return false;
                   },
                   child: GestureDetector(
-                    behavior: HitTestBehavior.deferToChild,
+                    behavior:
+                        HitTestBehavior.translucent, // 🎯 자식이 터치를 소비해도 부모도 받음
                     onTapUp: (details) {
                       _lastTapPosition = details.globalPosition;
+                      print(
+                        '[PostReaderScreen] 🖱️ 탭 감지: ${details.globalPosition}',
+                      );
                       _handleTap();
                     },
                     onHorizontalDragUpdate: (details) {
@@ -1047,7 +1075,12 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                                 dragService: _dragService,
                                 isEditing: false, // 읽기 모드
                               ),
-                              LinkComponentBuilder(isEditing: false),
+                              LinkComponentBuilder(
+                                isEditing: false,
+                                isDarkMode:
+                                    context.watch<ThemeProvider>().themeMode ==
+                                    ThemeMode.dark,
+                              ),
                               DividerComponentBuilder(),
                               PinComponentBuilder(dragService: _dragService),
                               CustomParagraphComponentBuilder(
@@ -1264,56 +1297,61 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                       },
                     ),
                   ),
-                // 전체화면 이미지/영상 뷰어
+                // 전체화면 이미지/영상 뷰어 (페이드 애니메이션)
                 if (_showImageViewer && _currentImageUrl != null)
                   Positioned.fill(
-                    child: FullscreenImageViewer(
-                      imageUrl: _currentImageUrl!,
-                      allImageUrls: _allImageUrls,
-                      mediaId: _currentMediaId,
-                      allMediaIds: _allMediaIds,
-                      initialIndex:
-                          _currentImageUrl != null && _allImageUrls.isNotEmpty
-                              ? _allImageUrls.indexOf(_currentImageUrl!)
-                              : 0,
-                      isVideo: _isVideoViewer,
-                      preloadedController:
-                          _isVideoViewer
-                              ? PostReaderService.getPreloadedController(
-                                _currentImageUrl!,
-                              )
-                              : null,
-                      imageProvider:
-                          !_isVideoViewer
-                              ? CachedNetworkImageProvider(_currentImageUrl!)
-                              : null,
-                      onClose: _closeImageViewer,
-                      postTitle: () {
-                        final title = widget.exported['title'] as String?;
-                        print('[PostReader] postTitle: $title');
-                        return title;
-                      }(),
-                      postAuthor: () {
-                        final author = widget.exported['author'] as String?;
-                        print('[PostReader] postAuthor: $author');
-                        return author;
-                      }(),
-                      postAuthorProfileUrl: () {
-                        final url =
-                            widget.exported['authorProfileImageUrl'] as String?;
-                        print('[PostReader] postAuthorProfileUrl: $url');
-                        return url;
-                      }(),
-                      commentCount: () {
-                        final count = widget.exported['commentCount'] as int?;
-                        print('[PostReader] commentCount: $count');
-                        print(
-                          '[PostReader] exported keys: ${widget.exported.keys.toList()}',
-                        );
-                        return count;
-                      }(),
+                    child: FadeTransition(
+                      opacity: _imageViewerFade,
+                      child: FullscreenImageViewer(
+                        imageUrl: _currentImageUrl!,
+                        allImageUrls: _allImageUrls,
+                        mediaId: _currentMediaId,
+                        allMediaIds: _allMediaIds,
+                        initialIndex:
+                            _currentImageUrl != null && _allImageUrls.isNotEmpty
+                                ? _allImageUrls.indexOf(_currentImageUrl!)
+                                : 0,
+                        isVideo: _isVideoViewer,
+                        preloadedController:
+                            _isVideoViewer
+                                ? PostReaderService.getPreloadedController(
+                                  _currentImageUrl!,
+                                )
+                                : null,
+                        imageProvider:
+                            !_isVideoViewer
+                                ? CachedNetworkImageProvider(_currentImageUrl!)
+                                : null,
+                        onClose: _closeImageViewer,
+                        postTitle: () {
+                          final title = widget.exported['title'] as String?;
+                          print('[PostReader] postTitle: $title');
+                          return title;
+                        }(),
+                        postAuthor: () {
+                          final author = widget.exported['author'] as String?;
+                          print('[PostReader] postAuthor: $author');
+                          return author;
+                        }(),
+                        postAuthorProfileUrl: () {
+                          final url =
+                              widget.exported['authorProfileImageUrl']
+                                  as String?;
+                          print('[PostReader] postAuthorProfileUrl: $url');
+                          return url;
+                        }(),
+                        commentCount: () {
+                          final count = widget.exported['commentCount'] as int?;
+                          print('[PostReader] commentCount: $count');
+                          print(
+                            '[PostReader] exported keys: ${widget.exported.keys.toList()}',
+                          );
+                          return count;
+                        }(),
+                      ),
                     ),
                   ),
+
                 // 하단 바 (Medium 스타일)
                 AnimatedPositioned(
                   duration: Duration(milliseconds: _bottomBarAnimationDuration),

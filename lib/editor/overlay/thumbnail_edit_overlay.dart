@@ -6,7 +6,6 @@ import 'package:doppy/data/services/blog_service.dart';
 import 'package:doppy/data/services/video_cache_service.dart';
 import 'package:doppy/image/native_image_picker.dart';
 import 'package:doppy/image/custom_image_editor_screen.dart';
-import 'package:doppy/editor/service/node_component_service.dart';
 import 'package:doppy/editor/utils/video_upload_utils.dart';
 import 'package:doppy/utils/error_handler.dart';
 import 'package:doppy/utils/dialog_utils.dart';
@@ -317,11 +316,6 @@ class _ThumbnailEditOverlayState extends State<ThumbnailEditOverlay> {
       _thumbnailId = newId;
 
       if (mounted) {
-        NodeComponentService().setTempThumbnail(
-          widget.sessionKey,
-          url: _thumbnailUrl,
-          id: _thumbnailId,
-        );
         setState(() {
           _isUploadingThumb = false;
           _isVideo = false; // 편집 후 이미지로 변경
@@ -425,15 +419,6 @@ class _ThumbnailEditOverlayState extends State<ThumbnailEditOverlay> {
             _thumbnailUrl = t.url!;
             _thumbnailId = t.imageId;
 
-            if (mounted) {
-              NodeComponentService().setTempThumbnail(
-                widget.sessionKey,
-                url: _thumbnailUrl,
-                id: _thumbnailId,
-              );
-              setState(() {});
-            }
-
             // 업로드 완료 시점에는 콜백 호출하지 않음 (수정 완료 버튼 클릭 시에만 호출)
           } else {
             if (mounted) {
@@ -535,11 +520,6 @@ class _ThumbnailEditOverlayState extends State<ThumbnailEditOverlay> {
           _thumbnailId = videoId;
 
           if (mounted) {
-            NodeComponentService().setTempThumbnail(
-              widget.sessionKey,
-              url: _thumbnailUrl,
-              id: _thumbnailId,
-            );
             setState(() {
               _isUploadingThumb = false;
               _isVideo = true; // 영상 업로드 완료

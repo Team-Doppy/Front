@@ -28,11 +28,43 @@ class Feed {
   // ========= Helper functions (visibility & filtering rules) =========
 
   /// Raw 데이터를 PostData 리스트로 변환
-  List<PostData> _mapRawToPosts(List<dynamic> rawList) {
+  List<PostData> _mapRawToPosts(
+    List<dynamic> rawList,
+    BaseFeedProvider feedProvider,
+  ) {
+    // 🎯 userInfo에서 프로필 이미지 추출 (프로필 피드용)
+    final String? profileImageFromUser =
+        feedProvider.userInfo?['profileImageUrl'] as String?;
+
     return rawList
         .map((raw) {
           try {
-            return PostData.fromServer(raw);
+            final postData = PostData.fromServer(raw);
+
+            // 🎯 authorProfileImageUrl이 없거나 비어있으면 userInfo에서 추가
+            if ((postData.authorProfileImageUrl.isEmpty) &&
+                profileImageFromUser != null &&
+                profileImageFromUser.isNotEmpty) {
+              return PostData(
+                id: postData.id,
+                thumbnailImageUrl: postData.thumbnailImageUrl,
+                title: postData.title,
+                summary: postData.summary,
+                author: postData.author,
+                authorId: postData.authorId,
+                authorProfileImageUrl: profileImageFromUser,
+                content: postData.content,
+                accessLevel: postData.accessLevel,
+                createdAt: postData.createdAt,
+                updatedAt: postData.updatedAt,
+                viewCount: postData.viewCount,
+                likeCount: postData.likeCount,
+                commentCount: postData.commentCount,
+                isLiked: postData.isLiked,
+              );
+            }
+
+            return postData;
           } catch (_) {
             return null;
           }
@@ -147,7 +179,7 @@ class Feed {
                       .toSet();
 
               // 모든 포스트에서 해당 ID에 맞는 포스트만 필터링
-              final allPosts = _mapRawToPosts(feedProvider.posts);
+              final allPosts = _mapRawToPosts(feedProvider.posts, feedProvider);
               filteredPosts =
                   allPosts
                       .where((post) => targetPostIds.contains(post.id))
@@ -246,7 +278,7 @@ class Feed {
             print('[Feed] 선택됨 - $title (key: $categoryKey)');
 
             // 원본 포스트 목록을 PostData로 변환 (전체 탭이므로 필터 없음)
-            final posts = _mapRawToPosts(rawPosts);
+            final posts = _mapRawToPosts(rawPosts, feedProvider);
 
             print('[Feed] 포스트 개수: ${posts.length}');
 

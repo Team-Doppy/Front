@@ -195,8 +195,7 @@ class _ParagraphWithDropLinesState extends State<_ParagraphWithDropLines>
               if (prev is ImageNode ||
                   prev is ImageRowNode ||
                   prev is ClipNode ||
-                  prev is LinkNode ||
-                  (prev is ParagraphNode && prev.metadata['mention'] == true)) {
+                  prev is LinkNode) {
                 showTop = false;
               }
             }
@@ -211,7 +210,10 @@ class _ParagraphWithDropLinesState extends State<_ParagraphWithDropLines>
         Widget stack = Stack(
           children: [
             // 본문 내용 마진 제거
-            content,
+            Padding(
+              padding: EdgeInsets.only(top: 6, bottom: showBottom ? 4 : 0),
+              child: content,
+            ),
             // 형광펜 오버레이 (스포일러처럼 그리기)
             Builder(
               builder: (context) {
@@ -325,8 +327,8 @@ class _ParagraphWithDropLinesState extends State<_ParagraphWithDropLines>
             if (showTop)
               const Positioned(
                 top: 0,
-                left: 0,
-                right: 0,
+                left: 20,
+                right: 20,
                 child: SizedBox(
                   height: 5,
                   child: ColoredBox(color: AppColors.primary),
@@ -335,8 +337,8 @@ class _ParagraphWithDropLinesState extends State<_ParagraphWithDropLines>
             if (showBottom)
               const Positioned(
                 bottom: 0,
-                left: 0,
-                right: 0,
+                left: 20,
+                right: 20,
                 child: SizedBox(
                   height: 5,
                   child: ColoredBox(color: AppColors.primary),

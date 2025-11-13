@@ -325,7 +325,7 @@ class _PostListState extends State<PostList> {
           ),
         SliverToBoxAdapter(
           child: Container(
-            height: 35,
+            height: 60,
             decoration: BoxDecoration(color: Colors.transparent),
           ),
         ),

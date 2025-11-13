@@ -77,9 +77,9 @@ class _SingleImageComponentState extends State<SingleImageComponent>
   Widget? _lastRenderedChild;
   GlobalKey get componentKey => widget._componentKey;
 
-  static const double marginTop = 4;
-  static const double marginBottom = 2;
-  static const double paddingWithText = 15;
+  static const double marginTop = 2.5;
+  static const double marginBottom = 2.5;
+  static const double paddingWithText = 12;
 
   late final AnimationController _controller;
   // 스포일러 해제 스캐터 이펙트
@@ -133,7 +133,10 @@ class _SingleImageComponentState extends State<SingleImageComponent>
             final editedBytes = context
                 .watch<NodeComponentService>()
                 .getEditedBytes(widget.nodeId);
-            final image = _buildImage(editedBytes);
+            final image = Padding(
+              padding: EdgeInsets.only(bottom: 2),
+              child: _buildImage(editedBytes),
+            );
 
             // 플레이스홀더/업로드 중 상태 판정: imageUrl 비었거나 로컬 경로이거나 metadata.isPlaceholder == true
             // ignore: invalid_use_of_visible_for_testing_member

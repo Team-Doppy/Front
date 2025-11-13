@@ -5,6 +5,11 @@ import '../data/models/group_member_model.dart';
 import '../data/services/group_service.dart';
 
 class GroupProvider with ChangeNotifier {
+  // 🎯 싱글톤 패턴
+  static final GroupProvider _instance = GroupProvider._internal();
+  factory GroupProvider() => _instance;
+  GroupProvider._internal();
+
   final GroupService _groupService = GroupService();
 
   // 🎯 그룹 스키마 캐시 (기본 정보 + memberCount + memberThumbnails)

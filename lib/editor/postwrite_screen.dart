@@ -9,6 +9,7 @@ import 'package:flutter/rendering.dart';
 import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 import 'package:doppy/editor/component/link_component.dart';
+import 'package:doppy/editor/component/app_image_node.dart';
 import 'package:doppy/editor/component/single_image_component.dart';
 import 'package:doppy/editor/component/row_image_component.dart';
 import 'package:doppy/editor/component/title_component.dart';
@@ -39,6 +40,7 @@ import 'package:doppy/data/services/draft_service.dart';
 import 'package:doppy/data/services/blog_service.dart';
 import 'package:doppy/image/custom_image_editor_screen.dart';
 import 'package:doppy/providers/feed_provider/my_profile_feed_provider.dart';
+import 'package:doppy/providers/theme_provider.dart';
 
 /// 글 공개 범위 옵션
 enum VisibilityOption { public, partial, private }
@@ -228,24 +230,6 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
         } catch (e) {
           print('[PostwriteScreen] 스티커 복원 실패: $e');
         }
-
-        // 썸네일 정보를 NodeComponentService에 persist
-        try {
-          final thumbnailUrl =
-              widget.exportedDataForEdit!['thumbnailImageUrl'] as String?;
-          final thumbnailId =
-              widget.exportedDataForEdit!['thumbnailImageId']?.toString();
-          if (thumbnailUrl != null && thumbnailUrl.isNotEmpty) {
-            nodeComponentService.setTempThumbnail(
-              'default',
-              url: thumbnailUrl,
-              id: thumbnailId,
-            );
-            print('[PostwriteScreen] 썸네일 복원: $thumbnailUrl (ID: $thumbnailId)');
-          }
-        } catch (e) {
-          print('[PostwriteScreen] 썸네일 복원 실패: $e');
-        }
       }
 
       // 편집 모드가 아닐 때만 커서 이동
@@ -410,15 +394,16 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
       dragService.endDrag();
       composer.clearSelection();
       nodeComponentService.clearAll();
-      // 작성 종료 시 세션 썸네일 정리 (작성 과정 동안만 유지)
-      try {
-        nodeComponentService.clearTempThumbnail('default');
-      } catch (_) {}
     } catch (_) {}
 
     try {
       stickerService.select(null);
       stickerService.removeAll();
+    } catch (_) {}
+
+    // 🎯 영상 파일 정리
+    try {
+      nodeComponentService.clearTempVideoFile('default');
     } catch (_) {}
 
     if (mounted) Navigator.of(context).pop();
@@ -544,8 +529,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
         return node is ImageNode ||
             node is ImageRowNode ||
             node is ClipNode ||
-            node is LinkNode ||
-            (node is ParagraphNode && node.metadata['mention'] == true);
+            node is LinkNode;
       }
 
       final bool isSpecialBefore = before != null && isSpecialNode(before);
@@ -558,21 +542,22 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
 
         editorService.insertEmptyParagraphAtIndex(verticalGapIndex);
 
-        // 키보드가 올라가 있으면 스크롤 위치 유지
-        if (isKeyboardVisible) {
-          WidgetsBinding.instance.addPostFrameCallback((_) {
+        // 🎯 100ms 대기 후 안정적으로 포커스/스크롤 처리
+        Future.delayed(const Duration(milliseconds: 100), () {
+          if (!mounted) return;
+
+          // 키보드가 올라가 있으면 스크롤 위치 유지
+          if (isKeyboardVisible) {
             if (scrollController.hasClients) {
               scrollController.jumpTo(currentScrollOffset);
             }
-          });
-        } else {
-          // 키보드가 내려가 있을 때만 포커스 요청
-          WidgetsBinding.instance.addPostFrameCallback((_) {
+          } else {
+            // 키보드가 내려가 있을 때만 포커스 요청
             if (!_editorFocusNode.hasFocus) {
               _editorFocusNode.requestFocus();
             }
-          });
-        }
+          }
+        });
       }
       nodeComponentService.selectNode(null);
       return;
@@ -582,6 +567,53 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     if (nodeId == null) return;
 
     final node = document.getNodeById(nodeId);
+
+    // 클릭한 노드가 마지막 노드이고, 실제 노드 영역 아래를 클릭했는지 확인
+    final lastIndex = document.nodeCount - 1;
+    final isLastNode =
+        lastIndex >= 0 && document.getNodeAt(lastIndex)?.id == nodeId;
+
+    if (isLastNode && node != null) {
+      // 실제 노드 영역 확인
+      final nodeRect = dragService.getNodeGlobalRect(nodeId);
+      if (nodeRect != null && _lastTapPosition!.dy > nodeRect.bottom + 20) {
+        // 노드 영역 아래(+20px 여유)를 클릭한 경우
+        final isSpecial =
+            node is ImageNode ||
+            node is ImageRowNode ||
+            node is LinkNode ||
+            node is ClipNode;
+
+        // 마지막 노드가 특수 노드라면 새 빈 문단 추가
+        if (isSpecial) {
+          editorService.insertEmptyParagraphAtIndex(lastIndex + 1);
+          nodeComponentService.selectNode(null);
+
+          // 🎯 새로 추가된 노드에 안정적으로 포커스 (100ms 대기)
+          Future.delayed(const Duration(milliseconds: 100), () {
+            if (!mounted) return;
+
+            final newLastIndex = document.nodeCount - 1;
+            if (newLastIndex >= 0) {
+              final newNode = document.getNodeAt(newLastIndex);
+              if (newNode != null) {
+                composer.setSelectionWithReason(
+                  DocumentSelection.collapsed(
+                    position: DocumentPosition(
+                      nodeId: newNode.id,
+                      nodePosition: const TextNodePosition(offset: 0),
+                    ),
+                  ),
+                  'user_tap_after_special_node',
+                );
+                _editorFocusNode.requestFocus();
+              }
+            }
+          });
+          return;
+        }
+      }
+    }
 
     // 2) 이미지행 내부 경계(이미지 사이) 클릭 감지 → 빈 문단 삽입
     if (node is ImageRowNode) {
@@ -613,7 +645,25 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
         (node is ParagraphNode && node.metadata['mention'] == true) ||
         node is ClipNode;
 
-    nodeComponentService.selectNode(isSpecial ? nodeId : null);
+    // 🎯 노드 선택을 둔감하게: 가장자리 영역 클릭 시 선택 안 함
+    bool shouldSelect = false;
+    if (isSpecial) {
+      final nodeRect = dragService.getNodeGlobalRect(nodeId);
+      if (nodeRect != null) {
+        const edgeThreshold = 10.0; // 🎯 가장자리 10px 영역은 선택 제외
+
+        final localY = _lastTapPosition!.dy - nodeRect.top;
+        final isInEdge =
+            localY < edgeThreshold ||
+            localY > (nodeRect.height - edgeThreshold);
+
+        shouldSelect = !isInEdge; // 가장자리가 아닐 때만 선택
+      } else {
+        shouldSelect = true; // rect를 못 가져오면 기본 동작
+      }
+    }
+
+    nodeComponentService.selectNode(shouldSelect ? nodeId : null);
   }
 
   // moved to EditorService (getNodeGlobalRect)
@@ -624,7 +674,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
   }
 
   int? _detectImageRowBoundaryGap(ImageRowNode rowNode, Offset globalPos) {
-    const double threshold = 12.0; // 경계 감지 임계
+    const double threshold = 6.0; // 🎯 경계 감지 임계 (12.0 → 6.0으로 줄임)
     final rect = dragService.getNodeGlobalRect(rowNode.id);
     if (rect == null) return null;
 
@@ -679,6 +729,14 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     }
 
     // 기타 노드(문단, 링크, 멘션, 구분선 등)
+    // 🎯 텍스트 노드는 키보드가 내려가 있을 때만 드래그 가능
+    if (node is ParagraphNode) {
+      final isKeyboardVisible = MediaQuery.of(context).viewInsets.bottom > 0;
+      if (isKeyboardVisible) {
+        return;
+      }
+    }
+
     dragService.startDrag(nodeId, context, details.globalPosition);
   }
 
@@ -755,6 +813,9 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // 🎯 EditorService에 context 설정 (노드 선택 해제용)
+    editorService.setContext(context);
+
     // 로케일 디버깅
     final currentLocale = Localizations.localeOf(context);
     print('[PostwriteScreen] 현재 로케일: ${currentLocale.languageCode}');
@@ -846,104 +907,87 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                 clipBehavior: Clip.none,
                 children: [
                   Positioned.fill(
-                    child: ValueListenableBuilder<String?>(
-                      valueListenable: dragService.draggingNodeIdNotifier,
-                      builder: (context, draggingNodeId, _) {
-                        return TweenAnimationBuilder<double>(
-                          tween: Tween<double>(
-                            begin: draggingNodeId != null ? 1.0 : 0.86,
-                            end: draggingNodeId != null ? 0.86 : 1.0,
-                          ),
-                          duration: const Duration(milliseconds: 400),
-                          curve: Curves.easeOutCubic,
-                          builder: (context, scale, child) {
-                            return Transform.scale(
-                              scale: scale,
-                              alignment: Alignment.center,
-                              child: child,
-                            );
-                          },
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Expanded(
-                                child: Theme(
-                                  data: AppTheme.lightTheme,
-                                  child: Stack(
-                                    children: [
-                                      RawScrollbar(
-                                        controller: scrollController,
-                                        thumbColor: Theme.of(context)
-                                            .colorScheme
-                                            .onSurface
-                                            .withOpacity(0.3),
-                                        thickness: 4,
-                                        radius: const Radius.circular(12),
-                                        child: SuperEditor(
-                                          gestureMode:
-                                              Platform.isIOS
-                                                  ? DocumentGestureMode.iOS
-                                                  : DocumentGestureMode.android,
-                                          editor: editor,
-                                          focusNode: _editorFocusNode,
-                                          stylesheet: _buildStylesheet(context),
-                                          selectionStyle: SelectionStyles(
-                                            selectionColor: AppColors.primary
-                                                .withValues(alpha: 0.3),
-                                            highlightEmptyTextBlocks: false,
-                                          ),
-                                          documentLayoutKey: _documentLayoutKey,
-                                          scrollController: scrollController,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
+                          child: Theme(
+                            data: AppTheme.lightTheme,
+                            child: Stack(
+                              children: [
+                                RawScrollbar(
+                                  controller: scrollController,
+                                  thumbColor: Theme.of(
+                                    context,
+                                  ).colorScheme.onSurface.withOpacity(0.3),
+                                  thickness: 4,
+                                  radius: const Radius.circular(12),
+                                  child: SuperEditor(
+                                    gestureMode:
+                                        Platform.isIOS
+                                            ? DocumentGestureMode.iOS
+                                            : DocumentGestureMode.android,
+                                    editor: editor,
+                                    focusNode: _editorFocusNode,
+                                    stylesheet: _buildStylesheet(context),
+                                    selectionStyle: SelectionStyles(
+                                      selectionColor: AppColors.primary
+                                          .withValues(alpha: 0.3),
+                                      highlightEmptyTextBlocks: false,
+                                    ),
+                                    documentLayoutKey: _documentLayoutKey,
+                                    scrollController: scrollController,
 
-                                          componentBuilders: [
-                                            // 타이틀 문단 전용 빌더(드래그 없음)
-                                            TitleParagraphComponentBuilder(
-                                              editorService: editorService,
-                                            ),
-                                            // 커스텀 이미지 컴포넌트들
-                                            SingleImageComponentBuilder(
-                                              dragService: dragService,
-                                            ),
-                                            RowImageComponentBuilder(
-                                              dragService: dragService,
-                                            ),
-                                            CustomParagraphComponentBuilder(
-                                              dragService: dragService,
-                                              editorService: editorService,
-                                            ),
+                                    componentBuilders: [
+                                      // 타이틀 문단 전용 빌더(드래그 없음)
+                                      TitleParagraphComponentBuilder(
+                                        editorService: editorService,
+                                      ),
+                                      // 커스텀 이미지 컴포넌트들
+                                      SingleImageComponentBuilder(
+                                        dragService: dragService,
+                                      ),
+                                      RowImageComponentBuilder(
+                                        dragService: dragService,
+                                      ),
+                                      CustomParagraphComponentBuilder(
+                                        dragService: dragService,
+                                        editorService: editorService,
+                                      ),
 
-                                            // 구분선 전용 컴포넌트
-                                            DividerComponentBuilder(
-                                              dragService: dragService,
-                                            ),
+                                      // 구분선 전용 컴포넌트
+                                      DividerComponentBuilder(
+                                        dragService: dragService,
+                                      ),
 
-                                            LinkComponentBuilder(
-                                              dragService: dragService,
-                                            ),
+                                      LinkComponentBuilder(
+                                        dragService: dragService,
+                                        isDarkMode:
+                                            context
+                                                .read<ThemeProvider>()
+                                                .themeMode ==
+                                            ThemeMode.dark,
+                                      ),
 
-                                            PinComponentBuilder(
-                                              dragService: dragService,
-                                              isEditing: true,
-                                            ),
+                                      PinComponentBuilder(
+                                        dragService: dragService,
+                                        isEditing: true,
+                                      ),
 
-                                            // 기본 컴포넌트들 (Paragraph 제외)
-                                            ...defaultComponentBuilders.where(
-                                              (builder) =>
-                                                  builder.runtimeType
-                                                      .toString() !=
-                                                  'ParagraphComponentBuilder',
-                                            ),
-                                          ],
-                                        ),
+                                      // 기본 컴포넌트들 (Paragraph 제외)
+                                      ...defaultComponentBuilders.where(
+                                        (builder) =>
+                                            builder.runtimeType.toString() !=
+                                            'ParagraphComponentBuilder',
                                       ),
                                     ],
                                   ),
                                 ),
-                              ),
-                            ],
+                              ],
+                            ),
                           ),
-                        );
-                      },
+                        ),
+                      ],
                     ),
                   ),
 
@@ -1072,9 +1116,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                   return const SizedBox.shrink();
                 }
 
-                return AnimatedContainer(
-                  duration: const Duration(milliseconds: 20),
-                  curve: Curves.easeInOut,
+                return Container(
                   padding: EdgeInsets.only(
                     bottom:
                         MediaQuery.of(context).viewInsets.bottom <= 30
@@ -1193,7 +1235,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     final updatedMetadata = Map<String, dynamic>.from(node.metadata);
     updatedMetadata['padding'] = nextPadding;
 
-    final newNode = ImageNode(
+    final newNode = AppImageNode(
       id: node.id,
       imageUrl: node.imageUrl,
       altText: node.altText,
@@ -1228,6 +1270,10 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     if (_isEditingImage) return;
     _isEditingImage = true;
 
+    // 🎯 이미지 편집 전 현재 상태를 히스토리에 저장
+    editorService.saveHistoryNow();
+    print('[PostwriteScreen] 📸 이미지 편집 전 히스토리 저장');
+
     try {
       FocusScope.of(context).unfocus();
 
@@ -1245,6 +1291,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
 
                   child: Center(
                     child: CircularProgressIndicator(
+                      strokeWidth: 4,
                       color: Theme.of(context).colorScheme.onSurface,
                     ),
                   ),
@@ -1322,14 +1369,18 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
       // 5. 문서에서 이미지 URL 교체
       final nodeIndex = document.getNodeIndexById(imageId);
       if (nodeIndex != -1) {
-        final newNode = ImageNode(
+        final newNode = AppImageNode(
           id: imageId,
           imageUrl: newUrl,
           altText: node.altText,
+          metadata: Map<String, dynamic>.from(node.metadata),
         );
 
         document.deleteNode(imageId);
         document.insertNodeAt(nodeIndex, newNode);
+
+        // 🎯 이미지 편집 후 히스토리 저장
+        editorService.saveHistoryNow();
       }
     } catch (e) {
       print('이미지 편집 중 오류: $e');
@@ -1476,11 +1527,9 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
       final titleHash = title.hashCode.abs();
       final draftIdByTitle = 'draft_$titleHash';
 
-      // 현재 draft ID를 sessionKey로 persist된 썸네일 및 영상 파일 가져오기
+      // 현재 draft ID를 sessionKey로 영상 파일만 가져오기
       final sessionKey = currentDraftId ?? draftIdByTitle;
-      String thumbnailUrl =
-          nodeComponentService.getTempThumbnailUrl(sessionKey) ?? '';
-      final thumbnailId = nodeComponentService.getTempThumbnailId(sessionKey);
+
       final videoFilePath = nodeComponentService.getTempVideoFilePath(
         sessionKey,
       );
@@ -1488,32 +1537,19 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
         sessionKey,
       );
 
-      // 기존 썸네일이 없으면 첫 번째 이미지를 자동으로 설정
-      if (thumbnailUrl.isEmpty) {
-        final firstImageUrl = _findFirstImageUrl();
-        if (firstImageUrl != null && firstImageUrl.isNotEmpty) {
-          nodeComponentService.setTempThumbnail(
-            sessionKey,
-            url: firstImageUrl,
-            id: null,
-          );
-          thumbnailUrl = firstImageUrl;
-          print(
-            '[PostwriteScreen] 임시저장 - 첫 번째 이미지를 썸네일로 자동 설정: $firstImageUrl',
-          );
-        }
+      // 🎯 썸네일은 항상 첫 번째 이미지를 자동으로 설정
+      String thumbnailUrl = '';
+      final firstImageUrl = _findFirstImageUrl();
+      if (firstImageUrl != null && firstImageUrl.isNotEmpty) {
+        thumbnailUrl = firstImageUrl;
       }
-
-      print('[PostwriteScreen] 임시저장 - sessionKey: $sessionKey');
-      print('[PostwriteScreen] 임시저장 - 썸네일: $thumbnailUrl (ID: $thumbnailId)');
-      print('[PostwriteScreen] 임시저장 - 영상: $videoFilePath');
-      print('[PostwriteScreen] 임시저장 - 영상 썸네일: $videoThumbnailPath');
 
       // 제목이 같으면 기존 임시저장을 덮어씀
       currentDraftId = await draftService.saveDraft(
         editorService: editorService,
         stickerService: stickerService,
         title: title,
+        summary: '', // 🎯 summary는 항상 빈 문자열 (자동 추출)
         thumbnailUrl: thumbnailUrl,
         videoFilePath: videoFilePath,
         videoThumbnailPath: videoThumbnailPath,
@@ -1550,17 +1586,6 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
         context,
         title: context.tr('wait_for_media_upload'),
         message: context.tr('media_still_uploading'),
-      );
-      return;
-    }
-
-    // 🎯 PNG 드로잉 업로드 중이면 차단
-    final uploadService = UploadService();
-    if (uploadService.hasActiveUploads(kinds: {UploadKind.editorImage})) {
-      await DialogUtils.showInfoDialog(
-        context,
-        title: '드로잉 업로드 중',
-        message: '드로잉 이미지가 아직 업로드 중입니다. 잠시만 기다려주세요.',
       );
       return;
     }

@@ -84,19 +84,29 @@ class MediaCommentService {
     return '';
   }
 
-  Future<void> deleteImageComment({required String commentId}) async {
-    print('[MediaCommentService] DELETE image comment id=$commentId');
+  Future<void> deleteImageComment({
+    required String imageId,
+    required String commentId,
+  }) async {
+    print(
+      '[MediaCommentService] DELETE image comment imageId=$imageId commentId=$commentId',
+    );
     await _dio.delete(
-      '/api/media/image/comments/$commentId',
+      '/api/media/image/$imageId/comments/$commentId',
       options: Options(receiveTimeout: const Duration(seconds: 10)),
     );
     print('[MediaCommentService] DELETE success');
   }
 
-  Future<void> deleteVideoComment({required String commentId}) async {
-    print('[MediaCommentService] DELETE video comment id=$commentId');
+  Future<void> deleteVideoComment({
+    required String videoId,
+    required String commentId,
+  }) async {
+    print(
+      '[MediaCommentService] DELETE video comment videoId=$videoId commentId=$commentId',
+    );
     await _dio.delete(
-      '/api/media/video/comments/$commentId',
+      '/api/media/video/$videoId/comments/$commentId',
       options: Options(receiveTimeout: const Duration(seconds: 10)),
     );
     print('[MediaCommentService] DELETE success');
@@ -132,34 +142,27 @@ class MediaCommentService {
     return MediaComment.fromJson(res.data as Map<String, dynamic>);
   }
 
-  Future<MediaComment> toggleImageCommentEmotion({
+  // ✅ 새로운 간단한 좋아요 API
+  Future<MediaComment> toggleImageCommentLike({
     required String imageId,
     required String commentId,
-    required String emoji,
   }) async {
-    print(
-      '[MediaCommentService] POST emotion image comment id=$commentId emoji=$emoji',
-    );
+    print('[MediaCommentService] POST like image comment id=$commentId');
     final res = await _dio.post(
-      '/api/media/image/$imageId/comments/$commentId/emotions',
-      queryParameters: {'emoji': emoji},
+      '/api/media/image/$imageId/comments/$commentId/like',
       options: Options(receiveTimeout: const Duration(seconds: 10)),
     );
     print('[MediaCommentService] <- status=${res.statusCode}');
     return MediaComment.fromJson(res.data as Map<String, dynamic>);
   }
 
-  Future<MediaComment> toggleVideoCommentEmotion({
+  Future<MediaComment> toggleVideoCommentLike({
     required String videoId,
     required String commentId,
-    required String emoji,
   }) async {
-    print(
-      '[MediaCommentService] POST emotion video comment id=$commentId emoji=$emoji',
-    );
+    print('[MediaCommentService] POST like video comment id=$commentId');
     final res = await _dio.post(
-      '/api/media/video/$videoId/comments/$commentId/emotions',
-      queryParameters: {'emoji': emoji},
+      '/api/media/video/$videoId/comments/$commentId/like',
       options: Options(receiveTimeout: const Duration(seconds: 10)),
     );
     print('[MediaCommentService] <- status=${res.statusCode}');
@@ -184,8 +187,8 @@ class MediaComment {
   final String? authorProfileImageUrl;
   final String createdAt;
   final String updatedAt;
-  final Map<String, int> emotionCounts;
-  final List<String> myEmotions;
+  final int likeCount; // ✅ 좋아요 개수
+  final bool isLiked; // ✅ 내가 좋아요 눌렀는지
 
   MediaComment({
     required this.id,
@@ -194,29 +197,11 @@ class MediaComment {
     this.authorProfileImageUrl,
     this.createdAt = '',
     this.updatedAt = '',
-    this.emotionCounts = const {},
-    this.myEmotions = const [],
+    this.likeCount = 0,
+    this.isLiked = false,
   });
 
-  // 편의를 위한 getter: 좋아요 여부
-  bool get isLiked => myEmotions.contains('❤️');
-
-  // 편의를 위한 getter: 총 좋아요 수
-  int get likeCount =>
-      emotionCounts.values.fold(0, (sum, count) => sum + count);
-
   factory MediaComment.fromJson(Map<String, dynamic> json) {
-    final emotionCountsRaw = json['emotionCounts'] as Map<String, dynamic>?;
-    final emotionCounts = <String, int>{};
-    if (emotionCountsRaw != null) {
-      emotionCountsRaw.forEach((key, value) {
-        emotionCounts[key] = value as int? ?? 0;
-      });
-    }
-
-    final myEmotionsRaw = json['myEmotions'] as List<dynamic>?;
-    final myEmotions = myEmotionsRaw?.map((e) => e.toString()).toList() ?? [];
-
     return MediaComment(
       id: json['id']?.toString() ?? '',
       text: (json['text'] ?? json['content'] ?? '').toString(),
@@ -224,8 +209,8 @@ class MediaComment {
       authorProfileImageUrl: json['authorProfileImageUrl']?.toString(),
       createdAt: json['createdAt']?.toString() ?? '',
       updatedAt: json['updatedAt']?.toString() ?? '',
-      emotionCounts: emotionCounts,
-      myEmotions: myEmotions,
+      likeCount: json['likeCount'] as int? ?? 0,
+      isLiked: json['isLiked'] as bool? ?? false,
     );
   }
 
@@ -236,8 +221,8 @@ class MediaComment {
     String? authorProfileImageUrl,
     String? createdAt,
     String? updatedAt,
-    Map<String, int>? emotionCounts,
-    List<String>? myEmotions,
+    int? likeCount,
+    bool? isLiked,
   }) {
     return MediaComment(
       id: id ?? this.id,
@@ -247,8 +232,8 @@ class MediaComment {
           authorProfileImageUrl ?? this.authorProfileImageUrl,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
-      emotionCounts: emotionCounts ?? this.emotionCounts,
-      myEmotions: myEmotions ?? this.myEmotions,
+      likeCount: likeCount ?? this.likeCount,
+      isLiked: isLiked ?? this.isLiked,
     );
   }
 }

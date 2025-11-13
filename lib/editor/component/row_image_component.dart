@@ -696,7 +696,7 @@ class _ImageRowComponentState extends State<ImageRowComponent>
                           top: 0,
                           left: 0,
                           right: 0,
-                          child: Container(height: 3, color: AppColors.primary),
+                          child: Container(height: 5, color: AppColors.primary),
                         ),
 
                       // 아래쪽 가로 라인
@@ -705,7 +705,7 @@ class _ImageRowComponentState extends State<ImageRowComponent>
                           bottom: 0,
                           left: 0,
                           right: 0,
-                          child: Container(height: 3, color: AppColors.primary),
+                          child: Container(height: 5, color: AppColors.primary),
                         ),
 
                       // 왼쪽 세로 라인 (가로배치 모드일 때)
@@ -714,7 +714,7 @@ class _ImageRowComponentState extends State<ImageRowComponent>
                           left: 0,
                           top: marginTop,
                           bottom: marginBottom,
-                          child: Container(width: 3, color: AppColors.primary),
+                          child: Container(width: 5, color: AppColors.primary),
                         ),
 
                       // 오른쪽 세로 라인 (가로배치 모드일 때)
@@ -723,7 +723,7 @@ class _ImageRowComponentState extends State<ImageRowComponent>
                           right: 0,
                           top: marginTop,
                           bottom: marginBottom,
-                          child: Container(width: 3, color: AppColors.primary),
+                          child: Container(width: 5, color: AppColors.primary),
                         ),
                     ],
                   );

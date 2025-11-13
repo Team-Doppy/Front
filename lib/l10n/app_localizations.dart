@@ -140,6 +140,7 @@ class AppLocalizations {
       'copy': '복사',
       'write_comment': '이 글에 대해 채팅하기',
       'leave_reaction': '반응 남기기...',
+      'first_comment': '첫 댓글을 남겨보세요',
       'just_now': '방금',
       'min_ago': '분 전',
       'hr_ago': '시간 전',
@@ -217,6 +218,7 @@ class AppLocalizations {
       'visibility_changed_group': '공개범위가 그룹공개로 변경되었습니다',
       'select_image': '이미지 선택',
       'select_video': 'short clip 선택',
+      'add': '추가',
       'tap_to_select_thumbnail': '눌러서 썸네일을 선택해주세요',
       'uploading_title': '업로드 중',
       'uploading_message': '아직 업로드 중입니다.\n취소하고 나가시겠어요?',
@@ -274,6 +276,7 @@ class AppLocalizations {
       'select_group_first': '그룹을 먼저 선택해주세요',
       'select_group_please': '그룹을 선택해주세요',
       'no_friends_to_add': '아직 추가할 수 있는 친구가 없어요',
+      'no_matching_members_or_groups': '일치하는 멤버나 그룹이 없어요',
       'accept_friend_request': '친구 요청을 수락할까요?',
       'members_added': '{count}명의 멤버를 추가했습니다',
       'group_creation_failed': '그룹 생성에 실패했습니다',
@@ -349,6 +352,7 @@ class AppLocalizations {
       'thumbnail_select_first': '먼저 썸네일을 선택해주세요',
       'upload_url_failed': '업로드 URL을 받지 못했습니다',
       'category_name_required': '카테고리 이름을 입력하세요.',
+      'category_required': '카테고리를 선택해주세요.',
 
       // 임시저장 관련
       'draft_save_failed': '임시저장에 실패했습니다',
@@ -515,6 +519,7 @@ class AppLocalizations {
       'copy': 'Copy',
       'write_comment': 'Chat about this post',
       'leave_reaction': 'Leave a reaction...',
+      'first_comment': 'Be the first to comment',
       'just_now': 'just now',
       'min_ago': 'min ago',
       'hr_ago': 'hr ago',
@@ -594,6 +599,7 @@ class AppLocalizations {
       'visibility_changed_group': 'Visibility changed to group',
       'select_image': 'Select Image',
       'select_video': 'Select Short Clip',
+      'add': 'Add',
       'tap_to_select_thumbnail': 'Tap to select thumbnail',
       'uploading_title': 'Uploading',
       'uploading_message':
@@ -653,6 +659,7 @@ class AppLocalizations {
       'select_group_first': 'Please select a group first',
       'select_group_please': 'Please select a group',
       'no_friends_to_add': 'No friends to add',
+      'no_matching_members_or_groups': 'No matching members or groups',
       'accept_friend_request': 'Accept friend request?',
       'members_added': '{count} member(s) added',
       'group_creation_failed': 'Failed to create group',
@@ -727,6 +734,7 @@ class AppLocalizations {
       'thumbnail_select_first': 'Please select a thumbnail first',
       'upload_url_failed': 'Failed to get upload URL',
       'category_name_required': 'Please enter a category name.',
+      'category_required': 'Please select a category.',
 
       // Draft Related
       'draft_save_failed': 'Failed to save draft',
