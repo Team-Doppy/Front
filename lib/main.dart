@@ -150,6 +150,7 @@ class _RootShellState extends State<RootShell> {
       GlobalKey<HomeScreenState>();
   final ValueNotifier<bool> _isShowingSearchResults = ValueNotifier(false);
   bool _isObscuredByOverlay = false; // 검색/글쓰기 오버레이에 가려졌는지
+  String? _searchInitialQuery; // 검색 화면 초기 검색어
 
   @override
   void initState() {
@@ -163,41 +164,16 @@ class _RootShellState extends State<RootShell> {
     super.dispose();
   }
 
-  // 검색 화면 열기
+  bool _isProcessingSearchComplete = false; // 🎯 중복 처리 방지
+
+  // 검색 화면 열기 (인덱스 기반)
   void _openSearchScreen([String? initialQuery]) {
     if (!mounted) return;
-
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder:
-            (context) => SearchScreenOverlay(
-              initialQuery: initialQuery, // 초기 검색어 전달
-              onSearchComplete: (results, query) {
-                // 검색 결과를 받아서 홈화면으로 전환하며 표시
-                Navigator.of(context).pop(); // 검색 화면 닫기
-
-                if (mounted) {
-                  // SearchProvider에 검색 결과 저장
-                  context.read<SearchProvider>().setSearchResults(
-                    results,
-                    query,
-                  );
-
-                  // 홈화면에 검색 결과 전달
-                  WidgetsBinding.instance.addPostFrameCallback((_) {
-                    final homeState = _homeScreenKey.currentState;
-                    if (homeState != null && homeState.mounted) {
-                      homeState.setSearchResults(results, query);
-                    }
-                  });
-                }
-              },
-              onClose: () {
-                Navigator.of(context).pop();
-              },
-            ),
-      ),
-    );
+    debugPrint('[Main] 검색 화면 열기 (인덱스 기반)');
+    setState(() {
+      _searchInitialQuery = initialQuery;
+      _index = 1; // 검색 탭으로 전환
+    });
   }
 
   @override
@@ -228,7 +204,10 @@ class _RootShellState extends State<RootShell> {
       if (homeState != null && homeState.isShowingSearchResults) {
         homeState.clearSearchAndReturnToHome();
       }
-      setState(() => _index = 0);
+      setState(() {
+        _index = 0;
+        _searchInitialQuery = null; // 검색어 초기화
+      });
       return;
     }
 
@@ -258,13 +237,125 @@ class _RootShellState extends State<RootShell> {
 
     setState(() {
       _index = i;
+      // 검색 탭이 아닌 다른 탭으로 이동하면 초기 검색어 초기화
+      if (i != 1) {
+        _searchInitialQuery = null;
+      }
     });
-
-    // 홈 탭 복귀 시: 기존 상태(필터/목록/스크롤)를 유지하고 추가 서버 요청을 하지 않음
 
     // 다른 탭으로 이동 시 검색 오버레이 상태 해제
     if (i != 0) {
       searchResultProvider.setSearchOverlayVisible(false);
+    }
+  }
+
+  // 현재 인덱스에 따라 화면 빌드
+  Widget _buildCurrentScreen(Widget homeScreen) {
+    switch (_index) {
+      case 0:
+        return homeScreen;
+      case 1:
+        return SearchScreenOverlay(
+          key: ValueKey(
+            'search_${_searchInitialQuery ?? 'empty'}',
+          ), // 초기 검색어 변경 시 위젯 재생성
+          initialQuery: _searchInitialQuery,
+          onSearchComplete: (results, query) {
+            if (!mounted || _isProcessingSearchComplete) {
+              debugPrint('[Main] 검색 완료 무시 (중복 또는 unmounted)');
+              return;
+            }
+
+            _isProcessingSearchComplete = true;
+            debugPrint('[Main] ========== 검색 완료 시작 ==========');
+            debugPrint('[Main] 검색 완료: ${results.length}개 결과');
+
+            // 🎯 1단계: 홈 탭으로 전환
+            if (_index != 0) {
+              setState(() {
+                _index = 0;
+                _searchInitialQuery = null;
+              });
+              debugPrint('[Main] 홈 탭으로 전환 완료');
+            }
+
+            // 🎯 2단계: SearchProvider에 검색 결과 저장
+            context.read<SearchProvider>().setSearchResults(results, query);
+            debugPrint('[Main] SearchProvider에 데이터 저장 완료');
+
+            // 🎯 3단계: 홈 화면에 데이터 전달
+            final homeState = _homeScreenKey.currentState;
+            if (homeState != null && homeState.mounted) {
+              homeState.setSearchResults(results, query);
+              debugPrint('[Main] 홈 화면에 검색 결과 전달 완료');
+            }
+
+            // 플래그 리셋
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted) {
+                _isProcessingSearchComplete = false;
+                debugPrint('[Main] ========== 검색 완료 종료 ==========');
+              }
+            });
+          },
+          onClose: () {
+            // 검색 화면 닫기 (홈으로 이동)
+            if (mounted) {
+              setState(() {
+                _index = 0;
+                _searchInitialQuery = null;
+              });
+            }
+          },
+          onTabChange: (index) {
+            debugPrint('[Main] onTabChange: $index (검색 화면에서 호출)');
+            if (!mounted) return;
+
+            // 글쓰기 탭(2)은 글쓰기 화면 열기
+            if (index == 2) {
+              debugPrint('[Main] 글쓰기 화면 열기');
+              setState(() {
+                _isObscuredByOverlay = true;
+                _index = 0; // 홈으로 먼저 이동
+                _searchInitialQuery = null;
+              });
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (mounted) {
+                  Navigator.of(context)
+                      .push(
+                        PageRouteBuilder(
+                          pageBuilder:
+                              (context, animation, secondaryAnimation) =>
+                                  PostwriteScreen(isEditingMode: false),
+                          transitionDuration: Duration.zero,
+                          reverseTransitionDuration: Duration.zero,
+                        ),
+                      )
+                      .whenComplete(() {
+                        if (mounted) {
+                          setState(() => _isObscuredByOverlay = false);
+                        }
+                      });
+                }
+              });
+              return;
+            }
+
+            // 일반 탭 전환
+            setState(() {
+              _index = index;
+              // 검색 탭이 아닌 다른 탭으로 이동하면 초기 검색어 초기화
+              if (index != 1) {
+                _searchInitialQuery = null;
+              }
+            });
+            debugPrint('[Main] 탭 전환 완료: $_index');
+          },
+        );
+      case 3:
+        return const UserProfileScreen(isFromBottomTab: true);
+      default:
+        return homeScreen;
     }
   }
 
@@ -282,16 +373,8 @@ class _RootShellState extends State<RootShell> {
     return Material(
       child: Stack(
         children: [
-          // 메인 화면들
-          IndexedStack(
-            index: _index,
-            children: [
-              homeScreen,
-              const SizedBox.shrink(), // 검색은 별도 라우트로 push
-              const SizedBox.shrink(), // 작성은 라우트로 별도 push
-              const UserProfileScreen(),
-            ],
-          ),
+          // 메인 화면들 (인덱스 기반 단순 전환)
+          _buildCurrentScreen(homeScreen),
           // 플로팅 바텀 네비게이션 바
           Positioned(
             left: 0,

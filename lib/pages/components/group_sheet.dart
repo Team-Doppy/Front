@@ -564,12 +564,57 @@ class GroupDropDown {
                               });
 
                               try {
+                                // 🎯 이미지 업로드가 진행 중이면 완료될 때까지 대기
+                                String? finalImageUrl = _selectedGroupImageUrl;
+                                if (_groupImageUploadTask != null &&
+                                    _groupImageUploadTask!.state !=
+                                        UploadState.success) {
+                                  // 업로드 완료까지 최대 30초 대기
+                                  int waitCount = 0;
+                                  while (_groupImageUploadTask != null &&
+                                      _groupImageUploadTask!.state !=
+                                          UploadState.success &&
+                                      _groupImageUploadTask!.state !=
+                                          UploadState.failed &&
+                                      waitCount < 300) {
+                                    await Future.delayed(
+                                      const Duration(milliseconds: 100),
+                                    );
+                                    waitCount++;
+                                  }
+
+                                  if (_groupImageUploadTask != null &&
+                                      _groupImageUploadTask!.state ==
+                                          UploadState.success) {
+                                    finalImageUrl = _groupImageUploadTask!.url;
+                                    print(
+                                      '✅ [GroupSheet] 이미지 업로드 완료: $finalImageUrl',
+                                    );
+                                  } else {
+                                    print('⚠️ [GroupSheet] 이미지 업로드 실패 또는 타임아웃');
+                                    finalImageUrl = null; // 업로드 실패 시 null로 설정
+                                  }
+                                }
+
+                                // 🎯 로컬 파일 경로인 경우 제외 (서버 URL만 전달)
+                                if (finalImageUrl != null &&
+                                    (finalImageUrl.startsWith('file://') ||
+                                        (!finalImageUrl.startsWith('http://') &&
+                                            !finalImageUrl.startsWith(
+                                              'https://',
+                                            )))) {
+                                  print(
+                                    '⚠️ [GroupSheet] 로컬 파일 경로는 전달하지 않음: $finalImageUrl',
+                                  );
+                                  finalImageUrl = null;
+                                }
+
                                 await onCreateGroup(
                                   groupName,
                                   groupDescription.isEmpty
                                       ? null
                                       : groupDescription, // 🎯 설명 전달
-                                  _selectedGroupImageUrl, // 🎯 이미지 URL 전달
+                                  finalImageUrl, // 🎯 서버 URL만 전달
                                 );
 
                                 setModalState(() {

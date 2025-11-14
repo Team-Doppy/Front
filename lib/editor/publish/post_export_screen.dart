@@ -6,7 +6,7 @@ import 'package:doppy/image/native_image_picker.dart';
 import 'package:doppy/image/custom_image_editor_screen.dart';
 import 'package:doppy/editor/service/node_component_service.dart';
 import 'package:doppy/editor/service/sticker_service.dart';
-import 'package:doppy/pages/screens/post_reader_screen.dart';
+import 'package:doppy/pages/components/share_post_overlay.dart';
 import 'package:doppy/providers/feed_provider/my_profile_feed_provider.dart';
 import 'package:doppy/providers/user_provider.dart';
 import 'package:doppy/theme/app_colors.dart';
@@ -44,7 +44,7 @@ class PostExportScreen extends StatefulWidget {
 }
 
 class _PostExportScreenState extends State<PostExportScreen>
-    with SingleTickerProviderStateMixin {
+    with TickerProviderStateMixin {
   String get _nsKey => widget.sessionKey ?? 'default';
 
   // 3단계 진행 상태
@@ -92,9 +92,14 @@ class _PostExportScreenState extends State<PostExportScreen>
     vsync: this,
     duration: const Duration(milliseconds: 220),
   );
+  late final Animation<double> _editCurve = CurvedAnimation(
+    parent: _controller,
+    curve: Curves.easeOutCubic,
+    reverseCurve: Curves.easeInCubic,
+  );
   late final AnimationController _intro = AnimationController(
     vsync: this,
-    duration: const Duration(milliseconds: 300),
+    duration: const Duration(milliseconds: 220),
   );
   late final Animation<double> _introCurve = CurvedAnimation(
     parent: _intro,
@@ -151,6 +156,12 @@ class _PostExportScreenState extends State<PostExportScreen>
         _titleFocusNode.hasFocus || _excerptFocusNode.hasFocus;
     if (_editMode != nowEditing) {
       setState(() => _editMode = nowEditing);
+      // 🎯 포커스 변화에 따라 애니메이션 실행
+      if (nowEditing) {
+        _controller.forward();
+      } else {
+        _controller.reverse();
+      }
     }
   }
 
@@ -498,42 +509,25 @@ class _PostExportScreenState extends State<PostExportScreen>
         print('[PostExport] 백그라운드 재로드 실패: $e');
       }
 
-      Navigator.of(context).pop();
+      // 🎯 등록 완료 애니메이션과 함께 현재 화면 닫기
+      await _closeWithAnimation();
 
-      // 업로드 성공 시 바로 글보기 화면으로 이동
-      Navigator.of(context).pushReplacement(
-        PageRouteBuilder(
-          transitionDuration: const Duration(milliseconds: 600),
-          reverseTransitionDuration: const Duration(milliseconds: 220),
-          pageBuilder:
-              (_, __, ___) => PostReaderScreen(
-                exported: uploadResult, // 서버 응답 데이터 직접 사용
-                heroTag:
-                    'uploaded-post-${DateTime.now().millisecondsSinceEpoch}',
-              ),
-          transitionsBuilder: (context, animation, secondaryAnimation, child) {
-            final curved = CurvedAnimation(
-              parent: animation,
-              curve: Curves.easeOutCubic,
-            );
-            final slide = Tween<Offset>(
-              begin: const Offset(0, 0.06),
-              end: Offset.zero,
-            ).chain(CurveTween(curve: Curves.easeOutCubic)).animate(animation);
-            final scale = Tween<double>(
-              begin: 0.98,
-              end: 1.0,
-            ).chain(CurveTween(curve: Curves.easeOutCubic)).animate(animation);
+      if (!mounted) return;
 
-            return FadeTransition(
-              opacity: curved,
-              child: SlideTransition(
-                position: slide,
-                child: ScaleTransition(scale: scale, child: child),
-              ),
-            );
-          },
-        ),
+      // 🎯 공유 오버레이를 pushReplacement로 띄우기
+      await SharePostOverlay.show(
+        context,
+        postId: uploadResult['id']?.toString() ?? '',
+        title: uploadResult['title']?.toString() ?? '',
+        summary: uploadResult['summary']?.toString() ?? '',
+        authorUsername: uploadResult['author']?.toString() ?? '',
+        authorProfileImageUrl:
+            uploadResult['authorProfileImageUrl']?.toString(),
+        thumbnailUrl: uploadResult['thumbnailImageUrl']?.toString(),
+        readTime: (uploadResult['readTime'] as int?) ?? 1,
+        isNewPost: true, // 🎯 최초 등록
+        uploadedData: uploadResult, // 🎯 전체 데이터 전달
+        useReplacement: true, // 🎯 pushReplacement 사용
       );
     } catch (e) {
       debugPrint('Upload failed: $e');
@@ -680,6 +674,9 @@ class _PostExportScreenState extends State<PostExportScreen>
   }
 
   void _openGalleryPicker() async {
+    // 🎯 포커스 해제 (제목/써머리 편집 모드 종료)
+    FocusScope.of(context).unfocus();
+
     // 이미지 또는 비디오 선택 옵션 제공
     String? mode;
     final mediaType = await showModalBottomSheet<String>(
@@ -978,18 +975,16 @@ class _PostExportScreenState extends State<PostExportScreen>
 
   /// 썸네일 편집/변경 옵션 선택
   Future<void> _editThumbnail() async {
-    if (_exportedThumbnailImageUrl.isEmpty) {
-      ErrorHandler.showInfo(context, context.tr('thumbnail_select_first'));
-      return;
-    }
+    // 🎯 포커스 해제 (제목/써머리 편집 모드 종료)
+    FocusScope.of(context).unfocus();
 
-    // 🎯 영상일 때는 바로 기존 갤러리 피커로
-    if (_localVideoFile != null) {
+    // 🎯 썸네일이 없거나 영상일 때는 바로 갤러리 피커 열기
+    if (_exportedThumbnailImageUrl.isEmpty || _localVideoFile != null) {
       _openGalleryPicker();
       return;
     }
 
-    // 🎯 이미지일 때는 편집/변경 옵션 선택
+    // 🎯 이미지일 때만 편집/변경 옵션 선택
     final action = await showModalBottomSheet<String>(
       backgroundColor: Colors.transparent,
       context: context,
@@ -1458,7 +1453,10 @@ class _PostExportScreenState extends State<PostExportScreen>
               // PostList와 동일한 카드 디자인
               // 🎯 키보드 상태에 따라 이미지 영역 전환 (AnimatedCrossFade)
               AnimatedCrossFade(
-                duration: const Duration(milliseconds: 100),
+                duration: const Duration(milliseconds: 200),
+                firstCurve: Curves.easeInExpo, // 🎯 이미지는 빠르게 사라짐
+                secondCurve: Curves.easeOut, // 🎯 텍스트는 부드럽게 나타남
+                sizeCurve: Curves.easeOut, // 🎯 크기 변화도 부드럽게
                 crossFadeState:
                     (MediaQuery.of(context).viewInsets.bottom > 0)
                         ? CrossFadeState.showSecond
@@ -1472,16 +1470,17 @@ class _PostExportScreenState extends State<PostExportScreen>
                         onTap: _openGalleryPicker,
                         onLongPress: _toggleEditMode,
                         child: AnimatedBuilder(
-                          animation: _introCurve,
+                          animation: Listenable.merge([
+                            _introCurve,
+                            _editCurve,
+                          ]),
                           builder: (context, _) {
-                            final double scale =
-                                0.85 + 0.15 * _introCurve.value;
                             final double translateY =
                                 (1 - _introCurve.value) * 10;
                             return Transform.translate(
                               offset: Offset(0, translateY),
                               child: Transform.scale(
-                                scale: scale,
+                                scale: 1,
                                 child: Container(
                                   decoration: BoxDecoration(
                                     borderRadius: BorderRadius.circular(
@@ -1627,42 +1626,49 @@ class _PostExportScreenState extends State<PostExportScreen>
                                           Positioned(
                                             right: 12,
                                             bottom: 12,
-                                            child: GestureDetector(
-                                              onTap: () {
-                                                setState(() {
-                                                  if (_videoController!
-                                                          .value
-                                                          .volume >
-                                                      0) {
-                                                    _videoController!.setVolume(
-                                                      0,
-                                                    );
-                                                  } else {
-                                                    _videoController!.setVolume(
-                                                      1,
-                                                    );
-                                                  }
-                                                });
-                                              },
-                                              child: Container(
-                                                padding: const EdgeInsets.all(
-                                                  8,
-                                                ),
-                                                decoration: BoxDecoration(
-                                                  color: Colors.black
-                                                      .withOpacity(0.5),
-                                                  shape: BoxShape.circle,
-                                                ),
-                                                child: Icon(
-                                                  _videoController!
-                                                              .value
-                                                              .volume >
-                                                          0
-                                                      ? Icons.volume_up_rounded
-                                                      : Icons
-                                                          .volume_off_rounded,
-                                                  color: Colors.white,
-                                                  size: 20,
+                                            child: AnimatedOpacity(
+                                              opacity:
+                                                  1.0 -
+                                                  (0.7 * _editCurve.value),
+                                              duration: const Duration(
+                                                milliseconds: 220,
+                                              ),
+                                              child: GestureDetector(
+                                                onTap: () {
+                                                  setState(() {
+                                                    if (_videoController!
+                                                            .value
+                                                            .volume >
+                                                        0) {
+                                                      _videoController!
+                                                          .setVolume(0);
+                                                    } else {
+                                                      _videoController!
+                                                          .setVolume(1);
+                                                    }
+                                                  });
+                                                },
+                                                child: Container(
+                                                  padding: const EdgeInsets.all(
+                                                    8,
+                                                  ),
+                                                  decoration: BoxDecoration(
+                                                    color: Colors.black
+                                                        .withOpacity(0.5),
+                                                    shape: BoxShape.circle,
+                                                  ),
+                                                  child: Icon(
+                                                    _videoController!
+                                                                .value
+                                                                .volume >
+                                                            0
+                                                        ? Icons
+                                                            .volume_up_rounded
+                                                        : Icons
+                                                            .volume_off_rounded,
+                                                    color: Colors.white,
+                                                    size: 20,
+                                                  ),
                                                 ),
                                               ),
                                             ),
@@ -1689,59 +1695,86 @@ class _PostExportScreenState extends State<PostExportScreen>
                     ),
                   ),
                 ),
-                secondChild: const SizedBox(height: 8),
+                secondChild: SizedBox(height: 8),
               ),
 
               // 하단: 고정된 텍스트 편집 영역
               SafeArea(
                 top: false,
                 child: Container(
-                  decoration: BoxDecoration(
-                    // 이미지가 없을 때만 테마 배경색 사용
-                    color: Colors.transparent,
-                  ),
+                  decoration: BoxDecoration(color: Colors.transparent),
                   child: Padding(
-                    padding: const EdgeInsets.fromLTRB(20, 30, 20, 16),
+                    padding: const EdgeInsets.fromLTRB(30, 30, 30, 16),
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       crossAxisAlignment: CrossAxisAlignment.center,
                       children: [
                         // 제목 편집
-                        GestureDetector(
-                          onTap: () {
-                            setState(() => _editMode = true);
-                            FocusScope.of(
-                              context,
-                            ).requestFocus(_titleFocusNode);
-                          },
-                          child: AbsorbPointer(
-                            absorbing: false,
-                            child: TextField(
-                              controller: _titleController,
-                              focusNode: _titleFocusNode,
-                              textAlign: TextAlign.center,
-                              style: TextStyle(
-                                color: AppColors.darkTextPrimary,
-                                fontSize: 28,
-                                fontWeight: FontWeight.bold,
-                                letterSpacing: -0.2,
-                              ),
-                              maxLines: 1,
-                              scrollPhysics:
-                                  const NeverScrollableScrollPhysics(),
-                              decoration: InputDecoration(
-                                hintText: '제목을 입력하세요',
-                                hintStyle: TextStyle(
-                                  color: Theme.of(
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          crossAxisAlignment: CrossAxisAlignment.center,
+                          children: [
+                            if (!_editMode &&
+                                MediaQuery.of(context).viewInsets.bottom == 0)
+                              SizedBox(width: 48),
+                            Expanded(
+                              child: GestureDetector(
+                                onTap: () {
+                                  setState(() => _editMode = true);
+                                  FocusScope.of(
                                     context,
-                                  ).colorScheme.onSurface.withOpacity(0.3),
+                                  ).requestFocus(_titleFocusNode);
+                                },
+                                child: AbsorbPointer(
+                                  absorbing: false,
+                                  child: TextField(
+                                    cursorColor: AppColors.darkTextPrimary,
+                                    controller: _titleController,
+                                    focusNode: _titleFocusNode,
+                                    textAlign: TextAlign.center,
+                                    style: TextStyle(
+                                      color: AppColors.darkTextPrimary,
+                                      fontSize: 28,
+                                      fontWeight: FontWeight.bold,
+                                      letterSpacing: -0.2,
+                                    ),
+                                    maxLines: 1,
+                                    scrollPhysics:
+                                        const NeverScrollableScrollPhysics(),
+                                    decoration: InputDecoration(
+                                      hintText: '제목을 입력하세요',
+                                      hintStyle: TextStyle(
+                                        color: Theme.of(context)
+                                            .colorScheme
+                                            .onSurface
+                                            .withOpacity(0.3),
+                                      ),
+                                      border: InputBorder.none,
+                                      isCollapsed: true,
+                                      contentPadding: EdgeInsets.zero,
+                                    ),
+                                  ),
                                 ),
-                                border: InputBorder.none,
-                                isCollapsed: true,
-                                contentPadding: EdgeInsets.zero,
                               ),
                             ),
-                          ),
+                            if (!_editMode &&
+                                MediaQuery.of(context).viewInsets.bottom == 0)
+                              IconButton(
+                                onPressed: () {
+                                  setState(() => _editMode = true);
+                                  FocusScope.of(
+                                    context,
+                                  ).requestFocus(_excerptFocusNode);
+                                },
+                                icon: Icon(
+                                  Icons.edit,
+                                  size: 20,
+                                  color: AppColors.darkTextPrimary.withOpacity(
+                                    0.3,
+                                  ),
+                                ),
+                              ),
+                          ],
                         ),
                         const SizedBox(height: 12),
                         // 내용 편집
@@ -1767,6 +1800,7 @@ class _PostExportScreenState extends State<PostExportScreen>
                                 height: 1.6,
                                 letterSpacing: -0.1,
                               ),
+                              cursorColor: AppColors.darkTextPrimary,
                               maxLines: 5,
                               minLines: 2,
                               keyboardType: TextInputType.multiline,
@@ -2442,23 +2476,6 @@ class _PostExportScreenState extends State<PostExportScreen>
     final String buttonText =
         isVideo ? context.tr('change_thumbnail') : context.tr('edit_thumbnail');
 
-    // 영상일 때는 회색 투명, 이미지일 때는 기존 스타일
-    final Color buttonColor;
-    final Color bgColor;
-
-    if (isVideo) {
-      // 🎯 영상: 회색 투명
-      buttonColor = Colors.white;
-      bgColor = const ui.Color.fromARGB(255, 44, 44, 44).withOpacity(0.3);
-    } else {
-      // 이미지: 기존 스타일
-      buttonColor =
-          _currentStep == 0 && _exportedThumbnailImageUrl.isEmpty
-              ? Theme.of(context).colorScheme.onSurface
-              : AppColors.darkTextPrimary;
-      bgColor = buttonColor.withOpacity(0.2);
-    }
-
     return ClipRRect(
       borderRadius: BorderRadius.circular(35),
       child: BackdropFilter(
@@ -2466,7 +2483,7 @@ class _PostExportScreenState extends State<PostExportScreen>
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
           decoration: BoxDecoration(
-            color: bgColor,
+            color: const ui.Color.fromARGB(255, 44, 44, 44).withOpacity(0.4),
             borderRadius: BorderRadius.circular(35),
           ),
           child: Row(
@@ -2474,7 +2491,7 @@ class _PostExportScreenState extends State<PostExportScreen>
               Text(
                 buttonText,
                 style: TextStyle(
-                  color: buttonColor,
+                  color: Colors.white,
                   fontSize: 14,
                   fontWeight: FontWeight.w300,
                 ),

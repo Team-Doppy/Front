@@ -65,11 +65,17 @@ class GroupService {
 
       if (response.statusCode == 200) {
         final decoded = response.data;
-        print('✅ [GroupService] 파싱된 데이터 타입: ${decoded.runtimeType}');
 
         List<Group> groups;
         if (decoded is List) {
-          groups = decoded.map<Group>((item) => Group.fromJson(item)).toList();
+          groups =
+              decoded.map<Group>((item) {
+                // 각 항목이 { "group": { ... } } 형태로 래핑되어 있을 수 있음
+                if (item is Map<String, dynamic> && item.containsKey('group')) {
+                  return Group.fromJson(item['group'] as Map<String, dynamic>);
+                }
+                return Group.fromJson(item as Map<String, dynamic>);
+              }).toList();
         } else if (decoded is Map<String, dynamic>) {
           final dynamic groupsData =
               decoded['groups'] ??
@@ -79,7 +85,16 @@ class GroupService {
               decoded['results'];
           if (groupsData is List) {
             groups =
-                groupsData.map<Group>((item) => Group.fromJson(item)).toList();
+                groupsData.map<Group>((item) {
+                  // 각 항목이 { "group": { ... } } 형태로 래핑되어 있을 수 있음
+                  if (item is Map<String, dynamic> &&
+                      item.containsKey('group')) {
+                    return Group.fromJson(
+                      item['group'] as Map<String, dynamic>,
+                    );
+                  }
+                  return Group.fromJson(item as Map<String, dynamic>);
+                }).toList();
           } else {
             print('⚠️ [GroupService] 예상치 못한 응답 구조입니다. groups 배열을 찾지 못했습니다.');
             groups = <Group>[];
@@ -368,19 +383,24 @@ class GroupService {
     }
   }
 
-  /// 3. 그룹 수정 (이름 및 설명)
+  /// 3. 그룹 수정 (이름, 설명, 이미지)
   Future<Map<String, dynamic>> updateGroup(
     int groupId,
     String name,
-    String description,
-  ) async {
+    String description, {
+    String? profileImageUrl, // 🎯 프로필 이미지 URL
+  }) async {
     try {
       print('🔍 [GroupService] 그룹 수정 시작 - 그룹ID: $groupId');
-      print('🔍 [GroupService] 새 이름: $name, 새 설명: $description');
+      print(
+        '🔍 [GroupService] 새 이름: $name, 새 설명: $description, 이미지: $profileImageUrl',
+      );
 
-      final Map<String, String> body = {
+      final Map<String, dynamic> body = {
         'name': name,
         'description': description,
+        if (profileImageUrl != null && profileImageUrl.isNotEmpty)
+          'groupImage': profileImageUrl, // 🎯 이미지 URL 포함
       };
 
       final response = await _dio.put('/api/groups/$groupId', data: body);

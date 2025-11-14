@@ -4,6 +4,7 @@ import 'package:doppy/data/models/post_data.dart';
 import 'package:doppy/data/services/video_cache_service.dart';
 import 'package:doppy/pages/components/shimmer_box.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import 'package:video_player/video_player.dart';
 import 'package:doppy/utils/format_utils.dart';
 
@@ -196,8 +197,14 @@ class _ImageViewState extends State<ImageView> {
                     right: 2,
                     child: Container(
                       padding: EdgeInsets.symmetric(
-                        horizontal: widget.post.viewCount > 9 ? 4 : 8,
-                        vertical: 4,
+                        horizontal:
+                            widget.post.accessLevel == AccessLevel.private
+                                ? 6
+                                : (widget.post.viewCount > 9 ? 4 : 8),
+                        vertical:
+                            widget.post.accessLevel == AccessLevel.private
+                                ? 6
+                                : 4,
                       ),
                       decoration: BoxDecoration(
                         color: Colors.black.withOpacity(0.6),
@@ -206,14 +213,25 @@ class _ImageViewState extends State<ImageView> {
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Text(
-                            formatCount(widget.post.viewCount),
-                            style: const TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w500,
-                              color: Colors.white,
+                          if (widget.post.accessLevel == AccessLevel.private)
+                            SvgPicture.asset(
+                              'assets/icons/lock.svg',
+                              width: 14,
+                              height: 14,
+                              colorFilter: const ColorFilter.mode(
+                                Colors.white,
+                                BlendMode.srcIn,
+                              ),
+                            )
+                          else
+                            Text(
+                              formatCount(widget.post.viewCount),
+                              style: const TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w500,
+                                color: Colors.white,
+                              ),
                             ),
-                          ),
                         ],
                       ),
                     ),

@@ -64,7 +64,7 @@ class DoppyLoadingLogo extends StatelessWidget {
                     width: (ppyTextSize ?? 36) / 2,
                     height: (ppyTextSize ?? 36) / 2,
                     child: CircularProgressIndicator(
-                      strokeWidth: spinnerStrokeWidth ?? 3,
+                      strokeWidth: spinnerStrokeWidth ?? 4.2,
                       valueColor: AlwaysStoppedAnimation<Color>(
                         color ??
                             spinnerColor ??

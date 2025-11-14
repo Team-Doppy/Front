@@ -1,4 +1,6 @@
 // lib/data/models/group_member_model.dart
+import 'package:doppy/utils/time_utils.dart';
+
 class GroupMember {
   final int id;
   final int groupId;
@@ -39,7 +41,7 @@ class GroupMember {
           (json['profileImageUrl'] ?? json['profile_image_url']) as String?,
       joinedAt:
           (createdAt is String && createdAt.isNotEmpty)
-              ? DateTime.tryParse(createdAt) ?? DateTime.now()
+              ? TimeUtils.toLocalTimeOrNull(createdAt) ?? DateTime.now()
               : DateTime.now(),
     );
   }

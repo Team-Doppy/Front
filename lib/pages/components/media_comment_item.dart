@@ -1,5 +1,6 @@
 import 'package:doppy/pages/components/common_profile_avatar.dart';
 import 'package:doppy/utils/format_utils.dart';
+import 'package:doppy/utils/time_utils.dart';
 import 'package:flutter/material.dart';
 import 'package:doppy/data/services/media_comment_service.dart';
 import 'package:doppy/l10n/app_localizations.dart';
@@ -61,7 +62,8 @@ class _MediaCommentItemState extends State<MediaCommentItem> {
 
   String _formatTime(BuildContext context, String isoString) {
     try {
-      final dateTime = DateTime.parse(isoString);
+      // UTC 시간을 로컬 시간으로 변환
+      final dateTime = TimeUtils.toLocalTime(isoString);
       final now = DateTime.now();
       final diff = now.difference(dateTime);
       final loc = AppLocalizations.of(context);

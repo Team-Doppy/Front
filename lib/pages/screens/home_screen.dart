@@ -375,6 +375,7 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
   // 검색 결과 설정 (외부에서 호출) - 현재 섹션에 설정
   void setSearchResults(List<PostData> results, String query) {
+    debugPrint('[HomeScreen] setSearchResults 시작: ${results.length}개');
     if (mounted) {
       setState(() {
         if (_currentSectionIndex == 0) {
@@ -389,6 +390,7 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           _friendsRefreshCount++; // 강제 새로고침
           _friendsIsLoading = false;
           _friendsHasMoreData = false;
+          debugPrint('[HomeScreen] 친구글 섹션 업데이트 완료');
         } else {
           // 검색 전 데이터 백업 (첫 검색 시에만)
           if (!_isShowingSearchResults) {
@@ -401,6 +403,7 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           _allRefreshCount++; // 강제 새로고침
           _allIsLoading = false;
           _allHasMoreData = false;
+          debugPrint('[HomeScreen] 전체글 섹션 업데이트 완료');
         }
         _isShowingSearchResults = true;
         _searchQuery = query;
@@ -679,10 +682,19 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
     // 새로고침 중이고 이전 배경 이미지가 있으면 그것을 사용
     if (currentPosts.isEmpty && _previousBackgroundImageUrl != null) {
+      // 🎯 비디오 URL 체크
+      final isPreviousVideoUrl =
+          _previousBackgroundImageUrl!.toLowerCase().endsWith('.mp4') ||
+          _previousBackgroundImageUrl!.toLowerCase().endsWith('.mov') ||
+          _previousBackgroundImageUrl!.toLowerCase().endsWith('.avi') ||
+          _previousBackgroundImageUrl!.toLowerCase().endsWith('.webm') ||
+          _previousBackgroundImageUrl!.contains('/videos/');
+
       return Positioned.fill(
         child: Stack(
           children: [
-            Theme.of(context).brightness == Brightness.dark
+            Theme.of(context).brightness == Brightness.dark &&
+                    !isPreviousVideoUrl
                 ? Positioned.fill(
                   child: CachedNetworkImage(
                     imageUrl: _previousBackgroundImageUrl!,
@@ -737,12 +749,20 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
     final bool isNetwork = imageUrl.startsWith('http');
 
+    // 🎯 비디오 URL 체크
+    final isVideoUrl =
+        imageUrl.toLowerCase().endsWith('.mp4') ||
+        imageUrl.toLowerCase().endsWith('.mov') ||
+        imageUrl.toLowerCase().endsWith('.avi') ||
+        imageUrl.toLowerCase().endsWith('.webm') ||
+        imageUrl.contains('/videos/');
+
     return Positioned.fill(
       child: Stack(
         children: [
           Positioned.fill(
             child:
-                isNetwork
+                (isNetwork && !isVideoUrl)
                     ? CachedNetworkImage(
                       imageUrl: imageUrl,
                       fit: BoxFit.cover,
@@ -769,7 +789,7 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                         colors: [
                           Theme.of(
                             context,
-                          ).colorScheme.background.withOpacity(0.85),
+                          ).colorScheme.background.withOpacity(0.65),
                           Theme.of(
                             context,
                           ).colorScheme.background.withOpacity(0.75),

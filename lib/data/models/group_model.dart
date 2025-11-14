@@ -3,6 +3,7 @@ import 'dart:ui';
 
 import 'user_model.dart'; // User 모델 사용
 import 'group_member_model.dart';
+import 'package:doppy/utils/time_utils.dart';
 
 /// 그룹 컬러 파레트
 class GroupColorPalette {
@@ -33,6 +34,7 @@ class Group {
   final String? profileImageUrl; // 그룹 프로필 이미지
   final int? memberCount; // 🎯 멤버 수
   final List<String>? memberThumbnails; // 🎯 멤버 썸네일 URL 리스트
+  final bool? isSystem; // 🎯 시스템 그룹 여부 (전체 친구 등)
 
   Group({
     required this.id,
@@ -45,6 +47,7 @@ class Group {
     this.profileImageUrl,
     this.memberCount,
     this.memberThumbnails,
+    this.isSystem,
   });
 
   factory Group.fromJson(Map<String, dynamic> json) {
@@ -56,6 +59,14 @@ class Group {
                 .toList()
             : const <GroupMember>[];
 
+    // 🎯 이미지 URL 파싱 로그
+    final profileImageUrl =
+        (json['profileImageUrl'] ??
+                json['profile_image_url'] ??
+                json['groupImage'] ??
+                json['group_image'])
+            ?.toString();
+
     return Group(
       id: (json['id'] as num?)?.toInt() ?? 0,
       name: (json['name'] ?? '').toString(),
@@ -66,21 +77,17 @@ class Group {
         alias: (json['ownerId'] ?? json['owner_id'] ?? '').toString(),
       ),
       createdAt:
-          DateTime.tryParse((json['createdAt'] ?? '').toString()) ??
+          TimeUtils.toLocalTimeOrNull((json['createdAt'] ?? '').toString()) ??
           DateTime.fromMillisecondsSinceEpoch(0),
       members: parsedMembers,
-      profileImageUrl:
-          (json['profileImageUrl'] ??
-                  json['profile_image_url'] ??
-                  json['groupImage'] ??
-                  json['group_image'])
-              ?.toString(),
+      profileImageUrl: profileImageUrl,
       memberCount: (json['memberCount'] as num?)?.toInt(),
       memberThumbnails:
           (json['memberThumbnails'] as List?)
               ?.map((e) => e?.toString() ?? '')
               .where((url) => url.isNotEmpty)
               .toList(),
+      isSystem: json['isSystem'] as bool? ?? false,
     );
   }
 
@@ -96,6 +103,7 @@ class Group {
     String? profileImageUrl,
     int? memberCount,
     List<String>? memberThumbnails,
+    bool? isSystem,
   }) {
     return Group(
       id: id ?? this.id,
@@ -108,6 +116,7 @@ class Group {
       profileImageUrl: profileImageUrl ?? this.profileImageUrl,
       memberCount: memberCount ?? this.memberCount,
       memberThumbnails: memberThumbnails ?? this.memberThumbnails,
+      isSystem: isSystem ?? this.isSystem,
     );
   }
 }

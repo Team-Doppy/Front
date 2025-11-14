@@ -5,6 +5,7 @@ import 'package:doppy/pages/components/common_profile_avatar.dart';
 import 'package:flutter/material.dart';
 import 'package:doppy/theme/app_colors.dart';
 import 'package:doppy/data/services/search_service.dart';
+import 'package:doppy/utils/time_utils.dart';
 
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -173,7 +174,7 @@ class _MentionHistoryEntry {
       username: json['username'] ?? '',
       alias: json['alias'],
       profileImageUrl: json['profileImageUrl'],
-      timestamp: DateTime.parse(
+      timestamp: TimeUtils.toLocalTime(
         json['timestamp'] ?? DateTime.now().toIso8601String(),
       ),
     );

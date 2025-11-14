@@ -1,7 +1,7 @@
 import 'dart:io';
 import 'package:doppy/editor/editor_appbar.dart';
 import 'package:doppy/editor/component/clip_component.dart'
-    show ClipNode, videoPlayerControllers, PinComponentBuilder;
+    show ClipNode, videoPlayerControllers, ClipComponentBuilder;
 
 import 'package:doppy/editor/style/selected_toolbar.dart';
 import 'package:doppy/utils/error_handler.dart';
@@ -946,9 +946,19 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                                       // 커스텀 이미지 컴포넌트들
                                       SingleImageComponentBuilder(
                                         dragService: dragService,
+                                        isDarkMode:
+                                            context
+                                                .read<ThemeProvider>()
+                                                .themeMode ==
+                                            ThemeMode.dark,
                                       ),
                                       RowImageComponentBuilder(
                                         dragService: dragService,
+                                        isDarkMode:
+                                            context
+                                                .read<ThemeProvider>()
+                                                .themeMode ==
+                                            ThemeMode.dark,
                                       ),
                                       CustomParagraphComponentBuilder(
                                         dragService: dragService,
@@ -969,9 +979,14 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                                             ThemeMode.dark,
                                       ),
 
-                                      PinComponentBuilder(
+                                      ClipComponentBuilder(
                                         dragService: dragService,
                                         isEditing: true,
+                                        isDarkMode:
+                                            context
+                                                .read<ThemeProvider>()
+                                                .themeMode ==
+                                            ThemeMode.dark,
                                       ),
 
                                       // 기본 컴포넌트들 (Paragraph 제외)

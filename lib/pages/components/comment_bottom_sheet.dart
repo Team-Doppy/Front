@@ -6,6 +6,7 @@ import 'package:doppy/data/services/comment_service.dart';
 import 'package:doppy/providers/user_provider.dart';
 import 'package:doppy/pages/components/comment_item.dart';
 import 'package:doppy/l10n/app_localizations.dart';
+import 'package:doppy/utils/time_utils.dart';
 
 class CommentBottomSheet extends StatefulWidget {
   const CommentBottomSheet({
@@ -180,7 +181,7 @@ class _CommentBottomSheetState extends State<CommentBottomSheet>
 
         final now = DateTime.now();
         final commentAge = now.difference(
-          DateTime.parse(latestComment.createdAt),
+          TimeUtils.toLocalTime(latestComment.createdAt),
         );
 
         // 3초 이내에 생성된 댓글만 "새 댓글"로 간주 (로드모어는 오래된 댓글)

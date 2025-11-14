@@ -6,7 +6,6 @@ import 'package:doppy/editor/component/app_image_node.dart';
 import 'package:doppy/editor/component/single_image_component.dart';
 import 'package:doppy/l10n/app_localizations.dart';
 import 'package:doppy/pages/components/post_reader_header.dart';
-import 'package:doppy/pages/components/share_post_overlay.dart';
 import 'package:doppy/pages/screens/user_profile_screen.dart';
 import 'package:doppy/utils/error_handler.dart';
 import 'package:doppy/utils/format_utils.dart';
@@ -25,19 +24,22 @@ import 'package:doppy/data/models/user_model.dart';
 import 'package:doppy/data/services/comment_service.dart';
 import 'package:doppy/data/services/blog_service.dart';
 import 'package:doppy/data/services/like_service.dart';
+import 'package:doppy/pages/components/access_level_sheet.dart';
 import 'package:doppy/pages/components/comment_bottom_sheet.dart';
 import 'package:doppy/pages/components/comment_preview_section.dart';
+import 'package:doppy/pages/components/share_post_overlay.dart';
 import 'package:doppy/pages/components/doppy_loading_logo.dart';
 import 'package:doppy/pages/components/fullscreen_image_viewer.dart';
 import 'package:doppy/utils/dialog_utils.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:doppy/providers/feed_provider/my_profile_feed_provider.dart';
 
 // 읽기 전용에서는 에디터 전용 컴포넌트를 사용하지 않음
 import 'package:doppy/editor/component/link_component.dart';
 import 'package:doppy/editor/component/divider_component.dart';
 import 'package:doppy/editor/component/paragraph_component.dart';
 import 'package:doppy/editor/component/clip_component.dart'
-    show ClipNode, videoPlayerControllers, PinComponentBuilder;
+    show ClipNode, videoPlayerControllers, ClipComponentBuilder;
 import 'package:doppy/editor/service/editor_service.dart';
 import 'package:doppy/editor/service/drag_service.dart';
 import 'package:doppy/editor/service/post_reader_service.dart';
@@ -46,9 +48,15 @@ import 'package:doppy/editor/service/node_component_service.dart';
 
 /// 읽기 전용: 작성 화면에서 Export된 Map을 받아 그대로 복원하여 보여준다.
 class PostReaderScreen extends StatefulWidget {
-  const PostReaderScreen({super.key, required this.exported, this.heroTag});
+  const PostReaderScreen({
+    super.key,
+    required this.exported,
+    this.heroTag,
+    this.fromProfile = false, // 프로필에서 들어왔는지 여부
+  });
   final Map<String, dynamic> exported;
   final String? heroTag; // 홈 썸네일과 자연스러운 연결(Hero)
+  final bool fromProfile; // 프로필에서 들어왔는지 여부
 
   @override
   State<PostReaderScreen> createState() => _PostReaderScreenState();
@@ -531,7 +539,7 @@ class _PostReaderScreenState extends State<PostReaderScreen>
     final bool? shouldDelete = await DialogUtils.showConfirmDialog(
       context,
       title: '게시물을 삭제하시겠습니까?',
-      message: '30일 이후 자동 영구 삭제됩니다.\n삭제된 게시물의 조회수, 댓글, 좋아요 등의 데이터는 복구할 수 없습니다.',
+      message: '즉시 영구 삭제됩니다.\n삭제된 게시물의 조회수, 댓글, 좋아요 등의 데이터는 복구할 수 없습니다.',
       confirmText: '삭제',
       cancelText: '취소',
       isDestructive: true,
@@ -551,6 +559,164 @@ class _PostReaderScreenState extends State<PostReaderScreen>
         ErrorHandler.showError(context, context.tr('post_delete_failed'));
       }
     }
+  }
+
+  /// 공개범위에 따라 아이콘 빌드 (PRIVATE이면 자물쇠, 그 외에는 공유 아이콘)
+  Widget _buildAccessLevelIcon(BuildContext context) {
+    final accessLevelRaw = widget.exported['accessLevel'];
+    String accessLevelStr = 'PUBLIC';
+    if (accessLevelRaw != null) {
+      final levelStr = accessLevelRaw.toString().toUpperCase();
+      if (levelStr == 'PRIVATE' ||
+          levelStr == 'PUBLIC' ||
+          levelStr == 'FRIENDS' ||
+          levelStr == 'GROUPS') {
+        accessLevelStr = levelStr;
+      }
+    }
+
+    final isPrivate = accessLevelStr == 'PRIVATE';
+    final iconColor = Theme.of(context).colorScheme.onSurface.withOpacity(0.7);
+
+    if (isPrivate) {
+      // PRIVATE이면 자물쇠 아이콘
+      return SvgPicture.asset(
+        'assets/icons/lock.svg',
+        width: 24,
+        height: 24,
+        color: iconColor,
+      );
+    } else {
+      // 그 외에는 공유 아이콘
+      return Icon(Icons.share, size: 24, color: iconColor);
+    }
+  }
+
+  /// 공개범위에 따라 공유 오버레이 또는 공개범위 변경 바텀시트 표시
+  void _handleAccessLevelOrShare() {
+    final accessLevelRaw = widget.exported['accessLevel'];
+    String accessLevelStr = 'PUBLIC';
+    if (accessLevelRaw != null) {
+      final levelStr = accessLevelRaw.toString().toUpperCase();
+      if (levelStr == 'PRIVATE' ||
+          levelStr == 'PUBLIC' ||
+          levelStr == 'FRIENDS' ||
+          levelStr == 'GROUPS') {
+        accessLevelStr = levelStr;
+      }
+    }
+
+    final isPrivate = accessLevelStr == 'PRIVATE';
+
+    if (isPrivate) {
+      // PRIVATE이면 공개범위 변경 바텀시트
+      _showAccessLevelBottomSheet();
+    } else {
+      // 그 외에는 공유 오버레이
+      _showShareOverlay();
+    }
+  }
+
+  /// 공유 오버레이 표시
+  void _showShareOverlay() {
+    final postId = widget.exported['id']?.toString() ?? '';
+    final title = widget.exported['title']?.toString() ?? '';
+    final summary = widget.exported['summary']?.toString() ?? '';
+    final authorUsername = widget.exported['author']?.toString() ?? '';
+    final authorProfileImageUrl =
+        widget.exported['authorProfileImageUrl']?.toString();
+    final thumbnailUrl = widget.exported['thumbnailImageUrl']?.toString();
+    final readTime = (widget.exported['readTime'] as int?) ?? 1;
+
+    SharePostOverlay.show(
+      context,
+      postId: postId,
+      title: title,
+      summary: summary,
+      authorUsername: authorUsername,
+      authorProfileImageUrl: authorProfileImageUrl,
+      thumbnailUrl: thumbnailUrl,
+      readTime: readTime,
+      isNewPost: false,
+      useReplacement: false,
+    );
+  }
+
+  void _showAccessLevelBottomSheet() {
+    final postId = widget.exported['id']?.toString();
+    if (postId == null || postId.isEmpty) {
+      return;
+    }
+
+    // 현재 accessLevel 및 sharedGroupIds 확인
+    final accessLevelRaw = widget.exported['accessLevel'];
+    String currentAccessLevelStr = 'PUBLIC';
+    if (accessLevelRaw != null) {
+      final accessLevelStr = accessLevelRaw.toString().toUpperCase();
+      // 유효한 값인지 확인
+      if (accessLevelStr == 'PRIVATE' ||
+          accessLevelStr == 'PUBLIC' ||
+          accessLevelStr == 'FRIENDS' ||
+          accessLevelStr == 'GROUPS') {
+        currentAccessLevelStr = accessLevelStr;
+      }
+    }
+
+    final currentSharedGroupIds =
+        widget.exported['sharedGroupIds'] != null
+            ? (widget.exported['sharedGroupIds'] as List)
+                .map((e) => (e is int) ? e : int.tryParse(e.toString()))
+                .where((id) => id != null)
+                .cast<int>()
+                .toList()
+            : null;
+
+    print(
+      '[PostReaderScreen] accessLevelRaw: $accessLevelRaw, currentAccessLevelStr: $currentAccessLevelStr',
+    );
+
+    AccessLevelSheet.show(
+      context,
+      postId: postId,
+      currentAccessLevel: currentAccessLevelStr,
+      currentSharedGroupIds: currentSharedGroupIds,
+      onChanged: (String accessLevel, List<int>? sharedGroupIds) async {
+        // exported 데이터 업데이트
+        widget.exported['accessLevel'] = accessLevel;
+        if (sharedGroupIds != null) {
+          widget.exported['sharedGroupIds'] = sharedGroupIds;
+        } else {
+          widget.exported.remove('sharedGroupIds');
+        }
+        if (_currentExportedData != null) {
+          _currentExportedData!['accessLevel'] = accessLevel;
+          if (sharedGroupIds != null) {
+            _currentExportedData!['sharedGroupIds'] = sharedGroupIds;
+          } else {
+            _currentExportedData!.remove('sharedGroupIds');
+          }
+        }
+
+        if (mounted) {
+          setState(() {}); // UI 업데이트
+        }
+
+        // 프로필에서 들어왔다면 피드 새로고침
+        if (widget.fromProfile) {
+          // 비디오 컨트롤러 정리가 완전히 완료될 때까지 약간 지연
+          Future.delayed(const Duration(milliseconds: 300), () {
+            try {
+              final feed = MyProfileFeedProvider(); // 싱글톤 직접 접근
+              feed.invalidateCache();
+              feed.refresh().catchError((_) {});
+              print('[PostReaderScreen] 프로필 피드 새로고침 완료');
+            } catch (e) {
+              print('[PostReaderScreen] 프로필 피드 새로고침 실패: $e');
+            }
+          });
+        }
+      },
+    );
   }
 
   void _showCommentBottomSheet() {
@@ -830,6 +996,7 @@ class _PostReaderScreenState extends State<PostReaderScreen>
           _closeCommentsOverlay();
           return false;
         }
+
         return true;
       },
       child: Scaffold(
@@ -1082,7 +1249,7 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                                     ThemeMode.dark,
                               ),
                               DividerComponentBuilder(),
-                              PinComponentBuilder(dragService: _dragService),
+                              ClipComponentBuilder(dragService: _dragService),
                               CustomParagraphComponentBuilder(
                                 dragService: _dragService,
                                 editorService: _editorService,
@@ -1371,6 +1538,15 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                       final commentCount =
                           _commentService.getTotalCommentCount();
 
+                      // isMyPost 확인
+                      final currentUser =
+                          context.read<UserProvider>().currentUser;
+                      final String postAuthor =
+                          (widget.exported['author'] ?? '').toString();
+                      final bool isMyPost =
+                          currentUser != null &&
+                          currentUser.username == postAuthor;
+
                       return Container(
                         height: 74,
                         decoration: BoxDecoration(
@@ -1396,43 +1572,64 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                             ),
                             child: Row(
                               children: [
+                                // 공유 아이콘 또는 자물쇠 아이콘
                                 GestureDetector(
-                                  onTap: () {
-                                    SharePostOverlay.show(
-                                      context,
-                                      postId:
-                                          widget.exported['id']?.toString() ??
-                                          '',
-                                      title: widget.exported['title'] ?? '',
-                                      summary:
-                                          (widget.exported['summary'] ??
-                                                  widget.exported['excerpt'] ??
-                                                  '')
-                                              as String, // 🎯 summary 우선, excerpt 폴백
-                                      authorUsername:
-                                          widget.exported['author'] ?? '',
-                                      authorProfileImageUrl:
-                                          widget.exported['authorProfileImageUrl']
-                                              as String?, // 🎯 프로필 이미지
-                                      thumbnailUrl:
-                                          widget.exported['thumbnailImageUrl']
-                                              as String?, // 🎯 썸네일
-                                      readTime:
-                                          widget.exported['readTime'] ?? 0,
-                                    );
-                                  },
+                                  onTap:
+                                      isMyPost
+                                          ? _handleAccessLevelOrShare
+                                          : null,
                                   child: Padding(
                                     padding: const EdgeInsets.only(left: 8.0),
-                                    child: SvgPicture.asset(
-                                      'assets/icons/share.svg',
-                                      width: 24,
-                                      height: 24,
-                                      color: Theme.of(
-                                        context,
-                                      ).colorScheme.onSurface.withOpacity(0.7),
-                                    ),
+                                    child: _buildAccessLevelIcon(context),
                                   ),
                                 ),
+
+                                // 내 포스트이고 나만보기가 아닌 경우 lock_open.svg 추가
+                                if (isMyPost) ...[
+                                  Builder(
+                                    builder: (context) {
+                                      final accessLevelRaw =
+                                          widget.exported['accessLevel'];
+                                      String accessLevelStr = 'PUBLIC';
+                                      if (accessLevelRaw != null) {
+                                        final levelStr =
+                                            accessLevelRaw
+                                                .toString()
+                                                .toUpperCase();
+                                        if (levelStr == 'PRIVATE' ||
+                                            levelStr == 'PUBLIC' ||
+                                            levelStr == 'FRIENDS' ||
+                                            levelStr == 'GROUPS') {
+                                          accessLevelStr = levelStr;
+                                        }
+                                      }
+                                      final isPrivate =
+                                          accessLevelStr == 'PRIVATE';
+
+                                      // 나만보기가 아닌 경우에만 lock_open.svg 표시
+                                      if (!isPrivate) {
+                                        return GestureDetector(
+                                          onTap: _showAccessLevelBottomSheet,
+                                          child: Padding(
+                                            padding: const EdgeInsets.only(
+                                              left: 20.0,
+                                            ),
+                                            child: SvgPicture.asset(
+                                              'assets/icons/lock_open.svg',
+                                              width: 23,
+                                              height: 23,
+                                              color: Theme.of(context)
+                                                  .colorScheme
+                                                  .onSurface
+                                                  .withOpacity(0.7),
+                                            ),
+                                          ),
+                                        );
+                                      }
+                                      return const SizedBox.shrink();
+                                    },
+                                  ),
+                                ],
 
                                 const Spacer(),
                                 // 우측: 좋아요 + 댓글

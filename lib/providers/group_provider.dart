@@ -94,11 +94,20 @@ class GroupProvider with ChangeNotifier {
     }
   }
 
-  /// ✏️ 그룹 수정 → 캐시 무효화 및 재조회
-  Future<bool> updateGroup(int groupId, String name, String description) async {
+  Future<bool> updateGroup(
+    int groupId,
+    String name,
+    String description, {
+    String? profileImageUrl, // 🎯 프로필 이미지 URL
+  }) async {
     try {
       print('🔄 [GroupProvider] 그룹 수정 시작: $groupId');
-      await _groupService.updateGroup(groupId, name, description);
+      await _groupService.updateGroup(
+        groupId,
+        name,
+        description,
+        profileImageUrl: profileImageUrl, // 🎯 이미지 URL 전달
+      );
 
       // 🎯 캐시 무효화 및 재조회
       await _invalidateAndRefreshGroups();

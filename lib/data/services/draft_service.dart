@@ -4,6 +4,7 @@ import 'package:doppy/editor/service/editor_service.dart';
 import 'package:doppy/editor/service/sticker_service.dart';
 import 'package:doppy/editor/service/post_reader_service.dart';
 import 'package:doppy/editor/publish/post_exporter.dart';
+import 'package:doppy/utils/time_utils.dart';
 import 'package:super_editor/super_editor.dart';
 
 /// 임시저장 데이터 모델
@@ -61,10 +62,10 @@ class DraftData {
       videoThumbnailPath: json['videoThumbnailPath'] as String?,
       visibility: json['visibility'] ?? 'public',
       selectedGroupIds: List<int>.from(json['selectedGroupIds'] ?? []),
-      createdAt: DateTime.parse(
+      createdAt: TimeUtils.toLocalTime(
         json['createdAt'] ?? DateTime.now().toIso8601String(),
       ),
-      updatedAt: DateTime.parse(
+      updatedAt: TimeUtils.toLocalTime(
         json['updatedAt'] ?? DateTime.now().toIso8601String(),
       ),
     );

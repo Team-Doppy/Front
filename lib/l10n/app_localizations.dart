@@ -124,6 +124,7 @@ class AppLocalizations {
       'searching': '검색 중...',
       'load_more': '더 보기',
       'create_new_category': '새 카테고리 만들기',
+      'new_category_name': '새 카테고리 이름',
 
       // 포스트
       'post': '포스트',
@@ -141,6 +142,7 @@ class AppLocalizations {
       'write_comment': '이 글에 대해 채팅하기',
       'leave_reaction': '반응 남기기...',
       'first_comment': '첫 댓글을 남겨보세요',
+      'view_post': '글보러가기',
       'just_now': '방금',
       'min_ago': '분 전',
       'hr_ago': '시간 전',
@@ -365,6 +367,14 @@ class AppLocalizations {
 
       // 공개범위 변경
       'already_public': '이미 전체공개예요',
+      'change_access_level': '공개범위 변경하기',
+      'public_access': '전체 공개',
+      'friends_access': '친구 공개',
+      'private_access': '나만보기',
+      'group_access': '그룹 공개',
+      'access_level_changed': '공개범위가 변경되었습니다.',
+      'access_level_change_failed': '공개범위 변경에 실패했습니다: {error}',
+      'invalid_post_id': '유효하지 않은 포스트 ID입니다.',
 
       // 기타
       'some_features_limited': '일부 기능이 제한될 수 있어요',
@@ -503,6 +513,7 @@ class AppLocalizations {
       'searching': 'Searching...',
       'load_more': 'Load More',
       'create_new_category': 'Create New Category',
+      'new_category_name': 'New Category Name',
 
       // Post
       'post': 'Post',
@@ -520,6 +531,7 @@ class AppLocalizations {
       'write_comment': 'Chat about this post',
       'leave_reaction': 'Leave a reaction...',
       'first_comment': 'Be the first to comment',
+      'view_post': 'View Post',
       'just_now': 'just now',
       'min_ago': 'min ago',
       'hr_ago': 'hr ago',
@@ -747,6 +759,14 @@ class AppLocalizations {
 
       // Visibility Changes
       'already_public': 'Already public',
+      'change_access_level': 'Change Access Level',
+      'public_access': 'Public',
+      'friends_access': 'Friends Only',
+      'private_access': 'Private',
+      'group_access': 'Group',
+      'access_level_changed': 'Access level has been changed.',
+      'access_level_change_failed': 'Failed to change access level: {error}',
+      'invalid_post_id': 'Invalid post ID.',
 
       // Others
       'some_features_limited': 'Some features may be limited',

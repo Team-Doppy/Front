@@ -1213,8 +1213,7 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer>
                         _visibleHeight > 100
                             ? Container(
                               decoration: BoxDecoration(
-                                color: Theme.of(context).colorScheme.surface
-                                    .withOpacity(p), // 🎯 p값에 따라 불투명도 변화
+                                color: Theme.of(context).colorScheme.surface,
                                 borderRadius: BorderRadius.only(
                                   topLeft: Radius.circular(30),
                                   topRight: Radius.circular(30),
@@ -1431,7 +1430,7 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer>
                                             ),
                                   ),
                                   // 댓글 입력창 (p값이 0.3 이상일 때만 표시 - 안정적)
-                                  if (p >= 0.3)
+                                  if (p >= 0.95)
                                     Container(
                                       padding: const EdgeInsets.symmetric(
                                         horizontal: 16,

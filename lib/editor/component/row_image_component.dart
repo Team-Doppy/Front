@@ -145,10 +145,15 @@ class ImageRowNode extends BlockNode {
 }
 
 class RowImageComponentBuilder implements ComponentBuilder {
-  const RowImageComponentBuilder({this.dragService, this.isEditing = true});
+  const RowImageComponentBuilder({
+    this.dragService,
+    this.isEditing = true,
+    this.isDarkMode = false,
+  });
 
   final dynamic dragService; // DragService 타입을 나중에 import해서 수정
   final bool isEditing;
+  final bool isDarkMode;
 
   @override
   Widget? createComponent(
@@ -160,6 +165,7 @@ class RowImageComponentBuilder implements ComponentBuilder {
         nodeId: componentViewModel.nodeId,
         imageUrls: componentViewModel.imageUrls,
         spacing: componentViewModel.spacing,
+        isDarkMode: isDarkMode,
         componentKey: componentContext.componentKey, // ← 매우 중요
         dragService: dragService,
         isEditing: isEditing,
@@ -193,6 +199,7 @@ class ImageRowComponent extends StatefulWidget {
     required GlobalKey componentKey,
     this.dragService,
     this.isEditing = true,
+    this.isDarkMode = false,
     Key? key,
   }) : _componentKey = componentKey,
        super(key: componentKey);
@@ -202,6 +209,7 @@ class ImageRowComponent extends StatefulWidget {
   final double spacing;
   final dynamic dragService; // DragService 타입을 나중에 import해서 수정
   final bool isEditing;
+  final bool isDarkMode;
 
   final GlobalKey _componentKey;
 
@@ -507,6 +515,7 @@ class _ImageRowComponentState extends State<ImageRowComponent>
                                             return ShimmerBox(
                                               width: double.infinity,
                                               height: _unifiedHeight ?? 150,
+                                              isDarkMode: widget.isDarkMode,
                                             );
                                           },
                                           errorBuilder: (

@@ -1,4 +1,5 @@
 import 'package:doppy/data/models/post_data.dart';
+import 'package:doppy/pages/components/shimmer_box.dart';
 import 'package:doppy/providers/feed_provider/feed_ui_service.dart';
 import 'package:doppy/pages/components/vertical_category_section.dart';
 import 'package:doppy/pages/components/grid_category_section.dart';
@@ -420,37 +421,78 @@ class Feed {
     if (isCardView) {
       // CardView 모드 shimmer
       return SliverPadding(
-        padding: const EdgeInsets.symmetric(horizontal: 12.0),
+        padding: const EdgeInsets.symmetric(horizontal: 1.0),
         sliver: SliverList(
           delegate: SliverChildBuilderDelegate(
             (context, index) {
+              if (index == 0) {
+                // 카테고리 타이틀 shimmer
+                return Padding(
+                  padding: const EdgeInsets.only(
+                    bottom: 12.0,
+                    top: 16.0,
+                    left: 8.0,
+                    right: 200.0,
+                  ),
+                  child: ShimmerBox(
+                    width: 200,
+                    height: 24,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                );
+              }
+              // 카드 shimmer (실제 간격과 동일하게 2.0)
               return Padding(
-                padding: const EdgeInsets.only(bottom: 12.0),
+                padding: const EdgeInsets.only(bottom: 2.0),
                 child: CardViewShimmer(),
               );
             },
-            childCount: 5, // 5개의 shimmer 카드 표시
+            childCount: 6, // 타이틀 1개 + 카드 5개
           ),
         ),
       );
     } else {
       // ImageView (그리드) 모드 shimmer
-      return SliverPadding(
-        padding: const EdgeInsets.all(4.0),
-        sliver: SliverGrid(
-          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: 3,
-            crossAxisSpacing: 4,
-            mainAxisSpacing: 4,
-            childAspectRatio: 4 / 5,
+      return SliverMainAxisGroup(
+        slivers: [
+          // 카테고리 타이틀 shimmer
+          SliverPadding(
+            padding: const EdgeInsets.only(
+              left: 12.0,
+              right: 200.0,
+              top: 16.0,
+              bottom: 8.0,
+            ),
+            sliver: SliverToBoxAdapter(
+              child: ShimmerBox(
+                width: 200,
+                height: 24,
+                borderRadius: BorderRadius.circular(8),
+              ),
+            ),
           ),
-          delegate: SliverChildBuilderDelegate(
-            (context, index) {
-              return ImageViewShimmer(isFirst: index == 0, isLast: index == 8);
-            },
-            childCount: 9, // 9개의 shimmer 이미지 표시
+          // 그리드 shimmer (실제 간격과 동일하게 2.5, 2)
+          SliverPadding(
+            padding: const EdgeInsets.symmetric(horizontal: 4.0),
+            sliver: SliverGrid(
+              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 3,
+                crossAxisSpacing: 2,
+                mainAxisSpacing: 2.5,
+                childAspectRatio: 4 / 5,
+              ),
+              delegate: SliverChildBuilderDelegate(
+                (context, index) {
+                  return ImageViewShimmer(
+                    isFirst: index == 0,
+                    isLast: index == 8,
+                  );
+                },
+                childCount: 9, // 9개의 shimmer 이미지 표시
+              ),
+            ),
           ),
-        ),
+        ],
       );
     }
   }

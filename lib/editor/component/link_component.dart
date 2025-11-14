@@ -384,19 +384,19 @@ class _LinkComponentState extends State<_LinkComponent>
       padding: const EdgeInsets.symmetric(horizontal: 20),
       child: GestureDetector(
         behavior: HitTestBehavior.opaque, // 🎯 불투명 영역만 탭 감지
-        onTap:
-            widget.isEditing
-                ? () {
-                  imageService.selectImage(widget.nodeId);
-                }
-                : null,
-        onLongPressStart:
-            widget.isEditing ? null : (d) => _showPreview(d.globalPosition),
-        onLongPressMoveUpdate:
-            widget.isEditing
-                ? null
-                : (d) => _updatePreviewPosition(d.globalPosition),
-        onLongPressEnd: widget.isEditing ? null : (_) => _hidePreview(),
+      onTap:
+          widget.isEditing
+              ? () {
+                imageService.selectImage(widget.nodeId);
+              }
+              : null,
+      onLongPressStart:
+          widget.isEditing ? null : (d) => _showPreview(d.globalPosition),
+      onLongPressMoveUpdate:
+          widget.isEditing
+              ? null
+              : (d) => _updatePreviewPosition(d.globalPosition),
+      onLongPressEnd: widget.isEditing ? null : (_) => _hidePreview(),
         child: Container(
           margin: EdgeInsets.only(top: marginTop, bottom: marginBottom),
           decoration: BoxDecoration(

@@ -1,4 +1,5 @@
 import 'package:doppy/pages/components/common_profile_avatar.dart';
+import 'package:doppy/utils/time_utils.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:doppy/data/models/user_model.dart';
@@ -112,7 +113,8 @@ class _CommentItemState extends State<CommentItem> {
 
   String _formatRelativeTime(String isoString) {
     try {
-      final dateTime = DateTime.parse(isoString);
+      // UTC 시간을 로컬 시간으로 변환
+      final dateTime = TimeUtils.toLocalTime(isoString);
       final now = DateTime.now();
       final difference = now.difference(dateTime);
 

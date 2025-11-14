@@ -210,25 +210,69 @@ class AuthService {
         return false;
       }
 
+      print('[AuthService] Region 업데이트 시작: $region');
+      print('[AuthService] Base URL: $baseUrl');
+
       final url = Uri.parse('$baseUrl/api/auth/update-region');
+      print('[AuthService] 요청 URL: $url');
+
+      final requestBody = jsonEncode({'region': region});
+      print('[AuthService] 요청 본문: $requestBody');
+
       final response = await http.patch(
         url,
         headers: {
           'Content-Type': 'application/json',
           'Authorization': 'Bearer $token',
         },
-        body: jsonEncode({'region': region}),
+        body: requestBody,
       );
 
+      print('[AuthService] Region 업데이트 응답 상태: ${response.statusCode}');
+      print('[AuthService] Region 업데이트 응답 본문: ${response.body}');
+
       if (response.statusCode == 200) {
-        print('[AuthService] Region 업데이트 성공: $region');
-        return true;
+        // 🎯 새 토큰 저장
+        final responseData = jsonDecode(response.body);
+
+        if (responseData['success'] == true && responseData['data'] != null) {
+          final data = responseData['data'];
+
+          // token (accessToken)
+          if (data['token'] != null) {
+            await saveToken(data['token']);
+            print('[AuthService] 새 access token 저장 완료');
+            print('[AuthService] 새 토큰: ${data['token']}');
+          }
+
+          // refreshToken
+          if (data['refreshToken'] != null) {
+            await saveRefreshToken(data['refreshToken']);
+            print('[AuthService] 새 refresh token 저장 완료');
+          }
+
+          // 사용자 정보도 업데이트
+          if (data['username'] != null) {
+            print(
+              '[AuthService] 사용자: ${data['username']}, Region: ${data['region']}',
+            );
+          }
+
+          print('[AuthService] Region 업데이트 성공: $region');
+          return true;
+        } else {
+          print('[AuthService] Region 업데이트 실패: 응답 구조 오류');
+          print('[AuthService] 응답 데이터: $responseData');
+          return false;
+        }
       } else {
         print('[AuthService] Region 업데이트 실패: ${response.statusCode}');
+        print('[AuthService] 에러 메시지: ${response.body}');
         return false;
       }
-    } catch (e) {
+    } catch (e, stackTrace) {
       print('[AuthService] Region 업데이트 오류: $e');
+      print('[AuthService] Stack trace: $stackTrace');
       return false;
     }
   }

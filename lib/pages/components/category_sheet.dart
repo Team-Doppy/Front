@@ -724,7 +724,7 @@ class CategoryDropDown {
                   color: Theme.of(context).colorScheme.onSurface,
                 ),
                 decoration: InputDecoration(
-                  hintText: '새 카테고리 이름',
+                  hintText: context.tr('new_category_name'),
                   hintStyle: TextStyle(
                     fontSize: 16,
                     color: Theme.of(
@@ -769,7 +769,7 @@ class CategoryDropDown {
                     padding: const EdgeInsets.symmetric(vertical: 12),
                   ),
                   child: Text(
-                    '취소',
+                    context.tr('cancel'),
                     style: TextStyle(
                       fontSize: 18,
                       fontWeight: FontWeight.w700,
@@ -800,7 +800,7 @@ class CategoryDropDown {
                     padding: const EdgeInsets.symmetric(vertical: 12),
                   ),
                   child: Text(
-                    '생성',
+                    context.tr('create'),
                     style: TextStyle(
                       fontSize: 18,
                       fontWeight: FontWeight.w700,

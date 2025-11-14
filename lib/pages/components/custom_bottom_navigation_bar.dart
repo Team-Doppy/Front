@@ -15,12 +15,16 @@ class CustomBottomNavigationBar extends StatelessWidget {
   /// 실제 화면 인덱스 (배경색 결정용, currentIndex와 다를 수 있음)
   final int? actualIndex;
 
+  /// 🎯 강제로 배경 불투명하게 (검색 화면용)
+  final bool forceOpaqueBackground;
+
   const CustomBottomNavigationBar({
     Key? key,
     required this.currentIndex,
     required this.onTap,
     this.isSearching = false,
     this.actualIndex,
+    this.forceOpaqueBackground = false,
   }) : super(key: key);
 
   @override
@@ -40,7 +44,7 @@ class CustomBottomNavigationBar extends StatelessWidget {
           height: 72,
           decoration: BoxDecoration(
             color:
-                (actualIndex ?? currentIndex) == 3
+                forceOpaqueBackground || (actualIndex ?? currentIndex) == 3
                     ? Theme.of(context).colorScheme.background
                     : Colors.transparent,
           ),

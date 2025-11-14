@@ -1,4 +1,5 @@
-import 'package:doppy/data/models/user_model.dart';
+import 'dart:async';
+
 import 'package:doppy/data/models/group_model.dart';
 import 'package:doppy/l10n/app_localizations.dart';
 import 'package:doppy/pages/components/group_sheet.dart';
@@ -6,6 +7,7 @@ import 'package:doppy/pages/screens/manage_group_screen.dart';
 import 'package:doppy/providers/group_provider.dart';
 import 'package:doppy/utils/error_handler.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 /// 그룹 선택 화면 (디스크 형태 가로 스크롤)
@@ -23,6 +25,12 @@ class _GroupSelectionScreenState extends State<GroupSelectionScreen>
   late final PageController _pageController;
   int _currentGroupIndex = 0;
   double _headerOpacity = 1.0; // 🎯 헤더 투명도 추적
+  bool _isDragMode = false; // 🎯 드래그 모드 (롱프레스 중)
+  List<Group> _groups = []; // 🎯 reorder를 위한 그룹 리스트
+  Timer? _autoScrollTimer; // 🎯 자동 스크롤 타이머
+  Offset? _dragPosition; // 🎯 드래그 중인 위치
+  int? _dragTargetIndex; // 🎯 드래그 중 드롭 타겟 인덱스 (시각적 표시용)
+  int? _draggingGroupIndex; // 🎯 현재 드래그 중인 그룹의 원래 인덱스
 
   // 멤버 썸네일 애니메이션 컨트롤러
   late final AnimationController _memberAnimationController;
@@ -93,6 +101,7 @@ class _GroupSelectionScreenState extends State<GroupSelectionScreen>
 
   @override
   void dispose() {
+    _autoScrollTimer?.cancel();
     _pageController.dispose();
     _memberAnimationController.dispose();
     _loadingAnimationController.stop();
@@ -117,18 +126,20 @@ class _GroupSelectionScreenState extends State<GroupSelectionScreen>
                 // 최신순 정렬 (createdAt 기준 내림차순)
                 groups.sort((a, b) => b.createdAt.compareTo(a.createdAt));
 
-                // 전체 친구 가상 그룹 생성
-                final allFriendsGroup = Group(
-                  id: -1,
-                  name: context.tr('all_friends'),
-                  description: context.tr('all_friends'),
-                  ownerId: 'system',
-                  owner: User(username: 'system'),
-                  createdAt: DateTime.now(),
-                );
-
-                // 전체 친구 그룹을 맨 앞에 추가
-                groups = [allFriendsGroup, ...groups];
+                // 🎯 _groups 업데이트 (reorder를 위해) - 드래그 중에는 업데이트 금지
+                if (!_isDragMode &&
+                    (_groups.length != groups.length ||
+                        !_groups.every(
+                          (g) => groups.any((g2) => g2.id == g.id),
+                        ))) {
+                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                    if (mounted && !_isDragMode) {
+                      setState(() {
+                        _groups = List.from(groups);
+                      });
+                    }
+                  });
+                }
 
                 return _buildGroupSelectionContent(groups);
               },
@@ -177,25 +188,40 @@ class _GroupSelectionScreenState extends State<GroupSelectionScreen>
         PageView.builder(
           controller: _pageController,
           scrollDirection: Axis.vertical,
-          physics: const PageScrollPhysics(), // 🎯 딱딱 스냅되는 물리 효과
-          itemCount: groups.length + 1, // +1 for create group button
+          physics:
+              _groups.length <= 1
+                  ? const NeverScrollableScrollPhysics() // 🎯 그룹이 1개 이하면 스크롤 비활성화
+                  : const PageScrollPhysics(), // 🎯 드래그 중에도 자동 스크롤을 위해 스크롤 활성화
+          itemCount:
+              _isDragMode
+                  ? _groups
+                      .length // 🎯 드래그 중에는 itemCount 고정 (생성 버튼 제외)
+                  : (_groups.length <= 1
+                      ? _groups.length +
+                          1 // 🎯 그룹이 1개 이하면 생성 버튼 포함
+                      : _groups.length), // 🎯 그룹이 2개 이상이면 생성 버튼 제외
           onPageChanged: (index) {
-            setState(() {
-              _currentGroupIndex = index;
-            });
-            // 페이지 변경 시 멤버 썸네일 애니메이션
-            _memberAnimationController.reset();
-            _memberAnimationController.forward();
+            if (!_isDragMode) {
+              // 드래그 모드가 아닐 때만 페이지 변경 처리
+              setState(() {
+                _currentGroupIndex = index;
+              });
+              // 페이지 변경 시 멤버 썸네일 애니메이션
+              _memberAnimationController.reset();
+              _memberAnimationController.forward();
+            }
+            // 🎯 드래그 중에는 페이지 변경 무시 (이웃 디스크가 원래 위치로 이동하는 것 방지)
           },
           itemBuilder: (context, index) {
-            // 마지막 아이템은 그룹 생성 버튼
-            if (index == groups.length) {
+            // 🎯 그룹이 1개 이하일 때만 마지막 아이템에 그룹 생성 버튼 표시
+            if (_groups.length <= 1 && index == _groups.length) {
               return _buildCreateGroupDisc();
             }
 
-            final group = groups[index];
+            final group = _groups[index];
 
-            return _buildGroupDisc(group, index);
+            // 🎯 LongPressDraggable + DragTarget으로 reorder 구현
+            return _buildDraggableGroupDisc(group, index);
           },
         ),
 
@@ -247,7 +273,9 @@ class _GroupSelectionScreenState extends State<GroupSelectionScreen>
 
   // 그룹 인덱스 인디케이터 (가로 라인) - 클릭/드래그 가능
   Widget _buildGroupIndexIndicator(List<Group> groups) {
-    final totalItems = groups.length + 1; // 그룹 + 추가 버튼
+    // 🎯 그룹이 1개 이하면 생성 버튼 포함, 아니면 그룹만
+    final totalItems =
+        _groups.length <= 1 ? _groups.length + 1 : _groups.length;
 
     return GestureDetector(
       // 🎯 세로 드래그로 페이지 이동
@@ -314,10 +342,268 @@ class _GroupSelectionScreenState extends State<GroupSelectionScreen>
     );
   }
 
+  /// 자동 스크롤 시작 (위치 업데이트)
+  void _startAutoScroll(Offset globalPosition) {
+    if (!mounted) return;
+
+    _dragPosition = globalPosition;
+
+    // 🎯 글로벌 좌표 기준으로 화면 높이 계산
+    // 글로벌 좌표는 화면 전체를 기준으로 하므로 0부터 시작
+    final screenHeight = MediaQuery.of(context).size.height;
+    final threshold = screenHeight * 0.15; // 화면 상단/하단 15% 영역
+
+    // 자동 스크롤이 필요한 영역인지 확인 (글로벌 좌표 기준)
+    final needsAutoScroll =
+        _dragPosition!.dy < threshold ||
+        _dragPosition!.dy > screenHeight - threshold;
+
+    // 자동 스크롤이 필요 없으면 Timer 중지
+    if (!needsAutoScroll) {
+      _stopAutoScroll();
+      return;
+    }
+
+    // Timer가 없으면 시작
+    if (_autoScrollTimer == null) {
+      _autoScrollTimer = Timer.periodic(const Duration(milliseconds: 200), (
+        timer,
+      ) {
+        if (!_isDragMode ||
+            _dragPosition == null ||
+            !_pageController.hasClients ||
+            !mounted) {
+          _stopAutoScroll();
+          return;
+        }
+
+        // 🎯 글로벌 좌표 기준으로 화면 높이 계산
+        final screenHeight = MediaQuery.of(context).size.height;
+        final threshold = screenHeight * 0.15; // 화면 상단/하단 15% 영역
+
+        // 현재 위치에 따라 방향 결정 (매번 체크, 글로벌 좌표 기준)
+        int? targetIndex;
+        final maxIndex = _groups.length - 1; // 마지막 인덱스 (생성 버튼 제외)
+
+        // 화면 상단 근처 (글로벌 좌표 기준, 0부터 시작)
+        if (_dragPosition!.dy < threshold && _currentGroupIndex > 0) {
+          targetIndex = (_currentGroupIndex - 1).clamp(0, maxIndex);
+        }
+        // 화면 하단 근처 (글로벌 좌표 기준)
+        else if (_dragPosition!.dy > screenHeight - threshold &&
+            _currentGroupIndex < maxIndex) {
+          targetIndex = (_currentGroupIndex + 1).clamp(0, maxIndex);
+        }
+
+        // 타겟 인덱스가 있고 현재와 다르면 스크롤
+        if (targetIndex != null && targetIndex != _currentGroupIndex) {
+          _pageController.animateToPage(
+            targetIndex,
+            duration: const Duration(milliseconds: 400),
+            curve: Curves.easeOut,
+          );
+          setState(() {
+            _currentGroupIndex = targetIndex!;
+          });
+        } else if (targetIndex == null) {
+          // 자동 스크롤이 더 이상 필요 없으면 중지
+          _stopAutoScroll();
+        }
+      });
+    }
+  }
+
+  /// 자동 스크롤 중지
+  void _stopAutoScroll() {
+    _autoScrollTimer?.cancel();
+    _autoScrollTimer = null;
+    _dragPosition = null;
+  }
+
+  /// 드래그 타겟 인덱스 업데이트 (시각적 표시용)
+  void _updateDragTargetIndex(Offset globalPosition, int draggingIndex) {
+    if (!mounted || !_pageController.hasClients) return;
+
+    final screenHeight = MediaQuery.of(context).size.height;
+    // 🎯 fractional page 의존 제거 - 정확한 인덱스 사용
+    final currentIndex = _pageController.page?.round() ?? _currentGroupIndex;
+
+    // 현재 페이지 기준으로 드롭 위치 계산
+    // 화면 중앙 기준으로 위/아래 판단
+    final screenCenter = screenHeight / 2;
+    final relativeY = globalPosition.dy - screenCenter;
+
+    int? targetIndex;
+    if (relativeY < -50) {
+      // 화면 위쪽: 현재 인덱스 앞에 삽입
+      targetIndex = (currentIndex - 1).clamp(0, _groups.length - 1);
+    } else if (relativeY > 50) {
+      // 화면 아래쪽: 현재 인덱스 뒤에 삽입
+      targetIndex = (currentIndex + 1).clamp(0, _groups.length - 1);
+    } else {
+      // 화면 중앙: 현재 인덱스
+      targetIndex = currentIndex.clamp(0, _groups.length - 1);
+    }
+
+    // 드래그 중인 아이템 자체는 타겟에서 제외
+    if (targetIndex != draggingIndex && targetIndex != _dragTargetIndex) {
+      setState(() {
+        _dragTargetIndex = targetIndex;
+      });
+    }
+  }
+
+  /// 그룹 reorder 함수 - 인덱스 꼬임 방지
+  void _reorderGroup(int from, int to) {
+    if (from == to) return;
+
+    // 1) 리스트 순서 변경
+    setState(() {
+      final item = _groups.removeAt(from);
+      _groups.insert(to, item);
+      _currentGroupIndex = to; // 인덱스 보정
+    });
+
+    // 2) 다음 위젯 프레임에서 PageView index 즉시 동기화
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_pageController.hasClients) return;
+
+      // *** 핵심: PageController 내부 index를 맞춰서 index mismatch 제거 ***
+      _pageController.jumpToPage(to);
+
+      // 3) 다음 이벤트 루프(= UI 안정되는 시점)에 부드러운 스냅 애니메이션
+      Future.microtask(() {
+        if (!mounted || !_pageController.hasClients) return;
+        _pageController.animateToPage(
+          to,
+          duration: const Duration(milliseconds: 280),
+          curve: Curves.easeOutCubic,
+        );
+      });
+    });
+
+    // 4) 멤버 썸네일 애니메이션 실행
+    _memberAnimationController
+      ..reset()
+      ..forward();
+  }
+
+  /// 드래그 가능한 그룹 디스크 (LongPressDraggable + DragTarget)
+  Widget _buildDraggableGroupDisc(Group group, int groupIndex) {
+    // 시스템 그룹(isSystem = true)은 reorder 불가능
+    final canReorder = group.isSystem != true;
+
+    if (!canReorder) {
+      // reorder 불가능한 그룹은 일반 디스크로 표시
+      return _buildGroupDisc(group, groupIndex);
+    }
+
+    return LongPressDraggable<int>(
+      data: groupIndex,
+      dragAnchorStrategy: (draggable, context, position) {
+        // 🎯 왼쪽 위로 보정 (피드백 위치 조정)
+        return Offset(100, 100);
+      },
+      onDragStarted: () {
+        setState(() {
+          _isDragMode = true;
+          _draggingGroupIndex = groupIndex; // 🎯 드래그 시작 시 원래 인덱스 저장
+        });
+        // 햅틱 피드백
+        HapticFeedback.mediumImpact();
+      },
+      onDragUpdate: (details) {
+        // 🎯 드래그 위치 업데이트 및 자동 스크롤 시작
+        _startAutoScroll(details.globalPosition);
+        // 🎯 드롭 타겟 인덱스 업데이트 (시각적 표시용)
+        _updateDragTargetIndex(details.globalPosition, groupIndex);
+      },
+      onDragEnd: (_) async {
+        // 🎯 자동 스크롤 중지
+        _stopAutoScroll();
+
+        // 드래그 종료 후 현재 페이지로 스냅
+        if (_pageController.hasClients) {
+          _pageController.animateToPage(
+            _currentGroupIndex,
+            duration: const Duration(milliseconds: 300),
+            curve: Curves.easeOut,
+          );
+        }
+
+        // 🎯 페이지 애니메이션 끝날 때까지 기다림 (드래그 모드 종료 지연)
+        await Future.delayed(const Duration(milliseconds: 250));
+
+        if (!mounted) return;
+
+        setState(() {
+          _isDragMode = false;
+          _dragTargetIndex = null; // 드롭 타겟 인덱스 초기화
+        });
+      },
+      feedback: Material(
+        color: Colors.transparent,
+        child: Transform.scale(
+          scale: 0.85,
+          child: Opacity(
+            opacity: 0.9,
+            child: _buildGroupDisc(group, groupIndex),
+          ),
+        ),
+      ),
+      childWhenDragging: Opacity(
+        opacity: 0.2,
+        child: _buildGroupDisc(group, groupIndex),
+      ),
+      child: DragTarget<int>(
+        onWillAccept: (from) => from != groupIndex && canReorder,
+        onAccept: (from) {
+          _reorderGroup(from, groupIndex);
+        },
+        onMove: (details) {
+          // 드래그가 이 타겟 위로 이동했을 때
+          if (details.data != groupIndex) {
+            setState(() {
+              _dragTargetIndex = groupIndex;
+            });
+          }
+        },
+        onLeave: (data) {
+          // 드래그가 이 타겟을 벗어났을 때
+          setState(() {
+            _dragTargetIndex = null;
+          });
+        },
+        builder: (context, candidateData, rejectedData) {
+          // 🎯 드롭 타겟 인덱스에 따라 padding만 추가 (height는 절대 변경하지 않음)
+          final isDropTarget =
+              _dragTargetIndex == groupIndex && candidateData.isNotEmpty;
+          final isFirstGroup = groupIndex == 0;
+
+          final screenHeight = MediaQuery.of(context).size.height;
+
+          return AnimatedContainer(
+            duration: const Duration(milliseconds: 200),
+            margin: EdgeInsets.only(
+              top: isDropTarget && isFirstGroup ? 44.0 : 0.0,
+              bottom: isDropTarget && !isFirstGroup ? 44.0 : 0.0,
+            ),
+            child: SizedBox(
+              height: screenHeight, // 절대 변화하지 않음
+              child: _buildGroupDisc(group, groupIndex),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
   /// 그룹 디스크 아이템
   Widget _buildGroupDisc(Group group, int groupIndex) {
     return GestureDetector(
       onTap: () {
+        if (_isDragMode) return; // 드래그 모드 중에는 탭 무시
+
         // 🎯 빠른 페이드 전환
         Navigator.push(
           context,
@@ -423,9 +709,9 @@ class _GroupSelectionScreenState extends State<GroupSelectionScreen>
                       ),
                     ),
 
-                    // 🎯 중앙에 멤버 수 표시 (전체 친구 그룹은 제외)
-                    if (group.id == -1)
-                      // 🐱 전체 친구 그룹: 고양이 이미지 표시
+                    // 🎯 중앙에 멤버 수 표시 (시스템 그룹은 제외)
+                    if (group.isSystem == true)
+                      // 🐱 시스템 그룹(전체 친구): 고양이 이미지 표시
                       Center(
                         child: Padding(
                           padding: const EdgeInsets.only(left: 4.0),
@@ -740,11 +1026,13 @@ class _GroupSelectionScreenState extends State<GroupSelectionScreen>
         await groupProvider.fetchMyGroups();
 
         // 🎯 새로 생성된 그룹으로 이동
-        // 최신순 정렬이므로 새 그룹은 인덱스 1에 위치 (0은 "전체 친구")
+        // 시스템 그룹 개수를 계산하여 새 그룹 위치 결정
         if (mounted && _pageController.hasClients) {
           await Future.delayed(const Duration(milliseconds: 100)); // UI 업데이트 대기
+          final systemGroupCount =
+              _groups.where((g) => g.isSystem == true).length;
           _pageController.animateToPage(
-            1, // 새로 생성된 그룹 위치 (전체 친구 다음)
+            systemGroupCount, // 새로 생성된 그룹 위치 (시스템 그룹 다음)
             duration: const Duration(milliseconds: 400),
             curve: Curves.easeInOut,
           );

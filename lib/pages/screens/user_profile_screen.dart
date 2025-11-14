@@ -26,8 +26,13 @@ import 'dart:async';
 
 class UserProfileScreen extends StatefulWidget {
   final User? otherUser; // 다른 사용자 프로필을 볼 때 username 전달
+  final bool isFromBottomTab; // 바텀 탭에서 직접 열렸는지 여부
 
-  const UserProfileScreen({super.key, this.otherUser});
+  const UserProfileScreen({
+    super.key,
+    this.otherUser,
+    this.isFromBottomTab = false,
+  });
 
   @override
   State<UserProfileScreen> createState() => _UserProfileScreenState();
@@ -290,7 +295,10 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                 builder: (context, isDraggingCategory, _) {
                   return TweenAnimationBuilder<double>(
                     tween: Tween<double>(
-                      begin: isDraggingCategory ? 1.0 : 0.7,
+                      begin:
+                          isDraggingCategory
+                              ? 0.7
+                              : 1.0, // 초기값을 end와 동일하게 설정하여 애니메이션 방지
                       end: isDraggingCategory ? 0.7 : 1.0,
                     ),
                     duration: const Duration(milliseconds: 400),
@@ -326,7 +334,8 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                               child: Row(
                                 mainAxisAlignment: MainAxisAlignment.start,
                                 children: [
-                                  if (isOther)
+                                  // 바텀 탭에서 직접 온 경우가 아닐 때만 뒤로가기 버튼 표시
+                                  if (!widget.isFromBottomTab)
                                     GestureDetector(
                                       child: Padding(
                                         padding: const EdgeInsets.only(top: 1),

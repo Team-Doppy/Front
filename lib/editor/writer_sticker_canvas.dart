@@ -296,6 +296,13 @@ class _StickerViewState extends State<_StickerView> {
                 fit: BoxFit.fill, // 정확한 크기로 채우기
                 filterQuality: FilterQuality.high,
                 isAntiAlias: true,
+                errorBuilder: (context, error, stackTrace) {
+                  return Container(
+                    width: width ?? 140,
+                    height: height ?? 140,
+                    color: Colors.transparent,
+                  );
+                },
               ),
             );
           } else {
@@ -320,6 +327,13 @@ class _StickerViewState extends State<_StickerView> {
             fit: BoxFit.contain,
             filterQuality: FilterQuality.high,
             isAntiAlias: true,
+            errorBuilder: (context, error, stackTrace) {
+              return Container(
+                width: 140,
+                height: 140,
+                color: Colors.transparent,
+              );
+            },
           );
         } else {
           body = Container(

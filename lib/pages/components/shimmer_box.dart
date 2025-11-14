@@ -6,6 +6,7 @@ class ShimmerBox extends StatelessWidget {
   final double height;
   final BorderRadius? borderRadius;
   final ShapeBorder? shape;
+  final bool? isDarkMode; // 🎯 외부에서 테마 주입 가능
 
   const ShimmerBox({
     super.key,
@@ -13,12 +14,15 @@ class ShimmerBox extends StatelessWidget {
     required this.height,
     this.borderRadius,
     this.shape,
+    this.isDarkMode, // 🎯 null이면 Theme.of(context)로 자동 감지
   });
 
   @override
   Widget build(BuildContext context) {
+    // 🎯 외부 주입 테마가 있으면 사용, 없으면 컨텍스트 테마로 자동 감지
     final bool isDark =
-        Theme.of(context).colorScheme.brightness == Brightness.dark;
+        isDarkMode ??
+        (Theme.of(context).colorScheme.brightness == Brightness.dark);
     final Color baseColor =
         isDark ? const Color(0xFF2A2A2A) : const Color(0xFFE8E8E8);
     final Color highlightColor =

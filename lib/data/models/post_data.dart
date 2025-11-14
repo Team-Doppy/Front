@@ -207,6 +207,7 @@ class PostData {
         'authorId': authorId,
         'authorProfileImageUrl': authorProfileImageUrl,
         'content': contentData,
+        'accessLevel': accessLevel.name.toUpperCase(), // 🎯 accessLevel 추가
         'likeCount': likeCount,
         'commentCount': commentCount,
         'isLiked': isLiked,
@@ -224,6 +225,7 @@ class PostData {
         'authorId': authorId,
         'authorProfileImageUrl': authorProfileImageUrl,
         'content': {'nodes': []},
+        'accessLevel': accessLevel.name.toUpperCase(), // 🎯 accessLevel 추가
         'likeCount': likeCount,
         'commentCount': commentCount,
         'isLiked': isLiked,

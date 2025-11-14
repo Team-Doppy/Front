@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'package:doppy/editor/service/editor_service.dart';
 import 'package:doppy/editor/service/sticker_service.dart';
 import 'package:doppy/editor/publish/post_exporter.dart';
@@ -21,6 +20,10 @@ class ContentChangeDetector {
   /// - 스티커 (위치, 크기, 타입, 내용)
   /// - 정렬 (align)
   /// - 제목 메타데이터
+  ///
+  /// 다음 항목들은 무시됩니다 (별도로 관리):
+  /// - 공개범위 (accessLevel, visibility)
+  /// - 그룹 공유 (groupIds, sharedGroupIds)
   static bool hasContentChanged({
     required Map<String, dynamic> originalExported,
     required EditorService editorService,
@@ -35,7 +38,7 @@ class ContentChangeDetector {
         stickerService: stickerService,
       );
 
-      // 2. 문서 구조 비교
+      // 2. 문서 구조 비교 (공개범위, groupIds는 무시)
       if (_hasDocumentStructureChanged(originalExported, currentExported)) {
         print('[ContentChangeDetector] ✓ 문서 구조 변경 감지');
         return true;
@@ -106,7 +109,7 @@ class ContentChangeDetector {
 
   // 개별 노드 비교 함수들은 제거 (블록 단위 1:1 비교로 대체)
 
-  /// 스티커 비교 (JSON 문자열 1:1 비교)
+  /// 스티커 비교 (정규화 후 비교)
   static bool _hasStickersChanged(
     Map<String, dynamic> original,
     Map<String, dynamic> current,
@@ -115,44 +118,113 @@ class ContentChangeDetector {
     final originalContent = original['content'] as Map<String, dynamic>?;
     final currentContent = current['content'] as Map<String, dynamic>?;
 
-    final originalStickers = originalContent?['stickers'];
-    final currentStickers = currentContent?['stickers'];
+    final originalStickers = originalContent?['stickers'] as List?;
+    final currentStickers = currentContent?['stickers'] as List?;
 
     print('[ContentChangeDetector] 🔍 스티커 비교 (content.stickers)');
-    print(
-      '  원본 스티커: ${originalStickers?.runtimeType} (${(originalStickers as List?)?.length ?? 0}개)',
-    );
-    print(
-      '  현재 스티커: ${currentStickers?.runtimeType} (${(currentStickers as List?)?.length ?? 0}개)',
-    );
+    print('  원본 스티커: ${originalStickers?.length ?? 0}개');
+    print('  현재 스티커: ${currentStickers?.length ?? 0}개');
 
-    // 🎯 JSON 문자열로 변환하여 1:1 비교
+    // 둘 다 null이거나 빈 리스트면 변경 없음
+    if ((originalStickers == null || originalStickers.isEmpty) &&
+        (currentStickers == null || currentStickers.isEmpty)) {
+      print('[ContentChangeDetector] ✗ 스티커 변경 없음 (둘 다 비어있음)');
+      return false;
+    }
+
+    // 하나만 null이거나 빈 리스트면 변경됨
+    if (originalStickers == null ||
+        originalStickers.isEmpty ||
+        currentStickers == null ||
+        currentStickers.isEmpty) {
+      print('[ContentChangeDetector] ✓ 스티커 변경 감지 (개수 차이)');
+      return true;
+    }
+
+    // 개수가 다르면 변경됨
+    if (originalStickers.length != currentStickers.length) {
+      print(
+        '[ContentChangeDetector] ✓ 스티커 변경 감지 (개수: ${originalStickers.length} → ${currentStickers.length})',
+      );
+      return true;
+    }
+
+    // 각 스티커를 정규화하여 비교
     try {
-      final originalJson = jsonEncode(originalStickers ?? []);
-      final currentJson = jsonEncode(currentStickers ?? []);
+      final normalizedOriginal = _normalizeStickers(originalStickers);
+      final normalizedCurrent = _normalizeStickers(currentStickers);
 
-      print('  원본 JSON 길이: ${originalJson.length}');
-      print('  현재 JSON 길이: ${currentJson.length}');
-
-      if (originalJson != currentJson) {
-        print('[ContentChangeDetector] ✓ 스티커 변경 감지 (JSON 불일치)');
-        print(
-          '  원본 JSON: ${originalJson.substring(0, originalJson.length > 200 ? 200 : originalJson.length)}...',
-        );
-        print(
-          '  현재 JSON: ${currentJson.substring(0, currentJson.length > 200 ? 200 : currentJson.length)}...',
-        );
+      if (!_deepEquals(normalizedOriginal, normalizedCurrent)) {
+        print('[ContentChangeDetector] ✓ 스티커 변경 감지 (내용 차이)');
         return true;
       }
 
-      print('[ContentChangeDetector] ✗ 스티커 변경 없음 (JSON 동일)');
+      print('[ContentChangeDetector] ✗ 스티커 변경 없음');
       return false;
     } catch (e, stackTrace) {
-      print('[ContentChangeDetector] ❌ 스티커 JSON 비교 에러: $e');
+      print('[ContentChangeDetector] ❌ 스티커 비교 에러: $e');
       print('  스택 트레이스: $stackTrace');
       // 에러 발생 시 안전하게 변경된 것으로 간주
       return true;
     }
+  }
+
+  /// 스티커 데이터 정규화 (기본값 채우기, 메타데이터 포함)
+  static List<Map<String, dynamic>> _normalizeStickers(List stickers) {
+    return stickers.map((sticker) {
+      if (sticker is! Map<String, dynamic>) {
+        return <String, dynamic>{};
+      }
+
+      final normalized = <String, dynamic>{};
+
+      // 필수 필드
+      normalized['id'] = sticker['id'];
+      normalized['type'] = sticker['type'];
+
+      // 메타데이터 필드 (기본값 채우기)
+      normalized['scale'] = (sticker['scale'] as num?)?.toDouble() ?? 1.0;
+      normalized['zIndex'] = (sticker['zIndex'] as num?)?.toInt() ?? 0;
+      normalized['opacity'] = (sticker['opacity'] as num?)?.toDouble() ?? 1.0;
+      normalized['rotation'] = (sticker['rotation'] as num?)?.toDouble() ?? 0.0;
+
+      // content 필드 (URL 등)
+      if (sticker['content'] != null) {
+        normalized['content'] = sticker['content'];
+      }
+
+      // 위치 정보: anchor와 positionFallback 모두 비교
+      final anchor = sticker['anchor'] as Map<String, dynamic>?;
+      final positionFallback =
+          sticker['positionFallback'] as Map<String, dynamic>?;
+
+      if (anchor != null) {
+        // anchor 정보 정규화
+        normalized['anchor'] = {
+          'nodeId': anchor['nodeId'],
+          'localX': (anchor['localX'] as num?)?.toDouble(),
+          'localY': (anchor['localY'] as num?)?.toDouble(),
+          'refW': (anchor['refW'] as num?)?.toDouble(),
+        };
+      } else {
+        // anchor가 null이면 null로 명시적으로 저장
+        normalized['anchor'] = null;
+      }
+
+      if (positionFallback != null) {
+        // positionFallback 정보 정규화
+        normalized['positionFallback'] = {
+          'xPx': (positionFallback['xPx'] as num?)?.toDouble(),
+          'yPx': (positionFallback['yPx'] as num?)?.toDouble(),
+          'docWidth': (positionFallback['docWidth'] as num?)?.toDouble(),
+        };
+      } else {
+        // positionFallback이 null이면 null로 명시적으로 저장
+        normalized['positionFallback'] = null;
+      }
+
+      return normalized;
+    }).toList();
   }
 
   /// Deep equality 비교 (재귀적으로 Map, List 비교, 정규화 포함)
@@ -162,6 +234,7 @@ class ContentChangeDetector {
 
     if (a is Map && b is Map) {
       // 무시할 키 목록 (서버/클라이언트 차이로 인한 false positive 방지)
+      // 공개범위 및 그룹 공유 관련 키는 변경 감지에서 제외 (별도로 관리)
       const ignoredKeys = {
         'title',
         'isliked', // 클라이언트가 자동 추가
@@ -175,10 +248,10 @@ class ContentChangeDetector {
         'author', // 서버에서만 제공 (작성자)
         'position', // 서버에서만 제공 (순서)
         'id', // 노드 ID는 변경 여부와 무관 (순서만 중요)
-        'accessLevel', // 서버에서만 제공 (공개 범위) - 별도로 관리
-        'visibility', // 서버에서만 제공 (공개 범위) - 별도로 관리
-        'sharedGroupIds', // 서버에서만 제공 (그룹 공유) - 별도로 관리
-        'groupIds', // 서버에서만 제공 (그룹 공유) - 별도로 관리
+        'accessLevel', // 공개 범위 - 변경 감지에서 제외
+        'visibility', // 공개 범위 - 변경 감지에서 제외
+        'sharedGroupIds', // 그룹 공유 - 변경 감지에서 제외
+        'groupIds', // 그룹 공유 - 변경 감지에서 제외
         'thumbnailImageUrl', // 서버에서만 제공 (썸네일 URL) - 별도로 관리
         'summary', // 서버에서만 제공 (요약) - 별도로 관리
         'authorProfileImageUrl', // 서버에서만 제공 (작성자 프로필 이미지 URL) - 별도로 관리

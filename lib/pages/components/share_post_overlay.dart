@@ -2,6 +2,7 @@ import 'dart:ui';
 import 'dart:io';
 
 import 'package:doppy/pages/components/common_profile_avatar.dart';
+import 'package:doppy/pages/screens/post_reader_screen.dart';
 import 'package:doppy/theme/app_colors.dart';
 import 'package:doppy/utils/error_handler.dart';
 import 'package:flutter/material.dart';
@@ -25,6 +26,8 @@ class SharePostOverlay extends StatefulWidget {
   final String? authorProfileImageUrl; // 🎯 작성자 프로필 이미지
   final String? thumbnailUrl;
   final int readTime; // 분
+  final bool isNewPost; // 🎯 최초 등록 여부
+  final Map<String, dynamic>? uploadedData; // 🎯 업로드된 전체 데이터
 
   const SharePostOverlay({
     super.key,
@@ -35,6 +38,8 @@ class SharePostOverlay extends StatefulWidget {
     this.authorProfileImageUrl,
     this.thumbnailUrl,
     required this.readTime,
+    this.isNewPost = false, // 🎯 기본값 false
+    this.uploadedData, // 🎯 업로드된 데이터
   });
 
   /// 오버레이 표시
@@ -47,8 +52,16 @@ class SharePostOverlay extends StatefulWidget {
     String? authorProfileImageUrl, // 🎯 추가
     String? thumbnailUrl,
     required int readTime,
+    bool isNewPost = false, // 🎯 최초 등록 여부
+    Map<String, dynamic>? uploadedData, // 🎯 업로드된 데이터
+    bool useReplacement = false, // 🎯 pushReplacement 사용 여부
   }) {
-    return Navigator.of(context).push(
+    final navigation =
+        useReplacement
+            ? Navigator.of(context).pushReplacement
+            : Navigator.of(context).push;
+
+    return navigation(
       PageRouteBuilder(
         opaque: false,
         barrierColor: Colors.black.withOpacity(0.85),
@@ -61,6 +74,8 @@ class SharePostOverlay extends StatefulWidget {
             authorProfileImageUrl: authorProfileImageUrl, // 🎯 전달
             thumbnailUrl: thumbnailUrl,
             readTime: readTime,
+            isNewPost: isNewPost, // 🎯 전달
+            uploadedData: uploadedData, // 🎯 전달
           );
         },
         transitionsBuilder: (context, animation, secondaryAnimation, child) {
@@ -90,14 +105,29 @@ class _SharePostOverlayState extends State<SharePostOverlay> {
   String? _extractedThumbnailPath; // 🎯 비디오에서 추출한 썸네일 경로
   bool _isExtractingThumbnail = false; // 🎯 썸네일 추출 중
 
+  // 🎯 PageView 컨트롤러
+  late final PageController _pageController;
+  final List<ShareTheme> _themes = [
+    ShareTheme.darkBlur,
+    ShareTheme.lightBlur,
+    ShareTheme.dark,
+    ShareTheme.light,
+  ];
+
+  // 🎯 스와이프 닫기 제스처
+  double _verticalDragOffset = 0.0;
+
   @override
   void initState() {
     super.initState();
+    // 🎯 무한 루프를 위해 중간 페이지부터 시작
+    _pageController = PageController(initialPage: 1000);
     _checkAndExtractVideoThumbnail();
   }
 
   @override
   void dispose() {
+    _pageController.dispose();
     // 추출한 썸네일 파일 정리
     if (_extractedThumbnailPath != null) {
       try {
@@ -198,74 +228,113 @@ class _SharePostOverlayState extends State<SharePostOverlay> {
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
-      onTap: () => Navigator.of(context).pop(),
-      child: Scaffold(
-        backgroundColor: Colors.transparent,
-        body: Stack(
-          children: [
-            // 🎯 캡처 영역 (배경 + 블러 + 카드만)
-            Positioned.fill(
-              child: RepaintBoundary(
-                key: _fullScreenKey, // 🎯 전체 화면 캡처용
-                child: Stack(
-                  children: [
-                    // 배경: 썸네일 이미지
-                    Positioned.fill(
-                      child: _buildThumbnailImage(
-                        fit: BoxFit.cover,
-                        errorWidget: Container(
-                          decoration: BoxDecoration(
-                            gradient: LinearGradient(
-                              begin: Alignment.topCenter,
-                              end: Alignment.bottomCenter,
-                              colors: [Color(0xFF667EEA), Color(0xFF764BA2)],
+      onVerticalDragUpdate: (details) {
+        // 🎯 아래로 드래그 시 offset 증가
+        if (details.primaryDelta! > 0) {
+          setState(() {
+            _verticalDragOffset += details.primaryDelta!;
+          });
+        }
+      },
+      onVerticalDragEnd: (details) {
+        // 🎯 100px 이상 드래그하거나 빠르게 스와이프하면 닫기
+        if (_verticalDragOffset > 100 ||
+            (details.primaryVelocity != null &&
+                details.primaryVelocity! > 300)) {
+          Navigator.of(context).pop();
+        } else {
+          // 원래대로 복귀
+          setState(() {
+            _verticalDragOffset = 0.0;
+          });
+        }
+      },
+      child: Opacity(
+        opacity: (1.0 - _verticalDragOffset / 300).clamp(0.0, 1.0),
+        child: Transform.translate(
+          offset: Offset(0, _verticalDragOffset),
+          child: Scaffold(
+            backgroundColor: Colors.transparent,
+            body: Stack(
+              children: [
+                // 🎯 배경 필터 PageView (좌우 스와이프로 테마 변경 - 무한 루프)
+                Positioned.fill(
+                  child: PageView.builder(
+                    controller: _pageController,
+                    onPageChanged: (index) {
+                      setState(() {
+                        _currentTheme = _themes[index % _themes.length];
+                      });
+                    },
+                    itemBuilder: (context, index) {
+                      final theme = _themes[index % _themes.length];
+                      return _buildBackgroundForTheme(theme);
+                    },
+                  ),
+                ),
+
+                // 🎯 캡처 영역 (현재 테마 배경 + 카드)
+                Positioned.fill(
+                  child: IgnorePointer(
+                    child: RepaintBoundary(
+                      key: _fullScreenKey,
+                      child: Stack(
+                        children: [
+                          // 🎯 캡처용 현재 테마 배경
+                          Positioned.fill(
+                            child: _buildBackgroundForTheme(_currentTheme),
+                          ),
+
+                          // 카드만 (헤더, 버튼 제외)
+                          SafeArea(
+                            child: Padding(
+                              padding: const EdgeInsets.only(
+                                top: 60,
+                              ), // 🎯 헤더 공간
+                              child: SingleChildScrollView(
+                                physics:
+                                    const NeverScrollableScrollPhysics(), // 🎯 세로 스크롤 비활성화
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 20,
+                                  ),
+                                  child: _buildPostCard(context),
+                                ),
+                              ),
                             ),
                           ),
-                        ),
+                        ],
                       ),
                     ),
+                  ),
+                ),
 
-                    // 블러 효과
-                    Positioned.fill(child: _buildBackgroundOverlay()),
+                // 🎯 헤더 (캡처에서 제외)
+                Positioned(
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  child: SafeArea(child: _buildHeader()),
+                ),
 
-                    // 카드만 (헤더, 버튼 제외)
-                    SafeArea(
-                      child: Padding(
-                        padding: const EdgeInsets.only(top: 60), // 🎯 헤더 공간
-                        child: SingleChildScrollView(
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 20),
-                            child: _buildPostCard(context),
-                          ),
-                        ),
-                      ),
+                // 🎯 공유 버튼들 (캡처에서 제외)
+                Positioned(
+                  bottom: 0,
+                  left: 0,
+                  right: 0,
+                  child: SafeArea(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        _buildShareOptions(),
+                        const SizedBox(height: 20),
+                      ],
                     ),
-                  ],
+                  ),
                 ),
-              ),
+              ],
             ),
-
-            // 🎯 헤더 (캡처에서 제외)
-            Positioned(
-              top: 0,
-              left: 0,
-              right: 0,
-              child: SafeArea(child: _buildHeader()),
-            ),
-
-            // 🎯 공유 버튼들 (캡처에서 제외)
-            Positioned(
-              bottom: 0,
-              left: 0,
-              right: 0,
-              child: SafeArea(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [_buildShareOptions(), const SizedBox(height: 20)],
-                ),
-              ),
-            ),
-          ],
+          ),
         ),
       ),
     );
@@ -277,7 +346,7 @@ class _SharePostOverlayState extends State<SharePostOverlay> {
       child: Row(
         children: [
           GestureDetector(
-            onTap: () => Navigator.of(context).pop(),
+            onTap: () => Navigator.of(context).pop(), // 🎯 닫기 버튼은 그냥 닫기
             child: Container(
               padding: EdgeInsets.all(8),
 
@@ -290,6 +359,55 @@ class _SharePostOverlayState extends State<SharePostOverlay> {
           ),
 
           Spacer(),
+
+          // 🎯 최초 등록 시 글보러가기 버튼
+          if (widget.isNewPost && widget.uploadedData != null)
+            Material(
+              color: Colors.transparent,
+              child: InkWell(
+                onTap: () {
+                  print('[ShareOverlay] 글보러가기 버튼 클릭');
+                  // 🎯 SharePostOverlay의 context로 직접 이동
+                  Navigator.of(context).pushReplacement(
+                    MaterialPageRoute(
+                      builder:
+                          (_) => PostReaderScreen(
+                            exported: widget.uploadedData!,
+                            heroTag:
+                                'uploaded-post-${DateTime.now().millisecondsSinceEpoch}',
+                          ),
+                    ),
+                  );
+                },
+                borderRadius: BorderRadius.circular(20),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 8,
+                  ),
+                  decoration: BoxDecoration(
+                    color: _getTextColor().withOpacity(0.15),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        context.tr('view_post'),
+                        style: TextStyle(
+                          color: _getTextColor(),
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+
+          const SizedBox(width: 12),
+
           // 🎯 테마 선택 버튼
           _buildThemeSelector(),
         ],
@@ -299,50 +417,40 @@ class _SharePostOverlayState extends State<SharePostOverlay> {
 
   /// 🎯 테마 선택 버튼
   Widget _buildThemeSelector() {
-    return GestureDetector(
-      onTap: _cycleTheme,
-      child: Container(
-        padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-        decoration: BoxDecoration(
-          color: _getButtonBackgroundColor(), // 🎯 테마별 배경
-          borderRadius: BorderRadius.circular(20),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              _getThemeLabel(),
-              style: TextStyle(
-                fontSize: 12,
-                color: _getTextColor(), // 🎯 테마별 색상
-                fontWeight: FontWeight.w600,
-                letterSpacing: 0.5,
-              ),
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: _cycleTheme,
+        borderRadius: BorderRadius.circular(20),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          decoration: BoxDecoration(
+            color: _getTextColor().withOpacity(0.15), // 🎯 글보러가기와 동일
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: Text(
+            _getThemeLabel(),
+            style: TextStyle(
+              fontSize: 14, // 🎯 글보러가기와 동일
+              color: _getTextColor(),
+              fontWeight: FontWeight.w600,
             ),
-          ],
+          ),
         ),
       ),
     );
   }
 
-  /// 🎯 테마 순환
+  /// 🎯 테마 순환 (PageView로 이동)
   void _cycleTheme() {
-    setState(() {
-      switch (_currentTheme) {
-        case ShareTheme.darkBlur:
-          _currentTheme = ShareTheme.lightBlur;
-          break;
-        case ShareTheme.lightBlur:
-          _currentTheme = ShareTheme.dark;
-          break;
-        case ShareTheme.dark:
-          _currentTheme = ShareTheme.light;
-          break;
-        case ShareTheme.light:
-          _currentTheme = ShareTheme.darkBlur;
-          break;
-      }
-    });
+    // 현재 페이지 인덱스를 직접 사용하여 다음 페이지로 이동
+    final currentPage = _pageController.page?.round() ?? 1000;
+    final nextPage = currentPage + 1;
+    _pageController.animateToPage(
+      nextPage,
+      duration: const Duration(milliseconds: 300),
+      curve: Curves.easeInOut,
+    );
   }
 
   /// 🎯 테마 라벨
@@ -359,9 +467,34 @@ class _SharePostOverlayState extends State<SharePostOverlay> {
     }
   }
 
+  /// 🎯 테마별 배경 전체 (썸네일 + 필터)
+  Widget _buildBackgroundForTheme(ShareTheme theme) {
+    return Stack(
+      children: [
+        // 배경: 썸네일 이미지
+        Positioned.fill(
+          child: _buildThumbnailImage(
+            fit: BoxFit.cover,
+            errorWidget: Container(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [Color(0xFF667EEA), Color(0xFF764BA2)],
+                ),
+              ),
+            ),
+          ),
+        ),
+        // 필터 효과
+        Positioned.fill(child: _buildBackgroundOverlay(theme)),
+      ],
+    );
+  }
+
   /// 🎯 배경 오버레이 (테마별)
-  Widget _buildBackgroundOverlay() {
-    switch (_currentTheme) {
+  Widget _buildBackgroundOverlay(ShareTheme theme) {
+    switch (theme) {
       case ShareTheme.darkBlur:
         return BackdropFilter(
           filter: ImageFilter.blur(sigmaX: 30, sigmaY: 30),

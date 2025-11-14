@@ -16,10 +16,15 @@ import 'dart:math' as math;
 import 'package:super_editor/super_editor.dart';
 
 class SingleImageComponentBuilder implements ComponentBuilder {
-  const SingleImageComponentBuilder({this.dragService, this.isEditing = true});
+  const SingleImageComponentBuilder({
+    this.dragService,
+    this.isEditing = true,
+    this.isDarkMode = false,
+  });
 
   final dynamic dragService; // DragService 타입을 나중에 import해서 수정
   final bool isEditing;
+  final bool isDarkMode;
 
   @override
   Widget? createComponent(
@@ -33,6 +38,7 @@ class SingleImageComponentBuilder implements ComponentBuilder {
         componentKey: componentContext.componentKey,
         dragService: dragService,
         isEditing: isEditing,
+        isDarkMode: isDarkMode,
       );
     }
     return null;
@@ -57,6 +63,7 @@ class SingleImageComponent extends StatefulWidget {
     required GlobalKey componentKey,
     this.dragService,
     this.isEditing = true,
+    this.isDarkMode = false,
     Key? key,
   }) : _componentKey = componentKey,
        super(key: componentKey);
@@ -66,6 +73,7 @@ class SingleImageComponent extends StatefulWidget {
   final GlobalKey _componentKey;
   final dynamic dragService; // DragService 타입을 나중에 import해서 수정
   final bool isEditing;
+  final bool isDarkMode;
 
   @override
   State<SingleImageComponent> createState() => _SingleImageComponentState();
@@ -724,7 +732,8 @@ class _SingleImageComponentState extends State<SingleImageComponent>
             return child;
           }
           final h = w / (4 / 5);
-          return _lastRenderedChild ?? ShimmerBox(width: w, height: h);
+          return _lastRenderedChild ??
+              ShimmerBox(width: w, height: h, isDarkMode: widget.isDarkMode);
         },
       );
     }
@@ -759,7 +768,12 @@ class _SingleImageComponentState extends State<SingleImageComponent>
                 return child;
               }
               final h = w / (4 / 5);
-              return _lastRenderedChild ?? ShimmerBox(width: w, height: h);
+              return _lastRenderedChild ??
+                  ShimmerBox(
+                    width: w,
+                    height: h,
+                    isDarkMode: widget.isDarkMode,
+                  );
             },
             errorBuilder:
                 (context, error, stack) => Builder(
@@ -800,7 +814,8 @@ class _SingleImageComponentState extends State<SingleImageComponent>
         }
         final w = MediaQuery.of(context).size.width;
         final h = w / (4 / 5);
-        return _lastRenderedChild ?? ShimmerBox(width: w, height: h);
+        return _lastRenderedChild ??
+            ShimmerBox(width: w, height: h, isDarkMode: widget.isDarkMode);
       },
       errorBuilder:
           (context, error, stack) => Builder(

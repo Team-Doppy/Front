@@ -160,6 +160,13 @@ class PostReaderStickers extends StatelessWidget {
                           fit: BoxFit.fill, // 정확한 크기
                           filterQuality: FilterQuality.high,
                           isAntiAlias: true,
+                          errorBuilder: (context, error, stackTrace) {
+                            return Container(
+                              width: width,
+                              height: height,
+                              color: Colors.transparent,
+                            );
+                          },
                         ),
                       ),
                     );
@@ -171,6 +178,13 @@ class PostReaderStickers extends StatelessWidget {
                         fit: BoxFit.contain,
                         filterQuality: FilterQuality.high,
                         isAntiAlias: true,
+                        errorBuilder: (context, error, stackTrace) {
+                          return Container(
+                            width: 140,
+                            height: 140,
+                            color: Colors.transparent,
+                          );
+                        },
                       ),
                     );
                   }

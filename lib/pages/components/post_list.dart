@@ -325,7 +325,7 @@ class _PostListState extends State<PostList> {
           ),
         SliverToBoxAdapter(
           child: Container(
-            height: 60,
+            height: 50,
             decoration: BoxDecoration(color: Colors.transparent),
           ),
         ),
@@ -754,7 +754,7 @@ class _PostListState extends State<PostList> {
         // AppBar 영역 (투명)
         if (widget.showAppBar)
           SliverAppBar(
-            toolbarHeight: 35,
+            toolbarHeight: 55,
             backgroundColor: Colors.transparent,
             elevation: 0,
             scrolledUnderElevation: 0,
