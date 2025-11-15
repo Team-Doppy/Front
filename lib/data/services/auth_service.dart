@@ -145,7 +145,7 @@ class AuthService {
     print('[-] [AuthService] logout success');
   }
 
-  /// 4. 토큰 검증 (클라이언트 사이드)
+  /// 4. 토큰 검증 및 갱신 (클라이언트 사이드)
   Future<bool> validateAndRefreshToken() async {
     final token = await getToken();
     if (token == null) {
@@ -178,7 +178,14 @@ class AuthService {
       }
 
       final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+      final expirationTime = exp * 1000; // 밀리초로 변환
+      final nowMs = DateTime.now().millisecondsSinceEpoch;
       final isExpired = now >= exp;
+
+      // 🎯 테스트 환경: 만료 기간이 1분이므로 10초 전에 리프레시
+      // 프로덕션에서는 5 * 60 * 1000 (5분) 사용
+      final bufferTime = 10 * 1000; // 10초 버퍼 (테스트용)
+      final shouldRefresh = isExpired || (expirationTime - nowMs) < bufferTime;
 
       print(
         '[AuthService] Token expires at: ${DateTime.fromMillisecondsSinceEpoch(exp * 1000)}',
@@ -187,10 +194,22 @@ class AuthService {
         '[AuthService] Current time: ${DateTime.fromMillisecondsSinceEpoch(now * 1000)}',
       );
       print('[AuthService] Token is expired: $isExpired');
+      print('[AuthService] Should refresh: $shouldRefresh');
 
-      if (isExpired) {
-        print('[AuthService] Token expired - will be handled by DioClient');
-        return false; // DioClient에서 갱신 처리
+      // 🎯 토큰이 만료되었거나 곧 만료될 경우 리프레시 시도
+      if (shouldRefresh) {
+        print(
+          '[AuthService] Token expired or expiring soon - attempting refresh...',
+        );
+
+        final refreshed = await _refreshToken();
+        if (refreshed) {
+          print('[AuthService] ✅ Token refreshed successfully');
+          return true;
+        } else {
+          print('[AuthService] ❌ Token refresh failed');
+          return false;
+        }
       } else {
         print('[AuthService] Token is valid');
         return true;
@@ -199,6 +218,65 @@ class AuthService {
       print('[AuthService] Token validation error: $e');
       return false;
     }
+  }
+
+  /// 🎯 리프레시 토큰으로 새 토큰 발급 (재시도 포함)
+  Future<bool> _refreshToken() async {
+    final refreshToken = await getRefreshToken();
+    if (refreshToken == null || refreshToken.isEmpty) {
+      print('[AuthService] ❌ 리프레시 토큰이 없습니다');
+      return false;
+    }
+
+    const maxRetries = 2;
+    const retry1Delay = Duration(milliseconds: 300);
+    const retry2Delay = Duration(milliseconds: 800);
+
+    for (int attempt = 0; attempt <= maxRetries; attempt++) {
+      if (attempt > 0) {
+        final delay = attempt == 1 ? retry1Delay : retry2Delay;
+        await Future.delayed(delay);
+      }
+
+      try {
+        final url = Uri.parse('$baseUrl/api/auth/refresh');
+        final response = await http.post(
+          url,
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({'refreshToken': refreshToken}),
+        );
+
+        if (response.statusCode == 200) {
+          final responseData = jsonDecode(utf8.decode(response.bodyBytes));
+
+          // 🎯 API 응답 구조 확인 (data 안에 있을 수도 있고, 직접 있을 수도 있음)
+          final data = responseData['data'] ?? responseData;
+          final newToken = data['token'] ?? data['accessToken'];
+          final newRefreshToken = data['refreshToken'];
+
+          if (newToken != null && newRefreshToken != null) {
+            await saveToken(newToken);
+            await saveRefreshToken(newRefreshToken);
+            print('✅ [AuthService] 토큰 갱신 성공 (attempt=${attempt + 1})');
+            return true;
+          } else {
+            print(
+              '❌ [AuthService] 토큰 갱신 실패: 응답에 토큰이 없습니다 (attempt=${attempt + 1})',
+            );
+          }
+        } else {
+          print(
+            '❌ [AuthService] 토큰 갱신 실패: ${response.statusCode} (attempt=${attempt + 1})',
+          );
+        }
+      } catch (e) {
+        print('❌ [AuthService] 토큰 갱신 오류 (attempt=${attempt + 1}): $e');
+      }
+    }
+
+    // 모든 재시도 실패
+    print('[AuthService] ❌ 토큰 갱신 실패: 모든 재시도 소진');
+    return false;
   }
 
   /// 사용자 region 업데이트 (언어 변경 시)

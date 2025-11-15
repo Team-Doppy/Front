@@ -461,4 +461,80 @@ class GroupService {
       rethrow;
     }
   }
+
+  /// 26. 그룹 순서 변경 (드래그 앤 드롭)
+  ///
+  /// [groups] - 그룹 순서 정보 리스트
+  /// 각 항목: { "groupId": 1, "displayOrder": 0 }
+  ///
+  /// 응답: 변경된 그룹 목록 (displayOrder 반영)
+  Future<List<Group>> reorderGroups(List<Map<String, dynamic>> groups) async {
+    try {
+      print('🔍 [GroupService] 그룹 순서 변경 시작 - 그룹 수: ${groups.length}');
+
+      final response = await _dio.patch(
+        '/api/groups/reorder',
+        data: {'groups': groups},
+      );
+
+      print('📡 [GroupService] API 응답 상태: ${response.statusCode}');
+      print('📡 [GroupService] API 응답 데이터: ${response.data}');
+
+      if (response.statusCode == 200) {
+        final decoded = response.data;
+        List<Group> reorderedGroups;
+
+        if (decoded is List) {
+          reorderedGroups =
+              decoded.map<Group>((item) {
+                if (item is Map<String, dynamic> && item.containsKey('group')) {
+                  return Group.fromJson(item['group'] as Map<String, dynamic>);
+                }
+                return Group.fromJson(item as Map<String, dynamic>);
+              }).toList();
+        } else if (decoded is Map<String, dynamic>) {
+          final dynamic groupsData =
+              decoded['groups'] ??
+              decoded['data'] ??
+              decoded['content'] ??
+              decoded['items'] ??
+              decoded['results'];
+          if (groupsData is List) {
+            reorderedGroups =
+                groupsData.map<Group>((item) {
+                  if (item is Map<String, dynamic> &&
+                      item.containsKey('group')) {
+                    return Group.fromJson(
+                      item['group'] as Map<String, dynamic>,
+                    );
+                  }
+                  return Group.fromJson(item as Map<String, dynamic>);
+                }).toList();
+          } else {
+            print('⚠️ [GroupService] 예상치 못한 응답 구조입니다. groups 배열을 찾지 못했습니다.');
+            reorderedGroups = <Group>[];
+          }
+        } else {
+          print('⚠️ [GroupService] 알 수 없는 응답 형태입니다.');
+          reorderedGroups = <Group>[];
+        }
+
+        print('✅ [GroupService] 그룹 순서 변경 성공 - ${reorderedGroups.length}개 그룹');
+        return reorderedGroups;
+      } else {
+        print(
+          '❌ [GroupService] API 오류: ${response.statusCode} - ${response.data}',
+        );
+        throw Exception('그룹 순서 변경 실패: ${response.statusCode}');
+      }
+    } catch (e) {
+      print('❌ [GroupService] 그룹 순서 변경 중 예외 발생: $e');
+      if (e is DioException) {
+        print(
+          '❌ [GroupService] Dio 에러: ${e.response?.statusCode} - ${e.response?.data}',
+        );
+      }
+      rethrow;
+    }
+  }
 }

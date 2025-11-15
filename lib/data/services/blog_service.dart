@@ -445,6 +445,65 @@ class BlogService {
     }
   }
 
+  /// 여러 포스트를 배치로 PRIVATE(나만보기)로 변경
+  ///
+  /// [postIds] - 변경할 포스트 ID 리스트
+  ///
+  /// 응답: 변경된 포스트 목록
+  Future<List<Map<String, dynamic>>> batchMakePostsPrivate(
+    List<int> postIds,
+  ) async {
+    try {
+      print('[BlogService] 여러 포스트 배치로 나만보기 변경 시작 - 포스트 수: ${postIds.length}');
+
+      final response = await _dio.patch(
+        '/api/posts/batch/make-private',
+        data: {'postIds': postIds},
+        options: Options(
+          sendTimeout: const Duration(seconds: 30),
+          receiveTimeout: const Duration(seconds: 30),
+        ),
+      );
+
+      print('[BlogService] 여러 포스트 배치로 나만보기 변경 응답 상태: ${response.statusCode}');
+
+      if (response.statusCode == 200) {
+        final data = response.data;
+        List<Map<String, dynamic>> updatedPosts;
+
+        if (data is List) {
+          updatedPosts = data.cast<Map<String, dynamic>>();
+        } else if (data is Map<String, dynamic>) {
+          final postsData =
+              data['posts'] ?? data['data'] ?? data['content'] ?? [];
+          if (postsData is List) {
+            updatedPosts = postsData.cast<Map<String, dynamic>>();
+          } else {
+            updatedPosts = [];
+          }
+        } else {
+          updatedPosts = [];
+        }
+
+        print(
+          '[BlogService] 여러 포스트 배치로 나만보기 변경 성공 - 변경된 포스트 수: ${updatedPosts.length}',
+        );
+        return updatedPosts;
+      } else {
+        throw Exception('여러 포스트 배치로 나만보기 변경 실패: ${response.statusCode}');
+      }
+    } catch (e) {
+      print('[BlogService] 여러 포스트 배치로 나만보기 변경 에러: $e');
+      if (e is DioException) {
+        print(
+          '[BlogService] Dio 에러: ${e.response?.statusCode} - ${e.response?.data}',
+        );
+        throw Exception('여러 포스트 배치로 나만보기 변경 실패: ${e.response?.statusCode}');
+      }
+      rethrow;
+    }
+  }
+
   /// 포스트 썸네일, 타이틀, 요약 수정
   ///
   /// [postId] - 수정할 포스트 ID
@@ -1082,6 +1141,119 @@ class BlogService {
         return [];
       }
       throw Exception('Failed to fetch user posts: $e');
+    }
+  }
+
+  /// 그룹별 포스트 조회
+  ///
+  /// [groupId] - 그룹 ID
+  /// [page] - 페이지 번호 (기본값: 0)
+  /// [size] - 페이지 크기 (기본값: 10)
+  /// [includeContent] - content 포함 여부 (기본값: false)
+  ///
+  /// 응답 구조:
+  /// {
+  ///   "group": { ... },
+  ///   "posts": {
+  ///     "content": [...],
+  ///     "totalElements": 50,
+  ///     "totalPages": 5,
+  ///     ...
+  ///   },
+  ///   "friends": [...]
+  /// }
+  Future<Map<String, dynamic>> getGroupPosts({
+    required int groupId,
+    int page = 0,
+    int size = 10,
+    bool includeContent = false,
+  }) async {
+    try {
+      print(
+        '[BlogService] 그룹별 포스트 조회 시작 - 그룹ID: $groupId, page: $page, size: $size, includeContent: $includeContent',
+      );
+
+      final response = await _dio.get(
+        '/api/posts/group/$groupId',
+        queryParameters: {
+          'page': page,
+          'size': size,
+          'includeContent': includeContent,
+        },
+        options: Options(receiveTimeout: const Duration(seconds: 10)),
+      );
+
+      print('[BlogService] 그룹별 포스트 조회 응답 상태: ${response.statusCode}');
+
+      if (response.statusCode == 200) {
+        final data = response.data as Map<String, dynamic>;
+        print(
+          '[BlogService] 그룹별 포스트 조회 성공 - 포스트 수: ${(data['posts']?['content'] as List?)?.length ?? 0}',
+        );
+        return data;
+      } else {
+        throw Exception('그룹별 포스트 조회 실패: ${response.statusCode}');
+      }
+    } catch (e) {
+      print('[BlogService] 그룹별 포스트 조회 에러: $e');
+      if (e is DioException) {
+        print(
+          '[BlogService] Dio 에러: ${e.response?.statusCode} - ${e.response?.data}',
+        );
+        throw Exception('그룹별 포스트 조회 실패: ${e.response?.statusCode}');
+      }
+      rethrow;
+    }
+  }
+
+  /// 포스트 조회자 정보 조회
+  ///
+  /// [postId] - 포스트 ID
+  ///
+  /// 응답 구조:
+  /// {
+  ///   "postId": 123,
+  ///   "postTitle": "포스트 제목",
+  ///   "viewers": [
+  ///     {
+  ///       "userId": 1,
+  ///       "username": "viewer1",
+  ///       "profileImageUrl": "url",
+  ///       "viewedAt": "2024-01-01T00:00:00",
+  ///       "hasLiked": true
+  ///     },
+  ///     ...
+  ///   ],
+  ///   "totalViewerCount": 10
+  /// }
+  Future<Map<String, dynamic>> getPostViewers(String postId) async {
+    try {
+      print('[BlogService] 포스트 조회자 정보 조회 시작 - 포스트ID: $postId');
+
+      final response = await _dio.get(
+        '/api/posts/$postId/viewers',
+        options: Options(receiveTimeout: const Duration(seconds: 10)),
+      );
+
+      print('[BlogService] 포스트 조회자 정보 조회 응답 상태: ${response.statusCode}');
+
+      if (response.statusCode == 200) {
+        final data = response.data as Map<String, dynamic>;
+        final viewerCount = (data['viewers'] as List?)?.length ?? 0;
+        print('[BlogService] 포스트 조회자 정보 조회 성공 - 조회자 수: $viewerCount');
+        return data;
+      } else {
+        throw Exception('포스트 조회자 정보 조회 실패: ${response.statusCode}');
+      }
+    } catch (e) {
+      print('[BlogService] 포스트 조회자 정보 조회 에러: $e');
+      if (e is DioException) {
+        print(
+          '[BlogService] Dio 에러: ${e.response?.statusCode} - ${e.response?.data}',
+        );
+        throw Exception('포스트 조회자 정보 조회 실패: ${e.response?.statusCode}');
+      }
+      rethrow;
     }
   }
 }

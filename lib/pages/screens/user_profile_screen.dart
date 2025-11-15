@@ -430,7 +430,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                                   imageUrl: _displayImageUrl,
                                   username: _displayUsername,
                                   size: 150,
-                                  borderWidth: 3,
+                                  borderWidth: _isUploadingProfileImage ? 0 : 3,
                                   borderColor:
                                       Theme.of(context).brightness ==
                                               Brightness.dark

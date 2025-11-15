@@ -254,6 +254,25 @@ class GroupProvider with ChangeNotifier {
     await fetchMyGroups(forceRefresh: true);
   }
 
+  /// 🔄 그룹 순서 변경 (드래그 앤 드롭)
+  Future<bool> reorderGroups(List<Map<String, dynamic>> groups) async {
+    try {
+      print('🔄 [GroupProvider] 그룹 순서 변경 시작: ${groups.length}개');
+      final reorderedGroups = await _groupService.reorderGroups(groups);
+
+      // 🎯 캐시 업데이트
+      _cachedGroups = reorderedGroups;
+      _isGroupsCached = true;
+
+      notifyListeners();
+      print('✅ [GroupProvider] 그룹 순서 변경 완료');
+      return true;
+    } catch (e) {
+      print('❌ [GroupProvider] 그룹 순서 변경 에러: $e');
+      return false;
+    }
+  }
+
   /// 🗑️ 모든 캐시 초기화
   void clearAllCache() {
     print('🗑️ [GroupProvider] 모든 캐시 초기화');

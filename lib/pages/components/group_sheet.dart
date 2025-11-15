@@ -246,6 +246,25 @@ class _GroupCreateEditPageState extends State<_GroupCreateEditPage> {
         widget.groupDropDown._createGroupFocusNode.requestFocus();
       }
     });
+
+    // 🎯 텍스트 필드 변경 감지 (변경사항 확인용)
+    widget.groupDropDown._createGroupController.addListener(_onFieldChanged);
+    widget.groupDropDown._createGroupDescriptionController.addListener(
+      _onFieldChanged,
+    );
+  }
+
+  @override
+  void dispose() {
+    widget.groupDropDown._createGroupController.removeListener(_onFieldChanged);
+    widget.groupDropDown._createGroupDescriptionController.removeListener(
+      _onFieldChanged,
+    );
+    super.dispose();
+  }
+
+  void _onFieldChanged() {
+    setState(() {}); // 🎯 변경사항 감지 시 rebuild
   }
 
   @override
@@ -315,6 +334,11 @@ class GroupDropDown {
   VoidCallback? _uploadTaskListener;
   bool _isEditMode = false;
 
+  // 🎯 수정 모드 초기 값 저장 (변경사항 감지용)
+  String _initialName = '';
+  String _initialDescription = '';
+  String? _initialImageUrl;
+
   /// 리소스 정리
   void dispose() {
     _createGroupController.dispose();
@@ -350,10 +374,16 @@ class GroupDropDown {
 
     // 🎯 수정 모드인 경우 기존 값으로 초기화
     if (editMode) {
-      _createGroupController.text = initialName ?? '';
-      _createGroupDescriptionController.text = initialDescription ?? '';
-      _selectedGroupImageUrl = initialImageUrl;
+      _initialName = initialName ?? '';
+      _initialDescription = initialDescription ?? '';
+      _initialImageUrl = initialImageUrl;
+      _createGroupController.text = _initialName;
+      _createGroupDescriptionController.text = _initialDescription;
+      _selectedGroupImageUrl = _initialImageUrl;
     } else {
+      _initialName = '';
+      _initialDescription = '';
+      _initialImageUrl = null;
       _createGroupController.clear();
       _createGroupDescriptionController.clear();
       _selectedGroupImageUrl = null;
@@ -549,116 +579,293 @@ class GroupDropDown {
               ),
               const SizedBox(width: 12),
               Expanded(
-                child: TextButton(
-                  onPressed:
-                      _isCreatingLoading
-                          ? null
-                          : () async {
-                            final groupName = nameController.text.trim();
-                            final groupDescription =
-                                descriptionController.text.trim(); // 🎯 설명 가져오기
-                            if (groupName.isNotEmpty) {
-                              // 🎯 로딩 시작
-                              setModalState(() {
-                                _isCreatingLoading = true;
-                              });
+                child: Builder(
+                  builder: (context) {
+                    // 🎯 수정 모드일 때 변경사항 확인
+                    final bool hasChanges =
+                        _isEditMode
+                            ? _hasChanges()
+                            : nameController.text.trim().isNotEmpty;
 
-                              try {
-                                // 🎯 이미지 업로드가 진행 중이면 완료될 때까지 대기
-                                String? finalImageUrl = _selectedGroupImageUrl;
-                                if (_groupImageUploadTask != null &&
-                                    _groupImageUploadTask!.state !=
-                                        UploadState.success) {
-                                  // 업로드 완료까지 최대 30초 대기
-                                  int waitCount = 0;
-                                  while (_groupImageUploadTask != null &&
-                                      _groupImageUploadTask!.state !=
-                                          UploadState.success &&
-                                      _groupImageUploadTask!.state !=
-                                          UploadState.failed &&
-                                      waitCount < 300) {
-                                    await Future.delayed(
-                                      const Duration(milliseconds: 100),
+                    return TextButton(
+                      onPressed:
+                          (_isCreatingLoading || !hasChanges)
+                              ? null
+                              : () async {
+                                final groupName = nameController.text.trim();
+                                final groupDescription =
+                                    descriptionController.text
+                                        .trim(); // 🎯 설명 가져오기
+                                if (groupName.isNotEmpty) {
+                                  // 🎯 로딩 시작
+                                  setModalState(() {
+                                    _isCreatingLoading = true;
+                                  });
+
+                                  try {
+                                    // 🎯 이미지 업로드 상태 확인 및 대기
+                                    String? finalImageUrl = null;
+
+                                    // 1. 이미지가 선택되었는지 확인
+                                    final hasImage =
+                                        _selectedGroupImageUrl != null;
+
+                                    if (hasImage) {
+                                      // 2. 업로드 태스크가 있는지 확인
+                                      if (_groupImageUploadTask != null) {
+                                        // 3. 업로드 상태 확인
+                                        final currentState =
+                                            _groupImageUploadTask!.state;
+
+                                        if (currentState ==
+                                            UploadState.success) {
+                                          // 이미 업로드 완료된 경우
+                                          finalImageUrl =
+                                              _groupImageUploadTask!.url;
+                                          // 최신 상태 확인을 위해 _selectedGroupImageUrl도 체크
+                                          if (finalImageUrl == null &&
+                                              _selectedGroupImageUrl != null &&
+                                              _selectedGroupImageUrl!
+                                                  .startsWith('http')) {
+                                            finalImageUrl =
+                                                _selectedGroupImageUrl;
+                                          }
+                                          print(
+                                            '✅ [GroupSheet] 이미지 업로드 완료: $finalImageUrl',
+                                          );
+                                        } else if (currentState ==
+                                                UploadState.failed ||
+                                            currentState ==
+                                                UploadState.cancelled) {
+                                          // 업로드 실패한 경우
+                                          print(
+                                            '❌ [GroupSheet] 이미지 업로드 실패: $currentState',
+                                          );
+                                          if (context.mounted) {
+                                            ErrorHandler.showError(
+                                              context,
+                                              context.tr('image_upload_failed'),
+                                            );
+                                          }
+                                          setModalState(() {
+                                            _isCreatingLoading = false;
+                                          });
+                                          return; // 생성/수정 취소
+                                        } else {
+                                          // 업로드 진행 중인 경우 - 완료될 때까지 대기
+                                          print(
+                                            '🔄 [GroupSheet] 이미지 업로드 진행 중... (상태: $currentState)',
+                                          );
+
+                                          // 업로드 완료까지 최대 60초 대기 (더 긴 대기 시간)
+                                          int waitCount = 0;
+                                          const maxWaitTime = 600; // 60초
+
+                                          while (_groupImageUploadTask !=
+                                                  null &&
+                                              _groupImageUploadTask!.state !=
+                                                  UploadState.success &&
+                                              _groupImageUploadTask!.state !=
+                                                  UploadState.failed &&
+                                              _groupImageUploadTask!.state !=
+                                                  UploadState.cancelled &&
+                                              waitCount < maxWaitTime) {
+                                            await Future.delayed(
+                                              const Duration(milliseconds: 100),
+                                            );
+                                            waitCount++;
+                                          }
+
+                                          // 최종 상태 확인
+                                          if (_groupImageUploadTask != null) {
+                                            final finalState =
+                                                _groupImageUploadTask!.state;
+
+                                            if (finalState ==
+                                                UploadState.success) {
+                                              finalImageUrl =
+                                                  _groupImageUploadTask!.url;
+
+                                              // 리스너가 아직 업데이트하지 않았을 수 있으므로
+                                              // _selectedGroupImageUrl도 확인
+                                              if (finalImageUrl == null &&
+                                                  _selectedGroupImageUrl !=
+                                                      null &&
+                                                  _selectedGroupImageUrl!
+                                                      .startsWith('http')) {
+                                                finalImageUrl =
+                                                    _selectedGroupImageUrl;
+                                              }
+
+                                              print(
+                                                '✅ [GroupSheet] 이미지 업로드 완료 (대기 후): $finalImageUrl',
+                                              );
+                                            } else {
+                                              // 업로드 실패 또는 취소
+                                              print(
+                                                '❌ [GroupSheet] 이미지 업로드 실패 또는 취소: $finalState',
+                                              );
+                                              if (context.mounted) {
+                                                ErrorHandler.showError(
+                                                  context,
+                                                  context.tr(
+                                                    'image_upload_failed',
+                                                  ),
+                                                );
+                                              }
+                                              setModalState(() {
+                                                _isCreatingLoading = false;
+                                              });
+                                              return; // 생성/수정 취소
+                                            }
+                                          } else {
+                                            // 태스크가 null이 된 경우 (완료된 후 리스너에서 정리됨)
+                                            // _selectedGroupImageUrl 확인
+                                            if (_selectedGroupImageUrl !=
+                                                    null &&
+                                                _selectedGroupImageUrl!
+                                                    .startsWith('http')) {
+                                              finalImageUrl =
+                                                  _selectedGroupImageUrl;
+                                              print(
+                                                '✅ [GroupSheet] 이미지 업로드 완료 (태스크 정리 후): $finalImageUrl',
+                                              );
+                                            } else {
+                                              print(
+                                                '⚠️ [GroupSheet] 이미지 업로드 타임아웃 또는 실패',
+                                              );
+                                              if (context.mounted) {
+                                                ErrorHandler.showError(
+                                                  context,
+                                                  context.tr(
+                                                    'image_upload_failed',
+                                                  ),
+                                                );
+                                              }
+                                              setModalState(() {
+                                                _isCreatingLoading = false;
+                                              });
+                                              return; // 생성/수정 취소
+                                            }
+                                          }
+                                        }
+                                      } else {
+                                        // 업로드 태스크가 없지만 이미지 URL이 있는 경우
+                                        // 이미 서버 URL인지 확인
+                                        if (_selectedGroupImageUrl != null) {
+                                          if (_selectedGroupImageUrl!
+                                                  .startsWith('http://') ||
+                                              _selectedGroupImageUrl!
+                                                  .startsWith('https://')) {
+                                            // 이미 서버 URL인 경우
+                                            finalImageUrl =
+                                                _selectedGroupImageUrl;
+                                            print(
+                                              '✅ [GroupSheet] 이미 서버 URL 사용: $finalImageUrl',
+                                            );
+                                          } else {
+                                            // 로컬 파일 경로인 경우 - 업로드가 아직 시작되지 않았을 수 있음
+                                            print(
+                                              '⚠️ [GroupSheet] 로컬 파일 경로 감지, 업로드 태스크 없음: ${_selectedGroupImageUrl}',
+                                            );
+                                            // 업로드가 시작되지 않았다면 사용자에게 알림
+                                            if (context.mounted) {
+                                              ErrorHandler.showError(
+                                                context,
+                                                '이미지 업로드가 아직 시작되지 않았습니다. 잠시 후 다시 시도해주세요.',
+                                              );
+                                            }
+                                            setModalState(() {
+                                              _isCreatingLoading = false;
+                                            });
+                                            return; // 생성/수정 취소
+                                          }
+                                        }
+                                      }
+                                    }
+
+                                    // 🎯 최종 검증: 서버 URL만 전달 (로컬 파일 경로는 제외)
+                                    if (finalImageUrl != null &&
+                                        !finalImageUrl.startsWith('http://') &&
+                                        !finalImageUrl.startsWith('https://')) {
+                                      print(
+                                        '❌ [GroupSheet] 최종 검증 실패: 서버 URL이 아닌 경로 감지 - $finalImageUrl',
+                                      );
+                                      if (context.mounted) {
+                                        ErrorHandler.showError(
+                                          context,
+                                          context.tr('image_upload_failed'),
+                                        );
+                                      }
+                                      setModalState(() {
+                                        _isCreatingLoading = false;
+                                      });
+                                      return; // 생성/수정 취소
+                                    }
+
+                                    // 🎯 그룹 생성/수정 실행
+                                    await onCreateGroup(
+                                      groupName,
+                                      groupDescription.isEmpty
+                                          ? null
+                                          : groupDescription, // 🎯 설명 전달
+                                      finalImageUrl, // 🎯 서버 URL만 전달 (null 가능)
                                     );
-                                    waitCount++;
+
+                                    setModalState(() {
+                                      _isCreatingLoading = false;
+                                      _selectedGroupImageUrl = null;
+                                    });
+
+                                    if (context.mounted) {
+                                      Navigator.of(context).pop();
+                                    }
+                                  } catch (e) {
+                                    // 🎯 에러 발생 시 로딩 해제
+                                    setModalState(() {
+                                      _isCreatingLoading = false;
+                                    });
+                                    rethrow;
                                   }
-
-                                  if (_groupImageUploadTask != null &&
-                                      _groupImageUploadTask!.state ==
-                                          UploadState.success) {
-                                    finalImageUrl = _groupImageUploadTask!.url;
-                                    print(
-                                      '✅ [GroupSheet] 이미지 업로드 완료: $finalImageUrl',
-                                    );
-                                  } else {
-                                    print('⚠️ [GroupSheet] 이미지 업로드 실패 또는 타임아웃');
-                                    finalImageUrl = null; // 업로드 실패 시 null로 설정
-                                  }
                                 }
-
-                                // 🎯 로컬 파일 경로인 경우 제외 (서버 URL만 전달)
-                                if (finalImageUrl != null &&
-                                    (finalImageUrl.startsWith('file://') ||
-                                        (!finalImageUrl.startsWith('http://') &&
-                                            !finalImageUrl.startsWith(
-                                              'https://',
-                                            )))) {
-                                  print(
-                                    '⚠️ [GroupSheet] 로컬 파일 경로는 전달하지 않음: $finalImageUrl',
-                                  );
-                                  finalImageUrl = null;
-                                }
-
-                                await onCreateGroup(
-                                  groupName,
-                                  groupDescription.isEmpty
-                                      ? null
-                                      : groupDescription, // 🎯 설명 전달
-                                  finalImageUrl, // 🎯 서버 URL만 전달
-                                );
-
-                                setModalState(() {
-                                  _isCreatingLoading = false;
-                                  _selectedGroupImageUrl = null;
-                                });
-
-                                if (context.mounted) {
-                                  Navigator.of(context).pop();
-                                }
-                              } catch (e) {
-                                // 🎯 에러 발생 시 로딩 해제
-                                setModalState(() {
-                                  _isCreatingLoading = false;
-                                });
-                                rethrow;
-                              }
-                            }
-                          },
-                  style: TextButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                  ),
-                  child:
-                      _isCreatingLoading
-                          ? SizedBox(
-                            height: 24,
-                            width: 24,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2.5,
-                              valueColor: AlwaysStoppedAnimation<Color>(
-                                Theme.of(context).colorScheme.onSurface,
+                              },
+                      style: TextButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                      ),
+                      child:
+                          _isCreatingLoading
+                              ? SizedBox(
+                                height: 24,
+                                width: 24,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2.5,
+                                  valueColor: AlwaysStoppedAnimation<Color>(
+                                    Theme.of(context).colorScheme.onSurface,
+                                  ),
+                                ),
+                              )
+                              : Text(
+                                _isEditMode
+                                    ? context.tr('save_changes')
+                                    : context.tr(
+                                      'create',
+                                    ), // 🎯 수정 모드에 따라 텍스트 변경
+                                style: TextStyle(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.w700,
+                                  color:
+                                      hasChanges
+                                          ? Theme.of(
+                                            context,
+                                          ).colorScheme.onSurface
+                                          : Theme.of(context)
+                                              .colorScheme
+                                              .onSurface
+                                              .withOpacity(0.4),
+                                ),
                               ),
-                            ),
-                          )
-                          : Text(
-                            _isEditMode
-                                ? '수정완료'
-                                : context.tr('create'), // 🎯 수정 모드에 따라 텍스트 변경
-                            style: TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.w700,
-                              color: Theme.of(context).colorScheme.onSurface,
-                            ),
-                          ),
+                    );
+                  },
                 ),
               ),
             ],
@@ -666,6 +873,29 @@ class GroupDropDown {
         ],
       ),
     );
+  }
+
+  // 🎯 변경사항 확인 (수정 모드용)
+  bool _hasChanges() {
+    if (!_isEditMode) return false;
+
+    final currentName = _createGroupController.text.trim();
+    final currentDescription = _createGroupDescriptionController.text.trim();
+    final currentImageUrl = _selectedGroupImageUrl;
+
+    // 이름 변경 확인
+    if (currentName != _initialName) return true;
+
+    // 설명 변경 확인 (null과 빈 문자열을 같게 처리)
+    final initialDesc =
+        _initialDescription.isEmpty ? null : _initialDescription;
+    final currentDesc = currentDescription.isEmpty ? null : currentDescription;
+    if (currentDesc != initialDesc) return true;
+
+    // 이미지 변경 확인
+    if (currentImageUrl != _initialImageUrl) return true;
+
+    return false;
   }
 
   /// 그룹 프로필 아바타 빌드

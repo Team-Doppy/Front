@@ -430,7 +430,7 @@ class Feed {
                 return Padding(
                   padding: const EdgeInsets.only(
                     bottom: 12.0,
-                    top: 16.0,
+                    top: 14.0,
                     left: 8.0,
                     right: 200.0,
                   ),

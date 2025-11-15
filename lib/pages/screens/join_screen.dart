@@ -57,6 +57,7 @@ class _JoinScreenState extends State<JoinScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Theme.of(context).colorScheme.surface,
+      resizeToAvoidBottomInset: true,
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
@@ -388,54 +389,51 @@ class _JoinScreenState extends State<JoinScreen> {
         Container(
           padding: const EdgeInsets.fromLTRB(24, 12, 24, 20),
 
-          child: SafeArea(
-            top: false,
-            child: SizedBox(
-              width: double.infinity,
-              height: 50,
-              child: ElevatedButton(
-                onPressed:
+          child: SizedBox(
+            width: double.infinity,
+            height: 50,
+            child: ElevatedButton(
+              onPressed:
+                  (_idController.text.isNotEmpty &&
+                          _passwordController.text.isNotEmpty &&
+                          !_isCheckingDuplicate)
+                      ? _handleLogin
+                      : null,
+              style: ElevatedButton.styleFrom(
+                backgroundColor:
                     (_idController.text.isNotEmpty &&
-                            _passwordController.text.isNotEmpty &&
-                            !_isCheckingDuplicate)
-                        ? _handleLogin
-                        : null,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor:
-                      (_idController.text.isNotEmpty &&
-                              _passwordController.text.isNotEmpty)
-                          ? Theme.of(context).colorScheme.onSurface
-                          : Colors.grey[300],
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                  elevation: 0,
+                            _passwordController.text.isNotEmpty)
+                        ? Theme.of(context).colorScheme.onSurface
+                        : Colors.grey[300],
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16),
                 ),
-                child:
-                    _isCheckingDuplicate
-                        ? SizedBox(
-                          width: 20,
-                          height: 20,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            valueColor: AlwaysStoppedAnimation<Color>(
-                              Theme.of(context).colorScheme.surface,
-                            ),
-                          ),
-                        )
-                        : Text(
-                          '로그인',
-                          style: TextStyle(
-                            color:
-                                (_idController.text.isNotEmpty &&
-                                        _passwordController.text.isNotEmpty)
-                                    ? Theme.of(context).colorScheme.surface
-                                    : Colors.grey[600],
-                            fontSize: 16,
-                            fontWeight: FontWeight.w600,
+                elevation: 0,
+              ),
+              child:
+                  _isCheckingDuplicate
+                      ? SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          valueColor: AlwaysStoppedAnimation<Color>(
+                            Theme.of(context).colorScheme.surface,
                           ),
                         ),
-              ),
+                      )
+                      : Text(
+                        '로그인',
+                        style: TextStyle(
+                          color:
+                              (_idController.text.isNotEmpty &&
+                                      _passwordController.text.isNotEmpty)
+                                  ? Theme.of(context).colorScheme.surface
+                                  : Colors.grey[600],
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
             ),
           ),
         ),

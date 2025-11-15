@@ -3,6 +3,7 @@ import 'package:doppy/pages/components/doppy_loading_logo.dart';
 import 'package:doppy/providers/auth_provider.dart';
 import 'package:doppy/providers/group_provider.dart';
 import 'package:doppy/providers/user_provider.dart';
+import 'package:doppy/providers/friend_provider.dart';
 import 'package:doppy/data/services/home_data_service.dart';
 import 'package:doppy/data/services/search_service.dart';
 import 'package:doppy/utils/network_utils.dart';
@@ -86,12 +87,13 @@ class _SplashScreenState extends State<SplashScreen>
           _loadingStatus = '사용자 데이터를 불러오는 중...';
         });
 
-        // 홈 데이터, 검색 기록, 유저 정보, 그룹 데이터를 병렬로 로드
+        // 홈 데이터, 검색 기록, 유저 정보, 그룹 데이터, 친구 데이터를 병렬로 로드
         await Future.wait([
           _loadHomeData(),
           _loadSearchHistory(),
           _loadUserData(),
           _loadGroupData(),
+          _loadFriendData(),
         ]);
       } else {
         // 토큰이 없거나 유효하지 않은 경우 빈 데이터로 설정
@@ -203,6 +205,20 @@ class _SplashScreenState extends State<SplashScreen>
     } catch (e) {
       print('[SplashScreen] 그룹 데이터 로드 실패 (무시): $e');
       // 그룹 데이터 로드 실패는 앱 시작을 막지 않음
+    }
+  }
+
+  Future<void> _loadFriendData() async {
+    try {
+      print('[SplashScreen] 친구 데이터 로드 시작');
+
+      final friendProvider = context.read<FriendProvider>();
+      await friendProvider.fetchAllFriendData();
+
+      print('[SplashScreen] 친구 데이터 로드 완료');
+    } catch (e) {
+      print('[SplashScreen] 친구 데이터 로드 실패 (무시): $e');
+      // 친구 데이터 로드 실패는 앱 시작을 막지 않음
     }
   }
 

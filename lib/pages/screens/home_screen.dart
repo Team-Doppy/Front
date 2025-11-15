@@ -780,7 +780,7 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           Theme.of(context).brightness == Brightness.dark
               ? Positioned.fill(
                 child: BackdropFilter(
-                  filter: ui.ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+                  filter: ui.ImageFilter.blur(sigmaX: 10, sigmaY: 10),
                   child: Container(
                     decoration: BoxDecoration(
                       gradient: LinearGradient(
