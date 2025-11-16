@@ -189,16 +189,28 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
       if (_selectedGroup == null || isSystemGroup) {
         // allFriends 그룹: 친구 데이터만 추가로 로드 (그룹 정보는 이미 위에서 로드됨)
         if (!friendProv.isLoading && friendProv.acceptedFriends.isEmpty) {
-          await friendProv.fetchAllFriendData();
+          // 🎯 백그라운드 로드 (await 없이)
+          friendProv.fetchAllFriendData();
         }
       } else {
-        // 일반 그룹: 캐시 확인 후 멤버 목록 로드
+        // 일반 그룹: 캐시 확인 후 멤버 목록 로드 (백그라운드)
         if (!groupProv.isMembersCached(_selectedGroup!.id) &&
             !groupProv.isLoadingMembers(_selectedGroup!.id)) {
-          await groupProv.fetchGroupMembers(_selectedGroup!.id);
+          groupProv.fetchGroupMembers(_selectedGroup!.id);
         }
       }
-      // 🎯 포스트는 포스트 모드로 갈 때만 로드 (캐시 확인 후)
+
+      // 🎯 전체 친구 그룹에 처음 들어갔을 때 포스트도 자동 로드
+      if (isSystemGroup) {
+        final groupId = -1;
+        final posts = _groupPostsCache[groupId] ?? [];
+        final isLoading = _isLoadingGroupPosts[groupId] ?? false;
+        final hasMore = _hasMoreGroupPosts[groupId] ?? true;
+        if (posts.isEmpty && !isLoading && hasMore) {
+          // 포스트 탭으로 자동 전환하지 않고 백그라운드에서 로드
+          _loadAllFriendsPosts();
+        }
+      }
     });
   }
 
@@ -331,7 +343,7 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
                                           ),
                                         ),
                                       ),
-                                      SizedBox(height: 8),
+                                      SizedBox(height: 12),
                                       AnimatedOpacity(
                                         opacity:
                                             (1.0 -

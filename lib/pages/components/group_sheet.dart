@@ -1067,6 +1067,8 @@ class GroupDropDown {
                   ? (_selectedGroupImageUrl!.startsWith('http://') ||
                           _selectedGroupImageUrl!.startsWith('https://'))
                       ? CachedNetworkImage(
+                        width: double.infinity,
+                        height: double.infinity,
                         key: ValueKey('network-${_selectedGroupImageUrl}'),
                         imageUrl: _selectedGroupImageUrl!,
                         fit: BoxFit.cover,
@@ -1182,20 +1184,30 @@ class GroupDropDown {
                 final imageUrl = task.url ?? '';
                 print('✅ [GroupSheet] 그룹 이미지 업로드 성공: $imageUrl');
 
-                setModalState(() {
-                  _selectedGroupImageUrl =
-                      imageUrl.isNotEmpty ? imageUrl : null;
-                });
-
+                // 🎯 업로드 완료 후 태스크 정리 및 상태 업데이트
                 // 리스너 제거
                 if (_uploadTaskListener != null) {
                   task.removeListener(_uploadTaskListener!);
                   _uploadTaskListener = null;
                 }
                 _groupImageUploadTask = null;
+
+                // 🎯 업로드 완료 후 이미지 URL 업데이트 및 버튼 활성화를 위한 UI 업데이트
+                setModalState(() {
+                  _selectedGroupImageUrl =
+                      imageUrl.isNotEmpty ? imageUrl : null;
+                });
               } else if (task.state == UploadState.failed ||
                   task.state == UploadState.cancelled) {
                 print('❌ [GroupSheet] 그룹 이미지 업로드 실패 또는 취소');
+
+                // 🎯 업로드 실패 후 태스크 정리
+                // 리스너 제거
+                if (_uploadTaskListener != null) {
+                  task.removeListener(_uploadTaskListener!);
+                  _uploadTaskListener = null;
+                }
+                _groupImageUploadTask = null;
 
                 setModalState(() {
                   _selectedGroupImageUrl = null;
@@ -1207,13 +1219,6 @@ class GroupDropDown {
                     context.tr('image_upload_failed'),
                   );
                 }
-
-                // 리스너 제거
-                if (_uploadTaskListener != null) {
-                  task.removeListener(_uploadTaskListener!);
-                  _uploadTaskListener = null;
-                }
-                _groupImageUploadTask = null;
               }
             };
 

@@ -76,6 +76,7 @@ class GroupProvider with ChangeNotifier {
       final allFriendsGroupId = result.$4;
       final totalFriendCount = result.$5;
       final allFriendsDescription = result.$6;
+      final allFriendsPostCount = result.$7;
 
       _allFriendsGroupId = allFriendsGroupId;
 
@@ -86,6 +87,7 @@ class GroupProvider with ChangeNotifier {
         allFriendsGroupId,
         totalFriendCount,
         allFriendsDescription,
+        allFriendsPostCount,
         friendProvider,
       );
 
@@ -137,6 +139,7 @@ class GroupProvider with ChangeNotifier {
     int? groupId,
     int? totalFriendCountFromServer,
     String? descriptionFromServer,
+    int? allFriendsPostCountFromServer,
     FriendProvider? friendProvider,
   ) async {
     // 🎯 서버에서 받은 totalFriendCount 우선 사용, 없으면 friendProvider 사용, 둘 다 없으면 0
@@ -163,7 +166,7 @@ class GroupProvider with ChangeNotifier {
       members: const [],
       profileImageUrl: imageUrl, // 🎯 서버에서 받은 이미지 URL 사용 (로컬 파일 경로 포함)
       memberCount: totalFriendCount, // 🎯 서버에서 받은 값 사용
-      postCount: null, // 🎯 allFriends는 서버 응답에 postCount가 없으므로 null (필요시 별도 처리)
+      postCount: allFriendsPostCountFromServer, // 🎯 전체 친구 그룹에 공유된 포스트 수
       memberThumbnails: null,
       isSystem: true, // 시스템 그룹으로 표시
     );

@@ -54,8 +54,11 @@ class GroupService {
   }
 
   /// 18. 내가 소유한 그룹 목록 조회 (allFriends 메타데이터 포함)
-  /// 반환값: (groups, allFriendsDisplayOrder, allFriendsImage, allFriendsGroupId, totalFriendCount, allFriendsDescription)
-  Future<(List<Group>, int, String?, int?, int?, String?)> getMyGroups() async {
+  /// 반환값:
+  /// (groups, allFriendsDisplayOrder, allFriendsImage, allFriendsGroupId,
+  ///  totalFriendCount, allFriendsDescription, allFriendsPostCount)
+  Future<(List<Group>, int, String?, int?, int?, String?, int?)>
+  getMyGroups() async {
     try {
       print('🔍 [GroupService] 내가 소유한 그룹 목록 조회 시작');
 
@@ -73,6 +76,7 @@ class GroupService {
         int? allFriendsGroupId;
         int? totalFriendCount;
         String? allFriendsDescription;
+        int? allFriendsPostCount;
 
         if (decoded is List) {
           // 🎯 리스트 형태인 경우 (구형 API 응답)
@@ -125,10 +129,9 @@ class GroupService {
           totalFriendCount = (decoded['totalFriendCount'] as num?)?.toInt();
           // 🎯 allFriendsDescription 파싱
           allFriendsDescription = decoded['allFriendsDescription']?.toString();
-
-          print(
-            '📋 [GroupService] allFriends 메타데이터 - displayOrder: $allFriendsDisplayOrder, image: $allFriendsImage, groupId: $allFriendsGroupId, totalFriendCount: $totalFriendCount, description: $allFriendsDescription',
-          );
+          // 🎯 allFriendsPostCount 파싱 (전체 친구 그룹에 공유된 포스트 수)
+          allFriendsPostCount =
+              (decoded['allFriendsPostCount'] as num?)?.toInt();
         } else {
           print('⚠️ [GroupService] 알 수 없는 응답 형태입니다.');
           groups = <Group>[];
@@ -142,6 +145,7 @@ class GroupService {
           allFriendsGroupId,
           totalFriendCount,
           allFriendsDescription,
+          allFriendsPostCount,
         );
       } else {
         print(
