@@ -347,7 +347,7 @@ class AppLocalizations {
       'posts_changed_to_private': '{count}개의 포스트를 나만보기로 변경했습니다',
       'change_to_private_failed': '나만보기 변경에 실패했습니다',
       'change': '변경',
-      'no_posts_in_group': '이 그룹에 공유한 포스트가 없어요',
+      'no_posts_in_group': '공유한 포스트가 없어요',
       'no_title': '제목 없음',
       'by_author': 'by {author}',
       'go_to_post': '글 보러가기',

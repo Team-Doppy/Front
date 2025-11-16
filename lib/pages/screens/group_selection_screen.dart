@@ -60,10 +60,28 @@ class _GroupSelectionScreenState extends State<GroupSelectionScreen>
     _pageController.addListener(_onPageScroll);
 
     // 🎯 화면 진입 시 친구 요청 데이터 새로 조회 (캐시 무시)
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
       if (!mounted) return;
       final friendProvider = context.read<FriendProvider>();
-      friendProvider.fetchAllFriendData(forceRefresh: true);
+      final groupProvider = context.read<GroupProvider>();
+
+      // 🎯 친구 요청 데이터 새로 조회
+      await friendProvider.fetchAllFriendData(forceRefresh: true);
+
+      // 🎯 그룹 데이터 확인 및 보장
+      if (!mounted) return;
+      final groups = groupProvider.myGroups;
+
+      // 🎯 전체 그룹(allFriends)이 없으면 새로 로드
+      final hasAllFriendsGroup = groups.any((g) => g.isSystem == true);
+
+      // 🎯 데이터가 없거나 전체 그룹이 없으면 새로 로드
+      if (groups.isEmpty || !hasAllFriendsGroup) {
+        await groupProvider.fetchMyGroups(
+          forceRefresh: true,
+          friendProvider: friendProvider,
+        );
+      }
     });
   }
 
@@ -121,6 +139,23 @@ class _GroupSelectionScreenState extends State<GroupSelectionScreen>
             Consumer<GroupProvider>(
               builder: (context, groupProv, child) {
                 List<Group> groups = groupProv.myGroups;
+
+                // 🎯 전체 그룹(allFriends) 보장 - 없으면 새로 로드
+                final hasAllFriendsGroup = groups.any(
+                  (g) => g.isSystem == true,
+                );
+                if (!groupProv.isLoading &&
+                    (groups.isEmpty || !hasAllFriendsGroup)) {
+                  WidgetsBinding.instance.addPostFrameCallback((_) async {
+                    if (!mounted) return;
+                    final friendProvider = context.read<FriendProvider>();
+                    print('🔄 [GroupSelectionScreen] 전체 그룹 보장 - 새로 로드');
+                    await groupProv.fetchMyGroups(
+                      forceRefresh: true,
+                      friendProvider: friendProvider,
+                    );
+                  });
+                }
 
                 // 🎯 서버에서 받은 순서 유지 (정렬 제거)
                 // displayOrder가 있다면 그 순서로 정렬, 없으면 createdAt 순서 유지

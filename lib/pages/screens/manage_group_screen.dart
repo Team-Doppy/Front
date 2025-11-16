@@ -1313,7 +1313,7 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
       return [
         SliverToBoxAdapter(
           child: SizedBox(
-            height: MediaQuery.of(context).size.height * 0.45 + 40,
+            height: MediaQuery.of(context).size.height * 0.45 + 46,
             child: Center(
               child: Text(
                 _searchQuery.isNotEmpty

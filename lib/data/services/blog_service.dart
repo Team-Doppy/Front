@@ -1003,7 +1003,9 @@ class BlogService {
 
       if (response.statusCode == 200) {
         final data = response.data as Map<String, dynamic>;
-        final postsList = (data['content'] as List?) ?? [];
+        // 🎯 서버 응답 구조: { "posts": { "content": [...] } }
+        final postsData = data['posts'] as Map<String, dynamic>?;
+        final postsList = (postsData?['content'] as List?) ?? [];
         print('[BlogService] 내 FRIENDS 포스트 조회 성공 - 포스트 수: ${postsList.length}');
         return postsList.cast<Map<String, dynamic>>();
       } else {
