@@ -20,7 +20,6 @@ import 'package:doppy/editor/component/row_image_component.dart'
     show RowImageComponentBuilder, ImageRowNode;
 import 'package:doppy/editor/postwrite_screen.dart';
 import 'package:doppy/providers/user_provider.dart';
-import 'package:doppy/providers/friend_provider.dart';
 import 'package:doppy/providers/group_provider.dart';
 import 'package:doppy/providers/theme_provider.dart';
 import 'package:doppy/data/models/user_model.dart';
@@ -33,6 +32,8 @@ import 'package:doppy/pages/components/comment_preview_section.dart';
 import 'package:doppy/pages/components/share_post_overlay.dart';
 import 'package:doppy/pages/components/doppy_loading_logo.dart';
 import 'package:doppy/pages/components/fullscreen_image_viewer.dart';
+import 'package:doppy/pages/components/liked_users_bottom_sheet.dart';
+import 'package:doppy/pages/components/post_action_bottom_sheet.dart';
 import 'package:doppy/utils/dialog_utils.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:doppy/providers/feed_provider/my_profile_feed_provider.dart';
@@ -83,6 +84,7 @@ class _PostReaderScreenState extends State<PostReaderScreen>
   bool _showLoadingLogo = false; // 로딩 로고 표시 여부
   bool _isRenderReady = false; // 스포일러 마스크 렌더링 완료 여부
   bool _accessLevelChanged = false; // 🎯 공개 범위 변경 여부
+  bool _documentInitialized = false; // 🎯 문서 초기화 완료 플래그 (재생성 방지)
 
   // 스크롤 애니메이션을 위한 변수들
   static const double _appBarHeight = 52.0; // AppBar 높이
@@ -94,6 +96,7 @@ class _PostReaderScreenState extends State<PostReaderScreen>
   bool _showAppBar = true; // 상단 이미지 제거 → 기본 표시
   int _bottomBarAnimationDuration = 300; // 하단 바 애니메이션 속도 (ms)
   bool _previousAppBarState = true; // 🎯 풀스크린/댓글 진입 전 앱바 상태 저장
+  double _currentScrollOffset = 0.0; // 🎯 현재 스크롤 위치 (타이틀 표시용)
 
   // 순차 애니메이션 제거
 
@@ -101,6 +104,11 @@ class _PostReaderScreenState extends State<PostReaderScreen>
   bool _showCommentsOverlay = false;
   late final AnimationController _commentOverlayCtrl;
   late final Animation<double> _commentFade;
+
+  // 좋아요 사용자 목록 오버레이 상태/애니메이션
+  bool _showLikedUsersOverlay = false;
+  late final AnimationController _likedUsersOverlayCtrl;
+  late final Animation<double> _likedUsersFade;
 
   // 전체화면 이미지 뷰어 상태/애니메이션
   bool _showImageViewer = false;
@@ -557,19 +565,32 @@ class _PostReaderScreenState extends State<PostReaderScreen>
     if (shouldDelete != true) return;
 
     try {
+      // 🎯 삭제 전에 공개범위 정보 저장 (삭제 후에는 접근 불가)
+      final accessLevel = _accessLevel ?? 'PUBLIC';
+      final sharedGroupIds = _sharedGroupIds;
+
       await _blogService.deletePost(postId);
 
-      // 🎯 포스트 삭제 후 그룹 데이터도 갱신 (postCount 업데이트)
+      // 🎯 포스트 삭제 후 관련 그룹의 postCount만 선택적 업데이트 (전체 재조회 생략)
       try {
-        final friendProvider = context.read<FriendProvider>();
         final groupProvider = context.read<GroupProvider>();
-        groupProvider.fetchMyGroups(friendProvider: friendProvider).catchError((
-          e,
-        ) {
-          print('[PostReaderScreen] 그룹 데이터 재로드 실패: $e');
-        });
+
+        // GROUPS 공개범위인 경우에만 관련 그룹의 postCount 업데이트
+        if (accessLevel == 'GROUPS' &&
+            sharedGroupIds != null &&
+            sharedGroupIds.isNotEmpty) {
+          final groupIdToDelta = <int, int>{};
+          for (final groupId in sharedGroupIds) {
+            groupIdToDelta[groupId] = -1; // 포스트 삭제로 -1
+          }
+          groupProvider.updateMultipleGroupsPostCount(groupIdToDelta);
+          print(
+            '[PostReaderScreen] 관련 그룹 postCount 선택적 업데이트 완료: ${sharedGroupIds.length}개 그룹',
+          );
+        }
+        // PUBLIC/FRIENDS/PRIVATE는 그룹 postCount에 영향 없음
       } catch (e) {
-        print('[PostReaderScreen] 그룹 데이터 재로드 실패: $e');
+        print('[PostReaderScreen] 그룹 postCount 업데이트 실패: $e');
       }
 
       if (mounted) {
@@ -695,22 +716,21 @@ class _PostReaderScreenState extends State<PostReaderScreen>
         // 🎯 공개 범위 변경 플래그 설정
         _accessLevelChanged = true;
 
-        // 🎯 프로필에서 들어왔다면 피드 새로고침 (더 확실하게)
+        // 🎯 프로필에서 들어왔다면 피드 선택적 업데이트 (전체 새로고침 생략)
         if (widget.fromProfile) {
           try {
             final feed = MyProfileFeedProvider(); // 싱글톤 직접 접근
-            // 캐시 무효화 및 강제 새로고침
-            feed.invalidateCache();
-            await feed.loadInitial(force: true);
-            print('[PostReaderScreen] 프로필 피드 새로고침 완료 (force)');
+            final postId = widget.exported['id']?.toString();
+            if (postId != null) {
+              feed.updatePostMetadata(
+                postId,
+                accessLevel: accessLevel,
+                sharedGroupIds: sharedGroupIds,
+              );
+              print('[PostReaderScreen] 프로필 피드 선택적 업데이트 완료 (공개범위 변경)');
+            }
           } catch (e) {
-            print('[PostReaderScreen] 프로필 피드 새로고침 실패: $e');
-            // 실패 시에도 fallback으로 refresh 시도
-            try {
-              final feed = MyProfileFeedProvider();
-              feed.invalidateCache();
-              feed.refresh().catchError((_) {});
-            } catch (_) {}
+            print('[PostReaderScreen] 프로필 피드 선택적 업데이트 실패: $e');
           }
         }
       },
@@ -755,6 +775,30 @@ class _PostReaderScreenState extends State<PostReaderScreen>
       // WebSocket 연결 해제
       _commentService.disconnectWebSocket();
       print('[PostReaderScreen] 댓글창 닫기 - WebSocket 연결 해제');
+    });
+  }
+
+  // 🎯 좋아요 사용자 목록 오버레이 표시
+  void _openLikedUsersOverlay() {
+    setState(() {
+      _previousAppBarState = _showAppBar; // 🎯 현재 상태 저장
+      _showLikedUsersOverlay = true;
+      _showAppBar = false; // 하단 바 숨김
+      _bottomBarAnimationDuration = 50; // 빠르게 숨김
+    });
+    _likedUsersOverlayCtrl.forward(from: 0.0);
+  }
+
+  // 🎯 좋아요 사용자 목록 오버레이 닫기
+  void _closeLikedUsersOverlay() {
+    _likedUsersOverlayCtrl.reverse().whenComplete(() {
+      if (!mounted) return;
+      setState(() {
+        _showLikedUsersOverlay = false;
+        _showAppBar = _previousAppBarState; // 🎯 이전 상태로 복원
+        _bottomBarAnimationDuration =
+            _previousAppBarState ? 0 : 300; // 🎯 열려있었으면 즉시(0), 닫혀있었으면 일반 속도
+      });
     });
   }
 
@@ -895,6 +939,16 @@ class _PostReaderScreenState extends State<PostReaderScreen>
       curve: Curves.easeOutCubic,
     );
 
+    // 🎯 좋아요 사용자 목록 오버레이 애니메이션 초기화
+    _likedUsersOverlayCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 240),
+    );
+    _likedUsersFade = CurvedAnimation(
+      parent: _likedUsersOverlayCtrl,
+      curve: Curves.easeOutCubic,
+    );
+
     // 🎯 이미지 뷰어 애니메이션 초기화
     _imageViewerCtrl = AnimationController(
       vsync: this,
@@ -917,6 +971,11 @@ class _PostReaderScreenState extends State<PostReaderScreen>
 
       // 🎯 초기 댓글 로드 (타이밍 시어 없이 즉시 로드)
       _commentService.loadComments(size: 20);
+
+      // 🎯 좋아요 사용자 목록 미리 로드 (비동기, 백그라운드)
+      LikedUsersBottomSheet.preloadLikedUsers(postId).catchError((e) {
+        print('[PostReaderScreen] 좋아요 사용자 목록 미리 로드 실패: $e');
+      });
 
       // 본문 로드 시 실제 데이터로 좋아요/댓글 초기화 (_loadContentWithPreloadedMedia에서 처리)
       _contentFuture = _loadContentWithPreloadedMedia(postId);
@@ -951,6 +1010,7 @@ class _PostReaderScreenState extends State<PostReaderScreen>
     _readOnlyFocus.dispose();
     _scrollCtrl.removeListener(_onScroll);
     _commentOverlayCtrl.dispose();
+    _likedUsersOverlayCtrl.dispose();
     _imageViewerCtrl.dispose();
 
     // 프리로드된 비디오 컨트롤러 정리
@@ -979,9 +1039,14 @@ class _PostReaderScreenState extends State<PostReaderScreen>
       nextShow = false;
     }
 
-    if (nextShow != _showAppBar) {
+    // 🎯 스크롤 위치 변경 시 항상 업데이트 (타이틀 표시/숨김을 위해)
+    final bool shouldUpdate =
+        nextShow != _showAppBar || nextOffset != _currentScrollOffset;
+
+    if (shouldUpdate) {
       setState(() {
         _showAppBar = nextShow;
+        _currentScrollOffset = nextOffset; // 🎯 현재 스크롤 위치 업데이트
         _previousAppBarState = nextShow; // 🎯 스크롤로 변경된 상태도 저장
         _bottomBarAnimationDuration = 300; // 일반 속도
       });
@@ -1008,9 +1073,19 @@ class _PostReaderScreenState extends State<PostReaderScreen>
           return false;
         }
 
-        // 🎯 공개 범위가 변경되었으면 결과 반환 (피드 새로고침을 위해)
+        if (_showLikedUsersOverlay) {
+          _closeLikedUsersOverlay();
+          return false;
+        }
+
+        // 🎯 공개 범위가 변경되었으면 결과 반환 (피드 선택적 업데이트를 위해)
         if (_accessLevelChanged) {
-          Navigator.of(context).pop({'accessLevelChanged': true});
+          Navigator.of(context).pop({
+            'accessLevelChanged': true,
+            'postId': widget.exported['id']?.toString(),
+            'accessLevel': _accessLevel,
+            'sharedGroupIds': _sharedGroupIds,
+          });
           return false; // Navigator.pop을 호출했으므로 false 반환
         }
 
@@ -1114,18 +1189,22 @@ class _PostReaderScreenState extends State<PostReaderScreen>
               // 최신 데이터 저장 (수정하기에서 사용)
               _currentExportedData = merged;
 
-              // 최신 본문으로 문서 재구성
-              _document = _postReaderService.rebuildDocumentForRead(merged);
-              _editor = createDefaultDocumentEditor(
-                document: _document,
-                composer: _composer,
-              );
-              _editorService = EditorService(
-                editor: _editor,
-                document: _document,
-              );
-              _editorService.setDocumentLayoutKey(_layoutKey);
-              _dragService = DragService(editorService: _editorService);
+              // 🎯 문서가 이미 초기화되었고 내용이 동일하면 재생성하지 않음 (성능 최적화)
+              if (!_documentInitialized) {
+                // 최신 본문으로 문서 재구성 (최초 1회만)
+                _document = _postReaderService.rebuildDocumentForRead(merged);
+                _editor = createDefaultDocumentEditor(
+                  document: _document,
+                  composer: _composer,
+                );
+                _editorService = EditorService(
+                  editor: _editor,
+                  document: _document,
+                );
+                _editorService.setDocumentLayoutKey(_layoutKey);
+                _dragService = DragService(editorService: _editorService);
+                _documentInitialized = true; // 🎯 초기화 완료 표시
+              }
             }
 
             // 스티커 추출: 서버에서 최신 본문(snap.data)이 있으면 그쪽에서,
@@ -1476,6 +1555,41 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                       ),
                       animationDuration:
                           _bottomBarAnimationDuration, // 🎯 바텀바와 동일한 속도
+                      scrollOffset: _currentScrollOffset, // 🎯 현재 스크롤 위치 전달
+                      onMoreTap:
+                          !isMyPost
+                              ? () {
+                                // 🎯 글 액션 바텀시트 표시
+                                final postId =
+                                    widget.exported['id']?.toString() ?? '';
+                                final postTitle =
+                                    widget.exported['title']?.toString() ?? '';
+                                final authorUsername = postAuthor;
+                                final authorProfileImageUrl =
+                                    widget.exported['authorProfileImageUrl']
+                                        ?.toString();
+                                final authorAlias =
+                                    widget.exported['authorAlias']?.toString();
+                                final thumbnailImageUrl =
+                                    widget.exported['thumbnailImageUrl']
+                                        ?.toString();
+                                final likeCount = _likeService.getPostLikeCount(
+                                  postId,
+                                );
+
+                                PostActionBottomSheet.show(
+                                  context,
+                                  postId: postId,
+                                  postTitle: postTitle,
+                                  authorUsername: authorUsername,
+                                  authorAlias: authorAlias,
+                                  authorProfileImageUrl: authorProfileImageUrl,
+                                  thumbnailImageUrl: thumbnailImageUrl,
+                                  likeCount: likeCount,
+                                  onShowLikedUsers: _openLikedUsersOverlay,
+                                );
+                              }
+                              : null,
                     );
                   },
                 ),
@@ -1488,6 +1602,21 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                         return CommentBottomSheet(
                           title: widget.exported['title'] ?? '',
                           commentService: _commentService,
+                        );
+                      },
+                    ),
+                  ),
+                // 좋아요 사용자 목록 오버레이
+                if (_showLikedUsersOverlay)
+                  Positioned.fill(
+                    child: AnimatedBuilder(
+                      animation: _likedUsersFade,
+                      builder: (context, _) {
+                        return LikedUsersBottomSheet(
+                          postId: widget.exported['id']?.toString() ?? '',
+                          likeCount: _likeService.getPostLikeCount(
+                            widget.exported['id']?.toString() ?? '',
+                          ),
                         );
                       },
                     ),
@@ -1727,6 +1856,7 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                                 // 우측: 좋아요 + 댓글
                                 GestureDetector(
                                   onTap: _toggleLike,
+                                  onLongPress: _openLikedUsersOverlay,
                                   child: Row(
                                     mainAxisSize: MainAxisSize.min,
                                     children: [

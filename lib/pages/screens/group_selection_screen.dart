@@ -1042,18 +1042,7 @@ class _GroupSelectionScreenState extends State<GroupSelectionScreen>
                                               Theme.of(
                                                 context,
                                               ).colorScheme.surface,
-                                          child: Center(
-                                            child: CircularProgressIndicator(
-                                              strokeWidth: 2,
-                                              valueColor:
-                                                  AlwaysStoppedAnimation<Color>(
-                                                    Theme.of(context)
-                                                        .colorScheme
-                                                        .onSurface
-                                                        .withOpacity(0.3),
-                                                  ),
-                                            ),
-                                          ),
+                                          child: Center(),
                                         ),
                                     errorWidget: (context, url, error) {
                                       // 네트워크 이미지 로드 실패 시 플레이스홀더 표시

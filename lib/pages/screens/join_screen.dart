@@ -1,3 +1,4 @@
+import 'package:doppy/l10n/app_localizations.dart';
 import 'package:doppy/providers/auth_provider.dart';
 import 'package:doppy/providers/locale_provider.dart';
 import 'package:flutter/material.dart';
@@ -24,6 +25,10 @@ class _JoinScreenState extends State<JoinScreen> {
   final TextEditingController _confirmPasswordController =
       TextEditingController();
 
+  // 로그인 필드 포커스 제어용
+  final FocusNode _loginIdFocusNode = FocusNode();
+  final FocusNode _loginPasswordFocusNode = FocusNode();
+
   // 각 단계별 상태
   bool _isIdDuplicateChecked = false;
   bool _isIdAvailable = false;
@@ -40,7 +45,7 @@ class _JoinScreenState extends State<JoinScreen> {
     if (_selectedMode == null) {
       return ['인증 방식 선택'];
     } else if (_selectedMode == AuthMode.login) {
-      return ['로그인'];
+      return [context.tr('login')];
     }
     return ['ID 입력', '비밀번호 설정', '비밀번호 확인', '완료'];
   }
@@ -50,6 +55,8 @@ class _JoinScreenState extends State<JoinScreen> {
     _idController.dispose();
     _passwordController.dispose();
     _confirmPasswordController.dispose();
+    _loginIdFocusNode.dispose();
+    _loginPasswordFocusNode.dispose();
     super.dispose();
   }
 
@@ -73,7 +80,7 @@ class _JoinScreenState extends State<JoinScreen> {
           child: Padding(
             padding: const EdgeInsets.only(left: 20, top: 22),
             child: Text(
-              '이전',
+              context.tr('previous'),
               style: TextStyle(
                 color: Theme.of(context).colorScheme.onSurface.withOpacity(1),
                 fontSize: 16,
@@ -128,28 +135,57 @@ class _JoinScreenState extends State<JoinScreen> {
         children: [
           SizedBox(height: 36),
           Text(
-            '환영합니다!',
+            context.tr('join_welcome_title'),
             style: Theme.of(context).textTheme.headlineSmall?.copyWith(
               fontWeight: FontWeight.bold,
               fontSize: 24,
               color: Theme.of(context).colorScheme.onSurface,
             ),
           ),
-          SizedBox(height: 8),
-          Text(
-            '도피 이용약관 확인하기 (개인정보 수집 동의)',
-            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-              color: Theme.of(
-                context,
-              ).colorScheme.onSurfaceVariant.withOpacity(0.7),
+
+          // 이용약관 및 개인정보 처리방침 보기
+          InkWell(
+            borderRadius: BorderRadius.circular(12),
+
+            onTap: () {
+              // TODO: 이용약관/개인정보 처리방침 화면으로 이동 연결
+            },
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 6.0),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    context.tr('join_terms_and_privacy'),
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.onSurface.withOpacity(0.7),
+                      fontWeight: FontWeight.w500,
+                      fontSize: 14,
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 2.0),
+                    child: Icon(
+                      Icons.info_outline_rounded,
+                      size: 14,
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.onSurface.withOpacity(0.7),
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
           SizedBox(height: 32),
 
           // 로그인 옵션
           _buildAuthOption(
-            title: '로그인',
-            subtitle: '기존 계정으로 로그인하세요',
+            title: context.tr('login'),
+            subtitle: context.tr('join_login_subtitle'),
             onTap: () {
               setState(() {
                 _selectedMode = AuthMode.login;
@@ -162,8 +198,8 @@ class _JoinScreenState extends State<JoinScreen> {
 
           // 회원가입 옵션
           _buildAuthOption(
-            title: '회원가입',
-            subtitle: '새로운 계정을 만들어 시작하세요',
+            title: context.tr('signup'),
+            subtitle: context.tr('join_signup_subtitle'),
             onTap: () {
               setState(() {
                 _selectedMode = AuthMode.signup;
@@ -191,14 +227,8 @@ class _JoinScreenState extends State<JoinScreen> {
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
           decoration: BoxDecoration(
-            color: Theme.of(
-              context,
-            ).colorScheme.surfaceVariant.withOpacity(0.3),
+            color: Theme.of(context).colorScheme.surfaceVariant,
             borderRadius: BorderRadius.circular(16),
-            border: Border.all(
-              color: Theme.of(context).colorScheme.outline.withOpacity(0.1),
-              width: 1,
-            ),
           ),
           child: Row(
             children: [
@@ -249,7 +279,7 @@ class _JoinScreenState extends State<JoinScreen> {
             children: [
               SizedBox(height: 36),
               Text(
-                '로그인',
+                context.tr('login'),
                 style: Theme.of(context).textTheme.headlineSmall?.copyWith(
                   fontWeight: FontWeight.bold,
                   fontSize: 24,
@@ -258,7 +288,7 @@ class _JoinScreenState extends State<JoinScreen> {
               ),
               SizedBox(height: 8),
               Text(
-                'ID와 비밀번호를 입력해주세요.',
+                context.tr('join_login_description'),
                 style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                   color: Theme.of(
                     context,
@@ -276,8 +306,10 @@ class _JoinScreenState extends State<JoinScreen> {
                   fontWeight: FontWeight.w500,
                 ),
                 controller: _idController,
+                focusNode: _loginIdFocusNode,
+                textInputAction: TextInputAction.next,
                 decoration: InputDecoration(
-                  hintText: 'doppy_official',
+                  hintText: context.tr('join_id_hint'),
                   hintStyle: TextStyle(color: Colors.grey[600]),
                   filled: true,
                   fillColor: Theme.of(context).colorScheme.surfaceVariant,
@@ -319,6 +351,9 @@ class _JoinScreenState extends State<JoinScreen> {
                           )
                           : null,
                 ),
+                onSubmitted: (_) {
+                  FocusScope.of(context).requestFocus(_loginPasswordFocusNode);
+                },
                 onChanged: (value) {
                   setState(() {});
                 },
@@ -336,8 +371,9 @@ class _JoinScreenState extends State<JoinScreen> {
                   fontSize: 18,
                   fontWeight: FontWeight.w500,
                 ),
+                focusNode: _loginPasswordFocusNode,
                 decoration: InputDecoration(
-                  hintText: '비밀번호를 입력하세요',
+                  hintText: context.tr('password_hint'),
                   hintStyle: TextStyle(color: Colors.grey[600]),
                   filled: true,
                   fillColor: Theme.of(context).colorScheme.surfaceVariant,
@@ -377,6 +413,14 @@ class _JoinScreenState extends State<JoinScreen> {
                     },
                   ),
                 ),
+                textInputAction: TextInputAction.done,
+                onSubmitted: (_) {
+                  if (_idController.text.isNotEmpty &&
+                      _passwordController.text.isNotEmpty &&
+                      !_isCheckingDuplicate) {
+                    _handleLogin();
+                  }
+                },
                 onChanged: (value) {
                   setState(() {});
                 },
@@ -385,55 +429,57 @@ class _JoinScreenState extends State<JoinScreen> {
           ),
         ),
 
-        // 하단 고정 버튼 영역
+        // 하단 고정 버튼 영역 (Scaffold의 resizeToAvoidBottomInset에 맡기고 SafeArea만 적용)
         Container(
           padding: const EdgeInsets.fromLTRB(24, 12, 24, 20),
-
-          child: SizedBox(
-            width: double.infinity,
-            height: 50,
-            child: ElevatedButton(
-              onPressed:
-                  (_idController.text.isNotEmpty &&
-                          _passwordController.text.isNotEmpty &&
-                          !_isCheckingDuplicate)
-                      ? _handleLogin
-                      : null,
-              style: ElevatedButton.styleFrom(
-                backgroundColor:
+          child: SafeArea(
+            top: false,
+            child: SizedBox(
+              width: double.infinity,
+              height: 50,
+              child: ElevatedButton(
+                onPressed:
                     (_idController.text.isNotEmpty &&
-                            _passwordController.text.isNotEmpty)
-                        ? Theme.of(context).colorScheme.onSurface
-                        : Colors.grey[300],
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(16),
+                            _passwordController.text.isNotEmpty &&
+                            !_isCheckingDuplicate)
+                        ? _handleLogin
+                        : null,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor:
+                      (_idController.text.isNotEmpty &&
+                              _passwordController.text.isNotEmpty)
+                          ? Theme.of(context).colorScheme.onSurface
+                          : Colors.grey[300],
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  elevation: 0,
                 ),
-                elevation: 0,
-              ),
-              child:
-                  _isCheckingDuplicate
-                      ? SizedBox(
-                        width: 20,
-                        height: 20,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          valueColor: AlwaysStoppedAnimation<Color>(
-                            Theme.of(context).colorScheme.surface,
+                child:
+                    _isCheckingDuplicate
+                        ? SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            valueColor: AlwaysStoppedAnimation<Color>(
+                              Theme.of(context).colorScheme.onSurface,
+                            ),
+                          ),
+                        )
+                        : Text(
+                          context.tr('login'),
+                          style: TextStyle(
+                            color:
+                                (_idController.text.isNotEmpty &&
+                                        _passwordController.text.isNotEmpty)
+                                    ? Theme.of(context).colorScheme.surface
+                                    : Colors.grey[600],
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
                           ),
                         ),
-                      )
-                      : Text(
-                        '로그인',
-                        style: TextStyle(
-                          color:
-                              (_idController.text.isNotEmpty &&
-                                      _passwordController.text.isNotEmpty)
-                                  ? Theme.of(context).colorScheme.surface
-                                  : Colors.grey[600],
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
+              ),
             ),
           ),
         ),
@@ -451,7 +497,7 @@ class _JoinScreenState extends State<JoinScreen> {
             children: [
               SizedBox(height: 36),
               Text(
-                'ID를 입력해주세요',
+                context.tr('join_enter_id_title'),
                 style: Theme.of(context).textTheme.headlineSmall?.copyWith(
                   fontWeight: FontWeight.bold,
                   fontSize: 24,
@@ -460,7 +506,7 @@ class _JoinScreenState extends State<JoinScreen> {
               ),
               SizedBox(height: 8),
               Text(
-                '내 계정 이름을 잘 지어볼까요?',
+                context.tr('join_enter_id_subtitle'),
                 style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                   color: Theme.of(
                     context,
@@ -476,8 +522,9 @@ class _JoinScreenState extends State<JoinScreen> {
                   fontWeight: FontWeight.w500,
                 ),
                 controller: _idController,
+                textInputAction: TextInputAction.done,
                 decoration: InputDecoration(
-                  hintText: 'doppy_official',
+                  hintText: context.tr('join_id_hint'),
                   hintStyle: TextStyle(color: Colors.grey[600]),
                   filled: true,
                   fillColor: Theme.of(context).colorScheme.surfaceVariant,
@@ -520,9 +567,9 @@ class _JoinScreenState extends State<JoinScreen> {
                   ),
                   errorText:
                       _isIdLengthChecked && _idController.text.length < 4
-                          ? 'ID는 4자 이상이어야 합니다.'
+                          ? context.tr('join_id_too_short')
                           : (_isIdDuplicateChecked && !_isIdAvailable
-                              ? '이미 사용 중인 ID에요.'
+                              ? context.tr('join_id_already_used')
                               : null),
                   suffixIcon:
                       _idController.text.isNotEmpty
@@ -544,6 +591,14 @@ class _JoinScreenState extends State<JoinScreen> {
                           )
                           : null,
                 ),
+                onSubmitted: (_) {
+                  setState(() {
+                    _isIdLengthChecked = true;
+                  });
+                  if (_idController.text.length >= 4) {
+                    _handleIdNext();
+                  }
+                },
                 onChanged: (value) {
                   setState(() {
                     _isIdDuplicateChecked = false;
@@ -559,7 +614,6 @@ class _JoinScreenState extends State<JoinScreen> {
         if (_idController.text.isNotEmpty)
           Container(
             padding: const EdgeInsets.fromLTRB(24, 12, 24, 20),
-
             child: SafeArea(
               top: false,
               child: SizedBox(
@@ -595,12 +649,12 @@ class _JoinScreenState extends State<JoinScreen> {
                             child: CircularProgressIndicator(
                               strokeWidth: 2,
                               valueColor: AlwaysStoppedAnimation<Color>(
-                                Colors.white,
+                                Theme.of(context).colorScheme.onSurface,
                               ),
                             ),
                           )
                           : Text(
-                            '다음',
+                            context.tr('next'),
                             style: TextStyle(
                               color:
                                   _isCheckingDuplicate
@@ -628,7 +682,7 @@ class _JoinScreenState extends State<JoinScreen> {
             children: [
               SizedBox(height: 36),
               Text(
-                '비밀번호를 설정해주세요',
+                context.tr('join_set_password_title'),
                 style: Theme.of(context).textTheme.headlineSmall?.copyWith(
                   fontWeight: FontWeight.bold,
                   fontSize: 24,
@@ -637,7 +691,7 @@ class _JoinScreenState extends State<JoinScreen> {
               ),
               SizedBox(height: 8),
               Text(
-                '안전한 6자리 이상 비밀번호를 설정해볼까요?',
+                context.tr('join_set_password_subtitle'),
                 style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                   color: Theme.of(
                     context,
@@ -648,6 +702,7 @@ class _JoinScreenState extends State<JoinScreen> {
               TextField(
                 controller: _passwordController,
                 obscureText: _obscurePassword,
+                textInputAction: TextInputAction.done,
                 decoration: InputDecoration(
                   hintText: '비밀번호를 입력하세요',
                   hintStyle: TextStyle(color: Colors.grey[600]),
@@ -686,6 +741,11 @@ class _JoinScreenState extends State<JoinScreen> {
                     },
                   ),
                 ),
+                onSubmitted: (_) {
+                  if (_isPasswordValid) {
+                    _nextStep();
+                  }
+                },
                 onChanged: (value) {
                   setState(() {
                     _isPasswordValid = _validatePassword(value);
@@ -714,7 +774,6 @@ class _JoinScreenState extends State<JoinScreen> {
         // 하단 고정 버튼 영역
         Container(
           padding: const EdgeInsets.fromLTRB(24, 12, 24, 20),
-
           child: SafeArea(
             top: false,
             child: SizedBox(
@@ -794,7 +853,7 @@ class _JoinScreenState extends State<JoinScreen> {
             children: [
               SizedBox(height: 36),
               Text(
-                '비밀번호를 다시 입력해주세요',
+                context.tr('join_confirm_password_title'),
                 style: Theme.of(context).textTheme.headlineSmall?.copyWith(
                   fontWeight: FontWeight.bold,
                   fontSize: 24,
@@ -803,7 +862,7 @@ class _JoinScreenState extends State<JoinScreen> {
               ),
               SizedBox(height: 8),
               Text(
-                '보안을 위해 비밀번호를 한 번 더 입력해주세요.',
+                context.tr('join_confirm_password_subtitle'),
                 style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                   color: Theme.of(
                     context,
@@ -815,6 +874,7 @@ class _JoinScreenState extends State<JoinScreen> {
                 cursorColor: Theme.of(context).colorScheme.onSurface,
                 controller: _confirmPasswordController,
                 obscureText: _obscureConfirmPassword,
+                textInputAction: TextInputAction.done,
                 decoration: InputDecoration(
                   hintText: '비밀번호를 다시 입력하세요',
                   hintStyle: TextStyle(color: Colors.grey[600]),
@@ -860,6 +920,11 @@ class _JoinScreenState extends State<JoinScreen> {
                     },
                   ),
                 ),
+                onSubmitted: (_) {
+                  if (_isPasswordMatch && !_isCheckingDuplicate) {
+                    _completeSignup();
+                  }
+                },
                 onChanged: (value) {
                   setState(() {
                     _isPasswordMatch = value == _passwordController.text;
@@ -873,7 +938,6 @@ class _JoinScreenState extends State<JoinScreen> {
         // 하단 고정 버튼 영역
         Container(
           padding: const EdgeInsets.fromLTRB(24, 12, 24, 20),
-
           child: SafeArea(
             top: false,
             child: SizedBox(
@@ -902,12 +966,12 @@ class _JoinScreenState extends State<JoinScreen> {
                           child: CircularProgressIndicator(
                             strokeWidth: 2,
                             valueColor: AlwaysStoppedAnimation<Color>(
-                              Theme.of(context).colorScheme.surface,
+                              Theme.of(context).colorScheme.onSurface,
                             ),
                           ),
                         )
                         : Text(
-                          '회원가입 완료',
+                          context.tr('join_complete_button'),
                           style: TextStyle(
                             color:
                                 _isPasswordMatch
@@ -939,14 +1003,14 @@ class _JoinScreenState extends State<JoinScreen> {
           ),
           SizedBox(height: 24),
           Text(
-            '회원가입이 완료되었습니다!',
+            context.tr('join_complete_title'),
             style: Theme.of(
               context,
             ).textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.bold),
           ),
           SizedBox(height: 16),
           Text(
-            '환영합니다! 이제 서비스를 이용하실 수 있습니다.',
+            context.tr('join_complete_subtitle'),
             style: Theme.of(
               context,
             ).textTheme.bodyLarge?.copyWith(color: Colors.grey[600]),
@@ -959,7 +1023,7 @@ class _JoinScreenState extends State<JoinScreen> {
             child: CircularProgressIndicator(
               strokeWidth: 2,
               valueColor: AlwaysStoppedAnimation<Color>(
-                Theme.of(context).colorScheme.primary,
+                Theme.of(context).colorScheme.onSurface,
               ),
             ),
           ),
@@ -1018,7 +1082,9 @@ class _JoinScreenState extends State<JoinScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('중복확인 중 오류가 발생했습니다: $e'),
+            content: Text(
+              context.tr('join_id_check_error').replaceAll('{error}', '$e'),
+            ),
             backgroundColor: Colors.red,
           ),
         );
@@ -1073,7 +1139,7 @@ class _JoinScreenState extends State<JoinScreen> {
       // 로그인 실패 시 사용자에게 피드백 제공
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('아이디 또는 비밀번호가 일치하지 않습니다.'),
+          content: Text(context.tr('login_failed_invalid_credentials')),
           backgroundColor: Theme.of(context).colorScheme.error,
         ),
       );
@@ -1122,7 +1188,7 @@ class _JoinScreenState extends State<JoinScreen> {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
               content: Text(
-                '회원가입에 실패했습니다. 다시 시도해주세요.',
+                context.tr('signup_failed_try_again'),
                 style: TextStyle(color: Theme.of(context).colorScheme.onError),
               ),
               backgroundColor: Theme.of(context).colorScheme.error,
@@ -1139,7 +1205,9 @@ class _JoinScreenState extends State<JoinScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              '회원가입 중 오류가 발생했습니다: $e',
+              context
+                  .tr('signup_error_with_message')
+                  .replaceAll('{error}', '$e'),
               style: TextStyle(color: Theme.of(context).colorScheme.onError),
             ),
             backgroundColor: Theme.of(context).colorScheme.error,

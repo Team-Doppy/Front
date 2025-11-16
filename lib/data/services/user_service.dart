@@ -9,23 +9,7 @@ class UserService {
 
   final Dio _dio = BaseApiService().dio;
 
-  /// 4. 내 친구 수 조회
-  Future<int> getFriendCount() async {
-    try {
-      final response = await _dio.get('/api/users/friend-count');
-      if (response.statusCode == 200) {
-        return response.data['friendCount'];
-      }
-      throw Exception('친구 수 조회 실패');
-    } catch (e) {
-      if (e is DioException) {
-        throw Exception('친구 수 조회 실패: ${e.response?.statusCode}');
-      }
-      rethrow;
-    }
-  }
-
-  /// 5. 자기소개 저장
+  /// 자기소개 저장
   Future<void> saveSelfIntroduction(String introduction) async {
     try {
       final response = await _dio.put(
@@ -79,12 +63,20 @@ class UserService {
   Future<void> updateProfileInfo({
     required String alias,
     required String selfIntroduction,
+    List<String>? links, // 🎯 프로필 링크 목록 (최대 3개)
   }) async {
     try {
-      final response = await _dio.put(
-        '/api/profile/info',
-        data: {'alias': alias, 'selfIntroduction': selfIntroduction},
-      );
+      final data = <String, dynamic>{
+        'alias': alias,
+        'selfIntroduction': selfIntroduction,
+      };
+
+      // 🎯 links가 있으면 추가 (최대 3개)
+      if (links != null && links.isNotEmpty) {
+        data['links'] = links.take(3).toList();
+      }
+
+      final response = await _dio.put('/api/profile/info', data: data);
       if (response.statusCode != 200) {
         throw Exception('프로필 정보 업데이트 실패');
       }

@@ -97,6 +97,10 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
 
   // 서버에 적용된 제목 (썸네일 오버레이에서 변경 시 업데이트)
   String? _serverAppliedTitle;
+  // 서버에 적용된 요약 (썸네일 오버레이에서 변경 시 업데이트)
+  String? _serverAppliedSummary;
+  // 서버에 적용된 썸네일 URL (썸네일 오버레이에서 변경 시 업데이트)
+  String? _serverAppliedThumbnailUrl;
 
   // 저장 중 상태
   bool _isSaving = false;
@@ -797,12 +801,37 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     dragService.removeListener(_onDragging);
     scrollController.removeListener(_onScrollChanged);
     _editorFocusNode.dispose();
-    // 수정 도중 변경이 있었다면 내 피드 한 번만 새로고침
-    if (_shouldRefreshMyFeed) {
+    // 🎯 수정 도중 변경이 있었다면 내 피드 선택적 업데이트 (전체 새로고침 생략)
+    if (_shouldRefreshMyFeed && widget.postId != null) {
       // 비디오 컨트롤러 정리가 완전히 완료될 때까지 약간 지연
       Future.delayed(const Duration(milliseconds: 300), () {
         try {
           final feed = MyProfileFeedProvider(); // 싱글톤 직접 접근
+          final postId = widget.postId!;
+
+          // 변경된 메타데이터만 선택적 업데이트
+          feed.updatePostMetadata(
+            postId,
+            thumbnailImageUrl: _serverAppliedThumbnailUrl,
+            title: _serverAppliedTitle,
+            summary: _serverAppliedSummary,
+          );
+          print('[PostwriteScreen] 프로필 피드 선택적 업데이트 완료 (썸네일/제목/요약 변경)');
+        } catch (e) {
+          print('[PostwriteScreen] 프로필 피드 선택적 업데이트 실패: $e');
+          // 실패 시 fallback으로 전체 새로고침
+          try {
+            final feed = MyProfileFeedProvider();
+            feed.invalidateCache();
+            feed.refresh().catchError((_) {});
+          } catch (_) {}
+        }
+      });
+    } else if (_shouldRefreshMyFeed && widget.postId == null) {
+      // 새 포스트 생성 시에는 전체 새로고침 필요 (포스트 ID가 없음)
+      Future.delayed(const Duration(milliseconds: 300), () {
+        try {
+          final feed = MyProfileFeedProvider();
           feed.invalidateCache();
           feed.refresh().catchError((_) {});
         } catch (_) {}
@@ -1077,12 +1106,13 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                               onTitleSummaryChanged: (title, summary) {
                                 // 썸네일 오버레이에서 제목/요약이 변경되면 에디터 제목 노드 업데이트
                                 _updateTitleNode(title);
-                                // 서버에 적용된 제목 저장 (변경 감지 시 제외용)
+                                // 서버에 적용된 제목/요약 저장 (선택적 업데이트용)
                                 setState(() {
                                   _serverAppliedTitle = title;
+                                  _serverAppliedSummary = summary;
                                 });
                                 print(
-                                  '[PostwriteScreen] 제목 업데이트 및 서버 적용: $title',
+                                  '[PostwriteScreen] 제목/요약 업데이트 및 서버 적용: title=$title, summary=$summary',
                                 );
                                 _shouldRefreshMyFeed = true;
                               },
@@ -1090,12 +1120,16 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                                 _shouldRefreshMyFeed = true;
                                 // 카테고리 변경 플래그만 설정 (dispose에서 새로고침)
                               },
-                              onThumbnailChanged: () {
+                              onThumbnailChanged: (url, id) {
                                 print(
-                                  '[PostwriteScreen] onThumbnailChanged 콜백 받음',
+                                  '[PostwriteScreen] onThumbnailChanged 콜백 받음: url=$url, id=$id',
                                 );
+                                // 서버에 적용된 썸네일 URL 저장 (선택적 업데이트용)
+                                setState(() {
+                                  _serverAppliedThumbnailUrl = url;
+                                });
                                 _shouldRefreshMyFeed = true;
-                                // 썸네일 변경 플래그만 설정 (dispose에서 새로고침)
+                                // 썸네일 변경 플래그만 설정 (dispose에서 선택적 업데이트)
                               },
                             )
                             : EditorAppBar(

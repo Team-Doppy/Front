@@ -2,9 +2,10 @@ import 'package:flutter/material.dart';
 import '../data/models/friend_model.dart';
 import '../data/models/user_model.dart';
 import '../data/services/friend_service.dart';
+import 'group_provider.dart';
 
 // 친구 요청 상태를 나타내는 enum
-enum FriendRequestStatus { none, requested, accepted, pending }
+enum FriendRequestStatus { none, requested, accepted, pending, blocked }
 
 class FriendProvider with ChangeNotifier {
   final FriendService _friendService = FriendService();
@@ -212,7 +213,10 @@ class FriendProvider with ChangeNotifier {
 
   /// ✨ [추가] 친구 요청을 수락합니다.
   /// 반환값: true = 성공, false = 일반 실패, null = 요청이 이미 취소됨
-  Future<bool?> acceptFriendRequest(String requesterUsername) async {
+  Future<bool?> acceptFriendRequest(
+    String requesterUsername, {
+    GroupProvider? groupProvider,
+  }) async {
     try {
       await _friendService.acceptFriendRequest(requesterUsername);
       // 성공 시, 받은 요청 → 수락으로 이동 (글로벌 로딩 없이 국소 업데이트)
@@ -223,6 +227,12 @@ class FriendProvider with ChangeNotifier {
         final moved = _receivedRequests.removeAt(idx);
         _acceptedFriends.add(moved);
       }
+
+      // 🎯 allFriends 그룹의 memberCount 업데이트 (선택적 업데이트)
+      if (groupProvider != null) {
+        groupProvider.updateAllFriendsMemberCount(1);
+      }
+
       notifyListeners();
       return true;
     } catch (e) {
@@ -239,7 +249,10 @@ class FriendProvider with ChangeNotifier {
   }
 
   /// 로딩 스피너(전체 쉬머) 없이 낙관적 갱신으로 처리
-  Future<bool> acceptFriendRequestOptimistic(String requesterUsername) async {
+  Future<bool> acceptFriendRequestOptimistic(
+    String requesterUsername, {
+    GroupProvider? groupProvider,
+  }) async {
     try {
       await _friendService.acceptFriendRequest(requesterUsername);
       // 받은 요청 목록에서 제거하고, 수락된 친구 목록에 추가
@@ -250,6 +263,12 @@ class FriendProvider with ChangeNotifier {
         final friend = _receivedRequests.removeAt(idx);
         _acceptedFriends.add(friend);
       }
+
+      // 🎯 allFriends 그룹의 memberCount 업데이트 (선택적 업데이트)
+      if (groupProvider != null) {
+        groupProvider.updateAllFriendsMemberCount(1);
+      }
+
       notifyListeners();
       return true;
     } catch (e) {
@@ -284,16 +303,28 @@ class FriendProvider with ChangeNotifier {
   }
 
   /// 이웃(친구) 해제
-  Future<bool> deleteFriend(String targetUsername) async {
+  Future<bool> deleteFriend(
+    String targetUsername, {
+    GroupProvider? groupProvider,
+  }) async {
     _isLoadingStatus = true;
     notifyListeners();
     try {
       await _friendService.deleteFriend(targetUsername);
       // 목록/상태 국소 업데이트
+      final wasAccepted = _acceptedFriends.any(
+        (f) => f.username == targetUsername,
+      );
       _acceptedFriends.removeWhere((f) => f.username == targetUsername);
       _receivedRequests.removeWhere((f) => f.username == targetUsername);
       _sentRequests.removeWhere((f) => f.username == targetUsername);
       _friendStatus = FriendRequestStatus.none;
+
+      // 🎯 allFriends 그룹의 memberCount 업데이트 (선택적 업데이트)
+      if (groupProvider != null && wasAccepted) {
+        groupProvider.updateAllFriendsMemberCount(-1);
+      }
+
       return true;
     } catch (e) {
       debugPrint('이웃 해제 실패: $e');
@@ -305,16 +336,28 @@ class FriendProvider with ChangeNotifier {
   }
 
   /// 여러 이웃(친구) 일괄 해제
-  Future<bool> deleteFriendsBatch(List<String> usernames) async {
+  Future<bool> deleteFriendsBatch(
+    List<String> usernames, {
+    GroupProvider? groupProvider,
+  }) async {
     try {
       print('🔄 [FriendProvider] 친구 일괄 해제: ${usernames.length}명');
       await _friendService.deleteFriendsBatch(usernames);
 
       // 목록에서 일괄 제거
+      int acceptedCount = 0;
       for (final username in usernames) {
+        if (_acceptedFriends.any((f) => f.username == username)) {
+          acceptedCount++;
+        }
         _acceptedFriends.removeWhere((f) => f.username == username);
         _receivedRequests.removeWhere((f) => f.username == username);
         _sentRequests.removeWhere((f) => f.username == username);
+      }
+
+      // 🎯 allFriends 그룹의 memberCount 업데이트 (선택적 업데이트)
+      if (groupProvider != null && acceptedCount > 0) {
+        groupProvider.updateAllFriendsMemberCount(-acceptedCount);
       }
 
       notifyListeners();
@@ -335,11 +378,16 @@ class FriendProvider with ChangeNotifier {
       final results = await Future.wait([
         _friendService.getSentFriendRequests(page: 0, size: 20),
         _friendService.getAcceptedFriends(page: 0, size: 20),
+        _friendService.getBlockedUsers(), // 🎯 차단 목록 조회
       ]);
-      final sentRequests = results[0];
-      final acceptedFriends = results[1];
+      final sentRequests = results[0] as List<Friend>;
+      final acceptedFriends = results[1] as List<Friend>;
+      final blockedUsers = results[2] as List<User>;
 
-      if (acceptedFriends.any((f) => f.username == targetUsername)) {
+      // 🎯 차단된 사용자인지 먼저 확인
+      if (blockedUsers.any((u) => u.username == targetUsername)) {
+        _friendStatus = FriendRequestStatus.blocked;
+      } else if (acceptedFriends.any((f) => f.username == targetUsername)) {
         _friendStatus = FriendRequestStatus.accepted;
       } else if (sentRequests.any((r) => r.username == targetUsername)) {
         _friendStatus = FriendRequestStatus.requested;

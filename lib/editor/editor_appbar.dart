@@ -29,7 +29,8 @@ class EditModeAppBar extends StatefulWidget {
   final Function(String title, String summary)?
   onTitleSummaryChanged; // 제목/요약 변경 콜백
   final VoidCallback? onCategoryChanged; // 카테고리 변경 콜백
-  final VoidCallback? onThumbnailChanged; // 썸네일 변경 콜백
+  final Function(String url, String? id)?
+  onThumbnailChanged; // 썸네일 변경 콜백 (URL과 ID 전달)
   final String? postId; // 서버에서 데이터 가져오기용
   final bool isSaving; // 저장 중 상태
 
@@ -315,9 +316,11 @@ class _EditModeAppBarState extends State<EditModeAppBar> {
                             _thumbnailId = id;
                           });
                           print('[EditModeAppBar] 썸네일 변경됨: $url');
-                          // 부모에 통지: 썸네일 변경됨
-                          widget.onThumbnailChanged?.call();
-                          print('[EditModeAppBar] 부모 콜백 호출 완료');
+                          // 부모에 통지: 썸네일 변경됨 (URL과 ID 전달)
+                          widget.onThumbnailChanged?.call(url, id);
+                          print(
+                            '[EditModeAppBar] 부모 콜백 호출 완료: url=$url, id=$id',
+                          );
                         },
                         onMetadataChanged: (title, summary) {
                           // 제목/요약이 변경되었을 때 부모(PostwriteScreen)에게 알림

@@ -30,7 +30,7 @@ class WebSocketService extends ChangeNotifier {
       wsState = WebSocketState.connecting;
 
       final token = await AuthService().getToken();
-      final wsUrl = 'wss://nbillion.co.kr/ws?token=$token';
+      final wsUrl = 'wss://api.doppy.app/ws?token=$token';
       webSocket = await WebSocket.connect(wsUrl);
       wsState = WebSocketState.connected;
       webSocket!.listen(_onMessageReceived);

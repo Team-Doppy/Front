@@ -512,6 +512,61 @@ abstract class BaseFeedProvider extends ChangeNotifier {
     }
   }
 
+  /// 🎯 선택적 업데이트: 특정 포스트의 메타데이터만 업데이트 (서버 재조회 없음)
+  /// 공개범위/썸네일/제목/요약 변경 시 전체 새로고침 대신 사용
+  void updatePostMetadata(
+    String postId, {
+    String? thumbnailImageUrl,
+    String? title,
+    String? summary,
+    String? accessLevel,
+    List<int>? sharedGroupIds,
+  }) {
+    try {
+      bool hasUpdate = false;
+      for (final categoryId in _postsByCategory.keys) {
+        final posts = _postsByCategory[categoryId]!;
+        final idx = posts.indexWhere((p) => '${p['id']}' == postId);
+        if (idx != -1) {
+          // 변경된 필드만 업데이트
+          if (thumbnailImageUrl != null) {
+            posts[idx]['thumbnailImageUrl'] = thumbnailImageUrl;
+            hasUpdate = true;
+          }
+          if (title != null) {
+            posts[idx]['title'] = title;
+            hasUpdate = true;
+          }
+          if (summary != null) {
+            posts[idx]['summary'] = summary;
+            hasUpdate = true;
+          }
+          if (accessLevel != null) {
+            posts[idx]['accessLevel'] = accessLevel;
+            hasUpdate = true;
+          }
+          if (sharedGroupIds != null) {
+            if (sharedGroupIds.isEmpty) {
+              posts[idx].remove('sharedGroupIds');
+            } else {
+              posts[idx]['sharedGroupIds'] = sharedGroupIds;
+            }
+            hasUpdate = true;
+          }
+
+          if (hasUpdate) {
+            notifyListeners();
+            print('✅ [BaseFeedProvider] 포스트 $postId 메타데이터 선택적 업데이트 완료');
+          }
+          return;
+        }
+      }
+      print('⚠️ [BaseFeedProvider] 포스트 $postId를 찾을 수 없어 메타데이터 업데이트 불가');
+    } catch (e) {
+      print('[BaseFeedProvider] 포스트 메타데이터 업데이트 실패: $e');
+    }
+  }
+
   /// 포스트를 로컬에서 카테고리 간 이동 // my_profile_feed_provider.dart 에서만 사용
   void movePostLocally(
     String postId,

@@ -5,12 +5,9 @@ import 'package:doppy/pages/screens/post_reader_screen.dart';
 import 'package:doppy/data/models/post_data.dart';
 import 'package:doppy/l10n/app_localizations.dart';
 import 'package:doppy/pages/components/shimmer_box.dart';
-import 'package:doppy/pages/components/custom_bottom_navigation_bar.dart';
 import 'package:doppy/pages/components/custom_refresh_indicator.dart';
 import 'package:doppy/pages/components/post_list.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/cupertino.dart';
-import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:video_player/video_player.dart';
 import '../../../theme/app_text_styles.dart';
@@ -164,65 +161,37 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
   Widget build(BuildContext context) {
     return Consumer<SearchService>(
       builder: (context, searchService, child) {
-        return Stack(
-          children: [
-            Scaffold(
-              backgroundColor: Theme.of(context).colorScheme.background,
-              body: SafeArea(
-                child: Column(
-                  children: [
-                    // 🎯 검색 결과가 표시될 때는 검색창 숨김
-                    if (!_isShowingSearchResults) ...[
-                      _SearchTopBar(
-                        controller: _searchController,
-                        focusNode: _searchFocusNode,
-                        query: searchService.query,
-                        onClear: _clearSearch,
-                        onBack: _resetToInitial,
-                        onClose: widget.onClose,
-                        onSubmitted: _runSearch,
-                        onCancel: () {
-                          _searchFocusNode.unfocus();
-                          context.read<SearchService>().setFocused(false);
-                        },
-                        isSearching: _isSearching, // 🎯 검색 중 여부 전달
-                      ),
-                    ],
-                    Expanded(
-                      child:
-                          _isShowingSearchResults
-                              ? _buildSearchResultsView(context)
-                              : _buildDefaultSearchBody(context, searchService),
-                    ),
-                  ],
+        return Scaffold(
+          backgroundColor: Theme.of(context).colorScheme.background,
+          body: SafeArea(
+            child: Column(
+              children: [
+                // 🎯 검색 결과가 표시될 때는 검색창 숨김
+                if (!_isShowingSearchResults) ...[
+                  _SearchTopBar(
+                    controller: _searchController,
+                    focusNode: _searchFocusNode,
+                    query: searchService.query,
+                    onClear: _clearSearch,
+                    onBack: _resetToInitial,
+                    onClose: widget.onClose,
+                    onSubmitted: _runSearch,
+                    onCancel: () {
+                      _searchFocusNode.unfocus();
+                      context.read<SearchService>().setFocused(false);
+                    },
+                    isSearching: _isSearching, // 🎯 검색 중 여부 전달
+                  ),
+                ],
+                Expanded(
+                  child:
+                      _isShowingSearchResults
+                          ? _buildSearchResultsView(context)
+                          : _buildDefaultSearchBody(context, searchService),
                 ),
-              ),
+              ],
             ),
-            // 🎯 바텀 네비게이션 바
-            Positioned(
-              left: 0,
-              right: 0,
-              bottom: 0,
-              child: CustomBottomNavigationBar(
-                currentIndex: 1, // 검색 탭 활성화
-                actualIndex: 1,
-                onTap: (index) {
-                  debugPrint('[SearchScreen] 바텀 바 탭: $index');
-
-                  if (index == 1) {
-                    debugPrint('[SearchScreen] 검색 탭 클릭 무시');
-                    return; // 검색 탭은 무시
-                  }
-
-                  // 🎯 onTabChange에 위임 (main.dart에서 인덱스 기반으로 처리)
-                  debugPrint('[SearchScreen] 탭 전환 위임: $index');
-                  widget.onTabChange?.call(index);
-                },
-                isSearching: true,
-                forceOpaqueBackground: true, // 🎯 투명도 없이 배경 색상 표시
-              ),
-            ),
-          ],
+          ),
         );
       },
     );
@@ -564,6 +533,11 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
         });
       },
       onClearSearch: () {
+        // 🎯 검색 필드 비우기
+        _searchController.clear();
+        final searchService = context.read<SearchService>();
+        searchService.clearSearch();
+
         setState(() {
           _isShowingSearchResults = false;
           _searchResults = [];
@@ -870,6 +844,8 @@ class _AccountListItem extends StatelessWidget {
                 imageUrl: account.profileImageUrl,
                 username: account.username ?? '',
                 size: 50.0,
+                borderColor: Theme.of(context).colorScheme.surface,
+                borderWidth: 2,
               ),
               const SizedBox(width: 16),
               Expanded(

@@ -8,8 +8,24 @@ import 'package:doppy/utils/error_handler.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+// 상태 관리 헬퍼 클래스
+class _AccessLevelStateHelper {
+  Set<int> selectedGroupIds = <int>{};
+  String currentAccessLevel = 'PUBLIC';
+  bool initialized = false;
+
+  void reset() {
+    selectedGroupIds = <int>{};
+    currentAccessLevel = 'PUBLIC';
+    initialized = false;
+  }
+}
+
 class AccessLevelSheet {
   static bool _hasScrolled = false;
+
+  // 상태 관리 헬퍼 인스턴스
+  static final _StateHelper = _AccessLevelStateHelper();
 
   /// 공개범위 변경 바텀시트 표시
   static void show(
@@ -21,6 +37,7 @@ class AccessLevelSheet {
     required Function(String accessLevel, List<int>? sharedGroupIds) onChanged,
   }) async {
     _hasScrolled = false; // 스크롤 플래그 초기화
+    _StateHelper.reset(); // 상태 초기화
     final parentContext = context; // 부모 context 저장
 
     // 🎯 그룹 변경 여부 추적 (시트가 닫힐 때 스낵바 표시용)
@@ -38,11 +55,24 @@ class AccessLevelSheet {
           builder: (context, groupProvider, _) {
             return StatefulBuilder(
               builder: (context, setModalState) {
-                // 🎯 선택된 그룹 ID 목록 관리 (다중 선택 가능)
+                // 🎯 선택된 그룹 ID 목록 관리 (다중 선택 가능) - 상태로 관리
                 final Set<int> selectedGroupIds =
-                    currentSharedGroupIds != null
-                        ? currentSharedGroupIds.toSet()
-                        : <int>{};
+                    (() {
+                      // 초기 상태 설정 (한 번만)
+                      if (!_StateHelper.initialized) {
+                        _StateHelper.selectedGroupIds =
+                            currentSharedGroupIds != null
+                                ? currentSharedGroupIds.toSet()
+                                : <int>{};
+                        _StateHelper.currentAccessLevel = currentAccessLevel;
+                        _StateHelper.initialized = true;
+                      }
+                      return _StateHelper.selectedGroupIds;
+                    })();
+
+                // 현재 accessLevel 가져오기
+                final String activeAccessLevel =
+                    _StateHelper.currentAccessLevel;
 
                 return Stack(
                   children: [
@@ -119,18 +149,22 @@ class AccessLevelSheet {
                                           child: _buildAccessLevelContent(
                                             bottomSheetContext,
                                             parentContext,
-                                            postId,
-                                            currentAccessLevel,
+                                            activeAccessLevel,
                                             currentSharedGroupIds,
                                             currentSharedGroupNames, // 🎯 서버에서 제공하는 그룹 이름 목록
                                             onChanged,
                                             setModalState,
                                             scrollController,
-                                            groupProvider.myGroups,
+                                            postId,
+                                            groupProvider,
                                             selectedGroupIds, // 🎯 선택된 그룹 ID 목록 전달
                                             (accessLevel, sharedGroupIds) {
-                                              // 🎯 그룹 변경 추적
-                                              hasGroupChanged = true;
+                                              // 🎯 그룹 변경 추적 및 상태 업데이트
+                                              // 이 콜백은 _updateAccessLevel이 성공했을 때만 호출됨
+                                              hasGroupChanged =
+                                                  true; // 🎯 API 성공 시에만 true로 설정
+                                              _StateHelper.currentAccessLevel =
+                                                  accessLevel;
                                               onChanged(
                                                 accessLevel,
                                                 sharedGroupIds,
@@ -179,16 +213,21 @@ class AccessLevelSheet {
   }) {
     final isDarkMode = Theme.of(context).brightness == Brightness.dark;
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 0),
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
       child: Material(
-        borderRadius: BorderRadius.circular(12),
-        color:
-            isSelected
-                ? Theme.of(context).colorScheme.onSurface.withOpacity(0.9)
-                : Colors.transparent,
-        child: InkWell(
+        borderRadius: BorderRadius.circular(20),
+        color: Colors.transparent,
+        child: GestureDetector(
           onTap: onTap,
+          behavior: HitTestBehavior.opaque,
           child: Container(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(20),
+              color:
+                  isSelected
+                      ? Theme.of(context).colorScheme.onSurface.withOpacity(0.9)
+                      : Colors.transparent,
+            ),
             padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
             child: Row(
               children: [
@@ -231,210 +270,332 @@ class AccessLevelSheet {
   static Widget _buildAccessLevelContent(
     BuildContext bottomSheetContext,
     BuildContext parentContext,
-    String postId,
     String currentAccessLevel,
     List<int>? currentSharedGroupIds,
     List<String>? currentSharedGroupNames, // 🎯 서버에서 제공하는 그룹 이름 목록
     Function(String accessLevel, List<int>? sharedGroupIds) onChanged,
     StateSetter setModalState,
     ScrollController scrollController,
-    List<dynamic> groups,
+    String postId,
+    GroupProvider groupProvider, // 🎯 GroupProvider를 직접 전달
     Set<int> selectedGroupIds, // 🎯 선택된 그룹 ID 목록
     Function(String accessLevel, List<int>? sharedGroupIds)
     onGroupChanged, // 🎯 그룹 변경 추적 콜백
   ) {
-    final accessLevelUpper = (currentAccessLevel.toString()).toUpperCase();
+    // 🎯 StatefulBuilder가 리빌드될 때마다 최신 상태 반영
+    final activeAccessLevel = _StateHelper.currentAccessLevel;
+    final accessLevelUpper = (activeAccessLevel.toString()).toUpperCase();
     final isPublic = accessLevelUpper == 'PUBLIC';
     final isPrivate = accessLevelUpper == 'PRIVATE';
     final isFriends = accessLevelUpper == 'FRIENDS';
-    final isGroups = accessLevelUpper == 'GROUPS';
 
-    return Consumer<GroupProvider>(
-      builder: (context, groupProvider, child) {
-        // 그룹 목록 로드 및 스크롤
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (groupProvider.myGroups.isEmpty &&
-              !groupProvider.isLoading &&
-              !groupProvider.isGroupsCached) {
-            groupProvider.fetchMyGroups();
-          }
+    // 그룹 목록 로드 및 스크롤
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (groupProvider.myGroups.isEmpty &&
+          !groupProvider.isLoading &&
+          !groupProvider.isGroupsCached) {
+        groupProvider.fetchMyGroups();
+      }
 
-          // 그룹 목록이 준비되면 스크롤 (스크롤바가 뜰 정도로 길 때만, 한 번만)
-          if (!_hasScrolled) {
-            Future.delayed(const Duration(milliseconds: 300), () {
-              if (scrollController.hasClients && !_hasScrolled) {
-                // 스크롤이 가능한지 확인 (maxScrollExtent > 0)
-                if (scrollController.position.maxScrollExtent > 0) {
-                  _hasScrolled = true;
-                  final selectedIndex = _getSelectedIndex(
-                    currentAccessLevel,
-                    currentSharedGroupIds,
-                    groupProvider.myGroups,
-                  );
-                  if (selectedIndex >= 0) {
-                    // 각 항목의 높이는 padding 16*2 + 텍스트 높이 = 약 48
-                    const double itemHeight = 48.0;
-                    final scrollOffset = selectedIndex * itemHeight;
-                    scrollController.animateTo(
-                      scrollOffset,
-                      duration: const Duration(milliseconds: 300),
-                      curve: Curves.easeOut,
-                    );
-                  }
-                } else {
-                  // 스크롤이 필요 없으면 플래그만 설정
-                  _hasScrolled = true;
-                }
+      // 그룹 목록이 준비되면 스크롤 (스크롤바가 뜰 정도로 길 때만, 한 번만)
+      if (!_hasScrolled) {
+        Future.delayed(const Duration(milliseconds: 300), () {
+          if (scrollController.hasClients && !_hasScrolled) {
+            // 스크롤이 가능한지 확인 (maxScrollExtent > 0)
+            if (scrollController.position.maxScrollExtent > 0) {
+              _hasScrolled = true;
+              final selectedIndex = _getSelectedIndex(
+                currentAccessLevel,
+                currentSharedGroupIds,
+                groupProvider.myGroups,
+              );
+              if (selectedIndex >= 0) {
+                // 각 항목의 높이는 padding 16*2 + 텍스트 높이 = 약 48
+                const double itemHeight = 48.0;
+                final scrollOffset = selectedIndex * itemHeight;
+                scrollController.animateTo(
+                  scrollOffset,
+                  duration: const Duration(milliseconds: 300),
+                  curve: Curves.easeOut,
+                );
               }
-            });
+            } else {
+              // 스크롤이 필요 없으면 플래그만 설정
+              _hasScrolled = true;
+            }
           }
         });
+      }
+    });
 
-        return Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // 전체 공개
-            _buildAccessLevelItem(
-              title: bottomSheetContext.tr('public_access'),
-              isSelected: isPublic,
-              context: bottomSheetContext,
-              onTap: () async {
-                final success = await _updateAccessLevel(
-                  bottomSheetContext,
-                  postId,
-                  'PUBLIC',
-                  null,
-                  onChanged,
-                );
-                if (success) {
-                  Navigator.of(bottomSheetContext).pop();
-                  // 바텀시트가 닫힌 후에 메시지 표시
-                  await Future.delayed(const Duration(milliseconds: 300));
-                  if (parentContext.mounted) {
-                    ErrorHandler.showInfo(
-                      parentContext,
-                      parentContext.tr('access_level_changed'),
-                    );
-                  }
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // 전체 공개
+        _buildAccessLevelItem(
+          title: bottomSheetContext.tr('public_access'),
+          isSelected: isPublic,
+          context: bottomSheetContext,
+          onTap: () {
+            // 🎯 즉시 피드백을 위한 상태 업데이트
+            setModalState(() {
+              // 🎯 변경 전 공개범위가 GROUPS였으면 관련 그룹의 postCount 업데이트
+              final previousAccessLevel = activeAccessLevel;
+              if (previousAccessLevel == 'GROUPS' &&
+                  currentSharedGroupIds != null &&
+                  currentSharedGroupIds.isNotEmpty) {
+                final groupIdToDelta = <int, int>{};
+                for (final groupId in currentSharedGroupIds) {
+                  groupIdToDelta[groupId] = -1; // GROUPS → PUBLIC로 변경 시 그룹에서 제거
                 }
-              },
-            ),
-
-            // 친구 공개
-            _buildAccessLevelItem(
-              title: bottomSheetContext.tr('friends_access'),
-              isSelected: isFriends,
-              context: bottomSheetContext,
-              onTap: () async {
-                final success = await _updateAccessLevel(
-                  bottomSheetContext,
-                  postId,
-                  'FRIENDS',
-                  null,
-                  onChanged,
+                groupProvider.updateMultipleGroupsPostCount(groupIdToDelta);
+                print(
+                  '[AccessLevelSheet] GROUPS → PUBLIC 변경: ${currentSharedGroupIds.length}개 그룹 postCount -1',
                 );
-                if (success) {
-                  Navigator.of(bottomSheetContext).pop();
-                  // 바텀시트가 닫힌 후에 메시지 표시
-                  await Future.delayed(const Duration(milliseconds: 300));
-                  if (parentContext.mounted) {
-                    ErrorHandler.showInfo(
-                      parentContext,
-                      parentContext.tr('access_level_changed'),
-                    );
-                  }
-                }
-              },
-            ),
+              }
 
-            // 나만보기
-            _buildAccessLevelItem(
-              title: bottomSheetContext.tr('private_access'),
-              isSelected: isPrivate,
-              context: bottomSheetContext,
-              onTap: () async {
-                final success = await _updateAccessLevel(
-                  bottomSheetContext,
-                  postId,
-                  'PRIVATE',
-                  null,
-                  onChanged,
+              _StateHelper.currentAccessLevel = 'PUBLIC';
+              _StateHelper.selectedGroupIds.clear(); // 그룹 선택 초기화
+            });
+
+            // API 업데이트
+            _updateAccessLevel(
+              bottomSheetContext,
+              postId,
+              'PUBLIC',
+              null,
+              onChanged,
+            ).then((success) async {
+              if (success) {
+                Navigator.of(bottomSheetContext).pop();
+                // 바텀시트가 닫힌 후에 메시지 표시
+                await Future.delayed(const Duration(milliseconds: 300));
+                if (parentContext.mounted) {
+                  ErrorHandler.showInfo(
+                    parentContext,
+                    parentContext.tr('access_level_changed'),
+                  );
+                }
+              } else {
+                // 🎯 실패 시 에러는 _updateAccessLevel 내부에서 이미 표시됨
+                // 로컬 상태 롤백 필요 시 여기서 처리
+                print('[AccessLevelSheet] PUBLIC 변경 실패 - 로컬 상태 롤백 필요');
+              }
+            });
+          },
+        ),
+
+        // 친구 공개
+        _buildAccessLevelItem(
+          title: bottomSheetContext.tr('friends_access'),
+          isSelected: isFriends,
+          context: bottomSheetContext,
+          onTap: () {
+            // 🎯 즉시 피드백을 위한 상태 업데이트
+            setModalState(() {
+              // 🎯 변경 전 공개범위가 GROUPS였으면 관련 그룹의 postCount 업데이트
+              final previousAccessLevel = activeAccessLevel;
+              if (previousAccessLevel == 'GROUPS' &&
+                  currentSharedGroupIds != null &&
+                  currentSharedGroupIds.isNotEmpty) {
+                final groupIdToDelta = <int, int>{};
+                for (final groupId in currentSharedGroupIds) {
+                  groupIdToDelta[groupId] =
+                      -1; // GROUPS → FRIENDS로 변경 시 그룹에서 제거
+                }
+                groupProvider.updateMultipleGroupsPostCount(groupIdToDelta);
+                print(
+                  '[AccessLevelSheet] GROUPS → FRIENDS 변경: ${currentSharedGroupIds.length}개 그룹 postCount -1',
                 );
-                if (success) {
-                  Navigator.of(bottomSheetContext).pop();
-                  // 바텀시트가 닫힌 후에 메시지 표시
-                  await Future.delayed(const Duration(milliseconds: 300));
-                  if (parentContext.mounted) {
-                    ErrorHandler.showInfo(
-                      parentContext,
-                      parentContext.tr('access_level_changed'),
-                    );
-                  }
+              }
+
+              _StateHelper.currentAccessLevel = 'FRIENDS';
+              _StateHelper.selectedGroupIds.clear(); // 그룹 선택 초기화
+            });
+
+            // API 업데이트
+            _updateAccessLevel(
+              bottomSheetContext,
+              postId,
+              'FRIENDS',
+              null,
+              onChanged,
+            ).then((success) async {
+              if (success) {
+                Navigator.of(bottomSheetContext).pop();
+                // 바텀시트가 닫힌 후에 메시지 표시
+                await Future.delayed(const Duration(milliseconds: 300));
+                if (parentContext.mounted) {
+                  ErrorHandler.showInfo(
+                    parentContext,
+                    parentContext.tr('access_level_changed'),
+                  );
                 }
-              },
-            ),
+              } else {
+                // 🎯 실패 시 에러는 _updateAccessLevel 내부에서 이미 표시됨
+                // 로컬 상태 롤백 필요 시 여기서 처리
+                print('[AccessLevelSheet] FRIENDS 변경 실패 - 로컬 상태 롤백 필요');
+              }
+            });
+          },
+        ),
 
-            // 실제 그룹들만 표시 (시스템 그룹 제외)
-            if (groupProvider.myGroups.isNotEmpty) ...[
-              // 실제 그룹 필터링 (시스템 그룹 제외)
-              ...groupProvider.myGroups
-                  .where((group) {
-                    // 시스템 그룹이 아닌 그룹만
-                    return group.isSystem != true;
-                  })
-                  .map((group) {
-                    final isGroupSelected = selectedGroupIds.contains(group.id);
-                    return _buildAccessLevelItem(
-                      title: group.name,
-                      isSelected: isGroups && isGroupSelected,
-                      context: bottomSheetContext,
-                      onTap: () {
-                        // 🎯 그룹 선택/해제 토글 (다중 선택 가능)
-                        setModalState(() {
-                          if (isGroupSelected) {
-                            selectedGroupIds.remove(group.id);
-                          } else {
-                            selectedGroupIds.add(group.id);
-                          }
+        // 나만보기
+        _buildAccessLevelItem(
+          title: bottomSheetContext.tr('private_access'),
+          isSelected: isPrivate,
+          context: bottomSheetContext,
+          onTap: () {
+            // 🎯 즉시 피드백을 위한 상태 업데이트
+            setModalState(() {
+              // 🎯 변경 전 공개범위가 GROUPS였으면 관련 그룹의 postCount 업데이트
+              final previousAccessLevel = activeAccessLevel;
+              if (previousAccessLevel == 'GROUPS' &&
+                  currentSharedGroupIds != null &&
+                  currentSharedGroupIds.isNotEmpty) {
+                final groupIdToDelta = <int, int>{};
+                for (final groupId in currentSharedGroupIds) {
+                  groupIdToDelta[groupId] =
+                      -1; // GROUPS → PRIVATE로 변경 시 그룹에서 제거
+                }
+                groupProvider.updateMultipleGroupsPostCount(groupIdToDelta);
+                print(
+                  '[AccessLevelSheet] GROUPS → PRIVATE 변경: ${currentSharedGroupIds.length}개 그룹 postCount -1',
+                );
+              }
 
-                          // 🎯 선택된 그룹이 있으면 GROUPS로 업데이트, 없으면 PUBLIC로 변경
-                          final newSharedGroupIds =
-                              selectedGroupIds.isEmpty
-                                  ? null
-                                  : selectedGroupIds.toList();
-                          final newAccessLevel =
-                              selectedGroupIds.isEmpty ? 'PUBLIC' : 'GROUPS';
+              _StateHelper.currentAccessLevel = 'PRIVATE';
+              _StateHelper.selectedGroupIds.clear(); // 그룹 선택 초기화
+            });
 
-                          // 🎯 즉시 API 업데이트 (시트는 열어둠 - 다중 선택 가능)
-                          _updateAccessLevel(
-                            bottomSheetContext,
-                            postId,
-                            newAccessLevel,
-                            newSharedGroupIds,
-                            onChanged,
-                          ).then((success) {
-                            // 🎯 성공 시 그룹 변경 추적 (스낵바는 시트가 닫힐 때 표시)
-                            if (success) {
-                              onGroupChanged(newAccessLevel, newSharedGroupIds);
-                            }
-                          });
-                        });
-                      },
-                    );
-                  }),
-            ] else if (groupProvider.isLoading) ...[
-              // 로딩 중
-              const Padding(
-                padding: EdgeInsets.all(20.0),
-                child: CircularProgressIndicator(),
-              ),
-            ],
+            // API 업데이트
+            _updateAccessLevel(
+              bottomSheetContext,
+              postId,
+              'PRIVATE',
+              null,
+              onChanged,
+            ).then((success) async {
+              if (success) {
+                Navigator.of(bottomSheetContext).pop();
+                // 바텀시트가 닫힌 후에 메시지 표시
+                await Future.delayed(const Duration(milliseconds: 300));
+                if (parentContext.mounted) {
+                  ErrorHandler.showInfo(
+                    parentContext,
+                    parentContext.tr('access_level_changed'),
+                  );
+                }
+              } else {
+                // 🎯 실패 시 에러는 _updateAccessLevel 내부에서 이미 표시됨
+                // 로컬 상태 롤백 필요 시 여기서 처리
+                print('[AccessLevelSheet] PRIVATE 변경 실패 - 로컬 상태 롤백 필요');
+              }
+            });
+          },
+        ),
 
-            // BottomSheet 하단 여백
-            const SizedBox(height: 20),
-          ],
-        );
-      },
+        // 실제 그룹들만 표시 (시스템 그룹 제외)
+        if (groupProvider.myGroups.isNotEmpty) ...[
+          // 실제 그룹 필터링 (시스템 그룹 제외)
+          ...groupProvider.myGroups
+              .where((group) {
+                // 시스템 그룹이 아닌 그룹만
+                return group.isSystem != true;
+              })
+              .map((group) {
+                // 매번 최신 상태 확인
+                final isGroupSelected = selectedGroupIds.contains(group.id);
+                final activeIsGroups = (accessLevelUpper == 'GROUPS');
+                return _buildAccessLevelItem(
+                  title: group.name,
+                  isSelected: activeIsGroups && isGroupSelected,
+                  context: bottomSheetContext,
+                  onTap: () {
+                    // 🎯 그룹 선택/해제 토글 (다중 선택 가능)
+                    setModalState(() {
+                      // 🎯 변경 전 그룹 ID 목록 저장 (postCount 업데이트용)
+                      final previousGroupIds = Set<int>.from(
+                        _StateHelper.selectedGroupIds,
+                      );
+
+                      // 상태 업데이트 - 즉시 반영
+                      if (_StateHelper.selectedGroupIds.contains(group.id)) {
+                        _StateHelper.selectedGroupIds.remove(group.id);
+                      } else {
+                        _StateHelper.selectedGroupIds.add(group.id);
+                      }
+
+                      // 🎯 선택된 그룹이 있으면 GROUPS로 업데이트, 없으면 PUBLIC로 변경
+                      final newSharedGroupIds =
+                          _StateHelper.selectedGroupIds.isEmpty
+                              ? null
+                              : _StateHelper.selectedGroupIds.toList();
+                      final newAccessLevel =
+                          _StateHelper.selectedGroupIds.isEmpty
+                              ? 'PUBLIC'
+                              : 'GROUPS';
+
+                      // 상태에 즉시 반영
+                      _StateHelper.currentAccessLevel = newAccessLevel;
+
+                      // 🎯 선택적 그룹 postCount 업데이트 (전체 재조회 생략)
+                      final currentGroupIds = _StateHelper.selectedGroupIds;
+                      final removedGroups = previousGroupIds.difference(
+                        currentGroupIds,
+                      );
+                      final addedGroups = currentGroupIds.difference(
+                        previousGroupIds,
+                      );
+
+                      if (removedGroups.isNotEmpty || addedGroups.isNotEmpty) {
+                        final groupIdToDelta = <int, int>{};
+                        for (final groupId in removedGroups) {
+                          groupIdToDelta[groupId] = -1; // 그룹에서 제거
+                        }
+                        for (final groupId in addedGroups) {
+                          groupIdToDelta[groupId] = 1; // 그룹에 추가
+                        }
+                        groupProvider.updateMultipleGroupsPostCount(
+                          groupIdToDelta,
+                        );
+                        print(
+                          '[AccessLevelSheet] 관련 그룹 postCount 선택적 업데이트: 제거 ${removedGroups.length}개, 추가 ${addedGroups.length}개',
+                        );
+                      }
+
+                      // 🎯 즉시 API 업데이트 (시트는 열어둠 - 다중 선택 가능)
+                      _updateAccessLevel(
+                        bottomSheetContext,
+                        postId,
+                        newAccessLevel,
+                        newSharedGroupIds,
+                        onChanged,
+                      ).then((success) {
+                        // 🎯 API 성공 시에만 그룹 변경 콜백 호출 (스낵바는 시트가 닫힐 때 표시)
+                        if (success) {
+                          onGroupChanged(newAccessLevel, newSharedGroupIds);
+                          // onGroupChanged 콜백 내부에서 hasGroupChanged = true 설정됨
+                        } else {
+                          // 🎯 API 실패 시 로컬 상태 롤백 필요 시 여기서 처리
+                          print('[AccessLevelSheet] API 실패로 그룹 변경 롤백 필요');
+                        }
+                      });
+                    });
+                  },
+                );
+              }),
+        ] else if (groupProvider.isLoading) ...[
+          // 로딩 중
+          const Padding(
+            padding: EdgeInsets.all(20.0),
+            child: CircularProgressIndicator(),
+          ),
+        ],
+
+        // BottomSheet 하단 여백
+        const SizedBox(height: 20),
+      ],
     );
   }
 

@@ -43,12 +43,14 @@ class UserProvider with ChangeNotifier {
   Future<bool> updateProfileInfo({
     required String alias,
     required String selfIntroduction,
+    List<String>? links,
   }) async {
     try {
       // API 호출
       await _userService.updateProfileInfo(
         alias: alias,
         selfIntroduction: selfIntroduction,
+        links: links,
       );
 
       // 로컬 상태 업데이트
@@ -56,6 +58,7 @@ class UserProvider with ChangeNotifier {
         final updatedUser = _currentUser!.copyWith(
           alias: alias,
           selfIntroduction: selfIntroduction,
+          links: links,
         );
         _currentUser = updatedUser;
 
@@ -79,14 +82,9 @@ class UserProvider with ChangeNotifier {
     try {
       final me = await _userService.getMyProfile();
       _currentUser = me;
+      // 🎯 User 모델에 이미 selfIntroduction이 포함되어 있으므로 별도 API 호출 불필요
+      _selfIntroduction = me.selfIntroduction;
       await _persistCurrentUser();
-      // 별도 필드가 오지 않으면 기존 API 유지 시도 (선택)
-      try {
-        _friendCount = await _userService.getFriendCount();
-      } catch (_) {}
-      try {
-        _selfIntroduction = await _userService.getSelfIntroduction();
-      } catch (_) {}
     } finally {
       _isLoading = false;
       notifyListeners();
@@ -193,6 +191,7 @@ class UserProvider with ChangeNotifier {
   static const _kAlias = 'user_alias';
   static const _kProfileImageUrl = 'user_profileImageUrl';
   static const _kSelfIntroduction = 'user_selfIntroduction';
+  static const _kLinks = 'user_links'; // 🎯 프로필 링크 목록
   static const _kFriendCount = 'user_friendCount';
 
   Future<void> _persistCurrentUser() async {
@@ -204,6 +203,12 @@ class UserProvider with ChangeNotifier {
       await prefs.setString(_kAlias, u.alias ?? '');
       await prefs.setString(_kProfileImageUrl, u.profileImageUrl ?? '');
       await prefs.setString(_kSelfIntroduction, u.selfIntroduction ?? '');
+      // 🎯 links 저장 (JSON 문자열로 변환)
+      if (u.links != null && u.links!.isNotEmpty) {
+        await prefs.setStringList(_kLinks, u.links!);
+      } else {
+        await prefs.remove(_kLinks);
+      }
       await prefs.setInt(_kFriendCount, u.friendCount ?? 0);
       print('[UserProvider] 사용자 정보 로컬 저장 완료');
     } catch (e) {
@@ -217,12 +222,22 @@ class UserProvider with ChangeNotifier {
       if (!prefs.containsKey(_kUserId) || !prefs.containsKey(_kUsername)) {
         return;
       }
+      // 🎯 links 복구
+      List<String>? links;
+      if (prefs.containsKey(_kLinks)) {
+        final linksList = prefs.getStringList(_kLinks);
+        if (linksList != null && linksList.isNotEmpty) {
+          links = linksList;
+        }
+      }
+
       final user = User(
         username: prefs.getString(_kUsername) ?? '',
         role: null,
         alias: prefs.getString(_kAlias),
         profileImageUrl: prefs.getString(_kProfileImageUrl),
         selfIntroduction: prefs.getString(_kSelfIntroduction),
+        links: links,
         friendCount: prefs.getInt(_kFriendCount),
       );
       _currentUser = user;
@@ -240,6 +255,7 @@ class UserProvider with ChangeNotifier {
       await prefs.remove(_kAlias);
       await prefs.remove(_kProfileImageUrl);
       await prefs.remove(_kSelfIntroduction);
+      await prefs.remove(_kLinks); // 🎯 links 삭제
       await prefs.remove(_kFriendCount);
       print('[UserProvider] 로컬 사용자 정보 삭제 완료');
     } catch (e) {

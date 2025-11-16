@@ -1,6 +1,10 @@
 import 'package:doppy/data/services/base_api_service.dart';
+import 'package:doppy/data/services/fcm_service.dart';
+import 'package:doppy/data/services/user_service.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:http/http.dart' as http;
+import 'package:uuid/uuid.dart';
 import 'dart:convert';
 import '../models/login_response_model.dart';
 
@@ -13,7 +17,9 @@ class AuthService {
   final String _tokenKey = 'auth_token';
   final String _refreshTokenKey = 'refresh_token';
   final String _usernameKey = 'username';
+  final String _deviceIdKey = 'device_id';
   static const String baseUrl = BaseApiService.baseUrl;
+  static const _uuid = Uuid();
 
   // 앱 시작 시 1회 로드되어 메모리에 보관되는 동기 접근용 사용자명
   static String? _cachedUsername;
@@ -35,9 +41,22 @@ class AuthService {
     String? alias,
     String? region, // 'KR' 또는 'US'
   }) async {
+    // 🎯 FCM 토큰 발급
+    String? fcmToken;
+    try {
+      final fcmService = FcmService();
+      fcmToken = await fcmService.getToken();
+      print('[AuthService] FCM 토큰 발급: ${fcmToken != null ? '성공' : '실패'}');
+    } catch (e) {
+      print('[AuthService] FCM 토큰 발급 중 오류 (무시): $e');
+    }
+
     final body = {'username': username, 'password': password};
     if (alias != null) body['alias'] = alias;
     if (region != null) body['region'] = region;
+    if (fcmToken != null && fcmToken.isNotEmpty) {
+      body['fcmToken'] = fcmToken;
+    }
 
     try {
       final url = Uri.parse('$baseUrl/api/auth/register');
@@ -86,6 +105,11 @@ class AuthService {
         await _saveRefreshToken(loginResponse.refreshToken);
         await _saveUsername(loginResponse.username);
         await initAfterLogin();
+
+        // 🎯 FCM 토큰과 deviceId를 서버에 전송
+        _sendFcmTokenToServer(loginResponse.token).catchError((e) {
+          print('[AuthService] FCM 토큰 전송 실패 (무시): $e');
+        });
 
         print('[-] [AuthService] login success: ${loginResponse.username}');
         return loginResponse;
@@ -137,6 +161,115 @@ class AuthService {
   Future<String?> getRefreshToken() async =>
       await _storage.read(key: _refreshTokenKey);
   Future<String?> getUsername() async => await _storage.read(key: _usernameKey);
+
+  /// deviceId 가져오기 (없으면 생성)
+  Future<String> getDeviceId() async {
+    final prefs = await SharedPreferences.getInstance();
+    String? deviceId = prefs.getString(_deviceIdKey);
+
+    if (deviceId == null || deviceId.isEmpty) {
+      deviceId = _uuid.v4();
+      await prefs.setString(_deviceIdKey, deviceId);
+      print('[AuthService] 새 deviceId 생성: $deviceId');
+    }
+
+    return deviceId;
+  }
+
+  /// FCM 토큰과 deviceId를 서버에 전송
+  Future<void> _sendFcmTokenToServer(String authToken) async {
+    try {
+      // 1. FCM 토큰 확인
+      final fcmService = FcmService();
+      String? fcmToken = await fcmService.getToken();
+
+      // 2. 없으면 발급
+      if (fcmToken == null || fcmToken.isEmpty) {
+        fcmToken = await fcmService.getToken();
+        if (fcmToken == null || fcmToken.isEmpty) {
+          print('[AuthService] FCM 토큰을 가져올 수 없어 서버 전송을 건너뜁니다 (권한 거부 또는 오류)');
+          // 🎯 FCM 토큰이 없다는 것은 대부분 알림 권한이 거부된 경우이므로
+          // 서버의 notificationEnabled / marketingConsent 플래그도 OFF로 동기화
+          await _syncNotificationSettingsOnDenied();
+          return;
+        }
+      }
+
+      // 3. deviceId 가져오기 (없으면 생성)
+      final deviceId = await getDeviceId();
+
+      // 4. 서버에 전송 (FCM 토큰과 deviceId)
+      print(
+        '[AuthService] FCM 토큰 전송 준비 - deviceId: $deviceId, fcmToken: ${fcmToken.substring(0, 20)}...',
+      );
+      final url = Uri.parse('$baseUrl/api/fcm/tokens');
+      final response = await http.post(
+        url,
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $authToken', // 인증용 accessToken
+        },
+        body: jsonEncode({
+          'deviceId': deviceId,
+          'token': fcmToken, // FCM 토큰
+        }),
+      );
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        print('[AuthService] ✅ FCM 토큰 서버 전송 성공 (deviceId: $deviceId)');
+      } else {
+        print('[AuthService] ❌ FCM 토큰 서버 전송 실패: ${response.statusCode}');
+      }
+    } catch (e) {
+      print('[AuthService] ❌ FCM 토큰 서버 전송 오류: $e');
+      rethrow;
+    }
+  }
+
+  /// 알림 권한 거부 시 서버 설정(notificationEnabled, marketingConsent)을 OFF로 동기화
+  Future<void> _syncNotificationSettingsOnDenied() async {
+    try {
+      final userService = UserService();
+      final settings = await userService.getSettings();
+
+      final bool currentMarketing = settings['marketingConsent'] ?? false;
+      final bool currentNotification = settings['notificationEnabled'] ?? true;
+
+      // 서버 값이 true일 때만 토글 호출 → 최종적으로 false가 되도록 보장
+      if (currentMarketing) {
+        try {
+          await userService.toggleMarketingConsent();
+          print('[AuthService] 알림 권한 거부로 marketingConsent=false 로 동기화');
+        } catch (e) {
+          print('[AuthService] marketingConsent 동기화 실패: $e');
+        }
+      }
+
+      if (currentNotification) {
+        try {
+          await userService.toggleNotificationEnabled();
+          print('[AuthService] 알림 권한 거부로 notificationEnabled=false 로 동기화');
+        } catch (e) {
+          print('[AuthService] notificationEnabled 동기화 실패: $e');
+        }
+      }
+    } catch (e) {
+      // 설정 조회 실패 등은 앱 흐름을 막지 않고 로그만 남김
+      print('[AuthService] 알림 설정 동기화 실패 (권한 거부): $e');
+    }
+  }
+
+  /// 외부에서 호출할 수 있는 FCM 토큰/디바이스 정보 동기화 헬퍼
+  /// - 알림 설정을 켰을 때 등, 로그인 이후에도 재사용 가능
+  Future<void> syncFcmTokenAndSettings() async {
+    final authToken = await getToken();
+    if (authToken == null || authToken.isEmpty) {
+      print('[AuthService] syncFcmTokenAndSettings: 토큰 없음, 건너뜀');
+      return;
+    }
+    await _sendFcmTokenToServer(authToken);
+  }
+
   Future<void> logout() async {
     await _storage.delete(key: _tokenKey);
     await _storage.delete(key: _refreshTokenKey);

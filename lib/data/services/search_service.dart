@@ -319,26 +319,11 @@ class SearchService extends ChangeNotifier {
 
   // ---- UI 로직 메서드들 ----
 
-  /// 초기화
+  /// 초기화 (검색 기록만 로드, 트렌딩은 검색 화면 진입 시 로드)
   Future<void> initialize({bool forceRefresh = false}) async {
     _allContentItems.clear();
     await _loadSearchHistory();
     await _loadBlogSearchHistory(); // 🎯 글 검색 기록도 로드
-
-    // 🎯 캐싱: 5분 이내에는 다시 fetch하지 않음
-    final now = DateTime.now();
-    final shouldFetch =
-        forceRefresh ||
-        _lastTrendingFetchTime == null ||
-        now.difference(_lastTrendingFetchTime!).inMinutes >= 5;
-
-    if (shouldFetch) {
-      await fetchTrendingKeywords(); // 🎯 실시간 검색어 로드
-    } else {
-      debugPrint(
-        '[SearchService] 캐시된 trending 데이터 사용 (${now.difference(_lastTrendingFetchTime!).inSeconds}초 전)',
-      );
-    }
 
     notifyListeners();
   }
@@ -551,13 +536,17 @@ class SearchService extends ChangeNotifier {
         debugPrint('[Search] 검색어가 비어있고 트렌딩 데이터가 없어서 캐시 체크 후 로드');
         ensureTrendingData();
       }
+      notifyListeners();
     } else {
-      // 포커스 여부와 관계없이 실시간 검색
+      // 포커스 여부와 관계없이 실시간 검색 (debounce 적용)
       _isSearching = true;
-      _performRealTimeSearch(q);
-    }
+      notifyListeners(); // 즉시 UI 업데이트
 
-    notifyListeners();
+      // 🎯 debounce를 적용하여 중복 호출 방지 (300ms)
+      _debounce = Timer(const Duration(milliseconds: 300), () {
+        _performRealTimeSearch(q);
+      });
+    }
   }
 
   /// 실시간 검색 (계정만)
@@ -738,10 +727,49 @@ class SearchService extends ChangeNotifier {
     );
 
     debugPrint('[SearchService] 시맨틱 검색 응답: ${res.statusCode}');
+    debugPrint(
+      '[SearchService] 시맨틱 검색 응답 데이터 키: ${res.data is Map ? (res.data as Map).keys.toList() : 'not a map'}',
+    );
+    debugPrint('[SearchService] 시맨틱 검색 응답 데이터 구조: ${res.data}');
 
     final List<SearchContentItem> posts = [];
     if (res.statusCode == 200 && res.data is Map<String, dynamic>) {
-      final content = (res.data['content'] as List?) ?? [];
+      final responseData = res.data as Map<String, dynamic>;
+
+      // 🎯 여러 가능한 응답 구조 처리
+      List<dynamic>? content;
+
+      // 1. 직접 content 필드
+      if (responseData.containsKey('content') &&
+          responseData['content'] is List) {
+        content = responseData['content'] as List;
+        debugPrint('[SearchService] content 필드에서 파싱: ${content.length}개');
+      }
+      // 2. data.content 구조
+      else if (responseData.containsKey('data') &&
+          responseData['data'] is Map) {
+        final data = responseData['data'] as Map<String, dynamic>;
+        if (data.containsKey('content') && data['content'] is List) {
+          content = data['content'] as List;
+          debugPrint('[SearchService] data.content에서 파싱: ${content.length}개');
+        } else if (data.containsKey('posts') && data['posts'] is List) {
+          content = data['posts'] as List;
+          debugPrint('[SearchService] data.posts에서 파싱: ${content.length}개');
+        }
+      }
+      // 3. posts 필드
+      else if (responseData.containsKey('posts') &&
+          responseData['posts'] is List) {
+        content = responseData['posts'] as List;
+        debugPrint('[SearchService] posts 필드에서 파싱: ${content.length}개');
+      }
+
+      if (content == null) {
+        debugPrint('[SearchService] ⚠️ 시맨틱 검색 응답에서 포스트 목록을 찾을 수 없음');
+        debugPrint('[SearchService] 전체 응답: $responseData');
+        return posts;
+      }
+
       for (final e in content) {
         if (e is Map<String, dynamic>) {
           final id = e['id']?.toString() ?? '';
@@ -780,6 +808,19 @@ class SearchService extends ChangeNotifier {
           );
         }
       }
+
+      debugPrint('[SearchService] 시맨틱 검색 파싱 완료: ${posts.length}개 포스트');
+      if (posts.isEmpty && content.isNotEmpty) {
+        debugPrint(
+          '[SearchService] ⚠️ content는 ${content.length}개인데 파싱된 포스트는 0개',
+        );
+        debugPrint('[SearchService] 첫 번째 content 아이템: ${content.first}');
+      }
+    } else {
+      debugPrint('[SearchService] ⚠️ 시맨틱 검색 응답이 Map이 아니거나 statusCode가 200이 아님');
+      debugPrint(
+        '[SearchService] statusCode: ${res.statusCode}, data type: ${res.data.runtimeType}',
+      );
     }
     return posts;
   }

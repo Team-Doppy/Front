@@ -671,7 +671,8 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       isShowingFriendsOnly: true,
       onFilterTap: _handleSectionSwitch,
       showAppBar: true,
-      sectionLabel: context.tr('all_posts'),
+      // 현재 섹션 이름을 표시 (친구/팔로우/그룹 등 나와 연결된 사람들의 피드) - 로케일 기반
+      sectionLabel: context.tr('my_network_feed'),
       appBarOpacity: _appBarOpacity, // 앱바 투명도 전달
       networkError: _friendsError, // 에러 상태 전달
       onRetryError: () => _loadFriendsPosts(refresh: true), // 에러 재시도 콜백
@@ -716,7 +717,8 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       isShowingFriendsOnly: false,
       onFilterTap: _handleSectionSwitch,
       showAppBar: true,
-      sectionLabel: context.tr('friends_posts'),
+      // 전체 피드 섹션에서는 현재 페이지명을 명확히 표시
+      sectionLabel: context.tr('all_posts'),
       appBarOpacity: _appBarOpacity, // 앱바 투명도 전달
       networkError: _allError, // 에러 상태 전달
       onRetryError: () => _loadAllPosts(refresh: true), // 에러 재시도 콜백

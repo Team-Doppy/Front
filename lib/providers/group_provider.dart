@@ -297,14 +297,14 @@ class GroupProvider with ChangeNotifier {
     }
   }
 
-  /// ➕ 멤버 추가 → 그룹 스키마 & 멤버 캐시 무효화
+  /// ➕ 멤버 추가 → 선택적 업데이트 (전체 재조회 생략)
   Future<bool> addMember(int groupId, String userId) async {
     try {
       print('🔄 [GroupProvider] 그룹 $groupId에 멤버 추가: $userId');
       await _groupService.addMemberToGroup(groupId, userId);
 
-      // 🎯 그룹 스키마 무효화 (memberCount 변경)
-      await _invalidateAndRefreshGroups();
+      // 🎯 선택적 업데이트: memberCount만 로컬 업데이트 (전체 재조회 생략)
+      updateGroupMemberCount(groupId, 1);
 
       // 🎯 해당 그룹의 멤버 캐시 무효화
       _isMembersCached[groupId] = false;
@@ -324,14 +324,14 @@ class GroupProvider with ChangeNotifier {
     }
   }
 
-  /// ➖ 멤버 제거 → 그룹 스키마 & 멤버 캐시 무효화
+  /// ➖ 멤버 제거 → 선택적 업데이트 (전체 재조회 생략)
   Future<bool> removeMember(int groupId, String userId) async {
     try {
       print('🔄 [GroupProvider] 그룹 $groupId에서 멤버 제거: $userId');
       await _groupService.removeMemberFromGroup(groupId, userId);
 
-      // 🎯 그룹 스키마 무효화 (memberCount 변경)
-      await _invalidateAndRefreshGroups();
+      // 🎯 선택적 업데이트: memberCount만 로컬 업데이트 (전체 재조회 생략)
+      updateGroupMemberCount(groupId, -1);
 
       // 🎯 해당 그룹의 멤버 캐시 무효화
       _isMembersCached[groupId] = false;
@@ -351,7 +351,7 @@ class GroupProvider with ChangeNotifier {
     }
   }
 
-  /// ➖ 여러 멤버 일괄 제거 (배치) → 그룹 스키마 & 멤버 캐시 무효화
+  /// ➖ 여러 멤버 일괄 제거 (배치) → 선택적 업데이트 (전체 재조회 생략)
   Future<bool> removeMembersBatch(int groupId, List<String> usernames) async {
     try {
       print('🔄 [GroupProvider] 그룹 $groupId에서 멤버 일괄 제거: ${usernames.length}명');
@@ -359,12 +359,8 @@ class GroupProvider with ChangeNotifier {
       // 🎯 멤버 삭제 API 호출 (실패 시 즉시 false 반환)
       await _groupService.removeMembersFromGroupBatch(groupId, usernames);
 
-      // 🎯 멤버 삭제 성공 후에만 그룹 스키마 업데이트 시도 (실패해도 무시)
-      try {
-        await _invalidateAndRefreshGroups();
-      } catch (e) {
-        print('⚠️ [GroupProvider] 멤버 일괄 제거 성공했으나 그룹 스키마 업데이트 실패 (무시): $e');
-      }
+      // 🎯 선택적 업데이트: memberCount만 로컬 업데이트 (전체 재조회 생략)
+      updateGroupMemberCount(groupId, -usernames.length);
 
       // 🎯 해당 그룹의 멤버 캐시 무효화
       _isMembersCached[groupId] = false;
@@ -391,6 +387,145 @@ class GroupProvider with ChangeNotifier {
     print('🔄 [GroupProvider] 그룹 스키마 캐시 무효화 및 재조회');
     _isGroupsCached = false;
     await fetchMyGroups(forceRefresh: true);
+  }
+
+  /// 🎯 선택적 업데이트: 특정 그룹의 memberCount만 업데이트 (서버 재조회 없음)
+  /// 멤버 추가/제거 시 전체 재조회 대신 사용
+  void updateGroupMemberCount(int groupId, int delta) {
+    if (!_isGroupsCached) {
+      print('⚠️ [GroupProvider] 그룹 캐시가 없어 memberCount 업데이트 불가 - 전체 재조회 권장');
+      return;
+    }
+
+    final groupIndex = _cachedGroups.indexWhere((g) => g.id == groupId);
+    if (groupIndex == -1) {
+      print('⚠️ [GroupProvider] 그룹 $groupId를 찾을 수 없어 memberCount 업데이트 불가');
+      return;
+    }
+
+    final currentGroup = _cachedGroups[groupIndex];
+    final newMemberCount = (currentGroup.memberCount ?? 0) + delta;
+
+    // 새로운 Group 객체 생성 (불변성 유지)
+    final updatedGroup = Group(
+      id: currentGroup.id,
+      name: currentGroup.name,
+      description: currentGroup.description,
+      ownerId: currentGroup.ownerId,
+      owner: currentGroup.owner,
+      createdAt: currentGroup.createdAt,
+      members: currentGroup.members,
+      profileImageUrl: currentGroup.profileImageUrl,
+      memberCount: newMemberCount < 0 ? 0 : newMemberCount,
+      postCount: currentGroup.postCount,
+      memberThumbnails: currentGroup.memberThumbnails,
+      isSystem: currentGroup.isSystem,
+    );
+
+    _cachedGroups[groupIndex] = updatedGroup;
+    notifyListeners();
+    print(
+      '✅ [GroupProvider] 그룹 $groupId memberCount 업데이트: ${currentGroup.memberCount} → $newMemberCount (delta: $delta)',
+    );
+  }
+
+  /// 🎯 선택적 업데이트: 특정 그룹의 postCount만 업데이트 (서버 재조회 없음)
+  /// 포스트 생성/삭제 시 전체 재조회 대신 사용
+  void updateGroupPostCount(int groupId, int delta) {
+    if (!_isGroupsCached) {
+      print('⚠️ [GroupProvider] 그룹 캐시가 없어 postCount 업데이트 불가 - 전체 재조회 권장');
+      return;
+    }
+
+    final groupIndex = _cachedGroups.indexWhere((g) => g.id == groupId);
+    if (groupIndex == -1) {
+      print('⚠️ [GroupProvider] 그룹 $groupId를 찾을 수 없어 postCount 업데이트 불가');
+      return;
+    }
+
+    final currentGroup = _cachedGroups[groupIndex];
+    final currentPostCount = currentGroup.postCount ?? 0;
+    final newPostCount = currentPostCount + delta;
+
+    // 새로운 Group 객체 생성 (불변성 유지)
+    final updatedGroup = Group(
+      id: currentGroup.id,
+      name: currentGroup.name,
+      description: currentGroup.description,
+      ownerId: currentGroup.ownerId,
+      owner: currentGroup.owner,
+      createdAt: currentGroup.createdAt,
+      members: currentGroup.members,
+      profileImageUrl: currentGroup.profileImageUrl,
+      memberCount: currentGroup.memberCount,
+      postCount: newPostCount < 0 ? 0 : newPostCount,
+      memberThumbnails: currentGroup.memberThumbnails,
+      isSystem: currentGroup.isSystem,
+    );
+
+    _cachedGroups[groupIndex] = updatedGroup;
+    notifyListeners();
+    print(
+      '✅ [GroupProvider] 그룹 $groupId postCount 업데이트: $currentPostCount → $newPostCount (delta: $delta)',
+    );
+  }
+
+  /// 🎯 선택적 업데이트: 여러 그룹의 postCount를 일괄 업데이트
+  /// 공개범위 변경으로 여러 그룹에 영향을 줄 때 사용
+  void updateMultipleGroupsPostCount(Map<int, int> groupIdToDelta) {
+    if (!_isGroupsCached) {
+      print('⚠️ [GroupProvider] 그룹 캐시가 없어 postCount 일괄 업데이트 불가 - 전체 재조회 권장');
+      return;
+    }
+
+    bool hasUpdate = false;
+    for (final entry in groupIdToDelta.entries) {
+      final groupId = entry.key;
+      final delta = entry.value;
+
+      final groupIndex = _cachedGroups.indexWhere((g) => g.id == groupId);
+      if (groupIndex == -1) continue;
+
+      final currentGroup = _cachedGroups[groupIndex];
+      final currentPostCount = currentGroup.postCount ?? 0;
+      final newPostCount = currentPostCount + delta;
+
+      final updatedGroup = Group(
+        id: currentGroup.id,
+        name: currentGroup.name,
+        description: currentGroup.description,
+        ownerId: currentGroup.ownerId,
+        owner: currentGroup.owner,
+        createdAt: currentGroup.createdAt,
+        members: currentGroup.members,
+        profileImageUrl: currentGroup.profileImageUrl,
+        memberCount: currentGroup.memberCount,
+        postCount: newPostCount < 0 ? 0 : newPostCount,
+        memberThumbnails: currentGroup.memberThumbnails,
+        isSystem: currentGroup.isSystem,
+      );
+
+      _cachedGroups[groupIndex] = updatedGroup;
+      hasUpdate = true;
+      print(
+        '✅ [GroupProvider] 그룹 $groupId postCount 업데이트: $currentPostCount → $newPostCount (delta: $delta)',
+      );
+    }
+
+    if (hasUpdate) {
+      notifyListeners();
+    }
+  }
+
+  /// 🎯 allFriends 그룹의 memberCount만 업데이트 (서버 재조회 없음)
+  /// 친구 수락/취소 시 사용
+  void updateAllFriendsMemberCount(int delta) {
+    if (_allFriendsGroupId == null) {
+      print('⚠️ [GroupProvider] allFriendsGroupId가 없어 memberCount 업데이트 불가');
+      return;
+    }
+
+    updateGroupMemberCount(_allFriendsGroupId!, delta);
   }
 
   /// 🔄 그룹 순서 변경 (드래그 앤 드롭)

@@ -341,6 +341,7 @@ class DialogUtils {
     String? initialText,
     String confirmText = '확인',
     String cancelText = '취소',
+    int? maxLines, // 🎯 여러 줄 입력 지원 (null이면 1줄)
   }) async {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final controller = TextEditingController(text: initialText ?? '');
@@ -385,6 +386,13 @@ class DialogUtils {
                           child: TextField(
                             controller: controller,
                             autofocus: true,
+                            maxLines: maxLines,
+                            minLines:
+                                maxLines != null ? (maxLines > 1 ? 3 : 1) : 1,
+                            textInputAction:
+                                maxLines != null && maxLines > 1
+                                    ? TextInputAction.newline
+                                    : TextInputAction.done,
                             cursorColor:
                                 isDark ? Colors.white : const Color(0xFF007AFF),
                             decoration: InputDecoration(
@@ -407,9 +415,12 @@ class DialogUtils {
                               color: isDark ? Colors.white : Colors.black,
                               fontSize: 15,
                             ),
-                            onSubmitted: (v) {
-                              Navigator.of(context).pop(v.trim());
-                            },
+                            onSubmitted:
+                                maxLines == null || maxLines == 1
+                                    ? (v) {
+                                      Navigator.of(context).pop(v.trim());
+                                    }
+                                    : null,
                           ),
                         ),
                       ],

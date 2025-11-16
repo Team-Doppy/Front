@@ -117,6 +117,23 @@ class _SharePostOverlayState extends State<SharePostOverlay> {
   // 🎯 스와이프 닫기 제스처
   double _verticalDragOffset = 0.0;
 
+  /// 🎯 공유용 슬러그 생성 (공백 → 하이픈)
+  String get _slug {
+    final raw = widget.title.trim();
+    if (raw.isEmpty) return '';
+    // 연속 공백도 하나의 '-'로
+    return raw.replaceAll(RegExp(r'\s+'), '-');
+  }
+
+  /// 🎯 공유용 URL (https://doppy.app/post/{postId}/{slug})
+  String get _shareUrl {
+    final slug = _slug;
+    if (slug.isEmpty) {
+      return 'https://doppy.app/post/${widget.postId}';
+    }
+    return 'https://doppy.app/post/${widget.postId}/$slug';
+  }
+
   @override
   void initState() {
     super.initState();
@@ -719,8 +736,7 @@ class _SharePostOverlayState extends State<SharePostOverlay> {
 
   /// 🎯 링크 복사
   Future<void> _copyLink() async {
-    final shareUrl = 'https://doppy.app/post/${widget.postId}';
-    await Clipboard.setData(ClipboardData(text: shareUrl));
+    await Clipboard.setData(ClipboardData(text: _shareUrl));
 
     if (mounted) {
       setState(() => _isCopied = true);
@@ -745,7 +761,6 @@ class _SharePostOverlayState extends State<SharePostOverlay> {
 
   /// 🎯 공유 바텀시트 (iOS 스타일)
   Widget _buildShareBottomSheet() {
-    final shareUrl = 'https://doppy.app/post/${widget.postId}';
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
     return StatefulBuilder(
@@ -790,7 +805,7 @@ class _SharePostOverlayState extends State<SharePostOverlay> {
                     ),
                     child: GestureDetector(
                       onTap: () async {
-                        await Clipboard.setData(ClipboardData(text: shareUrl));
+                        await Clipboard.setData(ClipboardData(text: _shareUrl));
                         if (mounted) {
                           setState(() => _isBottomSheetCopied = true);
                           setModalState(() {}); // 바텀시트 리빌드
@@ -808,7 +823,7 @@ class _SharePostOverlayState extends State<SharePostOverlay> {
                         children: [
                           Expanded(
                             child: Text(
-                              shareUrl,
+                              _shareUrl,
                               style: TextStyle(
                                 fontSize: 12,
                                 color:
@@ -824,7 +839,7 @@ class _SharePostOverlayState extends State<SharePostOverlay> {
                           GestureDetector(
                             onTap: () async {
                               await Clipboard.setData(
-                                ClipboardData(text: shareUrl),
+                                ClipboardData(text: _shareUrl),
                               );
                               if (mounted) {
                                 setState(() => _isBottomSheetCopied = true);
@@ -927,42 +942,28 @@ class _SharePostOverlayState extends State<SharePostOverlay> {
 
   /// 🎯 네이티브 시스템 공유
   Future<void> _shareViaSystemNative() async {
-    final shareUrl = 'https://doppy.app/post/${widget.postId}';
-    final shareText = '${widget.title}\n\n$shareUrl';
+    final shareText = '${widget.title}\n\n$_shareUrl';
 
     try {
-      final imageFile = await _captureCardAsImage();
-
-      if (imageFile != null) {
-        await Share.shareXFiles(
-          [XFile(imageFile.path)],
-          text: shareText,
-          subject: widget.title,
-        );
-
-        try {
-          await imageFile.delete();
-        } catch (_) {}
-      } else {
-        await Share.share(shareText, subject: widget.title);
-      }
+      // ✅ 시스템 공유는 이미지 없이 "텍스트 + 링크"만 공유
+      await Share.share(shareText, subject: widget.title);
     } catch (e) {
+      // 공유 실패 시 최소한 링크는 클립보드에 복사
       await Clipboard.setData(ClipboardData(text: shareText));
     }
   }
 
   /// 🎯 SNS로 공유
   Future<void> _shareToSNS(String platform) async {
-    final shareUrl = 'https://doppy.app/post/${widget.postId}';
     String url = '';
 
     switch (platform) {
       case 'facebook':
-        url = 'https://www.facebook.com/sharer/sharer.php?u=$shareUrl';
+        url = 'https://www.facebook.com/sharer/sharer.php?u=$_shareUrl';
         break;
       case 'x':
         url =
-            'twitter://post?message=${Uri.encodeComponent(widget.title)}&url=$shareUrl';
+            'twitter://post?message=${Uri.encodeComponent(widget.title)}&url=$_shareUrl';
         break;
       case 'threads':
         url = 'barcelona://create';
@@ -970,7 +971,7 @@ class _SharePostOverlayState extends State<SharePostOverlay> {
     }
 
     try {
-      await Clipboard.setData(ClipboardData(text: shareUrl));
+      await Clipboard.setData(ClipboardData(text: _shareUrl));
 
       final uri = Uri.parse(url);
       if (await canLaunchUrl(uri)) {
@@ -1045,8 +1046,7 @@ class _SharePostOverlayState extends State<SharePostOverlay> {
       );
 
       // 링크를 클립보드에 복사
-      final shareUrl = 'https://doppy.app/post/${widget.postId}';
-      await Clipboard.setData(ClipboardData(text: shareUrl));
+      await Clipboard.setData(ClipboardData(text: _shareUrl));
 
       // 임시 파일 정리
       try {

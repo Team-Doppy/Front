@@ -34,6 +34,7 @@ class EditorService extends ChangeNotifier {
   final List<_DocumentSnapshot> _redoStack = [];
   bool _isExecutingHistory = false;
   Timer? _historyTimer;
+  bool _initialStateSaved = false; // 🎯 초기 상태 저장 완료 플래그 (중복 방지)
 
   // 🎯 NodeComponentService 참조 (노드 선택 해제용)
   BuildContext? _context;
@@ -59,10 +60,12 @@ class EditorService extends ChangeNotifier {
 
   // 🎯 초기 상태 저장
   void _saveInitialState() {
-    if (_isExecutingHistory) return;
+    if (_isExecutingHistory || _initialStateSaved)
+      return; // 🎯 이미 저장되었으면 중복 실행 방지
 
     final snapshot = _copyAllNodes();
     _undoStack.add(snapshot);
+    _initialStateSaved = true; // 🎯 저장 완료 표시
     print('[EditorService] 📸 초기 상태 저장 (nodes: ${snapshot.nodes.length})');
   }
 

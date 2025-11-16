@@ -68,6 +68,9 @@ dependencies:
   webview_flutter_wkwebview: ^3.13.1
   scrollable_positioned_list: ^0.3.8
   image_gallery_saver: ^2.0.3
+  firebase_core: ^3.15.2
+  firebase_messaging: ^15.2.10
+  uuid: ^4.5.1
 
 dependency_overrides:
   screenshot: ^3.0.0

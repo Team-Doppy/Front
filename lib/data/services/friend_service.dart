@@ -183,6 +183,78 @@ class FriendService {
     }
   }
 
+  /// 15. 사용자 차단
+  /// - [targetUsername] 차단할 사용자명
+  Future<void> blockUser(String targetUsername) async {
+    try {
+      final response = await _dio.post('/api/friends/block/$targetUsername');
+
+      if (response.statusCode != null &&
+          response.statusCode! >= 200 &&
+          response.statusCode! < 300) {
+        print('[FriendService] 사용자 차단 성공: $targetUsername');
+        return;
+      }
+
+      throw Exception('사용자 차단 실패: ${response.statusCode}');
+    } catch (e) {
+      if (e is DioException) {
+        final statusCode = e.response?.statusCode;
+        final errorMessage =
+            e.response?.data?['message']?.toString() ??
+            '사용자 차단 실패: $statusCode';
+        print('[FriendService] 사용자 차단 실패: $errorMessage');
+        throw Exception(errorMessage);
+      }
+      rethrow;
+    }
+  }
+
+  /// 16. 차단 해제
+  /// - [targetUsername] 차단 해제할 사용자명
+  Future<void> unblockUser(String targetUsername) async {
+    try {
+      final response = await _dio.delete('/api/friends/block/$targetUsername');
+
+      if (response.statusCode != null &&
+          response.statusCode! >= 200 &&
+          response.statusCode! < 300) {
+        print('[FriendService] 차단 해제 성공: $targetUsername');
+        return;
+      }
+
+      throw Exception('차단 해제 실패: ${response.statusCode}');
+    } catch (e) {
+      if (e is DioException) {
+        final statusCode = e.response?.statusCode;
+        final errorMessage =
+            e.response?.data?['message']?.toString() ?? '차단 해제 실패: $statusCode';
+        print('[FriendService] 차단 해제 실패: $errorMessage');
+        throw Exception(errorMessage);
+      }
+      rethrow;
+    }
+  }
+
+  /// 17. 차단 목록 조회
+  Future<List<User>> getBlockedUsers() async {
+    try {
+      final response = await _dio.get('/api/friends/blocked');
+
+      if (response.statusCode == 200) {
+        final List<dynamic> data = response.data;
+        return data.map((item) => User.fromJson(item)).toList();
+      }
+
+      throw Exception('차단 목록 조회 실패');
+    } catch (e) {
+      if (e is DioException) {
+        throw Exception('차단 목록 조회 실패: ${e.response?.statusCode}');
+      }
+      rethrow;
+    }
+  }
+
   /// 14. 수락된 친구 목록 조회 (페이지네이션 지원)
   Future<List<Friend>> getAcceptedFriends({int page = 0, int size = 20}) async {
     try {

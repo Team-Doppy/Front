@@ -9,7 +9,6 @@ import 'package:doppy/editor/service/sticker_service.dart';
 import 'package:doppy/pages/components/share_post_overlay.dart';
 import 'package:doppy/providers/feed_provider/my_profile_feed_provider.dart';
 import 'package:doppy/providers/user_provider.dart';
-import 'package:doppy/providers/friend_provider.dart';
 import 'package:doppy/theme/app_colors.dart';
 import 'package:doppy/l10n/app_localizations.dart';
 import 'package:doppy/data/models/system_category_keys.dart';
@@ -496,14 +495,21 @@ class _PostExportScreenState extends State<PostExportScreen>
         });
         print('[PostExport] 백그라운드 재로드 시작');
 
-        // 🎯 포스트 생성 후 그룹 데이터도 갱신 (postCount 업데이트)
-        final friendProvider = context.read<FriendProvider>();
+        // 🎯 포스트 생성 후 관련 그룹의 postCount만 선택적 업데이트 (전체 재조회 생략)
         final groupProvider = context.read<GroupProvider>();
-        groupProvider.fetchMyGroups(friendProvider: friendProvider).catchError((
-          e,
-        ) {
-          print('[PostExport] 그룹 데이터 재로드 실패: $e');
-        });
+
+        // GROUPS 공개범위인 경우에만 관련 그룹의 postCount 업데이트
+        if (scopeLabel == 'GROUPS' && _selectedAudienceGroupIds.isNotEmpty) {
+          final groupIdToDelta = <int, int>{};
+          for (final groupId in _selectedAudienceGroupIds) {
+            groupIdToDelta[groupId] = 1; // 포스트 생성으로 +1
+          }
+          groupProvider.updateMultipleGroupsPostCount(groupIdToDelta);
+          print(
+            '[PostExport] 관련 그룹 postCount 선택적 업데이트 완료: ${_selectedAudienceGroupIds.length}개 그룹',
+          );
+        }
+        // PUBLIC/FRIENDS/PRIVATE는 그룹 postCount에 영향 없음
       } catch (e) {
         print('[PostExport] 백그라운드 재로드 실패: $e');
       }

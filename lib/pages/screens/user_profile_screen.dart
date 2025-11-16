@@ -11,15 +11,19 @@ import 'package:doppy/utils/network_utils.dart';
 import 'package:doppy/utils/error_handler.dart';
 import 'package:doppy/utils/dialog_utils.dart';
 import 'package:doppy/l10n/app_localizations.dart';
+import 'package:doppy/data/services/friend_service.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:doppy/data/services/upload_service.dart';
 import 'package:doppy/providers/user_provider.dart';
 import 'package:doppy/providers/friend_provider.dart';
+import 'package:doppy/providers/group_provider.dart';
 import 'package:doppy/providers/feed_provider/my_profile_feed_provider.dart';
 import 'package:doppy/providers/feed_provider/base_feed_provider.dart';
 import 'package:doppy/data/models/user_model.dart';
 import 'package:doppy/image/profile_image_bottom_sheet.dart';
+import 'package:url_launcher/url_launcher.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import 'dart:io';
 import 'dart:ui';
 import 'dart:async';
@@ -76,13 +80,6 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
 
     // otherUser가 null이거나, otherUser가 나 자신이면 내 프로필
     _isOwnProfile = (widget.otherUser == null) || isActuallyMe;
-
-    if (isActuallyMe) {
-      print('[UserProfileScreen] otherUser가 본인임 → 내 프로필 모드로 전환');
-      print('  - otherUser: ${widget.otherUser!.username}');
-      print('  - currentUser: ${currentUser.username}');
-    }
-
     _scrollController = ScrollController();
 
     // 내 프로필이면 MyProfileFeedProvider, 다른 사람 프로필이면 ProfileFeedProvider 사용
@@ -398,15 +395,51 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                                   opacity: 1.0 - _pullProgress,
                                   child: Row(
                                     children: [
-                                      if (_isOwnProfile) ...[
+                                      // 🎯 링크 아이콘 (링크가 있을 때만 표시)
+                                      if ((isOther &&
+                                              other?.links != null &&
+                                              other!.links!.isNotEmpty) ||
+                                          (!isOther &&
+                                              me?.links != null &&
+                                              me!.links!.isNotEmpty))
                                         GestureDetector(
-                                          child: Icon(
-                                            Icons.edit,
-                                            color:
+                                          onTap: () {
+                                            final links =
+                                                isOther
+                                                    ? (other?.links ?? [])
+                                                    : (me?.links ?? []);
+                                            if (links.isNotEmpty) {
+                                              _showLinksModal(context, links);
+                                            }
+                                          },
+                                          child: Container(
+                                            padding: const EdgeInsets.all(8),
+                                            child: SvgPicture.asset(
+                                              'assets/icons/link.svg',
+                                              width: 26,
+                                              height: 26,
+                                              colorFilter: ColorFilter.mode(
                                                 Theme.of(
                                                   context,
                                                 ).colorScheme.onSurface,
-                                            size: 19,
+                                                BlendMode.srcIn,
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                      if (_isOwnProfile) ...[
+                                        SizedBox(width: 8),
+                                        GestureDetector(
+                                          child: SvgPicture.asset(
+                                            'assets/icons/edit.svg',
+                                            width: 22,
+                                            height: 22,
+                                            colorFilter: ColorFilter.mode(
+                                              Theme.of(
+                                                context,
+                                              ).colorScheme.onSurface,
+                                              BlendMode.srcIn,
+                                            ),
                                           ),
                                           onTap: () {
                                             me != null
@@ -416,16 +449,19 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                                                 : null;
                                           },
                                         ),
-                                        SizedBox(width: 12),
+                                        SizedBox(width: 16),
                                         // 설정 버튼
                                         GestureDetector(
-                                          child: Icon(
-                                            Icons.menu,
-                                            color:
-                                                Theme.of(
-                                                  context,
-                                                ).colorScheme.onSurface,
-                                            size: 24,
+                                          child: SvgPicture.asset(
+                                            'assets/icons/menu.svg',
+                                            width: 20,
+                                            height: 20,
+                                            colorFilter: ColorFilter.mode(
+                                              Theme.of(
+                                                context,
+                                              ).colorScheme.onSurface,
+                                              BlendMode.srcIn,
+                                            ),
                                           ),
                                           onTap: () {
                                             Navigator.of(context).push(
@@ -448,7 +484,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                                 children: [
                                   const SizedBox(height: 50),
 
-                                  // 원형 아바타 (텍스트 위에 위치)
+                                  // 원형 아바타 (링크 아래에 위치)
                                   CommonProfileAvatar(
                                     imageUrl: _displayImageUrl,
                                     username: _displayUsername,
@@ -766,11 +802,20 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
       }
     }
 
-    // 화면 전환: 즉시 이동
+    // 화면 전환: 페이드 인 전환 (옆에서 슬라이드되는 페이지 전환 대신)
     if (mounted) {
-      Navigator.of(
-        context,
-      ).push(MaterialPageRoute(builder: (_) => const GroupSelectionScreen()));
+      Navigator.of(context).push(
+        PageRouteBuilder(
+          pageBuilder:
+              (context, animation, secondaryAnimation) =>
+                  const GroupSelectionScreen(),
+          transitionDuration: const Duration(milliseconds: 220),
+          reverseTransitionDuration: const Duration(milliseconds: 220),
+          transitionsBuilder: (context, animation, secondaryAnimation, child) {
+            return FadeTransition(opacity: animation, child: child);
+          },
+        ),
+      );
     }
 
     // 이미지 프리캐싱: 백그라운드에서 1회만 수행(체감 지연 제거)
@@ -801,9 +846,59 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
         String buttonText;
         VoidCallback buttonAction;
 
+        final l10n = AppLocalizations.of(context);
+
         switch (friendProvider.friendStatus) {
+          case FriendRequestStatus.blocked:
+            // 🎯 차단된 사용자
+            buttonText = l10n.t('blocked');
+            buttonAction = () async {
+              // 차단 해제 다이얼로그
+              final confirm = await DialogUtils.showConfirmDialog(
+                context,
+                title: l10n.t('unblock_user_title'),
+                message: l10n
+                    .t('unblock_user_message')
+                    .replaceAll(
+                      '{name}',
+                      widget.otherUser?.alias ??
+                          widget.otherUser?.username ??
+                          '이 사용자',
+                    ),
+                confirmText: l10n.t('unblock_user'),
+                cancelText: l10n.t('cancel'),
+                isDestructive: false,
+              );
+
+              if (confirm == true && mounted) {
+                try {
+                  final friendService = FriendService();
+                  await friendService.unblockUser(widget.otherUser!.username);
+
+                  // 상태 새로고침
+                  await friendProvider.checkFriendStatus(
+                    widget.otherUser!.username,
+                  );
+
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(l10n.t('unblock_success')),
+                        behavior: SnackBarBehavior.floating,
+                        duration: const Duration(seconds: 2),
+                      ),
+                    );
+                  }
+                } catch (e) {
+                  if (mounted) {
+                    ErrorHandler.showError(context, e.toString());
+                  }
+                }
+              }
+            };
+            break;
           case FriendRequestStatus.none:
-            buttonText = '이웃 추가';
+            buttonText = l10n.t('add_friend');
             buttonAction = () async {
               try {
                 await friendProvider.sendFriendRequest(
@@ -813,7 +908,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
             };
             break;
           case FriendRequestStatus.requested:
-            buttonText = '요청 취소';
+            buttonText = l10n.t('cancel_friend_request');
             buttonAction = () async {
               try {
                 await friendProvider.deleteFriend(widget.otherUser!.username);
@@ -821,23 +916,34 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
             };
             break;
           case FriendRequestStatus.accepted:
-            buttonText = '친구 취소';
+            buttonText = l10n.t('remove_friend');
             buttonAction = () async {
               // 확인 다이얼로그 표시
               final confirm = await DialogUtils.showConfirmDialog(
                 context,
-                title: '친구 취소',
-                message:
-                    '${widget.otherUser?.alias ?? widget.otherUser?.username ?? '이 사용자'}님과의 친구 관계를 취소하시겠습니까?',
-                confirmText: '취소하기',
-                cancelText: '돌아가기',
+                title: l10n.t('remove_friend'),
+                message: l10n
+                    .t('remove_friend_confirm')
+                    .replaceAll(
+                      '{name}',
+                      widget.otherUser?.alias ??
+                          widget.otherUser?.username ??
+                          '이 사용자',
+                    ),
+                confirmText: l10n.t('remove_friend'),
+                cancelText: l10n.t('cancel'),
                 isDestructive: true,
               );
 
               // 확인을 누른 경우에만 친구 취소 실행
               if (confirm == true && mounted) {
                 try {
-                  await friendProvider.deleteFriend(widget.otherUser!.username);
+                  // 🎯 GroupProvider 전달하여 allFriends 그룹 memberCount 업데이트
+                  final groupProvider = context.read<GroupProvider>();
+                  await friendProvider.deleteFriend(
+                    widget.otherUser!.username,
+                    groupProvider: groupProvider,
+                  );
                 } catch (e) {
                   if (mounted) {
                     ScaffoldMessenger.of(
@@ -881,6 +987,9 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                       isFilled:
                           friendProvider.friendStatus ==
                           FriendRequestStatus.none,
+                      isBlocked:
+                          friendProvider.friendStatus ==
+                          FriendRequestStatus.blocked, // 🎯 차단된 경우 스타일 변경
                     ),
                   ),
                 );
@@ -897,6 +1006,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     required VoidCallback onTap,
     bool isLoading = false,
     bool isFilled = false,
+    bool isBlocked = false, // 🎯 차단된 사용자 표시용
   }) {
     return GestureDetector(
       onTap: isLoading ? null : onTap,
@@ -906,7 +1016,11 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(12),
           color:
-              isFilled
+              isBlocked
+                  ? Theme.of(context).colorScheme.error.withOpacity(
+                    0.1,
+                  ) // 🎯 차단된 경우 빨간색 배경
+                  : isFilled
                   ? Theme.of(context).colorScheme.primary.withOpacity(1)
                   : Theme.of(context).colorScheme.onSurface.withOpacity(0.1),
         ),
@@ -929,7 +1043,11 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                     text,
                     style: TextStyle(
                       color:
-                          isFilled
+                          isBlocked
+                              ? Theme.of(context)
+                                  .colorScheme
+                                  .error // 🎯 차단된 경우 빨간색 텍스트
+                              : isFilled
                               ? Colors.white
                               : Theme.of(
                                 context,
@@ -990,6 +1108,276 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     );
   }
 
+  /// 🎯 링크 모달 표시
+  void _showLinksModal(BuildContext context, List<String> links) {
+    showDialog(
+      context: context,
+      barrierColor:
+          Theme.of(context).brightness == Brightness.dark
+              ? Colors.black.withOpacity(0.3)
+              : Colors.black.withOpacity(0.6),
+      builder: (BuildContext context) {
+        return Stack(
+          children: [
+            // 🎯 모달 컨텐츠 (아래쪽 정렬)
+            Align(
+              alignment: Alignment.bottomCenter,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 20,
+                ),
+                child: GestureDetector(
+                  onTap: () {}, // 모달 컨텐츠 탭 시 배경으로 이벤트 전파 방지
+                  child: Material(
+                    color: Colors.transparent,
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Container(
+                          constraints: BoxConstraints(
+                            maxHeight: MediaQuery.of(context).size.height * 0.7,
+                            maxWidth: MediaQuery.of(context).size.width,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.surface.withOpacity(0.95),
+                            borderRadius: BorderRadius.circular(30),
+                          ),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              // 제목
+                              Padding(
+                                padding: const EdgeInsets.fromLTRB(
+                                  24,
+                                  24,
+                                  24,
+                                  16,
+                                ),
+                                child: Row(
+                                  children: [
+                                    SvgPicture.asset(
+                                      'assets/icons/link.svg',
+                                      width: 20,
+                                      height: 20,
+                                      colorFilter: ColorFilter.mode(
+                                        Theme.of(context).colorScheme.onSurface,
+                                        BlendMode.srcIn,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 10),
+
+                                    const Spacer(),
+                                    GestureDetector(
+                                      onTap: () => Navigator.of(context).pop(),
+                                      child: Icon(
+                                        Icons.close,
+                                        color: Theme.of(context)
+                                            .colorScheme
+                                            .onSurface
+                                            .withOpacity(0.6),
+                                        size: 24,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+
+                              // 링크 목록
+                              Flexible(
+                                child: ListView.separated(
+                                  shrinkWrap: true,
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 24,
+                                  ),
+                                  itemCount: links.length,
+                                  separatorBuilder: (context, index) {
+                                    return Divider(
+                                      height: 1,
+                                      thickness: 1,
+                                      color: Theme.of(
+                                        context,
+                                      ).colorScheme.onSurface.withOpacity(0.1),
+                                      indent: 0,
+                                      endIndent: 0,
+                                    );
+                                  },
+                                  itemBuilder: (context, index) {
+                                    return _buildLinkModalItem(
+                                      context,
+                                      links[index],
+                                    );
+                                  },
+                                ),
+                              ),
+
+                              const SizedBox(height: 24),
+                            ],
+                          ),
+                        ),
+
+                        SizedBox(height: 15),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 4),
+                          child: ElevatedButton(
+                            style: ElevatedButton.styleFrom(
+                              minimumSize: Size(double.infinity, 53),
+                              backgroundColor:
+                                  Theme.of(context).colorScheme.surface,
+                              foregroundColor:
+                                  Theme.of(context).colorScheme.onSurface,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(20),
+                              ),
+
+                              textStyle: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            onPressed: () => Navigator.of(context).pop(),
+                            child: Text(
+                              '닫기',
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w600,
+                                color: Theme.of(context).colorScheme.onSurface,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  /// 🎯 모달용 링크 아이템 위젯
+  Widget _buildLinkModalItem(BuildContext context, String url) {
+    // URL 정규화
+    String displayUrl = url;
+    if (!url.startsWith('http://') && !url.startsWith('https://')) {
+      displayUrl = 'https://$url';
+    }
+
+    // 도메인 추출
+    String domain = url;
+    String? thumbnailUrl;
+    try {
+      final uri = Uri.parse(displayUrl);
+      domain = uri.host.replaceFirst('www.', '');
+      // 🎯 썸네일 URL 생성 (Google Favicon API 또는 도메인 기반)
+      thumbnailUrl = 'https://www.google.com/s2/favicons?domain=$domain&sz=64';
+    } catch (_) {
+      domain = url;
+    }
+
+    final theme = Theme.of(context);
+
+    return GestureDetector(
+      onTap: () async {
+        try {
+          final uri = Uri.parse(displayUrl);
+          if (await canLaunchUrl(uri)) {
+            await launchUrl(uri, mode: LaunchMode.externalApplication);
+          }
+          Navigator.of(context).pop();
+        } catch (e) {
+          if (mounted) {
+            ErrorHandler.showError(context, '링크를 열 수 없습니다: $url');
+          }
+        }
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 0, vertical: 16),
+
+        child: Row(
+          children: [
+            // 🎯 링크 썸네일
+            Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: theme.colorScheme.onSurface.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child:
+                  thumbnailUrl != null
+                      ? ClipRRect(
+                        borderRadius: BorderRadius.circular(10),
+                        child: Image.network(
+                          thumbnailUrl,
+                          width: 40,
+                          height: 40,
+                          fit: BoxFit.cover,
+                          errorBuilder: (context, error, stackTrace) {
+                            return Icon(
+                              Icons.link,
+                              size: 20,
+                              color: theme.colorScheme.onSurface.withOpacity(
+                                0.5,
+                              ),
+                            );
+                          },
+                          loadingBuilder: (context, child, loadingProgress) {
+                            if (loadingProgress == null) {
+                              return child;
+                            }
+                            return Center();
+                          },
+                        ),
+                      )
+                      : Icon(
+                        Icons.link,
+                        size: 20,
+                        color: theme.colorScheme.onSurface.withOpacity(0.7),
+                      ),
+            ),
+            const SizedBox(width: 16),
+            // 링크 정보
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    domain,
+                    style: TextStyle(
+                      color: theme.colorScheme.onSurface,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    url,
+                    style: TextStyle(
+                      color: theme.colorScheme.onSurface.withOpacity(0.7),
+                      fontSize: 12,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   /// 프로필 사진 변경 바텀시트 표시
   void _changeProfileImage() {
     if (_isUploadingProfileImage) return;
@@ -1022,50 +1410,42 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
       backgroundColor: Colors.transparent,
       isScrollControlled: true,
       builder: (BuildContext context) {
-        return SizedBox(
-          height: MediaQuery.of(context).size.height * 0.75,
-          child: Container(
-            width: MediaQuery.of(context).size.width,
-            decoration: BoxDecoration(
-              color: Theme.of(context).colorScheme.surface,
-              borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-            ),
-            child: ProfileInfoEditBottomSheet(
-              user: me,
-              nameController: _nameController,
-              descriptionController: _descriptionController,
-              onClearProfileImage: _clearProfileImage,
-              onImagesSelected: (files) => _handleImageSelected(files.first),
-              onSave: ({
-                required String alias,
-                required String description,
-              }) async {
-                // UserProvider를 통해 API 호출 및 상태 업데이트
-                final userProvider = context.read<UserProvider>();
+        return ProfileInfoEditBottomSheet(
+          user: me,
+          nameController: _nameController,
+          descriptionController: _descriptionController,
+          onClearProfileImage: _clearProfileImage,
+          onImagesSelected: (files) => _handleImageSelected(files.first),
+          onSave: ({
+            required String alias,
+            required String description,
+            List<String>? links, // 🎯 프로필 링크 목록 (최대 3개)
+          }) async {
+            // UserProvider를 통해 API 호출 및 상태 업데이트
+            final userProvider = context.read<UserProvider>();
 
-                final success = await userProvider.updateProfileInfo(
-                  alias: alias,
-                  selfIntroduction: description,
-                );
+            final success = await userProvider.updateProfileInfo(
+              alias: alias,
+              selfIntroduction: description,
+              links: links,
+            );
 
-                if (!success && mounted) {
-                  // 실패 메시지 표시
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text(
-                        '프로필 저장에 실패했습니다',
-                        style: TextStyle(
-                          color: Theme.of(context).colorScheme.onError,
-                        ),
-                      ),
-                      backgroundColor: Theme.of(context).colorScheme.error,
-                      duration: Duration(seconds: 2),
+            if (!success && mounted) {
+              // 실패 메시지 표시
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(
+                    '프로필 저장에 실패했습니다',
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.onError,
                     ),
-                  );
-                }
-              },
-            ),
-          ),
+                  ),
+                  backgroundColor: Theme.of(context).colorScheme.error,
+                  duration: Duration(seconds: 2),
+                ),
+              );
+            }
+          },
         );
       },
     );

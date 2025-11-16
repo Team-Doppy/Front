@@ -7,7 +7,9 @@ import 'package:flutter/rendering.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:image_gallery_saver/image_gallery_saver.dart';
 import 'package:doppy/l10n/app_localizations.dart';
+import 'package:doppy/utils/error_handler.dart';
 
 /// 👤 프로필 공유 바텀시트
 class ShareProfileBottomSheet extends StatelessWidget {
@@ -475,7 +477,7 @@ class _ShareBottomSheetState extends State<ShareBottomSheet> {
     }
   }
 
-  // 🎯 Instagram에 이미지 포함 공유
+  // 🎯 Instagram에 이미지 포함 공유 (글 공유와 동일한 메커니즘)
   Future<void> _shareToInstagramWithImage(String text) async {
     if (_isSharing) return;
 
@@ -485,32 +487,68 @@ class _ShareBottomSheetState extends State<ShareBottomSheet> {
       // 1️⃣ previewWidget을 이미지로 캡처
       final imageFile = await _capturePreviewAsImage();
 
-      if (imageFile != null) {
-        // 2️⃣ 이미지 + 텍스트 함께 공유 (Instagram 스토리)
-        final result = await Share.shareXFiles(
-          [XFile(imageFile.path)],
-          text: text,
-          subject: widget.title,
-        );
-
-        // 3️⃣ 임시 파일 삭제
-        try {
-          await imageFile.delete();
-        } catch (_) {}
-
-        print('✅ Instagram 공유 완료: ${result.status}');
-      } else {
-        // 캡처 실패 시 텍스트만 공유
-        await Share.share(text, subject: widget.title);
+      if (imageFile == null) {
+        print('❌ 이미지 캡처 실패');
+        if (mounted) {
+          setState(() => _isSharing = false);
+          ErrorHandler.showError(context, '이미지 캡처에 실패했습니다.');
+        }
+        return;
       }
 
-      setState(() => _isSharing = false);
-    } catch (e) {
-      print('⚠️ Instagram 공유 실패: $e');
-      setState(() => _isSharing = false);
+      // 2️⃣ 이미지를 갤러리에 저장
+      final bytes = await imageFile.readAsBytes();
+      final result = await ImageGallerySaver.saveImage(
+        bytes,
+        quality: 100,
+        name:
+            'doppy_profile_${widget.username}_${DateTime.now().millisecondsSinceEpoch}',
+      );
 
-      // 폴백: 클립보드에 복사
-      await Clipboard.setData(ClipboardData(text: text));
+      // 3️⃣ 링크를 클립보드에 복사
+      await Clipboard.setData(ClipboardData(text: widget.shareUrl));
+
+      // 4️⃣ 임시 파일 정리
+      try {
+        await imageFile.delete();
+      } catch (_) {}
+
+      // 5️⃣ 저장 실패 시
+      if (result == null || result['isSuccess'] != true) {
+        if (mounted) {
+          setState(() => _isSharing = false);
+          ErrorHandler.showError(context, '이미지 저장에 실패했습니다.');
+        }
+        return;
+      }
+
+      // 6️⃣ Instagram 갤러리 선택 화면으로 이동
+      // instagram://library → 갤러리에서 선택 후 게시물/릴스/스토리 선택 가능
+      final instagramUrl = Uri.parse('instagram://library?AssetPath=ALL');
+
+      if (await canLaunchUrl(instagramUrl)) {
+        await launchUrl(instagramUrl, mode: LaunchMode.externalApplication);
+        print('✅ Instagram 갤러리 선택 화면 열림');
+      } else {
+        // Instagram 앱이 없으면 갤러리만 저장
+        print('⚠️ Instagram 앱 없음 - 갤러리에만 저장');
+        if (mounted) {
+          ErrorHandler.showInfo(
+            context,
+            'Instagram 앱이 설치되어 있지 않습니다.\n이미지가 갤러리에 저장되었습니다.',
+          );
+        }
+      }
+
+      if (mounted) {
+        setState(() => _isSharing = false);
+      }
+    } catch (e) {
+      print('❌ Instagram 공유 실패: $e');
+      if (mounted) {
+        setState(() => _isSharing = false);
+        ErrorHandler.showError(context, '공유에 실패했습니다.');
+      }
     }
   }
 

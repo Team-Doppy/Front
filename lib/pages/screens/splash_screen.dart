@@ -1,14 +1,11 @@
 import 'package:doppy/main.dart';
 import 'package:doppy/pages/components/doppy_loading_logo.dart';
 import 'package:doppy/providers/auth_provider.dart';
-import 'package:doppy/providers/group_provider.dart';
 import 'package:doppy/providers/user_provider.dart';
-import 'package:doppy/providers/friend_provider.dart';
+import 'package:doppy/providers/group_provider.dart';
 import 'package:doppy/data/services/home_data_service.dart';
 import 'package:doppy/data/services/search_service.dart';
 import 'package:doppy/utils/network_utils.dart';
-import 'package:cached_network_image/cached_network_image.dart';
-import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -90,17 +87,17 @@ class _SplashScreenState extends State<SplashScreen>
           _loadingStatus = '사용자 데이터를 불러오는 중...';
         });
 
-        // 🎯 친구 데이터를 먼저 로드한 후 그룹 데이터 로드 (allFriends 그룹의 친구 수 반영을 위해)
-        // 홈 데이터, 검색 기록, 유저 정보, 친구 데이터를 병렬로 로드
+        // 🎯 앱 시작 시 필수 데이터만 로드 (그룹 스키마 포함)
+        // 홈 데이터, 검색 기록, 유저 정보, 그룹 스키마를 병렬로 로드
         await Future.wait([
           _loadHomeData(),
           _loadSearchHistory(),
           _loadUserData(),
-          _loadFriendData(), // 친구 데이터를 먼저 로드
+          _loadGroupSchema(),
         ]);
 
-        // 🎯 친구 데이터 로드 후 그룹 데이터 로드 (friendProvider 전달)
-        await _loadGroupData();
+        // 🎯 트렌딩 데이터는 비동기로 백그라운드에서 로드 (앱 시작을 막지 않음)
+        _loadTrendingData();
       } else {
         // 토큰이 없거나 유효하지 않은 경우 빈 데이터로 설정
         setState(() {
@@ -140,10 +137,6 @@ class _SplashScreenState extends State<SplashScreen>
         _loadingStatus = homeData.isEmpty ? '데이터 로드 완료' : '이미지를 미리 로드하는 중...';
       });
 
-      print(
-        '[SplashScreen] 피드 데이터 로드 완료: 친구글 ${homeData.friendsPosts.length}개, 전체글 ${homeData.allPosts.length}개',
-      );
-
       // 이미지 미리 로드 (두 섹션 모두)
       if (!homeData.isEmpty) {
         final allPosts = [...homeData.friendsPosts, ...homeData.allPosts];
@@ -168,23 +161,16 @@ class _SplashScreenState extends State<SplashScreen>
 
   Future<void> _loadSearchHistory() async {
     try {
-      print('[SplashScreen] 검색 기록 로드 시작');
-
       // SearchService를 통해 검색 기록 미리 로드
       final searchService = SearchService();
       await searchService.loadSearchHistory();
-
-      print('[SplashScreen] 검색 기록 로드 완료');
     } catch (e) {
-      print('[SplashScreen] 검색 기록 로드 실패 (무시): $e');
       // 검색 기록 로드 실패는 앱 시작을 막지 않음
     }
   }
 
   Future<void> _loadUserData() async {
     try {
-      print('[SplashScreen] 유저 정보 로드 시작');
-
       final userProvider = context.read<UserProvider>();
 
       // 먼저 로컬 캐시 로드
@@ -192,97 +178,32 @@ class _SplashScreenState extends State<SplashScreen>
 
       // 그 다음 서버에서 최신 정보 가져오기
       await userProvider.fetchMyProfile();
-
-      print('[SplashScreen] 유저 정보 로드 완료');
     } catch (e) {
-      print('[SplashScreen] 유저 정보 로드 실패 (무시): $e');
       // 유저 정보 로드 실패는 앱 시작을 막지 않음
     }
   }
 
-  Future<void> _loadGroupData() async {
+  Future<void> _loadGroupSchema() async {
     try {
-      print('[SplashScreen] 그룹 데이터 로드 시작');
-
+      // GroupProvider를 통해 그룹 스키마 미리 로드 (메타데이터만)
       final groupProvider = context.read<GroupProvider>();
-      final friendProvider = context.read<FriendProvider>();
-
-      // 🎯 friendProvider를 전달하여 allFriends 그룹의 친구 수 정확히 반영
-      await groupProvider.fetchMyGroups(friendProvider: friendProvider);
-
-      print('[SplashScreen] 그룹 데이터 로드 완료');
-
-      // 🎯 그룹 이미지 프리로드 (비동기로 실행, 앱 시작을 막지 않음)
-      _preloadGroupImages(groupProvider.myGroups);
+      await groupProvider.fetchMyGroups(forceRefresh: false);
     } catch (e) {
-      print('[SplashScreen] 그룹 데이터 로드 실패 (무시): $e');
-      // 그룹 데이터 로드 실패는 앱 시작을 막지 않음
+      // 그룹 스키마 로드 실패는 앱 시작을 막지 않음
+      print('[SplashScreen] 그룹 스키마 로드 실패: $e');
     }
   }
 
-  // 🎯 그룹 이미지 프리로드 (비동기)
-  Future<void> _preloadGroupImages(List groups) async {
+  Future<void> _loadTrendingData() async {
     try {
-      final List<String> imageUrls = [];
-
-      // 유효한 그룹 이미지 URL 수집
-      for (final group in groups) {
-        final profileImageUrl = group.profileImageUrl;
-        if (profileImageUrl != null && profileImageUrl.isNotEmpty) {
-          if (profileImageUrl.startsWith('http://') ||
-              profileImageUrl.startsWith('https://')) {
-            // 네트워크 이미지 프리로드
-            imageUrls.add(profileImageUrl);
-          } else {
-            // 🎯 로컬 파일 경로인 경우 파일 존재 여부 확인 후 프리로드
-            try {
-              final file = File(profileImageUrl);
-              if (await file.exists()) {
-                await precacheImage(FileImage(file), context);
-                print('[SplashScreen] 로컬 이미지 프리로드 완료: $profileImageUrl');
-              }
-            } catch (e) {
-              print('[SplashScreen] 로컬 이미지 프리로드 실패: $e');
-            }
-          }
-        }
-      }
-
-      if (imageUrls.isEmpty) {
-        print('[SplashScreen] 프리로드할 그룹 이미지 없음');
-        return;
-      }
-
-      print('[SplashScreen] 그룹 이미지 프리로드 시작: ${imageUrls.length}개');
-
-      // 🎯 병렬로 모든 이미지 프리로드
-      await Future.wait(
-        imageUrls
-            .map(
-              (url) => precacheImage(CachedNetworkImageProvider(url), context),
-            )
-            .toList(),
-        eagerError: false, // 하나 실패해도 계속 진행
+      // SearchService를 통해 트렌딩 데이터 비동기 로드 (shimmer 없이)
+      final searchService = SearchService();
+      await searchService.fetchTrendingKeywords(
+        limit: 5,
+        showShimmer: false, // 🎯 앱 시작 시에는 shimmer 표시하지 않음
       );
-
-      print('[SplashScreen] 그룹 이미지 프리로드 완료');
     } catch (e) {
-      print('[SplashScreen] 그룹 이미지 프리로드 실패 (무시): $e');
-      // 이미지 프리로드 실패는 앱 시작을 막지 않음
-    }
-  }
-
-  Future<void> _loadFriendData() async {
-    try {
-      print('[SplashScreen] 친구 데이터 로드 시작');
-
-      final friendProvider = context.read<FriendProvider>();
-      await friendProvider.fetchAllFriendData();
-
-      print('[SplashScreen] 친구 데이터 로드 완료');
-    } catch (e) {
-      print('[SplashScreen] 친구 데이터 로드 실패 (무시): $e');
-      // 친구 데이터 로드 실패는 앱 시작을 막지 않음
+      // 트렌딩 데이터 로드 실패는 앱 시작을 막지 않음
     }
   }
 

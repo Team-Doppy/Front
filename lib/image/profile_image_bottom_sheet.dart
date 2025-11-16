@@ -1,7 +1,9 @@
 import 'dart:io';
 import 'package:doppy/data/models/user_model.dart';
 import 'package:doppy/l10n/app_localizations.dart';
+import 'package:doppy/editor/overlay/link_overlay.dart';
 import 'package:flutter/material.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'native_image_picker.dart';
 
 class ProfileImageBottomSheet extends StatelessWidget {
@@ -125,6 +127,7 @@ class ProfileInfoEditBottomSheet extends StatefulWidget {
   final Future<void> Function({
     required String alias,
     required String description,
+    List<String>? links, // 🎯 프로필 링크 목록 (최대 3개)
   })?
   onSave;
 
@@ -151,6 +154,9 @@ class _ProfileInfoEditBottomSheetState
 
   late String _initialName;
   late String _initialDescription;
+  late List<String> _initialLinks; // 🎯 초기 링크 목록 (URL만)
+  List<String> _links = []; // 🎯 현재 링크 목록 (URL만, 저장용)
+  Map<String, String> _linkThumbnails = {}; // 🎯 링크 썸네일 캐시 (URL -> 썸네일 URL)
 
   @override
   void initState() {
@@ -158,8 +164,13 @@ class _ProfileInfoEditBottomSheetState
     // trim()된 값으로 초기값 저장
     _initialName = widget.nameController.text.trim();
     _initialDescription = widget.descriptionController.text.trim();
+
+    // 🎯 초기 링크 목록 설정
+    _initialLinks = List<String>.from(widget.user?.links ?? []);
+    _links = List<String>.from(_initialLinks);
+
     print(
-      '[ProfileEdit] 초기값 저장 - 이름: "$_initialName", 소개: "$_initialDescription"',
+      '[ProfileEdit] 초기값 저장 - 이름: "$_initialName", 소개: "$_initialDescription", 링크: ${_initialLinks.length}개',
     );
 
     // Bottom Sheet 열릴 때 자동으로 별명란에 포커스
@@ -185,6 +196,8 @@ class _ProfileInfoEditBottomSheetState
 
     final hasNameChange = currentName != _initialName;
     final hasDescChange = currentDescription != _initialDescription;
+    // 🎯 링크 변경 체크 (순서 무관 비교)
+    final hasLinksChange = !_listEquals(_links, _initialLinks);
 
     print(
       '[ProfileEdit] 변경 체크 - 이름: "$currentName" vs "$_initialName" = $hasNameChange',
@@ -192,278 +205,357 @@ class _ProfileInfoEditBottomSheetState
     print(
       '[ProfileEdit] 변경 체크 - 소개: "$currentDescription" vs "$_initialDescription" = $hasDescChange',
     );
+    print(
+      '[ProfileEdit] 변경 체크 - 링크: ${_links.length}개 vs ${_initialLinks.length}개 = $hasLinksChange',
+    );
 
     // 별명이 비어있으면 변경사항이 있어도 저장 불가
     if (currentName.isEmpty) {
       return false;
     }
 
-    return hasNameChange || hasDescChange;
+    return hasNameChange || hasDescChange || hasLinksChange;
+  }
+
+  // 🎯 리스트 비교 헬퍼 (순서 무관)
+  bool _listEquals(List<String> a, List<String> b) {
+    if (a.length != b.length) return false;
+    final aSet = a.toSet();
+    final bSet = b.toSet();
+    return aSet.length == bSet.length &&
+        aSet.every((item) => bSet.contains(item));
   }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final screenHeight = MediaQuery.of(context).size.height;
     final keyboardHeight = MediaQuery.of(context).viewInsets.bottom;
-    final availableHeight = screenHeight - keyboardHeight;
-    final sheetHeight = availableHeight * 0.95;
 
-    return SafeArea(
-      top: false,
-      child: SizedBox(
-        height: sheetHeight,
-        child: Container(
+    return DraggableScrollableSheet(
+      // 기본 높이 고정: 화면의 85%
+      initialChildSize: 0.85,
+      minChildSize: 0.4,
+      maxChildSize: 0.95,
+      builder: (context, scrollController) {
+        return Container(
           padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
           decoration: BoxDecoration(
             color: theme.colorScheme.surface,
             borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
           ),
-          child: ConstrainedBox(
-            constraints: BoxConstraints(minHeight: sheetHeight - 32),
-            child: IntrinsicHeight(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Center(
-                    child: Container(
-                      width: 36,
-                      height: 4,
-                      decoration: BoxDecoration(
-                        color: theme.colorScheme.onSurface.withOpacity(0.2),
-                        borderRadius: BorderRadius.circular(2),
-                      ),
+          child: SingleChildScrollView(
+            controller: scrollController,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Center(
+                  child: Container(
+                    width: 36,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: theme.colorScheme.onSurface.withOpacity(0.2),
+                      borderRadius: BorderRadius.circular(2),
                     ),
                   ),
-                  const SizedBox(height: 20),
+                ),
+                const SizedBox(height: 20),
 
-                  // 원형 프로필 + 액션 버튼]
-                  /*
-                  Center(
-                    child: Stack(
-                      alignment: Alignment.center,
-                      children: [
-                        GestureDetector(
-                          onTap: () {
-                            Navigator.pop(context);
-                            showModalBottomSheet(
-                              context: context,
-                              builder:
-                                  (context) => ProfileImageBottomSheet(
-                                    onClearProfileImage: () async {
-                                      await widget.onClearProfileImage!();
-                                    },
-                                    onImagesSelected: (files) {
-                                      widget.onImagesSelected!(files);
-                                    },
-                                  ),
-                            );
-                          },
-                          child: CommonProfileAvatar(
-                            imageUrl: widget.user?.profileImageUrl ?? '',
-                            username: widget.user?.username ?? '',
-                            size: 150,
-                            borderWidth: 2,
-                            borderColor: theme.colorScheme.onSurface,
-                          ),
-                        ),
-                        Positioned(
-                          bottom: 0,
-                          right: 4,
-                          child: Container(
-                            width: 32,
-                            height: 32,
-                            decoration: BoxDecoration(
-                              color: theme.colorScheme.onSurface,
-                              borderRadius: BorderRadius.circular(16),
-                            ),
-                            child: Icon(
-                              Icons.photo_camera,
-                              color: theme.colorScheme.surface,
-                              size: 24,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),*/
-                  Text(
-                    AppLocalizations.of(context).translate('nickname'),
-                    style: TextStyle(
-                      color: Theme.of(
-                        context,
-                      ).colorScheme.onSurface.withOpacity(0.8),
-                      fontSize: 13,
-                      fontWeight: FontWeight.w400,
-                    ),
-                  ),
-                  // 별명 텍스트필드
-                  TextField(
-                    controller: widget.nameController,
-                    focusNode: _nameFocus,
-                    textAlign: TextAlign.center,
-                    onChanged: (value) => setState(() {}),
-                    style: TextStyle(
-                      color: Theme.of(context).colorScheme.onSurface,
-                      fontSize: 18,
-                      fontWeight: FontWeight.w400,
-                    ),
-                    decoration: InputDecoration(
-                      hintText: AppLocalizations.of(
-                        context,
-                      ).translate('nickname_hint'),
-                      hintStyle: TextStyle(color: Colors.grey[600]),
-                      filled: true,
-                      fillColor: Theme.of(context).colorScheme.surfaceVariant,
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 14,
-                      ),
-                      border: OutlineInputBorder(
-                        borderSide: BorderSide.none,
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                      enabledBorder: OutlineInputBorder(
-                        borderSide: BorderSide.none,
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                      focusedBorder: OutlineInputBorder(
-                        borderSide: BorderSide.none,
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                      errorBorder: OutlineInputBorder(
-                        borderSide: BorderSide(
-                          color: Theme.of(context).colorScheme.error,
-                          width: 1,
-                        ),
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                      focusedErrorBorder: OutlineInputBorder(
-                        borderSide: BorderSide(
-                          color: Theme.of(context).colorScheme.error,
-                          width: 2,
-                        ),
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                      errorText:
-                          widget.nameController.text.trim().isEmpty
-                              ? AppLocalizations.of(
-                                context,
-                              ).translate('nickname_required')
-                              : null,
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  Text(
-                    AppLocalizations.of(context).translate('introduction'),
-                    style: TextStyle(
-                      color: Theme.of(
-                        context,
-                      ).colorScheme.onSurface.withOpacity(0.8),
-                      fontSize: 13,
-                      fontWeight: FontWeight.w400,
-                    ),
-                  ),
-                  // 소개글 텍스트필드
-                  TextField(
-                    controller: widget.descriptionController,
-                    focusNode: _descriptionFocus,
-                    textAlign: TextAlign.center,
-                    maxLines: 1,
-                    onChanged: (value) => setState(() {}),
-                    style: TextStyle(
-                      color: Theme.of(context).colorScheme.onSurface,
-                      fontSize: 16,
-                      fontWeight: FontWeight.w400,
-                    ),
-                    decoration: InputDecoration(
-                      hintText: AppLocalizations.of(
-                        context,
-                      ).translate('introduction_hint'),
-                      hintStyle: TextStyle(color: Colors.grey[600]),
-                      filled: true,
-                      fillColor: Theme.of(context).colorScheme.surfaceVariant,
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 14,
-                      ),
-                      border: OutlineInputBorder(
-                        borderSide: BorderSide.none,
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                      enabledBorder: OutlineInputBorder(
-                        borderSide: BorderSide.none,
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                      focusedBorder: OutlineInputBorder(
-                        borderSide: BorderSide.none,
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                    ),
-                  ),
-                  Spacer(),
-
-                  // 저장 버튼 (별명이 있고 변경사항이 있을 때만)
-                  if (widget.onSave != null &&
-                      _hasChanges &&
-                      widget.nameController.text.trim().isNotEmpty)
-                    _buildActionButton(
-                      context: context,
-                      icon: Icons.save,
-                      label: AppLocalizations.of(
-                        context,
-                      ).translate('save_profile'),
-                      onTap: () async {
-                        final hasChanges = _hasChanges;
-                        if (!hasChanges) return;
-
-                        setState(() => _saving = true);
-
-                        try {
-                          await widget.onSave!(
-                            alias: widget.nameController.text.trim(),
-                            description:
-                                widget.descriptionController.text.trim(),
-                          );
-
-                          // 저장 완료 후 잠시 대기
-                          await Future.delayed(
-                            const Duration(milliseconds: 500),
-                          );
-
-                          if (context.mounted) Navigator.pop(context);
-                        } catch (e) {
-                          // 에러 처리
-                          if (context.mounted) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                content: Text(
-                                  AppLocalizations.of(
-                                    context,
-                                  ).translate('save_error'),
-                                  style: TextStyle(
-                                    color:
-                                        Theme.of(context).colorScheme.onError,
-                                  ),
+                // 원형 프로필 + 액션 버튼]
+                /*
+                Center(
+                  child: Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      GestureDetector(
+                        onTap: () {
+                          Navigator.pop(context);
+                          showModalBottomSheet(
+                            context: context,
+                            builder:
+                                (context) => ProfileImageBottomSheet(
+                                  onClearProfileImage: () async {
+                                    await widget.onClearProfileImage!();
+                                  },
+                                  onImagesSelected: (files) {
+                                    widget.onImagesSelected!(files);
+                                  },
                                 ),
-                                backgroundColor:
-                                    Theme.of(context).colorScheme.error,
-                              ),
-                            );
-                          }
-                        } finally {
-                          if (mounted) setState(() => _saving = false);
-                        }
-                      },
+                          );
+                        },
+                        child: CommonProfileAvatar(
+                          imageUrl: widget.user?.profileImageUrl ?? '',
+                          username: widget.user?.username ?? '',
+                          size: 150,
+                          borderWidth: 2,
+                          borderColor: theme.colorScheme.onSurface,
+                        ),
+                      ),
+                      Positioned(
+                        bottom: 0,
+                        right: 4,
+                        child: Container(
+                          width: 32,
+                          height: 32,
+                          decoration: BoxDecoration(
+                            color: theme.colorScheme.onSurface,
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                          child: Icon(
+                            Icons.photo_camera,
+                            color: theme.colorScheme.surface,
+                            size: 24,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),*/
+                Text(
+                  AppLocalizations.of(context).translate('nickname'),
+                  style: TextStyle(
+                    color: Theme.of(
+                      context,
+                    ).colorScheme.onSurface.withOpacity(0.8),
+                    fontSize: 13,
+                    fontWeight: FontWeight.w400,
+                  ),
+                ),
+                // 별명 텍스트필드
+                TextField(
+                  controller: widget.nameController,
+                  focusNode: _nameFocus,
+                  textAlign: TextAlign.center,
+                  onChanged: (value) => setState(() {}),
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.onSurface,
+                    fontSize: 18,
+                    fontWeight: FontWeight.w400,
+                  ),
+                  decoration: InputDecoration(
+                    hintText: AppLocalizations.of(
+                      context,
+                    ).translate('nickname_hint'),
+                    hintStyle: TextStyle(color: Colors.grey[600]),
+                    filled: true,
+                    fillColor: Theme.of(context).colorScheme.surfaceVariant,
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 14,
                     ),
-                  // 키보드가 올라올 때 하단 여백 추가
-                  SizedBox(height: keyboardHeight > 0 ? keyboardHeight : 0),
+                    border: OutlineInputBorder(
+                      borderSide: BorderSide.none,
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderSide: BorderSide.none,
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderSide: BorderSide.none,
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    errorBorder: OutlineInputBorder(
+                      borderSide: BorderSide(
+                        color: Theme.of(context).colorScheme.error,
+                        width: 1,
+                      ),
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    focusedErrorBorder: OutlineInputBorder(
+                      borderSide: BorderSide(
+                        color: Theme.of(context).colorScheme.error,
+                        width: 2,
+                      ),
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    errorText:
+                        widget.nameController.text.trim().isEmpty
+                            ? AppLocalizations.of(
+                              context,
+                            ).translate('nickname_required')
+                            : null,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  AppLocalizations.of(context).translate('introduction'),
+                  style: TextStyle(
+                    color: Theme.of(
+                      context,
+                    ).colorScheme.onSurface.withOpacity(0.8),
+                    fontSize: 13,
+                    fontWeight: FontWeight.w400,
+                  ),
+                ),
+                // 소개글 텍스트필드
+                TextField(
+                  controller: widget.descriptionController,
+                  focusNode: _descriptionFocus,
+                  textAlign: TextAlign.center,
+                  maxLines: 1,
+                  onChanged: (value) => setState(() {}),
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.onSurface,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w400,
+                  ),
+                  decoration: InputDecoration(
+                    hintText: AppLocalizations.of(
+                      context,
+                    ).translate('introduction_hint'),
+                    hintStyle: TextStyle(color: Colors.grey[600]),
+                    filled: true,
+                    fillColor: Theme.of(context).colorScheme.surfaceVariant,
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 14,
+                    ),
+                    border: OutlineInputBorder(
+                      borderSide: BorderSide.none,
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderSide: BorderSide.none,
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderSide: BorderSide.none,
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 16),
+
+                // 🎯 링크 섹션
+                Row(
+                  children: [
+                    Text(
+                      '링크',
+                      style: TextStyle(
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.onSurface.withOpacity(0.8),
+                        fontSize: 13,
+                        fontWeight: FontWeight.w400,
+                      ),
+                    ),
+                    const Spacer(),
+                    if (_links.length < 3)
+                      GestureDetector(
+                        onTap: () => _showLinkOverlay(context),
+                        child: Container(
+                          width: 28,
+                          height: 28,
+                          decoration: BoxDecoration(
+                            color: Theme.of(context).colorScheme.onSurface,
+                            shape: BoxShape.circle,
+                          ),
+                          child: Icon(
+                            Icons.add,
+                            color: Theme.of(context).colorScheme.surface,
+                            size: 20,
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+
+                // 🎯 링크 목록 표시 (Column 내에서 직접 빌드)
+                if (_links.isNotEmpty) ...[
+                  ...List.generate(_links.length, (index) {
+                    return Padding(
+                      padding: EdgeInsets.only(
+                        bottom: index < _links.length - 1 ? 8 : 0,
+                      ),
+                      child: _buildLinkItem(context, _links[index], index),
+                    );
+                  }),
+                  const SizedBox(height: 8),
                 ],
-              ),
+
+                if (_links.isEmpty) ...[
+                  Container(
+                    height: 48,
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).colorScheme.surfaceVariant,
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    child: Center(
+                      child: Text(
+                        '링크가 없습니다',
+                        style: TextStyle(
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.onSurface.withOpacity(0.5),
+                          fontSize: 14,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                ],
+
+                const SizedBox(height: 16),
+
+                // 저장 버튼 (별명이 있고 변경사항이 있을 때만)
+                if (widget.onSave != null &&
+                    _hasChanges &&
+                    widget.nameController.text.trim().isNotEmpty)
+                  _buildActionButton(
+                    context: context,
+                    icon: Icons.save,
+                    label: AppLocalizations.of(
+                      context,
+                    ).translate('save_profile'),
+                    onTap: () async {
+                      final hasChanges = _hasChanges;
+                      if (!hasChanges) return;
+
+                      setState(() => _saving = true);
+
+                      try {
+                        await widget.onSave!(
+                          alias: widget.nameController.text.trim(),
+                          description: widget.descriptionController.text.trim(),
+                          links: _links.isEmpty ? null : _links,
+                        );
+
+                        // 저장 완료 후 잠시 대기
+                        await Future.delayed(const Duration(milliseconds: 500));
+
+                        if (context.mounted) Navigator.pop(context);
+                      } catch (e) {
+                        // 에러 처리
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text(
+                                AppLocalizations.of(
+                                  context,
+                                ).translate('save_error'),
+                                style: TextStyle(
+                                  color: Theme.of(context).colorScheme.onError,
+                                ),
+                              ),
+                              backgroundColor:
+                                  Theme.of(context).colorScheme.error,
+                            ),
+                          );
+                        }
+                      } finally {
+                        if (mounted) setState(() => _saving = false);
+                      }
+                    },
+                  ),
+                // 키보드가 올라올 때 하단 여백 추가
+                SizedBox(height: keyboardHeight > 0 ? keyboardHeight : 16),
+              ],
             ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 
@@ -515,6 +607,184 @@ class _ProfileInfoEditBottomSheetState
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  // 🎯 링크 오버레이 표시 (LinkOverlay 사용)
+  void _showLinkOverlay(BuildContext context) async {
+    await Navigator.of(context).push(
+      PageRouteBuilder(
+        opaque: false,
+        barrierDismissible: true,
+        transitionDuration: Duration.zero,
+        reverseTransitionDuration: Duration.zero,
+        pageBuilder:
+            (_, __, ___) => LinkOverlay(
+              autoSubmit: true, // 🎯 링크 추가 시 즉시 제출 (LinkOverlay는 닫지 않음)
+              onSubmit: ({
+                required String url,
+                String? title,
+                String? description,
+                String? thumbnailUrl,
+              }) {
+                // 🎯 링크 추가 (최대 3개, 즉시 추가)
+                if (mounted) {
+                  // 중복 링크 체크
+                  if (_links.contains(url)) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('이미 추가된 링크입니다'),
+                        backgroundColor: Theme.of(context).colorScheme.error,
+                      ),
+                    );
+                    return;
+                  }
+
+                  if (_links.length < 3) {
+                    setState(() {
+                      _links.add(url);
+                      // 🎯 썸네일 정보 저장
+                      if (thumbnailUrl != null && thumbnailUrl.isNotEmpty) {
+                        _linkThumbnails[url] = thumbnailUrl;
+                      }
+                    });
+                    // 🎯 LinkOverlay는 닫지 않고 계속 열어둠 (바텀시트도 열어둠)
+                  } else {
+                    // 이미 3개가 있으면 에러 메시지
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('링크는 최대 3개까지 추가할 수 있습니다'),
+                        backgroundColor: Theme.of(context).colorScheme.error,
+                      ),
+                    );
+                  }
+                }
+              },
+            ),
+      ),
+    );
+  }
+
+  // 🎯 링크 아이템 빌드
+  Widget _buildLinkItem(BuildContext context, String link, int index) {
+    // URL 정규화 (표시용)
+    String displayUrl = link;
+    if (!link.startsWith('http://') && !link.startsWith('https://')) {
+      displayUrl = 'https://$link';
+    }
+
+    // 도메인 추출 (표시용)
+    String domain = link;
+    try {
+      final uri = Uri.parse(displayUrl);
+      domain = uri.host.replaceFirst('www.', '');
+    } catch (_) {
+      // 파싱 실패 시 원본 link 사용
+      domain = link;
+    }
+
+    return Container(
+      height: 56,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surfaceVariant,
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Row(
+        children: [
+          // 🎯 링크 썸네일 또는 아이콘
+          Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              color: Theme.of(context).colorScheme.onSurface.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            clipBehavior: Clip.antiAlias,
+            child:
+                _linkThumbnails.containsKey(link) &&
+                        _linkThumbnails[link] != null &&
+                        _linkThumbnails[link]!.isNotEmpty
+                    ? CachedNetworkImage(
+                      imageUrl: _linkThumbnails[link]!,
+                      fit: BoxFit.cover,
+                      errorWidget:
+                          (context, url, error) => Icon(
+                            Icons.link,
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.onSurface.withOpacity(0.7),
+                            size: 20,
+                          ),
+                      placeholder:
+                          (context, url) => Icon(
+                            Icons.link,
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.onSurface.withOpacity(0.7),
+                            size: 20,
+                          ),
+                    )
+                    : Icon(
+                      Icons.link,
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.onSurface.withOpacity(0.7),
+                      size: 20,
+                    ),
+          ),
+          const SizedBox(width: 12),
+          // 링크 정보
+          Expanded(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  domain,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.onSurface,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  link,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: Theme.of(
+                      context,
+                    ).colorScheme.onSurface.withOpacity(0.6),
+                    fontSize: 12,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          // 삭제 버튼
+          GestureDetector(
+            onTap: () {
+              setState(() {
+                final removedUrl = _links.removeAt(index);
+                // 🎯 썸네일 캐시도 삭제
+                _linkThumbnails.remove(removedUrl);
+              });
+            },
+            child: Container(
+              padding: const EdgeInsets.all(8),
+              child: Icon(
+                Icons.close,
+                color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
+                size: 20,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

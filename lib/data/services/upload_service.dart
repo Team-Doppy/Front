@@ -795,7 +795,7 @@ class UploadService with ChangeNotifier {
     }
 
     try {
-      final url = Uri.parse('https://api.doppy.me/api/auth/refresh');
+      final url = Uri.parse('https://api.doppy.app/api/auth/refresh');
       final response = await http.post(
         url,
         headers: {'Content-Type': 'application/json'},

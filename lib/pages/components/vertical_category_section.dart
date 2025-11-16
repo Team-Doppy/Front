@@ -401,8 +401,9 @@ class _VerticalCategorySectionState extends State<VerticalCategorySection> {
                                         ),
                                       ),
                                       if (!context
-                                          .read<BaseFeedProvider>()
-                                          .isReadOnly)
+                                              .read<BaseFeedProvider>()
+                                              .isReadOnly &&
+                                          widget.categoryId != '0')
                                         Builder(
                                           builder:
                                               (iconCtx) => InkWell(
@@ -940,13 +941,31 @@ class _VerticalCategorySectionState extends State<VerticalCategorySection> {
         await provider.loadInitial(force: true);
         print('[VerticalCategorySection] 피드 새로고침 완료');
       } else if (result['accessLevelChanged'] == true) {
-        // 🎯 공개 범위 변경 감지 - 피드 새로고침
-        print('[VerticalCategorySection] 공개 범위 변경 감지 - 피드 새로고침 시작');
-        final provider = context.read<BaseFeedProvider>();
-        provider.clearInMemory();
-        provider.setNetworkError(null);
-        await provider.loadInitial(force: true);
-        print('[VerticalCategorySection] 피드 새로고침 완료 (공개 범위 변경)');
+        // 🎯 공개 범위 변경 감지 - 선택적 업데이트 (전체 새로고침 생략)
+        final postId = result['postId']?.toString();
+        final accessLevel = result['accessLevel']?.toString();
+        final sharedGroupIds = result['sharedGroupIds'] as List<int>?;
+
+        if (postId != null && accessLevel != null) {
+          print(
+            '[VerticalCategorySection] 공개 범위 변경 감지 - 선택적 업데이트 시작 (postId: $postId)',
+          );
+          final provider = context.read<BaseFeedProvider>();
+          provider.updatePostMetadata(
+            postId,
+            accessLevel: accessLevel,
+            sharedGroupIds: sharedGroupIds,
+          );
+          print('[VerticalCategorySection] 피드 선택적 업데이트 완료 (공개 범위 변경)');
+        } else {
+          // fallback: 정보가 없으면 전체 새로고침
+          print('[VerticalCategorySection] 공개 범위 변경 감지 - 정보 부족으로 전체 새로고침');
+          final provider = context.read<BaseFeedProvider>();
+          provider.clearInMemory();
+          provider.setNetworkError(null);
+          await provider.loadInitial(force: true);
+          print('[VerticalCategorySection] 피드 새로고침 완료 (공개 범위 변경)');
+        }
       }
     }
   }

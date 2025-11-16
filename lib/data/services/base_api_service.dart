@@ -19,7 +19,7 @@ class BaseApiService {
     _setupInterceptors();
   }
 
-  static const String baseUrl = "https://www.nbillion.co.kr";
+  static const String baseUrl = "https://api.doppy.app";
   final AuthService _authService = AuthService();
 
   late final Dio _dio = Dio(
@@ -77,8 +77,8 @@ class BaseApiService {
 
           // 🎯 클라이언트 우선 방식: JWT 만료 시간 확인 및 미리 리프레시
           if (!isAuthEndpoint) {
-          final token = await _authService.getToken();
-          if (token != null && token.isNotEmpty) {
+            final token = await _authService.getToken();
+            if (token != null && token.isNotEmpty) {
               // JWT 만료 시간 추출
               final expirationTime = _getTokenExpiration(token);
               final now = DateTime.now().millisecondsSinceEpoch;
@@ -132,7 +132,7 @@ class BaseApiService {
                 }
               } else {
                 // 아직 유효하면 기존 토큰 사용
-            options.headers['Authorization'] = 'Bearer $token';
+                options.headers['Authorization'] = 'Bearer $token';
               }
             }
           }
@@ -274,10 +274,10 @@ class BaseApiService {
           final newRefreshToken = data['refreshToken'];
 
           if (newToken != null && newRefreshToken != null) {
-          await _authService.saveToken(newToken);
-          await _authService.saveRefreshToken(newRefreshToken);
+            await _authService.saveToken(newToken);
+            await _authService.saveRefreshToken(newRefreshToken);
             print('✅ [BaseApiService] 토큰 갱신 성공 (attempt=${attempt + 1})');
-          return true;
+            return true;
           } else {
             print(
               '❌ [BaseApiService] 토큰 갱신 실패: 응답에 토큰이 없습니다 (attempt=${attempt + 1})',

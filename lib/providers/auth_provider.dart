@@ -92,6 +92,8 @@ class AuthProvider extends ChangeNotifier {
       } catch (e) {
         print('[AuthProvider] 로그인 직후 사용자 저장 실패: $e');
       }
+
+      // 🎯 UserCollection 업데이트는 서버에서 처리됨 (로그인 API에서 FCM 토큰을 받아 처리)
     }
     return result != null;
   }

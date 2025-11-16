@@ -96,13 +96,8 @@ class BlogService {
 
   /// 프로필 스키마 조회 (카테고리/매핑 전용)
   Future<Map<String, dynamic>> getProfileSchema(String username) async {
-    print('[BlogService] 프로필 스키마 요청: $username');
-
     try {
       final response = await _dio.get('/api/profile/feed/schema/$username');
-
-      print('[BlogService] 프로필 스키마 응답 상태: ${response.statusCode}');
-      print('[BlogService] 프로필 스키마 응답 데이터: ${response.data}');
 
       return response.data as Map<String, dynamic>;
     } catch (e) {
@@ -135,32 +130,13 @@ class BlogService {
     int page = 0,
     int size = 20,
   }) async {
-    print('[BlogService] 프로필 포스트 요청: $username page=$page size=$size');
-
     try {
       final response = await _dio.get(
         '/api/profile/feed/posts/$username',
         queryParameters: {'page': page, 'size': size},
       );
 
-      final data = response.data as Map<String, dynamic>;
-
-      // 디버깅: 서버 응답 데이터 구조 확인
-      print('[BlogService] 서버 응답 데이터 구조:');
-      if (data.containsKey('data') && data['data'] is Map) {
-        final dataMap = data['data'] as Map<String, dynamic>;
-        if (dataMap.containsKey('posts') && dataMap['posts'] is List) {
-          final posts = dataMap['posts'] as List;
-          print('[BlogService] 포스트 개수: ${posts.length}');
-          if (posts.isNotEmpty) {
-            final firstPost = posts.first as Map<String, dynamic>;
-            print('[BlogService] 첫 번째 포스트 필드들: ${firstPost.keys.toList()}');
-            print('[BlogService] 첫 번째 포스트 데이터: $firstPost');
-          }
-        }
-      }
-
-      return data;
+      return response.data as Map<String, dynamic>;
     } catch (e) {
       print('[BlogService] 프로필 포스트 로드 실패: $e');
 
@@ -952,8 +928,6 @@ class BlogService {
     bool forceRefresh = false,
   }) async {
     try {
-      print('[BlogService] Fetching home posts: page=$page, size=$size');
-
       final response = await _dio.get(
         '/api/posts/friends',
         queryParameters: {'page': page, 'size': size},
@@ -962,11 +936,9 @@ class BlogService {
 
       final data = response.data;
       final posts = List<Map<String, dynamic>>.from(data['content'] ?? []);
-      print('[BlogService] Successfully fetched ${posts.length} home posts');
 
       return posts;
     } catch (e) {
-      print('[BlogService] Exception: $e');
       // 네트워크 에러는 상위로 전파 (빈 배열 반환하지 않음)
       rethrow;
     }
@@ -1029,8 +1001,6 @@ class BlogService {
     int size = 10,
   }) async {
     try {
-      print('[BlogService] Fetching recommended posts: page=$page, size=$size');
-
       final response = await _dio.get(
         '/api/posts/recommendation',
         queryParameters: {'page': page, 'size': size},
@@ -1039,19 +1009,14 @@ class BlogService {
 
       final data = response.data;
       final posts = List<Map<String, dynamic>>.from(data['content'] ?? []);
-      print(
-        '[BlogService] Successfully fetched ${posts.length} recommended posts',
-      );
 
       // 포스트가 없으면 home으로 fallback
       if (posts.isEmpty) {
-        print('[BlogService] No recommended posts, falling back to home');
         return getFriendsPosts(page: page, size: size);
       }
 
       return posts;
     } catch (e) {
-      print('[BlogService] Exception: $e');
       // 네트워크 에러는 상위로 전파 (fallback 하지 않음)
       rethrow;
     }
@@ -1274,12 +1239,19 @@ class BlogService {
   ///   ],
   ///   "totalViewerCount": 10
   /// }
-  Future<Map<String, dynamic>> getPostViewers(String postId) async {
+  Future<Map<String, dynamic>> getPostViewers(
+    String postId, {
+    int page = 0,
+    int size = 20,
+  }) async {
     try {
-      print('[BlogService] 포스트 조회자 정보 조회 시작 - 포스트ID: $postId');
+      print(
+        '[BlogService] 포스트 조회자 정보 조회 시작 - 포스트ID: $postId, page: $page, size: $size',
+      );
 
       final response = await _dio.get(
         '/api/posts/$postId/viewers',
+        queryParameters: {'page': page, 'size': size},
         options: Options(receiveTimeout: const Duration(seconds: 10)),
       );
 

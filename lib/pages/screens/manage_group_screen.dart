@@ -1302,9 +1302,8 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
     final isLoading = _isLoadingGroupPosts[groupId] ?? false;
     final hasMore = _hasMoreGroupPosts[groupId] ?? true;
 
-    // 🎯 새로고침 중이거나 (로딩 중이고 포스트가 비어있을 때) Shimmer 표시
-    if ((_isRefreshing && _currentViewIndex == 1) ||
-        (isLoading && posts.isEmpty && hasMore)) {
+    // 🎯 새로고침 중일 때만 Shimmer 표시
+    if (_isRefreshing && _currentViewIndex == 1) {
       return [
         SliverPadding(
           padding: const EdgeInsets.fromLTRB(12.0, 24.0, 12.0, 0),
@@ -1320,8 +1319,8 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
       ];
     }
 
-    // 🎯 빈 상태: SliverToBoxAdapter + 고정 height
-    if (posts.isEmpty) {
+    // 🎯 빈 상태: SliverToBoxAdapter + 고정 height (선택 모드일 때는 숨김)
+    if (posts.isEmpty && !_isMultiSelectMode) {
       return [
         SliverToBoxAdapter(
           child: SizedBox(
@@ -1718,8 +1717,8 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
       );
     }
 
-    // 🎯 빈 상태: SliverToBoxAdapter + 고정 height
-    if (tiles.isEmpty) {
+    // 🎯 빈 상태: SliverToBoxAdapter + 고정 height (선택 모드일 때는 숨김)
+    if (tiles.isEmpty && !_isMultiSelectMode) {
       return SliverToBoxAdapter(
         child: SizedBox(
           height: MediaQuery.of(context).size.height * 0.45,
@@ -2025,7 +2024,12 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
           '🔄 [ManageGroupScreen] 친구 일괄 해제 시작: ${usernamesToRemove.length}명',
         );
         final friendProv = context.read<FriendProvider>();
-        success = await friendProv.deleteFriendsBatch(usernamesToRemove);
+        final groupProv = context.read<GroupProvider>(); // 🎯 그룹 데이터 동기화용
+        // 🎯 GroupProvider 전달하여 allFriends 그룹 memberCount 업데이트
+        success = await friendProv.deleteFriendsBatch(
+          usernamesToRemove,
+          groupProvider: groupProv,
+        );
       } else {
         if (!mounted) return;
         final groupProv = context.read<GroupProvider>();

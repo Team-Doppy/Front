@@ -6,6 +6,7 @@ import 'package:doppy/utils/error_handler.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../providers/friend_provider.dart';
+import '../../providers/group_provider.dart';
 
 // 친구 요청 수락/거절 바텀시트
 class FriendRequestBottomSheet extends StatefulWidget {
@@ -228,10 +229,15 @@ class _FriendRequestBottomSheetState extends State<FriendRequestBottomSheet> {
     try {
       if (!mounted) return;
       final friendProvider = context.read<FriendProvider>();
+      final groupProvider = context.read<GroupProvider>(); // 🎯 그룹 데이터 동기화용
       bool? result;
 
       if (accept) {
-        result = await friendProvider.acceptFriendRequest(widget.username);
+        // 🎯 GroupProvider 전달하여 allFriends 그룹 memberCount 업데이트
+        result = await friendProvider.acceptFriendRequest(
+          widget.username,
+          groupProvider: groupProvider,
+        );
       } else {
         // 거절 기능이 없으면 단순히 false 반환
         result = false;
@@ -239,15 +245,7 @@ class _FriendRequestBottomSheetState extends State<FriendRequestBottomSheet> {
 
       if (mounted) {
         Navigator.pop(context); // 바텀시트 닫기
-
-        if (result == true && mounted) {
-          // 친구 데이터 새로고침
-          context.read<FriendProvider>().fetchAllFriendData(forceRefresh: true);
-        } else if (result == null && mounted) {
-          // 🎯 이미 취소된 요청인 경우 - 조용히 처리 (메시지 없이 데이터만 새로고침)
-          // 데이터 새로고침하여 UI 업데이트 (이미 Provider에서 처리되었을 수 있음)
-          friendProvider.fetchAllFriendData(forceRefresh: true);
-        } else if (result == false && mounted) {
+        if (result == false && mounted) {
           // 일반 실패 메시지 표시
           ErrorHandler.showError(
             context,

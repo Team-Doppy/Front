@@ -225,7 +225,7 @@ class _ImageViewState extends State<ImageView> {
                             )
                           else
                             Text(
-                              formatCount(widget.post.viewCount),
+                              formatViewCount(widget.post.viewCount),
                               style: const TextStyle(
                                 fontSize: 12,
                                 fontWeight: FontWeight.w500,

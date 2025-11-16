@@ -65,7 +65,6 @@ class SmartFeedCache {
     if (_cache.length >= _maxCacheSize) {
       final oldestKey = _cache.keys.first;
       _cache.remove(oldestKey);
-      print('[SmartFeedCache] LRU: 오래된 캐시 제거 - $oldestKey');
     }
 
     _cache[key] = CachedFeedData(
@@ -73,8 +72,6 @@ class SmartFeedCache {
       cachedAt: DateTime.now(),
       page: page,
     );
-
-    print('[SmartFeedCache] 캐시 저장: $key (${posts.length}개 포스트)');
   }
 
   /// 캐시된 피드 데이터 조회
@@ -83,17 +80,14 @@ class SmartFeedCache {
     final cached = _cache[key];
 
     if (cached == null) {
-      print('[SmartFeedCache] 캐시 미스: $key');
       return null;
     }
 
     if (cached.isExpired) {
       _cache.remove(key);
-      print('[SmartFeedCache] 캐시 만료: $key');
       return null;
     }
 
-    print('[SmartFeedCache] 캐시 히트: $key (${cached.posts.length}개 포스트)');
     return cached.posts;
   }
 
@@ -104,14 +98,11 @@ class SmartFeedCache {
     for (final key in keysToRemove) {
       _cache.remove(key);
     }
-    print('[SmartFeedCache] 캐시 무효화: $type (${keysToRemove.length}개 항목)');
   }
 
   /// 전체 캐시 클리어
   void clearAll() {
-    final count = _cache.length;
     _cache.clear();
-    print('[SmartFeedCache] 전체 캐시 클리어: ${count}개 항목');
   }
 }
 
@@ -126,8 +117,6 @@ class HomeDataService {
 
   /// 스플래시에서 사용: 두 섹션 데이터 동시 로드
   Future<HomeData> preloadAllSections({int page = 0, int size = 10}) async {
-    print('[HomeDataService] 전체 섹션 프리로드 시작');
-
     try {
       // 두 섹션 데이터를 병렬로 로드
       final results = await Future.wait([
@@ -145,12 +134,8 @@ class HomeDataService {
 
       final feedData = HomeData(friendsPosts: friendsPosts, allPosts: allPosts);
 
-      print(
-        '[HomeDataService] 전체 섹션 프리로드 완료: 친구글 ${friendsPosts.length}개, 전체글 ${allPosts.length}개',
-      );
       return feedData;
     } catch (e) {
-      print('[HomeDataService] 전체 섹션 프리로드 실패: $e');
       // 에러를 그대로 전파해서 홈화면에서 적절한 에러 UI 표시
       rethrow;
     }
@@ -162,12 +147,9 @@ class HomeDataService {
     int size = 10,
     bool refresh = false,
   }) async {
-    print('[HomeDataService] 친구글 로드: page=$page, size=$size, refresh=$refresh');
-
     // 새로고침이면 캐시 완전히 비우기
     if (refresh) {
       _cache.invalidateCache('friends');
-      print('[HomeDataService] 친구글 캐시 무효화 완료');
     }
 
     // 새로고침이 아니면 캐시 확인
@@ -185,10 +167,8 @@ class HomeDataService {
       // 캐시 저장
       _cache.cacheFeedData('friends', posts, page, size);
 
-      print('[HomeDataService] 친구글 로드 완료: ${posts.length}개');
       return posts;
     } catch (e) {
-      print('[HomeDataService] 친구글 로드 실패: $e');
       rethrow;
     }
   }
@@ -199,12 +179,9 @@ class HomeDataService {
     int size = 10,
     bool refresh = false,
   }) async {
-    print('[HomeDataService] 전체글 로드: page=$page, size=$size, refresh=$refresh');
-
     // 새로고침이면 캐시 완전히 비우기
     if (refresh) {
       _cache.invalidateCache('all');
-      print('[HomeDataService] 전체글 캐시 무효화 완료');
     }
 
     // 새로고침이 아니면 캐시 확인
@@ -222,10 +199,8 @@ class HomeDataService {
       // 캐시 저장
       _cache.cacheFeedData('all', posts, page, size);
 
-      print('[HomeDataService] 전체글 로드 완료: ${posts.length}개');
       return posts;
     } catch (e) {
-      print('[HomeDataService] 전체글 로드 실패: $e');
       rethrow;
     }
   }
@@ -241,26 +216,31 @@ class HomeDataService {
         posts
             .take(3) // 최대 3개만
             .where((post) => post.thumbnailImageUrl.isNotEmpty)
+            .where((post) {
+              // 🎯 비디오 파일(.mp4, .mov 등) 제외 - 이미지만 프리캐시
+              final url = post.thumbnailImageUrl.toLowerCase();
+              return !url.endsWith('.mp4') &&
+                  !url.endsWith('.mov') &&
+                  !url.endsWith('.avi') &&
+                  !url.endsWith('.webm');
+            })
             .map((post) => post.thumbnailImageUrl)
             .toSet() // 중복 제거
             .toList();
 
     if (imagesToCache.isEmpty) return;
 
-    print('[FeedDataService] 이미지 프리캐싱 시작: ${imagesToCache.length}개');
-
     final futures =
         imagesToCache.map((url) {
-          return precacheImage(NetworkImage(url), context).catchError((error) {
-            print('[FeedDataService] 이미지 프리캐싱 실패: $url - $error');
+          return precacheImage(NetworkImage(url), context).catchError((_) {
+            // 실패해도 무시 (로그 최소화)
           });
         }).toList();
 
     try {
       await Future.wait(futures, eagerError: false);
-      print('[FeedDataService] 이미지 프리캐싱 완료');
-    } catch (e) {
-      print('[FeedDataService] 이미지 프리캐싱 부분 실패: $e');
+    } catch (_) {
+      // 프리캐싱 실패해도 앱 동작에 영향 없음
     }
   }
 
@@ -278,7 +258,6 @@ class HomeDataService {
     int page = 0,
     int size = 10,
   }) async {
-    print('[HomeDataService] 친구글 직접 로드: page=$page, size=$size');
     return _blogService.getFriendsPosts(page: page, size: size);
   }
 
@@ -287,7 +266,6 @@ class HomeDataService {
     int page = 0,
     int size = 10,
   }) async {
-    print('[HomeDataService] 전체글 직접 로드: page=$page, size=$size');
     return _blogService.getRecommendedPosts(page: page, size: size);
   }
 }

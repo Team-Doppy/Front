@@ -371,6 +371,8 @@ class PostReaderAppBar extends StatelessWidget {
     required this.onCommentTap,
     required this.isLiked,
     required this.animationDuration, // 🎯 바텀바와 동일한 속도
+    this.onMoreTap, // 🎯 글 액션 바텀시트 열기
+    this.scrollOffset = 0.0, // 🎯 현재 스크롤 위치 (타이틀 표시용)
   });
 
   final bool showAppBar;
@@ -387,6 +389,8 @@ class PostReaderAppBar extends StatelessWidget {
   final VoidCallback onCommentTap;
   final bool isLiked;
   final int animationDuration; // 🎯 바텀바와 동일한 속도
+  final VoidCallback? onMoreTap; // 🎯 글 액션 바텀시트 열기
+  final double scrollOffset; // 🎯 현재 스크롤 위치 (타이틀 표시용)
 
   @override
   Widget build(BuildContext context) {
@@ -423,9 +427,28 @@ class PostReaderAppBar extends StatelessWidget {
                         size: 24,
                       ),
                     ),
-                    SizedBox(width: 15),
-
-                    const Spacer(),
+                    const SizedBox(width: 15),
+                    // 🎯 다른 사람 포스트일 때 타이틀 표시 (헤더가 보이지 않을 때만, 즉 300px 이상일 때만)
+                    if (!isMyPost && showAppBar)
+                      Expanded(
+                        child: AnimatedOpacity(
+                          opacity: scrollOffset > 200.0 ? 1.0 : 0.0,
+                          duration: const Duration(milliseconds: 200),
+                          curve: Curves.easeInOut,
+                          child: Text(
+                            title.isNotEmpty ? title : '포스트',
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w600,
+                              color: Theme.of(context).colorScheme.onSurface,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      )
+                    else
+                      const Spacer(),
                     if (isMyPost) ...[
                       // 수정
                       GestureDetector(
@@ -453,6 +476,22 @@ class PostReaderAppBar extends StatelessWidget {
                             width: 22,
                             height: 22,
                             color: Colors.red.withOpacity(0.7),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                    ] else if (onMoreTap != null) ...[
+                      // 🎯 다른 사람 포스트일 때 more_vert 아이콘
+                      GestureDetector(
+                        onTap: onMoreTap,
+                        child: Padding(
+                          padding: const EdgeInsets.all(8.0),
+                          child: Icon(
+                            Icons.more_vert,
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.onSurface.withOpacity(0.7),
+                            size: 24,
                           ),
                         ),
                       ),

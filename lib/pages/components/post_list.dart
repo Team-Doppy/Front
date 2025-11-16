@@ -208,7 +208,7 @@ class _PostListState extends State<PostList> {
                   widget.isShowingSearchResults
                       ? Container() // 검색 결과일 때는 doppy 로고 숨김
                       : Container(
-                        padding: const EdgeInsets.only(bottom: 6),
+                        padding: const EdgeInsets.only(bottom: 5),
                         child: Text(
                           ' doppy',
                           style: GoogleFonts.notoSansKr(
@@ -297,7 +297,7 @@ class _PostListState extends State<PostList> {
                             onTap: widget.onFilterTap,
                             child: Row(
                               children: [
-                                if (widget.sectionLabel != null) ...[
+                                if (widget.sectionLabel != null)
                                   Padding(
                                     padding: const EdgeInsets.only(top: 2),
                                     child: Text(
@@ -306,19 +306,12 @@ class _PostListState extends State<PostList> {
                                         color: Theme.of(
                                           context,
                                         ).colorScheme.primary.withOpacity(1),
-                                        fontSize: 15,
+                                        fontSize: 16,
                                         fontWeight: FontWeight.w600,
                                       ),
                                     ),
                                   ),
-                                ],
-                                Icon(
-                                  Icons.keyboard_arrow_up,
-                                  size: 24,
-                                  color: Theme.of(
-                                    context,
-                                  ).colorScheme.primary.withOpacity(0.9),
-                                ),
+                                // 위로 가는 화살표 제거 (텍스트만 표시)
                               ],
                             ),
                           ),
@@ -511,7 +504,7 @@ class _PostListState extends State<PostList> {
                           (_, __, ___) => PostReaderScreen(
                             exported: _items[_currentIndex].toExportedData(),
                             heroTag:
-                                'post-hero-${widget.sectionLabel ?? "main"}-${_items[_currentIndex].id}-$_currentIndex',
+                                'post-hero-${widget.sectionLabel ?? "main"}-${_items[_currentIndex].id}-$_currentIndex-${widget.key?.hashCode ?? hashCode}',
                           ),
                       transitionsBuilder: (
                         context,
@@ -628,7 +621,7 @@ class _PostListState extends State<PostList> {
                     (_, __, ___) => PostReaderScreen(
                       exported: post.toExportedData(),
                       heroTag:
-                          'post-hero-${widget.sectionLabel ?? "main"}-${post.id}-$index',
+                          'post-hero-${widget.sectionLabel ?? "main"}-${post.id}-$index-${widget.key?.hashCode ?? hashCode}',
                     ),
                 transitionsBuilder: (
                   context,
@@ -697,7 +690,7 @@ class _PostListState extends State<PostList> {
                           containerWidth: widget.containerWidth,
                           thumbnailImageUrl: post.thumbnailImageUrl,
                           heroTag:
-                              'post-hero-${widget.sectionLabel ?? "main"}-${post.id}-$index',
+                              'post-hero-${widget.sectionLabel ?? "main"}-${post.id}-$index-${widget.key?.hashCode ?? hashCode}',
                           title: post.title,
                           author: post.author,
                           authorProfileImageUrl: post.authorProfileImageUrl,

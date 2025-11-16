@@ -254,7 +254,7 @@ class _CardViewState extends State<CardView> {
                                 )
                               else
                                 Text(
-                                  '${widget.post.viewCount}',
+                                  formatViewCount(widget.post.viewCount),
                                   style: TextStyle(
                                     fontSize: 12,
                                     fontWeight: FontWeight.w600,

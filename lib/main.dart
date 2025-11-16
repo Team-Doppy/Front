@@ -28,6 +28,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:flutter/foundation.dart' show defaultTargetPlatform;
+import 'firebase_options.dart';
 import 'theme/theme.dart';
 import 'utils/route_observer.dart';
 
@@ -41,6 +44,16 @@ class AppConstants {
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // 🎯 Firebase 초기화
+  try {
+    final options = DefaultFirebaseOptions.currentPlatform;
+    print('[Firebase] 플랫폼: ${defaultTargetPlatform}');
+
+    await Firebase.initializeApp(options: options);
+  } catch (e) {
+    print('[Firebase] 초기화 실패: $e');
+  }
 
   // 1. FlutterSecureStorage 인스턴스를 생성합니다.
   const storage = FlutterSecureStorage();

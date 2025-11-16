@@ -9,8 +9,10 @@ import 'package:doppy/theme/app_colors.dart';
 import 'package:doppy/utils/dialog_utils.dart';
 import 'package:doppy/pages/components/account_deletion_confirm.dart';
 import 'package:doppy/data/services/user_service.dart';
+import 'package:doppy/data/services/auth_service.dart';
 import 'package:doppy/main.dart' show AppConstants;
 import 'package:flutter/material.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:provider/provider.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -62,6 +64,42 @@ class _SettingScreenState extends State<SettingScreen> {
         setState(() {
           _notificationEnabled = newValue;
         });
+      }
+
+      // 🎯 알림을 켠 경우, FCM 토큰/디바이스 정보도 서버와 동기화
+      if (newValue) {
+        try {
+          final authService = AuthService();
+          await authService.syncFcmTokenAndSettings();
+
+          // syncFcmTokenAndSettings 안에서 권한 거부 상태면
+          // 서버 플래그가 다시 OFF로 동기화되므로, UI도 맞춰줌
+          final settings = await _userService.getSettings();
+          final serverNotificationEnabled =
+              settings['notificationEnabled'] ?? false;
+
+          if (mounted && !serverNotificationEnabled) {
+            // 서버가 다시 false로 내려왔다는 것은 여전히 권한이 없다는 의미
+            setState(() {
+              _notificationEnabled = false;
+            });
+
+            final l10n = AppLocalizations.of(context);
+            final goToSettings = await DialogUtils.showConfirmDialog(
+              context,
+              title: l10n.t('notification_permission_required_title'),
+              message: l10n.t('notification_permission_required_message'),
+              confirmText: l10n.t('open_settings'),
+              cancelText: l10n.t('cancel'),
+            );
+
+            if (goToSettings == true) {
+              await openAppSettings();
+            }
+          }
+        } catch (e) {
+          print('[SettingScreen] FCM 동기화 실패 (알림 ON): $e');
+        }
       }
     } catch (e) {
       print('[SettingScreen] 알림 토글 실패: $e');
