@@ -24,12 +24,22 @@ class ThumbnailEditOverlay extends StatefulWidget {
   final Function(String title, String summary)?
   onMetadataChanged; // 제목/요약 변경 콜백
 
+  // 🎯 이미 로드된 데이터 (있으면 메타데이터 재조회 불필요)
+  final String? initialTitle;
+  final String? initialSummary;
+  final String? initialThumbnailUrl;
+  final String? initialThumbnailId;
+
   const ThumbnailEditOverlay({
     super.key,
     required this.postId,
     required this.sessionKey,
     required this.onThumbnailChanged,
     this.onMetadataChanged,
+    this.initialTitle,
+    this.initialSummary,
+    this.initialThumbnailUrl,
+    this.initialThumbnailId,
   });
 
   @override
@@ -80,6 +90,71 @@ class _ThumbnailEditOverlayState extends State<ThumbnailEditOverlay> {
 
   Future<void> _loadPostData() async {
     try {
+      // 🎯 이미 로드된 썸네일 데이터가 있고, title/summary도 모두 있으면 메타데이터 재조회 불필요
+      // title/summary는 메타데이터에 있으므로, 없으면 메타데이터를 조회해야 함
+      if (widget.initialThumbnailUrl != null &&
+          widget.initialTitle != null &&
+          widget.initialSummary != null) {
+        if (mounted) {
+          final title = widget.initialTitle!;
+          final summary = widget.initialSummary!;
+          final thumbnailUrl = widget.initialThumbnailUrl!;
+          final thumbnailId = widget.initialThumbnailId;
+
+          // 썸네일이 영상인지 판단
+          final url = thumbnailUrl.toLowerCase();
+          final isVideo =
+              url.endsWith('.mp4') ||
+              url.endsWith('.mov') ||
+              url.endsWith('.m4v') ||
+              url.contains('/videos/') ||
+              url.contains('video');
+
+          setState(() {
+            // 제목
+            _titleController.text = title;
+            _originalTitle = title;
+
+            // 요약
+            _excerptController.text = summary;
+            _originalSummary = summary;
+
+            // 썸네일
+            _thumbnailUrl = thumbnailUrl;
+            _thumbnailId = thumbnailId;
+            _originalThumbnailUrl = thumbnailUrl;
+            _isVideo = isVideo;
+
+            _isLoading = false;
+          });
+
+          // 영상이면 VideoPlayer 초기화 (캐시 사용)
+          if (isVideo && thumbnailUrl.isNotEmpty) {
+            _cachedVideoUrl = thumbnailUrl;
+            _videoController = VideoCacheService().getOrCreateController(
+              _cachedVideoUrl!,
+              namespace: 'profile',
+            );
+
+            // 이미 초기화된 경우 바로 재생, 아니면 리스너 등록 후 재생
+            if (_videoController!.value.isInitialized) {
+              _videoController!.setLooping(true);
+              _videoController!.play();
+              if (mounted) setState(() {});
+            } else {
+              _videoController!.addListener(_onServerVideoInitialized);
+            }
+          }
+
+          print('[ThumbnailEditOverlay] 기존 데이터 사용 (메타데이터 재조회 생략)');
+          print('  - 제목: ${_titleController.text}');
+          print('  - 요약: ${_excerptController.text}');
+          print('  - 썸네일: $_thumbnailUrl (영상: $isVideo)');
+        }
+        return;
+      }
+
+      // 🎯 기존 데이터가 없으면 메타데이터 조회
       final blogService = BlogService();
       final metadata = await blogService.getPostMetadata(widget.postId);
 

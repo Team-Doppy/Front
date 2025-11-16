@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../../data/services/blog_service.dart';
 import '../../data/services/auth_service.dart';
 import '../../data/models/post_data.dart';
+import '../../data/models/system_category_keys.dart';
 import '../../utils/network_utils.dart';
 
 // 카테고리 필터 타입
@@ -89,6 +90,166 @@ abstract class BaseFeedProvider extends ChangeNotifier {
 
   /// 더 많은 포스트 로드 (추상 메서드)
   Future<void> loadMore();
+
+  /// 특정 포스트 중심 오프셋 조회
+  /// 이미 로드된 포스트는 재사용하고, 누락된 포스트만 API로 조회합니다.
+  Future<void> loadPostsAround(String postId, {int size = 20}) async {
+    if (username == null) {
+      print('[BaseFeedProvider] loadPostsAround: username이 null입니다');
+      return;
+    }
+
+    try {
+      // 1. 스키마에서 globalIndex 확인
+      final schemaResp = await blogService.getProfileSchema(username!);
+      if (schemaResp['success'] != true) {
+        print('[BaseFeedProvider] loadPostsAround: 스키마 조회 실패');
+        return;
+      }
+
+      final schemaData = schemaResp['data'] as Map<String, dynamic>?;
+      if (schemaData == null) {
+        print('[BaseFeedProvider] loadPostsAround: 스키마 데이터가 null입니다');
+        return;
+      }
+
+      // 2. 스키마에서 포스트 ID의 globalIndex 찾기
+      final postsByCategoryData =
+          schemaData['postsByCategory'] as Map<String, dynamic>?;
+      if (postsByCategoryData == null) {
+        print('[BaseFeedProvider] loadPostsAround: postsByCategory가 null입니다');
+        return;
+      }
+
+      Map<String, dynamic>? targetPostOrder;
+      for (final postOrders in postsByCategoryData.values) {
+        if (postOrders is List) {
+          for (final postOrder in postOrders) {
+            if (postOrder is Map<String, dynamic>) {
+              final postIdValue = postOrder['id'];
+              if (postIdValue != null &&
+                  postIdValue.toString() == postId.toString()) {
+                targetPostOrder = postOrder;
+                break;
+              }
+            }
+          }
+          if (targetPostOrder != null) break;
+        }
+      }
+
+      if (targetPostOrder == null) {
+        print(
+          '[BaseFeedProvider] loadPostsAround: 포스트 ID $postId를 스키마에서 찾을 수 없습니다',
+        );
+        return;
+      }
+
+      final targetGlobalIndex = targetPostOrder['globalIndex'] as int?;
+      if (targetGlobalIndex == null) {
+        print(
+          '[BaseFeedProvider] loadPostsAround: 포스트 ID $postId의 globalIndex가 null입니다',
+        );
+        return;
+      }
+
+      // 3. 이미 로드된 포스트 확인 (선택적 최적화)
+      // 오프셋 조회 API는 항상 호출하여 최신 데이터를 받아오되,
+      // 결과 병합 시 중복을 제거합니다.
+      // 참고: 서버가 이미 필요한 포스트를 정렬된 순서로 반환하므로,
+      // 클라이언트에서 미리 계산할 필요 없음
+
+      // 4. 오프셋 조회 API 호출
+      print(
+        '[BaseFeedProvider] loadPostsAround: 포스트 ID $postId (globalIndex: $targetGlobalIndex) 중심으로 오프셋 조회',
+      );
+      final postsResp = await blogService.getProfilePostsAround(
+        username!,
+        postId,
+        size: size,
+      );
+
+      if (postsResp['success'] == true) {
+        final postsData = postsResp['data'] as Map<String, dynamic>?;
+        if (postsData != null) {
+          final List<dynamic> newPosts = postsData['posts'] ?? [];
+
+          // 9. 기존 데이터와 병합 (중복 제거)
+          final existingPostIds = <int, Map<String, dynamic>>{};
+          for (final categoryPosts in _postsByCategory.values) {
+            for (final post in categoryPosts) {
+              final postIdValue = post['id'] as int?;
+              if (postIdValue != null) {
+                existingPostIds[postIdValue] = post;
+              }
+            }
+          }
+
+          // 10. 새 포스트를 카테고리별로 병합
+          for (final newPost in newPosts) {
+            if (newPost is! Map<String, dynamic>) continue;
+
+            final postIdValue = newPost['id'] as int?;
+            if (postIdValue == null) continue;
+
+            final categoryId = (newPost['categoryId'] ?? 0).toString();
+
+            if (existingPostIds.containsKey(postIdValue)) {
+              // 이미 있는 포스트 → 업데이트 (더 최신 데이터 사용)
+              final existingPost = existingPostIds[postIdValue]!;
+              final updatedPost = {
+                ...existingPost,
+                ...newPost, // 새 데이터로 덮어쓰기
+                'order': existingPost['order'], // order는 유지
+              };
+
+              // 기존 위치에서 교체
+              final categoryPosts = _postsByCategory[categoryId] ?? [];
+              final index = categoryPosts.indexWhere(
+                (p) => (p['id'] as int?) == postIdValue,
+              );
+              if (index != -1) {
+                categoryPosts[index] = updatedPost;
+              }
+            } else {
+              // 새로운 포스트 → globalIndex 순서대로 삽입
+              if (!_postsByCategory.containsKey(categoryId)) {
+                _postsByCategory[categoryId] = [];
+              }
+              final categoryPosts = _postsByCategory[categoryId]!;
+              final newPostGlobalIndex = newPost['globalIndex'] as int?;
+
+              if (newPostGlobalIndex != null) {
+                // globalIndex 기준으로 삽입 위치 찾기
+                int insertIndex = categoryPosts.length;
+                for (int i = 0; i < categoryPosts.length; i++) {
+                  final existingGlobalIndex =
+                      categoryPosts[i]['globalIndex'] as int?;
+                  if (existingGlobalIndex != null &&
+                      existingGlobalIndex > newPostGlobalIndex) {
+                    insertIndex = i;
+                    break;
+                  }
+                }
+                categoryPosts.insert(insertIndex, newPost);
+              } else {
+                // globalIndex가 없으면 맨 뒤에 추가
+                categoryPosts.add(newPost);
+              }
+            }
+          }
+
+          notifyListeners();
+          print(
+            '[BaseFeedProvider] loadPostsAround: 오프셋 조회 완료 - ${newPosts.length}개 포스트 병합',
+          );
+        }
+      }
+    } catch (e) {
+      print('[BaseFeedProvider] loadPostsAround 실패: $e');
+      rethrow;
+    }
+  }
 
   /// 새로고침
   Future<void> refresh() async => loadInitial(force: true);
@@ -200,7 +361,24 @@ abstract class BaseFeedProvider extends ChangeNotifier {
         final pid = item['id'];
         if (pid is int && idToPost.containsKey(pid)) {
           final full = Map<String, dynamic>.from(idToPost[pid]!);
+          // 스키마에서 order와 globalIndex 유지
           if (item.containsKey('order')) full['order'] = item['order'];
+          if (item.containsKey('globalIndex')) {
+            full['globalIndex'] = item['globalIndex'];
+          }
+          // 🎯 sharedGroupIds가 스키마에만 있고 posts에는 없는 경우를 대비해 명시적으로 보존
+          // (일반적으로 posts에 있지만, 혹시 모를 경우를 대비)
+          if (item.containsKey('sharedGroupIds') &&
+              !full.containsKey('sharedGroupIds')) {
+            full['sharedGroupIds'] = item['sharedGroupIds'];
+          }
+          // 🎯 디버깅: sharedGroupIds 확인
+          if (full.containsKey('sharedGroupIds') &&
+              full['accessLevel'] == 'GROUPS') {
+            print(
+              '[BaseFeedProvider] 포스트 ID ${pid}: sharedGroupIds = ${full['sharedGroupIds']}',
+            );
+          }
           merged.add(full);
         } else {
           merged.add(item);
@@ -252,7 +430,8 @@ abstract class BaseFeedProvider extends ChangeNotifier {
 
   int get privatePostCount {
     if (_systemCategoryMappings == null) return 0;
-    final postIds = _systemCategoryMappings!['나만보기'] as List?;
+    final postIds =
+        _systemCategoryMappings![SystemCategoryKeys.private] as List?;
     final count = postIds?.length ?? 0;
     print('[BaseFeedProvider] privatePostCount: $count');
     return count;
@@ -260,7 +439,8 @@ abstract class BaseFeedProvider extends ChangeNotifier {
 
   int get publicPostCount {
     if (_systemCategoryMappings == null) return 0;
-    final postIds = _systemCategoryMappings!['전체공개'] as List?;
+    final postIds =
+        _systemCategoryMappings![SystemCategoryKeys.public] as List?;
     final count = postIds?.length ?? 0;
     print('[BaseFeedProvider] publicPostCount: $count');
     return count;
@@ -268,7 +448,8 @@ abstract class BaseFeedProvider extends ChangeNotifier {
 
   int get groupsPostCount {
     if (_systemCategoryMappings == null) return 0;
-    final postIds = _systemCategoryMappings!['그룹공유'] as List?;
+    final postIds =
+        _systemCategoryMappings![SystemCategoryKeys.groups] as List?;
     final count = postIds?.length ?? 0;
     print('[BaseFeedProvider] groupsPostCount: $count');
     return count;
@@ -276,7 +457,8 @@ abstract class BaseFeedProvider extends ChangeNotifier {
 
   int get friendsPostCount {
     if (_systemCategoryMappings == null) return 0;
-    final postIds = _systemCategoryMappings!['친구공유'] as List?;
+    final postIds =
+        _systemCategoryMappings![SystemCategoryKeys.friends] as List?;
     final count = postIds?.length ?? 0;
     print('[BaseFeedProvider] friendsPostCount: $count');
     return count;
@@ -313,8 +495,13 @@ abstract class BaseFeedProvider extends ChangeNotifier {
         final idx = posts.indexWhere((p) => '${p['id']}' == postId);
         if (idx != -1) {
           String level = 'PUBLIC';
-          if (newLevel == AccessLevel.private) level = 'PRIVATE';
-          if (newLevel == AccessLevel.groups) level = 'GROUPS';
+          if (newLevel == AccessLevel.private) {
+            level = 'PRIVATE';
+          } else if (newLevel == AccessLevel.friends) {
+            level = 'FRIENDS';
+          } else if (newLevel == AccessLevel.groups) {
+            level = 'GROUPS';
+          }
           posts[idx]['accessLevel'] = level;
           notifyListeners();
           return;

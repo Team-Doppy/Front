@@ -37,7 +37,7 @@ class SearchService extends ChangeNotifier {
 
   // 검색 기록 (사용자 객체 기반)
   List<_SearchHistoryEntry> _searchHistory = [];
-  static const int _maxHistorySize = 10;
+  static const int _maxHistorySize = 30; // 🎯 최대 30개로 변경
   static const String _searchHistoryKey = 'search_history';
 
   // 🎯 글 검색 키워드 기록
@@ -914,7 +914,7 @@ class SearchService extends ChangeNotifier {
                 .whereType<Map<String, dynamic>>()
                 .map((m) => _SearchHistoryEntry.fromJson(m))
                 .toList();
-        // username 기준 최신 우선 중복 제거
+        // username 기준 최신 우선 중복 제거 + 개수 제한
         final seen = <String>{};
         _searchHistory = [];
         for (final e in loaded) {
@@ -923,10 +923,14 @@ class SearchService extends ChangeNotifier {
           if (!seen.contains(u)) {
             _searchHistory.add(e);
             seen.add(u);
+            // 🎯 최대 30개까지만 로드
+            if (_searchHistory.length >= _maxHistorySize) {
+              break;
+            }
           }
         }
         debugPrint(
-          '[SearchHistory] loaded(objects): ${_searchHistory.length} items',
+          '[SearchHistory] loaded(objects): ${_searchHistory.length} items (max: $_maxHistorySize)',
         );
       } else {
         _searchHistory = [];
@@ -1033,7 +1037,8 @@ class SearchService extends ChangeNotifier {
     _lastAccountQuery = '';
     _lastAccountCount = -1;
 
-    // 🎯 초기화할 때 트렌딩 데이터가 비어있으면 캐시 체크 후 로드
+    // 🎯 뒤로가기를 눌렀을 때 항상 트렌딩 데이터가 표시되도록 보장
+    // 트렌딩 데이터가 비어있으면 캐시 체크 후 로드
     if (_trendingKeywords.isEmpty && _recommendedPosts.isEmpty) {
       debugPrint('[Search] resetToInitial - 트렌딩 데이터가 없어서 캐시 체크 후 로드');
       ensureTrendingData().then((_) {
@@ -1042,6 +1047,7 @@ class SearchService extends ChangeNotifier {
       return; // ensureTrendingData가 완료된 후 notifyListeners 호출
     }
 
+    // 🎯 트렌딩 데이터가 있어도 항상 보장하도록 (이미 있는 경우에도 화면 갱신)
     notifyListeners();
   }
 

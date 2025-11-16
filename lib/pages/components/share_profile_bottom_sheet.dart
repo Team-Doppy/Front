@@ -49,15 +49,20 @@ class ShareProfileBottomSheet extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final shareUrl = 'https://doppy.app/profile/$username';
+    // 🎯 Instagram용 전체 텍스트 (이미지와 함께 공유)
     final shareText =
-        context.tr('share_profile_message').replaceAll('{username}', username) +
-        '\n$shareUrl';
+        '${context.tr('share_profile_message').replaceAll('{username}', username)}\n$shareUrl';
+    // 🎯 Instagram 제외한 나머지용 메시지 (이미지 없이 링크와 메시지만)
+    final shareTextWithoutImage =
+        '${context.tr('friend_request_message').replaceAll('{username}', username)}\n$shareUrl';
 
     return ShareBottomSheet(
       title: context.tr('share_profile'),
       subtitle: context.tr('share_profile_subtitle'),
       shareUrl: shareUrl,
       shareText: shareText,
+      shareTextWithoutImage: shareTextWithoutImage,
+      username: username,
       previewWidget: _buildProfilePreview(context),
     );
   }
@@ -69,13 +74,13 @@ class ShareProfileBottomSheet extends StatelessWidget {
         width: MediaQuery.of(context).size.width * 0.7,
         constraints: BoxConstraints(
           maxWidth: 320,
-          minHeight: 400, // 🎯 4:5 비율 유지
+          minHeight: 360, // 🎯 4:5 비율 유지
         ),
         decoration: BoxDecoration(borderRadius: BorderRadius.circular(24)),
         child: ClipRRect(
           borderRadius: BorderRadius.circular(24),
           child: SizedBox(
-            height: 400, // 🎯 명시적 높이 지정
+            height: 360, // 🎯 명시적 높이 지정
             child: Stack(
               fit: StackFit.expand, // 🎯 passthrough → expand
               children: [
@@ -93,51 +98,15 @@ class ShareProfileBottomSheet extends StatelessWidget {
                           : _buildGradientFallback(),
                 ),
 
-                // 🎯 하단 블러 (정보 영역만)
-                Positioned(
-                  bottom: 0,
-                  left: 0,
-                  right: 0,
-                  height: 100,
-                  child: ClipRRect(
-                    child: BackdropFilter(
-                      filter: ImageFilter.blur(sigmaX: 2.0, sigmaY: 2.0),
-                      child: Container(),
-                    ),
-                  ),
-                ),
-                Positioned(
-                  bottom: 0,
-                  left: 0,
-                  right: 0,
-                  height: 90,
-                  child: ClipRRect(
-                    child: BackdropFilter(
-                      filter: ImageFilter.blur(sigmaX: 2.3, sigmaY: 2.3),
-                      child: Container(),
-                    ),
-                  ),
-                ),
                 Positioned(
                   bottom: 0,
                   left: 0,
                   right: 0,
                   height: 80,
                   child: ClipRRect(
+                    borderRadius: BorderRadius.circular(12),
                     child: BackdropFilter(
-                      filter: ImageFilter.blur(sigmaX: 2.6, sigmaY: 2.6),
-                      child: Container(),
-                    ),
-                  ),
-                ),
-                Positioned(
-                  bottom: 0,
-                  left: 0,
-                  right: 0,
-                  height: 70,
-                  child: ClipRRect(
-                    child: BackdropFilter(
-                      filter: ImageFilter.blur(sigmaX: 3.0, sigmaY: 3.0),
+                      filter: ImageFilter.blur(sigmaX: 5.0, sigmaY: 5.0),
                       child: Container(),
                     ),
                   ),
@@ -145,7 +114,7 @@ class ShareProfileBottomSheet extends StatelessWidget {
 
                 // 🎯 상단: 사용자명
                 Positioned(
-                  bottom: 20,
+                  bottom: 15,
                   left: 20,
                   right: 0,
                   child: Column(
@@ -153,11 +122,14 @@ class ShareProfileBottomSheet extends StatelessWidget {
                     children: [
                       Text(
                         "@$username",
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                         style: TextStyle(
                           fontSize: 24,
                           fontWeight: FontWeight.w800,
                           color: Colors.white,
                           letterSpacing: -0.5,
+
                           shadows: [
                             Shadow(
                               color: Colors.black.withOpacity(0.3),
@@ -168,58 +140,14 @@ class ShareProfileBottomSheet extends StatelessWidget {
                         ),
                       ),
                       Text(
-                        bio ?? '',
+                        bio ?? username,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                         style: TextStyle(
                           fontSize: 16,
                           fontWeight: FontWeight.w400,
                           color: Colors.white,
                           letterSpacing: -0.5,
-                          shadows: [
-                            Shadow(
-                              color: Colors.black.withOpacity(0.3),
-                              blurRadius: 8,
-                              offset: Offset(0, 2),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-
-                // 🎯 하단: 사용자 정보 & 버튼
-                Positioned(
-                  top: 20,
-                  left: 20,
-                  right: 20,
-                  child: Row(
-                    children: [
-                      // 중앙: 정보
-
-                      // 우측: Share 버튼
-                      Container(
-                        padding: EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 8,
-                        ),
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(Icons.add, size: 16, color: Colors.black87),
-                            SizedBox(width: 4),
-                            Text(
-                              context.tr('add_member'),
-                              style: TextStyle(
-                                fontSize: 12,
-                                fontWeight: FontWeight.w700,
-                                color: Colors.black87,
-                              ),
-                            ),
-                          ],
                         ),
                       ),
                     ],
@@ -253,7 +181,9 @@ class ShareBottomSheet extends StatefulWidget {
   final String subtitle;
   final String shareUrl;
   final Widget previewWidget;
-  final String shareText;
+  final String shareText; // 🎯 Instagram용 (이미지 포함)
+  final String shareTextWithoutImage; // 🎯 Instagram 제외용 (이미지 없이 링크와 메시지만)
+  final String username; // 🎯 username 전달용
 
   const ShareBottomSheet({
     super.key,
@@ -262,6 +192,8 @@ class ShareBottomSheet extends StatefulWidget {
     required this.shareUrl,
     required this.previewWidget,
     required this.shareText,
+    required this.shareTextWithoutImage,
+    required this.username,
   });
 
   @override
@@ -438,21 +370,30 @@ class _ShareBottomSheetState extends State<ShareBottomSheet> {
                             label: 'Facebook',
                             color: const Color(0xFF1877F2),
                             onTap:
-                                () => _shareToSNS('facebook', widget.shareText),
+                                () => _shareToSNS(
+                                  'facebook',
+                                  widget.shareTextWithoutImage,
+                                ),
                           ),
                           _ShareButton(
                             imagePath: 'assets/images/x_logo.jpg',
                             label: 'X',
                             color: Colors.black,
                             onTap:
-                                () => _shareToSNS('twitter', widget.shareText),
+                                () => _shareToSNS(
+                                  'twitter',
+                                  widget.shareTextWithoutImage,
+                                ),
                           ),
                           _ShareButton(
                             imagePath: 'assets/images/thread_logo.jpg',
                             label: 'Threads',
                             color: Colors.black,
                             onTap:
-                                () => _shareToSNS('threads', widget.shareText),
+                                () => _shareToSNS(
+                                  'threads',
+                                  widget.shareTextWithoutImage,
+                                ),
                           ),
                           _ShareButton(
                             icon:
@@ -467,7 +408,9 @@ class _ShareBottomSheetState extends State<ShareBottomSheet> {
                             onTap:
                                 _isSharing
                                     ? () {}
-                                    : () => _shareGeneral(widget.shareText),
+                                    : () => _shareGeneral(
+                                      widget.shareTextWithoutImage,
+                                    ),
                           ),
                         ],
                       ),
@@ -490,24 +433,27 @@ class _ShareBottomSheetState extends State<ShareBottomSheet> {
 
     switch (platform) {
       case 'instagram':
-        // Instagram은 스토리 공유만 지원 (텍스트 직접 공유 불가)
-        // 클립보드에 복사하고 Instagram 앱 열기
-        await Clipboard.setData(ClipboardData(text: text));
-        url = 'instagram://story-camera';
-        break;
+        // 🎯 Instagram은 이미지 포함 공유
+        // 이미지를 캡처해서 Instagram 앱에 공유
+        await _shareToInstagramWithImage(text);
+        return; // 🎯 별도 처리이므로 여기서 종료
       case 'facebook':
+        // 🎯 이미지 없이 링크와 메시지만 전달
         url =
-            'https://www.facebook.com/sharer/sharer.php?u=${Uri.encodeComponent(widget.shareUrl)}';
+            'https://www.facebook.com/sharer/sharer.php?u=${Uri.encodeComponent(widget.shareUrl)}&quote=${Uri.encodeComponent(text)}';
         break;
       case 'twitter':
+        // 🎯 이미지 없이 링크와 메시지만 전달
         url = 'https://twitter.com/intent/tweet?text=$encodedText';
         break;
       case 'threads':
-        // Threads (Meta)
+        // 🎯 이미지 없이 링크와 메시지만 전달
+        // Threads (Meta) - 클립보드에 텍스트 복사 후 앱 열기
         await Clipboard.setData(ClipboardData(text: text));
         url = 'barcelona://create'; // Threads 앱 열기
         break;
       case 'telegram':
+        // 🎯 이미지 없이 링크와 메시지만 전달
         url =
             'https://t.me/share/url?url=${Uri.encodeComponent(widget.shareUrl)}&text=$encodedText';
         break;
@@ -529,8 +475,8 @@ class _ShareBottomSheetState extends State<ShareBottomSheet> {
     }
   }
 
-  // 🎯 시스템 공유 (커스텀 이미지 카드 + 텍스트)
-  Future<void> _shareGeneral(String text) async {
+  // 🎯 Instagram에 이미지 포함 공유
+  Future<void> _shareToInstagramWithImage(String text) async {
     if (_isSharing) return;
 
     setState(() => _isSharing = true);
@@ -540,7 +486,7 @@ class _ShareBottomSheetState extends State<ShareBottomSheet> {
       final imageFile = await _capturePreviewAsImage();
 
       if (imageFile != null) {
-        // 2️⃣ 이미지 + 텍스트 함께 공유
+        // 2️⃣ 이미지 + 텍스트 함께 공유 (Instagram 스토리)
         final result = await Share.shareXFiles(
           [XFile(imageFile.path)],
           text: text,
@@ -552,11 +498,31 @@ class _ShareBottomSheetState extends State<ShareBottomSheet> {
           await imageFile.delete();
         } catch (_) {}
 
-        print('✅ 공유 완료: ${result.status}');
+        print('✅ Instagram 공유 완료: ${result.status}');
       } else {
         // 캡처 실패 시 텍스트만 공유
         await Share.share(text, subject: widget.title);
       }
+
+      setState(() => _isSharing = false);
+    } catch (e) {
+      print('⚠️ Instagram 공유 실패: $e');
+      setState(() => _isSharing = false);
+
+      // 폴백: 클립보드에 복사
+      await Clipboard.setData(ClipboardData(text: text));
+    }
+  }
+
+  // 🎯 시스템 공유 (이미지 없이 링크와 메시지만 전달)
+  Future<void> _shareGeneral(String text) async {
+    if (_isSharing) return;
+
+    setState(() => _isSharing = true);
+
+    try {
+      // 🎯 Instagram 제외한 나머지는 이미지 없이 텍스트만 공유
+      await Share.share(text, subject: widget.title);
 
       setState(() => _isSharing = false);
     } catch (e) {

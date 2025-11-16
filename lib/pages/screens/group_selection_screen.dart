@@ -1,10 +1,12 @@
 import 'dart:async';
 
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:doppy/data/models/group_model.dart';
 import 'package:doppy/l10n/app_localizations.dart';
 import 'package:doppy/pages/components/group_sheet.dart';
 import 'package:doppy/pages/components/friend_requests_list_bottom_sheet.dart';
 import 'package:doppy/pages/components/sent_requests_list_bottom_sheet.dart';
+import 'package:doppy/pages/components/custom_refresh_indicator.dart';
 import 'package:doppy/pages/screens/manage_group_screen.dart';
 import 'package:doppy/providers/group_provider.dart';
 import 'package:doppy/providers/friend_provider.dart';
@@ -28,15 +30,14 @@ class _GroupSelectionScreenState extends State<GroupSelectionScreen>
   late final PageController _pageController;
   int _currentGroupIndex = 0;
   double _headerOpacity = 1.0; // 🎯 헤더 투명도 추적
+  double _iconOpacity = 1.0; // 🎯 아이콘 투명도 (스크롤만, 새로고침 시 영향 없음)
   bool _isDragMode = false; // 🎯 드래그 모드 (롱프레스 중)
+  bool _isReordering = false; // 🎯 reorder 진행 중인지 여부 (낙관적 업데이트 보호용)
   List<Group> _groups = []; // 🎯 reorder를 위한 그룹 리스트
   Timer? _autoScrollTimer; // 🎯 자동 스크롤 타이머
   Offset? _dragPosition; // 🎯 드래그 중인 위치
   int? _dragTargetIndex; // 🎯 드래그 중 드롭 타겟 인덱스 (시각적 표시용)
-
-  // 멤버 썸네일 애니메이션 컨트롤러
-  late final AnimationController _memberAnimationController;
-  late final Animation<double> _memberAnimation;
+  bool _isRefreshing = false; // 🎯 새로고침 중인지 여부
 
   @override
   void initState() {
@@ -53,26 +54,17 @@ class _GroupSelectionScreenState extends State<GroupSelectionScreen>
       vsync: this,
     )..repeat();
 
-    // 멤버 썸네일 애니메이션 컨트롤러 초기화
-    _memberAnimationController = AnimationController(
-      duration: const Duration(milliseconds: 600),
-      vsync: this,
-    );
-
-    _memberAnimation = CurvedAnimation(
-      parent: _memberAnimationController,
-      curve: Curves.easeOutBack,
-    );
-
-    // 첫 페이지 애니메이션 시작
     // 그룹 데이터는 이미 SplashScreen에서 로드되었으므로 여기서 다시 호출하지 않음
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      _memberAnimationController.forward();
-    });
 
     // 🎯 PageController 리스너 추가 (스크롤 진행률 감지)
     _pageController.addListener(_onPageScroll);
+
+    // 🎯 화면 진입 시 친구 요청 데이터 새로 조회 (캐시 무시)
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final friendProvider = context.read<FriendProvider>();
+      friendProvider.fetchAllFriendData(forceRefresh: true);
+    });
   }
 
   // 🎯 페이지 스크롤 리스너
@@ -85,18 +77,24 @@ class _GroupSelectionScreenState extends State<GroupSelectionScreen>
     // 0.15 이상 스크롤되면 사라짐 시작 (15% 스크롤)
     if (page < 0.15) {
       setState(() {
-        _headerOpacity = 1.0 - (page / 0.15);
+        final opacity = 1.0 - (page / 0.15);
+        _headerOpacity = opacity;
+        _iconOpacity = opacity; // 🎯 아이콘도 스크롤에 따라 사라짐
       });
-    } else if (_headerOpacity > 0.0) {
+    } else if (_headerOpacity > 0.0 || _iconOpacity > 0.0) {
       setState(() {
         _headerOpacity = 0.0;
+        _iconOpacity = 0.0; // 🎯 아이콘도 스크롤에 따라 사라짐
       });
     }
 
     // 다시 첫 페이지로 돌아올 때
-    if (page >= 0.0 && page < 0.01 && _headerOpacity < 1.0) {
+    if (page >= 0.0 &&
+        page < 0.01 &&
+        (_headerOpacity < 1.0 || _iconOpacity < 1.0)) {
       setState(() {
         _headerOpacity = 1.0;
+        _iconOpacity = 1.0; // 🎯 아이콘도 다시 나타남
       });
     }
   }
@@ -105,7 +103,6 @@ class _GroupSelectionScreenState extends State<GroupSelectionScreen>
   void dispose() {
     _autoScrollTimer?.cancel();
     _pageController.dispose();
-    _memberAnimationController.dispose();
     _loadingAnimationController.stop();
     _loadingAnimationController.dispose();
     _groupDropDown.dispose();
@@ -129,8 +126,8 @@ class _GroupSelectionScreenState extends State<GroupSelectionScreen>
                 // displayOrder가 있다면 그 순서로 정렬, 없으면 createdAt 순서 유지
                 // groups는 이미 서버에서 displayOrder 순서로 정렬되어 옴
 
-                // 🎯 _groups 업데이트 (reorder를 위해) - 드래그 중에는 업데이트 금지
-                if (!_isDragMode) {
+                // 🎯 _groups 업데이트 (reorder를 위해) - 드래그 중이거나 reorder 중에는 업데이트 금지
+                if (!_isDragMode && !_isReordering) {
                   // 그룹 수나 ID가 다르면 업데이트
                   final needsUpdate =
                       _groups.length != groups.length ||
@@ -141,28 +138,38 @@ class _GroupSelectionScreenState extends State<GroupSelectionScreen>
                         final index = entry.key;
                         final group = entry.value;
                         if (index >= groups.length) return true;
-                        return groups[index].id != group.id ||
-                            groups[index].name != group.name ||
-                            groups[index].memberCount != group.memberCount;
+                        final updatedGroup = groups[index];
+                        return updatedGroup.id != group.id ||
+                            updatedGroup.name != group.name ||
+                            updatedGroup.memberCount != group.memberCount ||
+                            updatedGroup.profileImageUrl !=
+                                group.profileImageUrl ||
+                            updatedGroup.description != group.description;
                       });
 
                   if (needsUpdate) {
+                    // 🎯 빌드 중에는 setState 호출 불가하므로 PostFrameCallback 사용
                     WidgetsBinding.instance.addPostFrameCallback((_) {
-                      if (mounted && !_isDragMode) {
+                      if (mounted && !_isDragMode && !_isReordering) {
                         setState(() {
                           _groups = List<Group>.from(groups);
-                          // 현재 인덱스 범위 체크
-                          if (_currentGroupIndex >= _groups.length &&
-                              _groups.isNotEmpty) {
-                            _currentGroupIndex = _groups.length - 1;
-                          }
+                          // ❌ _currentGroupIndex 직접 변경 금지 - PageView가 onPageChanged로 변경하도록 맡김
                         });
 
-                        // PageView index 재동기화
+                        // PageView index 재동기화 (범위 체크)
                         if (_pageController.hasClients && _groups.isNotEmpty) {
-                          _pageController.jumpToPage(
-                            _currentGroupIndex.clamp(0, _groups.length - 1),
-                          );
+                          if (_currentGroupIndex >= _groups.length) {
+                            // 인덱스가 범위를 벗어났을 때만 이동
+                            final targetIndex = (_groups.length - 1).clamp(
+                              0,
+                              _groups.length - 1,
+                            );
+                            _pageController.animateToPage(
+                              targetIndex,
+                              duration: const Duration(milliseconds: 1),
+                              curve: Curves.linear,
+                            );
+                          }
                         }
                       }
                     });
@@ -172,7 +179,7 @@ class _GroupSelectionScreenState extends State<GroupSelectionScreen>
                 return _buildGroupSelectionContent(groups);
               },
             ),
-            Positioned(top: 20, left: 0, right: 0, child: _buildAppBar()),
+            Positioned(top: 6, left: 0, right: 0, child: _buildAppBar()),
           ],
         ),
       ),
@@ -194,82 +201,95 @@ class _GroupSelectionScreenState extends State<GroupSelectionScreen>
             ),
             Spacer(),
 
-            // 받은 친구요청 아이콘
-            Stack(
-              clipBehavior: Clip.none,
-              children: [
-                IconButton(
-                  onPressed: () {
-                    FriendRequestsListBottomSheet.show(context);
-                  },
-                  icon: Icon(Icons.person_add_alt_1, size: 26),
-                  tooltip: context.tr('received_requests'),
-                ),
-                if (receivedCount > 0)
-                  Positioned(
-                    right: 6,
-                    top: 6,
-                    child: Container(
-                      padding: const EdgeInsets.all(4),
-                      decoration: BoxDecoration(
-                        color: Theme.of(context).colorScheme.error,
-                        shape: BoxShape.circle,
-                      ),
-                      constraints: const BoxConstraints(
-                        minWidth: 16,
-                        minHeight: 16,
-                      ),
-                      child: Text(
-                        receivedCount > 99 ? '99+' : '$receivedCount',
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 10,
-                          fontWeight: FontWeight.bold,
-                        ),
-                        textAlign: TextAlign.center,
+            // 받은 친구요청 아이콘 - 스크롤에만 반응 (새로고침 시 영향 없음)
+            Opacity(
+              opacity: _iconOpacity,
+              child: Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  IconButton(
+                    onPressed: () {
+                      FriendRequestsListBottomSheet.show(context);
+                    },
+                    icon: Padding(
+                      padding: const EdgeInsets.only(top: 0.0),
+                      child: Icon(
+                        Icons.person_add_alt_1,
+                        size: 26,
+                        color: Theme.of(context).colorScheme.onSurface,
                       ),
                     ),
+                    tooltip: context.tr('received_requests'),
                   ),
-              ],
+                  if (receivedCount > 0)
+                    Positioned(
+                      right: 7,
+                      top: 9,
+                      child: Container(
+                        padding: const EdgeInsets.all(4),
+                        decoration: BoxDecoration(
+                          color: Theme.of(context).colorScheme.error,
+                          shape: BoxShape.circle,
+                        ),
+                        constraints: const BoxConstraints(
+                          minWidth: 16,
+                          minHeight: 16,
+                        ),
+                        child: Text(
+                          receivedCount > 99 ? '99+' : '$receivedCount',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 10,
+                            fontWeight: FontWeight.bold,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
             ),
 
-            // 보낸 친구요청 아이콘
-            Stack(
-              clipBehavior: Clip.none,
-              children: [
-                IconButton(
-                  onPressed: () {
-                    SentRequestsListBottomSheet.show(context);
-                  },
-                  icon: Icon(Icons.send, size: 26),
-                  tooltip: context.tr('sent_requests'),
-                ),
-                if (sentCount > 0)
-                  Positioned(
-                    right: 6,
-                    top: 6,
-                    child: Container(
-                      padding: const EdgeInsets.all(4),
-                      decoration: BoxDecoration(
-                        color: Theme.of(context).colorScheme.primary,
-                        shape: BoxShape.circle,
-                      ),
-                      constraints: const BoxConstraints(
-                        minWidth: 16,
-                        minHeight: 16,
-                      ),
-                      child: Text(
-                        sentCount > 99 ? '99+' : '$sentCount',
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 10,
-                          fontWeight: FontWeight.bold,
+            // 보낸 친구요청 아이콘 - 스크롤에만 반응 (새로고침 시 영향 없음)
+            Opacity(
+              opacity: _iconOpacity,
+              child: Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  IconButton(
+                    onPressed: () {
+                      SentRequestsListBottomSheet.show(context);
+                    },
+                    icon: Icon(Icons.send_rounded, size: 24.5),
+                    tooltip: context.tr('sent_requests'),
+                  ),
+                  if (sentCount > 0)
+                    Positioned(
+                      right: 7,
+                      top: 9,
+                      child: Container(
+                        padding: const EdgeInsets.all(4),
+                        decoration: BoxDecoration(
+                          color: Theme.of(context).colorScheme.error,
+                          shape: BoxShape.circle,
                         ),
-                        textAlign: TextAlign.center,
+                        constraints: const BoxConstraints(
+                          minWidth: 16,
+                          minHeight: 16,
+                        ),
+                        child: Text(
+                          sentCount > 99 ? '99+' : '$sentCount',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 10,
+                            fontWeight: FontWeight.bold,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
                       ),
                     ),
-                  ),
-              ],
+                ],
+              ),
             ),
 
             IconButton(
@@ -293,91 +313,140 @@ class _GroupSelectionScreenState extends State<GroupSelectionScreen>
     );
   }
 
+  /// 리프레시 처리
+  Future<void> _handleRefresh() async {
+    try {
+      final groupProvider = context.read<GroupProvider>();
+      final friendProvider = context.read<FriendProvider>();
+
+      // 🎯 친구 요청 데이터를 먼저 새로고침 (allFriends 그룹의 친구 수 반영을 위해)
+      await friendProvider.fetchAllFriendData(forceRefresh: true);
+
+      // 그룹 데이터 새로고침 (friendProvider 전달)
+      await groupProvider.fetchMyGroups(
+        forceRefresh: true,
+        friendProvider: friendProvider,
+      );
+    } catch (e) {
+      print('❌ [GroupSelectionScreen] 리프레시 에러: $e');
+    } finally {
+      // 🎯 새로고침 완료 후 약간의 딜레이 후 텍스트 복원
+      await Future.delayed(const Duration(milliseconds: 200));
+      if (mounted) {
+        setState(() {
+          _isRefreshing = false;
+          // 🎯 첫 페이지에 있으면 "내 그룹" 텍스트 다시 보이기
+          if (_currentGroupIndex == 0) {
+            _headerOpacity = 1.0;
+          }
+        });
+      }
+    }
+  }
+
+  /// 🎯 당기는 진행률 업데이트 (스피너 표시 감지용)
+  void _onPullProgress(double progress) {
+    // 스피너가 보일 정도로 당겼으면 (30 이상 당기면 스피너 표시, 약 0.4 progress)
+    final shouldHide = progress >= 0.5;
+
+    setState(() {
+      if (shouldHide) {
+        // 당겨서 스피너가 보이면 숨기기
+        _isRefreshing = true;
+        _headerOpacity = 0.0; // 🎯 새로고침 시작 시 "내 그룹" 텍스트 숨기기
+      } else if (!shouldHide && progress < 0.5) {
+        // 다시 내려갔고 충분히 낮아졌으면 (실제 새로고침하지 않았을 때) 다시 보이기
+        _isRefreshing = false;
+        if (_currentGroupIndex == 0) {
+          _headerOpacity = 1.0; // 🎯 첫 페이지에 있으면 다시 보이기
+        }
+      }
+    });
+  }
+
   /// 그룹 선택 메인 컨텐츠
   Widget _buildGroupSelectionContent(List<Group> groups) {
     return Stack(
       children: [
-        // 세로 스크롤 그룹 디스크 (PageView로 스냅 효과)
-        PageView.builder(
-          controller: _pageController,
-          scrollDirection: Axis.vertical,
-          physics:
-              _groups.length <= 1
-                  ? const NeverScrollableScrollPhysics() // 🎯 그룹이 1개 이하면 스크롤 비활성화
-                  : const PageScrollPhysics(), // 🎯 드래그 중에도 자동 스크롤을 위해 스크롤 활성화
-          itemCount:
-              _isDragMode
-                  ? _groups
-                      .length // 🎯 드래그 중에는 itemCount 고정 (생성 버튼 제외)
-                  : (_groups.length <= 1
-                      ? _groups.length +
-                          1 // 🎯 그룹이 1개 이하면 생성 버튼 포함
-                      : _groups.length), // 🎯 그룹이 2개 이상이면 생성 버튼 제외
-          onPageChanged: (index) {
-            if (!_isDragMode) {
-              // 드래그 모드가 아닐 때만 페이지 변경 처리
+        // 세로 스크롤 그룹 디스크 (PageView로 스냅 효과) - CustomRefreshIndicator로 감싸기
+        CustomRefreshIndicator(
+          top: 120,
+          onRefresh: _handleRefresh,
+          onPullProgress: _onPullProgress, // 🎯 당기는 진행률 콜백 추가
+          child: PageView.builder(
+            controller: _pageController,
+            scrollDirection: Axis.vertical,
+            physics: const PageScrollPhysics(), // 🎯 스크롤은 항상 활성화
+            itemCount:
+                _isDragMode
+                    ? _groups
+                        .length // 🎯 드래그 중에는 itemCount 고정 (생성 버튼 제외)
+                    : (_groups.length <= 1
+                        ? _groups.length +
+                            1 // 🎯 그룹이 1개 이하면 생성 버튼 포함
+                        : _groups.length), // 🎯 그룹이 2개 이상이면 생성 버튼 제외
+            onPageChanged: (index) {
+              // 🎯 PageController의 실제 페이지를 단일 source of truth로 사용
+              // 항상 index 업데이트 (dragMode와 무관하게)
               setState(() {
                 _currentGroupIndex = index;
               });
-              // 페이지 변경 시 멤버 썸네일 애니메이션
-              _memberAnimationController.reset();
-              _memberAnimationController.forward();
-            }
-            // 🎯 드래그 중에는 페이지 변경 무시 (이웃 디스크가 원래 위치로 이동하는 것 방지)
-          },
-          itemBuilder: (context, index) {
-            // 🎯 그룹이 1개 이하일 때만 마지막 아이템에 그룹 생성 버튼 표시
-            if (_groups.length <= 1 && index == _groups.length) {
-              return _buildCreateGroupDisc();
-            }
+            },
+            itemBuilder: (context, index) {
+              // 🎯 그룹이 1개 이하일 때만 마지막 아이템에 그룹 생성 버튼 표시
+              if (_groups.length <= 1 && index == _groups.length) {
+                return _buildCreateGroupDisc();
+              }
 
-            // 🎯 인덱스 범위 체크
-            if (index < 0 || index >= _groups.length) {
-              return const SizedBox.shrink();
-            }
+              // 🎯 인덱스 범위 체크
+              if (index < 0 || index >= _groups.length) {
+                return const SizedBox.shrink();
+              }
 
-            final group = _groups[index];
+              final group = _groups[index];
 
-            // 🎯 LongPressDraggable + DragTarget으로 reorder 구현
-            return _buildDraggableGroupDisc(group, index);
-          },
+              // 🎯 LongPressDraggable + DragTarget으로 reorder 구현
+              return _buildDraggableGroupDisc(group, index);
+            },
+          ),
         ),
 
-        // 🎯 스크롤 시 사라지는 상단 헤더 텍스트
-        Positioned(
-          top: 100,
-          left: 0,
-          right: 0,
-          child: IgnorePointer(
-            child: Opacity(
-              opacity: _headerOpacity,
-              child: Column(
-                children: [
-                  Text(
-                    context.tr('my_groups'),
-                    style: TextStyle(
-                      fontSize: 24,
-                      fontWeight: FontWeight.w700,
-                      color: Theme.of(context).colorScheme.onSurface,
-                      letterSpacing: -0.5,
+        // 🎯 스크롤 시 사라지는 상단 헤더 텍스트 (새로고침 중에는 숨김)
+        if (!_isRefreshing)
+          Positioned(
+            top: 110,
+            left: 0,
+            right: 0,
+            child: IgnorePointer(
+              child: Opacity(
+                opacity: _headerOpacity,
+                child: Column(
+                  children: [
+                    Text(
+                      context.tr('my_groups'),
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w700,
+                        color: Theme.of(context).colorScheme.onSurface,
+                        letterSpacing: -0.5,
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    context.tr('scroll_to_explore'),
-                    style: TextStyle(
-                      fontSize: 15,
-                      color: Theme.of(
-                        context,
-                      ).colorScheme.onSurface.withOpacity(0.6),
-                      letterSpacing: -0.2,
+                    const SizedBox(height: 4),
+                    Text(
+                      context.tr('scroll_to_explore'),
+                      style: TextStyle(
+                        fontSize: 15,
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.onSurface.withOpacity(0.6),
+                        letterSpacing: -0.2,
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
           ),
-        ),
 
         // 🎯 우측 인덱스 (가로 라인) - 독립적으로 터치 인식
         Positioned(
@@ -483,52 +552,48 @@ class _GroupSelectionScreenState extends State<GroupSelectionScreen>
     }
 
     // Timer가 없으면 시작
-    if (_autoScrollTimer == null) {
-      _autoScrollTimer = Timer.periodic(const Duration(milliseconds: 200), (
-        timer,
-      ) {
-        if (!_isDragMode ||
-            _dragPosition == null ||
-            !_pageController.hasClients ||
-            !mounted) {
-          _stopAutoScroll();
-          return;
-        }
+    _autoScrollTimer ??= Timer.periodic(const Duration(milliseconds: 200), (
+      timer,
+    ) {
+      if (!_isDragMode ||
+          _dragPosition == null ||
+          !_pageController.hasClients ||
+          !mounted) {
+        _stopAutoScroll();
+        return;
+      }
 
-        // 🎯 글로벌 좌표 기준으로 화면 높이 계산
-        final screenHeight = MediaQuery.of(context).size.height;
-        final threshold = screenHeight * 0.15; // 화면 상단/하단 15% 영역
+      // 🎯 글로벌 좌표 기준으로 화면 높이 계산
+      final screenHeight = MediaQuery.of(context).size.height;
+      final threshold = screenHeight * 0.15; // 화면 상단/하단 15% 영역
 
-        // 현재 위치에 따라 방향 결정 (매번 체크, 글로벌 좌표 기준)
-        int? targetIndex;
-        final maxIndex = _groups.length - 1; // 마지막 인덱스 (생성 버튼 제외)
+      // 현재 위치에 따라 방향 결정 (매번 체크, 글로벌 좌표 기준)
+      int? targetIndex;
+      final maxIndex = _groups.length - 1; // 마지막 인덱스 (생성 버튼 제외)
 
-        // 화면 상단 근처 (글로벌 좌표 기준, 0부터 시작)
-        if (_dragPosition!.dy < threshold && _currentGroupIndex > 0) {
-          targetIndex = (_currentGroupIndex - 1).clamp(0, maxIndex);
-        }
-        // 화면 하단 근처 (글로벌 좌표 기준)
-        else if (_dragPosition!.dy > screenHeight - threshold &&
-            _currentGroupIndex < maxIndex) {
-          targetIndex = (_currentGroupIndex + 1).clamp(0, maxIndex);
-        }
+      // 화면 상단 근처 (글로벌 좌표 기준, 0부터 시작)
+      if (_dragPosition!.dy < threshold && _currentGroupIndex > 0) {
+        targetIndex = (_currentGroupIndex - 1).clamp(0, maxIndex);
+      }
+      // 화면 하단 근처 (글로벌 좌표 기준)
+      else if (_dragPosition!.dy > screenHeight - threshold &&
+          _currentGroupIndex < maxIndex) {
+        targetIndex = (_currentGroupIndex + 1).clamp(0, maxIndex);
+      }
 
-        // 타겟 인덱스가 있고 현재와 다르면 스크롤
-        if (targetIndex != null && targetIndex != _currentGroupIndex) {
-          _pageController.animateToPage(
-            targetIndex,
-            duration: const Duration(milliseconds: 400),
-            curve: Curves.easeOut,
-          );
-          setState(() {
-            _currentGroupIndex = targetIndex!;
-          });
-        } else if (targetIndex == null) {
-          // 자동 스크롤이 더 이상 필요 없으면 중지
-          _stopAutoScroll();
-        }
-      });
-    }
+      // 타겟 인덱스가 있고 현재와 다르면 스크롤
+      if (targetIndex != null && targetIndex != _currentGroupIndex) {
+        _pageController.animateToPage(
+          targetIndex,
+          duration: const Duration(milliseconds: 400),
+          curve: Curves.easeOut,
+        );
+        // ❌ _currentGroupIndex 직접 변경 금지 - PageView가 onPageChanged로 변경하도록 맡김
+      } else if (targetIndex == null) {
+        // 자동 스크롤이 더 이상 필요 없으면 중지
+        _stopAutoScroll();
+      }
+    });
   }
 
   /// 자동 스크롤 중지
@@ -575,41 +640,43 @@ class _GroupSelectionScreenState extends State<GroupSelectionScreen>
   Future<void> _reorderGroup(int from, int to) async {
     if (from == to) return;
 
-    // 🎯 시스템 그룹은 순서 변경 불가
     if (from >= _groups.length || to >= _groups.length) return;
-    if (_groups[from].isSystem == true || _groups[to].isSystem == true) {
-      return; // 시스템 그룹은 reorder 불가
-    }
+
+    // 🎯 그룹이 2개 이상일 때만 reorder 가능
+    if (_groups.length < 2) return;
 
     final groupProvider = context.read<GroupProvider>();
 
-    // 1) Optimistic Update: 로컬 상태 먼저 변경
+    // 1) 🎯 낙관적 업데이트: 로컬 상태 즉시 변경 (UI 즉시 반영)
     final originalGroups = List<Group>.from(_groups);
+    final oldIndex = _currentGroupIndex;
+
     setState(() {
+      _isReordering = true; // 🎯 reorder 시작 플래그 설정
       final item = _groups.removeAt(from);
       _groups.insert(to, item);
-      _currentGroupIndex = to; // 인덱스 보정
+      // ❌ _currentGroupIndex 직접 변경 금지 - PageView가 onPageChanged로 변경하도록 맡김
     });
 
-    // 2) 다음 위젯 프레임에서 PageView index 즉시 동기화
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || !_pageController.hasClients) return;
+    // 2) 🎯 1ms animateToPage로 변경 (PageController.page 값이 정상 유지됨)
+    if (_pageController.hasClients) {
+      _pageController.animateToPage(
+        to,
+        duration: const Duration(milliseconds: 1),
+        curve: Curves.linear,
+      );
+    }
 
-      // *** 핵심: PageController 내부 index를 맞춰서 index mismatch 제거 ***
-      _pageController.jumpToPage(to);
-    });
-
-    // 3) 서버에 순서 변경 요청
+    // 3) 🎯 서버 요청 (단순 검증용, 성공해도 UI는 그대로 유지)
     try {
-      // 🎯 서버에 전송할 순서 정보 생성 (시스템 그룹 제외)
+      // 🎯 서버에 전송할 순서 정보 생성 (시스템 그룹은 -1로 전송, 서버가 자동으로 처리)
       final reorderData =
           _groups
               .asMap()
               .entries
-              .where((entry) => entry.value.isSystem != true)
               .map(
                 (entry) => {
-                  'groupId': entry.value.id,
+                  'groupId': entry.value.isSystem == true ? -1 : entry.value.id,
                   'displayOrder': entry.key,
                 },
               )
@@ -618,13 +685,29 @@ class _GroupSelectionScreenState extends State<GroupSelectionScreen>
       final success = await groupProvider.reorderGroups(reorderData);
 
       if (!success) {
-        // 서버 요청 실패 시 롤백
+        // 🎯 서버 요청 실패 시에만 롤백
         if (mounted) {
           setState(() {
             _groups = originalGroups;
+            // ❌ _currentGroupIndex 직접 변경 금지 - PageView가 onPageChanged로 변경하도록 맡김
+            _isReordering = false; // 🎯 롤백 후 reorder 플래그 해제
           });
+
+          if (_pageController.hasClients) {
+            // 🎯 1ms animateToPage로 변경 (PageController.page 값이 정상 유지됨)
+            _pageController.animateToPage(
+              oldIndex,
+              duration: const Duration(milliseconds: 1),
+              curve: Curves.linear,
+            );
+          }
+
           // Provider에서 최신 데이터 다시 가져오기
-          await groupProvider.fetchMyGroups(forceRefresh: true);
+          final friendProvider = context.read<FriendProvider>();
+          await groupProvider.fetchMyGroups(
+            forceRefresh: true,
+            friendProvider: friendProvider,
+          );
         }
         if (mounted) {
           ErrorHandler.showError(context, '그룹 순서 변경에 실패했습니다');
@@ -632,50 +715,64 @@ class _GroupSelectionScreenState extends State<GroupSelectionScreen>
         return;
       }
 
-      // 4) 서버 응답 후 Provider 데이터와 동기화
-      if (mounted) {
-        final updatedGroups = groupProvider.myGroups;
-        // 최신순 정렬 제거 (서버에서 받은 순서 유지)
-        setState(() {
-          _groups = List<Group>.from(updatedGroups);
-          // 현재 인덱스 유지하되 범위 체크
-          if (_currentGroupIndex >= _groups.length) {
-            _currentGroupIndex = _groups.length - 1;
-          }
-        });
+      // 🎯 성공 시: UI는 그대로 유지하고 Provider만 동기화 (조용히 업데이트)
+      // UI를 다시 빌드하지 않음으로써 불안정한 움직임 방지
+      final friendProvider = context.read<FriendProvider>();
+      await groupProvider.fetchMyGroups(
+        forceRefresh: true,
+        friendProvider: friendProvider,
+      );
 
-        // 5) PageView index 재동기화
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (!mounted || !_pageController.hasClients) return;
-          _pageController.jumpToPage(_currentGroupIndex);
+      // 🎯 Provider 업데이트 후 reorder 플래그 해제 (Consumer 업데이트 허용)
+      if (mounted) {
+        setState(() {
+          _isReordering = false;
         });
       }
     } catch (e) {
       print('❌ [GroupSelectionScreen] 그룹 순서 변경 에러: $e');
-      // 에러 발생 시 롤백
+      // 🎯 에러 발생 시에만 롤백
       if (mounted) {
         setState(() {
           _groups = originalGroups;
+          // ❌ _currentGroupIndex 직접 변경 금지 - PageView가 onPageChanged로 변경하도록 맡김
         });
+
+        if (_pageController.hasClients) {
+          // 🎯 1ms animateToPage로 변경 (PageController.page 값이 정상 유지됨)
+          _pageController.animateToPage(
+            oldIndex,
+            duration: const Duration(milliseconds: 1),
+            curve: Curves.linear,
+          );
+        }
+
         // Provider에서 최신 데이터 다시 가져오기
-        await groupProvider.fetchMyGroups(forceRefresh: true);
+        final friendProvider = context.read<FriendProvider>();
+        await groupProvider.fetchMyGroups(
+          forceRefresh: true,
+          friendProvider: friendProvider,
+        );
       }
+
+      // 🎯 롤백 후 reorder 플래그 해제
+      if (mounted) {
+        setState(() {
+          _isReordering = false;
+        });
+      }
+
       if (mounted) {
         ErrorHandler.showError(context, '그룹 순서 변경에 실패했습니다: $e');
       }
       return;
     }
-
-    // 6) 멤버 썸네일 애니메이션 실행
-    _memberAnimationController
-      ..reset()
-      ..forward();
   }
 
   /// 드래그 가능한 그룹 디스크 (LongPressDraggable + DragTarget)
   Widget _buildDraggableGroupDisc(Group group, int groupIndex) {
-    // 시스템 그룹(isSystem = true)은 reorder 불가능
-    final canReorder = group.isSystem != true;
+    // 🎯 그룹이 2개 이상이면 reorder 가능
+    final canReorder = _groups.length >= 2;
 
     if (!canReorder) {
       // reorder 불가능한 그룹은 일반 디스크로 표시
@@ -712,17 +809,7 @@ class _GroupSelectionScreenState extends State<GroupSelectionScreen>
           });
         }
 
-        // 드래그 종료 후 현재 페이지로 스냅
-        if (_pageController.hasClients) {
-          _pageController.animateToPage(
-            _currentGroupIndex,
-            duration: const Duration(milliseconds: 300),
-            curve: Curves.easeOut,
-          );
-        }
-
-        // 🎯 페이지 애니메이션 끝날 때까지 기다림 (드래그 모드 종료 지연)
-        await Future.delayed(const Duration(milliseconds: 350));
+        // 🎯 드래그 종료 시 페이지 이동은 _reorderGroup 내부에서 처리되므로 여기서는 제거
 
         if (!mounted) return;
 
@@ -741,15 +828,19 @@ class _GroupSelectionScreenState extends State<GroupSelectionScreen>
           if (updatedGroups.length != _groups.length) {
             setState(() {
               _groups = List<Group>.from(updatedGroups);
-              if (_currentGroupIndex >= _groups.length) {
-                _currentGroupIndex =
-                    _groups.length > 0 ? _groups.length - 1 : 0;
-              }
+              // ❌ _currentGroupIndex 직접 변경 금지 - PageView가 onPageChanged로 변경하도록 맡김
             });
 
-            // PageView index 재동기화
+            // PageView index 재동기화 (범위 체크)
             if (_pageController.hasClients && _groups.isNotEmpty) {
-              _pageController.jumpToPage(_currentGroupIndex);
+              if (_currentGroupIndex >= _groups.length) {
+                final targetIndex = _groups.length > 0 ? _groups.length - 1 : 0;
+                _pageController.animateToPage(
+                  targetIndex,
+                  duration: const Duration(milliseconds: 1),
+                  curve: Curves.linear,
+                );
+              }
             }
           }
         });
@@ -770,14 +861,11 @@ class _GroupSelectionScreenState extends State<GroupSelectionScreen>
       ),
       child: DragTarget<int>(
         onWillAccept: (from) {
-          // 🎯 드래그 중이 아니거나, 시스템 그룹이면 거부
+          // 🎯 드래그 중이 아니거나, 그룹이 2개 미만이면 거부
           if (!_isDragMode || !canReorder) return false;
+          if (_groups.length < 2) return false;
           if (from == null) return false;
           if (from < 0 || from >= _groups.length) return false;
-          if (_groups[from].isSystem == true ||
-              _groups[groupIndex].isSystem == true) {
-            return false;
-          }
           return from != groupIndex;
         },
         onAccept: (from) async {
@@ -899,12 +987,76 @@ class _GroupSelectionScreenState extends State<GroupSelectionScreen>
                         child: ClipOval(
                           child:
                               group.profileImageUrl != null &&
-                                      group.profileImageUrl!.isNotEmpty
-                                  ? Image.network(
-                                    group.profileImageUrl!,
+                                      group.profileImageUrl!.isNotEmpty &&
+                                      (group.profileImageUrl!.startsWith(
+                                            'http://',
+                                          ) ||
+                                          group.profileImageUrl!.startsWith(
+                                            'https://',
+                                          ))
+                                  ? CachedNetworkImage(
+                                    imageUrl: group.profileImageUrl!,
                                     fit: BoxFit.cover,
                                     width: 200,
                                     height: 200,
+                                    placeholder:
+                                        (context, url) => Container(
+                                          width: 200,
+                                          height: 200,
+                                          color:
+                                              Theme.of(
+                                                context,
+                                              ).colorScheme.surface,
+                                          child: Center(
+                                            child: CircularProgressIndicator(
+                                              strokeWidth: 2,
+                                              valueColor:
+                                                  AlwaysStoppedAnimation<Color>(
+                                                    Theme.of(context)
+                                                        .colorScheme
+                                                        .onSurface
+                                                        .withOpacity(0.3),
+                                                  ),
+                                            ),
+                                          ),
+                                        ),
+                                    errorWidget: (context, url, error) {
+                                      // 네트워크 이미지 로드 실패 시 플레이스홀더 표시
+                                      return Container(
+                                        decoration: BoxDecoration(
+                                          shape: BoxShape.circle,
+                                          gradient: LinearGradient(
+                                            begin: Alignment.topLeft,
+                                            end: Alignment.bottomRight,
+                                            colors: [
+                                              GroupColorPalette.getColor(
+                                                group.id,
+                                              ).withOpacity(0.55),
+                                              GroupColorPalette.getColor(
+                                                group.id,
+                                              ),
+                                              GroupColorPalette.getColor(
+                                                group.id,
+                                              ).withOpacity(0.95),
+                                            ],
+                                            stops: const [0.0, 0.5, 1.0],
+                                          ),
+                                        ),
+                                        child: Container(
+                                          decoration: BoxDecoration(
+                                            shape: BoxShape.circle,
+                                            gradient: RadialGradient(
+                                              center: Alignment(-0.4, -0.4),
+                                              radius: 1.0,
+                                              colors: [
+                                                Colors.white.withOpacity(0.12),
+                                                Colors.transparent,
+                                              ],
+                                            ),
+                                          ),
+                                        ),
+                                      );
+                                    },
                                   )
                                   : Container(
                                     decoration: BoxDecoration(
@@ -943,32 +1095,12 @@ class _GroupSelectionScreenState extends State<GroupSelectionScreen>
                       ),
                     ),
 
-                    // 🎯 중앙에 멤버 수 표시 (시스템 그룹은 제외)
-                    if (group.isSystem == true)
-                      // 🐱 시스템 그룹(전체 친구): 고양이 이미지 표시
-                      Center(
-                        child: Padding(
-                          padding: const EdgeInsets.only(left: 4.0),
-                          child: ClipOval(
-                            child: Image.asset(
-                              'assets/images/doppy_nobg.png',
-                              width: 40,
-                              height: 40,
-                              color: Colors.white,
-                              fit: BoxFit.contain,
-                            ),
-                          ),
-                        ),
-                      )
-                    else
-                      // 일반 그룹: 멤버 수 표시
-                      Center(
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 16,
-                            vertical: 8,
-                          ),
-                          child: Text(
+                    // 🎯 중앙에 멤버 수 · 포스트 수 표시 (모든 그룹에 동일하게 적용)
+                    Center(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
                             '${group.memberCount ?? 0}',
                             style: TextStyle(
                               fontSize: 24,
@@ -978,8 +1110,24 @@ class _GroupSelectionScreenState extends State<GroupSelectionScreen>
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                           ),
-                        ),
+                          if (group.postCount != null &&
+                              (group.postCount ?? 0) > 0)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 4),
+                              child: Text(
+                                '${group.postCount} ${context.tr('post')}',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w500,
+                                  color: Colors.white.withOpacity(0.8),
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                        ],
                       ),
+                    ),
 
                     // 재생 버튼 (오른쪽)
                     if (group.id != -1)
@@ -999,21 +1147,14 @@ class _GroupSelectionScreenState extends State<GroupSelectionScreen>
                           ),
                         ),
                       ),
-                    // 멤버 프로필 썸네일 (우측 하단) - 현재 페이지일 때만 표시
-                    if (groupIndex == _currentGroupIndex)
-                      Positioned(
-                        right: 10,
-                        bottom: 0,
-                        child: _buildMemberThumbnails(group),
-                      ),
                   ],
                 ),
               ),
             ),
             const SizedBox(height: 16),
-            // 그룹 이름
+            // 그룹 이름 (로케일 적용)
             Text(
-              group.name,
+              _getGroupDisplayName(context, group),
               style: TextStyle(
                 fontSize: 18,
                 fontWeight: FontWeight.w700,
@@ -1036,142 +1177,6 @@ class _GroupSelectionScreenState extends State<GroupSelectionScreen>
               textAlign: TextAlign.center,
             ),
           ],
-        ),
-      ),
-    );
-  }
-
-  /// 이니셜 아바타 생성
-  Widget _buildInitialAvatar(String username) {
-    final initial = username.isNotEmpty ? username[0].toUpperCase() : '?';
-    final colors = [
-      const Color(0xFFFF6B6B), // 빨강
-      const Color(0xFF4ECDC4), // 청록
-      const Color(0xFFFFE66D), // 노랑
-      const Color(0xFF95E1D3), // 민트
-      const Color(0xFFF38181), // 핑크
-    ];
-    final colorIndex = username.hashCode.abs() % colors.length;
-
-    return Container(
-      color: colors[colorIndex],
-      child: Center(
-        child: Text(
-          initial,
-          style: const TextStyle(
-            fontSize: 18,
-            fontWeight: FontWeight.bold,
-            color: Colors.white,
-          ),
-        ),
-      ),
-    );
-  }
-
-  /// 멤버 프로필 썸네일 (겹쳐서 표시)
-  Widget _buildMemberThumbnails(Group group) {
-    // 🎯 서버에서 제공하는 memberThumbnails와 memberCount 사용
-    final thumbnails = group.memberThumbnails ?? [];
-    final totalMembers = group.memberCount ?? 0;
-
-    if (totalMembers == 0) {
-      return const SizedBox.shrink();
-    }
-
-    // 🎯 최대 3명까지 썸네일 표시, 나머지는 +N으로 표시
-    final thumbnailsToShow = thumbnails.take(3).toList();
-    final showPlusN = totalMembers > thumbnailsToShow.length;
-    final remainingCount = totalMembers - thumbnailsToShow.length;
-
-    // 표시할 아이템 개수 (썸네일 + +N)
-    final displayCount = thumbnailsToShow.length + (showPlusN ? 1 : 0);
-
-    // 🎯 실제 표시될 너비 계산 (멤버 수에 따라 동적 조정)
-    final actualWidth = 40.0 + (displayCount - 1) * 24.0;
-
-    return Container(
-      // 🎯 1명일 때 왼쪽으로 이동하기 위한 마진
-      margin: EdgeInsets.only(right: displayCount == 1 ? 15 : 0),
-      child: SizedBox(
-        width: actualWidth + 10,
-        height: 40,
-        child: Stack(
-          children: List.generate(displayCount, (index) {
-            // 🎯 마지막이 +N인 경우
-            if (showPlusN && index == thumbnailsToShow.length) {
-              return AnimatedBuilder(
-                animation: _memberAnimation,
-                builder: (context, child) {
-                  final positionProgress = _memberAnimation.value;
-                  final targetLeft = index * 24.0;
-
-                  return Positioned(
-                    left: targetLeft * positionProgress,
-                    child: SizedBox(
-                      width: 40,
-                      height: 40,
-                      child: Center(
-                        child: Padding(
-                          padding: const EdgeInsets.only(top: 15.0),
-                          child: Text(
-                            '+$remainingCount',
-                            style: TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.bold,
-                              color: Theme.of(
-                                context,
-                              ).colorScheme.onSurface.withOpacity(0.6),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  );
-                },
-              );
-            }
-
-            // 일반 멤버 썸네일 (서버 데이터 사용)
-            final thumbnailUrl = thumbnailsToShow[index];
-
-            return AnimatedBuilder(
-              animation: _memberAnimation,
-              builder: (context, child) {
-                // 위치는 동시에 이동
-                final positionProgress = _memberAnimation.value;
-                final targetLeft = index * 24.0; // 최종 위치
-
-                return Positioned(
-                  left: targetLeft * positionProgress, // 동시에 이동
-                  child: Container(
-                    width: 40,
-                    height: 40,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      border: Border.all(color: Colors.white, width: 2),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.2),
-                          blurRadius: 4,
-                          offset: const Offset(0, 2),
-                        ),
-                      ],
-                    ),
-                    child: ClipOval(
-                      child: Image.network(
-                        thumbnailUrl,
-                        fit: BoxFit.cover,
-                        errorBuilder: (context, error, stackTrace) {
-                          // 이미지 로드 실패 시 이니셜 표시
-                          return _buildInitialAvatar('User${index + 1}');
-                        },
-                      ),
-                    ),
-                  ),
-                );
-              },
-            );
-          }),
         ),
       ),
     );
@@ -1257,7 +1262,8 @@ class _GroupSelectionScreenState extends State<GroupSelectionScreen>
 
       if (success) {
         // 그룹 목록 새로고침
-        await groupProvider.fetchMyGroups();
+        final friendProvider = context.read<FriendProvider>();
+        await groupProvider.fetchMyGroups(friendProvider: friendProvider);
 
         // 🎯 새로 생성된 그룹으로 이동
         // 시스템 그룹 개수를 계산하여 새 그룹 위치 결정
@@ -1299,5 +1305,15 @@ class _GroupSelectionScreenState extends State<GroupSelectionScreen>
         );
       }
     }
+  }
+
+  /// 🎯 그룹 표시 이름 가져오기 (로케일 적용)
+  /// allFriends 그룹은 "전체 친구" / "All Friends"로 표시
+  String _getGroupDisplayName(BuildContext context, Group group) {
+    // 🎯 시스템 그룹인 경우 로케일 적용
+    if (group.isSystem == true) {
+      return context.tr('all_friends');
+    }
+    return group.name;
   }
 }

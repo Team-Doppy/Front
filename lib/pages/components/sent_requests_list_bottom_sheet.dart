@@ -1,4 +1,3 @@
-import 'dart:ui' as ui;
 import 'package:doppy/data/models/friend_model.dart';
 import 'package:doppy/data/models/user_model.dart';
 import 'package:doppy/l10n/app_localizations.dart';
@@ -22,14 +21,7 @@ class SentRequestsListBottomSheet extends StatefulWidget {
       context: context,
       backgroundColor: Colors.transparent,
       isScrollControlled: true,
-      builder:
-          (context) => BackdropFilter(
-            filter: ui.ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-            child: Container(
-              decoration: BoxDecoration(color: Colors.black.withOpacity(0.3)),
-              child: const SentRequestsListBottomSheet(),
-            ),
-          ),
+      builder: (context) => SentRequestsListBottomSheet(),
     );
   }
 }
@@ -75,38 +67,18 @@ class _SentRequestsListBottomSheetState
                   Padding(
                     padding: const EdgeInsets.symmetric(
                       horizontal: 20,
-                      vertical: 16,
+                      vertical: 8,
                     ),
                     child: Row(
                       children: [
                         Text(
-                          context.tr('sent_requests'),
+                          "${context.tr('sent_requests')} (${sentRequests.length})",
                           style: TextStyle(
-                            fontSize: 24,
+                            fontSize: 20,
                             fontWeight: FontWeight.bold,
                             color: Theme.of(context).colorScheme.onSurface,
                           ),
                         ),
-                        const SizedBox(width: 8),
-                        if (sentRequests.isNotEmpty)
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 8,
-                              vertical: 4,
-                            ),
-                            decoration: BoxDecoration(
-                              color: Theme.of(context).colorScheme.primary,
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            child: Text(
-                              '${sentRequests.length}',
-                              style: const TextStyle(
-                                fontSize: 14,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.white,
-                              ),
-                            ),
-                          ),
                       ],
                     ),
                   ),
@@ -118,25 +90,7 @@ class _SentRequestsListBottomSheetState
                             ? Center(
                               child: Column(
                                 mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Icon(
-                                    Icons.send_outlined,
-                                    size: 64,
-                                    color: Theme.of(
-                                      context,
-                                    ).colorScheme.onSurface.withOpacity(0.3),
-                                  ),
-                                  const SizedBox(height: 16),
-                                  Text(
-                                    context.tr('no_sent_requests'),
-                                    style: TextStyle(
-                                      fontSize: 16,
-                                      color: Theme.of(
-                                        context,
-                                      ).colorScheme.onSurface.withOpacity(0.7),
-                                    ),
-                                  ),
-                                ],
+                                children: [],
                               ),
                             )
                             : ListView.builder(
@@ -145,8 +99,35 @@ class _SentRequestsListBottomSheetState
                                 horizontal: 20,
                                 vertical: 8,
                               ),
-                              itemCount: sentRequests.length,
+                              itemCount: sentRequests.length +
+                                  (friendProvider.hasMoreSentRequests ||
+                                          friendProvider.isLoadingMoreSentRequests
+                                      ? 1
+                                      : 0),
                               itemBuilder: (context, index) {
+                                // 🎯 마지막 아이템에 도달하면 더 불러오기
+                                if (index == sentRequests.length - 3 &&
+                                    friendProvider.hasMoreSentRequests &&
+                                    !friendProvider.isLoadingMoreSentRequests) {
+                                  WidgetsBinding.instance.addPostFrameCallback(
+                                    (_) {
+                                      friendProvider.loadMoreSentRequests();
+                                    },
+                                  );
+                                }
+
+                                // 🎯 로딩 인디케이터
+                                if (index >= sentRequests.length) {
+                                  return Padding(
+                                    padding: const EdgeInsets.all(16.0),
+                                    child: Center(
+                                      child: friendProvider.isLoadingMoreSentRequests
+                                          ? const CircularProgressIndicator()
+                                          : const SizedBox.shrink(),
+                                    ),
+                                  );
+                                }
+
                                 final friend = sentRequests[index];
                                 return _buildRequestTile(context, friend);
                               },
@@ -279,12 +260,18 @@ class _SentRequestsListBottomSheetState
           // 취소 성공 (이미 FriendProvider에서 목록 업데이트됨)
           // 스낵바는 표시하지 않음 (사용자 요청에 따라)
         } else {
-          ErrorHandler.showError(context, context.tr('error_occurred_simple'));
+          ErrorHandler.showError(
+            context,
+            context.tr('friend_request_cancel_failed'),
+          );
         }
       }
     } catch (e) {
       if (mounted) {
-        ErrorHandler.showError(context, context.tr('error_occurred_simple'));
+        ErrorHandler.showError(
+          context,
+          context.tr('friend_request_cancel_failed'),
+        );
       }
     } finally {
       if (mounted) {

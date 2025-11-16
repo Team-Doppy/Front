@@ -1,9 +1,6 @@
 import 'dart:math' as math;
-import 'package:cached_network_image/cached_network_image.dart';
-import 'package:doppy/common/widgets/image_error_placeholder.dart';
 import 'package:doppy/l10n/app_localizations.dart';
 import 'package:doppy/pages/components/card_view.dart';
-import 'package:doppy/pages/components/shimmer_box.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -933,14 +930,24 @@ class _VerticalCategorySectionState extends State<VerticalCategorySection> {
       ),
     );
 
-    // 포스트가 삭제된 경우 피드를 다시 로드
-    if (result != null && result['deleted'] == true) {
-      print('[VerticalCategorySection] 포스트 삭제 감지 - 피드 새로고침 시작');
-      final provider = context.read<BaseFeedProvider>();
-      provider.clearInMemory();
-      provider.setNetworkError(null);
-      await provider.loadInitial(force: true);
-      print('[VerticalCategorySection] 피드 새로고침 완료');
+    // 🎯 포스트 삭제 또는 공개 범위 변경 시 피드 새로고침
+    if (result != null) {
+      if (result['deleted'] == true) {
+        print('[VerticalCategorySection] 포스트 삭제 감지 - 피드 새로고침 시작');
+        final provider = context.read<BaseFeedProvider>();
+        provider.clearInMemory();
+        provider.setNetworkError(null);
+        await provider.loadInitial(force: true);
+        print('[VerticalCategorySection] 피드 새로고침 완료');
+      } else if (result['accessLevelChanged'] == true) {
+        // 🎯 공개 범위 변경 감지 - 피드 새로고침
+        print('[VerticalCategorySection] 공개 범위 변경 감지 - 피드 새로고침 시작');
+        final provider = context.read<BaseFeedProvider>();
+        provider.clearInMemory();
+        provider.setNetworkError(null);
+        await provider.loadInitial(force: true);
+        print('[VerticalCategorySection] 피드 새로고침 완료 (공개 범위 변경)');
+      }
     }
   }
 

@@ -53,8 +53,9 @@ class GroupService {
     }
   }
 
-  /// 18. 내가 소유한 그룹 목록 조회
-  Future<List<Group>> getMyGroups() async {
+  /// 18. 내가 소유한 그룹 목록 조회 (allFriends 메타데이터 포함)
+  /// 반환값: (groups, allFriendsDisplayOrder, allFriendsImage, allFriendsGroupId, totalFriendCount, allFriendsDescription)
+  Future<(List<Group>, int, String?, int?, int?, String?)> getMyGroups() async {
     try {
       print('🔍 [GroupService] 내가 소유한 그룹 목록 조회 시작');
 
@@ -67,7 +68,14 @@ class GroupService {
         final decoded = response.data;
 
         List<Group> groups;
+        int allFriendsDisplayOrder = 0;
+        String? allFriendsImage;
+        int? allFriendsGroupId;
+        int? totalFriendCount;
+        String? allFriendsDescription;
+
         if (decoded is List) {
+          // 🎯 리스트 형태인 경우 (구형 API 응답)
           groups =
               decoded.map<Group>((item) {
                 // 각 항목이 { "group": { ... } } 형태로 래핑되어 있을 수 있음
@@ -77,6 +85,7 @@ class GroupService {
                 return Group.fromJson(item as Map<String, dynamic>);
               }).toList();
         } else if (decoded is Map<String, dynamic>) {
+          // 🎯 객체 형태인 경우 (신형 API 응답)
           final dynamic groupsData =
               decoded['groups'] ??
               decoded['data'] ??
@@ -99,13 +108,41 @@ class GroupService {
             print('⚠️ [GroupService] 예상치 못한 응답 구조입니다. groups 배열을 찾지 못했습니다.');
             groups = <Group>[];
           }
+
+          // 🎯 allFriends 메타데이터 추출
+          allFriendsDisplayOrder =
+              (decoded['allFriendsDisplayOrder'] as num?)?.toInt() ?? 0;
+          allFriendsImage =
+              decoded['allFriendsImageUrl']?.toString() ??
+              decoded['allFriendsImage']?.toString();
+          final allFriendsGroupIdValue = decoded['allFriendsGroupId'];
+          if (allFriendsGroupIdValue != null) {
+            allFriendsGroupId =
+                (allFriendsGroupIdValue as num?)?.toInt() ??
+                (allFriendsGroupIdValue is int ? allFriendsGroupIdValue : null);
+          }
+          // 🎯 totalFriendCount 파싱
+          totalFriendCount = (decoded['totalFriendCount'] as num?)?.toInt();
+          // 🎯 allFriendsDescription 파싱
+          allFriendsDescription = decoded['allFriendsDescription']?.toString();
+
+          print(
+            '📋 [GroupService] allFriends 메타데이터 - displayOrder: $allFriendsDisplayOrder, image: $allFriendsImage, groupId: $allFriendsGroupId, totalFriendCount: $totalFriendCount, description: $allFriendsDescription',
+          );
         } else {
           print('⚠️ [GroupService] 알 수 없는 응답 형태입니다.');
           groups = <Group>[];
         }
 
         print('✅ [GroupService] 변환된 그룹 수: ${groups.length}');
-        return groups;
+        return (
+          groups,
+          allFriendsDisplayOrder,
+          allFriendsImage,
+          allFriendsGroupId,
+          totalFriendCount,
+          allFriendsDescription,
+        );
       } else {
         print(
           '❌ [GroupService] API 오류: ${response.statusCode} - ${response.data}',
@@ -383,6 +420,52 @@ class GroupService {
     }
   }
 
+  /// 26. 전체 친구 그룹 수정 (설명, 이미지만)
+  Future<Map<String, dynamic>> updateAllFriendsGroup({
+    String? description,
+    String? groupImage,
+  }) async {
+    try {
+      print('🔍 [GroupService] 전체 친구 그룹 수정 시작');
+      print('🔍 [GroupService] 새 설명: $description, 이미지: $groupImage');
+
+      final Map<String, dynamic> body = {};
+      if (description != null && description.isNotEmpty) {
+        body['description'] = description;
+      }
+
+      // 🎯 이미지 처리: 빈 문자열이면 빈 문자열로 전송 (기본 이미지), 값이 있으면 포함
+      if (groupImage != null) {
+        body['groupImage'] = groupImage; // 빈 문자열 포함하여 그대로 전송
+      }
+      // groupImage가 null이면 필드 생략 (변경하지 않음)
+
+      final response = await _dio.put('/api/groups/all-friends', data: body);
+
+      print('📡 [GroupService] API 응답 상태: ${response.statusCode}');
+      print('📡 [GroupService] API 응답 데이터: ${response.data}');
+
+      if (response.statusCode == 200) {
+        final responseData = response.data;
+        print('✅ [GroupService] 전체 친구 그룹 수정 성공');
+        return responseData;
+      } else {
+        print(
+          '❌ [GroupService] API 오류: ${response.statusCode} - ${response.data}',
+        );
+        throw Exception('전체 친구 그룹 수정 실패: ${response.statusCode}');
+      }
+    } catch (e) {
+      print('❌ [GroupService] 전체 친구 그룹 수정 중 예외 발생: $e');
+      if (e is DioException) {
+        print(
+          '❌ [GroupService] Dio 에러: ${e.response?.statusCode} - ${e.response?.data}',
+        );
+      }
+      rethrow;
+    }
+  }
+
   /// 3. 그룹 수정 (이름, 설명, 이미지)
   Future<Map<String, dynamic>> updateGroup(
     int groupId,
@@ -399,9 +482,13 @@ class GroupService {
       final Map<String, dynamic> body = {
         'name': name,
         'description': description,
-        if (profileImageUrl != null && profileImageUrl.isNotEmpty)
-          'groupImage': profileImageUrl, // 🎯 이미지 URL 포함
       };
+
+      // 🎯 이미지 URL 처리: 빈 문자열이면 빈 문자열로 전송 (기본 이미지), 값이 있으면 포함
+      if (profileImageUrl != null) {
+        body['groupImage'] = profileImageUrl; // 빈 문자열 포함하여 그대로 전송
+      }
+      // profileImageUrl이 null이면 필드 생략 (변경하지 않음)
 
       final response = await _dio.put('/api/groups/$groupId', data: body);
 

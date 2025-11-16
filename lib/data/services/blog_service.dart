@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:doppy/data/services/base_api_service.dart';
+import 'package:doppy/utils/access_level_parser.dart';
 
 class BlogService {
   static final BlogService _instance = BlogService._internal();
@@ -178,6 +179,56 @@ class BlogService {
           throw Exception('인증이 필요합니다.');
         } else {
           rethrow; // 기타 네트워크 에러도 그대로 전달
+        }
+      }
+      rethrow;
+    }
+  }
+
+  /// 특정 포스트 중심 오프셋 조회
+  /// 포스트 ID를 중심으로 앞뒤 포스트를 조회합니다.
+  Future<Map<String, dynamic>> getProfilePostsAround(
+    String username,
+    String postId, {
+    int size = 20,
+  }) async {
+    print('[BlogService] 프로필 포스트 오프셋 조회: $username postId=$postId size=$size');
+
+    try {
+      final response = await _dio.get(
+        '/api/profile/feed/posts/$username/around/$postId',
+        queryParameters: {'size': size},
+        options: Options(receiveTimeout: const Duration(seconds: 10)),
+      );
+
+      final data = response.data as Map<String, dynamic>;
+
+      print('[BlogService] 오프셋 조회 응답 상태: ${response.statusCode}');
+      if (data.containsKey('data') && data['data'] is Map) {
+        final dataMap = data['data'] as Map<String, dynamic>;
+        if (dataMap.containsKey('posts') && dataMap['posts'] is List) {
+          final posts = dataMap['posts'] as List;
+          print('[BlogService] 오프셋 조회 포스트 개수: ${posts.length}');
+        }
+      }
+
+      return data;
+    } catch (e) {
+      print('[BlogService] 프로필 포스트 오프셋 조회 실패: $e');
+
+      if (e is DioException) {
+        if (e.type == DioExceptionType.connectionError ||
+            e.type == DioExceptionType.connectionTimeout ||
+            e.type == DioExceptionType.sendTimeout ||
+            e.type == DioExceptionType.receiveTimeout) {
+          rethrow;
+        }
+        if (e.response?.statusCode == 404) {
+          throw Exception('포스트를 찾을 수 없습니다.');
+        } else if (e.response?.statusCode == 401) {
+          throw Exception('인증이 필요합니다.');
+        } else {
+          rethrow;
         }
       }
       rethrow;
@@ -637,40 +688,13 @@ class BlogService {
     // 서버 DTO에 맞춰 매핑: title, author, thumbnailImageUrl, content(JsonNode), accessLevel
     // accessLevel은 PostExporter에서 직접 설정한 값만 사용 (PUBLIC | PRIVATE | FRIENDS | GROUPS)
     // visibility 객체는 사용하지 않음
-    final dynamic accessLevelRaw = postData['accessLevel'];
-    String accessLevel;
-    if (accessLevelRaw != null) {
-      accessLevel = accessLevelRaw.toString().toUpperCase();
-      // 유효한 값인지 검증
-      if (accessLevel != 'PRIVATE' &&
-          accessLevel != 'GROUPS' &&
-          accessLevel != 'FRIENDS') {
-        accessLevel = 'PUBLIC'; // 기본값
-      }
-      debugPrint('[UploadPost] accessLevel: $accessLevel');
-    } else {
-      // accessLevel이 없으면 기본값으로 PUBLIC 설정
-      accessLevel = 'PUBLIC';
-      debugPrint('[UploadPost] accessLevel not found, using default: PUBLIC');
-    }
-
-    // sharedGroupIds 추출
-    List<int>? sharedGroupIds;
-    if (postData['sharedGroupIds'] != null) {
-      final dynamic sgIds = postData['sharedGroupIds'];
-      if (sgIds is List) {
-        sharedGroupIds =
-            sgIds
-                .map((e) {
-                  if (e is int) return e;
-                  if (e is String) return int.tryParse(e) ?? 0;
-                  return (e as num?)?.toInt() ?? 0;
-                })
-                .where((id) => id > 0)
-                .toList();
-      }
-      debugPrint('[UploadPost] sharedGroupIds: $sharedGroupIds');
-    }
+    // 🎯 공통 파싱 유틸리티 사용
+    final accessLevel =
+        AccessLevelParser.parseAccessLevelString(postData['accessLevel']) ??
+        'PUBLIC';
+    final sharedGroupIds = AccessLevelParser.parseSharedGroupIds(
+      postData['sharedGroupIds'],
+    );
 
     // content(JsonNode) 전송: 문자열이면 decode, 맵/리스트면 그대로 사용
     dynamic contentJson = postData['content'];
@@ -823,40 +847,13 @@ class BlogService {
 
     // 서버 DTO 규격에 맞게 업데이트 바디 구성
     // accessLevel은 postData에서 직접 읽기 (visibility 객체 사용 안 함)
-    final dynamic accessLevelRaw = postData['accessLevel'];
-    String accessLevel;
-    if (accessLevelRaw != null) {
-      accessLevel = accessLevelRaw.toString().toUpperCase();
-      // 유효한 값인지 검증
-      if (accessLevel != 'PRIVATE' &&
-          accessLevel != 'GROUPS' &&
-          accessLevel != 'FRIENDS') {
-        accessLevel = 'PUBLIC'; // 기본값
-      }
-      debugPrint('[UpdatePost] accessLevel: $accessLevel');
-    } else {
-      // accessLevel이 없으면 기본값으로 PUBLIC 설정
-      accessLevel = 'PUBLIC';
-      debugPrint('[UpdatePost] accessLevel not found, using default: PUBLIC');
-    }
-
-    // sharedGroupIds 추출
-    List<int>? sharedGroupIds;
-    if (postData['sharedGroupIds'] != null) {
-      final dynamic sgIds = postData['sharedGroupIds'];
-      if (sgIds is List) {
-        sharedGroupIds =
-            sgIds
-                .map((e) {
-                  if (e is int) return e;
-                  if (e is String) return int.tryParse(e) ?? 0;
-                  return (e as num?)?.toInt() ?? 0;
-                })
-                .where((id) => id > 0)
-                .toList();
-      }
-      debugPrint('[UpdatePost] sharedGroupIds: $sharedGroupIds');
-    }
+    // 🎯 공통 파싱 유틸리티 사용
+    final accessLevel =
+        AccessLevelParser.parseAccessLevelString(postData['accessLevel']) ??
+        'PUBLIC';
+    final sharedGroupIds = AccessLevelParser.parseSharedGroupIds(
+      postData['sharedGroupIds'],
+    );
 
     dynamic contentJson = postData['content'];
     if (contentJson is String && contentJson.isNotEmpty) {
@@ -971,6 +968,55 @@ class BlogService {
     } catch (e) {
       print('[BlogService] Exception: $e');
       // 네트워크 에러는 상위로 전파 (빈 배열 반환하지 않음)
+      rethrow;
+    }
+  }
+
+  /// 내가 작성한 FRIENDS 공개 범위 포스트 조회 (allFriends 그룹용)
+  ///
+  /// [page] - 페이지 번호 (0부터 시작)
+  /// [size] - 페이지 크기
+  /// [includeContent] - content 포함 여부
+  ///
+  /// Returns: 포스트 목록 (Map<String, dynamic> 리스트)
+  Future<List<Map<String, dynamic>>> getMyFriendsPosts({
+    int page = 0,
+    int size = 10,
+    bool includeContent = false,
+  }) async {
+    try {
+      print(
+        '[BlogService] 내 FRIENDS 포스트 조회 시작 - page: $page, size: $size, includeContent: $includeContent',
+      );
+
+      final response = await _dio.get(
+        '/api/posts/my-friends-posts',
+        queryParameters: {
+          'page': page,
+          'size': size,
+          'includeContent': includeContent,
+        },
+        options: Options(receiveTimeout: const Duration(seconds: 10)),
+      );
+
+      print('[BlogService] 내 FRIENDS 포스트 조회 응답 상태: ${response.statusCode}');
+
+      if (response.statusCode == 200) {
+        final data = response.data as Map<String, dynamic>;
+        final postsList = (data['content'] as List?) ?? [];
+        print('[BlogService] 내 FRIENDS 포스트 조회 성공 - 포스트 수: ${postsList.length}');
+        return postsList.cast<Map<String, dynamic>>();
+      } else {
+        throw Exception('내 FRIENDS 포스트 조회 실패: ${response.statusCode}');
+      }
+    } catch (e) {
+      print('[BlogService] 내 FRIENDS 포스트 조회 에러: $e');
+      if (e is DioException) {
+        print(
+          '[BlogService] Dio 에러: ${e.response?.statusCode} - ${e.response?.data}',
+        );
+        throw Exception('내 FRIENDS 포스트 조회 실패: ${e.response?.statusCode}');
+      }
       rethrow;
     }
   }

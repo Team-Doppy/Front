@@ -1,4 +1,5 @@
 import 'package:doppy/data/models/post_data.dart';
+import 'package:doppy/data/models/system_category_keys.dart';
 import 'package:doppy/pages/components/shimmer_box.dart';
 import 'package:doppy/providers/feed_provider/feed_ui_service.dart';
 import 'package:doppy/pages/components/vertical_category_section.dart';
@@ -56,6 +57,8 @@ class Feed {
                 authorProfileImageUrl: profileImageFromUser,
                 content: postData.content,
                 accessLevel: postData.accessLevel,
+                sharedGroupIds: postData.sharedGroupIds,
+                sharedGroupNames: postData.sharedGroupNames,
                 createdAt: postData.createdAt,
                 updatedAt: postData.updatedAt,
                 viewCount: postData.viewCount,
@@ -133,36 +136,19 @@ class Feed {
         // 단, filteredCategoryId가 있으면 커스텀 카테고리 상세보기이므로 시스템 필터를 무시
         if (filteredBase != BaseFilter.all && filteredCategoryId == null) {
           // systemCategoryMappings를 사용하여 포스트 필터링
-          String systemTitle;
-          String systemKey;
-          switch (filteredBase) {
-            case BaseFilter.private:
-              systemTitle = '나만보기';
-              systemKey = '나만보기';
-              break;
-            case BaseFilter.friends:
-              systemTitle = '친구공유';
-              systemKey = '친구공유';
-              break;
-            case BaseFilter.groups:
-              systemTitle = '그룹공유';
-              systemKey = '그룹공유';
-              break;
-            case BaseFilter.public:
-              systemTitle = '전체공개';
-              systemKey = '전체공개';
-              break;
-            case BaseFilter.all:
-              systemTitle = '전체';
-              systemKey = '';
-              break;
-          }
+          final systemKey = SystemCategoryKeys.fromBaseFilter(filteredBase);
+          final systemTitle =
+              systemKey != null
+                  ? SystemCategoryKeys.getDisplayText(context, systemKey)
+                  : context.tr('all');
 
           // systemCategoryMappings에서 포스트 ID 목록 가져오기
           final systemMappings = feedProvider.systemCategoryMappings;
           List<PostData> filteredPosts = [];
 
-          if (systemMappings != null && systemKey.isNotEmpty) {
+          if (systemMappings != null &&
+              systemKey != null &&
+              systemKey.isNotEmpty) {
             final postIdList = systemMappings[systemKey] as List?;
             if (postIdList != null && postIdList.isNotEmpty) {
               // 포스트 ID를 Set으로 변환 (빠른 조회를 위해)

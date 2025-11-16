@@ -104,11 +104,10 @@ class _FriendsGridState extends State<FriendsGrid> {
           widget.friendProv.receivedRequests; // 받은 요청(상단 우선)
       // List<Friend> sent = widget.friendProv.sentRequests; // 내가 보낸 요청은 제외
 
-      // 🎯 전체 친구 그룹인지 확인 (isSystem == true 또는 이름이 "allFriends")
+      // 🎯 전체 친구 그룹인지 확인 (isSystem == true)
       final isAllFriendsGroup =
           widget.selectedGroup != null &&
-          (widget.selectedGroup!.isSystem == true ||
-              widget.selectedGroup!.name.toLowerCase() == 'allfriends');
+          widget.selectedGroup!.isSystem == true;
 
       // 그룹이 선택된 경우 해당 그룹의 멤버만 필터링
       if (widget.selectedGroup != null) {
@@ -185,19 +184,51 @@ class _FriendsGridState extends State<FriendsGrid> {
 
       // 🎯 로딩 완료 후에만 "친구 없음" 메시지 표시
       if (tiles.isEmpty) {
-        return Center(
-          child: Text(
-            widget.selectedGroup != null
-                ? context
-                    .tr('no_friends_in_group')
-                    .replaceAll('{groupName}', widget.selectedGroup!.name)
-                : context.tr('no_friends_to_display'),
-            style: TextStyle(
-              color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
-            ),
+        // 🎯 빈 상태: 포스트 빈 상태와 동일한 구조로 통일
+        return SizedBox(
+          height: MediaQuery.of(context).size.height * 0.4, // 화면 높이의 40%
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Expanded(child: Container()), // 위쪽 간격
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                child: Text(
+                  widget.selectedGroup != null
+                      ? widget.selectedGroup!.isSystem == true
+                          ? context.tr('no_friends_to_display')
+                          : context
+                              .tr('no_friends_in_group')
+                              .replaceAll(
+                                '{groupName}',
+                                widget.selectedGroup!.name,
+                              )
+                      : context.tr('no_friends_to_display'),
+                  style: TextStyle(
+                    fontSize: 16,
+                    color: Theme.of(
+                      context,
+                    ).colorScheme.onSurface.withOpacity(0.7),
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+              ),
+              Expanded(child: Container()), // 아래쪽 간격
+            ],
           ),
         );
       }
+
+      // 🎯 전체 친구 그룹인 경우 accepted friends만 무한 스크롤
+      final bool shouldLoadMore =
+          isAllFriendsGroup &&
+          widget.friendProv.hasMoreAcceptedFriends &&
+          !widget.friendProv.isLoadingMoreAcceptedFriends;
+
+      final bool showLoadingIndicator =
+          isAllFriendsGroup &&
+          (widget.friendProv.isLoadingMoreAcceptedFriends ||
+              widget.friendProv.hasMoreAcceptedFriends);
 
       return RawScrollbar(
         controller: widget.scrollController,
@@ -214,8 +245,28 @@ class _FriendsGridState extends State<FriendsGrid> {
             crossAxisSpacing: 6,
             childAspectRatio: 0.82,
           ),
-          itemCount: tiles.length,
+          itemCount: tiles.length + (showLoadingIndicator ? 3 : 0),
           itemBuilder: (context, i) {
+            // 🎯 마지막에서 3번째 아이템에 도달하면 더 불러오기
+            if (isAllFriendsGroup && i == tiles.length - 3 && shouldLoadMore) {
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                widget.friendProv.loadMoreAcceptedFriends();
+              });
+            }
+
+            // 🎯 로딩 인디케이터
+            if (i >= tiles.length) {
+              return Center(
+                child:
+                    widget.friendProv.isLoadingMoreAcceptedFriends
+                        ? const Padding(
+                          padding: EdgeInsets.all(16.0),
+                          child: CircularProgressIndicator(),
+                        )
+                        : const SizedBox.shrink(),
+              );
+            }
+
             final t = tiles[i];
             return FriendTile(
               data: t,
@@ -349,8 +400,9 @@ class FriendTile extends StatelessWidget {
     final Color textColor = Theme.of(context).colorScheme.onSurface;
     final bool blur = data.state != FriendState.accepted;
     final groupProv = context.watch<GroupProvider>();
+    // 🎯 시스템 그룹이 아닌 첫 번째 그룹 선택
     final selectedGroup =
-        groupProv.myGroups.where((g) => g.id != -1).firstOrNull;
+        groupProv.myGroups.where((g) => g.isSystem != true).firstOrNull;
 
     Widget avatar = GestureDetector(
       onTap: () {

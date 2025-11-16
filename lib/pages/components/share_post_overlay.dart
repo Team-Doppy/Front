@@ -788,57 +788,78 @@ class _SharePostOverlayState extends State<SharePostOverlay> {
                               : Colors.grey.shade100, // 라이트: 기존 유지
                       borderRadius: BorderRadius.circular(8),
                     ),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            shareUrl,
-                            style: TextStyle(
-                              fontSize: 12,
-                              color:
-                                  isDark
-                                      ? Colors
-                                          .white // 🎯 다크: 희게
-                                      : Colors.grey.shade700, // 라이트: 기존 유지
-                            ),
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        GestureDetector(
-                          onTap: () async {
-                            await Clipboard.setData(
-                              ClipboardData(text: shareUrl),
-                            );
-                            if (mounted) {
-                              setState(() => _isBottomSheetCopied = true);
-                              setModalState(() {}); // 바텀시트 리빌드
+                    child: GestureDetector(
+                      onTap: () async {
+                        await Clipboard.setData(ClipboardData(text: shareUrl));
+                        if (mounted) {
+                          setState(() => _isBottomSheetCopied = true);
+                          setModalState(() {}); // 바텀시트 리빌드
 
-                              // 2초 후 아이콘만 복귀 (시트는 열린 상태 유지)
-                              Future.delayed(const Duration(seconds: 2), () {
-                                if (mounted) {
-                                  setState(() => _isBottomSheetCopied = false);
-                                  setModalState(() {}); // 아이콘 복귀
-                                }
-                              });
+                          // 2초 후 아이콘만 복귀 (시트는 열린 상태 유지)
+                          Future.delayed(const Duration(seconds: 2), () {
+                            if (mounted) {
+                              setState(() => _isBottomSheetCopied = false);
+                              setModalState(() {}); // 아이콘 복귀
                             }
-                          },
-                          child: AnimatedSwitcher(
-                            duration: const Duration(milliseconds: 200),
-                            child: Icon(
-                              _isBottomSheetCopied ? Icons.check : Icons.copy,
-                              key: ValueKey(_isBottomSheetCopied),
-                              size: 16,
-                              color:
-                                  _isBottomSheetCopied
-                                      ? Theme.of(context).colorScheme.onSurface
-                                      : (isDark
-                                          ? Colors.white70
-                                          : Colors.grey.shade600),
+                          });
+                        }
+                      },
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              shareUrl,
+                              style: TextStyle(
+                                fontSize: 12,
+                                color:
+                                    isDark
+                                        ? Colors
+                                            .white // 🎯 다크: 희게
+                                        : Colors.grey.shade700, // 라이트: 기존 유지
+                              ),
+                              overflow: TextOverflow.ellipsis,
                             ),
                           ),
-                        ),
-                      ],
+                          const SizedBox(width: 8),
+                          GestureDetector(
+                            onTap: () async {
+                              await Clipboard.setData(
+                                ClipboardData(text: shareUrl),
+                              );
+                              if (mounted) {
+                                setState(() => _isBottomSheetCopied = true);
+                                setModalState(() {}); // 바텀시트 리빌드
+
+                                // 2초 후 아이콘만 복귀 (시트는 열린 상태 유지)
+                                Future.delayed(const Duration(seconds: 2), () {
+                                  if (mounted) {
+                                    setState(
+                                      () => _isBottomSheetCopied = false,
+                                    );
+                                    setModalState(() {}); // 아이콘 복귀
+                                  }
+                                });
+                              }
+                            },
+                            child: AnimatedSwitcher(
+                              duration: const Duration(milliseconds: 200),
+                              child: Icon(
+                                _isBottomSheetCopied ? Icons.check : Icons.copy,
+                                key: ValueKey(_isBottomSheetCopied),
+                                size: 16,
+                                color:
+                                    _isBottomSheetCopied
+                                        ? Theme.of(
+                                          context,
+                                        ).colorScheme.onSurface
+                                        : (isDark
+                                            ? Colors.white70
+                                            : Colors.grey.shade600),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 ),

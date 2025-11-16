@@ -56,18 +56,7 @@ class DialogUtils {
                           textAlign: TextAlign.center,
                         ),
                         const SizedBox(height: 2),
-                        Text(
-                          message,
-                          style: TextStyle(
-                            color:
-                                isDark
-                                    ? Colors.white.withOpacity(0.6)
-                                    : Colors.black.withOpacity(0.6),
-                            fontSize: 13,
-                            fontWeight: FontWeight.w400,
-                          ),
-                          textAlign: TextAlign.center,
-                        ),
+                        _buildMessageWidget(message, isDark),
                       ],
                     ),
                   ),
@@ -289,6 +278,57 @@ class DialogUtils {
           ),
         );
       },
+    );
+  }
+
+  /// 메시지 위젯 빌드 (밑줄 지원)
+  static Widget _buildMessageWidget(String message, bool isDark) {
+    // 🎯 밑줄이 필요한 텍스트 감지 (예: "나만보기로 전환됩니다")
+    if (message.contains('나만보기로 전환됩니다')) {
+      final parts = message.split('나만보기로 전환됩니다');
+      if (parts.length == 2) {
+        return RichText(
+          textAlign: TextAlign.center,
+          text: TextSpan(
+            style: TextStyle(
+              color:
+                  isDark
+                      ? Colors.white.withOpacity(0.6)
+                      : Colors.black.withOpacity(0.6),
+              fontSize: 13,
+              fontWeight: FontWeight.w400,
+            ),
+            children: [
+              TextSpan(text: parts[0]),
+              TextSpan(
+                text: '나만보기로 전환됩니다',
+                style: TextStyle(
+                  decoration: TextDecoration.underline,
+                  decorationColor:
+                      isDark
+                          ? Colors.white.withOpacity(0.6)
+                          : Colors.black.withOpacity(0.6),
+                ),
+              ),
+              TextSpan(text: parts[1]),
+            ],
+          ),
+        );
+      }
+    }
+
+    // 🎯 일반 텍스트
+    return Text(
+      message,
+      style: TextStyle(
+        color:
+            isDark
+                ? Colors.white.withOpacity(0.6)
+                : Colors.black.withOpacity(0.6),
+        fontSize: 13,
+        fontWeight: FontWeight.w400,
+      ),
+      textAlign: TextAlign.center,
     );
   }
 

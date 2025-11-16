@@ -17,6 +17,7 @@ import 'package:doppy/editor/overlay/thumbnail_edit_overlay.dart';
 import 'package:doppy/providers/user_provider.dart';
 import 'package:doppy/data/services/blog_service.dart';
 import 'package:doppy/providers/feed_provider/my_profile_feed_provider.dart';
+import 'package:doppy/utils/access_level_parser.dart';
 import 'package:super_editor/super_editor.dart';
 
 class EditModeAppBar extends StatefulWidget {
@@ -153,15 +154,14 @@ class _EditModeAppBarState extends State<EditModeAppBar> {
         }
         _cachedCategories = categories;
 
-        // 공개범위 메타데이터 반영 (친구공개/그룹공개 포함)
+        // 🎯 공개범위 메타데이터 반영 (메타데이터에는 accessLevel만 있음)
+        // sharedGroupIds/Names는 content.accessLevelInfo에만 있으므로 여기서는 기본값으로 설정
         try {
-          final String? level =
-              metadata['accessLevel']?.toString().toUpperCase();
-          final List<dynamic> shared =
-              (metadata['sharedGroupIds'] is List)
-                  ? List<dynamic>.from(metadata['sharedGroupIds'])
-                  : const [];
-          if (level != null && level.isNotEmpty) {
+          final level = AccessLevelParser.parseAccessLevelString(
+            metadata['accessLevel'],
+          );
+
+          if (level != null) {
             if (level == 'PRIVATE') {
               _selectedVisibility = 'private';
               _selectedGroupIds.clear();
@@ -172,12 +172,10 @@ class _EditModeAppBarState extends State<EditModeAppBar> {
               _selectedVisibility = 'friends';
               _selectedGroupIds.clear();
             } else if (level == 'GROUPS') {
+              // 🎯 GROUPS인 경우 메타데이터에는 그룹 정보가 없으므로
+              // widget.currentGroupIds를 유지 (이미 로드된 데이터 활용)
               _selectedVisibility = 'partial';
-              _selectedGroupIds =
-                  shared
-                      .map((e) => e is int ? e : int.tryParse(e.toString()))
-                      .whereType<int>()
-                      .toList();
+              // _selectedGroupIds는 widget.currentGroupIds로 이미 초기화됨
             }
           }
         } catch (_) {}
@@ -308,6 +306,9 @@ class _EditModeAppBarState extends State<EditModeAppBar> {
                       (_, __, ___) => ThumbnailEditOverlay(
                         postId: widget.postId!,
                         sessionKey: 'default',
+                        // 🎯 이미 로드한 썸네일 데이터 전달 (메타데이터 재조회 불필요)
+                        initialThumbnailUrl: _thumbnailUrl,
+                        initialThumbnailId: _thumbnailId,
                         onThumbnailChanged: (url, id) {
                           setState(() {
                             _thumbnailUrl = url;
@@ -485,11 +486,15 @@ class _EditModeAppBarState extends State<EditModeAppBar> {
                 accessLevel: 'PRIVATE',
               );
 
+              // 🎯 낙관적 업데이트 (서버 호출 성공 시)
               if (mounted) {
                 setState(() {
                   _selectedVisibility = 'private';
                   _selectedGroupIds.clear();
                 });
+              }
+
+              if (mounted) {
                 widget.onVisibilityChanged?.call(
                   _selectedVisibility,
                   _selectedGroupIds,
@@ -539,11 +544,15 @@ class _EditModeAppBarState extends State<EditModeAppBar> {
                 accessLevel: 'PUBLIC',
               );
 
+              // 🎯 낙관적 업데이트 (서버 호출 성공 시)
               if (mounted) {
                 setState(() {
                   _selectedVisibility = 'public';
                   _selectedGroupIds.clear();
                 });
+              }
+
+              if (mounted) {
                 widget.onVisibilityChanged?.call(
                   _selectedVisibility,
                   _selectedGroupIds,
@@ -592,11 +601,15 @@ class _EditModeAppBarState extends State<EditModeAppBar> {
                 accessLevel: 'FRIENDS',
               );
 
+              // 🎯 낙관적 업데이트 (서버 호출 성공 시)
               if (mounted) {
                 setState(() {
                   _selectedVisibility = 'friends';
                   _selectedGroupIds.clear();
                 });
+              }
+
+              if (mounted) {
                 widget.onVisibilityChanged?.call(
                   _selectedVisibility,
                   _selectedGroupIds,
@@ -764,11 +777,15 @@ class _EditModeAppBarState extends State<EditModeAppBar> {
                     sharedGroupIds: newGroupIds,
                   );
 
+                  // 🎯 낙관적 업데이트 (서버 호출 성공 시)
                   if (mounted) {
                     setState(() {
                       _selectedVisibility = 'partial';
                       _selectedGroupIds = newGroupIds;
                     });
+                  }
+
+                  if (mounted) {
                     widget.onVisibilityChanged?.call(
                       _selectedVisibility,
                       _selectedGroupIds,
@@ -931,9 +948,11 @@ class _EditModeAppBarState extends State<EditModeAppBar> {
                                 widget.editorService.undo();
                               },
                               child: Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 8,
-                                  vertical: 8,
+                                padding: const EdgeInsets.only(
+                                  top: 12,
+                                  bottom: 8,
+                                  left: 8,
+                                  right: 8,
                                 ),
                                 child: SvgPicture.asset(
                                   'assets/icons/editor_undo.svg',
@@ -961,9 +980,11 @@ class _EditModeAppBarState extends State<EditModeAppBar> {
                                 widget.editorService.redo();
                               },
                               child: Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 8,
-                                  vertical: 8,
+                                padding: const EdgeInsets.only(
+                                  top: 12,
+                                  bottom: 8,
+                                  left: 8,
+                                  right: 8,
                                 ),
                                 child: SvgPicture.asset(
                                   'assets/icons/editor_redo.svg',
@@ -1114,11 +1135,11 @@ class EditorAppBar extends StatelessWidget {
       // 제목 또는 본문이 비어있으면 다이얼로그 표시
       String message;
       if (!hasTitle && !hasBody) {
-        message = '제목과 본문(또는 드로잉)이 필요합니다.';
+        message = context.tr('title_and_body_required');
       } else if (!hasTitle) {
         message = context.tr('title_required');
       } else {
-        message = '본문 또는 드로잉 중 하나는 필요합니다.';
+        message = context.tr('body_required');
       }
 
       await DialogUtils.showInfoDialog(
@@ -1200,9 +1221,11 @@ class EditorAppBar extends StatelessWidget {
                               editorService.undo();
                             },
                             child: Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 8,
-                                vertical: 8,
+                              padding: const EdgeInsets.only(
+                                top: 12,
+                                bottom: 8,
+                                left: 8,
+                                right: 8,
                               ),
                               child: SvgPicture.asset(
                                 'assets/icons/editor_undo.svg',
@@ -1230,9 +1253,11 @@ class EditorAppBar extends StatelessWidget {
                               editorService.redo();
                             },
                             child: Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 8,
-                                vertical: 8,
+                              padding: const EdgeInsets.only(
+                                top: 12,
+                                bottom: 8,
+                                left: 8,
+                                right: 8,
                               ),
                               child: SvgPicture.asset(
                                 'assets/icons/editor_redo.svg',

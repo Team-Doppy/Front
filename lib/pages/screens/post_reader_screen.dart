@@ -7,6 +7,7 @@ import 'package:doppy/editor/component/single_image_component.dart';
 import 'package:doppy/l10n/app_localizations.dart';
 import 'package:doppy/pages/components/post_reader_header.dart';
 import 'package:doppy/pages/screens/user_profile_screen.dart';
+import 'package:doppy/utils/access_level_parser.dart';
 import 'package:doppy/utils/error_handler.dart';
 import 'package:doppy/utils/format_utils.dart';
 import 'package:flutter/material.dart';
@@ -19,6 +20,8 @@ import 'package:doppy/editor/component/row_image_component.dart'
     show RowImageComponentBuilder, ImageRowNode;
 import 'package:doppy/editor/postwrite_screen.dart';
 import 'package:doppy/providers/user_provider.dart';
+import 'package:doppy/providers/friend_provider.dart';
+import 'package:doppy/providers/group_provider.dart';
 import 'package:doppy/providers/theme_provider.dart';
 import 'package:doppy/data/models/user_model.dart';
 import 'package:doppy/data/services/comment_service.dart';
@@ -79,6 +82,7 @@ class _PostReaderScreenState extends State<PostReaderScreen>
   Map<String, dynamic>? _currentExportedData; // 최신 컨텐츠를 저장
   bool _showLoadingLogo = false; // 로딩 로고 표시 여부
   bool _isRenderReady = false; // 스포일러 마스크 렌더링 완료 여부
+  bool _accessLevelChanged = false; // 🎯 공개 범위 변경 여부
 
   // 스크롤 애니메이션을 위한 변수들
   static const double _appBarHeight = 52.0; // AppBar 높이
@@ -110,6 +114,11 @@ class _PostReaderScreenState extends State<PostReaderScreen>
 
   // 좋아요/댓글 데이터
   final CommentService _commentService = CommentService();
+
+  // 🎯 content에서 받아온 공개범위 데이터
+  String? _accessLevel; // 'PUBLIC', 'PRIVATE', 'FRIENDS', 'GROUPS'
+  List<int>? _sharedGroupIds;
+  List<String>? _sharedGroupNames; // 🎯 서버에서 제공하는 그룹 이름 목록
   final LikeService _likeService = LikeService();
 
   // 마지막 탭 위치 저장
@@ -550,6 +559,19 @@ class _PostReaderScreenState extends State<PostReaderScreen>
     try {
       await _blogService.deletePost(postId);
 
+      // 🎯 포스트 삭제 후 그룹 데이터도 갱신 (postCount 업데이트)
+      try {
+        final friendProvider = context.read<FriendProvider>();
+        final groupProvider = context.read<GroupProvider>();
+        groupProvider.fetchMyGroups(friendProvider: friendProvider).catchError((
+          e,
+        ) {
+          print('[PostReaderScreen] 그룹 데이터 재로드 실패: $e');
+        });
+      } catch (e) {
+        print('[PostReaderScreen] 그룹 데이터 재로드 실패: $e');
+      }
+
       if (mounted) {
         // 뒤로가기 전에 결과 전달하여 프로필 화면이 다시 빌드되도록 함
         Navigator.of(context).pop({'deleted': true});
@@ -561,20 +583,22 @@ class _PostReaderScreenState extends State<PostReaderScreen>
     }
   }
 
+  /// 🎯 widget.exported에서 공개범위 데이터 초기화 (임시 값, _loadContentWithPreloadedMedia에서 최신 값으로 업데이트됨)
+  void _initializeAccessLevelFromExported() {
+    // widget.exported에 이미 데이터가 있으면 먼저 사용 (초기 표시용)
+    final parsed = AccessLevelParser.parseAccessLevelMetadata(widget.exported);
+    setState(() {
+      _accessLevel = parsed['accessLevel'] as String? ?? 'PUBLIC';
+      _sharedGroupIds = parsed['sharedGroupIds'] as List<int>?;
+      _sharedGroupNames = parsed['sharedGroupNames'] as List<String>?;
+    });
+
+    // 🎯 최신 공개범위는 _loadContentWithPreloadedMedia에서 함께 받아옴 (별도 호출 불필요)
+  }
+
   /// 공개범위에 따라 아이콘 빌드 (PRIVATE이면 자물쇠, 그 외에는 공유 아이콘)
   Widget _buildAccessLevelIcon(BuildContext context) {
-    final accessLevelRaw = widget.exported['accessLevel'];
-    String accessLevelStr = 'PUBLIC';
-    if (accessLevelRaw != null) {
-      final levelStr = accessLevelRaw.toString().toUpperCase();
-      if (levelStr == 'PRIVATE' ||
-          levelStr == 'PUBLIC' ||
-          levelStr == 'FRIENDS' ||
-          levelStr == 'GROUPS') {
-        accessLevelStr = levelStr;
-      }
-    }
-
+    final accessLevelStr = _accessLevel ?? 'PUBLIC';
     final isPrivate = accessLevelStr == 'PRIVATE';
     final iconColor = Theme.of(context).colorScheme.onSurface.withOpacity(0.7);
 
@@ -594,18 +618,7 @@ class _PostReaderScreenState extends State<PostReaderScreen>
 
   /// 공개범위에 따라 공유 오버레이 또는 공개범위 변경 바텀시트 표시
   void _handleAccessLevelOrShare() {
-    final accessLevelRaw = widget.exported['accessLevel'];
-    String accessLevelStr = 'PUBLIC';
-    if (accessLevelRaw != null) {
-      final levelStr = accessLevelRaw.toString().toUpperCase();
-      if (levelStr == 'PRIVATE' ||
-          levelStr == 'PUBLIC' ||
-          levelStr == 'FRIENDS' ||
-          levelStr == 'GROUPS') {
-        accessLevelStr = levelStr;
-      }
-    }
-
+    final accessLevelStr = _accessLevel ?? 'PUBLIC';
     final isPrivate = accessLevelStr == 'PRIVATE';
 
     if (isPrivate) {
@@ -642,78 +655,63 @@ class _PostReaderScreenState extends State<PostReaderScreen>
     );
   }
 
-  void _showAccessLevelBottomSheet() {
+  void _showAccessLevelBottomSheet() async {
     final postId = widget.exported['id']?.toString();
     if (postId == null || postId.isEmpty) {
       return;
     }
 
-    // 현재 accessLevel 및 sharedGroupIds 확인
-    final accessLevelRaw = widget.exported['accessLevel'];
-    String currentAccessLevelStr = 'PUBLIC';
-    if (accessLevelRaw != null) {
-      final accessLevelStr = accessLevelRaw.toString().toUpperCase();
-      // 유효한 값인지 확인
-      if (accessLevelStr == 'PRIVATE' ||
-          accessLevelStr == 'PUBLIC' ||
-          accessLevelStr == 'FRIENDS' ||
-          accessLevelStr == 'GROUPS') {
-        currentAccessLevelStr = accessLevelStr;
-      }
-    }
-
-    final currentSharedGroupIds =
-        widget.exported['sharedGroupIds'] != null
-            ? (widget.exported['sharedGroupIds'] as List)
-                .map((e) => (e is int) ? e : int.tryParse(e.toString()))
-                .where((id) => id != null)
-                .cast<int>()
-                .toList()
-            : null;
-
-    print(
-      '[PostReaderScreen] accessLevelRaw: $accessLevelRaw, currentAccessLevelStr: $currentAccessLevelStr',
-    );
+    // 🎯 content에서 받아온 공개범위 정보 사용 (메타데이터 조회 안 함)
+    final currentAccessLevelStr = _accessLevel ?? 'PUBLIC';
+    final currentSharedGroupIds = _sharedGroupIds;
+    final currentSharedGroupNames = _sharedGroupNames;
 
     AccessLevelSheet.show(
       context,
       postId: postId,
       currentAccessLevel: currentAccessLevelStr,
       currentSharedGroupIds: currentSharedGroupIds,
+      currentSharedGroupNames: currentSharedGroupNames, // 🎯 그룹 이름 목록 전달
       onChanged: (String accessLevel, List<int>? sharedGroupIds) async {
-        // exported 데이터 업데이트
-        widget.exported['accessLevel'] = accessLevel;
-        if (sharedGroupIds != null) {
-          widget.exported['sharedGroupIds'] = sharedGroupIds;
-        } else {
-          widget.exported.remove('sharedGroupIds');
-        }
-        if (_currentExportedData != null) {
-          _currentExportedData!['accessLevel'] = accessLevel;
-          if (sharedGroupIds != null) {
-            _currentExportedData!['sharedGroupIds'] = sharedGroupIds;
-          } else {
-            _currentExportedData!.remove('sharedGroupIds');
-          }
-        }
-
+        // 🎯 공개범위 변경 후 상태 업데이트 (낙관적 업데이트)
         if (mounted) {
-          setState(() {}); // UI 업데이트
-        }
+          setState(() {
+            _accessLevel = accessLevel;
+            _sharedGroupIds = sharedGroupIds;
+            // sharedGroupNames는 서버에서 갱신되므로 다음 content 로드 시 업데이트됨
 
-        // 프로필에서 들어왔다면 피드 새로고침
-        if (widget.fromProfile) {
-          // 비디오 컨트롤러 정리가 완전히 완료될 때까지 약간 지연
-          Future.delayed(const Duration(milliseconds: 300), () {
-            try {
-              final feed = MyProfileFeedProvider(); // 싱글톤 직접 접근
-              feed.invalidateCache();
-              feed.refresh().catchError((_) {});
-              print('[PostReaderScreen] 프로필 피드 새로고침 완료');
-            } catch (e) {
-              print('[PostReaderScreen] 프로필 피드 새로고침 실패: $e');
+            // 🎯 _currentExportedData도 함께 업데이트
+            if (_currentExportedData != null) {
+              _currentExportedData!['accessLevel'] = accessLevel;
+              if (sharedGroupIds != null) {
+                _currentExportedData!['sharedGroupIds'] = sharedGroupIds;
+              } else {
+                _currentExportedData!.remove('sharedGroupIds');
+              }
             }
           });
+        }
+
+        // 🎯 공개 범위 변경 플래그 설정
+        _accessLevelChanged = true;
+
+        // 🎯 프로필에서 들어왔다면 피드 새로고침 (더 확실하게)
+        if (widget.fromProfile) {
+          try {
+            final feed = MyProfileFeedProvider(); // 싱글톤 직접 접근
+            // 캐시 무효화 및 강제 새로고침
+            feed.invalidateCache();
+            await feed.loadInitial(force: true);
+            print('[PostReaderScreen] 프로필 피드 새로고침 완료 (force)');
+          } catch (e) {
+            print('[PostReaderScreen] 프로필 피드 새로고침 실패: $e');
+            // 실패 시에도 fallback으로 refresh 시도
+            try {
+              final feed = MyProfileFeedProvider();
+              feed.invalidateCache();
+              feed.refresh().catchError((_) {});
+            } catch (_) {}
+          }
         }
       },
     );
@@ -778,7 +776,7 @@ class _PostReaderScreenState extends State<PostReaderScreen>
   ) async {
     final response = await _blogService.getPostContent(postId);
 
-    // 🎯 서버 응답 구조: { isLiked, likeCount, commentCount, postId, content: {...} }
+    // 🎯 서버 응답 구조: { isLiked, likeCount, commentCount, postId, content: {...}, accessLevel, sharedGroupIds, sharedGroupNames }
     final actualLikeCount = response['likeCount'] as int? ?? 0;
     final actualIsLiked = response['isLiked'] == true;
     final actualCommentCount = response['commentCount'] as int? ?? 0;
@@ -789,6 +787,16 @@ class _PostReaderScreenState extends State<PostReaderScreen>
     print(
       '[PostReaderScreen] 실제 데이터 - 좋아요: $actualLikeCount, 좋아요 상태: $actualIsLiked, 댓글: $actualCommentCount',
     );
+
+    // 🎯 공개범위 정보 업데이트 (content.accessLevelInfo에서 추출)
+    final parsed = AccessLevelParser.parseAccessLevelFromContent(response);
+    if (mounted) {
+      setState(() {
+        _accessLevel = parsed['accessLevel'] as String? ?? 'PUBLIC';
+        _sharedGroupIds = parsed['sharedGroupIds'] as List<int>?;
+        _sharedGroupNames = parsed['sharedGroupNames'] as List<String>?;
+      });
+    }
 
     // content 객체 추출
     final content = response['content'] as Map<String, dynamic>? ?? {};
@@ -861,6 +869,9 @@ class _PostReaderScreenState extends State<PostReaderScreen>
       NodeComponentService().clearSpoilers();
     } catch (_) {}
     _document = _postReaderService.rebuildDocumentForRead(widget.exported);
+
+    // 🎯 공개범위 데이터 초기화: widget.exported에서 먼저 읽고, 필요시 서버 조회
+    _initializeAccessLevelFromExported();
     _composer = MutableDocumentComposer();
     _editor = createDefaultDocumentEditor(
       document: _document,
@@ -997,6 +1008,12 @@ class _PostReaderScreenState extends State<PostReaderScreen>
           return false;
         }
 
+        // 🎯 공개 범위가 변경되었으면 결과 반환 (피드 새로고침을 위해)
+        if (_accessLevelChanged) {
+          Navigator.of(context).pop({'accessLevelChanged': true});
+          return false; // Navigator.pop을 호출했으므로 false 반환
+        }
+
         return true;
       },
       child: Scaffold(
@@ -1082,6 +1099,17 @@ class _PostReaderScreenState extends State<PostReaderScreen>
             if (snap.hasData && (snap.data?.isNotEmpty ?? false)) {
               final merged = Map<String, dynamic>.from(widget.exported);
               merged['content'] = snap.data!;
+
+              // 🎯 공개범위 정보도 최신 상태로 업데이트 (_loadContentWithPreloadedMedia에서 이미 업데이트됨)
+              if (_accessLevel != null) {
+                merged['accessLevel'] = _accessLevel;
+              }
+              if (_sharedGroupIds != null) {
+                merged['sharedGroupIds'] = _sharedGroupIds;
+              }
+              if (_sharedGroupNames != null) {
+                merged['sharedGroupNames'] = _sharedGroupNames;
+              }
 
               // 최신 데이터 저장 (수정하기에서 사용)
               _currentExportedData = merged;
@@ -1579,32 +1607,76 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                                           ? _handleAccessLevelOrShare
                                           : null,
                                   child: Padding(
-                                    padding: const EdgeInsets.only(left: 8.0),
+                                    padding: const EdgeInsets.only(
+                                      left: 8.0,
+                                      top: 1,
+                                    ),
                                     child: _buildAccessLevelIcon(context),
                                   ),
                                 ),
 
                                 // 내 포스트이고 나만보기가 아닌 경우 lock_open.svg 추가
                                 if (isMyPost) ...[
-                                  Builder(
-                                    builder: (context) {
-                                      final accessLevelRaw =
-                                          widget.exported['accessLevel'];
-                                      String accessLevelStr = 'PUBLIC';
-                                      if (accessLevelRaw != null) {
-                                        final levelStr =
-                                            accessLevelRaw
-                                                .toString()
-                                                .toUpperCase();
-                                        if (levelStr == 'PRIVATE' ||
-                                            levelStr == 'PUBLIC' ||
-                                            levelStr == 'FRIENDS' ||
-                                            levelStr == 'GROUPS') {
-                                          accessLevelStr = levelStr;
-                                        }
-                                      }
+                                  Consumer<GroupProvider>(
+                                    builder: (context, groupProvider, _) {
+                                      // 🎯 서버에서 조회한 공개범위 데이터 사용
+                                      final accessLevelStr =
+                                          _accessLevel ?? 'PUBLIC';
                                       final isPrivate =
                                           accessLevelStr == 'PRIVATE';
+
+                                      // 🎯 GROUPS인 경우 실제 그룹 이름 가져오기
+                                      // 🎯 서버에서 제공하는 sharedGroupNames 우선 사용
+                                      String? groupName;
+                                      if (accessLevelStr == 'GROUPS') {
+                                        if (_sharedGroupNames != null &&
+                                            _sharedGroupNames!.isNotEmpty) {
+                                          // 🎯 서버에서 받은 그룹 이름 직접 사용
+                                          if (_sharedGroupNames!.length == 1) {
+                                            groupName =
+                                                _sharedGroupNames!.first;
+                                          } else {
+                                            groupName = context
+                                                .tr('groups_count')
+                                                .replaceAll(
+                                                  '{count}',
+                                                  '${_sharedGroupNames!.length}',
+                                                );
+                                          }
+                                        } else if (_sharedGroupIds != null &&
+                                            _sharedGroupIds!.isNotEmpty) {
+                                          // 🎯 sharedGroupNames가 없으면 GroupProvider에서 찾기 (fallback)
+                                          final groups = groupProvider.myGroups;
+                                          final matchingGroups =
+                                              groups
+                                                  .where(
+                                                    (g) => _sharedGroupIds!
+                                                        .contains(g.id),
+                                                  )
+                                                  .toList();
+
+                                          if (matchingGroups.isNotEmpty) {
+                                            if (matchingGroups.length == 1) {
+                                              final group =
+                                                  matchingGroups.first;
+                                              if (group.isSystem == true) {
+                                                groupName = context.tr(
+                                                  'all_friends',
+                                                );
+                                              } else {
+                                                groupName = group.name;
+                                              }
+                                            } else {
+                                              groupName = context
+                                                  .tr('groups_count')
+                                                  .replaceAll(
+                                                    '{count}',
+                                                    '${matchingGroups.length}',
+                                                  );
+                                            }
+                                          }
+                                        }
+                                      }
 
                                       // 나만보기가 아닌 경우에만 lock_open.svg 표시
                                       if (!isPrivate) {
@@ -1613,16 +1685,36 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                                           child: Padding(
                                             padding: const EdgeInsets.only(
                                               left: 20.0,
+                                              top: 1,
                                             ),
-                                            child: SvgPicture.asset(
-                                              'assets/icons/lock_open.svg',
-                                              width: 23,
-                                              height: 23,
-                                              color: Theme.of(context)
-                                                  .colorScheme
-                                                  .onSurface
-                                                  .withOpacity(0.7),
-                                            ),
+                                            child:
+                                                groupName != null
+                                                    ? Row(
+                                                      mainAxisSize:
+                                                          MainAxisSize.min,
+                                                      children: [
+                                                        SvgPicture.asset(
+                                                          'assets/icons/lock_open.svg',
+                                                          width: 23,
+                                                          height: 23,
+                                                          color: Theme.of(
+                                                                context,
+                                                              )
+                                                              .colorScheme
+                                                              .onSurface
+                                                              .withOpacity(0.7),
+                                                        ),
+                                                      ],
+                                                    )
+                                                    : SvgPicture.asset(
+                                                      'assets/icons/lock_open.svg',
+                                                      width: 23,
+                                                      height: 23,
+                                                      color: Theme.of(context)
+                                                          .colorScheme
+                                                          .onSurface
+                                                          .withOpacity(0.7),
+                                                    ),
                                           ),
                                         );
                                       }
@@ -1640,8 +1732,8 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                                     children: [
                                       SvgPicture.asset(
                                         'assets/icons/heart.svg',
-                                        width: 25,
-                                        height: 25,
+                                        width: 26,
+                                        height: 26,
                                         color:
                                             isLiked
                                                 ? const ui.Color.fromARGB(
@@ -1684,14 +1776,19 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                                   child: Row(
                                     mainAxisSize: MainAxisSize.min,
                                     children: [
-                                      SvgPicture.asset(
-                                        'assets/icons/comment.svg',
-                                        width: 24,
-                                        height: 24,
-                                        color: Theme.of(context)
-                                            .colorScheme
-                                            .onSurface
-                                            .withOpacity(0.8),
+                                      Padding(
+                                        padding: const EdgeInsets.only(
+                                          bottom: 0.8,
+                                        ),
+                                        child: SvgPicture.asset(
+                                          'assets/icons/comment.svg',
+                                          width: 24,
+                                          height: 24,
+                                          color: Theme.of(context)
+                                              .colorScheme
+                                              .onSurface
+                                              .withOpacity(0.8),
+                                        ),
                                       ),
                                       const SizedBox(width: 4),
                                       Text(

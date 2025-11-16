@@ -204,17 +204,20 @@ class _PostListState extends State<PostList> {
                       ? Duration(milliseconds: 0)
                       : Duration(milliseconds: 100),
               curve: Curves.easeInOut,
-              child: Container(
-                padding: const EdgeInsets.only(bottom: 6),
-                child: Text(
-                  ' doppy',
-                  style: GoogleFonts.notoSansKr(
-                    fontSize: 22,
-                    fontWeight: FontWeight.bold,
-                    color: Theme.of(context).colorScheme.primary,
-                  ),
-                ),
-              ),
+              child:
+                  widget.isShowingSearchResults
+                      ? Container() // 검색 결과일 때는 doppy 로고 숨김
+                      : Container(
+                        padding: const EdgeInsets.only(bottom: 6),
+                        child: Text(
+                          ' doppy',
+                          style: GoogleFonts.notoSansKr(
+                            fontSize: 22,
+                            fontWeight: FontWeight.bold,
+                            color: Theme.of(context).colorScheme.primary,
+                          ),
+                        ),
+                      ),
             ),
             centerTitle: false,
             actions: [
@@ -473,7 +476,7 @@ class _PostListState extends State<PostList> {
               _gestureAccumX = 0.0;
             },
             child: GestureDetector(
-              onTapUp: (details) {
+              onTapUp: (details) async {
                 // 텍스트 영역에서도 탭 위치에 따라 다른 동작
                 final screenWidth = MediaQuery.of(context).size.width;
                 final tapX = details.globalPosition.dx;
@@ -497,59 +500,58 @@ class _PostListState extends State<PostList> {
                 } else {
                   setState(() => _suppressVisibility = true);
                   // 중앙 40% - 포스트 상세보기
-                  Navigator.of(context)
-                      .push(
-                        PageRouteBuilder(
-                          transitionDuration: const Duration(milliseconds: 340),
-                          reverseTransitionDuration: const Duration(
-                            milliseconds: 100,
+                  await Navigator.of(context).push(
+                    PageRouteBuilder(
+                      transitionDuration: const Duration(milliseconds: 340),
+                      reverseTransitionDuration: const Duration(
+                        milliseconds: 100,
+                      ),
+                      opaque: false,
+                      pageBuilder:
+                          (_, __, ___) => PostReaderScreen(
+                            exported: _items[_currentIndex].toExportedData(),
+                            heroTag:
+                                'post-hero-${widget.sectionLabel ?? "main"}-${_items[_currentIndex].id}-$_currentIndex',
                           ),
-                          opaque: false,
-                          pageBuilder:
-                              (_, __, ___) => PostReaderScreen(
-                                exported:
-                                    _items[_currentIndex].toExportedData(),
-                                heroTag:
-                                    'post-hero-${widget.sectionLabel ?? "main"}-${_items[_currentIndex].id}-$_currentIndex',
-                              ),
-                          transitionsBuilder: (
-                            context,
-                            animation,
-                            secondaryAnimation,
-                            child,
-                          ) {
-                            const begin = Offset(0.0, 0.1);
-                            const end = Offset.zero;
-                            const curve = Curves.easeOutCubic;
-                            var tween = Tween(
-                              begin: begin,
-                              end: end,
-                            ).chain(CurveTween(curve: curve));
-                            var offsetAnimation = animation.drive(tween);
-                            var fadeAnimation = Tween<double>(
-                              begin: 0.0,
-                              end: 1.0,
-                            ).animate(
-                              CurvedAnimation(
-                                parent: animation,
-                                curve: Curves.easeOut,
-                              ),
-                            );
-                            return FadeTransition(
-                              opacity: fadeAnimation,
-                              child: SlideTransition(
-                                position: offsetAnimation,
-                                child: child,
-                              ),
-                            );
-                          },
-                        ),
-                      )
-                      .whenComplete(() {
-                        if (mounted) {
-                          setState(() => _suppressVisibility = false);
-                        }
-                      });
+                      transitionsBuilder: (
+                        context,
+                        animation,
+                        secondaryAnimation,
+                        child,
+                      ) {
+                        const begin = Offset(0.0, 0.1);
+                        const end = Offset.zero;
+                        const curve = Curves.easeOutCubic;
+                        var tween = Tween(
+                          begin: begin,
+                          end: end,
+                        ).chain(CurveTween(curve: curve));
+                        var offsetAnimation = animation.drive(tween);
+                        var fadeAnimation = Tween<double>(
+                          begin: 0.0,
+                          end: 1.0,
+                        ).animate(
+                          CurvedAnimation(
+                            parent: animation,
+                            curve: Curves.easeOut,
+                          ),
+                        );
+                        return FadeTransition(
+                          opacity: fadeAnimation,
+                          child: SlideTransition(
+                            position: offsetAnimation,
+                            child: child,
+                          ),
+                        );
+                      },
+                    ),
+                  );
+
+                  // 🎯 공개 범위 변경 또는 삭제는 피드 자체가 처리하므로 여기서는 별도 처리 불필요
+                  // (home_screen.dart에서 피드가 자동으로 새로고침되어 PostList는 didUpdateWidget으로 업데이트됨)
+                  if (mounted) {
+                    setState(() => _suppressVisibility = false);
+                  }
                 }
               },
               child: Container(
@@ -615,60 +617,55 @@ class _PostListState extends State<PostList> {
           // 먼저 현재 프레임에서 가시성 차단을 적용
           setState(() => _suppressVisibility = true);
           // 다음 프레임에서 push하여 정지가 먼저 반영되도록 함
-          WidgetsBinding.instance.addPostFrameCallback((_) {
+          WidgetsBinding.instance.addPostFrameCallback((_) async {
             if (!mounted) return;
-            Navigator.of(context)
-                .push(
-                  PageRouteBuilder(
-                    transitionDuration: const Duration(milliseconds: 340),
-                    reverseTransitionDuration: const Duration(
-                      milliseconds: 100,
+            await Navigator.of(context).push(
+              PageRouteBuilder(
+                transitionDuration: const Duration(milliseconds: 340),
+                reverseTransitionDuration: const Duration(milliseconds: 100),
+                opaque: false,
+                pageBuilder:
+                    (_, __, ___) => PostReaderScreen(
+                      exported: post.toExportedData(),
+                      heroTag:
+                          'post-hero-${widget.sectionLabel ?? "main"}-${post.id}-$index',
                     ),
-                    opaque: false,
-                    pageBuilder:
-                        (_, __, ___) => PostReaderScreen(
-                          exported: post.toExportedData(),
-                          heroTag:
-                              'post-hero-${widget.sectionLabel ?? "main"}-${post.id}-$index',
-                        ),
-                    transitionsBuilder: (
-                      context,
-                      animation,
-                      secondaryAnimation,
-                      child,
-                    ) {
-                      const begin = Offset(0.0, 0.1);
-                      const end = Offset.zero;
-                      const curve = Curves.easeOutCubic;
-                      var tween = Tween(
-                        begin: begin,
-                        end: end,
-                      ).chain(CurveTween(curve: curve));
-                      var offsetAnimation = animation.drive(tween);
-                      var fadeAnimation = Tween<double>(
-                        begin: 0.0,
-                        end: 1.0,
-                      ).animate(
-                        CurvedAnimation(
-                          parent: animation,
-                          curve: Curves.easeOut,
-                        ),
-                      );
-                      return FadeTransition(
-                        opacity: fadeAnimation,
-                        child: SlideTransition(
-                          position: offsetAnimation,
-                          child: child,
-                        ),
-                      );
-                    },
-                  ),
-                )
-                .whenComplete(() {
-                  if (mounted) {
-                    setState(() => _suppressVisibility = false);
-                  }
-                });
+                transitionsBuilder: (
+                  context,
+                  animation,
+                  secondaryAnimation,
+                  child,
+                ) {
+                  const begin = Offset(0.0, 0.1);
+                  const end = Offset.zero;
+                  const curve = Curves.easeOutCubic;
+                  var tween = Tween(
+                    begin: begin,
+                    end: end,
+                  ).chain(CurveTween(curve: curve));
+                  var offsetAnimation = animation.drive(tween);
+                  var fadeAnimation = Tween<double>(
+                    begin: 0.0,
+                    end: 1.0,
+                  ).animate(
+                    CurvedAnimation(parent: animation, curve: Curves.easeOut),
+                  );
+                  return FadeTransition(
+                    opacity: fadeAnimation,
+                    child: SlideTransition(
+                      position: offsetAnimation,
+                      child: child,
+                    ),
+                  );
+                },
+              ),
+            );
+
+            // 🎯 공개 범위 변경 또는 삭제는 피드 자체가 처리하므로 여기서는 별도 처리 불필요
+            // (home_screen.dart에서 피드가 자동으로 새로고침되어 PostList는 didUpdateWidget으로 업데이트됨)
+            if (mounted) {
+              setState(() => _suppressVisibility = false);
+            }
           });
         }
       },

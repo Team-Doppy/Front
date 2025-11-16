@@ -239,7 +239,9 @@ class _AddMemberBottomSheetState extends State<AddMemberBottomSheet> {
     final friendProv = context.watch<FriendProvider>();
     final groupProv = context.watch<GroupProvider>();
 
-    if (widget.selectedGroup == null || widget.selectedGroup!.id == -1) {
+    // 🎯 시스템 그룹이면 멤버 추가 불가
+    if (widget.selectedGroup == null ||
+        widget.selectedGroup!.isSystem == true) {
       return Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -810,7 +812,8 @@ class _AddMemberBottomSheetState extends State<AddMemberBottomSheet> {
   void _addSelectedMembers() {
     if (!mounted) return;
     final group = widget.selectedGroup;
-    if (group == null || group.id == -1) {
+    // 🎯 시스템 그룹이면 멤버 추가 불가
+    if (group == null || group.isSystem == true) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(context.tr('select_group_first'))),

@@ -203,6 +203,17 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
       try {
         _feedProvider.clearInMemory();
       } catch (_) {}
+
+      // 🎯 남의 프로필일 때 친구 관계도 새로고침
+      if (isOther) {
+        try {
+          final friendProvider = context.read<FriendProvider>();
+          await friendProvider.checkFriendStatus(widget.otherUser!.username);
+        } catch (e) {
+          print('[UserProfileScreen] 친구 상태 새로고침 실패: $e');
+        }
+      }
+
       await _feedProvider.loadInitial(
         username: isOther ? widget.otherUser!.username : null,
         force: true, // 강제로 새로 로드
@@ -319,201 +330,218 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                           _pullProgress = progress;
                         });
                       },
-                      child: CustomScrollView(
-                        clipBehavior: Clip.none,
+                      child: RawScrollbar(
                         controller: _scrollController,
-                        slivers: [
-                          SliverAppBar(
-                            expandedHeight: topPadding + 30,
-                            toolbarHeight: 50,
-                            backgroundColor: Colors.transparent,
-                            automaticallyImplyLeading: false,
-                            elevation: 0,
-                            title: Opacity(
-                              opacity: 1.0 - _pullProgress,
-                              child: Row(
-                                mainAxisAlignment: MainAxisAlignment.start,
-                                children: [
-                                  // 바텀 탭에서 직접 온 경우가 아닐 때만 뒤로가기 버튼 표시
-                                  if (!widget.isFromBottomTab)
-                                    GestureDetector(
-                                      child: Padding(
-                                        padding: const EdgeInsets.only(top: 1),
-                                        child: Row(
-                                          children: [
-                                            Icon(
-                                              Icons.arrow_back_ios_new_rounded,
-                                              size: 24,
-                                              color: Theme.of(context)
-                                                  .colorScheme
-                                                  .onSurface
-                                                  .withOpacity(0.75),
-                                            ),
-                                            SizedBox(width: 14),
-                                          ],
-                                        ),
-                                      ),
-
-                                      onTap: () => Navigator.of(context).pop(),
-                                    ),
-                                  Text(
-                                    _displayUsername,
-                                    style: TextStyle(
-                                      fontSize: 24,
-                                      fontWeight: FontWeight.bold,
-                                      color: Theme.of(
-                                        context,
-                                      ).colorScheme.onSurface.withOpacity(1),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-
-                            actions: [
-                              Opacity(
+                        thumbVisibility: false, // 🎯 스크롤할 때만 표시
+                        thumbColor: Theme.of(
+                          context,
+                        ).colorScheme.onSurface.withOpacity(0.15),
+                        thickness: 4,
+                        radius: Radius.circular(2),
+                        child: CustomScrollView(
+                          clipBehavior: Clip.none,
+                          controller: _scrollController,
+                          slivers: [
+                            SliverAppBar(
+                              expandedHeight: topPadding + 30,
+                              toolbarHeight: 50,
+                              backgroundColor: Colors.transparent,
+                              automaticallyImplyLeading: false,
+                              elevation: 0,
+                              title: Opacity(
                                 opacity: 1.0 - _pullProgress,
                                 child: Row(
+                                  mainAxisAlignment: MainAxisAlignment.start,
                                   children: [
-                                    if (_isOwnProfile) ...[
+                                    // 바텀 탭에서 직접 온 경우가 아닐 때만 뒤로가기 버튼 표시
+                                    if (!widget.isFromBottomTab)
                                       GestureDetector(
-                                        child: Icon(
-                                          Icons.edit,
-                                          color:
-                                              Theme.of(
-                                                context,
-                                              ).colorScheme.onSurface,
-                                          size: 19,
+                                        child: Padding(
+                                          padding: const EdgeInsets.only(
+                                            top: 1,
+                                          ),
+                                          child: Row(
+                                            children: [
+                                              Icon(
+                                                Icons
+                                                    .arrow_back_ios_new_rounded,
+                                                size: 24,
+                                                color: Theme.of(context)
+                                                    .colorScheme
+                                                    .onSurface
+                                                    .withOpacity(0.75),
+                                              ),
+                                              SizedBox(width: 14),
+                                            ],
+                                          ),
                                         ),
-                                        onTap: () {
-                                          me != null
-                                              ? showProfileInfoEditBottomSheet(
-                                                me,
-                                              )
-                                              : null;
-                                        },
+
+                                        onTap:
+                                            () => Navigator.of(context).pop(),
                                       ),
-                                      SizedBox(width: 12),
-                                      // 설정 버튼
-                                      GestureDetector(
-                                        child: Icon(
-                                          Icons.menu,
-                                          color:
-                                              Theme.of(
-                                                context,
-                                              ).colorScheme.onSurface,
-                                          size: 24,
-                                        ),
-                                        onTap: () {
-                                          Navigator.of(context).push(
-                                            MaterialPageRoute(
-                                              builder: (_) => SettingScreen(),
-                                            ),
-                                          );
-                                        },
+                                    Text(
+                                      _displayUsername,
+                                      style: TextStyle(
+                                        fontSize: 24,
+                                        fontWeight: FontWeight.bold,
+                                        color: Theme.of(
+                                          context,
+                                        ).colorScheme.onSurface.withOpacity(1),
                                       ),
-                                      SizedBox(width: 15),
-                                    ],
+                                    ),
                                   ],
                                 ),
                               ),
-                            ],
-                          ),
-                          SliverToBoxAdapter(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.center,
-                              children: [
-                                const SizedBox(height: 50),
 
-                                // 원형 아바타 (텍스트 위에 위치)
-                                CommonProfileAvatar(
-                                  imageUrl: _displayImageUrl,
-                                  username: _displayUsername,
-                                  size: 150,
-                                  borderWidth: _isUploadingProfileImage ? 0 : 3,
-                                  borderColor:
-                                      Theme.of(context).brightness ==
-                                              Brightness.dark
-                                          ? Colors.grey.shade300
-                                          : Colors.grey.shade400,
-                                  isUploading: _isUploadingProfileImage,
-                                  onTap:
-                                      _isOwnProfile && !_isUploadingProfileImage
-                                          ? _changeProfileImage
-                                          : null,
-                                ),
-
-                                const SizedBox(height: 20),
-                                GestureDetector(
-                                  onTap: () {
-                                    if (me != null) {
-                                      showProfileInfoEditBottomSheet(me);
-                                    }
-                                  },
-                                  child: Column(
+                              actions: [
+                                Opacity(
+                                  opacity: 1.0 - _pullProgress,
+                                  child: Row(
                                     children: [
-                                      Text(
-                                        _displayAlias ?? _displayUsername,
-                                        style: TextStyle(
-                                          color:
-                                              Theme.of(
-                                                context,
-                                              ).colorScheme.onSurface,
-                                          fontSize: 24,
-                                          fontWeight: FontWeight.bold,
-                                          height: 1.1,
+                                      if (_isOwnProfile) ...[
+                                        GestureDetector(
+                                          child: Icon(
+                                            Icons.edit,
+                                            color:
+                                                Theme.of(
+                                                  context,
+                                                ).colorScheme.onSurface,
+                                            size: 19,
+                                          ),
+                                          onTap: () {
+                                            me != null
+                                                ? showProfileInfoEditBottomSheet(
+                                                  me,
+                                                )
+                                                : null;
+                                          },
                                         ),
-                                      ),
-
-                                      const SizedBox(height: 5),
-                                      Text(
-                                        isOther
-                                            ? (other
-                                                        ?.selfIntroduction
-                                                        ?.isNotEmpty ==
-                                                    true
-                                                ? other!.selfIntroduction!
-                                                : _displayUsername)
-                                            : (me
-                                                        ?.selfIntroduction
-                                                        ?.isNotEmpty ==
-                                                    true
-                                                ? me!.selfIntroduction!
-                                                : ''),
-                                        style: TextStyle(
-                                          color: Theme.of(context)
-                                              .colorScheme
-                                              .onSurface
-                                              .withOpacity(0.8),
-
-                                          fontSize: 14,
-                                          height: 1.3,
+                                        SizedBox(width: 12),
+                                        // 설정 버튼
+                                        GestureDetector(
+                                          child: Icon(
+                                            Icons.menu,
+                                            color:
+                                                Theme.of(
+                                                  context,
+                                                ).colorScheme.onSurface,
+                                            size: 24,
+                                          ),
+                                          onTap: () {
+                                            Navigator.of(context).push(
+                                              MaterialPageRoute(
+                                                builder: (_) => SettingScreen(),
+                                              ),
+                                            );
+                                          },
                                         ),
-                                        maxLines: 2,
-                                        overflow: TextOverflow.ellipsis,
-                                      ),
+                                        SizedBox(width: 15),
+                                      ],
                                     ],
                                   ),
                                 ),
-
-                                // 다른 사용자 프로필일 때만 친구 추가 버튼 표시
-                                if (isOther) ...[_buildOtherProfileButton()],
-                                if (_isOwnProfile) ...[_buildMyProfileButton()],
                               ],
                             ),
-                          ),
-                          // Feed 모드 전환 스위처 (카드뷰 / 이미지 전용)
-                          _buildFeedModeSwitcher(),
-                          // Feed 컨텐츠 (네트워크 에러 처리 포함)
-                          Consumer<BaseFeedProvider>(
-                            builder: (context, feedProvider, _) {
-                              // 정상 상태일 때 Feed 컨텐츠 표시
-                              return _feed.buildFeedContent(
-                                scrollController: _scrollController,
-                              );
-                            },
-                          ),
-                        ],
+                            SliverToBoxAdapter(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.center,
+                                children: [
+                                  const SizedBox(height: 50),
+
+                                  // 원형 아바타 (텍스트 위에 위치)
+                                  CommonProfileAvatar(
+                                    imageUrl: _displayImageUrl,
+                                    username: _displayUsername,
+                                    size: 150,
+                                    borderWidth:
+                                        _isUploadingProfileImage ? 0 : 3,
+                                    borderColor:
+                                        Theme.of(context).brightness ==
+                                                Brightness.dark
+                                            ? Colors.grey.shade300
+                                            : Colors.grey.shade400,
+                                    isUploading: _isUploadingProfileImage,
+                                    onTap:
+                                        _isOwnProfile &&
+                                                !_isUploadingProfileImage
+                                            ? _changeProfileImage
+                                            : null,
+                                  ),
+
+                                  const SizedBox(height: 20),
+                                  GestureDetector(
+                                    onTap: () {
+                                      if (me != null) {
+                                        showProfileInfoEditBottomSheet(me);
+                                      }
+                                    },
+                                    child: Column(
+                                      children: [
+                                        Text(
+                                          _displayAlias ?? _displayUsername,
+                                          style: TextStyle(
+                                            color:
+                                                Theme.of(
+                                                  context,
+                                                ).colorScheme.onSurface,
+                                            fontSize: 24,
+                                            fontWeight: FontWeight.bold,
+                                            height: 1.1,
+                                          ),
+                                        ),
+
+                                        const SizedBox(height: 5),
+                                        Text(
+                                          isOther
+                                              ? (other
+                                                          ?.selfIntroduction
+                                                          ?.isNotEmpty ==
+                                                      true
+                                                  ? other!.selfIntroduction!
+                                                  : _displayUsername)
+                                              : (me
+                                                          ?.selfIntroduction
+                                                          ?.isNotEmpty ==
+                                                      true
+                                                  ? me!.selfIntroduction!
+                                                  : ''),
+                                          style: TextStyle(
+                                            color: Theme.of(context)
+                                                .colorScheme
+                                                .onSurface
+                                                .withOpacity(0.8),
+
+                                            fontSize: 14,
+                                            height: 1.3,
+                                          ),
+                                          maxLines: 2,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+
+                                  // 다른 사용자 프로필일 때만 친구 추가 버튼 표시
+                                  if (isOther) ...[_buildOtherProfileButton()],
+                                  if (_isOwnProfile) ...[
+                                    _buildMyProfileButton(),
+                                  ],
+                                ],
+                              ),
+                            ),
+                            // Feed 모드 전환 스위처 (카드뷰 / 이미지 전용)
+                            _buildFeedModeSwitcher(),
+                            // Feed 컨텐츠 (네트워크 에러 처리 포함)
+                            Consumer<BaseFeedProvider>(
+                              builder: (context, feedProvider, _) {
+                                // 정상 상태일 때 Feed 컨텐츠 표시
+                                return _feed.buildFeedContent(
+                                  scrollController: _scrollController,
+                                );
+                              },
+                            ),
+                          ],
+                        ),
                       ),
                     ),
                   );
@@ -680,7 +708,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
         children: [
           Expanded(
             child: _buildGlassyButton(
-              text: context.tr('my_friends'),
+              text: context.tr('my_groups'),
               onTap: () => _navigateToManageGroup(),
             ),
           ),

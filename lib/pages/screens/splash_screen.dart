@@ -7,6 +7,9 @@ import 'package:doppy/providers/friend_provider.dart';
 import 'package:doppy/data/services/home_data_service.dart';
 import 'package:doppy/data/services/search_service.dart';
 import 'package:doppy/utils/network_utils.dart';
+import 'package:cached_network_image/cached_network_image.dart';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -87,14 +90,17 @@ class _SplashScreenState extends State<SplashScreen>
           _loadingStatus = '사용자 데이터를 불러오는 중...';
         });
 
-        // 홈 데이터, 검색 기록, 유저 정보, 그룹 데이터, 친구 데이터를 병렬로 로드
+        // 🎯 친구 데이터를 먼저 로드한 후 그룹 데이터 로드 (allFriends 그룹의 친구 수 반영을 위해)
+        // 홈 데이터, 검색 기록, 유저 정보, 친구 데이터를 병렬로 로드
         await Future.wait([
           _loadHomeData(),
           _loadSearchHistory(),
           _loadUserData(),
-          _loadGroupData(),
-          _loadFriendData(),
+          _loadFriendData(), // 친구 데이터를 먼저 로드
         ]);
+
+        // 🎯 친구 데이터 로드 후 그룹 데이터 로드 (friendProvider 전달)
+        await _loadGroupData();
       } else {
         // 토큰이 없거나 유효하지 않은 경우 빈 데이터로 설정
         setState(() {
@@ -199,12 +205,70 @@ class _SplashScreenState extends State<SplashScreen>
       print('[SplashScreen] 그룹 데이터 로드 시작');
 
       final groupProvider = context.read<GroupProvider>();
-      await groupProvider.fetchMyGroups();
+      final friendProvider = context.read<FriendProvider>();
+
+      // 🎯 friendProvider를 전달하여 allFriends 그룹의 친구 수 정확히 반영
+      await groupProvider.fetchMyGroups(friendProvider: friendProvider);
 
       print('[SplashScreen] 그룹 데이터 로드 완료');
+
+      // 🎯 그룹 이미지 프리로드 (비동기로 실행, 앱 시작을 막지 않음)
+      _preloadGroupImages(groupProvider.myGroups);
     } catch (e) {
       print('[SplashScreen] 그룹 데이터 로드 실패 (무시): $e');
       // 그룹 데이터 로드 실패는 앱 시작을 막지 않음
+    }
+  }
+
+  // 🎯 그룹 이미지 프리로드 (비동기)
+  Future<void> _preloadGroupImages(List groups) async {
+    try {
+      final List<String> imageUrls = [];
+
+      // 유효한 그룹 이미지 URL 수집
+      for (final group in groups) {
+        final profileImageUrl = group.profileImageUrl;
+        if (profileImageUrl != null && profileImageUrl.isNotEmpty) {
+          if (profileImageUrl.startsWith('http://') ||
+              profileImageUrl.startsWith('https://')) {
+            // 네트워크 이미지 프리로드
+            imageUrls.add(profileImageUrl);
+          } else {
+            // 🎯 로컬 파일 경로인 경우 파일 존재 여부 확인 후 프리로드
+            try {
+              final file = File(profileImageUrl);
+              if (await file.exists()) {
+                await precacheImage(FileImage(file), context);
+                print('[SplashScreen] 로컬 이미지 프리로드 완료: $profileImageUrl');
+              }
+            } catch (e) {
+              print('[SplashScreen] 로컬 이미지 프리로드 실패: $e');
+            }
+          }
+        }
+      }
+
+      if (imageUrls.isEmpty) {
+        print('[SplashScreen] 프리로드할 그룹 이미지 없음');
+        return;
+      }
+
+      print('[SplashScreen] 그룹 이미지 프리로드 시작: ${imageUrls.length}개');
+
+      // 🎯 병렬로 모든 이미지 프리로드
+      await Future.wait(
+        imageUrls
+            .map(
+              (url) => precacheImage(CachedNetworkImageProvider(url), context),
+            )
+            .toList(),
+        eagerError: false, // 하나 실패해도 계속 진행
+      );
+
+      print('[SplashScreen] 그룹 이미지 프리로드 완료');
+    } catch (e) {
+      print('[SplashScreen] 그룹 이미지 프리로드 실패 (무시): $e');
+      // 이미지 프리로드 실패는 앱 시작을 막지 않음
     }
   }
 

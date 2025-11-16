@@ -145,7 +145,7 @@ class _CustomRefreshIndicatorState extends State<CustomRefreshIndicator>
                 left: 0,
                 right: 0,
                 child: Center(
-                  child: _CustomSpinner(
+                  child: CustomSpinner(
                     progress: progress,
                     isAnimating: _isAnimating,
                     rotation: _rotationAnimation.value,
@@ -160,12 +160,12 @@ class _CustomRefreshIndicatorState extends State<CustomRefreshIndicator>
 }
 
 /// 8개 날개 스피너 위젯
-class _CustomSpinner extends StatelessWidget {
+class CustomSpinner extends StatelessWidget {
   final double progress; // 0.0 ~ 1.0
   final bool isAnimating;
   final double rotation;
 
-  const _CustomSpinner({
+  const CustomSpinner({
     required this.progress,
     required this.isAnimating,
     required this.rotation,

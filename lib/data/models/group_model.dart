@@ -33,6 +33,7 @@ class Group {
   final List<GroupMember> members; // 선택적으로 포함되는 멤버 목록
   final String? profileImageUrl; // 그룹 프로필 이미지
   final int? memberCount; // 🎯 멤버 수
+  final int? postCount; // 🎯 포스트 수
   final List<String>? memberThumbnails; // 🎯 멤버 썸네일 URL 리스트
   final bool? isSystem; // 🎯 시스템 그룹 여부 (전체 친구 등)
 
@@ -46,6 +47,7 @@ class Group {
     this.members = const [],
     this.profileImageUrl,
     this.memberCount,
+    this.postCount,
     this.memberThumbnails,
     this.isSystem,
   });
@@ -82,6 +84,7 @@ class Group {
       members: parsedMembers,
       profileImageUrl: profileImageUrl,
       memberCount: (json['memberCount'] as num?)?.toInt(),
+      postCount: (json['postCount'] as num?)?.toInt(),
       memberThumbnails:
           (json['memberThumbnails'] as List?)
               ?.map((e) => e?.toString() ?? '')
@@ -102,6 +105,7 @@ class Group {
     List<GroupMember>? members,
     String? profileImageUrl,
     int? memberCount,
+    int? postCount,
     List<String>? memberThumbnails,
     bool? isSystem,
   }) {
@@ -115,6 +119,7 @@ class Group {
       members: members ?? this.members,
       profileImageUrl: profileImageUrl ?? this.profileImageUrl,
       memberCount: memberCount ?? this.memberCount,
+      postCount: postCount ?? this.postCount,
       memberThumbnails: memberThumbnails ?? this.memberThumbnails,
       isSystem: isSystem ?? this.isSystem,
     );

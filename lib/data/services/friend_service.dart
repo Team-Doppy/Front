@@ -3,6 +3,14 @@ import 'base_api_service.dart';
 import '../models/friend_model.dart';
 import '../models/user_model.dart';
 
+/// 친구 요청이 존재하지 않는 경우 예외 (이미 취소되었거나 없음)
+class FriendRequestNotFoundException implements Exception {
+  final String message;
+  FriendRequestNotFoundException(this.message);
+  @override
+  String toString() => message;
+}
+
 class FriendService {
   static final FriendService _instance = FriendService._internal();
   factory FriendService() => _instance;
@@ -85,7 +93,12 @@ class FriendService {
       if (response.statusCode != 200) throw Exception('친구 요청 수락 실패');
     } catch (e) {
       if (e is DioException) {
-        throw Exception('친구 요청 수락 실패: ${e.response?.statusCode}');
+        final statusCode = e.response?.statusCode;
+        // 🎯 이미 취소된 요청인 경우 (404 또는 적절한 에러 코드)
+        if (statusCode == 404) {
+          throw FriendRequestNotFoundException('친구 요청이 이미 취소되었거나 존재하지 않습니다');
+        }
+        throw Exception('친구 요청 수락 실패: $statusCode');
       }
       rethrow;
     }
@@ -170,10 +183,13 @@ class FriendService {
     }
   }
 
-  /// 14. 수락된 친구 목록 조회
-  Future<List<Friend>> getAcceptedFriends() async {
+  /// 14. 수락된 친구 목록 조회 (페이지네이션 지원)
+  Future<List<Friend>> getAcceptedFriends({int page = 0, int size = 20}) async {
     try {
-      final response = await _dio.get('/api/friends/accepted');
+      final response = await _dio.get(
+        '/api/friends/accepted',
+        queryParameters: {'page': page, 'size': size},
+      );
       if (response.statusCode == 200) {
         final List<dynamic> data = response.data;
         return data.map((item) => Friend.fromJson(item)).toList();
@@ -187,10 +203,16 @@ class FriendService {
     }
   }
 
-  /// 15. 보낸 친구 신청 목록
-  Future<List<Friend>> getSentFriendRequests() async {
+  /// 15. 보낸 친구 신청 목록 (페이지네이션 지원)
+  Future<List<Friend>> getSentFriendRequests({
+    int page = 0,
+    int size = 20,
+  }) async {
     try {
-      final response = await _dio.get('/api/friends/sent-requests');
+      final response = await _dio.get(
+        '/api/friends/sent-requests',
+        queryParameters: {'page': page, 'size': size},
+      );
       if (response.statusCode == 200) {
         final List<dynamic> data = response.data;
         return data.map((item) => Friend.fromJson(item)).toList();
@@ -224,10 +246,16 @@ class FriendService {
     }
   }
 
-  /// 16. 받은 친구 신청 목록
-  Future<List<Friend>> getReceivedFriendRequests() async {
+  /// 16. 받은 친구 신청 목록 (페이지네이션 지원)
+  Future<List<Friend>> getReceivedFriendRequests({
+    int page = 0,
+    int size = 20,
+  }) async {
     try {
-      final response = await _dio.get('/api/friends/received-requests');
+      final response = await _dio.get(
+        '/api/friends/received-requests',
+        queryParameters: {'page': page, 'size': size},
+      );
       if (response.statusCode == 200) {
         final List<dynamic> data = response.data;
         return data.map((item) => Friend.fromJson(item)).toList();

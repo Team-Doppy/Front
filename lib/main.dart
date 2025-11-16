@@ -145,11 +145,6 @@ class RootShell extends StatefulWidget {
 
 class _RootShellState extends State<RootShell> {
   late int _index;
-  bool _isFirstLoad = true; // 첫 로드 여부 추적
-  final GlobalKey<HomeScreenState> _homeScreenKey =
-      GlobalKey<HomeScreenState>();
-  final ValueNotifier<bool> _isShowingSearchResults = ValueNotifier(false);
-  bool _isObscuredByOverlay = false; // 검색/글쓰기 오버레이에 가려졌는지
   String? _searchInitialQuery; // 검색 화면 초기 검색어
 
   @override
@@ -160,31 +155,41 @@ class _RootShellState extends State<RootShell> {
 
   @override
   void dispose() {
-    _isShowingSearchResults.dispose();
     super.dispose();
   }
 
-  bool _isProcessingSearchComplete = false; // 🎯 중복 처리 방지
-
-  // 검색 화면 열기 (인덱스 기반)
+  // 검색 화면 열기
   void _openSearchScreen([String? initialQuery]) {
     if (!mounted) return;
-    debugPrint('[Main] 검색 화면 열기 (인덱스 기반)');
     setState(() {
       _searchInitialQuery = initialQuery;
       _index = 1; // 검색 탭으로 전환
     });
   }
 
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    // 첫 로드 후 애니메이션 활성화
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_isFirstLoad) {
-        setState(() {
-          _isFirstLoad = false;
-        });
+  // 탭 변경 처리 (검색 화면에서 호출)
+  void _handleTabChange(int index) {
+    if (!mounted) return;
+
+    // 글쓰기 탭(2)은 글쓰기 화면 열기
+    if (index == 2) {
+      Navigator.of(context).push(
+        PageRouteBuilder(
+          pageBuilder:
+              (context, animation, secondaryAnimation) =>
+                  PostwriteScreen(isEditingMode: false),
+          transitionDuration: Duration.zero,
+          reverseTransitionDuration: Duration.zero,
+        ),
+      );
+      return;
+    }
+
+    // 일반 탭 전환
+    setState(() {
+      _index = index;
+      if (index != 1) {
+        _searchInitialQuery = null;
       }
     });
   }
@@ -192,52 +197,41 @@ class _RootShellState extends State<RootShell> {
   void _onTap(int i) {
     final searchResultProvider = context.read<SearchProvider>();
 
-    // 검색 오버레이가 열려있을 때 홈 버튼을 누르면 오버레이만 닫기
-    if (i == 0 && searchResultProvider.isSearchOverlayVisible) {
-      searchResultProvider.setSearchOverlayVisible(false);
-      return;
-    }
-
-    // 홈 버튼(0번)을 눌렀을 때 검색 결과를 표시 중이라면 초기화
+    // 홈 탭 클릭
     if (i == 0) {
-      final homeState = _homeScreenKey.currentState;
-      if (homeState != null && homeState.isShowingSearchResults) {
-        homeState.clearSearchAndReturnToHome();
+      if (searchResultProvider.isSearchOverlayVisible) {
+        searchResultProvider.setSearchOverlayVisible(false);
       }
       setState(() {
         _index = 0;
-        _searchInitialQuery = null; // 검색어 초기화
+        _searchInitialQuery = null;
       });
       return;
     }
 
-    // 검색 버튼 클릭 시: 검색 화면 열기
+    // 검색 탭 클릭
     if (i == 1) {
       _openSearchScreen();
       return;
     }
 
+    // 글쓰기 탭 클릭
     if (i == 2) {
-      setState(() => _isObscuredByOverlay = true);
-      Navigator.of(context)
-          .push(
-            PageRouteBuilder(
-              pageBuilder:
-                  (context, animation, secondaryAnimation) =>
-                      PostwriteScreen(isEditingMode: false),
-              transitionDuration: Duration.zero, // 애니메이션 제거
-              reverseTransitionDuration: Duration.zero, // 역방향 애니메이션도 제거
-            ),
-          )
-          .whenComplete(() {
-            if (mounted) setState(() => _isObscuredByOverlay = false);
-          });
+      Navigator.of(context).push(
+        PageRouteBuilder(
+          pageBuilder:
+              (context, animation, secondaryAnimation) =>
+                  PostwriteScreen(isEditingMode: false),
+          transitionDuration: Duration.zero,
+          reverseTransitionDuration: Duration.zero,
+        ),
+      );
       return;
     }
 
+    // 프로필 탭 클릭
     setState(() {
       _index = i;
-      // 검색 탭이 아닌 다른 탭으로 이동하면 초기 검색어 초기화
       if (i != 1) {
         _searchInitialQuery = null;
       }
@@ -249,151 +243,51 @@ class _RootShellState extends State<RootShell> {
     }
   }
 
-  // 현재 인덱스에 따라 화면 빌드
-  Widget _buildCurrentScreen(Widget homeScreen) {
-    switch (_index) {
-      case 0:
-        return homeScreen;
-      case 1:
-        return SearchScreenOverlay(
-          key: ValueKey(
-            'search_${_searchInitialQuery ?? 'empty'}',
-          ), // 초기 검색어 변경 시 위젯 재생성
-          initialQuery: _searchInitialQuery,
-          onSearchComplete: (results, query) {
-            if (!mounted || _isProcessingSearchComplete) {
-              debugPrint('[Main] 검색 완료 무시 (중복 또는 unmounted)');
-              return;
-            }
-
-            _isProcessingSearchComplete = true;
-            debugPrint('[Main] ========== 검색 완료 시작 ==========');
-            debugPrint('[Main] 검색 완료: ${results.length}개 결과');
-
-            // 🎯 1단계: 홈 탭으로 전환
-            if (_index != 0) {
-              setState(() {
-                _index = 0;
-                _searchInitialQuery = null;
-              });
-              debugPrint('[Main] 홈 탭으로 전환 완료');
-            }
-
-            // 🎯 2단계: SearchProvider에 검색 결과 저장
-            context.read<SearchProvider>().setSearchResults(results, query);
-            debugPrint('[Main] SearchProvider에 데이터 저장 완료');
-
-            // 🎯 3단계: 홈 화면에 데이터 전달
-            final homeState = _homeScreenKey.currentState;
-            if (homeState != null && homeState.mounted) {
-              homeState.setSearchResults(results, query);
-              debugPrint('[Main] 홈 화면에 검색 결과 전달 완료');
-            }
-
-            // 플래그 리셋
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              if (mounted) {
-                _isProcessingSearchComplete = false;
-                debugPrint('[Main] ========== 검색 완료 종료 ==========');
-              }
-            });
-          },
-          onClose: () {
-            // 검색 화면 닫기 (홈으로 이동)
-            if (mounted) {
-              setState(() {
-                _index = 0;
-                _searchInitialQuery = null;
-              });
-            }
-          },
-          onTabChange: (index) {
-            debugPrint('[Main] onTabChange: $index (검색 화면에서 호출)');
-            if (!mounted) return;
-
-            // 글쓰기 탭(2)은 글쓰기 화면 열기
-            if (index == 2) {
-              debugPrint('[Main] 글쓰기 화면 열기');
-              setState(() {
-                _isObscuredByOverlay = true;
-                _index = 0; // 홈으로 먼저 이동
-                _searchInitialQuery = null;
-              });
-              WidgetsBinding.instance.addPostFrameCallback((_) {
-                if (mounted) {
-                  Navigator.of(context)
-                      .push(
-                        PageRouteBuilder(
-                          pageBuilder:
-                              (context, animation, secondaryAnimation) =>
-                                  PostwriteScreen(isEditingMode: false),
-                          transitionDuration: Duration.zero,
-                          reverseTransitionDuration: Duration.zero,
-                        ),
-                      )
-                      .whenComplete(() {
-                        if (mounted) {
-                          setState(() => _isObscuredByOverlay = false);
-                        }
-                      });
-                }
-              });
-              return;
-            }
-
-            // 일반 탭 전환
-            setState(() {
-              _index = index;
-              // 검색 탭이 아닌 다른 탭으로 이동하면 초기 검색어 초기화
-              if (index != 1) {
-                _searchInitialQuery = null;
-              }
-            });
-            debugPrint('[Main] 탭 전환 완료: $_index');
-          },
-        );
-      case 3:
-        return const UserProfileScreen(isFromBottomTab: true);
-      default:
-        return homeScreen;
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
-    // HomeScreen을 현재 탭 활성 상태와 함께 구성
-    final homeScreen = HomeScreen(
-      preloadedHomeData: widget.preloadedHomeData,
-      key: _homeScreenKey,
-      searchResultsNotifier: _isShowingSearchResults,
-      isActive: _index == 0 && !_isObscuredByOverlay,
-      onOpenSearchScreen: (query) => _openSearchScreen(query),
-    );
-
+    // 🎯 각 탭의 화면을 IndexedStack으로 재사용 (새로 만들어지지 않음)
     return Material(
       child: Stack(
         children: [
-          // 메인 화면들 (인덱스 기반 단순 전환)
-          _buildCurrentScreen(homeScreen),
+          // 모든 탭 화면을 미리 생성하고 IndexedStack으로 관리 (상태 유지)
+          IndexedStack(
+            index: _index,
+            children: [
+              // 홈 화면
+              HomeScreen(
+                preloadedHomeData: widget.preloadedHomeData,
+                isActive: _index == 0,
+                onOpenSearchScreen: (query) => _openSearchScreen(query),
+              ),
+              // 검색 화면
+              SearchScreenOverlay(
+                initialQuery: _searchInitialQuery,
+                onClose: () {
+                  if (mounted) {
+                    setState(() {
+                      _index = 0;
+                      _searchInitialQuery = null;
+                    });
+                  }
+                },
+                onTabChange: _handleTabChange,
+              ),
+              // 글쓰기 탭은 Navigator로 처리하므로 빈 위젯
+              const SizedBox.shrink(),
+              // 프로필 화면
+              const UserProfileScreen(isFromBottomTab: true),
+            ],
+          ),
           // 플로팅 바텀 네비게이션 바
           Positioned(
             left: 0,
             right: 0,
             bottom: 0,
-            child: ValueListenableBuilder<bool>(
-              valueListenable: _isShowingSearchResults,
-              builder: (context, isShowingSearchResults, child) {
-                // 검색 결과를 표시 중일 때는 홈(0)에서만 검색 아이콘(1번) 활성화
-                final displayIndex =
-                    (_index == 0 && isShowingSearchResults) ? 1 : _index;
-
-                return CustomBottomNavigationBar(
-                  currentIndex: displayIndex,
-                  actualIndex: _index, // 실제 화면 인덱스 전달
-                  onTap: _onTap,
-                  isSearching: context.watch<SearchProvider>().isSearchActive,
-                );
-              },
+            child: CustomBottomNavigationBar(
+              currentIndex: _index,
+              actualIndex: _index,
+              onTap: _onTap,
+              isSearching: context.watch<SearchProvider>().isSearchActive,
             ),
           ),
         ],

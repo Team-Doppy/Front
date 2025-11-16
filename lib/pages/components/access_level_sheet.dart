@@ -17,10 +17,15 @@ class AccessLevelSheet {
     required String postId,
     required String currentAccessLevel,
     required List<int>? currentSharedGroupIds,
+    List<String>? currentSharedGroupNames, // 🎯 서버에서 제공하는 그룹 이름 목록 (optional)
     required Function(String accessLevel, List<int>? sharedGroupIds) onChanged,
   }) async {
     _hasScrolled = false; // 스크롤 플래그 초기화
     final parentContext = context; // 부모 context 저장
+
+    // 🎯 그룹 변경 여부 추적 (시트가 닫힐 때 스낵바 표시용)
+    bool hasGroupChanged = false;
+
     await showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -33,6 +38,12 @@ class AccessLevelSheet {
           builder: (context, groupProvider, _) {
             return StatefulBuilder(
               builder: (context, setModalState) {
+                // 🎯 선택된 그룹 ID 목록 관리 (다중 선택 가능)
+                final Set<int> selectedGroupIds =
+                    currentSharedGroupIds != null
+                        ? currentSharedGroupIds.toSet()
+                        : <int>{};
+
                 return Stack(
                   children: [
                     // 배경 영역 (바깥 부분) - 탭하면 닫힘
@@ -111,10 +122,20 @@ class AccessLevelSheet {
                                             postId,
                                             currentAccessLevel,
                                             currentSharedGroupIds,
+                                            currentSharedGroupNames, // 🎯 서버에서 제공하는 그룹 이름 목록
                                             onChanged,
                                             setModalState,
                                             scrollController,
                                             groupProvider.myGroups,
+                                            selectedGroupIds, // 🎯 선택된 그룹 ID 목록 전달
+                                            (accessLevel, sharedGroupIds) {
+                                              // 🎯 그룹 변경 추적
+                                              hasGroupChanged = true;
+                                              onChanged(
+                                                accessLevel,
+                                                sharedGroupIds,
+                                              );
+                                            },
                                           ),
                                         ),
                                       ),
@@ -134,7 +155,19 @@ class AccessLevelSheet {
           },
         );
       },
-    );
+    ).then((_) {
+      // 🎯 시트가 닫힌 후 그룹이 변경되었으면 스낵바 표시
+      if (hasGroupChanged && parentContext.mounted) {
+        Future.delayed(const Duration(milliseconds: 300), () {
+          if (parentContext.mounted) {
+            ErrorHandler.showInfo(
+              parentContext,
+              parentContext.tr('access_level_changed'),
+            );
+          }
+        });
+      }
+    });
   }
 
   /// 공개범위 아이템 빌드
@@ -201,24 +234,20 @@ class AccessLevelSheet {
     String postId,
     String currentAccessLevel,
     List<int>? currentSharedGroupIds,
+    List<String>? currentSharedGroupNames, // 🎯 서버에서 제공하는 그룹 이름 목록
     Function(String accessLevel, List<int>? sharedGroupIds) onChanged,
     StateSetter setModalState,
     ScrollController scrollController,
     List<dynamic> groups,
+    Set<int> selectedGroupIds, // 🎯 선택된 그룹 ID 목록
+    Function(String accessLevel, List<int>? sharedGroupIds)
+    onGroupChanged, // 🎯 그룹 변경 추적 콜백
   ) {
     final accessLevelUpper = (currentAccessLevel.toString()).toUpperCase();
     final isPublic = accessLevelUpper == 'PUBLIC';
     final isPrivate = accessLevelUpper == 'PRIVATE';
     final isFriends = accessLevelUpper == 'FRIENDS';
     final isGroups = accessLevelUpper == 'GROUPS';
-
-    // 디버깅: 현재 accessLevel 확인
-    print(
-      '[AccessLevelSheet] currentAccessLevel: $currentAccessLevel, upper: $accessLevelUpper',
-    );
-    print(
-      '[AccessLevelSheet] isPublic: $isPublic, isPrivate: $isPrivate, isFriends: $isFriends, isGroups: $isGroups',
-    );
 
     return Consumer<GroupProvider>(
       builder: (context, groupProvider, child) {
@@ -345,68 +374,54 @@ class AccessLevelSheet {
               },
             ),
 
-            // 그룹 공개
+            // 실제 그룹들만 표시 (시스템 그룹 제외)
             if (groupProvider.myGroups.isNotEmpty) ...[
-              _buildAccessLevelItem(
-                title: bottomSheetContext.tr('group_access'),
-                isSelected:
-                    isGroups &&
-                    (currentSharedGroupIds == null ||
-                        currentSharedGroupIds.isEmpty),
-                context: bottomSheetContext,
-                onTap: () async {
-                  final success = await _updateAccessLevel(
-                    bottomSheetContext,
-                    postId,
-                    'GROUPS',
-                    null,
-                    onChanged,
-                  );
-                  if (success) {
-                    Navigator.of(bottomSheetContext).pop();
-                    // 바텀시트가 닫힌 후에 메시지 표시
-                    await Future.delayed(const Duration(milliseconds: 300));
-                    if (parentContext.mounted) {
-                      ErrorHandler.showInfo(
-                        parentContext,
-                        parentContext.tr('access_level_changed'),
-                      );
-                    }
-                  }
-                },
-              ),
+              // 실제 그룹 필터링 (시스템 그룹 제외)
+              ...groupProvider.myGroups
+                  .where((group) {
+                    // 시스템 그룹이 아닌 그룹만
+                    return group.isSystem != true;
+                  })
+                  .map((group) {
+                    final isGroupSelected = selectedGroupIds.contains(group.id);
+                    return _buildAccessLevelItem(
+                      title: group.name,
+                      isSelected: isGroups && isGroupSelected,
+                      context: bottomSheetContext,
+                      onTap: () {
+                        // 🎯 그룹 선택/해제 토글 (다중 선택 가능)
+                        setModalState(() {
+                          if (isGroupSelected) {
+                            selectedGroupIds.remove(group.id);
+                          } else {
+                            selectedGroupIds.add(group.id);
+                          }
 
-              // 각 그룹별 아이템
-              ...groupProvider.myGroups.map(
-                (group) => _buildAccessLevelItem(
-                  title: group.name,
-                  isSelected:
-                      isGroups &&
-                      currentSharedGroupIds != null &&
-                      currentSharedGroupIds.contains(group.id),
-                  context: bottomSheetContext,
-                  onTap: () async {
-                    final success = await _updateAccessLevel(
-                      bottomSheetContext,
-                      postId,
-                      'GROUPS',
-                      [group.id],
-                      onChanged,
+                          // 🎯 선택된 그룹이 있으면 GROUPS로 업데이트, 없으면 PUBLIC로 변경
+                          final newSharedGroupIds =
+                              selectedGroupIds.isEmpty
+                                  ? null
+                                  : selectedGroupIds.toList();
+                          final newAccessLevel =
+                              selectedGroupIds.isEmpty ? 'PUBLIC' : 'GROUPS';
+
+                          // 🎯 즉시 API 업데이트 (시트는 열어둠 - 다중 선택 가능)
+                          _updateAccessLevel(
+                            bottomSheetContext,
+                            postId,
+                            newAccessLevel,
+                            newSharedGroupIds,
+                            onChanged,
+                          ).then((success) {
+                            // 🎯 성공 시 그룹 변경 추적 (스낵바는 시트가 닫힐 때 표시)
+                            if (success) {
+                              onGroupChanged(newAccessLevel, newSharedGroupIds);
+                            }
+                          });
+                        });
+                      },
                     );
-                    if (success) {
-                      Navigator.of(bottomSheetContext).pop();
-                      // 바텀시트가 닫힌 후에 메시지 표시
-                      await Future.delayed(const Duration(milliseconds: 300));
-                      if (parentContext.mounted) {
-                        ErrorHandler.showInfo(
-                          parentContext,
-                          parentContext.tr('access_level_changed'),
-                        );
-                      }
-                    }
-                  },
-                ),
-              ),
+                  }),
             ] else if (groupProvider.isLoading) ...[
               // 로딩 중
               const Padding(
@@ -473,16 +488,22 @@ class AccessLevelSheet {
     } else if (accessLevelUpper == 'PRIVATE') {
       return 2;
     } else if (accessLevelUpper == 'GROUPS') {
-      // 그룹 공개 (일반)
-      if (currentSharedGroupIds == null || currentSharedGroupIds.isEmpty) {
-        return 3;
-      }
-      // 특정 그룹 선택
-      if (groups.isNotEmpty && currentSharedGroupIds.isNotEmpty) {
+      // 특정 그룹 선택 (그룹 공개 일반 옵션 제거됨)
+      if (groups.isNotEmpty &&
+          currentSharedGroupIds != null &&
+          currentSharedGroupIds.isNotEmpty) {
+        // 실제 그룹만 필터링 (시스템 그룹 제외)
+        final actualGroups =
+            groups.where((g) {
+              return g.isSystem != true;
+            }).toList();
+
         final selectedGroupId = currentSharedGroupIds.first;
-        final groupIndex = groups.indexWhere((g) => g.id == selectedGroupId);
+        final groupIndex = actualGroups.indexWhere(
+          (g) => g.id == selectedGroupId,
+        );
         if (groupIndex >= 0) {
-          return 4 + groupIndex; // 3 (그룹 공개) + 1 (그룹 공개 항목) + groupIndex
+          return 3 + groupIndex; // 3 (Public, Friends, Private) + groupIndex
         }
       }
     }

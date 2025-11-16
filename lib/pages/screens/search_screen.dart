@@ -7,6 +7,7 @@ import 'package:doppy/l10n/app_localizations.dart';
 import 'package:doppy/pages/components/shimmer_box.dart';
 import 'package:doppy/pages/components/custom_bottom_navigation_bar.dart';
 import 'package:doppy/pages/components/custom_refresh_indicator.dart';
+import 'package:doppy/pages/components/post_list.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/services.dart';
@@ -16,14 +17,12 @@ import '../../../theme/app_text_styles.dart';
 import '../../../data/services/search_service.dart';
 
 class SearchScreenOverlay extends StatefulWidget {
-  final Function(List<PostData>, String)? onSearchComplete; // 검색 결과와 검색어 함께 전달
   final VoidCallback? onClose;
   final String? initialQuery; // 초기 검색어 (검색어 칩에서 올 때)
   final Function(int)? onTabChange; // 🎯 바텀 바 탭 변경
 
   const SearchScreenOverlay({
     super.key,
-    this.onSearchComplete,
     this.onClose,
     this.initialQuery,
     this.onTabChange,
@@ -36,13 +35,18 @@ class SearchScreenOverlay extends StatefulWidget {
 class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
   final TextEditingController _searchController = TextEditingController();
   final FocusNode _searchFocusNode = FocusNode();
-  bool _freezeDuringPush = false;
-  List<SearchContentItem> _frozenAccounts = const [];
-  String _freezeKind = '';
   bool _hasNetworkError = false;
-  bool _suppressAnimOnce = false;
   bool _isSearching = false; // 🎯 중복 검색 방지
-  bool _isFadingOut = false; // 🎯 검색 완료 시 페이드아웃 상태
+  bool _isNavigating = false; // 🎯 네비게이션 중 중복 탭 방지
+  bool _shouldIgnoreControllerChanges = false; // 🎯 검색 칩 탭 시 리스너 무시 플래그
+
+  // 🎯 검색 결과 상태 (독립적으로 관리)
+  List<PostData> _searchResults = [];
+  String _searchQuery = '';
+  bool _isShowingSearchResults = false;
+  bool _searchHasMore = true;
+  bool _isLoadingMore = false;
+  int _searchRefreshCount = 0;
 
   @override
   void initState() {
@@ -57,14 +61,15 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
     }
 
     _searchController.addListener(() {
-      context.read<SearchService>().onSearchChanged(_searchController.text);
+      // 🎯 검색어 변경 시 SearchService 업데이트
+      // 단, 검색 칩 탭으로 인한 변경은 무시
+      if (!_shouldIgnoreControllerChanges) {
+        context.read<SearchService>().onSearchChanged(_searchController.text);
+      }
     });
 
     _searchFocusNode.addListener(() {
-      final svc = context.read<SearchService>();
-      if (!svc.isViewLocked) {
-        svc.setFocused(_searchFocusNode.hasFocus);
-      }
+      context.read<SearchService>().setFocused(_searchFocusNode.hasFocus);
     });
 
     // 🎯 초기화 및 초기 검색어 처리
@@ -159,17 +164,15 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
   Widget build(BuildContext context) {
     return Consumer<SearchService>(
       builder: (context, searchService, child) {
-        return AnimatedOpacity(
-          opacity: _isFadingOut ? 0.0 : 1.0,
-          duration: const Duration(milliseconds: 200),
-          child: Stack(
-            children: [
-              Scaffold(
-                backgroundColor: Theme.of(context).colorScheme.background,
-                body: SafeArea(
-                  child: Column(
-                    children: [
-                      const SizedBox(height: 5),
+        return Stack(
+          children: [
+            Scaffold(
+              backgroundColor: Theme.of(context).colorScheme.background,
+              body: SafeArea(
+                child: Column(
+                  children: [
+                    // 🎯 검색 결과가 표시될 때는 검색창 숨김
+                    if (!_isShowingSearchResults) ...[
                       _SearchTopBar(
                         controller: _searchController,
                         focusNode: _searchFocusNode,
@@ -184,77 +187,42 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
                         },
                         isSearching: _isSearching, // 🎯 검색 중 여부 전달
                       ),
-                      Expanded(
-                        child: AnimatedBuilder(
-                          animation: searchService,
-                          builder: (_, __) {
-                            final bool disableAnim =
-                                _freezeDuringPush ||
-                                _suppressAnimOnce ||
-                                searchService.query.isNotEmpty;
-
-                            return AnimatedSwitcher(
-                              duration:
-                                  disableAnim
-                                      ? const Duration(milliseconds: 0)
-                                      : const Duration(milliseconds: 300),
-                              switchInCurve: const Interval(
-                                0.5,
-                                1.0,
-                                curve: Curves.easeOut,
-                              ), // 🎯 20% 지연 후 나타남
-                              switchOutCurve: Curves.easeInCubic, // 🎯 빠르게 사라짐
-                              transitionBuilder: (child, anim) {
-                                if (disableAnim) return child;
-
-                                // 🎯 나타나는 child만 페이드 + 슬라이드
-                                final slide = Tween<Offset>(
-                                  begin: const Offset(0.0, 0.01),
-                                  end: Offset.zero,
-                                ).animate(anim);
-                                return FadeTransition(
-                                  opacity: anim,
-                                  child: SlideTransition(
-                                    position: slide,
-                                    child: child,
-                                  ),
-                                );
-                              },
-                              child: _buildSearchBody(context, searchService),
-                            );
-                          },
-                        ),
-                      ),
                     ],
-                  ),
+                    Expanded(
+                      child:
+                          _isShowingSearchResults
+                              ? _buildSearchResultsView(context)
+                              : _buildDefaultSearchBody(context, searchService),
+                    ),
+                  ],
                 ),
               ),
-              // 🎯 바텀 네비게이션 바
-              Positioned(
-                left: 0,
-                right: 0,
-                bottom: 0,
-                child: CustomBottomNavigationBar(
-                  currentIndex: 1, // 검색 탭 활성화
-                  actualIndex: 1,
-                  onTap: (index) {
-                    debugPrint('[SearchScreen] 바텀 바 탭: $index');
+            ),
+            // 🎯 바텀 네비게이션 바
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              child: CustomBottomNavigationBar(
+                currentIndex: 1, // 검색 탭 활성화
+                actualIndex: 1,
+                onTap: (index) {
+                  debugPrint('[SearchScreen] 바텀 바 탭: $index');
 
-                    if (index == 1) {
-                      debugPrint('[SearchScreen] 검색 탭 클릭 무시');
-                      return; // 검색 탭은 무시
-                    }
+                  if (index == 1) {
+                    debugPrint('[SearchScreen] 검색 탭 클릭 무시');
+                    return; // 검색 탭은 무시
+                  }
 
-                    // 🎯 onTabChange에 위임 (main.dart에서 인덱스 기반으로 처리)
-                    debugPrint('[SearchScreen] 탭 전환 위임: $index');
-                    widget.onTabChange?.call(index);
-                  },
-                  isSearching: true,
-                  forceOpaqueBackground: true, // 🎯 투명도 없이 배경 색상 표시
-                ),
+                  // 🎯 onTabChange에 위임 (main.dart에서 인덱스 기반으로 처리)
+                  debugPrint('[SearchScreen] 탭 전환 위임: $index');
+                  widget.onTabChange?.call(index);
+                },
+                isSearching: true,
+                forceOpaqueBackground: true, // 🎯 투명도 없이 배경 색상 표시
               ),
-            ],
-          ),
+            ),
+          ],
         );
       },
     );
@@ -290,48 +258,51 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
       final blogResults = searchService.blogResults;
       final posts =
           blogResults.map((item) {
-            return PostData(
-              id: item.id,
-              thumbnailImageUrl: item.imageUrl ?? '',
-              title: item.title ?? '',
-              summary: item.summary ?? item.parsedContent ?? '',
-              author: item.author ?? item.username ?? '',
-              authorProfileImageUrl: item.profileImageUrl ?? '',
-              content: item.content ?? '',
-              accessLevel: AccessLevel.public,
-              viewCount: 0,
-              likeCount: item.likes ?? 0,
-              commentCount: item.comments ?? 0,
-              isLiked: false,
-              createdAt: item.createdAt ?? DateTime.now().toIso8601String(),
-              updatedAt: item.createdAt ?? DateTime.now().toIso8601String(),
-            );
+            // 🎯 SearchService에 저장된 원본 서버 데이터 활용
+            final originalData = searchService.getPostData(item.id);
+            if (originalData != null) {
+              // 원본 서버 데이터가 있으면 PostData.fromServer로 변환 (정확한 데이터 사용)
+              return PostData.fromServer(originalData);
+            } else {
+              // fallback: SearchContentItem에서 수동 변환
+              return PostData(
+                id: item.id,
+                thumbnailImageUrl: item.imageUrl ?? '',
+                title: item.title ?? '',
+                summary: item.summary ?? item.parsedContent ?? '',
+                author: item.author ?? item.username ?? '',
+                authorProfileImageUrl: item.profileImageUrl ?? '',
+                content: item.content ?? '',
+                accessLevel: AccessLevel.public,
+                viewCount: 0,
+                likeCount: item.likes ?? 0,
+                commentCount: item.comments ?? 0,
+                isLiked: false,
+                createdAt: item.createdAt ?? DateTime.now().toIso8601String(),
+                updatedAt: item.createdAt ?? DateTime.now().toIso8601String(),
+              );
+            }
           }).toList();
 
-      if (widget.onSearchComplete != null) {
-        print('[SearchOverlay] 검색 완료 콜백 호출: ${posts.length}개');
-
-        // 🎯 페이드아웃 애니메이션 실행
-        if (mounted) {
-          setState(() {
-            _isFadingOut = true;
-          });
-
-          // 페이드아웃 애니메이션 후 콜백 호출
-          await Future.delayed(const Duration(milliseconds: 200));
-
-          if (mounted) {
-            widget.onSearchComplete!(posts, searchService.query);
-          }
-        }
+      // 🎯 검색 결과를 내부 상태로 저장 (홈으로 이동하지 않음)
+      if (mounted) {
+        setState(() {
+          _searchResults = posts;
+          _searchQuery = searchService.query;
+          _isShowingSearchResults = true;
+          _searchHasMore = searchService.blogsHasMore;
+          _searchRefreshCount++;
+        });
+        print('[SearchOverlay] 검색 완료: ${posts.length}개 결과 (검색 탭에 표시)');
       }
     } catch (e) {
       print('[SearchOverlay] 검색 실패: $e');
       if (mounted) {
-        setState(() => _hasNetworkError = true);
-      }
-      if (widget.onSearchComplete != null) {
-        widget.onSearchComplete!([], searchService.query);
+        setState(() {
+          _hasNetworkError = true;
+          _searchResults = [];
+          _isShowingSearchResults = false;
+        });
       }
     } finally {
       if (mounted) {
@@ -340,29 +311,16 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
     }
   }
 
-  Widget _buildSearchBody(BuildContext context, SearchService searchService) {
-    if (_freezeDuringPush) {
-      final enableHero = _freezeKind == 'live';
-      return _SearchResults(
-        accounts: _frozenAccounts,
-        searchHistory: const [],
-        query: enableHero ? searchService.query : '',
-        hasNetworkError: _hasNetworkError,
-        onAnyTapDown: () {},
-        onTapAccount: (item) {},
-        onTapHistory: (_) {},
-        onRemoveHistory: (item) {},
-        enableHero: enableHero,
-        onTapSearch: _runSearch,
-      );
-    }
+  // 🎯 기본 검색 화면 (trending/history/live)
+  Widget _buildDefaultSearchBody(
+    BuildContext context,
+    SearchService searchService,
+  ) {
     return Builder(
       key: ValueKey(
-        _freezeDuringPush
+        searchService.query.isNotEmpty
             ? 'live'
-            : (searchService.query.isNotEmpty
-                ? 'live'
-                : (searchService.isFocused ? 'history' : 'trending')),
+            : (searchService.isFocused ? 'history' : 'trending'),
       ),
       builder: (_) {
         // 1) 입력 중: 실시간 계정 검색 결과
@@ -372,48 +330,52 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
             searchHistory: const [],
             query: searchService.query,
             hasNetworkError: _hasNetworkError,
-            onAnyTapDown:
-                () => setState(() {
-                  _freezeDuringPush = true;
-                  _freezeKind = 'live';
-                  _frozenAccounts = List.of(searchService.searchingAccounts);
-                }),
+            onAnyTapDown: () {},
             onTapAccount: (item) {
-              // 뷰 잠금 후 네비게이션 (포커스 변화 억제)
-              searchService.lockView();
+              // 🎯 중복 탭 방지
+              if (_isNavigating) return;
+
+              setState(() {
+                _isNavigating = true;
+              });
+
               searchService.onTapContentItem(
                 item,
                 onNavigateToProfile: (username) {
-                  final route = MaterialPageRoute(
-                    builder:
-                        (_) => UserProfileScreen(
-                          otherUser: User(
-                            username: username,
-                            alias: item.alias,
-                            profileImageUrl: item.profileImageUrl,
-                          ),
+                  Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder:
+                              (_) => UserProfileScreen(
+                                otherUser: User(
+                                  username: username,
+                                  alias: item.alias,
+                                  profileImageUrl: item.profileImageUrl,
+                                ),
+                              ),
                         ),
-                  );
-                  Navigator.push(context, route).whenComplete(() {
-                    if (!mounted) return;
-                    setState(() {
-                      _freezeDuringPush = false;
-                      _suppressAnimOnce = true;
-                    });
-                    WidgetsBinding.instance.addPostFrameCallback((_) {
-                      if (!mounted) return;
-                      setState(() => _suppressAnimOnce = false);
-                    });
-                    final svc = context.read<SearchService>();
-                    svc.unlockView();
-                    svc.setFocused(true);
-                    _searchFocusNode.requestFocus();
-                  });
+                      )
+                      .then((_) {
+                        if (mounted) {
+                          setState(() {
+                            _isNavigating = false;
+                          });
+                          _searchFocusNode.requestFocus();
+                        }
+                      })
+                      .catchError((error) {
+                        debugPrint('[SearchScreen] 네비게이션 에러: $error');
+                        if (mounted) {
+                          setState(() {
+                            _isNavigating = false;
+                          });
+                        }
+                      });
                 },
               );
             },
             onTapHistory: (_) {},
-            onRemoveHistory: (item) {}, // 🎯 실시간 검색에서는 삭제 불필요
+            onRemoveHistory: (item) {},
             enableHero: true,
             onTapSearch: _runSearch,
           );
@@ -426,48 +388,52 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
             searchHistory: const [],
             query: '',
             hasNetworkError: false,
-            onAnyTapDown:
-                () => setState(() {
-                  _freezeDuringPush = true;
-                  _freezeKind = 'history';
-                  _frozenAccounts = List.of(searchService.searchHistory);
-                }),
+            onAnyTapDown: () {},
             onTapAccount: (item) {
+              // 🎯 중복 탭 방지
+              if (_isNavigating) return;
+
               // 🎯 글 검색 기록이면 검색 실행
               if (item.isBlog) {
                 _searchController.text = item.title ?? '';
-                context.read<SearchService>().onSearchChanged(item.title ?? '');
+                searchService.onSearchChanged(item.title ?? '');
                 _runSearch();
                 return;
               }
 
-              context.read<SearchService>().lockView();
-
-              final route = MaterialPageRoute(
-                builder:
-                    (_) => UserProfileScreen(
-                      otherUser: User(
-                        username: item.username ?? '',
-                        alias: item.alias,
-                        profileImageUrl: item.profileImageUrl,
-                      ),
-                    ),
-              );
-              Navigator.push(context, route).whenComplete(() {
-                if (!mounted) return;
-                setState(() {
-                  _freezeDuringPush = false;
-                  _suppressAnimOnce = true;
-                });
-                WidgetsBinding.instance.addPostFrameCallback((_) {
-                  if (!mounted) return;
-                  setState(() => _suppressAnimOnce = false);
-                });
-                final svc = context.read<SearchService>();
-                svc.unlockView();
-                svc.setFocused(true);
-                _searchFocusNode.requestFocus();
+              setState(() {
+                _isNavigating = true;
               });
+
+              Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder:
+                          (_) => UserProfileScreen(
+                            otherUser: User(
+                              username: item.username ?? '',
+                              alias: item.alias,
+                              profileImageUrl: item.profileImageUrl,
+                            ),
+                          ),
+                    ),
+                  )
+                  .then((_) {
+                    if (mounted) {
+                      setState(() {
+                        _isNavigating = false;
+                      });
+                      _searchFocusNode.requestFocus();
+                    }
+                  })
+                  .catchError((error) {
+                    debugPrint('[SearchScreen] 네비게이션 에러: $error');
+                    if (mounted) {
+                      setState(() {
+                        _isNavigating = false;
+                      });
+                    }
+                  });
             },
             onTapHistory: (_) {},
             onRemoveHistory: (item) {
@@ -543,10 +509,191 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
       },
     );
   }
+
+  // 🎯 검색 결과 뷰 (홈 화면과 동일한 구조)
+  Widget _buildSearchResultsView(BuildContext context) {
+    final screenWidth = MediaQuery.of(context).size.width;
+    double _appBarOpacity = 1.0; // 앱바 투명도 (홈스크린과 동일)
+
+    return PostList(
+      key: ValueKey('search-${_searchRefreshCount}'),
+      containerWidth: screenWidth,
+      posts: _searchResults,
+      onLoadMore: _searchHasMore ? _loadMoreSearchResults : null,
+      isLoadingMore: _isLoadingMore,
+      isLoading: _isSearching && _searchResults.isEmpty,
+      onRefresh: _refreshSearchResults,
+      showCardShimmer: _isSearching && _searchResults.isEmpty,
+      onPageChanged: (index) {
+        // 페이지 변경 처리 (필요시)
+      },
+      isShowingSearchResults: true,
+      searchQuery: _searchQuery,
+      onSearchChipTap: () {
+        // 🎯 검색 결과 칩 탭: 기본 검색 화면으로 돌아가되 검색어만 서치 필드에 입력
+        final searchService = context.read<SearchService>();
+
+        // 🎯 리스너 무시 플래그 먼저 설정 (상태 변경 중 리스너 트리거 방지)
+        _shouldIgnoreControllerChanges = true;
+
+        // 🎯 검색 결과 화면 숨기기
+        _isShowingSearchResults = false;
+        _searchResults = [];
+        _searchRefreshCount++;
+
+        // 🎯 필드에 검색어 설정 (리스너가 무시되므로 SearchService는 변경되지 않음)
+        _searchController.text = _searchQuery;
+
+        // 🎯 SearchService 상태 설정 (clearSearch() 호출하지 않음 - 플로우 끊김 방지)
+        // 1. 포커스 설정 먼저 (검색 기록 화면 표시를 위해)
+        searchService.setFocused(true);
+
+        // 2. 검색어를 비워서 검색 기록 화면이 표시되도록
+        // 단, 리스너가 무시되므로 필드의 검색어는 유지됨
+        searchService.onSearchChanged('');
+
+        // 🎯 한 번에 setState로 처리하여 플로우 끊김 최소화
+        setState(() {});
+
+        // 🎯 리스너 무시 플래그 해제 및 포커스 설정 (화면이 그려진 후)
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) {
+            _shouldIgnoreControllerChanges = false;
+            _searchFocusNode.requestFocus();
+          }
+        });
+      },
+      onClearSearch: () {
+        setState(() {
+          _isShowingSearchResults = false;
+          _searchResults = [];
+          _searchQuery = '';
+          _searchRefreshCount++;
+        });
+      },
+      isShowingFriendsOnly: false,
+      showAppBar: true, // 🎯 AppBar는 표시하되 검색 결과 칩만 보이도록
+      sectionLabel: _searchQuery.isNotEmpty ? _searchQuery : '검색 결과',
+      appBarOpacity: _appBarOpacity,
+      isTabActive: true,
+    );
+  }
+
+  // 🎯 검색 결과 새로고침
+  Future<void> _refreshSearchResults() async {
+    if (_searchQuery.trim().isEmpty) return;
+
+    setState(() {
+      _isSearching = true;
+    });
+
+    try {
+      final searchService = context.read<SearchService>();
+      await searchService.startBlogsSearch(_searchQuery, size: 20);
+
+      final blogResults = searchService.blogResults;
+      final posts =
+          blogResults.map((item) {
+            // 🎯 SearchService에 저장된 원본 서버 데이터 활용
+            final originalData = searchService.getPostData(item.id);
+            if (originalData != null) {
+              // 원본 서버 데이터가 있으면 PostData.fromServer로 변환 (정확한 데이터 사용)
+              return PostData.fromServer(originalData);
+            } else {
+              // fallback: SearchContentItem에서 수동 변환
+              return PostData(
+                id: item.id,
+                thumbnailImageUrl: item.imageUrl ?? '',
+                title: item.title ?? '',
+                summary: item.summary ?? item.parsedContent ?? '',
+                author: item.author ?? item.username ?? '',
+                authorProfileImageUrl: item.profileImageUrl ?? '',
+                content: item.content ?? '',
+                accessLevel: AccessLevel.public,
+                viewCount: 0,
+                likeCount: item.likes ?? 0,
+                commentCount: item.comments ?? 0,
+                isLiked: false,
+                createdAt: item.createdAt ?? DateTime.now().toIso8601String(),
+                updatedAt: item.createdAt ?? DateTime.now().toIso8601String(),
+              );
+            }
+          }).toList();
+
+      if (mounted) {
+        setState(() {
+          _searchResults = posts;
+          _searchHasMore = searchService.blogsHasMore;
+          _searchRefreshCount++;
+        });
+      }
+    } catch (e) {
+      print('[SearchOverlay] 검색 새로고침 실패: $e');
+    } finally {
+      if (mounted) {
+        setState(() => _isSearching = false);
+      }
+    }
+  }
+
+  // 🎯 검색 결과 더 불러오기
+  Future<void> _loadMoreSearchResults() async {
+    if (_isLoadingMore || !_searchHasMore) return;
+
+    setState(() {
+      _isLoadingMore = true;
+    });
+
+    try {
+      final searchService = context.read<SearchService>();
+      final items = await searchService.loadMoreBlogs(size: 20);
+
+      final append =
+          items.map((item) {
+            // 🎯 SearchService에 저장된 원본 서버 데이터 활용
+            final originalData = searchService.getPostData(item.id);
+            if (originalData != null) {
+              // 원본 서버 데이터가 있으면 PostData.fromServer로 변환 (정확한 데이터 사용)
+              return PostData.fromServer(originalData);
+            } else {
+              // fallback: SearchContentItem에서 수동 변환
+              return PostData(
+                id: item.id,
+                thumbnailImageUrl: item.imageUrl ?? '',
+                title: item.title ?? '',
+                summary: item.summary ?? item.parsedContent ?? '',
+                author: item.author ?? item.username ?? '',
+                authorProfileImageUrl: item.profileImageUrl ?? '',
+                content: item.content ?? '',
+                accessLevel: AccessLevel.public,
+                viewCount: 0,
+                likeCount: item.likes ?? 0,
+                commentCount: item.comments ?? 0,
+                isLiked: false,
+                createdAt: item.createdAt ?? DateTime.now().toIso8601String(),
+                updatedAt: item.createdAt ?? DateTime.now().toIso8601String(),
+              );
+            }
+          }).toList();
+
+      if (mounted) {
+        setState(() {
+          _searchResults.addAll(append);
+          _searchHasMore = searchService.blogsHasMore;
+          _isLoadingMore = false;
+        });
+      }
+    } catch (e) {
+      print('[SearchOverlay] 검색 결과 더 불러오기 실패: $e');
+      if (mounted) {
+        setState(() => _isLoadingMore = false);
+      }
+    }
+  }
 }
 
 /// -------------------- 검색 결과 (계정 + 검색 기록) --------------------
-class _SearchResults extends StatelessWidget {
+class _SearchResults extends StatefulWidget {
   final List<SearchContentItem> accounts;
   final List<String> searchHistory;
   final String query;
@@ -573,43 +720,69 @@ class _SearchResults extends StatelessWidget {
   });
 
   @override
+  State<_SearchResults> createState() => _SearchResultsState();
+}
+
+class _SearchResultsState extends State<_SearchResults> {
+  late final ScrollController _scrollController;
+
+  @override
+  void initState() {
+    super.initState();
+    _scrollController = ScrollController();
+  }
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final List<Widget> children = [];
-    if (query.isNotEmpty) {
+    if (widget.query.isNotEmpty) {
       // 검색어 실행 타일 (항상 맨 위)
       children.add(
         _AccountListItem(
           account: SearchContentItem.blogKeyword(
             id: 'current_search',
-            keyword: query,
+            keyword: widget.query,
           ),
-          onTap: onTapSearch,
-          onTapDown: onAnyTapDown,
+          onTap: widget.onTapSearch,
+          onTapDown: widget.onAnyTapDown,
           showRemoveButton: false,
         ),
       );
     }
 
-    if (accounts.isNotEmpty) {
+    if (widget.accounts.isNotEmpty) {
       final seen = <String>{};
-      for (final account in accounts) {
+      for (final account in widget.accounts) {
         final uname = account.username ?? '';
         if (uname.isNotEmpty) seen.add(uname);
         children.add(
           _AccountListItem(
             account: account,
-            onTapDown: onAnyTapDown,
-            onTap: () => onTapAccount(account),
-            onRemove: () => onRemoveHistory(account), // 🎯 item 전체 전달
-            showRemoveButton: query.isEmpty,
+            onTapDown: widget.onAnyTapDown,
+            onTap: () => widget.onTapAccount(account),
+            onRemove: () => widget.onRemoveHistory(account), // 🎯 item 전체 전달
+            showRemoveButton: widget.query.isEmpty,
           ),
         );
       }
     }
 
-    return ListView(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      children: children,
+    return RawScrollbar(
+      controller: _scrollController,
+      thumbVisibility: true,
+      thickness: 4,
+      radius: Radius.circular(2),
+      child: ListView(
+        controller: _scrollController,
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        children: children,
+      ),
     );
   }
 }

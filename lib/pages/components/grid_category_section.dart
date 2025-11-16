@@ -8,6 +8,8 @@ import 'package:doppy/pages/components/post_action_sheet.dart';
 import 'package:doppy/pages/screens/post_reader_screen.dart';
 import 'package:doppy/providers/feed_provider/base_feed_provider.dart';
 import 'package:doppy/providers/feed_provider/my_profile_feed_provider.dart';
+import 'package:doppy/providers/friend_provider.dart';
+import 'package:doppy/providers/group_provider.dart';
 import 'package:doppy/providers/user_provider.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -1034,13 +1036,36 @@ class _GridCategorySectionState extends State<GridCategorySection> {
     );
 
     print('[GridCategorySection] PostReaderScreen 결과: $result');
-    if (result != null && result['deleted'] == true) {
-      print('[GridCategorySection] 포스트 삭제 감지 - 피드 새로고침 시작');
-      final provider = context.read<BaseFeedProvider>();
-      provider.clearInMemory();
-      provider.setNetworkError(null);
-      await provider.loadInitial(force: true);
-      print('[GridCategorySection] 피드 새로고침 완료');
+    if (result != null) {
+      if (result['deleted'] == true) {
+        print('[GridCategorySection] 포스트 삭제 감지 - 피드 새로고침 시작');
+        final provider = context.read<BaseFeedProvider>();
+        provider.clearInMemory();
+        provider.setNetworkError(null);
+        await provider.loadInitial(force: true);
+        print('[GridCategorySection] 피드 새로고침 완료');
+
+        // 🎯 포스트 삭제 후 그룹 데이터도 갱신 (postCount 업데이트)
+        try {
+          final friendProvider = context.read<FriendProvider>();
+          final groupProvider = context.read<GroupProvider>();
+          groupProvider
+              .fetchMyGroups(friendProvider: friendProvider)
+              .catchError((e) {
+                print('[GridCategorySection] 그룹 데이터 재로드 실패: $e');
+              });
+        } catch (e) {
+          print('[GridCategorySection] 그룹 데이터 재로드 실패: $e');
+        }
+      } else if (result['accessLevelChanged'] == true) {
+        // 🎯 공개 범위 변경 감지 - 피드 새로고침
+        print('[GridCategorySection] 공개 범위 변경 감지 - 피드 새로고침 시작');
+        final provider = context.read<BaseFeedProvider>();
+        provider.clearInMemory();
+        provider.setNetworkError(null);
+        await provider.loadInitial(force: true);
+        print('[GridCategorySection] 피드 새로고침 완료 (공개 범위 변경)');
+      }
     }
   }
 

@@ -2,6 +2,7 @@ import 'package:doppy/data/models/user_model.dart';
 import 'package:doppy/l10n/app_localizations.dart';
 import 'package:doppy/pages/components/common_profile_avatar.dart';
 import 'package:doppy/pages/screens/user_profile_screen.dart';
+import 'package:doppy/utils/error_handler.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../providers/friend_provider.dart';
@@ -23,7 +24,19 @@ class FriendRequestBottomSheet extends StatefulWidget {
 }
 
 class _FriendRequestBottomSheetState extends State<FriendRequestBottomSheet> {
-  bool _isProcessing = false;
+  bool _isAccepting = false; // 🎯 수락 버튼 독립 로딩 상태
+  bool _isRejecting = false; // 🎯 거절 버튼 독립 로딩 상태
+
+  @override
+  void initState() {
+    super.initState();
+    // 🎯 타이밍 기반 캐시 사용: 10초 이내 조회했으면 캐시 사용, 아니면 서버에서 조회
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        context.read<FriendProvider>().fetchAllFriendData(forceRefresh: false);
+      }
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -122,7 +135,7 @@ class _FriendRequestBottomSheetState extends State<FriendRequestBottomSheet> {
                 Expanded(
                   child: ElevatedButton(
                     onPressed:
-                        _isProcessing
+                        (_isAccepting || _isRejecting)
                             ? null
                             : () => _handleFriendRequest(false),
                     style: ElevatedButton.styleFrom(
@@ -137,7 +150,7 @@ class _FriendRequestBottomSheetState extends State<FriendRequestBottomSheet> {
                       ),
                     ),
                     child:
-                        _isProcessing
+                        _isRejecting
                             ? const SizedBox(
                               height: 20,
                               width: 20,
@@ -160,7 +173,9 @@ class _FriendRequestBottomSheetState extends State<FriendRequestBottomSheet> {
                 Expanded(
                   child: ElevatedButton(
                     onPressed:
-                        _isProcessing ? null : () => _handleFriendRequest(true),
+                        (_isAccepting || _isRejecting)
+                            ? null
+                            : () => _handleFriendRequest(true),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Theme.of(context).colorScheme.primary,
                       foregroundColor: Colors.white,
@@ -170,7 +185,7 @@ class _FriendRequestBottomSheetState extends State<FriendRequestBottomSheet> {
                       ),
                     ),
                     child:
-                        _isProcessing
+                        _isAccepting
                             ? const SizedBox(
                               height: 20,
                               width: 20,
@@ -200,58 +215,63 @@ class _FriendRequestBottomSheetState extends State<FriendRequestBottomSheet> {
 
   Future<void> _handleFriendRequest(bool accept) async {
     if (!mounted) return;
+
+    // 🎯 각 버튼의 독립적인 로딩 상태 설정
     setState(() {
-      _isProcessing = true;
+      if (accept) {
+        _isAccepting = true;
+      } else {
+        _isRejecting = true;
+      }
     });
 
     try {
       if (!mounted) return;
       final friendProvider = context.read<FriendProvider>();
-      bool success;
+      bool? result;
 
       if (accept) {
-        success = await friendProvider.acceptFriendRequest(widget.username);
+        result = await friendProvider.acceptFriendRequest(widget.username);
       } else {
         // 거절 기능이 없으면 단순히 false 반환
-        success = false;
+        result = false;
       }
 
       if (mounted) {
         Navigator.pop(context); // 바텀시트 닫기
 
-        if (success && mounted) {
+        if (result == true && mounted) {
           // 친구 데이터 새로고침
           context.read<FriendProvider>().fetchAllFriendData(forceRefresh: true);
-        } else if (mounted) {
-          // 실패 메시지 표시
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                context.tr('error_occurred_simple'),
-                style: TextStyle(color: Theme.of(context).colorScheme.surface),
-              ),
-              backgroundColor: Colors.red,
-            ),
+        } else if (result == null && mounted) {
+          // 🎯 이미 취소된 요청인 경우 - 조용히 처리 (메시지 없이 데이터만 새로고침)
+          // 데이터 새로고침하여 UI 업데이트 (이미 Provider에서 처리되었을 수 있음)
+          friendProvider.fetchAllFriendData(forceRefresh: true);
+        } else if (result == false && mounted) {
+          // 일반 실패 메시지 표시
+          ErrorHandler.showError(
+            context,
+            context.tr('friend_request_accept_failed'),
           );
         }
       }
     } catch (e) {
       if (mounted) {
         Navigator.pop(context);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              context.tr('error_occurred_simple'),
-              style: TextStyle(color: Theme.of(context).colorScheme.surface),
-            ),
-            backgroundColor: Colors.red,
-          ),
+        ErrorHandler.showError(
+          context,
+          context.tr('friend_request_accept_failed'),
         );
       }
     } finally {
       if (mounted) {
         setState(() {
-          _isProcessing = false;
+          // 🎯 각 버튼의 독립적인 로딩 상태 해제
+          if (accept) {
+            _isAccepting = false;
+          } else {
+            _isRejecting = false;
+          }
         });
       }
     }
