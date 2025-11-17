@@ -6,6 +6,7 @@ import 'package:doppy/editor/service/drag_service.dart';
 import 'package:doppy/pages/components/shimmer_box.dart';
 import 'package:doppy/theme/app_colors.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_svg/svg.dart';
 import 'package:provider/provider.dart';
 import 'dart:ui' as ui;
 import 'package:super_editor/super_editor.dart';
@@ -144,10 +145,15 @@ class ImageRowNode extends BlockNode {
 }
 
 class RowImageComponentBuilder implements ComponentBuilder {
-  const RowImageComponentBuilder({this.dragService, this.isEditing = true});
+  const RowImageComponentBuilder({
+    this.dragService,
+    this.isEditing = true,
+    this.isDarkMode = false,
+  });
 
   final dynamic dragService; // DragService 타입을 나중에 import해서 수정
   final bool isEditing;
+  final bool isDarkMode;
 
   @override
   Widget? createComponent(
@@ -159,6 +165,7 @@ class RowImageComponentBuilder implements ComponentBuilder {
         nodeId: componentViewModel.nodeId,
         imageUrls: componentViewModel.imageUrls,
         spacing: componentViewModel.spacing,
+        isDarkMode: isDarkMode,
         componentKey: componentContext.componentKey, // ← 매우 중요
         dragService: dragService,
         isEditing: isEditing,
@@ -192,6 +199,7 @@ class ImageRowComponent extends StatefulWidget {
     required GlobalKey componentKey,
     this.dragService,
     this.isEditing = true,
+    this.isDarkMode = false,
     Key? key,
   }) : _componentKey = componentKey,
        super(key: componentKey);
@@ -201,6 +209,7 @@ class ImageRowComponent extends StatefulWidget {
   final double spacing;
   final dynamic dragService; // DragService 타입을 나중에 import해서 수정
   final bool isEditing;
+  final bool isDarkMode;
 
   final GlobalKey _componentKey;
 
@@ -347,6 +356,28 @@ class _ImageRowComponentState extends State<ImageRowComponent>
   }
 
   @override
+  void didUpdateWidget(ImageRowComponent oldWidget) {
+    super.didUpdateWidget(oldWidget);
+
+    // 이미지 URL이 변경되면 (추가/제거) 높이 재측정
+    if (oldWidget.imageUrls.length != widget.imageUrls.length ||
+        !_areUrlsEqual(oldWidget.imageUrls, widget.imageUrls)) {
+      setState(() {
+        _imageSizes.clear();
+        _unifiedHeight = null;
+      });
+    }
+  }
+
+  bool _areUrlsEqual(List<String> a, List<String> b) {
+    if (a.length != b.length) return false;
+    for (int i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
+  }
+
+  @override
   void dispose() {
     _controller.dispose();
     _scatterCtrl.dispose();
@@ -459,6 +490,9 @@ class _ImageRowComponentState extends State<ImageRowComponent>
                                                 ),
                                         child: Image.network(
                                           imageUrl,
+                                          key: ValueKey(
+                                            '$imageUrl-${Theme.of(context).brightness}',
+                                          ),
                                           fit: BoxFit.cover,
                                           frameBuilder: (
                                             context,
@@ -481,6 +515,7 @@ class _ImageRowComponentState extends State<ImageRowComponent>
                                             return ShimmerBox(
                                               width: double.infinity,
                                               height: _unifiedHeight ?? 150,
+                                              isDarkMode: widget.isDarkMode,
                                             );
                                           },
                                           errorBuilder: (
@@ -489,11 +524,14 @@ class _ImageRowComponentState extends State<ImageRowComponent>
                                             stack,
                                           ) {
                                             print('Image error: $error');
-                                            return ImageErrorPlaceholder(
-                                              width: 200,
+                                            return Builder(
+                                              builder:
+                                                  (context) =>
+                                                      ImageErrorPlaceholder(
+                                                        width: 200,
+                                                      ),
                                             );
                                           },
-                                          // 측정은 frameBuilder에서 처리
                                         ),
                                       ),
                                     ),
@@ -511,40 +549,37 @@ class _ImageRowComponentState extends State<ImageRowComponent>
                                     // 댓글 배지
                                     if (hasComments)
                                       Positioned(
-                                        top: 4,
+                                        top: 2,
                                         right: 4,
                                         child: IgnorePointer(
                                           child: Container(
                                             padding: const EdgeInsets.symmetric(
                                               horizontal: 6,
-                                              vertical: 2,
+                                              vertical: 6,
                                             ),
                                             decoration: BoxDecoration(
-                                              color: Colors.black.withOpacity(
-                                                0.55,
-                                              ),
+                                              color: Theme.of(context)
+                                                  .colorScheme
+                                                  .onSurface
+                                                  .withOpacity(1),
                                               borderRadius:
-                                                  BorderRadius.circular(12),
+                                                  BorderRadius.circular(10),
+                                              border: Border.all(
+                                                color: Theme.of(context)
+                                                    .colorScheme
+                                                    .surface
+                                                    .withOpacity(0.1),
+                                                width: 1,
+                                              ),
                                             ),
-                                            child: Row(
-                                              mainAxisSize: MainAxisSize.min,
-                                              children: [
-                                                const Icon(
-                                                  Icons
-                                                      .chat_bubble_outline_rounded,
-                                                  color: Colors.white,
-                                                  size: 12,
-                                                ),
-                                                const SizedBox(width: 3),
-                                                Text(
-                                                  commentCount.toString(),
-                                                  style: const TextStyle(
-                                                    color: Colors.white,
-                                                    fontSize: 11,
-                                                    fontWeight: FontWeight.w600,
-                                                  ),
-                                                ),
-                                              ],
+                                            child: SvgPicture.asset(
+                                              'assets/icons/comment.svg',
+                                              width: 12,
+                                              height: 12,
+                                              colorFilter: ColorFilter.mode(
+                                                Colors.white,
+                                                BlendMode.srcIn,
+                                              ),
                                             ),
                                           ),
                                         ),
@@ -670,7 +705,7 @@ class _ImageRowComponentState extends State<ImageRowComponent>
                           top: 0,
                           left: 0,
                           right: 0,
-                          child: Container(height: 3, color: AppColors.primary),
+                          child: Container(height: 5, color: AppColors.primary),
                         ),
 
                       // 아래쪽 가로 라인
@@ -679,7 +714,7 @@ class _ImageRowComponentState extends State<ImageRowComponent>
                           bottom: 0,
                           left: 0,
                           right: 0,
-                          child: Container(height: 3, color: AppColors.primary),
+                          child: Container(height: 5, color: AppColors.primary),
                         ),
 
                       // 왼쪽 세로 라인 (가로배치 모드일 때)
@@ -688,7 +723,7 @@ class _ImageRowComponentState extends State<ImageRowComponent>
                           left: 0,
                           top: marginTop,
                           bottom: marginBottom,
-                          child: Container(width: 3, color: AppColors.primary),
+                          child: Container(width: 5, color: AppColors.primary),
                         ),
 
                       // 오른쪽 세로 라인 (가로배치 모드일 때)
@@ -697,7 +732,7 @@ class _ImageRowComponentState extends State<ImageRowComponent>
                           right: 0,
                           top: marginTop,
                           bottom: marginBottom,
-                          child: Container(width: 3, color: AppColors.primary),
+                          child: Container(width: 5, color: AppColors.primary),
                         ),
                     ],
                   );

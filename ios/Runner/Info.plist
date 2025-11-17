@@ -46,12 +46,29 @@
 	
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>이 앱은 사진을 업로드하기 위해 사진 라이브러리 접근 권한이 필요합니다.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>이 앱은 이미지를 저장하기 위해 사진 라이브러리 추가 권한이 필요합니다.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>이 앱은 카메라를 사용하기 위해 카메라 접근 권한이 필요합니다.</string>
+	<!-- 🎯 Firebase Cloud Messaging 알림 권한 -->
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>remote-notification</string>
+	</array>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsArbitraryLoads</key>
 		<true/>
 	</dict>
+	
+	<!-- 🎯 URL 스킴 쿼리 허용 (Instagram 등) -->
+	<key>LSApplicationQueriesSchemes</key>
+	<array>
+		<string>instagram</string>
+		<string>instagram-stories</string>
+		<string>fb</string>
+		<string>twitter</string>
+		<string>barcelona</string>
+	</array>
 </dict>
 </plist>

@@ -1,3 +1,4 @@
+import 'package:doppy/l10n/app_localizations.dart';
 import 'package:doppy/utils/error_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/material.dart';
@@ -42,12 +43,14 @@ class UserProvider with ChangeNotifier {
   Future<bool> updateProfileInfo({
     required String alias,
     required String selfIntroduction,
+    List<String>? links,
   }) async {
     try {
       // API 호출
       await _userService.updateProfileInfo(
         alias: alias,
         selfIntroduction: selfIntroduction,
+        links: links,
       );
 
       // 로컬 상태 업데이트
@@ -55,6 +58,7 @@ class UserProvider with ChangeNotifier {
         final updatedUser = _currentUser!.copyWith(
           alias: alias,
           selfIntroduction: selfIntroduction,
+          links: links,
         );
         _currentUser = updatedUser;
 
@@ -78,14 +82,9 @@ class UserProvider with ChangeNotifier {
     try {
       final me = await _userService.getMyProfile();
       _currentUser = me;
+      // 🎯 User 모델에 이미 selfIntroduction이 포함되어 있으므로 별도 API 호출 불필요
+      _selfIntroduction = me.selfIntroduction;
       await _persistCurrentUser();
-      // 별도 필드가 오지 않으면 기존 API 유지 시도 (선택)
-      try {
-        _friendCount = await _userService.getFriendCount();
-      } catch (_) {}
-      try {
-        _selfIntroduction = await _userService.getSelfIntroduction();
-      } catch (_) {}
     } finally {
       _isLoading = false;
       notifyListeners();
@@ -101,7 +100,6 @@ class UserProvider with ChangeNotifier {
       if (_currentUser != null) {
         final u = _currentUser!;
         _currentUser = User(
-          id: u.id,
           username: u.username,
           role: u.role,
           alias: u.alias,
@@ -115,7 +113,6 @@ class UserProvider with ChangeNotifier {
           _viewedUser!.username == _currentUser!.username) {
         final v = _viewedUser!;
         _viewedUser = User(
-          id: v.id,
           username: v.username,
           role: v.role,
           alias: v.alias,
@@ -142,7 +139,6 @@ class UserProvider with ChangeNotifier {
       if (_currentUser != null) {
         final u = _currentUser!;
         _currentUser = User(
-          id: u.id,
           username: u.username,
           role: u.role,
           alias: u.alias,
@@ -156,7 +152,6 @@ class UserProvider with ChangeNotifier {
           _viewedUser!.username == _currentUser!.username) {
         final v = _viewedUser!;
         _viewedUser = User(
-          id: v.id,
           username: v.username,
           role: v.role,
           alias: v.alias,
@@ -169,7 +164,10 @@ class UserProvider with ChangeNotifier {
       return true;
     } catch (e) {
       debugPrint('[UserProvider] deleteProfileImage failed: $e');
-      ErrorHandler.showError(context, '프로필 이미지 삭제에 실패했습니다');
+      ErrorHandler.showError(
+        context,
+        context.tr('profile_image_delete_failed'),
+      );
       return false;
     }
   }
@@ -193,6 +191,7 @@ class UserProvider with ChangeNotifier {
   static const _kAlias = 'user_alias';
   static const _kProfileImageUrl = 'user_profileImageUrl';
   static const _kSelfIntroduction = 'user_selfIntroduction';
+  static const _kLinks = 'user_links'; // 🎯 프로필 링크 목록
   static const _kFriendCount = 'user_friendCount';
 
   Future<void> _persistCurrentUser() async {
@@ -200,11 +199,16 @@ class UserProvider with ChangeNotifier {
       final u = _currentUser;
       if (u == null) return;
       final prefs = await SharedPreferences.getInstance();
-      await prefs.setInt(_kUserId, u.id);
       await prefs.setString(_kUsername, u.username);
       await prefs.setString(_kAlias, u.alias ?? '');
       await prefs.setString(_kProfileImageUrl, u.profileImageUrl ?? '');
       await prefs.setString(_kSelfIntroduction, u.selfIntroduction ?? '');
+      // 🎯 links 저장 (JSON 문자열로 변환)
+      if (u.links != null && u.links!.isNotEmpty) {
+        await prefs.setStringList(_kLinks, u.links!);
+      } else {
+        await prefs.remove(_kLinks);
+      }
       await prefs.setInt(_kFriendCount, u.friendCount ?? 0);
       print('[UserProvider] 사용자 정보 로컬 저장 완료');
     } catch (e) {
@@ -218,13 +222,22 @@ class UserProvider with ChangeNotifier {
       if (!prefs.containsKey(_kUserId) || !prefs.containsKey(_kUsername)) {
         return;
       }
+      // 🎯 links 복구
+      List<String>? links;
+      if (prefs.containsKey(_kLinks)) {
+        final linksList = prefs.getStringList(_kLinks);
+        if (linksList != null && linksList.isNotEmpty) {
+          links = linksList;
+        }
+      }
+
       final user = User(
-        id: prefs.getInt(_kUserId) ?? 0,
         username: prefs.getString(_kUsername) ?? '',
         role: null,
         alias: prefs.getString(_kAlias),
         profileImageUrl: prefs.getString(_kProfileImageUrl),
         selfIntroduction: prefs.getString(_kSelfIntroduction),
+        links: links,
         friendCount: prefs.getInt(_kFriendCount),
       );
       _currentUser = user;
@@ -238,11 +251,11 @@ class UserProvider with ChangeNotifier {
   Future<void> _clearPersistedUser() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      await prefs.remove(_kUserId);
       await prefs.remove(_kUsername);
       await prefs.remove(_kAlias);
       await prefs.remove(_kProfileImageUrl);
       await prefs.remove(_kSelfIntroduction);
+      await prefs.remove(_kLinks); // 🎯 links 삭제
       await prefs.remove(_kFriendCount);
       print('[UserProvider] 로컬 사용자 정보 삭제 완료');
     } catch (e) {

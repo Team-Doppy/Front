@@ -294,14 +294,23 @@ class _PostCardState extends State<PostCard>
               Navigator.of(context).push(
                 PageRouteBuilder(
                   opaque: false,
-                  pageBuilder:
-                      (context, animation, secondaryAnimation) =>
-                          FullscreenImageViewer(
-                            imageUrl: widget.thumbnailImageUrl,
-                            isVideo: _isVideo,
-                            preloadedController:
-                                _isVideo ? _videoController : null,
-                          ),
+                  pageBuilder: (context, animation, secondaryAnimation) {
+                    return FadeTransition(
+                      opacity: animation,
+                      child: FullscreenImageViewer(
+                        imageUrl: widget.thumbnailImageUrl,
+                        isVideo: _isVideo,
+                        preloadedController: _isVideo ? _videoController : null,
+                        imageProvider:
+                            !_isVideo
+                                ? CachedNetworkImageProvider(
+                                  widget.thumbnailImageUrl,
+                                )
+                                : null,
+                        onClose: () => Navigator.of(context).pop(),
+                      ),
+                    );
+                  },
                 ),
               );
             },

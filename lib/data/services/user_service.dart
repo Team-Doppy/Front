@@ -9,23 +9,7 @@ class UserService {
 
   final Dio _dio = BaseApiService().dio;
 
-  /// 4. 내 친구 수 조회
-  Future<int> getFriendCount() async {
-    try {
-      final response = await _dio.get('/api/users/friend-count');
-      if (response.statusCode == 200) {
-        return response.data['friendCount'];
-      }
-      throw Exception('친구 수 조회 실패');
-    } catch (e) {
-      if (e is DioException) {
-        throw Exception('친구 수 조회 실패: ${e.response?.statusCode}');
-      }
-      rethrow;
-    }
-  }
-
-  /// 5. 자기소개 저장
+  /// 자기소개 저장
   Future<void> saveSelfIntroduction(String introduction) async {
     try {
       final response = await _dio.put(
@@ -79,12 +63,20 @@ class UserService {
   Future<void> updateProfileInfo({
     required String alias,
     required String selfIntroduction,
+    List<String>? links, // 🎯 프로필 링크 목록 (최대 3개)
   }) async {
     try {
-      final response = await _dio.put(
-        '/api/profile/info',
-        data: {'alias': alias, 'selfIntroduction': selfIntroduction},
-      );
+      final data = <String, dynamic>{
+        'alias': alias,
+        'selfIntroduction': selfIntroduction,
+      };
+
+      // 🎯 links가 있으면 추가 (최대 3개)
+      if (links != null && links.isNotEmpty) {
+        data['links'] = links.take(3).toList();
+      }
+
+      final response = await _dio.put('/api/profile/info', data: data);
       if (response.statusCode != 200) {
         throw Exception('프로필 정보 업데이트 실패');
       }
@@ -131,6 +123,65 @@ class UserService {
     } catch (e) {
       if (e is DioException) {
         throw Exception('프로필 이미지 삭제 실패: ${e.response?.statusCode}');
+      }
+      rethrow;
+    }
+  }
+
+  /// 설정 조회
+  Future<Map<String, bool>> getSettings() async {
+    try {
+      print('[UserService] GET /api/profile/settings');
+      final response = await _dio.get('/api/profile/settings');
+      if (response.statusCode == 200) {
+        final data = response.data;
+        return {
+          'marketingConsent': data['marketingConsent'] as bool? ?? false,
+          'notificationEnabled': data['notificationEnabled'] as bool? ?? true,
+        };
+      }
+      throw Exception('설정 조회 실패: ${response.statusCode}');
+    } catch (e) {
+      if (e is DioException) {
+        throw Exception('설정 조회 실패: ${e.response?.statusCode}');
+      }
+      rethrow;
+    }
+  }
+
+  /// 마케팅 정보 수신 동의 토글
+  Future<bool> toggleMarketingConsent() async {
+    try {
+      print('[UserService] PUT /api/profile/marketing-consent');
+      final response = await _dio.put('/api/profile/marketing-consent');
+      if (response.statusCode == 200) {
+        final newValue = response.data['marketingConsent'] as bool;
+        print('[UserService] marketingConsent toggled to: $newValue');
+        return newValue;
+      }
+      throw Exception('마케팅 동의 토글 실패: ${response.statusCode}');
+    } catch (e) {
+      if (e is DioException) {
+        throw Exception('마케팅 동의 토글 실패: ${e.response?.statusCode}');
+      }
+      rethrow;
+    }
+  }
+
+  /// 알림 허용 토글
+  Future<bool> toggleNotificationEnabled() async {
+    try {
+      print('[UserService] PUT /api/profile/notification-enabled');
+      final response = await _dio.put('/api/profile/notification-enabled');
+      if (response.statusCode == 200) {
+        final newValue = response.data['notificationEnabled'] as bool;
+        print('[UserService] notificationEnabled toggled to: $newValue');
+        return newValue;
+      }
+      throw Exception('알림 토글 실패: ${response.statusCode}');
+    } catch (e) {
+      if (e is DioException) {
+        throw Exception('알림 토글 실패: ${e.response?.statusCode}');
       }
       rethrow;
     }

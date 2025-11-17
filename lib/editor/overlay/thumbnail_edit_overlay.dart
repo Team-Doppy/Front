@@ -6,7 +6,6 @@ import 'package:doppy/data/services/blog_service.dart';
 import 'package:doppy/data/services/video_cache_service.dart';
 import 'package:doppy/image/native_image_picker.dart';
 import 'package:doppy/image/custom_image_editor_screen.dart';
-import 'package:doppy/editor/service/node_component_service.dart';
 import 'package:doppy/editor/utils/video_upload_utils.dart';
 import 'package:doppy/utils/error_handler.dart';
 import 'package:doppy/utils/dialog_utils.dart';
@@ -25,12 +24,22 @@ class ThumbnailEditOverlay extends StatefulWidget {
   final Function(String title, String summary)?
   onMetadataChanged; // 제목/요약 변경 콜백
 
+  // 🎯 이미 로드된 데이터 (있으면 메타데이터 재조회 불필요)
+  final String? initialTitle;
+  final String? initialSummary;
+  final String? initialThumbnailUrl;
+  final String? initialThumbnailId;
+
   const ThumbnailEditOverlay({
     super.key,
     required this.postId,
     required this.sessionKey,
     required this.onThumbnailChanged,
     this.onMetadataChanged,
+    this.initialTitle,
+    this.initialSummary,
+    this.initialThumbnailUrl,
+    this.initialThumbnailId,
   });
 
   @override
@@ -81,6 +90,71 @@ class _ThumbnailEditOverlayState extends State<ThumbnailEditOverlay> {
 
   Future<void> _loadPostData() async {
     try {
+      // 🎯 이미 로드된 썸네일 데이터가 있고, title/summary도 모두 있으면 메타데이터 재조회 불필요
+      // title/summary는 메타데이터에 있으므로, 없으면 메타데이터를 조회해야 함
+      if (widget.initialThumbnailUrl != null &&
+          widget.initialTitle != null &&
+          widget.initialSummary != null) {
+        if (mounted) {
+          final title = widget.initialTitle!;
+          final summary = widget.initialSummary!;
+          final thumbnailUrl = widget.initialThumbnailUrl!;
+          final thumbnailId = widget.initialThumbnailId;
+
+          // 썸네일이 영상인지 판단
+          final url = thumbnailUrl.toLowerCase();
+          final isVideo =
+              url.endsWith('.mp4') ||
+              url.endsWith('.mov') ||
+              url.endsWith('.m4v') ||
+              url.contains('/videos/') ||
+              url.contains('video');
+
+          setState(() {
+            // 제목
+            _titleController.text = title;
+            _originalTitle = title;
+
+            // 요약
+            _excerptController.text = summary;
+            _originalSummary = summary;
+
+            // 썸네일
+            _thumbnailUrl = thumbnailUrl;
+            _thumbnailId = thumbnailId;
+            _originalThumbnailUrl = thumbnailUrl;
+            _isVideo = isVideo;
+
+            _isLoading = false;
+          });
+
+          // 영상이면 VideoPlayer 초기화 (캐시 사용)
+          if (isVideo && thumbnailUrl.isNotEmpty) {
+            _cachedVideoUrl = thumbnailUrl;
+            _videoController = VideoCacheService().getOrCreateController(
+              _cachedVideoUrl!,
+              namespace: 'profile',
+            );
+
+            // 이미 초기화된 경우 바로 재생, 아니면 리스너 등록 후 재생
+            if (_videoController!.value.isInitialized) {
+              _videoController!.setLooping(true);
+              _videoController!.play();
+              if (mounted) setState(() {});
+            } else {
+              _videoController!.addListener(_onServerVideoInitialized);
+            }
+          }
+
+          print('[ThumbnailEditOverlay] 기존 데이터 사용 (메타데이터 재조회 생략)');
+          print('  - 제목: ${_titleController.text}');
+          print('  - 요약: ${_excerptController.text}');
+          print('  - 썸네일: $_thumbnailUrl (영상: $isVideo)');
+        }
+        return;
+      }
+
+      // 🎯 기존 데이터가 없으면 메타데이터 조회
       final blogService = BlogService();
       final metadata = await blogService.getPostMetadata(widget.postId);
 
@@ -242,7 +316,7 @@ class _ThumbnailEditOverlayState extends State<ThumbnailEditOverlay> {
   /// 이미지 편집기 열기
   Future<void> _editCurrentImage() async {
     if (_thumbnailUrl.isEmpty) {
-      ErrorHandler.showInfo(context, '먼저 썸네일을 선택해주세요');
+      ErrorHandler.showInfo(context, context.tr('thumbnail_select_first'));
       return;
     }
 
@@ -253,7 +327,7 @@ class _ThumbnailEditOverlayState extends State<ThumbnailEditOverlay> {
       final response = await http.get(Uri.parse(_thumbnailUrl));
       if (response.statusCode != 200) {
         if (mounted) {
-          ErrorHandler.showError(context, '이미지를 불러올 수 없습니다');
+          ErrorHandler.showError(context, context.tr('image_load_failed'));
         }
         return;
       }
@@ -292,7 +366,10 @@ class _ThumbnailEditOverlayState extends State<ThumbnailEditOverlay> {
 
       if (tasks.isEmpty || tasks.first.state != UploadState.success) {
         if (mounted) {
-          ErrorHandler.showError(context, '썸네일 업로드에 실패했습니다');
+          ErrorHandler.showError(
+            context,
+            context.tr('thumbnail_upload_failed'),
+          );
           setState(() => _isUploadingThumb = false);
         }
         return;
@@ -303,7 +380,7 @@ class _ThumbnailEditOverlayState extends State<ThumbnailEditOverlay> {
 
       if (newUrl == null || newUrl.isEmpty) {
         if (mounted) {
-          ErrorHandler.showError(context, '업로드 URL을 받지 못했습니다');
+          ErrorHandler.showError(context, context.tr('upload_url_failed'));
           setState(() => _isUploadingThumb = false);
         }
         return;
@@ -314,11 +391,6 @@ class _ThumbnailEditOverlayState extends State<ThumbnailEditOverlay> {
       _thumbnailId = newId;
 
       if (mounted) {
-        NodeComponentService().setTempThumbnail(
-          widget.sessionKey,
-          url: _thumbnailUrl,
-          id: _thumbnailId,
-        );
         setState(() {
           _isUploadingThumb = false;
           _isVideo = false; // 편집 후 이미지로 변경
@@ -422,19 +494,13 @@ class _ThumbnailEditOverlayState extends State<ThumbnailEditOverlay> {
             _thumbnailUrl = t.url!;
             _thumbnailId = t.imageId;
 
-            if (mounted) {
-              NodeComponentService().setTempThumbnail(
-                widget.sessionKey,
-                url: _thumbnailUrl,
-                id: _thumbnailId,
-              );
-              setState(() {});
-            }
-
             // 업로드 완료 시점에는 콜백 호출하지 않음 (수정 완료 버튼 클릭 시에만 호출)
           } else {
             if (mounted) {
-              ErrorHandler.showError(context, '썸네일 업로드에 실패했어요. 다시 시도해주세요.');
+              ErrorHandler.showError(
+                context,
+                context.tr('thumbnail_upload_failed'),
+              );
             }
           }
         }
@@ -519,7 +585,7 @@ class _ThumbnailEditOverlayState extends State<ThumbnailEditOverlay> {
 
           if (videoUrl == null || videoUrl.isEmpty) {
             if (mounted) {
-              ErrorHandler.showError(context, '영상 URL을 받지 못했습니다');
+              ErrorHandler.showError(context, context.tr('video_url_failed'));
               setState(() => _isUploadingThumb = false);
             }
             return;
@@ -529,11 +595,6 @@ class _ThumbnailEditOverlayState extends State<ThumbnailEditOverlay> {
           _thumbnailId = videoId;
 
           if (mounted) {
-            NodeComponentService().setTempThumbnail(
-              widget.sessionKey,
-              url: _thumbnailUrl,
-              id: _thumbnailId,
-            );
             setState(() {
               _isUploadingThumb = false;
               _isVideo = true; // 영상 업로드 완료

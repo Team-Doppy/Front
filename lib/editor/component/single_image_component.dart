@@ -9,16 +9,22 @@ import 'package:doppy/editor/service/node_component_service.dart';
 import 'package:doppy/pages/components/shimmer_box.dart';
 import 'package:doppy/theme/app_colors.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_svg/svg.dart';
 import 'package:provider/provider.dart';
 import 'dart:ui' as ui;
 import 'dart:math' as math;
 import 'package:super_editor/super_editor.dart';
 
 class SingleImageComponentBuilder implements ComponentBuilder {
-  const SingleImageComponentBuilder({this.dragService, this.isEditing = true});
+  const SingleImageComponentBuilder({
+    this.dragService,
+    this.isEditing = true,
+    this.isDarkMode = false,
+  });
 
   final dynamic dragService; // DragService 타입을 나중에 import해서 수정
   final bool isEditing;
+  final bool isDarkMode;
 
   @override
   Widget? createComponent(
@@ -32,6 +38,7 @@ class SingleImageComponentBuilder implements ComponentBuilder {
         componentKey: componentContext.componentKey,
         dragService: dragService,
         isEditing: isEditing,
+        isDarkMode: isDarkMode,
       );
     }
     return null;
@@ -56,6 +63,7 @@ class SingleImageComponent extends StatefulWidget {
     required GlobalKey componentKey,
     this.dragService,
     this.isEditing = true,
+    this.isDarkMode = false,
     Key? key,
   }) : _componentKey = componentKey,
        super(key: componentKey);
@@ -65,6 +73,7 @@ class SingleImageComponent extends StatefulWidget {
   final GlobalKey _componentKey;
   final dynamic dragService; // DragService 타입을 나중에 import해서 수정
   final bool isEditing;
+  final bool isDarkMode;
 
   @override
   State<SingleImageComponent> createState() => _SingleImageComponentState();
@@ -76,9 +85,9 @@ class _SingleImageComponentState extends State<SingleImageComponent>
   Widget? _lastRenderedChild;
   GlobalKey get componentKey => widget._componentKey;
 
-  static const double marginTop = 4;
-  static const double marginBottom = 2;
-  static const double paddingWithText = 15;
+  static const double marginTop = 2.5;
+  static const double marginBottom = 2.5;
+  static const double paddingWithText = 12;
 
   late final AnimationController _controller;
   // 스포일러 해제 스캐터 이펙트
@@ -132,7 +141,10 @@ class _SingleImageComponentState extends State<SingleImageComponent>
             final editedBytes = context
                 .watch<NodeComponentService>()
                 .getEditedBytes(widget.nodeId);
-            final image = _buildImage(editedBytes);
+            final image = Padding(
+              padding: EdgeInsets.only(bottom: 2),
+              child: _buildImage(editedBytes),
+            );
 
             // 플레이스홀더/업로드 중 상태 판정: imageUrl 비었거나 로컬 경로이거나 metadata.isPlaceholder == true
             // ignore: invalid_use_of_visible_for_testing_member
@@ -217,29 +229,34 @@ class _SingleImageComponentState extends State<SingleImageComponent>
                       image,
                       if (hasCommentsFlag)
                         Positioned(
-                          top: -4,
-                          right: -4,
+                          top: 4,
+                          right: 5,
                           child: IgnorePointer(
                             child: Container(
                               padding: const EdgeInsets.symmetric(
-                                horizontal: 7,
-                                vertical: 7,
+                                horizontal: 6,
+                                vertical: 6,
                               ),
                               decoration: BoxDecoration(
                                 color: Theme.of(
                                   context,
-                                ).colorScheme.surface.withOpacity(1),
-                                borderRadius: BorderRadius.circular(14),
+                                ).colorScheme.onSurface.withOpacity(1),
+                                borderRadius: BorderRadius.circular(20),
+                                border: Border.all(
+                                  color: Theme.of(
+                                    context,
+                                  ).colorScheme.surface.withOpacity(0.1),
+                                  width: 1,
+                                ),
                               ),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Icon(
-                                    Icons.chat_bubble_rounded,
-                                    color: AppColors.primary,
-                                    size: 14,
-                                  ),
-                                ],
+                              child: SvgPicture.asset(
+                                'assets/icons/comment.svg',
+                                width: 12,
+                                height: 12,
+                                colorFilter: ColorFilter.mode(
+                                  Theme.of(context).colorScheme.surface,
+                                  BlendMode.srcIn,
+                                ),
                               ),
                             ),
                           ),
@@ -329,10 +346,10 @@ class _SingleImageComponentState extends State<SingleImageComponent>
                               color: Colors.black.withOpacity(0.6),
                               alignment: Alignment.center,
                               child: SizedBox(
-                                width: 28,
-                                height: 28,
+                                width: 20,
+                                height: 20,
                                 child: CircularProgressIndicator(
-                                  strokeWidth: 2,
+                                  strokeWidth: 4,
                                   color: Colors.white.withOpacity(1),
                                 ),
                               ),
@@ -715,7 +732,8 @@ class _SingleImageComponentState extends State<SingleImageComponent>
             return child;
           }
           final h = w / (4 / 5);
-          return _lastRenderedChild ?? ShimmerBox(width: w, height: h);
+          return _lastRenderedChild ??
+              ShimmerBox(width: w, height: h, isDarkMode: widget.isDarkMode);
         },
       );
     }
@@ -740,6 +758,7 @@ class _SingleImageComponentState extends State<SingleImageComponent>
           final double w = MediaQuery.of(context).size.width;
           return Image.file(
             File(filePath),
+            key: ValueKey('$filePath-${Theme.of(context).brightness}'),
             fit: BoxFit.contain,
             cacheWidth: w.isFinite ? w.toInt() : null,
             filterQuality: FilterQuality.low,
@@ -749,11 +768,19 @@ class _SingleImageComponentState extends State<SingleImageComponent>
                 return child;
               }
               final h = w / (4 / 5);
-              return _lastRenderedChild ?? ShimmerBox(width: w, height: h);
+              return _lastRenderedChild ??
+                  ShimmerBox(
+                    width: w,
+                    height: h,
+                    isDarkMode: widget.isDarkMode,
+                  );
             },
             errorBuilder:
-                (context, error, stack) => ImageErrorPlaceholder(
-                  width: MediaQuery.of(context).size.width,
+                (context, error, stack) => Builder(
+                  builder:
+                      (context) => ImageErrorPlaceholder(
+                        width: MediaQuery.of(context).size.width,
+                      ),
                 ),
           );
         }
@@ -763,15 +790,21 @@ class _SingleImageComponentState extends State<SingleImageComponent>
       final filePath = url.startsWith('file://') ? url.substring(7) : url;
       return Image.file(
         File(filePath),
+        key: ValueKey('$filePath-${Theme.of(context).brightness}'),
         fit: BoxFit.contain,
         errorBuilder:
-            (context, error, stack) =>
-                ImageErrorPlaceholder(width: MediaQuery.of(context).size.width),
+            (context, error, stack) => Builder(
+              builder:
+                  (context) => ImageErrorPlaceholder(
+                    width: MediaQuery.of(context).size.width,
+                  ),
+            ),
       );
     }
 
     return Image.network(
       url,
+      key: ValueKey('$url-${Theme.of(context).brightness}'),
       fit: BoxFit.contain,
       frameBuilder: (context, child, frame, wasSyncLoaded) {
         // 프리로드(캐시 히트)된 경우 즉시 child 렌더 → 쉬머 미노출
@@ -781,12 +814,16 @@ class _SingleImageComponentState extends State<SingleImageComponent>
         }
         final w = MediaQuery.of(context).size.width;
         final h = w / (4 / 5);
-        return _lastRenderedChild ?? ShimmerBox(width: w, height: h);
+        return _lastRenderedChild ??
+            ShimmerBox(width: w, height: h, isDarkMode: widget.isDarkMode);
       },
       errorBuilder:
-          (context, error, stack) => ImageErrorPlaceholder(
-            width: MediaQuery.of(context).size.width,
-            height: MediaQuery.of(context).size.width / (4 / 5),
+          (context, error, stack) => Builder(
+            builder:
+                (context) => ImageErrorPlaceholder(
+                  width: MediaQuery.of(context).size.width,
+                  height: MediaQuery.of(context).size.width / (4 / 5),
+                ),
           ),
     );
   }

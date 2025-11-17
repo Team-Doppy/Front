@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "874736316072",
+    "project_id": "doppy-a0919",
+    "storage_bucket": "doppy-a0919.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:874736316072:android:5ec8272c9e541ad7141c9d",
+        "android_client_info": {
+          "package_name": "com.doppy.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAUwdkAGbn0q9oHCS0AFOUrna7SYPXc84o"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

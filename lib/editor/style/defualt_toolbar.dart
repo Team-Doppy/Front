@@ -5,6 +5,7 @@ import 'package:doppy/editor/overlay/sticker_overlay.dart';
 import 'package:doppy/editor/overlay/font_overlay.dart';
 import 'package:doppy/editor/style/font_catalog.dart';
 import 'package:doppy/editor/utils/video_upload_utils.dart';
+import 'package:doppy/l10n/app_localizations.dart';
 import 'package:flutter/material.dart';
 import 'package:super_editor/super_editor.dart';
 import 'package:doppy/image/native_image_picker.dart';
@@ -436,12 +437,6 @@ class TextStylingService extends ChangeNotifier {
       return;
     }
 
-    // 스포일러 보존 여부 스냅샷
-    final existingAttrs = _getAttributionsInSelection(
-      selectionOverride: selection,
-    );
-    final bool hadSpoiler = existingAttrs.contains(spoilerAttribution);
-
     // 기존 폰트 크기 속성 제거
     _removeFontSizeAttributions();
 
@@ -453,16 +448,6 @@ class TextStylingService extends ChangeNotifier {
         attributions: {fontSizeAttribution},
       ),
     ]);
-
-    // 스포일러 재적용(레이아웃 변경 후 표시 이상 방지)
-    if (hadSpoiler) {
-      editor.execute([
-        AddTextAttributionsRequest(
-          documentRange: selection,
-          attributions: {spoilerAttribution},
-        ),
-      ]);
-    }
   }
 
   /// 기존 색상 속성 제거
@@ -1151,14 +1136,26 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
     final selection = widget.stylingService.composer.selection;
     final hasSelection = selection != null && !selection.isCollapsed;
 
+    // 🎯 멘션 노드에서 선택이면 툴바 열지 않음
+    bool isMentionNode = false;
+    if (hasSelection) {
+      try {
+        final nodeId = selection.extent.nodeId;
+        final node = widget.editorService.document.getNodeById(nodeId);
+        if (node is ParagraphNode) {
+          isMentionNode = node.metadata['mention'] == true;
+        }
+      } catch (_) {}
+    }
+
     if (_hasTextSelection != hasSelection) {
       setState(() {
         _hasTextSelection = hasSelection;
-        if (hasSelection) {
-          // 텍스트가 선택되면 자동으로 텍스트 툴바 열기
+        if (hasSelection && !isMentionNode) {
+          // 텍스트가 선택되면 자동으로 텍스트 툴바 열기 (멘션 노드 제외)
           _expanded = ToolbarSection.text;
         } else {
-          // 선택이 해제되면 툴바 닫기
+          // 선택이 해제되거나 멘션 노드면 툴바 닫기
           _expanded = ToolbarSection.none;
         }
       });
@@ -1352,7 +1349,7 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
                                 return Navigator.of(context).pop(mode);
                               },
 
-                              title: Text('이미지 업로드'),
+                              title: Text(context.tr('upload_image')),
                             ),
                             ListTile(
                               onTap: () async {
@@ -1360,7 +1357,7 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
                                 return Navigator.of(context).pop(mode);
                               },
 
-                              title: Text('short clip 업로드'),
+                              title: Text(context.tr('upload_short_clip')),
                             ),
                           ],
                         ),
@@ -1557,6 +1554,7 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
                       placeholderId,
                       task.url!,
                       fallbackLocalPath: file.path,
+                      mediaId: task.imageId, // 🎯 mediaId 전달
                     );
                     _forceCloseToolbar();
                     FocusManager.instance.primaryFocus?.unfocus();
@@ -1583,8 +1581,7 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
                 // 비동기 대기 제거: 리스너가 터미널에서 스스로 정리
               } catch (e) {
                 debugPrint('video pick/upload error: $e');
-              } finally {
-                // 영상 처리 완료/실패 후 키보드 내리기 보장
+                // 에러 발생 시에만 키보드 내리기
                 if (context.mounted) {
                   FocusManager.instance.primaryFocus?.unfocus();
                 }
@@ -2443,12 +2440,13 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
                       (drawingData['strokes'] as List)
                           .cast<Map<String, dynamic>>();
                   final pos = drawingData['position'] as Map<String, dynamic>;
+                  final groupIndex = drawingData['groupIndex'] as int?;
                   // DrawingOverlay에서 이미 문서 좌표로 변환된 위치를 반환하므로 추가 보정 불필요
                   final at = Offset(
                     (pos['x'] as num).toDouble(),
                     (pos['y'] as num).toDouble(),
                   );
-                  svc.addDrawingSticker(strokes, at);
+                  svc.addDrawingSticker(strokes, at, groupIndex: groupIndex);
                 } else if (image != null) {
                   // 일반 이미지 스티커 - 화면 정가운데
                   final Size size = MediaQuery.of(context).size;
@@ -2460,17 +2458,8 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
                     scrollY + size.height / 2 - 200,
                   );
                   svc.addImageSticker(image, at);
-                } else if ((emoji ?? '').isNotEmpty) {
-                  final Size size = MediaQuery.of(context).size;
-                  final scrollY = widget.scrollController?.offset ?? 0.0;
-                  final at = Offset(size.width * 0.5 - 60, scrollY + 200);
-                  svc.addEmojiSticker(emoji!, at);
-                } else if (text.trim().isNotEmpty) {
-                  final Size size = MediaQuery.of(context).size;
-                  final scrollY = widget.scrollController?.offset ?? 0.0;
-                  final at = Offset(size.width * 0.5 - 60, scrollY + 200);
-                  svc.addTextStickerWithStyle(text.trim(), textStyle, at);
                 }
+                // 🎯 emoji, text 스티커 제거됨 (PNG 드로잉만 지원)
                 // 스티커 추가 후 상단 두번째 툴바 자동 닫기
                 _toggle(ToolbarSection.none);
               },
@@ -2613,13 +2602,17 @@ class _KeyboardDependentButtons extends StatelessWidget {
       children: [
         // 키보드가 올라와 있을 때만 키보드 내리기 버튼 표시
         if (isKeyboardVisible)
-          _buildMainIcon(
-            context: context,
-            icon: Icons.keyboard_arrow_down,
-            isActive: false,
-            onTap: () {
-              onDismissKeyboard?.call();
-            },
+          Padding(
+            padding: const EdgeInsets.only(right: 4),
+            child: _buildMainIcon(
+              context: context,
+              icon: Icons.keyboard_arrow_down,
+              isActive: false,
+              size: 30,
+              onTap: () {
+                onDismissKeyboard?.call();
+              },
+            ),
           ),
       ],
     );
@@ -2629,6 +2622,7 @@ class _KeyboardDependentButtons extends StatelessWidget {
     required BuildContext context,
     required IconData icon,
     required bool isActive,
+    double? size,
     required VoidCallback onTap,
     Color? activeColor,
   }) {
@@ -2644,7 +2638,7 @@ class _KeyboardDependentButtons extends StatelessWidget {
           width: 36,
           height: 50,
           alignment: Alignment.center,
-          child: Icon(icon, size: isActive ? 26 : 22, color: color),
+          child: Icon(icon, size: size ?? (isActive ? 26 : 22), color: color),
         ),
       ),
     );

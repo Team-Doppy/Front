@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_svg/svg.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:doppy/pages/components/common_profile_avatar.dart';
-import 'package:doppy/utils/format_utils.dart';
 
 class PostReaderHeader extends StatelessWidget {
   const PostReaderHeader({
@@ -22,6 +21,7 @@ class PostReaderHeader extends StatelessWidget {
     required this.commentCount,
     required this.onLikeTap,
     required this.onCommentTap,
+    required this.isLiked, // ← 추가
   });
 
   final Map<String, dynamic> exportedRoot;
@@ -40,6 +40,7 @@ class PostReaderHeader extends StatelessWidget {
   final int commentCount;
   final VoidCallback onLikeTap;
   final VoidCallback onCommentTap;
+  final bool isLiked; // ← 추가
 
   Map<String, dynamic>? get _contentRoot {
     final root = currentExportedData ?? exportedRoot;
@@ -323,9 +324,11 @@ class PostReaderHeader extends StatelessWidget {
           titleWidget,
           const SizedBox(height: 12),
           GestureDetector(
+            behavior: HitTestBehavior.opaque,
             onTap: enableAuthorTap ? onAuthorTap : null,
             child: Row(
               mainAxisAlignment: _toMainAxis(align),
+              mainAxisSize: MainAxisSize.min,
               children: [
                 CommonProfileAvatar(
                   username: postAuthor,
@@ -367,6 +370,9 @@ class PostReaderAppBar extends StatelessWidget {
     required this.onLikeTap,
     required this.onCommentTap,
     required this.isLiked,
+    required this.animationDuration, // 🎯 바텀바와 동일한 속도
+    this.onMoreTap, // 🎯 글 액션 바텀시트 열기
+    this.scrollOffset = 0.0, // 🎯 현재 스크롤 위치 (타이틀 표시용)
   });
 
   final bool showAppBar;
@@ -382,11 +388,14 @@ class PostReaderAppBar extends StatelessWidget {
   final VoidCallback onLikeTap;
   final VoidCallback onCommentTap;
   final bool isLiked;
+  final int animationDuration; // 🎯 바텀바와 동일한 속도
+  final VoidCallback? onMoreTap; // 🎯 글 액션 바텀시트 열기
+  final double scrollOffset; // 🎯 현재 스크롤 위치 (타이틀 표시용)
 
   @override
   Widget build(BuildContext context) {
     return AnimatedPositioned(
-      duration: const Duration(milliseconds: 180),
+      duration: Duration(milliseconds: animationDuration), // 🎯 동적 속도
       curve: Curves.easeInOut,
       top: showAppBar ? 0 : -barHeight,
       left: 0,
@@ -402,128 +411,91 @@ class PostReaderAppBar extends StatelessWidget {
               child: Padding(
                 padding: EdgeInsets.only(
                   top: MediaQuery.of(context).padding.top,
-                  bottom: 5.0,
+                  bottom: 8.0,
                 ),
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
-                    const SizedBox(width: 22),
+                    const SizedBox(width: 16),
                     GestureDetector(
                       onTap: onBack,
                       child: Icon(
                         Icons.arrow_back_ios_new_rounded,
-                        color: Theme.of(context).colorScheme.onSurface,
-                        size: 22,
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.onSurface.withOpacity(0.75),
+                        size: 24,
                       ),
                     ),
-                    SizedBox(width: 15),
-
-                    const Spacer(),
+                    const SizedBox(width: 15),
+                    // 🎯 다른 사람 포스트일 때 타이틀 표시 (헤더가 보이지 않을 때만, 즉 300px 이상일 때만)
+                    if (!isMyPost && showAppBar)
+                      Expanded(
+                        child: AnimatedOpacity(
+                          opacity: scrollOffset > 200.0 ? 1.0 : 0.0,
+                          duration: const Duration(milliseconds: 200),
+                          curve: Curves.easeInOut,
+                          child: Text(
+                            title.isNotEmpty ? title : '포스트',
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w600,
+                              color: Theme.of(context).colorScheme.onSurface,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      )
+                    else
+                      const Spacer(),
                     if (isMyPost) ...[
+                      // 수정
                       GestureDetector(
                         onTap: onEdit,
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 4,
-                          ),
-                          child: Text(
-                            '수정',
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w600,
-                              color: Theme.of(
-                                context,
-                              ).colorScheme.onSurface.withOpacity(0.7),
-                            ),
+                        child: Padding(
+                          padding: const EdgeInsets.all(8.0),
+                          child: SvgPicture.asset(
+                            'assets/icons/pen.svg',
+                            width: 22,
+                            height: 22,
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.onSurface.withOpacity(0.7),
                           ),
                         ),
                       ),
-                      const SizedBox(width: 6),
+                      const SizedBox(width: 4),
+                      // 삭제
                       GestureDetector(
                         onTap: onDelete,
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 4,
-                          ),
-                          child: Text(
-                            '삭제',
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w600,
-                              color: Theme.of(
-                                context,
-                              ).colorScheme.onSurface.withOpacity(0.7),
-                            ),
+                        child: Padding(
+                          padding: const EdgeInsets.all(8.0),
+                          child: SvgPicture.asset(
+                            'assets/icons/delete.svg',
+                            width: 22,
+                            height: 22,
+                            color: Colors.red.withOpacity(0.7),
                           ),
                         ),
                       ),
-                      const SizedBox(width: 15),
-                    ] else ...[
+                      const SizedBox(width: 8),
+                    ] else if (onMoreTap != null) ...[
+                      // 🎯 다른 사람 포스트일 때 more_vert 아이콘
                       GestureDetector(
-                        onTap: onLikeTap,
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            SvgPicture.asset(
-                              'assets/icons/heart.svg',
-                              width: 24,
-                              height: 24,
-                              color:
-                                  isLiked
-                                      ? Colors.red
-                                      : Theme.of(
-                                        context,
-                                      ).colorScheme.onSurface.withOpacity(0.7),
-                            ),
-                            const SizedBox(width: 5),
-                            Text(
-                              formatCount(likeCount),
-                              style: TextStyle(
-                                fontSize: 14,
-                                fontWeight: FontWeight.w500,
-                                color:
-                                    isLiked
-                                        ? Colors.red
-                                        : Theme.of(context)
-                                            .colorScheme
-                                            .onSurface
-                                            .withOpacity(0.7),
-                              ),
-                            ),
-                          ],
+                        onTap: onMoreTap,
+                        child: Padding(
+                          padding: const EdgeInsets.all(8.0),
+                          child: Icon(
+                            Icons.more_vert,
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.onSurface.withOpacity(0.7),
+                            size: 24,
+                          ),
                         ),
                       ),
-                      const SizedBox(width: 15),
-                      GestureDetector(
-                        onTap: onCommentTap,
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            SvgPicture.asset(
-                              'assets/icons/comment.svg',
-                              width: 22,
-                              height: 22,
-                              color: Theme.of(
-                                context,
-                              ).colorScheme.onSurface.withOpacity(0.7),
-                            ),
-                            const SizedBox(width: 5),
-                            Text(
-                              formatCount(commentCount),
-                              style: TextStyle(
-                                fontSize: 14,
-                                fontWeight: FontWeight.w500,
-                                color: Theme.of(
-                                  context,
-                                ).colorScheme.onSurface.withOpacity(0.7),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(width: 15),
+                      const SizedBox(width: 8),
                     ],
                   ],
                 ),

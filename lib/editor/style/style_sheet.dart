@@ -2,7 +2,6 @@ import 'package:doppy/editor/component/clip_component.dart';
 import 'package:doppy/editor/component/row_image_component.dart';
 import 'package:doppy/editor/config.dart';
 import 'package:doppy/editor/style/defualt_toolbar.dart'; // HighlightAttribution import
-import 'package:doppy/editor/service/node_component_service.dart';
 import 'package:doppy/providers/theme_provider.dart';
 import 'package:doppy/theme/app_colors.dart';
 import 'package:flutter/material.dart';
@@ -12,13 +11,6 @@ import 'package:super_editor/super_editor.dart';
 
 // 전역 폰트 접근용
 TextStylingService? _globalTextStylingService;
-
-// 스포일러 렌더링 모드 (글쓰기 화면에서는 텍스트를 옅게 보이게)
-bool _spoilerEditingMode = false;
-
-void setSpoilerEditingMode(bool isEditing) {
-  _spoilerEditingMode = isEditing;
-}
 
 void setGlobalTextStylingService(TextStylingService? service) {
   _globalTextStylingService = service;
@@ -109,8 +101,8 @@ Stylesheet buildCustomStylesheet(BuildContext context) {
             return {
               Styles.textStyle: mentionStyle,
               Styles.padding: CascadingPadding.only(
-                top: 1,
-                bottom: 1,
+                top: 0,
+                bottom: 0,
                 left: 20,
                 right: 20,
               ),
@@ -183,34 +175,6 @@ Stylesheet buildCustomStylesheet(BuildContext context) {
 
         return {};
       }),
-      // 스포일러가 해제된 ParagraphNode의 텍스트를 보이게 함
-      // inlineTextStyler에서 투명하게 만든 것을 덮어씀
-      StyleRule(BlockSelector.all, (doc, node) {
-        if (!_spoilerEditingMode && node is ParagraphNode) {
-          // 읽기 모드에서만 적용
-          final nodeService = NodeComponentService();
-          if (nodeService.isSpoilerDisabled(node.id)) {
-            // 스포일러가 해제되었으면 텍스트를 보이게 함
-            // inlineTextStyler에서 transparent로 만든 것을 원래 색으로 복원
-            final text = node.text;
-            bool hasSpoilerAttribution = false;
-            for (int i = 0; i < text.text.length; i++) {
-              final attrs = text.getAllAttributionsAt(i);
-              if (attrs.any(
-                (a) => a is NamedAttribution && a.id == 'spoiler',
-              )) {
-                hasSpoilerAttribution = true;
-                break;
-              }
-            }
-            if (hasSpoilerAttribution) {
-              // spoiler attribution이 있지만 해제되었으면 텍스트 색상을 복원
-              return {Styles.textStyle: TextStyle(color: bodyColor)};
-            }
-          }
-        }
-        return {};
-      }),
     ],
     inlineTextStyler: (attributions, existingStyle) {
       TextStyle style = existingStyle;
@@ -257,32 +221,12 @@ Stylesheet buildCustomStylesheet(BuildContext context) {
         // 형광펜은 별도 오버레이로 렌더링하므로 배경색은 사용하지 않음
       );
 
-      // 🙈 스포일러 스타일: 모드에 따라 다르게 처리
+      // 🙈 스포일러 스타일: 텍스트 색상은 유지, 마스크로만 가림
       if (isSpoiler) {
-        if (_spoilerEditingMode) {
-          final Color base = style.color ?? bodyColor;
-          style = style.copyWith(
-            color: base.withOpacity(1),
-            decoration: TextDecoration.none,
-          );
-        } else {
-          // addRulesAfter에서 해제된 문단은 bodyColor로 덮어쓴다.
-          // inlineTextStyler에서는 기존 색이 bodyColor로 들어온 경우 해제로 판단하여 투명 처리하지 않는다.
-          final Color? existingColor = existingStyle.color;
-          final bool isRevealed =
-              existingColor != null && existingColor.value == bodyColor.value;
-          if (isRevealed) {
-            style = style.copyWith(
-              color: bodyColor,
-              decoration: TextDecoration.none,
-            );
-          } else {
-            style = style.copyWith(
-              color: Colors.transparent,
-              decoration: TextDecoration.none,
-            );
-          }
-        }
+        // 스포일러 텍스트도 색상 유지
+        // paragraph_component의 마스크가 시각적으로 가림
+        style = style.copyWith(decoration: TextDecoration.none);
+        // ColorAttribution이 없으면 기본 bodyColor 유지
       }
 
       // 🎨 폰트 패밀리 적용 (Google Fonts 로더 통해 동적 로드)

@@ -3,6 +3,7 @@ import 'dart:ui';
 import 'dart:io';
 
 import 'package:doppy/data/services/video_cache_service.dart';
+import 'package:doppy/l10n/app_localizations.dart';
 import 'package:flutter/material.dart';
 import 'package:super_editor/super_editor.dart';
 import 'package:doppy/editor/service/drag_service.dart';
@@ -136,8 +137,8 @@ class ClipNode extends BlockNode {
   }
 }
 
-class PinComponentViewModel extends SingleColumnLayoutComponentViewModel {
-  PinComponentViewModel({
+class ClipComponentViewModel extends SingleColumnLayoutComponentViewModel {
+  ClipComponentViewModel({
     required super.nodeId,
     required this.label,
     required this.colorHex,
@@ -153,7 +154,7 @@ class PinComponentViewModel extends SingleColumnLayoutComponentViewModel {
   final String thumbnailPath;
 
   @override
-  SingleColumnLayoutComponentViewModel copy() => PinComponentViewModel(
+  SingleColumnLayoutComponentViewModel copy() => ClipComponentViewModel(
     nodeId: nodeId,
     label: label,
     colorHex: colorHex,
@@ -163,22 +164,28 @@ class PinComponentViewModel extends SingleColumnLayoutComponentViewModel {
   );
 }
 
-class PinComponentBuilder implements ComponentBuilder {
-  const PinComponentBuilder({this.dragService, this.isEditing = false});
+class ClipComponentBuilder implements ComponentBuilder {
+  const ClipComponentBuilder({
+    this.dragService,
+    this.isEditing = false,
+    this.isDarkMode = false,
+  });
   final DragService? dragService;
   final bool isEditing; // 에디터에서는 true, 리더에서는 false
+  final bool isDarkMode;
 
   @override
   Widget? createComponent(
     SingleColumnDocumentComponentContext context,
     SingleColumnLayoutComponentViewModel viewModel,
   ) {
-    if (viewModel is PinComponentViewModel) {
-      return _PinComponent(
+    if (viewModel is ClipComponentViewModel) {
+      return _ClipComponent(
         componentKey: context.componentKey,
         nodeId: viewModel.nodeId,
         label: viewModel.label,
         colorHex: viewModel.colorHex,
+        isDarkMode: isDarkMode,
         url: viewModel.url,
         localPath: viewModel.localPath,
         thumbnailPath: viewModel.thumbnailPath,
@@ -195,7 +202,7 @@ class PinComponentBuilder implements ComponentBuilder {
     DocumentNode node,
   ) {
     if (node is ClipNode) {
-      return PinComponentViewModel(
+      return ClipComponentViewModel(
         nodeId: node.id,
         label: node.label,
         colorHex: node.colorHex,
@@ -208,8 +215,8 @@ class PinComponentBuilder implements ComponentBuilder {
   }
 }
 
-class _PinComponent extends StatefulWidget {
-  const _PinComponent({
+class _ClipComponent extends StatefulWidget {
+  const _ClipComponent({
     required GlobalKey componentKey,
     required this.nodeId,
     required this.label,
@@ -219,6 +226,7 @@ class _PinComponent extends StatefulWidget {
     required this.thumbnailPath,
     this.dragService,
     this.isEditing = false,
+    this.isDarkMode = false,
   }) : _componentKey = componentKey,
        super(key: componentKey);
 
@@ -231,12 +239,13 @@ class _PinComponent extends StatefulWidget {
   final String thumbnailPath;
   final DragService? dragService;
   final bool isEditing;
+  final bool isDarkMode;
 
   @override
-  State<_PinComponent> createState() => _PinComponentState();
+  State<_ClipComponent> createState() => _ClipComponentState();
 }
 
-class _PinComponentState extends State<_PinComponent> with DocumentComponent {
+class _ClipComponentState extends State<_ClipComponent> with DocumentComponent {
   GlobalKey get componentKey => widget._componentKey;
 
   static const double marginTop = 4;
@@ -744,7 +753,11 @@ class _PinComponentState extends State<_PinComponent> with DocumentComponent {
                 height: calculatedHeight,
               )
             else
-              ShimmerBox(width: screenWidth, height: screenWidth / (4 / 5)),
+              ShimmerBox(
+                width: screenWidth,
+                height: screenWidth / (4 / 5),
+                isDarkMode: widget.isDarkMode,
+              ),
             // 업로드 진행 오버레이 (이미지 업로드와 통일: 검정 0.6)
             Positioned.fill(
               child: Container(
@@ -772,6 +785,7 @@ class _PinComponentState extends State<_PinComponent> with DocumentComponent {
         url: widget.url,
         thumbnailPath: widget.thumbnailPath,
         isEditing: widget.isEditing,
+        isDarkMode: widget.isDarkMode,
       );
     }
 
@@ -806,11 +820,13 @@ class _VisibilityAwareVideoPlayer extends StatefulWidget {
   final String url;
   final String thumbnailPath;
   final bool isEditing;
+  final bool isDarkMode;
 
   const _VisibilityAwareVideoPlayer({
     required this.url,
     required this.thumbnailPath,
     required this.isEditing,
+    this.isDarkMode = false,
   });
 
   @override
@@ -880,6 +896,7 @@ class _VisibilityAwareVideoPlayerState
         thumbnailPath: widget.thumbnailPath,
         shouldAutoPlay: _isVisible,
         isEditing: widget.isEditing,
+        isDarkMode: widget.isDarkMode,
       ),
     );
   }
@@ -891,12 +908,14 @@ class _VideoPlayerWidget extends StatefulWidget {
   final String thumbnailPath;
   final bool shouldAutoPlay;
   final bool isEditing;
+  final bool isDarkMode;
 
   const _VideoPlayerWidget({
     required this.url,
     required this.thumbnailPath,
     this.shouldAutoPlay = true,
     required this.isEditing,
+    this.isDarkMode = false,
   });
 
   @override
@@ -1031,12 +1050,13 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
 
   Future<void> _initializeVideo() async {
     try {
+      print('[VideoPlayer] 초기화 시작: ${widget.url}');
       if (widget.isEditing) {
         // 수정 모드: 항상 새 컨트롤러 생성
         _controller = VideoPlayerController.networkUrl(Uri.parse(widget.url));
         _isPreloaded = false;
         await _controller!.initialize();
-        print('[ClipComponent] (편집) 새 컨트롤러 생성: ${widget.url}');
+        print('[ClipComponent] (편집) 새 컨트롤러 생성 완료: ${widget.url}');
       } else {
         // 읽기 모드: 프리로드 컨트롤러가 있으면 재사용, 없으면 새로 생성
         final preloaded = PostReaderService.getPreloadedController(widget.url);
@@ -1053,7 +1073,7 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
           _controller = VideoPlayerController.networkUrl(Uri.parse(widget.url));
           _isPreloaded = false;
           await _controller!.initialize();
-          print('[ClipComponent] (읽기) 새 컨트롤러 생성: ${widget.url}');
+          print('[ClipComponent] (읽기) 새 컨트롤러 생성 완료: ${widget.url}');
         }
       }
 
@@ -1162,14 +1182,24 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
       return AspectRatio(
         aspectRatio: 16 / 9, // 기본 비율
         child: Container(
-          color: Colors.black,
+          color: Theme.of(context).colorScheme.surface,
           child: Center(
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Icon(Icons.error_outline, size: 48, color: Colors.white),
+                Icon(
+                  Icons.error_outline,
+                  size: 38,
+                  color: Theme.of(context).colorScheme.onSurface,
+                ),
                 SizedBox(height: 8),
-                Text('영상을 불러올 수 없습니다', style: TextStyle(color: Colors.white)),
+                Text(
+                  context.tr('video_load_failed'),
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.onSurface,
+                    fontSize: 16,
+                  ),
+                ),
               ],
             ),
           ),
@@ -1202,7 +1232,11 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
       final calculatedHeight = screenWidth / (4 / 5);
 
       return ClipRRect(
-        child: ShimmerBox(width: screenWidth, height: calculatedHeight),
+        child: ShimmerBox(
+          width: screenWidth,
+          height: calculatedHeight,
+          isDarkMode: widget.isDarkMode,
+        ),
       );
     }
 

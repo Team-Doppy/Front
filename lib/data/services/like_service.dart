@@ -37,18 +37,31 @@ class LikeService extends ChangeNotifier {
     _postLikeCounts[postId] = count;
   }
 
-  /// 포스트 좋아요 토글
+  /// 포스트 좋아요 토글 (낙관적 업데이트)
   Future<void> togglePostLike(String postId) async {
     if (postId.isEmpty) {
       print('[LikeService] 잘못된 postId: $postId');
       throw ArgumentError('postId가 비어있습니다');
     }
 
+    // 1️⃣ 현재 상태 확인 (is_liked 기반)
+    final isCurrentlyLiked = _postLikeStatus[postId] ?? false;
+    final currentCount = _postLikeCounts[postId] ?? 0;
+
+    print('[LikeService] 좋아요 ${isCurrentlyLiked ? '취소' : '추가'}: $postId');
+
+    // 2️⃣ 낙관적 업데이트: 즉시 로컬 상태 토글 (아주 빠르게)
+    _postLikeStatus[postId] = !isCurrentlyLiked;
+    _postLikeCounts[postId] =
+        isCurrentlyLiked
+            ? (currentCount - 1).clamp(0, double.infinity).toInt()
+            : currentCount + 1;
+
+    notifyListeners(); // UI 즉시 업데이트
+    print('[LikeService] 낙관적 업데이트 완료: $postId = ${_postLikeStatus[postId]}');
+
+    // 3️⃣ 서버에 요청 전송 (백그라운드)
     try {
-      final isCurrentlyLiked = _postLikeStatus[postId] ?? false;
-
-      print('[LikeService] 좋아요 ${isCurrentlyLiked ? '취소' : '추가'}: $postId');
-
       final response =
           isCurrentlyLiked
               ? await _dio.delete(
@@ -60,26 +73,19 @@ class LikeService extends ChangeNotifier {
                 options: Options(receiveTimeout: const Duration(seconds: 5)),
               );
 
-      print('[LikeService] 좋아요 응답: ${response.statusCode} - ${response.data}');
+      print('[LikeService] 서버 응답: ${response.statusCode} - ${response.data}');
 
+      // 성공하면 그대로 유지
       if (response.statusCode == 200 || response.statusCode == 204) {
-        // 성공 시 로컬 상태 업데이트
-        _postLikeStatus[postId] = !isCurrentlyLiked;
-
-        // 카운트 업데이트
-        final currentCount = _postLikeCounts[postId] ?? 0;
-        _postLikeCounts[postId] =
-            isCurrentlyLiked
-                ? (currentCount - 1).clamp(0, double.infinity).toInt()
-                : currentCount + 1;
-
-        notifyListeners();
-        print(
-          '[LikeService] 좋아요 토글 성공: $postId = ${_postLikeStatus[postId]}, 카운트: ${_postLikeCounts[postId]}',
-        );
+        print('[LikeService] 서버 동기화 성공: $postId');
       }
     } catch (e) {
-      print('[LikeService] 좋아요 토글 오류: $e');
+      print('[LikeService] 서버 동기화 실패 - 롤백: $e');
+
+      // 4️⃣ 실패 시 롤백: 원래 상태로 복원
+      _postLikeStatus[postId] = isCurrentlyLiked;
+      _postLikeCounts[postId] = currentCount;
+      notifyListeners(); // UI 롤백
 
       if (e is DioException) {
         final statusCode = e.response?.statusCode;

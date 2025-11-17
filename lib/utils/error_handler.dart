@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:doppy/l10n/app_localizations.dart';
 
 /// 앱 전역에서 사용하는 에러 핸들러
 class ErrorHandler {
@@ -77,35 +78,45 @@ class ErrorHandler {
     BuildContext context,
     String message, {
     Duration duration = const Duration(seconds: 2),
+    Color? bgColor,
+    Color? fgColor,
   }) {
     if (!context.mounted) return;
 
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final Color bgColor = isDark ? Colors.white : Colors.black;
-    final Color fgColor = isDark ? Colors.black87 : Colors.white;
+    final _bgColor = bgColor ?? (isDark ? Colors.white : Colors.black);
+    final _fgColor = fgColor ?? (isDark ? Colors.black87 : Colors.white);
 
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Row(
-          children: [
-            Icon(Icons.info_outline, color: fgColor, size: 20),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                message,
-                style: TextStyle(
-                  color: fgColor,
-                  fontSize: 14,
-                  fontWeight: FontWeight.w500,
+        content: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 10.0),
+          child: Row(
+            children: [
+              Icon(Icons.info_outline, color: _fgColor, size: 20),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  message,
+                  style: TextStyle(
+                    color: _fgColor,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                  ),
                 ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
-        backgroundColor: bgColor,
+        backgroundColor: _bgColor,
         behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
         duration: duration,
+        margin: const EdgeInsets.only(
+          bottom: 22, // ← 올릴 높이 (px)
+          left: 16,
+          right: 16,
+        ),
       ),
     );
   }
@@ -189,7 +200,15 @@ class ErrorHandler {
     String? customMessage,
     SnackBarAction? action,
   }) {
-    final message = customMessage ?? getErrorMessage(error);
+    String message = customMessage ?? getErrorMessage(error);
+
+    // 🎯 세션 만료 에러는 로케일 적용
+    final errorString = error.toString();
+    if (errorString.contains('ExpiredJwtException') ||
+        errorString.contains('JWT expired')) {
+      message = AppLocalizations.of(context).translate('session_expired_error');
+    }
+
     showError(context, message, action: action);
 
     // 에러 로깅
@@ -199,12 +218,13 @@ class ErrorHandler {
 
   /// 토큰 갱신 실패 시 재로그인 유도
   static void handleTokenRefreshFailure(BuildContext context) {
+    final localization = AppLocalizations.of(context);
     showError(
       context,
-      '로그인 세션이 만료되었습니다.',
+      localization.translate('session_expired_snackbar'),
       duration: const Duration(seconds: 4),
       action: SnackBarAction(
-        label: '재로그인',
+        label: localization.translate('login'),
         textColor: Colors.white,
         onPressed: () {
           // TODO: 로그인 화면으로 이동

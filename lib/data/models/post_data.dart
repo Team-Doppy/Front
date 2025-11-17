@@ -1,6 +1,7 @@
 import 'dart:convert';
+import 'package:doppy/utils/access_level_parser.dart';
 
-enum AccessLevel { public, private, groups }
+enum AccessLevel { public, private, friends, groups }
 
 class PostData {
   final String id;
@@ -14,8 +15,11 @@ class PostData {
   final String createdAt;
   final String updatedAt;
   final AccessLevel accessLevel;
+  final List<int>? sharedGroupIds; // 🎯 그룹 공유 시 그룹 ID 목록
+  final List<String>? sharedGroupNames; // 🎯 서버에서 제공하는 그룹 이름 목록
   final int viewCount;
   final int likeCount;
+  final int commentCount;
   final bool isLiked;
 
   PostData({
@@ -28,20 +32,27 @@ class PostData {
     required this.authorProfileImageUrl,
     required this.content,
     required this.accessLevel,
+    this.sharedGroupIds, // 🎯 그룹 공유 시 그룹 ID 목록
+    this.sharedGroupNames, // 🎯 서버에서 제공하는 그룹 이름 목록
     required this.createdAt,
     required this.updatedAt,
     required this.viewCount,
     required this.likeCount,
+    required this.commentCount,
     required this.isLiked,
   });
 
   // 서버 데이터에서 PostData 생성
   factory PostData.fromServer(Map<String, dynamic> data) {
-    // accessLevel 문자열을 enum으로 변환
+    // 🎯 공통 파싱 유틸리티 사용
+    final accessLevelStr = AccessLevelParser.parseAccessLevelString(
+      data['accessLevel'],
+    );
     AccessLevel accessLevel = AccessLevel.public;
-    final accessLevelStr = data['accessLevel']?.toString().toUpperCase();
     if (accessLevelStr == 'PRIVATE') {
       accessLevel = AccessLevel.private;
+    } else if (accessLevelStr == 'FRIENDS') {
+      accessLevel = AccessLevel.friends;
     } else if (accessLevelStr == 'GROUPS') {
       accessLevel = AccessLevel.groups;
     }
@@ -73,6 +84,12 @@ class PostData {
               : int.tryParse('${data['authorId']}');
     }
 
+    // 🎯 메타데이터 레벨에서는 sharedGroupIds/Names 없음
+    // content 포함 응답은 content.accessLevelInfo에서 파싱해야 함
+    // 여기서는 null로 설정 (메타데이터만 파싱하는 경우)
+    final List<int>? sharedGroupIds = null;
+    final List<String>? sharedGroupNames = null;
+
     return PostData(
       id: data['id']?.toString() ?? '',
       thumbnailImageUrl:
@@ -86,6 +103,8 @@ class PostData {
       content: content,
       summary: data['summary'] ?? '',
       accessLevel: accessLevel,
+      sharedGroupIds: sharedGroupIds,
+      sharedGroupNames: sharedGroupNames,
       createdAt: data['createdAt'] ?? DateTime.now().toIso8601String(),
       updatedAt:
           data['updatedAt'] ??
@@ -99,6 +118,10 @@ class PostData {
           (data['likeCount'] is int)
               ? (data['likeCount'] as int)
               : int.tryParse('${data['likeCount'] ?? 0}') ?? 0,
+      commentCount:
+          (data['commentCount'] is int)
+              ? (data['commentCount'] as int)
+              : int.tryParse('${data['commentCount'] ?? 0}') ?? 0,
       isLiked: data['isLiked'] == true,
     );
   }
@@ -196,11 +219,16 @@ class PostData {
         'id': id,
         'thumbnailImageUrl': thumbnailImageUrl,
         'title': title,
+        'summary': summary, // 🎯 summary 추가
         'author': author,
         'authorId': authorId,
         'authorProfileImageUrl': authorProfileImageUrl,
         'content': contentData,
+        'accessLevel': accessLevel.name.toUpperCase(), // 🎯 accessLevel 추가
+        'sharedGroupIds': sharedGroupIds, // 🎯 sharedGroupIds 추가
+        'sharedGroupNames': sharedGroupNames, // 🎯 sharedGroupNames 추가
         'likeCount': likeCount,
+        'commentCount': commentCount,
         'isLiked': isLiked,
         'stickers': [], // 서버에서 가져온 데이터에는 스티커가 없음
       };
@@ -211,11 +239,16 @@ class PostData {
         'id': id,
         'thumbnailImageUrl': thumbnailImageUrl,
         'title': title,
+        'summary': summary, // 🎯 summary 추가
         'author': author,
         'authorId': authorId,
         'authorProfileImageUrl': authorProfileImageUrl,
         'content': {'nodes': []},
+        'accessLevel': accessLevel.name.toUpperCase(), // 🎯 accessLevel 추가
+        'sharedGroupIds': sharedGroupIds, // 🎯 sharedGroupIds 추가
+        'sharedGroupNames': sharedGroupNames, // 🎯 sharedGroupNames 추가
         'likeCount': likeCount,
+        'commentCount': commentCount,
         'isLiked': isLiked,
         'stickers': [],
       };

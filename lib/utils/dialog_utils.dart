@@ -56,18 +56,7 @@ class DialogUtils {
                           textAlign: TextAlign.center,
                         ),
                         const SizedBox(height: 2),
-                        Text(
-                          message,
-                          style: TextStyle(
-                            color:
-                                isDark
-                                    ? Colors.white.withOpacity(0.6)
-                                    : Colors.black.withOpacity(0.6),
-                            fontSize: 13,
-                            fontWeight: FontWeight.w400,
-                          ),
-                          textAlign: TextAlign.center,
-                        ),
+                        _buildMessageWidget(message, isDark),
                       ],
                     ),
                   ),
@@ -292,6 +281,57 @@ class DialogUtils {
     );
   }
 
+  /// 메시지 위젯 빌드 (밑줄 지원)
+  static Widget _buildMessageWidget(String message, bool isDark) {
+    // 🎯 밑줄이 필요한 텍스트 감지 (예: "나만보기로 전환됩니다")
+    if (message.contains('나만보기로 전환됩니다')) {
+      final parts = message.split('나만보기로 전환됩니다');
+      if (parts.length == 2) {
+        return RichText(
+          textAlign: TextAlign.center,
+          text: TextSpan(
+            style: TextStyle(
+              color:
+                  isDark
+                      ? Colors.white.withOpacity(0.6)
+                      : Colors.black.withOpacity(0.6),
+              fontSize: 13,
+              fontWeight: FontWeight.w400,
+            ),
+            children: [
+              TextSpan(text: parts[0]),
+              TextSpan(
+                text: '나만보기로 전환됩니다',
+                style: TextStyle(
+                  decoration: TextDecoration.underline,
+                  decorationColor:
+                      isDark
+                          ? Colors.white.withOpacity(0.6)
+                          : Colors.black.withOpacity(0.6),
+                ),
+              ),
+              TextSpan(text: parts[1]),
+            ],
+          ),
+        );
+      }
+    }
+
+    // 🎯 일반 텍스트
+    return Text(
+      message,
+      style: TextStyle(
+        color:
+            isDark
+                ? Colors.white.withOpacity(0.6)
+                : Colors.black.withOpacity(0.6),
+        fontSize: 13,
+        fontWeight: FontWeight.w400,
+      ),
+      textAlign: TextAlign.center,
+    );
+  }
+
   /// 텍스트 입력 다이얼로그 (공통 디자인)
   /// 반환: 확인 시 입력 문자열, 취소/바깥 클릭 시 null
   static Future<String?> showTextInputDialog(
@@ -301,6 +341,7 @@ class DialogUtils {
     String? initialText,
     String confirmText = '확인',
     String cancelText = '취소',
+    int? maxLines, // 🎯 여러 줄 입력 지원 (null이면 1줄)
   }) async {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final controller = TextEditingController(text: initialText ?? '');
@@ -345,6 +386,13 @@ class DialogUtils {
                           child: TextField(
                             controller: controller,
                             autofocus: true,
+                            maxLines: maxLines,
+                            minLines:
+                                maxLines != null ? (maxLines > 1 ? 3 : 1) : 1,
+                            textInputAction:
+                                maxLines != null && maxLines > 1
+                                    ? TextInputAction.newline
+                                    : TextInputAction.done,
                             cursorColor:
                                 isDark ? Colors.white : const Color(0xFF007AFF),
                             decoration: InputDecoration(
@@ -367,9 +415,12 @@ class DialogUtils {
                               color: isDark ? Colors.white : Colors.black,
                               fontSize: 15,
                             ),
-                            onSubmitted: (v) {
-                              Navigator.of(context).pop(v.trim());
-                            },
+                            onSubmitted:
+                                maxLines == null || maxLines == 1
+                                    ? (v) {
+                                      Navigator.of(context).pop(v.trim());
+                                    }
+                                    : null,
                           ),
                         ),
                       ],

@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'package:doppy/editor/postwrite_screen.dart';
-import 'package:doppy/editor/component/row_image_component.dart';
 import 'package:doppy/editor/component/clip_component.dart';
 import 'package:doppy/editor/service/editor_service.dart';
 import 'package:doppy/editor/service/node_component_service.dart';
@@ -35,7 +34,6 @@ class DragService extends ChangeNotifier {
   int? _splitImageIndex;
   // 이미지 행 타겟 삽입 정보
   String? _targetRowId;
-  int? _targetInsertIndex;
 
   // Auto-scroll state
   Timer? _autoScrollTimer;
@@ -90,7 +88,8 @@ class DragService extends ChangeNotifier {
   }
 
   /// 세로 노드 사이 클릭 감지. 감지 시 삽입 인덱스 반환
-  int? detectVerticalGapAt(Offset globalPos, {double pad = 12.0}) {
+  int? detectVerticalGapAt(Offset globalPos, {double pad = 10.0}) {
+    // 🎯 4.0 → 20.0 증가
     final layout =
         editorService.documentLayoutKey?.currentState as DocumentLayout?;
     if (layout == null) return null;
@@ -309,7 +308,6 @@ class DragService extends ChangeNotifier {
     _splitImageRowId = null;
     _splitImageIndex = null;
     _targetRowId = null;
-    _targetInsertIndex = null;
 
     notifyListeners();
   }
@@ -634,16 +632,10 @@ class DragService extends ChangeNotifier {
           );
           int idx = (localXWithinTarget / slotW).floor();
           idx = idx.clamp(0, slots - 1);
-          _targetInsertIndex = idx;
-        } else {
-          _targetInsertIndex = null;
         }
-      } catch (_) {
-        _targetInsertIndex = null;
-      }
+      } catch (_) {}
     } else {
       _targetRowId = null;
-      _targetInsertIndex = null;
     }
 
     return {'dropIndex': finalCandidate};

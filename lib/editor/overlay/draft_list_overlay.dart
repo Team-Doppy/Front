@@ -2,6 +2,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:doppy/theme/app_colors.dart';
 import 'package:doppy/data/services/draft_service.dart';
+import 'package:doppy/l10n/app_localizations.dart';
 
 class DraftListOverlay extends StatefulWidget {
   const DraftListOverlay({
@@ -134,6 +135,7 @@ class _DraftListOverlayState extends State<DraftListOverlay>
 
   @override
   Widget build(BuildContext context) {
+    final isDarkMode = Theme.of(context).brightness == Brightness.dark;
     if (_isLoading) {
       return Scaffold(
         backgroundColor: Colors.transparent,
@@ -191,7 +193,10 @@ class _DraftListOverlayState extends State<DraftListOverlay>
               child: BackdropFilter(
                 filter: ui.ImageFilter.blur(sigmaX: 10, sigmaY: 10),
                 child: Container(
-                  color: const ui.Color.fromARGB(235, 45, 45, 45),
+                  color:
+                      isDarkMode
+                          ? const ui.Color.fromARGB(235, 45, 45, 45)
+                          : const ui.Color.fromARGB(235, 255, 255, 255),
                 ),
               ),
             ),
@@ -302,7 +307,10 @@ class _DraftListOverlayState extends State<DraftListOverlay>
                 filter: ui.ImageFilter.blur(sigmaX: 10, sigmaY: 10),
                 child: Container(
                   height: 56 + MediaQuery.of(context).padding.top,
-                  color: const ui.Color.fromARGB(243, 43, 43, 43),
+                  color:
+                      isDarkMode
+                          ? const ui.Color.fromARGB(243, 43, 43, 43)
+                          : const ui.Color.fromARGB(243, 255, 255, 255),
                   padding: EdgeInsets.only(
                     top: MediaQuery.of(context).padding.top,
                     left: 24,
@@ -313,9 +321,12 @@ class _DraftListOverlayState extends State<DraftListOverlay>
                       GestureDetector(
                         onTap: () => _closeWithAnimation(),
                         child: Text(
-                          '닫기',
+                          context.tr('close'),
                           style: TextStyle(
-                            color: Colors.white.withOpacity(0.8),
+                            color:
+                                isDarkMode
+                                    ? Colors.white.withOpacity(0.8)
+                                    : Colors.black.withOpacity(0.8),
                             fontSize: 16,
                             fontWeight: FontWeight.w400,
                           ),
@@ -324,9 +335,9 @@ class _DraftListOverlayState extends State<DraftListOverlay>
                       Expanded(
                         child: Center(
                           child: Text(
-                            '임시저장',
+                            context.tr('drafts'),
                             style: TextStyle(
-                              color: Colors.white,
+                              color: isDarkMode ? Colors.white : Colors.black,
                               fontSize: 17,
                               fontWeight: FontWeight.w600,
                             ),
@@ -388,6 +399,7 @@ class _DraftListOverlayState extends State<DraftListOverlay>
     final title = draft.title.isNotEmpty ? draft.title : '무제';
     final isSwiping = _swipingDraftId == draft.id;
     final isCurrentDraft = widget.currentDraftId == draft.id;
+    final isDarkMode = Theme.of(context).brightness == Brightness.dark;
 
     // 스와이프 거리 계산
     final double swipeOffset = isSwiping ? _swipeProgress * 80 : 0.0;
@@ -496,7 +508,10 @@ class _DraftListOverlayState extends State<DraftListOverlay>
               child: Transform.translate(
                 offset: Offset(-swipeOffset, 0),
                 child: Container(
-                  color: Theme.of(context).colorScheme.surface,
+                  color:
+                      isDarkMode
+                          ? Theme.of(context).colorScheme.surface
+                          : const ui.Color.fromARGB(255, 240, 240, 240),
                   padding: const EdgeInsets.symmetric(
                     horizontal: 24,
                     vertical: 16,

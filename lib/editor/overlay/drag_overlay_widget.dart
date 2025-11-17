@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:doppy/common/widgets/image_error_placeholder.dart';
 import 'package:doppy/editor/component/link_component.dart';
 import 'package:doppy/editor/component/row_image_component.dart';
@@ -54,14 +55,17 @@ class _DragOverlayWidgetState extends State<DragOverlayWidget> {
     return Positioned(
       left: left,
       top: top,
-      child: Material(
-        elevation: 8,
-        borderRadius: BorderRadius.circular(8),
-        child: ClipRRect(
+      child: Opacity(
+        opacity: 0.7, // 🎯 70% 투명도로 뒤의 텍스트가 보이게
+        child: Material(
+          elevation: 8,
           borderRadius: BorderRadius.circular(8),
-          child: KeyedSubtree(
-            key: _previewKey,
-            child: _buildNodePreview(context),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(8),
+            child: KeyedSubtree(
+              key: _previewKey,
+              child: _buildNodePreview(context),
+            ),
           ),
         ),
       ),
@@ -92,9 +96,9 @@ class _DragOverlayWidgetState extends State<DragOverlayWidget> {
       case 'clip':
         preview = _buildClipPreview(node as ClipNode);
         break;
-
+      case 'mention':
       case 'paragraph':
-        preview = _buildParagraphPreview(node as dynamic, context); // 타입 캐스팅 제거
+        preview = _buildParagraphPreview(node as dynamic, context);
         break;
       case 'link':
         preview = _buildLinkPreview(node as LinkNode);
@@ -110,8 +114,8 @@ class _DragOverlayWidgetState extends State<DragOverlayWidget> {
     return Stack(
       children: [
         Container(
-          width: 100,
-          height: 100,
+          width: 130,
+          height: 130,
 
           decoration: BoxDecoration(
             color: const Color(0xFF1A1A1A),
@@ -125,19 +129,21 @@ class _DragOverlayWidgetState extends State<DragOverlayWidget> {
                     topLeft: Radius.circular(8),
                     bottomLeft: Radius.circular(8),
                   ),
-                  child: Image.network(
-                    node.thumbnailUrl,
-                    width: 100,
-                    height: 100,
+                  child: CachedNetworkImage(
+                    imageUrl: node.thumbnailUrl,
+                    width: 130,
+                    height: 130,
                     fit: BoxFit.cover,
-                    errorBuilder:
-                        (context, error, stack) => ImageErrorPlaceholder(),
+                    errorWidget:
+                        (context, url, error) => Builder(
+                          builder: (context) => ImageErrorPlaceholder(),
+                        ),
                   ),
                 )
               else
                 Container(
-                  width: 100,
-                  height: 100,
+                  width: 130,
+                  height: 130,
                   alignment: Alignment.center,
                   decoration: const BoxDecoration(
                     color: Color(0xFF2A2A2A),
@@ -146,19 +152,26 @@ class _DragOverlayWidgetState extends State<DragOverlayWidget> {
                       bottomLeft: Radius.circular(8),
                     ),
                   ),
-                  child: const Icon(Icons.link, color: Colors.white54),
+                  child: const Icon(
+                    Icons.link,
+                    color: Colors.white54,
+                    size: 28,
+                  ),
                 ),
             ],
           ),
         ),
         if (node.thumbnailUrl.isNotEmpty)
-          Positioned(child: Icon(Icons.link, color: Colors.white54)),
+          Positioned(
+            right: 8,
+            top: 8,
+            child: Icon(Icons.link, color: Colors.white54, size: 20),
+          ),
       ],
     );
   }
 
   Widget _buildImagePreview(dynamic node) {
-    // AppImageNode 또는 ImageNode 모두 지원: placeholder면 로컬 경로 + 로딩 오버레이
     String imageUrl = '';
     try {
       imageUrl = (node as dynamic).imageUrl as String? ?? '';
@@ -181,10 +194,13 @@ class _DragOverlayWidgetState extends State<DragOverlayWidget> {
       baseImage = Image.file(File(localPath), fit: BoxFit.cover);
     } else if (imageUrl.startsWith('http://') ||
         imageUrl.startsWith('https://')) {
-      baseImage = Image.network(
-        imageUrl,
+      // 🎯 CachedNetworkImage 사용 (자동으로 캐시된 이미지 재사용)
+      baseImage = CachedNetworkImage(
+        imageUrl: imageUrl,
         fit: BoxFit.cover,
-        errorBuilder: (context, error, stack) => ImageErrorPlaceholder(),
+        errorWidget:
+            (context, url, error) =>
+                Builder(builder: (context) => ImageErrorPlaceholder()),
       );
     } else if (imageUrl.startsWith('file://')) {
       baseImage = Image.file(
@@ -196,9 +212,9 @@ class _DragOverlayWidgetState extends State<DragOverlayWidget> {
     }
 
     return ConstrainedBox(
-      constraints: const BoxConstraints(maxWidth: 250, maxHeight: 350),
+      constraints: const BoxConstraints(maxWidth: 150, maxHeight: 220),
       child: ClipRRect(
-        borderRadius: BorderRadius.circular(2),
+        borderRadius: BorderRadius.circular(4),
         child: Stack(
           children: [
             Positioned.fill(child: baseImage),
@@ -208,9 +224,9 @@ class _DragOverlayWidgetState extends State<DragOverlayWidget> {
                   color: Colors.black.withOpacity(0.18),
                   child: const Center(
                     child: SizedBox(
-                      width: 26,
-                      height: 26,
-                      child: CircularProgressIndicator(strokeWidth: 2.4),
+                      width: 22,
+                      height: 22,
+                      child: CircularProgressIndicator(strokeWidth: 2.0),
                     ),
                   ),
                 ),
@@ -223,7 +239,7 @@ class _DragOverlayWidgetState extends State<DragOverlayWidget> {
 
   Widget _buildImageRowPreview(ImageRowNode node) {
     return ConstrainedBox(
-      constraints: const BoxConstraints(maxWidth: 250, maxHeight: 300),
+      constraints: const BoxConstraints(maxWidth: 220, maxHeight: 180),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(2),
         child: _ImageRowPreviewContent(
@@ -236,7 +252,7 @@ class _DragOverlayWidgetState extends State<DragOverlayWidget> {
 
   Widget _buildParagraphPreview(dynamic node, BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       decoration: BoxDecoration(
         color: Theme.of(context).colorScheme.surface.withOpacity(0.5),
         borderRadius: BorderRadius.circular(8),
@@ -244,10 +260,11 @@ class _DragOverlayWidgetState extends State<DragOverlayWidget> {
       child: Text(
         node.text.text,
         style: TextStyle(
-          fontSize: 14,
+          fontSize: 16,
           color: Theme.of(context).colorScheme.onSurface,
+          fontWeight: FontWeight.normal,
         ),
-        maxLines: 1,
+        maxLines: 2,
         overflow: TextOverflow.ellipsis,
       ),
     );
@@ -284,10 +301,13 @@ class _DragOverlayWidgetState extends State<DragOverlayWidget> {
     if (isPlaceholder && thumb.isNotEmpty) {
       base = Image.file(File(thumb), fit: BoxFit.cover);
     } else if (node.url.isNotEmpty) {
-      base = Image.network(
-        node.url,
+      // 🎯 CachedNetworkImage 사용 (자동으로 캐시된 이미지 재사용)
+      base = CachedNetworkImage(
+        imageUrl: node.url,
         fit: BoxFit.cover,
-        errorBuilder: (context, error, stack) => ImageErrorPlaceholder(),
+        errorWidget:
+            (context, url, error) =>
+                Builder(builder: (context) => ImageErrorPlaceholder()),
       );
     } else {
       base = Container(
@@ -297,9 +317,9 @@ class _DragOverlayWidgetState extends State<DragOverlayWidget> {
     }
 
     return ConstrainedBox(
-      constraints: const BoxConstraints(maxWidth: 260, maxHeight: 180),
+      constraints: const BoxConstraints(maxWidth: 200, maxHeight: 120),
       child: ClipRRect(
-        borderRadius: BorderRadius.circular(6),
+        borderRadius: BorderRadius.circular(4),
         child: Stack(
           children: [
             Positioned.fill(child: base),
@@ -309,26 +329,26 @@ class _DragOverlayWidgetState extends State<DragOverlayWidget> {
                   color: Colors.black.withOpacity(0.18),
                   child: const Center(
                     child: SizedBox(
-                      width: 26,
-                      height: 26,
-                      child: CircularProgressIndicator(strokeWidth: 2.4),
+                      width: 22,
+                      height: 22,
+                      child: CircularProgressIndicator(strokeWidth: 2.0),
                     ),
                   ),
                 ),
               ),
             Positioned(
-              right: 8,
-              bottom: 8,
+              right: 6,
+              bottom: 6,
               child: Container(
                 decoration: BoxDecoration(
                   color: Colors.black.withOpacity(0.35),
-                  borderRadius: BorderRadius.circular(12),
+                  borderRadius: BorderRadius.circular(10),
                 ),
-                padding: const EdgeInsets.all(4),
+                padding: const EdgeInsets.all(3),
                 child: const Icon(
                   Icons.videocam,
                   color: Colors.white,
-                  size: 16,
+                  size: 14,
                 ),
               ),
             ),
@@ -340,22 +360,22 @@ class _DragOverlayWidgetState extends State<DragOverlayWidget> {
 
   Widget _buildSplitImagePreview(String imageUrl) {
     return ConstrainedBox(
-      constraints: const BoxConstraints(maxWidth: 250, maxHeight: 350),
+      constraints: const BoxConstraints(maxWidth: 150, maxHeight: 220),
       child: ClipRRect(
-        borderRadius: BorderRadius.circular(2),
-        child: Image.network(
-          imageUrl,
+        borderRadius: BorderRadius.circular(4),
+        child: CachedNetworkImage(
+          imageUrl: imageUrl,
           fit: BoxFit.cover,
-          errorBuilder: (context, error, stackTrace) {
-            return ImageErrorPlaceholder();
-          },
+          errorWidget:
+              (context, url, error) =>
+                  Builder(builder: (context) => ImageErrorPlaceholder()),
         ),
       ),
     );
   }
 
   Widget _buildDividerPreview() {
-    final Color lineColor = Colors.black.withOpacity(0.06);
+    final Color lineColor = Colors.white.withOpacity(0.3);
     return ConstrainedBox(
       constraints: const BoxConstraints(
         maxWidth: 260,
@@ -365,18 +385,10 @@ class _DragOverlayWidgetState extends State<DragOverlayWidget> {
       ),
       child: Container(
         width: 240,
-        height: 52,
+        height: 40,
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: Colors.black.withOpacity(0.1),
           borderRadius: BorderRadius.circular(10),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.08),
-              blurRadius: 10,
-              offset: const Offset(0, 4),
-            ),
-          ],
-          border: Border.all(color: Colors.black.withOpacity(0.06)),
         ),
         child: Stack(
           alignment: Alignment.center,
@@ -430,15 +442,10 @@ class _ImageRowPreviewContent extends StatefulWidget {
 }
 
 class _ImageRowPreviewContentState extends State<_ImageRowPreviewContent> {
-  final Map<String, Size> _imageSizes = {};
-  double? _unifiedHeight;
-
   @override
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
-        final availableWidth = constraints.maxWidth;
-
         return Row(
           children:
               widget.imageUrls.map((imageUrl) {
@@ -446,8 +453,8 @@ class _ImageRowPreviewContentState extends State<_ImageRowPreviewContent> {
                   child: Container(
                     margin: const EdgeInsets.only(right: 1),
                     child: SizedBox(
-                      height: _unifiedHeight ?? 200,
-                      child: _buildRowImageTile(imageUrl, availableWidth),
+                      height: 180,
+                      child: _buildRowImageTile(imageUrl),
                     ),
                   ),
                 );
@@ -457,7 +464,7 @@ class _ImageRowPreviewContentState extends State<_ImageRowPreviewContent> {
     );
   }
 
-  Widget _buildRowImageTile(String imageUrl, double availableWidth) {
+  Widget _buildRowImageTile(String imageUrl) {
     final bool isNetwork =
         imageUrl.startsWith('http://') || imageUrl.startsWith('https://');
     final bool isFileUrl = imageUrl.startsWith('file://');
@@ -465,17 +472,13 @@ class _ImageRowPreviewContentState extends State<_ImageRowPreviewContent> {
 
     Widget imageWidget;
     if (isNetwork) {
-      imageWidget = Image.network(
-        imageUrl,
+      // 🎯 CachedNetworkImage 사용 (자동으로 캐시된 이미지 재사용)
+      imageWidget = CachedNetworkImage(
+        imageUrl: imageUrl,
         fit: BoxFit.cover,
-        errorBuilder: (context, error, stack) => ImageErrorPlaceholder(),
-        frameBuilder: (context, child, frame, wasSync) {
-          if (frame == null) return child;
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            _calculateImageSize(imageUrl, availableWidth);
-          });
-          return child;
-        },
+        errorWidget:
+            (context, url, error) =>
+                Builder(builder: (context) => ImageErrorPlaceholder()),
       );
     } else if (isFileUrl || isLocalPath) {
       final String path =
@@ -505,47 +508,5 @@ class _ImageRowPreviewContentState extends State<_ImageRowPreviewContent> {
           ),
       ],
     );
-  }
-
-  void _calculateImageSize(String imageUrl, double availableWidth) {
-    if (_imageSizes.containsKey(imageUrl)) return;
-
-    Image.network(imageUrl).image
-        .resolve(const ImageConfiguration())
-        .addListener(
-          ImageStreamListener((ImageInfo info, bool synchronousCall) {
-            if (mounted) {
-              _imageSizes[imageUrl] = Size(
-                info.image.width.toDouble(),
-                info.image.height.toDouble(),
-              );
-
-              if (_imageSizes.length == widget.imageUrls.length) {
-                final count = widget.imageUrls.length;
-                final spacingWidth = widget.spacing * (count - 1);
-                final eachWidth = (availableWidth - spacingWidth) / count;
-
-                final heights = <double>[];
-                for (final url in widget.imageUrls) {
-                  final s = _imageSizes[url];
-                  if (s == null || s.width == 0) continue;
-                  heights.add(eachWidth * (s.height / s.width));
-                }
-                if (heights.isEmpty) return;
-
-                heights.sort();
-                final start = (heights.length * 0.2).floor();
-                final end = (heights.length * 0.8).ceil();
-                final filtered = heights.sublist(start, end);
-                final avg = filtered.reduce((a, b) => a + b) / filtered.length;
-
-                final unified = avg.clamp(150.0, 400.0);
-                if (_unifiedHeight != unified) {
-                  setState(() => _unifiedHeight = unified);
-                }
-              }
-            }
-          }),
-        );
   }
 }

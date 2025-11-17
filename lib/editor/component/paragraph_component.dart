@@ -132,6 +132,17 @@ class _ParagraphWithDropLinesState extends State<_ParagraphWithDropLines>
         if (mounted) setState(() => _scatterActive = false);
       }
     });
+
+    // 🎯 읽기 모드에서 스포일러 블러 렌더링을 위한 초기 리빌드
+    // 첫 프레임에서는 RenderBox가 아직 레이아웃되지 않아 _collectSpoilerBoxes가 빈 리스트 반환
+    // 두 번째 프레임에서 레이아웃 완료 후 정확한 박스 계산
+    if (!widget.isEditing) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          setState(() {});
+        }
+      });
+    }
   }
 
   @override
@@ -152,6 +163,10 @@ class _ParagraphWithDropLinesState extends State<_ParagraphWithDropLines>
       animation: Listenable.merge([
         widget.dragService,
         widget.editorService,
+        widget
+            .editorService
+            .editor
+            .composer, // Composer 변경사항 즉시 감지 (텍스트/attribution 변경)
         nodeService, // NodeComponentService 변경사항 감지 (ChangeNotifier는 Listenable)
       ]),
       builder: (context, _) {
@@ -180,34 +195,12 @@ class _ParagraphWithDropLinesState extends State<_ParagraphWithDropLines>
               if (prev is ImageNode ||
                   prev is ImageRowNode ||
                   prev is ClipNode ||
-                  prev is LinkNode ||
-                  (prev is ParagraphNode && prev.metadata['mention'] == true)) {
+                  prev is LinkNode) {
                 showTop = false;
               }
             }
           } catch (_) {}
         }
-
-        // 문단 내부 스포일러 박스 계산 (문단 로컬 좌표)
-        final boxes = _collectSpoilerBoxes(context, nodeService);
-        final bool maskVisible = boxes.isNotEmpty;
-        // 현재 마스크가 보이는 동안엔 다음 전환을 대비해 최근 박스를 보관
-        if (maskVisible) {
-          _prevBoxes = boxes;
-        }
-        // 방금 해제되면 일회성 스캐터 실행 (이전 프레임 박스를 사용)
-        if (_wasMaskVisible &&
-            !maskVisible &&
-            _scatterCtrl.status != AnimationStatus.forward) {
-          _scatterBoxes = _prevBoxes;
-          if (_scatterBoxes.isNotEmpty) {
-            _scatterActive = true;
-            _scatterCtrl
-              ..reset()
-              ..forward();
-          }
-        }
-        _wasMaskVisible = maskVisible;
 
         Widget content = DefaultTextStyle.merge(
           textAlign: _resolveTextAlign(),
@@ -217,7 +210,10 @@ class _ParagraphWithDropLinesState extends State<_ParagraphWithDropLines>
         Widget stack = Stack(
           children: [
             // 본문 내용 마진 제거
-            content,
+            Padding(
+              padding: EdgeInsets.only(top: 6, bottom: showBottom ? 4 : 0),
+              child: content,
+            ),
             // 형광펜 오버레이 (스포일러처럼 그리기)
             Builder(
               builder: (context) {
@@ -235,42 +231,71 @@ class _ParagraphWithDropLinesState extends State<_ParagraphWithDropLines>
             ),
             // 문단 위에 직접 글리터 렌더링 (로컬 좌표기준이라 오프셋 불필요)
             // 읽기 모드이고 스포일러가 있을 때는 탭 이벤트를 통과시켜야 함
-            if (boxes.isNotEmpty)
-              Builder(
-                builder: (context) {
-                  final theme = Theme.of(context).colorScheme;
-                  final brightness = Theme.of(context).brightness;
-                  final isLightTheme = brightness == Brightness.light;
-                  // 다크 모드의 편집 화면에서는 박스 배경을 투명 처리하여
-                  // 회색 박스가 깔리는 현상을 방지한다.
-                  final bgColor =
-                      (!isLightTheme && widget.isEditing)
-                          ? Colors.transparent
-                          : theme.background;
-                  final dotColor = theme.onSurface;
-                  return Positioned.fill(
-                    child: IgnorePointer(
-                      ignoring:
-                          widget.isEditing, // 편집 모드에서는 탭 무시, 읽기 모드에서는 탭 통과
-                      child: AnimatedBuilder(
-                        animation: _controller,
-                        builder: (context, __) {
-                          return CustomPaint(
-                            painter: _ParagraphSpoilerPainter(
-                              boxes: boxes,
-                              phase: _controller.value,
-                              isEditing: widget.isEditing,
-                              backgroundColor: bgColor,
-                              dotColor: dotColor,
-                              isLightTheme: isLightTheme,
-                            ),
-                          );
-                        },
-                      ),
+            Builder(
+              builder: (context) {
+                // 스포일러 박스를 매번 재계산
+                final boxes = _collectSpoilerBoxes(context, nodeService);
+                final bool maskVisible = boxes.isNotEmpty;
+
+                // 현재 마스크가 보이는 동안엔 다음 전환을 대비해 최근 박스를 보관
+                if (maskVisible) {
+                  _prevBoxes = boxes;
+                }
+                // 방금 해제되면 일회성 스캐터 실행 (이전 프레임 박스를 사용)
+                if (_wasMaskVisible &&
+                    !maskVisible &&
+                    _scatterCtrl.status != AnimationStatus.forward) {
+                  _scatterBoxes = _prevBoxes;
+                  if (_scatterBoxes.isNotEmpty) {
+                    // ✅ WidgetsBinding으로 다음 프레임에 setState 호출
+                    WidgetsBinding.instance.addPostFrameCallback((_) {
+                      if (mounted) {
+                        setState(() {
+                          _scatterActive = true;
+                        });
+                        _scatterCtrl
+                          ..reset()
+                          ..forward();
+                      }
+                    });
+                  }
+                }
+                _wasMaskVisible = maskVisible;
+
+                if (boxes.isEmpty) return const SizedBox.shrink();
+
+                final theme = Theme.of(context).colorScheme;
+                final brightness = Theme.of(context).brightness;
+                final isLightTheme = brightness == Brightness.light;
+                // 다크 모드의 편집 화면에서는 박스 배경을 투명 처리하여
+                // 회색 박스가 깔리는 현상을 방지한다.
+                final bgColor =
+                    (!isLightTheme && widget.isEditing)
+                        ? Colors.transparent
+                        : theme.background;
+                final dotColor = theme.onSurface;
+                return Positioned.fill(
+                  child: IgnorePointer(
+                    ignoring: widget.isEditing, // 편집 모드에서는 탭 무시, 읽기 모드에서는 탭 통과
+                    child: AnimatedBuilder(
+                      animation: _controller,
+                      builder: (context, __) {
+                        return CustomPaint(
+                          painter: _ParagraphSpoilerPainter(
+                            boxes: boxes,
+                            phase: _controller.value,
+                            isEditing: widget.isEditing,
+                            backgroundColor: bgColor,
+                            dotColor: dotColor,
+                            isLightTheme: isLightTheme,
+                          ),
+                        );
+                      },
                     ),
-                  );
-                },
-              ),
+                  ),
+                );
+              },
+            ),
             // 해제 시 점들이 흩어지는 스캐터 이펙트 (일회성)
             if (_scatterActive)
               Builder(
@@ -302,8 +327,8 @@ class _ParagraphWithDropLinesState extends State<_ParagraphWithDropLines>
             if (showTop)
               const Positioned(
                 top: 0,
-                left: 0,
-                right: 0,
+                left: 20,
+                right: 20,
                 child: SizedBox(
                   height: 5,
                   child: ColoredBox(color: AppColors.primary),
@@ -312,8 +337,8 @@ class _ParagraphWithDropLinesState extends State<_ParagraphWithDropLines>
             if (showBottom)
               const Positioned(
                 bottom: 0,
-                left: 0,
-                right: 0,
+                left: 20,
+                right: 20,
                 child: SizedBox(
                   height: 5,
                   child: ColoredBox(color: AppColors.primary),
@@ -627,15 +652,16 @@ class _ParagraphSpoilerPainter extends CustomPainter {
     final List<Rect> merged = _mergeBoxes(boxes);
 
     for (final rect in merged) {
-      // 배경이 투명(알파 0)일 경우에는 배경을 칠하지 않는다.
+      // 편집 모드: 반투명 배경으로 텍스트 가림
+      // 읽기 모드: 완전 불투명 배경으로 텍스트 완전히 가림
       final double fillAlpha = isEditing ? 0.5 : 1.0;
       if (backgroundColor.alpha != 0 && fillAlpha > 0) {
         mask.color = backgroundColor.withOpacity(fillAlpha);
-      canvas.drawRect(rect, mask);
+        canvas.drawRect(rect, mask);
       }
       // 점들 그리기
       final area = rect.width * rect.height;
-      // 글쓰기 모드(isEditing=true)에서는 밀도 낮춤
+      // 밀도는 모드에 관계없이 일관되게 유지
       final count =
           isEditing
               ? max(40, (area / 200).floor())
@@ -667,6 +693,7 @@ class _ParagraphSpoilerPainter extends CustomPainter {
         y = y % rect.height;
         if (x < 0) x += rect.width;
         if (y < 0) y += rect.height;
+        // 점 크기와 불투명도는 모드에 관계없이 일관되게
         final size = 1.0 + r.nextDouble() * 0.8;
         final opacity = (0.85 + r.nextDouble() * 0.15) * baseDotOpacity;
         final effectiveColor =
@@ -697,8 +724,8 @@ class _ParagraphSpoilerPainter extends CustomPainter {
           line.add(r);
           placed = true;
           break;
+        }
       }
-    }
       if (!placed) lines.add([r]);
     }
 

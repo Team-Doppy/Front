@@ -2,6 +2,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:super_editor/super_editor.dart';
+import 'package:doppy/editor/component/app_image_node.dart';
 import 'package:doppy/editor/component/link_component.dart';
 import 'package:doppy/editor/component/row_image_component.dart';
 import 'package:doppy/editor/component/divider_component.dart';
@@ -100,7 +101,7 @@ class PostReaderService {
           }
 
           rebuilt.add(
-            ImageNode(
+            AppImageNode(
               id: id,
               imageUrl: imageUrl,
               altText: (m['altText'] ?? '').toString(),
@@ -164,6 +165,15 @@ class PostReaderService {
             spoilerNodes.add(id);
           }
 
+          // 🎯 mediaIds 배열 생성 (PostReaderScreen에서 사용)
+          final List<String> mediaIds = [];
+          for (final url in urls) {
+            final info = imageCommentInfo[url];
+            final mediaId = info?['mediaId']?.toString();
+            mediaIds.add(mediaId ?? '');
+          }
+          print('[PostReaderService] 🔍 생성된 mediaIds 배열: $mediaIds');
+
           rebuilt.add(
             ImageRowNode(
               id: id,
@@ -171,6 +181,7 @@ class PostReaderService {
               spacing: (m['spacing'] as num?)?.toDouble() ?? 4.0,
               metadata: {
                 'imageCommentInfo': imageCommentInfo,
+                'mediaIds': mediaIds, // 🎯 PostReaderScreen용 mediaIds 배열 추가
                 if (hasSpoiler) 'spoiler': true,
               },
             ),
@@ -267,6 +278,13 @@ class PostReaderService {
               (m['hasComments'] ?? data?['hasComments']) == true;
           final commentCount =
               (m['commentCount'] ?? data?['commentCount']) ?? 0;
+
+          print('[PostReaderService] 🎬 ClipNode rebuild 시작: $id');
+          print('[PostReaderService] 🎬 원본 노드 데이터: $m');
+          print('[PostReaderService] 🎬 data: $data');
+          print('[PostReaderService] 🎬 URL: $url');
+          print('[PostReaderService] 🎬 mediaId: $mediaId');
+
           // 스포일러 정보 확인 (노드 레벨 또는 data 내부)
           final hasSpoiler =
               (m['spoiler'] == true) || (data?['spoiler'] == true);

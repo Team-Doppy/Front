@@ -82,36 +82,17 @@ class NodeComponentService extends ChangeNotifier {
     return result;
   }
 
-  // ====== Transient thumbnail storage (session-scoped, in-memory only) ======
-  final Map<String, String> _tempThumbnailUrlBySession = <String, String>{};
-  final Map<String, String> _tempThumbnailIdBySession = <String, String>{};
+  // ====== Transient video file storage (session-scoped, in-memory only) ======
   final Map<String, String> _tempVideoFilePathBySession =
       <String, String>{}; // 영상 파일 경로 저장
   final Map<String, String> _tempVideoThumbnailPathBySession =
       <String, String>{}; // 영상 로컬 썸네일 파일 경로 저장
-
-  String? getTempThumbnailUrl(String sessionKey) {
-    final url = _tempThumbnailUrlBySession[sessionKey];
-    return url;
-  }
-
-  String? getTempThumbnailId(String sessionKey) =>
-      _tempThumbnailIdBySession[sessionKey];
 
   String? getTempVideoFilePath(String sessionKey) =>
       _tempVideoFilePathBySession[sessionKey];
 
   String? getTempVideoThumbnailPath(String sessionKey) =>
       _tempVideoThumbnailPathBySession[sessionKey];
-
-  void setTempThumbnail(String sessionKey, {required String url, String? id}) {
-    _tempThumbnailUrlBySession[sessionKey] = url;
-    if (id != null) {
-      _tempThumbnailIdBySession[sessionKey] = id;
-    }
-
-    notifyListeners();
-  }
 
   void setTempVideoFile(String sessionKey, String filePath) {
     _tempVideoFilePathBySession[sessionKey] = filePath;
@@ -123,22 +104,14 @@ class NodeComponentService extends ChangeNotifier {
     notifyListeners();
   }
 
-  void clearTempThumbnail(String sessionKey) {
-    _tempThumbnailUrlBySession.remove(sessionKey);
-    _tempThumbnailIdBySession.remove(sessionKey);
-    notifyListeners();
-  }
-
   void clearTempVideoFile(String sessionKey) {
     _tempVideoFilePathBySession.remove(sessionKey);
     _tempVideoThumbnailPathBySession.remove(sessionKey);
     notifyListeners();
   }
 
-  // notifyListeners() 없이 조용히 썸네일 정리 (dispose 시 사용)
-  void clearTempThumbnailSilently(String sessionKey) {
-    _tempThumbnailUrlBySession.remove(sessionKey);
-    _tempThumbnailIdBySession.remove(sessionKey);
+  // notifyListeners() 없이 조용히 영상 정리 (dispose 시 사용)
+  void clearTempVideoFileSilently(String sessionKey) {
     _tempVideoFilePathBySession.remove(sessionKey);
     _tempVideoThumbnailPathBySession.remove(sessionKey);
   }

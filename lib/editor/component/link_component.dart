@@ -110,9 +110,14 @@ class LinkComponentViewModel extends SingleColumnLayoutComponentViewModel {
 }
 
 class LinkComponentBuilder implements ComponentBuilder {
-  const LinkComponentBuilder({this.dragService, this.isEditing = true});
+  const LinkComponentBuilder({
+    this.dragService,
+    this.isEditing = true,
+    this.isDarkMode = false,
+  });
   final DragService? dragService;
   final bool isEditing;
+  final bool isDarkMode;
 
   @override
   Widget? createComponent(
@@ -129,6 +134,7 @@ class LinkComponentBuilder implements ComponentBuilder {
         thumbnailUrl: viewModel.thumbnailUrl,
         dragService: dragService,
         isEditing: isEditing,
+        isDarkMode: isDarkMode,
       );
     }
     return null;
@@ -162,6 +168,7 @@ class _LinkComponent extends StatefulWidget {
     required this.thumbnailUrl,
     this.dragService,
     this.isEditing = true,
+    this.isDarkMode = false,
   }) : _componentKey = componentKey,
        super(key: componentKey);
 
@@ -173,6 +180,7 @@ class _LinkComponent extends StatefulWidget {
   final String thumbnailUrl;
   final DragService? dragService;
   final bool isEditing;
+  final bool isDarkMode;
 
   @override
   State<_LinkComponent> createState() => _LinkComponentState();
@@ -298,17 +306,6 @@ class _LinkComponentState extends State<_LinkComponent>
                       decoration: BoxDecoration(
                         color: theme.surface,
                         borderRadius: BorderRadius.circular(16),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withOpacity(0.28),
-                            blurRadius: 20,
-                            offset: const Offset(0, 12),
-                          ),
-                        ],
-                        border: Border.all(
-                          color: theme.onSurface.withOpacity(0.06),
-                          width: 1,
-                        ),
                       ),
                       clipBehavior: Clip.antiAlias,
                       child:
@@ -349,6 +346,7 @@ class _LinkComponentState extends State<_LinkComponent>
     // ignore: invalid_use_of_visible_for_testing_member
     final seState =
         widget.isEditing
+            // ignore: invalid_use_of_visible_for_testing_member
             ? context.findAncestorStateOfType<SuperEditorState>()
             : null;
     // ignore: invalid_use_of_visible_for_testing_member
@@ -364,10 +362,6 @@ class _LinkComponentState extends State<_LinkComponent>
         doc == null ? false : _hasNeighborImage(doc, widget.nodeId, -1);
     final bool hasImageBelow =
         doc == null ? false : _hasNeighborImage(doc, widget.nodeId, 1);
-    final bool hasMentionAbove =
-        doc == null ? false : _hasNeighborMention(doc, widget.nodeId, -1);
-    final bool hasMentionBelow =
-        doc == null ? false : _hasNeighborMention(doc, widget.nodeId, 1);
 
     final imageService = context.watch<NodeComponentService>();
     final bool isSelected =
@@ -386,7 +380,10 @@ class _LinkComponentState extends State<_LinkComponent>
       }
     }
 
-    final card = GestureDetector(
+    final card = Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 20),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque, // 🎯 불투명 영역만 탭 감지
       onTap:
           widget.isEditing
               ? () {
@@ -400,17 +397,11 @@ class _LinkComponentState extends State<_LinkComponent>
               ? null
               : (d) => _updatePreviewPosition(d.globalPosition),
       onLongPressEnd: widget.isEditing ? null : (_) => _hidePreview(),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 20),
         child: Container(
           margin: EdgeInsets.only(top: marginTop, bottom: marginBottom),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(12),
-            color: Theme.of(context).colorScheme.surface,
-            border: Border.all(
-              color: Theme.of(context).colorScheme.onSurface.withOpacity(0.08),
-              width: 1,
-            ),
+            color: widget.isDarkMode ? const Color(0xFF1C1C1E) : Colors.white,
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -437,10 +428,13 @@ class _LinkComponentState extends State<_LinkComponent>
                   child: _buildIconPlaceholder(),
                 ),
 
-              // 아래: 텍스트 정보 (테마 background)
+              // 아래: 텍스트 정보
               Container(
                 decoration: BoxDecoration(
-                  color: Theme.of(context).colorScheme.surface,
+                  color:
+                      widget.isDarkMode
+                          ? const Color(0xFF1C1C1E)
+                          : Colors.white,
                   borderRadius: const BorderRadius.only(
                     bottomLeft: Radius.circular(12),
                     bottomRight: Radius.circular(12),
@@ -456,7 +450,7 @@ class _LinkComponentState extends State<_LinkComponent>
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
-                        color: Theme.of(context).colorScheme.onSurface,
+                        color: widget.isDarkMode ? Colors.white : Colors.black,
                         fontWeight: FontWeight.w600,
                         fontSize: 16,
                         height: 1.3,
@@ -469,9 +463,10 @@ class _LinkComponentState extends State<_LinkComponent>
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
-                        color: Theme.of(
-                          context,
-                        ).colorScheme.onSurface.withOpacity(0.5),
+                        color:
+                            widget.isDarkMode
+                                ? Colors.white.withOpacity(0.5)
+                                : Colors.black.withOpacity(0.5),
                         fontSize: 14,
                         height: 1.2,
                       ),
@@ -484,9 +479,10 @@ class _LinkComponentState extends State<_LinkComponent>
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
-                          color: Theme.of(
-                            context,
-                          ).colorScheme.onSurface.withOpacity(0.65),
+                          color:
+                              widget.isDarkMode
+                                  ? Colors.white.withOpacity(0.65)
+                                  : Colors.black.withOpacity(0.65),
                           fontSize: 13,
                           height: 1.3,
                         ),
@@ -504,8 +500,7 @@ class _LinkComponentState extends State<_LinkComponent>
     return Column(
       children: [
         // 위쪽 패딩: 링크나 이미지, 멘션이 위에 있으면 패딩 제거
-        if (!hasLinkAbove && !hasImageAbove && !hasMentionAbove)
-          SizedBox(height: paddingWithText),
+        if (!hasLinkAbove && !hasImageAbove) SizedBox(height: paddingWithText),
         Stack(
           children: [
             card,
@@ -548,8 +543,8 @@ class _LinkComponentState extends State<_LinkComponent>
             if (widget.isEditing && _shouldShowTopDropLine())
               Positioned(
                 top: 0,
-                left: 0,
-                right: 0,
+                left: 20,
+                right: 20,
                 child: Padding(
                   padding: const EdgeInsets.only(bottom: 2),
                   child: Container(height: 5, color: AppColors.primary),
@@ -558,8 +553,8 @@ class _LinkComponentState extends State<_LinkComponent>
             if (widget.isEditing && _shouldShowBottomDropLine())
               Positioned(
                 bottom: 0,
-                left: 0,
-                right: 0,
+                left: 20,
+                right: 20,
                 child: Padding(
                   padding: const EdgeInsets.only(top: 2),
                   child: Container(height: 5, color: AppColors.primary),
@@ -568,8 +563,7 @@ class _LinkComponentState extends State<_LinkComponent>
           ],
         ),
         // 아래쪽 패딩: 링크나 이미지, 멘션이 아래에 있으면 패딩 제거
-        if (!hasLinkBelow && !hasImageBelow && !hasMentionBelow)
-          SizedBox(height: paddingWithText),
+        if (!hasLinkBelow && !hasImageBelow) SizedBox(height: paddingWithText),
       ],
     );
   }
@@ -798,15 +792,6 @@ class _LinkComponentState extends State<_LinkComponent>
     return neighbor is LinkNode;
   }
 
-  bool _hasNeighborMention(Document doc, String nodeId, int direction) {
-    final myIndex = doc.getNodeIndexById(nodeId);
-    if (myIndex == -1) return false;
-    final neighborIndex = myIndex + direction;
-    if (neighborIndex < 0 || neighborIndex >= doc.nodeCount) return false;
-    final neighbor = doc.getNodeAt(neighborIndex);
-    return neighbor is ParagraphNode && neighbor.metadata['mention'] == true;
-  }
-
   bool _hasNeighborImage(Document doc, String nodeId, int direction) {
     final myIndex = doc.getNodeIndexById(nodeId);
     if (myIndex == -1) return false;
@@ -820,7 +805,10 @@ class _LinkComponentState extends State<_LinkComponent>
   Widget _buildIconPlaceholder() {
     return Container(
       decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surfaceVariant.withOpacity(0.3),
+        color:
+            widget.isDarkMode
+                ? const Color(0xFF2C2C2E)
+                : const Color(0xFFF2F2F7),
         borderRadius: const BorderRadius.only(
           topLeft: Radius.circular(12),
           topRight: Radius.circular(12),
@@ -829,7 +817,10 @@ class _LinkComponentState extends State<_LinkComponent>
       child: Center(
         child: Icon(
           Icons.link_rounded,
-          color: Theme.of(context).colorScheme.onSurface.withOpacity(0.3),
+          color:
+              widget.isDarkMode
+                  ? Colors.white.withOpacity(0.3)
+                  : Colors.black.withOpacity(0.3),
           size: 40,
         ),
       ),

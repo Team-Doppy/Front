@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:doppy/pages/components/shimmer_box.dart';
@@ -10,7 +12,7 @@ class CommonProfileAvatar extends StatelessWidget {
   final Color? borderColor;
   final bool isUploading;
   final VoidCallback? onTap;
-  Color? backgroundColor;
+  final Color? backgroundColor;
   // 이미지 대신 중앙에 임의 위젯을 표시하고 싶을 때 사용 (예: 검색 아이콘)
   final Widget? centerWidget;
 
@@ -43,6 +45,7 @@ class CommonProfileAvatar extends StatelessWidget {
             height: size,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
+              color: backgroundColor ?? Theme.of(context).colorScheme.surface,
               border: Border.all(
                 color: borderColor ?? effectiveBorderColor,
                 width: effectiveBorderWidth,
@@ -56,20 +59,7 @@ class CommonProfileAvatar extends StatelessWidget {
                         child: Center(child: centerWidget),
                       )
                       : imageUrl != null && imageUrl!.isNotEmpty
-                      ? CachedNetworkImage(
-                        imageUrl: imageUrl!,
-                        fit: BoxFit.cover,
-                        placeholder:
-                            (context, url) =>
-                                ShimmerBox(width: size, height: size),
-                        errorWidget:
-                            (context, url, error) =>
-                                _buildPlaceholder(context, isDarkMode),
-                        memCacheWidth: (size * 2).round(),
-                        maxWidthDiskCache: (size * 2).round(),
-                        fadeInDuration: const Duration(milliseconds: 200),
-                        fadeOutDuration: const Duration(milliseconds: 200),
-                      )
+                      ? _buildImage(context, imageUrl!, isDarkMode)
                       : _buildPlaceholder(context, isDarkMode),
             ),
           ),
@@ -87,6 +77,40 @@ class CommonProfileAvatar extends StatelessWidget {
     );
   }
 
+  Widget _buildImage(BuildContext context, String imageUrl, bool isDarkMode) {
+    final bool isNetwork =
+        imageUrl.startsWith('http://') || imageUrl.startsWith('https://');
+    final bool isFileUrl = imageUrl.startsWith('file://');
+
+    if (isNetwork) {
+      // 🎯 네트워크 URL: CachedNetworkImage 사용
+      return CachedNetworkImage(
+        imageUrl: imageUrl,
+        fit: BoxFit.cover,
+        placeholder: (context, url) => ShimmerBox(width: size, height: size),
+        errorWidget:
+            (context, url, error) => _buildPlaceholder(context, isDarkMode),
+        memCacheWidth: (size * 2).round(),
+        maxWidthDiskCache: (size * 2).round(),
+        fadeInDuration: const Duration(milliseconds: 0), // 🎯 즉시 표시
+        fadeOutDuration: const Duration(milliseconds: 0), // 🎯 즉시 표시
+      );
+    } else if (isFileUrl) {
+      // 🎯 로컬 파일 경로: Image.file 사용
+      final String path = Uri.parse(imageUrl).toFilePath();
+      return Image.file(
+        File(path),
+        fit: BoxFit.cover,
+        errorBuilder:
+            (context, error, stackTrace) =>
+                _buildPlaceholder(context, isDarkMode),
+      );
+    } else {
+      // 알 수 없는 형식: 플레이스홀더 표시
+      return _buildPlaceholder(context, isDarkMode);
+    }
+  }
+
   Widget _buildPlaceholder(BuildContext context, bool isDarkMode) {
     // 사용자명의 첫 글자를 가져와서 표시
     final String firstLetter =
@@ -100,7 +124,7 @@ class CommonProfileAvatar extends StatelessWidget {
         child: Text(
           firstLetter,
           style: TextStyle(
-            color: isDarkMode ? Colors.white : Colors.grey.shade700,
+            color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
             fontSize: size * 0.4,
             fontWeight: FontWeight.w600,
           ),

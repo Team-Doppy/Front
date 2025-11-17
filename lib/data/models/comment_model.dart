@@ -1,3 +1,5 @@
+import 'package:doppy/utils/time_utils.dart';
+
 // Comment 모델 (기존과 동일)
 class Comment {
   final int id;
@@ -44,8 +46,8 @@ class Comment {
               ?.map((reply) => Comment.fromJson(reply as Map<String, dynamic>))
               .toList() ??
           [],
-      createdAt: DateTime.parse(json['createdAt'] as String),
-      updatedAt: DateTime.parse(json['updatedAt'] as String),
+      createdAt: TimeUtils.toLocalTime(json['createdAt'] as String),
+      updatedAt: TimeUtils.toLocalTime(json['updatedAt'] as String),
     );
   }
 }

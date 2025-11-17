@@ -20,6 +20,10 @@ class Comment {
   final String createdAt;
   final String updatedAt;
 
+  // 낙관적 업데이트 상태
+  final bool isPending; // 서버 전송 대기 중
+  final bool isFailed; // 서버 전송 실패
+
   Comment({
     required this.id,
     required this.author,
@@ -34,6 +38,8 @@ class Comment {
     this.replies = const [],
     required this.createdAt,
     required this.updatedAt,
+    this.isPending = false,
+    this.isFailed = false,
   });
 
   Comment copyWith({
@@ -50,6 +56,8 @@ class Comment {
     List<Comment>? replies,
     String? createdAt,
     String? updatedAt,
+    bool? isPending,
+    bool? isFailed,
   }) {
     return Comment(
       id: id ?? this.id,
@@ -66,6 +74,8 @@ class Comment {
       replies: replies ?? this.replies,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
+      isPending: isPending ?? this.isPending,
+      isFailed: isFailed ?? this.isFailed,
     );
   }
 
@@ -89,8 +99,18 @@ class Comment {
 
   factory Comment.fromJson(Map<String, dynamic> json) {
     // 명세서에 따른 필드 매핑
-    final emotionCounts = json['emotionCounts'] as Map<String, dynamic>? ?? {};
-    final myEmotions = json['myEmotions'] as Map<String, dynamic>? ?? {};
+    // ✅ emotionCounts와 myEmotions는 서버에서 빈 배열 []로 올 수 있으므로 방어 처리
+    final emotionCountsRaw = json['emotionCounts'];
+    final emotionCounts =
+        emotionCountsRaw is Map<String, dynamic>
+            ? emotionCountsRaw
+            : <String, dynamic>{};
+
+    final myEmotionsRaw = json['myEmotions'];
+    final myEmotions =
+        myEmotionsRaw is Map<String, dynamic>
+            ? myEmotionsRaw
+            : <String, dynamic>{};
 
     final emotionCountsMap = <String, String>{};
     emotionCounts.forEach((key, value) {
@@ -148,6 +168,7 @@ class CommentService extends ChangeNotifier {
   bool _isLoading = false;
   bool _hasMoreComments = true;
   int _currentPage = 0;
+  int _serverCommentCount = 0; // 🎯 서버에서 받아온 실제 댓글 총 개수
 
   // 타이밍 시어 관련
   bool _isTimingSheerActive = false;
@@ -159,42 +180,105 @@ class CommentService extends ChangeNotifier {
   bool get hasMoreComments => _hasMoreComments;
   bool get isTimingSheerActive => _isTimingSheerActive;
 
+  /// 🎯 전체 댓글 수 반환 (서버 값과 로드된 댓글 수 중 큰 값 사용)
+  int getTotalCommentCount() {
+    return _serverCommentCount > _comments.length
+        ? _serverCommentCount
+        : _comments.length;
+  }
+
+  /// 🎯 서버에서 받아온 초기 댓글 수 설정 (본문 로드 시)
+  void setInitialCommentCount(int count) {
+    _serverCommentCount = count;
+    print('[CommentService] 초기 댓글 수 설정: $count');
+    notifyListeners();
+  }
+
   /// 포스트 ID 설정 및 댓글 초기화
-  void setPostId(String postId) {
+  void setPostId(String postId, {List<Comment>? initialComments}) {
     if (_currentPostId != postId) {
       _currentPostId = postId;
       _comments.clear();
+      _serverCommentCount = 0; // 🎯 서버 댓글 수도 초기화
+
+      // 초기 댓글 데이터가 있으면 사용 (page=0 재사용)
+      if (initialComments != null && initialComments.isNotEmpty) {
+        _comments.addAll(initialComments);
+        _currentPage = 1; // 다음은 page=1부터 로드
+        print(
+          '[CommentService] 초기 댓글 ${initialComments.length}개 로드 (page=0 재사용)',
+        );
+      } else {
+        _currentPage = 0;
+      }
+
       _hasMoreComments = true;
       _isTimingSheerActive = false;
-      _currentPage = 0;
 
       notifyListeners();
     }
   }
 
   /// WebSocket 설정 및 구독
-  void _setupWebSocket() {
-    print('[CommentService] WebSocket 설정 시작');
+  Future<void> _setupWebSocket() async {
+    print('[CommentService] WebSocket 설정 시작 (current postId: $_currentPostId)');
 
-    // 이미 연결되어 있으면 중복 연결 방지
+    // 이미 연결되어 있으면 콜백과 구독만 다시 설정
     if (_webSocketService != null && _webSocketService!.isConnected) {
-      print('[CommentService] ⚠️ WebSocket이 이미 연결되어 있습니다 - 중복 연결 방지');
+      print('[CommentService] ✅ WebSocket이 이미 연결되어 있습니다 - 콜백과 구독만 재설정');
+
+      // 콜백 재설정
+      _webSocketService!.setCallbacks(
+        onCommentCreated: _handleCommentCreated,
+        onCommentUpdated: _handleCommentUpdated,
+        onCommentDeleted: _handleCommentDeleted,
+        onCommentLiked: _handleCommentLiked,
+        onCommentUnliked: _handleCommentUnliked,
+      );
+
+      // 포스트 댓글 구독 (즉시)
+      if (_currentPostId != null) {
+        print('[CommentService] 포스트 $_currentPostId 댓글 재구독');
+        _webSocketService!.subscribeToPostComments(_currentPostId!);
+      }
       return;
     }
 
-    // 기존 연결이 있으면 먼저 해제
-    if (_webSocketService != null) {
-      print('[CommentService] 기존 WebSocket 연결 해제');
-      _webSocketService!.disconnect();
+    // 기존 서비스가 있지만 연결이 끊긴 경우
+    if (_webSocketService != null && !_webSocketService!.isConnected) {
+      print('[CommentService] 🔄 기존 WebSocket이 끊겨있음 - 재사용');
+
+      // 콜백 재설정
+      _webSocketService!.setCallbacks(
+        onCommentCreated: _handleCommentCreated,
+        onCommentUpdated: _handleCommentUpdated,
+        onCommentDeleted: _handleCommentDeleted,
+        onCommentLiked: _handleCommentLiked,
+        onCommentUnliked: _handleCommentUnliked,
+      );
+
+      // 재연결 시도
+      try {
+        await _webSocketService!.connect();
+        print('[CommentService] ✅ WebSocket 재연결 완료');
+
+        // 구독
+        if (_currentPostId != null && _webSocketService!.isConnected) {
+          print('[CommentService] 포스트 $_currentPostId 댓글 구독');
+          _webSocketService!.subscribeToPostComments(_currentPostId!);
+        }
+        return;
+      } catch (e) {
+        print('[CommentService] ❌ 재연결 실패: $e - 새로 생성');
+        _webSocketService = null; // 실패 시 null로 설정
+      }
     }
 
-    // 새로운 WebSocketService 인스턴스 생성
+    // 완전히 새로운 WebSocketService 생성
+    print('[CommentService] 🆕 새로운 WebSocket 인스턴스 생성');
     _webSocketService = WebSocketService();
 
-    // WebSocket 연결
-    _webSocketService!.connect();
-
-    // 콜백 설정
+    // 콜백 먼저 설정 (연결 전)
     _webSocketService!.setCallbacks(
       onCommentCreated: _handleCommentCreated,
       onCommentUpdated: _handleCommentUpdated,
@@ -203,13 +287,23 @@ class CommentService extends ChangeNotifier {
       onCommentUnliked: _handleCommentUnliked,
     );
 
-    // 포스트 댓글 구독 (연결 후)
-    Timer(Duration(seconds: 1), () {
-      if (_currentPostId != null && _webSocketService != null) {
+    // WebSocket 연결 (await로 완료 대기)
+    try {
+      await _webSocketService!.connect();
+      print('[CommentService] ✅ WebSocket 신규 연결 완료');
+
+      // 연결 완료 후 즉시 구독
+      if (_currentPostId != null && _webSocketService!.isConnected) {
         print('[CommentService] 포스트 $_currentPostId 댓글 구독 시도');
         _webSocketService!.subscribeToPostComments(_currentPostId!);
+      } else {
+        print(
+          '[CommentService] ⚠️ 구독 실패 - postId: $_currentPostId, isConnected: ${_webSocketService?.isConnected}',
+        );
       }
-    });
+    } catch (e) {
+      print('[CommentService] ❌ WebSocket 연결 실패: $e');
+    }
   }
 
   /// 스크롤 위치 업데이트 (타이밍 시어)
@@ -227,15 +321,27 @@ class CommentService extends ChangeNotifier {
     if (_isTimingSheerActive) return;
 
     _isTimingSheerActive = true;
-    print('[CommentService] 타이밍 시어 활성화 - 댓글 로드 시작');
+    print('[CommentService] 타이밍 시어 활성화');
 
-    loadComments();
+    // 초기 댓글이 이미 있으면 로드하지 않음 (page=0 재사용)
+    if (_comments.isEmpty) {
+      print('[CommentService] 초기 댓글 없음 - page=0 로드 시작');
+      loadComments();
+    } else {
+      print('[CommentService] 초기 댓글 ${_comments.length}개 있음 - 로드 스킵');
+    }
   }
 
   /// 댓글 창 열 때 호출: 웹소켓 연결 및 구독 시작
-  void connectWebSocketForCurrentPost() {
-    if (_currentPostId == null || _currentPostId!.isEmpty) return;
-    _setupWebSocket();
+  Future<void> connectWebSocketForCurrentPost() async {
+    if (_currentPostId == null || _currentPostId!.isEmpty) {
+      print('[CommentService] ⚠️ currentPostId가 없어서 WebSocket 연결 중단');
+      return;
+    }
+    print(
+      '[CommentService] connectWebSocketForCurrentPost 호출 - postId: $_currentPostId',
+    );
+    await _setupWebSocket();
   }
 
   /// WebSocket 이벤트 핸들러들
@@ -248,93 +354,330 @@ class CommentService extends ChangeNotifier {
     final comment = Comment.fromServer(data);
     print('[CommentService] 🔥 생성된 댓글: ${comment.id} - ${comment.content}');
 
-    // 중복 댓글 방지 (ID와 내용 모두 체크)
-    final existingIndex = _comments.indexWhere(
-      (c) =>
-          c.id == comment.id ||
-          (c.content == comment.content && c.author == comment.author),
-    );
+    // 중복 댓글 방지 - 같은 ID가 이미 있으면 무시 (temp_ 포함 모든 ID)
+    final existingIndex = _comments.indexWhere((c) => c.id == comment.id);
     if (existingIndex != -1) {
-      print('[CommentService] ⚠️ 중복 댓글 감지! ID: ${comment.id} - 무시합니다');
+      print('[CommentService] ⚠️ 중복 댓글 감지! 이미 ID ${comment.id}가 존재함 - 무시');
+      print(
+        '[CommentService] 기존 댓글: ${_comments[existingIndex].id} (${_comments[existingIndex].content})',
+      );
       return;
     }
 
+    // temp_로 시작하는 임시 댓글이 있으면 교체 (같은 content+author)
+    final tempIndex = _comments.indexWhere(
+      (c) =>
+          c.id.startsWith('temp_') &&
+          c.content == comment.content &&
+          c.author == comment.author,
+    );
+
+    if (tempIndex != -1) {
+      print(
+        '[CommentService] 🔄 임시 댓글을 서버 댓글로 교체: ${_comments[tempIndex].id} → ${comment.id}',
+      );
+      _comments[tempIndex] = comment;
+
+      // 교체는 새 댓글이 아니므로 스크롤 안 함
+      notifyListeners();
+      return;
+    }
+
+    // 완전히 새로운 댓글 추가
     _comments.add(comment);
-    print('[CommentService] 🔥 추가 후 댓글 수: ${_comments.length}');
+    _serverCommentCount++; // 🎯 전체 댓글 수 증가
 
     notifyListeners();
   }
 
   void _handleCommentUpdated(Map<String, dynamic> data) {
-    print('[CommentService] 댓글 수정 이벤트 수신');
+    print('[CommentService] 댓글 수정 이벤트 수신 (검증용)');
+    print('[CommentService] 🔍 WebSocket 데이터: $data');
+
     final commentId = data['commentId'].toString();
     final index = _comments.indexWhere((c) => c.id == commentId);
+
     if (index != -1) {
-      _comments[index] = Comment.fromServer(data);
+      final localComment = _comments[index];
+      final serverComment = Comment.fromServer(data);
+
+      // 🎯 로컬 내용과 서버 내용 비교 (검증)
+      if (localComment.content != serverComment.content) {
+        print('[CommentService] ⚠️ 내용 불일치 감지!');
+        print('[CommentService] 로컬: ${localComment.content}');
+        print('[CommentService] 서버: ${serverComment.content}');
+
+        // 서버가 진실이므로 서버 데이터로 교체 (다른 사용자가 수정했거나 동기화 문제)
+        _comments[index] = serverComment;
+
+        notifyListeners();
+
+        print('[CommentService] 🔄 서버 데이터로 동기화 완료');
+      } else {
+        print('[CommentService] ✅ 검증 성공 - 로컬과 서버 일치');
+        // emotionCounts 등 다른 필드만 업데이트
+        _comments[index] = localComment.copyWith(
+          emotionCounts: serverComment.emotionCounts,
+          updatedAt: serverComment.updatedAt,
+        );
+
+        notifyListeners();
+      }
+    } else {
+      print('[CommentService] ⚠️ 댓글을 찾을 수 없음: $commentId - 새로 추가');
+      // 로컬에 없으면 추가 (다른 사용자가 작성한 댓글)
+      _comments.add(Comment.fromServer(data));
       notifyListeners();
     }
   }
 
   void _handleCommentDeleted(Map<String, dynamic> data) {
-    print('[CommentService] 댓글 삭제 이벤트 수신');
+    print('[CommentService] 댓글 삭제 이벤트 수신 (검증용)');
+    print('[CommentService] 🔍 WebSocket 데이터: $data');
+
     final commentId = data['commentId'].toString();
-    _comments.removeWhere((c) => c.id == commentId);
-    notifyListeners();
+    final index = _comments.indexWhere((c) => c.id == commentId);
+
+    if (index != -1) {
+      print('[CommentService] ⚠️ 로컬에 댓글이 남아있음 - 제거');
+      print('[CommentService] 다른 사용자가 삭제했거나 동기화 지연');
+
+      _comments.removeAt(index);
+      _serverCommentCount--; // 🎯 전체 댓글 수 감소
+
+      notifyListeners();
+    } else {
+      print('[CommentService] ✅ 검증 성공 - 로컬에서 이미 삭제됨');
+    }
   }
 
   void _handleCommentLiked(Map<String, dynamic> data) {
-    print('[CommentService] 댓글 좋아요 이벤트 수신');
     final commentId = data['commentId'].toString();
     final emoji = data['emoji']?.toString() ?? '👍';
+    final count = int.tryParse(data['count']?.toString() ?? '0') ?? 0;
+    print(
+      '[CommentService] 🔍 commentId: $commentId, emoji: $emoji, count: $count',
+    );
 
     // 로컬 상태 업데이트
     final index = _comments.indexWhere((c) => c.id == commentId);
+    print(
+      '[CommentService] 🔍 댓글 찾기 결과: index=$index, 전체 댓글 수=${_comments.length}',
+    );
     if (index != -1) {
       final comment = _comments[index];
-      final newEmotionCounts = Map<String, String>.from(comment.emotionCounts);
-      final newMyEmotions = Map<String, String>.from(comment.myEmotions);
 
-      // 이모지 카운트 증가
-      final currentCount = int.tryParse(newEmotionCounts[emoji] ?? '0') ?? 0;
-      newEmotionCounts[emoji] = (currentCount + 1).toString();
+      //  서버가 전체 emotionCounts를 보내주면 전체 교체
+      if (data.containsKey('emotionCounts')) {
+        // emotionCounts 파싱
+        final emotionCountsRaw = data['emotionCounts'];
+        final emotionCounts =
+            emotionCountsRaw is Map<String, dynamic>
+                ? emotionCountsRaw
+                : <String, dynamic>{};
+        final emotionCountsMap = <String, String>{};
+        emotionCounts.forEach((key, value) {
+          emotionCountsMap[key] = value.toString();
+        });
 
-      // 내 이모지 상태 추가
-      newMyEmotions[emoji] = '1';
+        print('[CommentService] 🔍 서버 emotionCounts: $emotionCountsMap');
 
-      _comments[index] = comment.copyWith(
-        emotionCounts: newEmotionCounts,
-        myEmotions: newMyEmotions,
-      );
-      notifyListeners();
+        // myEmotions 파싱 (있으면 검증용)
+        if (data.containsKey('myEmotions')) {
+          final myEmotionsRaw = data['myEmotions'];
+          final myEmotionsList = myEmotionsRaw is List ? myEmotionsRaw : [];
+          final myEmotionsMap = <String, String>{};
+          for (final e in myEmotionsList) {
+            myEmotionsMap[e.toString()] = '1';
+          }
+
+          print('[CommentService] 🔍 서버 myEmotions: $myEmotionsMap (검증용)');
+          print(
+            '[CommentService] 🔍 로컬 myEmotions: ${comment.myEmotions} (진실)',
+          );
+
+          // 🎯 로컬 myEmotions가 절대 진실 (서버는 검증/로그만)
+          final isMyEmotionsSame = _areMapsEqual(
+            comment.myEmotions,
+            myEmotionsMap,
+          );
+          if (isMyEmotionsSame) {
+            print('[CommentService] ✅ 검증 성공 - 로컬과 서버 일치');
+          } else {
+            print('[CommentService] ⚠️ 검증 실패 - 로컬 우선 (서버는 아직 처리 중)');
+          }
+        }
+
+        // ✅ emotionCounts는 전체 교체, myEmotions는 절대 변경 안 함!
+        _comments[index] = comment.copyWith(
+          emotionCounts: emotionCountsMap, // 다른 사람 카운트 반영 ✅
+          // myEmotions는 절대 변경 안 함 (로컬이 진실!)
+        );
+
+        print(
+          '[CommentService] 🎯 [LIKED] emotionCounts 업데이트 완료: $emotionCountsMap',
+        );
+
+        // 🎯 이모지 업데이트는 스크롤 안 함
+
+        notifyListeners();
+        print('[CommentService] ✅ [LIKED] notifyListeners() 호출 완료');
+
+        return;
+      } else {
+        // 🎯 서버가 부분 정보만 보내주면 (emoji, count) → 로컬에서 계산
+        print('[CommentService] 📊 [LIKED] 부분 정보 수신 - 로컬에서 카운트 업데이트');
+        final newEmotionCounts = Map<String, String>.from(
+          comment.emotionCounts,
+        );
+
+        // count가 0이면 제거, 아니면 설정
+        if (count > 0) {
+          newEmotionCounts[emoji] = count.toString();
+        } else {
+          newEmotionCounts.remove(emoji);
+        }
+
+        _comments[index] = comment.copyWith(
+          emotionCounts: newEmotionCounts,
+          // myEmotions는 절대 변경 안 함 (로컬이 진실!)
+        );
+
+        print(
+          '[CommentService] 🎯 [LIKED] 부분 정보로 emotionCounts 업데이트: $newEmotionCounts',
+        );
+
+        // 🎯 이모지 업데이트는 스크롤 안 함
+
+        notifyListeners();
+        print('[CommentService] ✅ [LIKED] notifyListeners() 호출 완료');
+      }
+    } else {
+      print('[CommentService] ❌ [LIKED] 댓글을 찾을 수 없음 - commentId: $commentId');
     }
+  }
+
+  // Map 비교 헬퍼
+  bool _areMapsEqual(Map<String, String> map1, Map<String, String> map2) {
+    if (map1.length != map2.length) return false;
+    for (final key in map1.keys) {
+      if (map1[key] != map2[key]) return false;
+    }
+    for (final key in map2.keys) {
+      if (!map1.containsKey(key)) return false;
+    }
+    return true;
   }
 
   void _handleCommentUnliked(Map<String, dynamic> data) {
     print('[CommentService] 댓글 좋아요 취소 이벤트 수신');
+    print('[CommentService] 🔍 WebSocket 데이터: $data');
+    print('[CommentService] 🔍 전체 키: ${data.keys.toList()}');
+
     final commentId = data['commentId'].toString();
     final emoji = data['emoji']?.toString() ?? '👍';
+    final count = int.tryParse(data['count']?.toString() ?? '0') ?? 0;
+    print(
+      '[CommentService] 🔍 commentId: $commentId, emoji: $emoji, count: $count',
+    );
 
     // 로컬 상태 업데이트
     final index = _comments.indexWhere((c) => c.id == commentId);
+    print(
+      '[CommentService] 🔍 댓글 찾기 결과: index=$index, 전체 댓글 수=${_comments.length}',
+    );
     if (index != -1) {
       final comment = _comments[index];
-      final newEmotionCounts = Map<String, String>.from(comment.emotionCounts);
-      final newMyEmotions = Map<String, String>.from(comment.myEmotions);
 
-      // 이모지 카운트 감소
-      final currentCount = int.tryParse(newEmotionCounts[emoji] ?? '0') ?? 0;
-      if (currentCount > 0) {
-        newEmotionCounts[emoji] = (currentCount - 1).toString();
+      // 🎯 서버가 전체 emotionCounts를 보내주면 전체 교체
+      if (data.containsKey('emotionCounts')) {
+        print('[CommentService] ✅ 서버에서 전체 상태 수신');
+
+        // emotionCounts 파싱
+        final emotionCountsRaw = data['emotionCounts'];
+        final emotionCounts =
+            emotionCountsRaw is Map<String, dynamic>
+                ? emotionCountsRaw
+                : <String, dynamic>{};
+        final emotionCountsMap = <String, String>{};
+        emotionCounts.forEach((key, value) {
+          emotionCountsMap[key] = value.toString();
+        });
+
+        print('[CommentService] 🔍 서버 emotionCounts: $emotionCountsMap');
+
+        // myEmotions 파싱 (있으면 검증용)
+        if (data.containsKey('myEmotions')) {
+          final myEmotionsRaw = data['myEmotions'];
+          final myEmotionsList = myEmotionsRaw is List ? myEmotionsRaw : [];
+          final myEmotionsMap = <String, String>{};
+          for (final e in myEmotionsList) {
+            myEmotionsMap[e.toString()] = '1';
+          }
+
+          print('[CommentService] 🔍 서버 myEmotions: $myEmotionsMap (검증용)');
+          print(
+            '[CommentService] 🔍 로컬 myEmotions: ${comment.myEmotions} (진실)',
+          );
+
+          // 🎯 로컬 myEmotions가 절대 진실 (서버는 검증/로그만)
+          final isMyEmotionsSame = _areMapsEqual(
+            comment.myEmotions,
+            myEmotionsMap,
+          );
+          if (isMyEmotionsSame) {
+            print('[CommentService] ✅ 검증 성공 - 로컬과 서버 일치');
+          } else {
+            print('[CommentService] ⚠️ 검증 실패 - 로컬 우선 (서버는 아직 처리 중)');
+          }
+        }
+
+        // ✅ emotionCounts는 전체 교체, myEmotions는 절대 변경 안 함!
+        _comments[index] = comment.copyWith(
+          emotionCounts: emotionCountsMap, // 다른 사람 카운트 반영 ✅
+          // myEmotions는 절대 변경 안 함 (로컬이 진실!)
+        );
+
+        print(
+          '[CommentService] 🎯 [UNLIKED] emotionCounts 업데이트 완료: $emotionCountsMap',
+        );
+
+        // 🎯 이모지 업데이트는 스크롤 안 함
+
+        notifyListeners();
+        print('[CommentService] ✅ [UNLIKED] notifyListeners() 호출 완료');
+
+        return;
+      } else {
+        // 🎯 서버가 부분 정보만 보내주면 (emoji, count) → 로컬에서 계산
+        print('[CommentService] 📊 [UNLIKED] 부분 정보 수신 - 로컬에서 카운트 업데이트');
+        final newEmotionCounts = Map<String, String>.from(
+          comment.emotionCounts,
+        );
+
+        // count가 0이면 제거, 아니면 설정
+        if (count > 0) {
+          newEmotionCounts[emoji] = count.toString();
+        } else {
+          newEmotionCounts.remove(emoji);
+        }
+
+        _comments[index] = comment.copyWith(
+          emotionCounts: newEmotionCounts,
+          // myEmotions는 절대 변경 안 함 (로컬이 진실!)
+        );
+
+        print(
+          '[CommentService] 🎯 [UNLIKED] 부분 정보로 emotionCounts 업데이트: $newEmotionCounts',
+        );
+
+        // 🎯 이모지 업데이트는 스크롤 안 함
+
+        notifyListeners();
+        print('[CommentService] ✅ [UNLIKED] notifyListeners() 호출 완료');
       }
-
-      // 내 이모지 상태 제거
-      newMyEmotions.remove(emoji);
-
-      _comments[index] = comment.copyWith(
-        emotionCounts: newEmotionCounts,
-        myEmotions: newMyEmotions,
-      );
-      notifyListeners();
+    } else {
+      print('[CommentService] ❌ [UNLIKED] 댓글을 찾을 수 없음 - commentId: $commentId');
     }
   }
 
@@ -356,10 +699,13 @@ class CommentService extends ChangeNotifier {
     try {
       print('[CommentService] API 호출 시작');
       print('[CommentService] PostId: $_currentPostId');
+      print('[CommentService] 현재 페이지: $_currentPage (로드 전)');
 
       final pageSize = size ?? 20;
+      final pageToLoad = refresh ? 0 : _currentPage;
+
       final response = await _dio.get(
-        '/api/comments/post/$_currentPostId?page=$_currentPage&size=$pageSize',
+        '/api/comments/post/$_currentPostId?page=$pageToLoad&size=$pageSize',
         options: Options(receiveTimeout: const Duration(seconds: 10)),
       );
 
@@ -394,15 +740,27 @@ class CommentService extends ChangeNotifier {
           _currentPage = 0;
         }
 
-        _comments.addAll(newComments);
+        // 중복 제거: 이미 있는 댓글은 추가하지 않음
+        final existingIds = _comments.map((c) => c.id).toSet();
+        final uniqueNewComments =
+            newComments.where((c) => !existingIds.contains(c.id)).toList();
+
+        print(
+          '[CommentService] 중복 제거: ${newComments.length}개 -> ${uniqueNewComments.length}개',
+        );
+
+        _comments.addAll(uniqueNewComments);
         _hasMoreComments = !(data['last'] ?? true);
 
-        // 다음 페이지를 위해 증가
-        if (!refresh && _hasMoreComments) {
+        // 다음 페이지를 위해 증가 (로드 성공 후)
+        if (!refresh) {
           _currentPage++;
         }
 
-        print('[CommentService] 댓글 로드 완료: ${newComments.length}개');
+        print('[CommentService] 댓글 로드 완료: ${uniqueNewComments.length}개 추가');
+        print(
+          '[CommentService] 다음 페이지: $_currentPage, hasMore: $_hasMoreComments',
+        );
       } else {
         print('[CommentService] 댓글 로드 실패: ${response.statusCode}');
         throw HttpException('댓글 로드 실패: ${response.statusCode}');
@@ -418,6 +776,7 @@ class CommentService extends ChangeNotifier {
       // _loadFallbackComments();
     } finally {
       _isLoading = false;
+
       notifyListeners();
     }
   }
@@ -444,15 +803,41 @@ class CommentService extends ChangeNotifier {
     }
   }
 
-  /// 댓글 추가 (API 호출)
+  /// 댓글 추가 (낙관적 업데이트)
   Future<void> addComment({
     required String username,
     required String content,
+    String? authorProfileImageUrl, // 🎯 프로필 이미지 URL 추가
     String? parentId,
     String? imageUrl,
   }) async {
     if (_currentPostId == null) return;
 
+    // 1️⃣ 임시 ID 생성 (pending 댓글 식별용)
+    final tempId = 'temp_${DateTime.now().millisecondsSinceEpoch}';
+
+    // 2️⃣ 낙관적 업데이트: 즉시 로컬에 댓글 추가
+    final optimisticComment = Comment(
+      id: tempId,
+      author: username,
+      content: content,
+      authorProfileImageUrl: authorProfileImageUrl ?? '', // 🎯 프로필 이미지 즉시 설정
+      postId: _currentPostId!,
+      parentId: parentId,
+      imageUrl: imageUrl,
+      visibility: 'PUBLIC',
+      createdAt: DateTime.now().toIso8601String(),
+      updatedAt: DateTime.now().toIso8601String(),
+      isPending: true, // 서버 전송 대기 중
+      isFailed: false,
+    );
+
+    _comments.add(optimisticComment);
+    _serverCommentCount++; // 🎯 전체 댓글 수 증가
+    notifyListeners(); // ⚡ UI 즉시 업데이트
+    print('[CommentService] 낙관적 댓글 추가: $tempId');
+
+    // 3️⃣ 서버에 요청 전송 (백그라운드)
     try {
       final requestBody = {
         'content': content,
@@ -475,14 +860,61 @@ class CommentService extends ChangeNotifier {
       );
 
       if (response.statusCode == 200 || response.statusCode == 201) {
-        // API 응답에서는 댓글을 추가하지 않음 - WebSocket 이벤트에서 처리
-        print('[CommentService] 댓글 추가 성공 - WebSocket 이벤트 대기 중');
+        // 성공: 서버 응답 데이터로 임시 댓글 교체
+        final serverComment = Comment.fromJson(response.data);
+
+        // 같은 ID가 이미 있는지 확인 (WebSocket이 먼저 추가했을 수 있음)
+        final existingServerCommentIndex = _comments.indexWhere(
+          (c) => c.id == serverComment.id,
+        );
+        if (existingServerCommentIndex != -1) {
+          print(
+            '[CommentService] ⚠️ 서버 응답 댓글이 이미 존재함 (WebSocket 먼저 도착) - ID: ${serverComment.id}',
+          );
+          // 임시 댓글만 제거
+          _comments.removeWhere((c) => c.id == tempId);
+          notifyListeners();
+          return;
+        }
+
+        // 임시 댓글 찾아서 교체
+        final tempIndex = _comments.indexWhere((c) => c.id == tempId);
+        if (tempIndex != -1) {
+          print('[CommentService] 🔄 임시 댓글 교체: $tempId → ${serverComment.id}');
+          _comments[tempIndex] = serverComment;
+        } else {
+          print('[CommentService] ⚠️ 임시 댓글이 없음 (이미 제거됨?) - 서버 댓글 추가 안 함');
+          // WebSocket이 이미 추가했으므로 여기선 추가하지 않음
+          return;
+        }
+        notifyListeners();
+        print('[CommentService] 댓글 추가 성공: ${serverComment.id}');
       } else {
+        // 실패: pending → failed로 변경
+        final index = _comments.indexWhere((c) => c.id == tempId);
+        if (index != -1) {
+          _comments[index] = _comments[index].copyWith(
+            isPending: false,
+            isFailed: true,
+          );
+          notifyListeners();
+        }
         print('[CommentService] 댓글 추가 실패: ${response.statusCode}');
         throw HttpException('댓글 추가 실패: ${response.statusCode}');
       }
     } catch (e) {
-      print('[CommentService] 댓글 추가 오류: $e');
+      print('[CommentService] 댓글 추가 오류 - failed 상태로 변경: $e');
+
+      // 4️⃣ 실패 시: pending → failed로 변경
+      final index = _comments.indexWhere((c) => c.id == tempId);
+      if (index != -1) {
+        _comments[index] = _comments[index].copyWith(
+          isPending: false,
+          isFailed: true,
+        );
+        notifyListeners(); // UI에 실패 상태 표시
+      }
+
       if (e is DioException) {
         print(
           '[CommentService] Dio 에러: ${e.response?.statusCode} - ${e.response?.data}',
@@ -491,49 +923,109 @@ class CommentService extends ChangeNotifier {
     }
   }
 
-  /// 댓글에 반응 추가/제거 (API 호출) - 사용자당 하나의 이모지만
+  /// 실패한 댓글 재시도
+  Future<void> retryComment(String tempId) async {
+    final index = _comments.indexWhere((c) => c.id == tempId);
+    if (index == -1) return;
+
+    final comment = _comments[index];
+
+    // failed → pending으로 변경
+    _comments[index] = comment.copyWith(isPending: true, isFailed: false);
+    notifyListeners();
+
+    // 재시도
+    await addComment(
+      username: comment.author,
+      content: comment.content,
+      parentId: comment.parentId,
+      imageUrl: comment.imageUrl,
+    );
+
+    // 기존 임시 댓글 제거
+    _comments.removeWhere((c) => c.id == tempId);
+    notifyListeners();
+  }
+
+  /// 실패한 댓글 삭제
+  void removeFailedComment(String tempId) {
+    _comments.removeWhere((c) => c.id == tempId);
+    notifyListeners();
+  }
+
+  /// 댓글에 반응 추가/제거 (API 호출) - 서버가 자동으로 토글 처리
   Future<void> toggleReaction(String commentId, String emoji) async {
     try {
-      // 현재 반응 상태 확인
+      print('[CommentService] 반응 토글 요청 - commentId: $commentId, emoji: $emoji');
+
+      // 1️⃣ 낙관적 업데이트 (즉시 UI 반영)
       final commentIndex = _comments.indexWhere((c) => c.id == commentId);
-      if (commentIndex == -1) return;
+      if (commentIndex != -1) {
+        final comment = _comments[commentIndex];
+        final hasThisReaction = comment.myEmotions.containsKey(emoji);
+        final previousEmoji =
+            comment.myEmotions.keys.firstOrNull; // 기존에 달았던 이모지
 
-      final comment = _comments[commentIndex];
-      final hasThisReaction = comment.myEmotions.containsKey(emoji);
+        // 🎯 한 사람당 하나의 이모지만 가능
+        // - 같은 이모지 클릭: 제거
+        // - 다른 이모지 클릭: 기존 이모지 제거 + 새 이모지 추가
+        final newMyEmotions =
+            hasThisReaction ? <String, String>{} : {emoji: '1'};
 
-      print(
-        '[CommentService] 토글 전 - commentId: $commentId, hasThisReaction: $hasThisReaction, myEmotions: ${comment.myEmotions}',
-      );
+        // emotionCounts도 낙관적으로 업데이트
+        final newEmotionCounts = Map<String, String>.from(
+          comment.emotionCounts,
+        );
 
-      if (hasThisReaction) {
-        // 같은 이모지인 경우 제거
-        print('[CommentService] DELETE 호출 - 하트 제거');
-        await _removeReactionFromServer(commentId, emoji);
-        // 로컬에서 제거
-        _comments[commentIndex] = comment.copyWith(myEmotions: {});
-      } else {
-        // 반응이 없거나 다른 경우 추가
-        print('[CommentService] POST 호출 - 하트 추가');
-
-        // 기존 다른 반응이 있으면 먼저 제거
-        if (comment.myEmotions.isNotEmpty) {
-          final existingEmoji = comment.myEmotions.keys.first;
-          await _removeReactionFromServer(commentId, existingEmoji);
+        // 기존 이모지가 있고, 새 이모지와 다르면 기존 이모지 카운트 감소
+        if (previousEmoji != null && previousEmoji != emoji) {
+          final oldCount =
+              int.tryParse(newEmotionCounts[previousEmoji] ?? '0') ?? 0;
+          if (oldCount > 1) {
+            newEmotionCounts[previousEmoji] = (oldCount - 1).toString();
+          } else {
+            newEmotionCounts.remove(previousEmoji);
+          }
         }
 
-        await _addReactionToServer(commentId, emoji);
-        // 로컬에 추가
-        _comments[commentIndex] = comment.copyWith(myEmotions: {emoji: '1'});
+        if (hasThisReaction) {
+          // 같은 이모지 제거: 카운트 감소
+          final currentCount =
+              int.tryParse(newEmotionCounts[emoji] ?? '0') ?? 0;
+          if (currentCount > 1) {
+            newEmotionCounts[emoji] = (currentCount - 1).toString();
+          } else {
+            newEmotionCounts.remove(emoji);
+          }
+        } else {
+          // 새 이모지 추가: 카운트 증가
+          final currentCount =
+              int.tryParse(newEmotionCounts[emoji] ?? '0') ?? 0;
+          newEmotionCounts[emoji] = (currentCount + 1).toString();
+        }
+
+        _comments[commentIndex] = comment.copyWith(
+          myEmotions: newMyEmotions,
+          emotionCounts: newEmotionCounts,
+        );
+
+        // 🎯 이모지 업데이트는 스크롤 안 함
+
+        notifyListeners(); // 즉시 UI 업데이트
       }
 
-      notifyListeners();
-      print('[CommentService] 반응 토글 성공');
+      // 2️⃣ 서버 요청 (항상 POST - 서버가 알아서 토글 처리)
+      await _addReactionToServer(commentId, emoji);
+
+      // 3️⃣ WebSocket으로 정확한 상태 받아서 최종 동기화 (중복은 핸들러에서 방지)
+      print('[CommentService] 반응 토글 요청 완료 (WebSocket 대기 중)');
     } catch (e) {
       print('[CommentService] 반응 토글 오류: $e');
+      rethrow;
     }
   }
 
-  /// 서버에 반응 추가
+  /// 서버에 반응 추가 (서버가 알아서 토글 처리)
   Future<void> _addReactionToServer(String commentId, String emoji) async {
     final response = await _dio.post(
       '/api/comments/$commentId/emotions?emoji=${Uri.encodeComponent(emoji)}',
@@ -541,90 +1033,145 @@ class CommentService extends ChangeNotifier {
     );
 
     print(
-      '[CommentService] 반응 추가 응답: ${response.statusCode} - ${response.data}',
+      '[CommentService] 반응 토글 응답: ${response.statusCode} - ${response.data}',
     );
   }
 
-  /// 서버에서 반응 제거
-  Future<void> _removeReactionFromServer(String commentId, String emoji) async {
-    final response = await _dio.delete(
-      '/api/comments/$commentId/emotions?emoji=${Uri.encodeComponent(emoji)}',
-      options: Options(receiveTimeout: const Duration(seconds: 5)),
-    );
-
-    print(
-      '[CommentService] 반응 제거 응답: ${response.statusCode} - ${response.data}',
-    );
-  }
-
-  /// 로컬 반응 상태 업데이트 (사용자당 하나의 이모지만)
-
-  /// 댓글 삭제 (API 호출)
+  /// 댓글 삭제 (낙관적 업데이트)
   Future<void> deleteComment(String commentId) async {
+    // 1️⃣ 낙관적 업데이트 (즉시 UI 반영)
+    final commentIndex = _comments.indexWhere((c) => c.id == commentId);
+    if (commentIndex == -1) {
+      print('[CommentService] ⚠️ 삭제할 댓글을 찾을 수 없음: $commentId');
+      return;
+    }
+
+    final deletedComment = _comments[commentIndex]; // 롤백용 백업
+    _comments.removeAt(commentIndex);
+    _serverCommentCount--; // 🎯 전체 댓글 수 감소
+
+    // 삭제는 스크롤 안 함
+
+    notifyListeners(); // ⚡ UI 즉시 업데이트
+
+    print('[CommentService] 낙관적 댓글 삭제: $commentId');
+
+    // 2️⃣ 서버에 요청 전송 (백그라운드)
     try {
       final response = await _dio.delete(
         '/api/comments/$commentId',
         options: Options(receiveTimeout: const Duration(seconds: 5)),
       );
 
+      print('[CommentService] 댓글 삭제 응답: ${response.statusCode}');
+
       if (response.statusCode == 200 || response.statusCode == 204) {
-        _comments.removeWhere((c) => c.id == commentId);
-        notifyListeners();
-        print('[CommentService] 댓글 삭제 성공');
+        print('[CommentService] ✅ 댓글 삭제 성공 (WebSocket으로 최종 검증 대기)');
+        // 3️⃣ WebSocket이 최종 검증 데이터를 보내줄 것임
       } else {
-        print('[CommentService] 댓글 삭제 실패: ${response.statusCode}');
+        print('[CommentService] ⚠️ 댓글 삭제 실패: ${response.statusCode}');
+        // 실패 시 복원
+        _comments.insert(commentIndex, deletedComment);
+
+        notifyListeners();
+
         throw HttpException('댓글 삭제 실패: ${response.statusCode}');
       }
     } catch (e) {
-      print('[CommentService] 댓글 삭제 오류: $e');
+      print('[CommentService] 댓글 삭제 오류 - 복원: $e');
+
+      // 4️⃣ 실패 시 복원
+      if (_comments.indexWhere((c) => c.id == commentId) == -1) {
+        _comments.insert(commentIndex, deletedComment);
+
+        notifyListeners();
+      }
+
       if (e is DioException) {
         print(
           '[CommentService] Dio 에러: ${e.response?.statusCode} - ${e.response?.data}',
         );
       }
-      // 오류 발생 시 로컬에서만 삭제
-      _comments.removeWhere((c) => c.id == commentId);
-      notifyListeners();
+      rethrow;
     }
   }
 
-  /// 댓글 수정 (API 호출)
+  /// 댓글 수정 (낙관적 업데이트)
   Future<void> updateComment(String commentId, String newContent) async {
+    // 1️⃣ 낙관적 업데이트 (즉시 UI 반영)
+    final commentIndex = _comments.indexWhere((c) => c.id == commentId);
+    if (commentIndex == -1) {
+      print('[CommentService] ⚠️ 수정할 댓글을 찾을 수 없음: $commentId');
+      return;
+    }
+
+    final originalComment = _comments[commentIndex];
+    _comments[commentIndex] = originalComment.copyWith(
+      content: newContent,
+      updatedAt: DateTime.now().toIso8601String(),
+    );
+
+    // 수정은 스크롤 안 함
+
+    notifyListeners(); // ⚡ UI 즉시 업데이트
+
+    print('[CommentService] 낙관적 댓글 수정: $commentId');
+
+    // 2️⃣ 서버에 요청 전송 (백그라운드)
     try {
+      final requestData = {
+        'content': newContent,
+        'postId': int.tryParse(originalComment.postId) ?? 0,
+        'parentId':
+            originalComment.parentId != null
+                ? int.tryParse(originalComment.parentId!)
+                : null,
+        'imageUrl': originalComment.imageUrl,
+        'visibility': originalComment.visibility,
+      };
+      print('[CommentService] 댓글 수정 요청 데이터: $requestData');
+
       final response = await _dio.put(
         '/api/comments/$commentId',
-        data: {'content': newContent},
+        data: requestData,
         options: Options(receiveTimeout: const Duration(seconds: 5)),
       );
 
+      print(
+        '[CommentService] 댓글 수정 응답: ${response.statusCode} - ${response.data}',
+      );
+
       if (response.statusCode == 200) {
-        final commentIndex = _comments.indexWhere((c) => c.id == commentId);
-        if (commentIndex != -1) {
-          _comments[commentIndex] = _comments[commentIndex].copyWith(
-            content: newContent,
-          );
+        print('[CommentService] ✅ 댓글 수정 성공 (WebSocket으로 최종 검증 대기)');
+        // 3️⃣ WebSocket이 최종 검증 데이터를 보내줄 것임
+      } else {
+        print('[CommentService] ⚠️ 댓글 수정 실패: ${response.statusCode}');
+        // 실패 시 원래 내용으로 롤백
+        final currentIndex = _comments.indexWhere((c) => c.id == commentId);
+        if (currentIndex != -1) {
+          _comments[currentIndex] = originalComment;
+
           notifyListeners();
         }
-        print('[CommentService] 댓글 수정 성공');
-      } else {
-        print('[CommentService] 댓글 수정 실패: ${response.statusCode}');
         throw HttpException('댓글 수정 실패: ${response.statusCode}');
       }
     } catch (e) {
-      print('[CommentService] 댓글 수정 오류: $e');
+      print('[CommentService] 댓글 수정 오류 - 롤백: $e');
+
+      // 4️⃣ 실패 시 원래 내용으로 롤백
+      final currentIndex = _comments.indexWhere((c) => c.id == commentId);
+      if (currentIndex != -1) {
+        _comments[currentIndex] = originalComment;
+
+        notifyListeners();
+      }
+
       if (e is DioException) {
         print(
           '[CommentService] Dio 에러: ${e.response?.statusCode} - ${e.response?.data}',
         );
       }
-      // 오류 발생 시 로컬에서만 수정
-      final commentIndex = _comments.indexWhere((c) => c.id == commentId);
-      if (commentIndex != -1) {
-        _comments[commentIndex] = _comments[commentIndex].copyWith(
-          content: newContent,
-        );
-        notifyListeners();
-      }
+      rethrow;
     }
   }
 

@@ -3,14 +3,15 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:doppy/editor/service/editor_service.dart';
 import 'package:doppy/editor/service/sticker_service.dart';
 import 'package:doppy/editor/service/post_reader_service.dart';
-import 'package:doppy/editor/service/node_component_service.dart';
 import 'package:doppy/editor/publish/post_exporter.dart';
+import 'package:doppy/utils/time_utils.dart';
 import 'package:super_editor/super_editor.dart';
 
 /// 임시저장 데이터 모델
 class DraftData {
   final String id;
   final String title;
+  final String summary; // 🎯 요약/본문 미리보기
   final String content; // JSON 문자열
   final String thumbnailUrl;
   final String? videoFilePath; // 영상 원본 파일 경로
@@ -23,6 +24,7 @@ class DraftData {
   DraftData({
     required this.id,
     required this.title,
+    this.summary = '', // 🎯 기본값 빈 문자열
     required this.content,
     required this.thumbnailUrl,
     this.videoFilePath,
@@ -37,6 +39,7 @@ class DraftData {
     return {
       'id': id,
       'title': title,
+      'summary': summary, // 🎯 요약 추가
       'content': content,
       'thumbnailUrl': thumbnailUrl,
       if (videoFilePath != null) 'videoFilePath': videoFilePath,
@@ -52,16 +55,17 @@ class DraftData {
     return DraftData(
       id: json['id'] ?? '',
       title: json['title'] ?? '',
+      summary: json['summary'] ?? '', // 🎯 요약 추가 (기본값 빈 문자열)
       content: json['content'] ?? '',
       thumbnailUrl: json['thumbnailUrl'] ?? '',
       videoFilePath: json['videoFilePath'] as String?,
       videoThumbnailPath: json['videoThumbnailPath'] as String?,
       visibility: json['visibility'] ?? 'public',
       selectedGroupIds: List<int>.from(json['selectedGroupIds'] ?? []),
-      createdAt: DateTime.parse(
+      createdAt: TimeUtils.toLocalTime(
         json['createdAt'] ?? DateTime.now().toIso8601String(),
       ),
-      updatedAt: DateTime.parse(
+      updatedAt: TimeUtils.toLocalTime(
         json['updatedAt'] ?? DateTime.now().toIso8601String(),
       ),
     );
@@ -78,6 +82,7 @@ class DraftService {
     required EditorService editorService,
     required StickerService stickerService,
     required String title,
+    String summary = '', // 🎯 요약 추가
     required String thumbnailUrl,
     String? videoFilePath,
     String? videoThumbnailPath,
@@ -116,6 +121,7 @@ class DraftService {
       final draftData = DraftData(
         id: draftId,
         title: effectiveTitle,
+        summary: summary, // 🎯 요약 저장
         content: json.encode(finalPayload), // 최종 페이로드 기준 저장
         thumbnailUrl: thumbnailUrl,
         videoFilePath: videoFilePath,
@@ -207,40 +213,6 @@ class DraftService {
         exported: exportedData,
         stickerService: stickerService,
       );
-
-      // 썸네일을 draft ID를 sessionKey로 persist (제목별로 독립 관리)
-      final nodeComponentService = NodeComponentService();
-      if (draft.thumbnailUrl.isNotEmpty) {
-        final thumbnailId = exportedData['thumbnailImageId']?.toString();
-        nodeComponentService.setTempThumbnail(
-          draftId, // draft ID를 sessionKey로 사용
-          url: draft.thumbnailUrl,
-          id: thumbnailId,
-        );
-        print(
-          '[DraftService] 썸네일 복원: ${draft.thumbnailUrl} (ID: $thumbnailId, sessionKey: $draftId)',
-        );
-      }
-
-      // 영상 파일 복원 (있다면)
-      if (draft.videoFilePath != null && draft.videoFilePath!.isNotEmpty) {
-        nodeComponentService.setTempVideoFile(draftId, draft.videoFilePath!);
-        print(
-          '[DraftService] 영상 파일 복원: ${draft.videoFilePath} (sessionKey: $draftId)',
-        );
-      }
-
-      // 영상 로컬 썸네일 복원 (있다면)
-      if (draft.videoThumbnailPath != null &&
-          draft.videoThumbnailPath!.isNotEmpty) {
-        nodeComponentService.setTempVideoThumbnail(
-          draftId,
-          draft.videoThumbnailPath!,
-        );
-        print(
-          '[DraftService] 영상 썸네일 복원: ${draft.videoThumbnailPath} (sessionKey: $draftId)',
-        );
-      }
 
       return true;
     } catch (e) {

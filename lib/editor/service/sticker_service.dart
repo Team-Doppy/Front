@@ -3,7 +3,7 @@ import 'dart:typed_data';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 
-enum StickerType { image, text, emoji, drawing }
+enum StickerType { image } // 🎯 PNG 드로잉만 지원
 
 class Sticker {
   // 공통 속성: 컨텐츠, 위치, 스케일, 회전, 투명도, zIndex, 잠금
@@ -76,6 +76,12 @@ class StickerService extends ChangeNotifier {
   double _scaleDelta = 1.0;
   double _rotationDelta = 0.0;
   bool _dragOverDelete = false;
+  bool _isPanning = false; // 팬 제스처 진행 중 여부
+
+  // 드래그 중 실시간 위치 업데이트용 ValueNotifier (rebuild 없이)
+  final ValueNotifier<Offset?> dragPreviewPosNotifier = ValueNotifier(null);
+  final ValueNotifier<bool> isDraggingNotifier = ValueNotifier(false);
+  final ValueNotifier<bool> dragOverDeleteNotifier = ValueNotifier(false);
 
   List<Sticker> get stickers {
     final list = List<Sticker>.from(_stickers);
@@ -86,6 +92,7 @@ class StickerService extends ChangeNotifier {
   String? get selectedId => _selectedId;
   String? get draggingId => _draggingId;
   bool get isDragging => _draggingId != null;
+  bool get isPanning => _isPanning; // 팬 제스처 진행 중
   Offset get dragPreviewPos => _dragBasePos + _dragAccum;
   double get dragPreviewScale =>
       (_dragBaseScale * _scaleDelta).clamp(minScale, maxScale);
@@ -105,38 +112,6 @@ class StickerService extends ChangeNotifier {
     notifyListeners();
   }
 
-  void addTextSticker(String text, Offset at) {
-    addTextStickerWithStyle(text, null, at);
-  }
-
-  void addTextStickerWithStyle(
-    String text,
-    Map<String, dynamic>? style,
-    Offset at,
-  ) {
-    addSticker(
-      Sticker(
-        id: 'stk_${DateTime.now().millisecondsSinceEpoch}',
-        type: StickerType.text,
-        content: <String, dynamic>{'text': text, 'style': style},
-        position: at,
-        scale: 1.4,
-      ),
-    );
-  }
-
-  void addEmojiSticker(String emoji, Offset at) {
-    addSticker(
-      Sticker(
-        id: 'stk_${DateTime.now().millisecondsSinceEpoch}',
-        type: StickerType.emoji,
-        content: emoji,
-        position: at,
-        scale: 1.6,
-      ),
-    );
-  }
-
   void addImageSticker(Uint8List bytes, Offset at) {
     addSticker(
       Sticker(
@@ -149,17 +124,52 @@ class StickerService extends ChangeNotifier {
     );
   }
 
-  /// 그리기 스티커 추가 (벡터 경로 기반)
-  void addDrawingSticker(List<Map<String, dynamic>> strokes, Offset at) {
-    addSticker(
-      Sticker(
-        id: 'stk_${DateTime.now().millisecondsSinceEpoch}',
-        type: StickerType.drawing,
-        content: {'strokes': strokes},
-        position: at,
-        scale: 1.0, // 벡터는 원본 크기 그대로
-      ),
-    );
+  /// 그리기 스티커 추가 (PNG 또는 벡터)
+  void addDrawingSticker(
+    List<Map<String, dynamic>> strokes,
+    Offset at, {
+    int? groupIndex,
+  }) {
+    // groupIndex가 있으면 고유 ID 생성을 위해 추가
+    final timestamp = DateTime.now().millisecondsSinceEpoch;
+    final uniqueId =
+        groupIndex != null ? 'stk_${timestamp}_$groupIndex' : 'stk_$timestamp';
+
+    // 🎯 PNG 이미지인지 확인 (type: 'png_image')
+    if (strokes.length == 1 && strokes[0]['type'] == 'png_image') {
+      final pngData = strokes[0];
+      final url = pngData['url'] as String?; // DrawingOverlay에서 업로드 완료된 URL
+      final width = pngData['width']; // 논리 픽셀 크기
+      final height = pngData['height']; // 논리 픽셀 크기
+
+      if (url != null) {
+        // ✅ 이미 업로드 완료된 URL + 크기 정보
+        addSticker(
+          Sticker(
+            id: uniqueId,
+            type: StickerType.image,
+            content: {'url': url, 'width': width, 'height': height},
+            position: at,
+            scale: 1.0,
+          ),
+        );
+      } else {
+        // ⚠️ URL이 없으면 (레거시 또는 에러)
+        final imageData = pngData['imageData'] as Uint8List?;
+        if (imageData != null) {
+          addSticker(
+            Sticker(
+              id: uniqueId,
+              type: StickerType.image,
+              content: imageData,
+              position: at,
+              scale: 1.0,
+            ),
+          );
+        }
+      }
+    }
+    // 🎯 벡터 드로잉 제거됨 (PNG만 지원)
   }
 
   void updateContent(String id, dynamic content) {
@@ -181,31 +191,34 @@ class StickerService extends ChangeNotifier {
       orElse:
           () => Sticker(
             id: id,
-            type: StickerType.text,
+            type: StickerType.image,
             content: '',
             position: Offset.zero,
           ),
     );
+    // 이미 드래그 중이면 무시 (중복 beginDrag 방지)
+    if (_draggingId == id && _isPanning) {
+      // ignore: avoid_print
+      print('[StickerService] beginDrag ignored - already dragging $id');
+      return;
+    }
+
     _draggingId = id;
     _dragBasePos = s.position;
     _dragBaseScale = s.scale;
     _dragBaseRot = s.rotation;
     _dragAccum = Offset.zero; // 누적 델타 리셋
+    _isPanning = true; // 팬 제스처 시작
     _scaleDelta = 1.0; // 배율은 항상 1.0에서 시작(상대 배율)
     _rotationDelta = 0.0; // 회전도 상대값으로 시작
-    // LOG
-    // ignore: avoid_print
-    print(
-      '[StickerService] beginDrag id=' +
-          id +
-          ' basePos=' +
-          _dragBasePos.toString() +
-          ' scale=' +
-          _dragBaseScale.toString(),
-    );
-    // 드래그 시작을 알림 → 에디터 레이어가 IgnorePointer(ignoring: true)로 전환되어
-    // 이후 포인터 이벤트가 스티커 레이어로 전달되도록 한다.
-    notifyListeners();
+
+    // ValueNotifier 초기화
+    dragPreviewPosNotifier.value = _dragBasePos;
+    isDraggingNotifier.value = true;
+    dragOverDeleteNotifier.value = false;
+
+    // notifyListeners() 완전 제거: 제스처 취소 방지
+    // ValueNotifier 변경으로 UI는 자동 업데이트됨
   }
 
   void updateDrag(
@@ -215,28 +228,19 @@ class StickerService extends ChangeNotifier {
   }) {
     if (_draggingId == null) return;
     _dragAccum += delta;
-    _scaleDelta = scaleDelta;
-    _rotationDelta = rotationDelta;
-    // LOG
-    // ignore: avoid_print
-    print(
-      '[StickerService] updateDrag id=' +
-          (_draggingId ?? '') +
-          ' d=' +
-          delta.toString() +
-          ' scaleΔ=' +
-          scaleDelta.toString() +
-          ' rotΔ=' +
-          rotationDelta.toString() +
-          ' previewPos=' +
-          dragPreviewPos.toString(),
-    );
-    notifyListeners();
+    _scaleDelta *= scaleDelta; // 누적 곱셈
+    _rotationDelta += rotationDelta; // 누적 덧셈
+
+    // ValueNotifier로 실시간 위치 업데이트 (rebuild 없이)
+    dragPreviewPosNotifier.value = dragPreviewPos;
+
+    // notifyListeners() 제거: ValueNotifier로 대체하여 성능 향상
   }
 
   void endDrag() {
     if (_draggingId == null) return;
     final id = _draggingId!;
+
     if (_dragOverDelete) {
       // ignore: avoid_print
       print('[StickerService] endDrag delete id=' + id);
@@ -259,6 +263,8 @@ class StickerService extends ChangeNotifier {
             ' rot=' +
             newRot.toString(),
       );
+      // 드래그 종료 시 zIndex 업데이트 (최상단으로)
+      bringToFront(id, silent: true); // 아직 notify 안함
       transform(id, position: newPos, scale: newScale, rotation: newRot);
     }
     _draggingId = null;
@@ -266,9 +272,16 @@ class StickerService extends ChangeNotifier {
     _scaleDelta = 1.0;
     _rotationDelta = 0.0;
     _dragOverDelete = false;
+    _isPanning = false; // 팬 제스처 종료
+
+    // ValueNotifier 리셋
+    dragPreviewPosNotifier.value = null;
+    isDraggingNotifier.value = false;
+    dragOverDeleteNotifier.value = false;
+
     // ignore: avoid_print
     print('[StickerService] endDrag reset');
-    notifyListeners();
+    notifyListeners(); // 드래그 종료 시 한 번만 notify
   }
 
   bool isDraggingSticker(String id) => _draggingId == id;
@@ -276,7 +289,8 @@ class StickerService extends ChangeNotifier {
   void setDragOverDelete(bool over) {
     if (_dragOverDelete == over) return;
     _dragOverDelete = over;
-    notifyListeners();
+    dragOverDeleteNotifier.value = over; // ValueNotifier로 대체
+    // notifyListeners() 제거: 제스처 취소 방지
   }
 
   void transform(
@@ -296,16 +310,19 @@ class StickerService extends ChangeNotifier {
     notifyListeners();
   }
 
-  void bringToFront(String id) {
+  void bringToFront(String id, {bool silent = false}) {
     int maxZ = _stickers.fold<int>(0, (p, e) => e.zIndex > p ? e.zIndex : p);
     final i = _stickers.indexWhere((s) => s.id == id);
     if (i == -1) return;
     _stickers[i] = _stickers[i].copyWith(zIndex: maxZ + 1);
-    notifyListeners();
+    if (!silent) {
+      notifyListeners();
+    }
   }
 
   void removeAll() {
     _stickers.clear();
+    _initialStickers.clear(); // 🎯 초기 상태도 함께 초기화
     _selectedId = null;
     notifyListeners();
   }
@@ -391,38 +408,27 @@ class StickerService extends ChangeNotifier {
       final opacity = (stickerData['opacity'] ?? 1.0).toDouble();
       final zIndex = (stickerData['zIndex'] ?? 0).toInt();
 
-      // 컨텐츠 복원
+      // 🎯 PNG 드로잉만 지원
       dynamic content;
-      switch (type) {
-        case StickerType.text:
-          final contentData = stickerData['content'];
-          if (contentData is Map) {
-            content = contentData; // {text, style} 형태 그대로 저장
-          } else {
-            content = {'text': contentData?.toString() ?? '', 'style': null};
-          }
-          break;
-        case StickerType.emoji:
-          content = stickerData['content']?.toString() ?? '😀';
-          break;
-        case StickerType.drawing:
-          final contentData = stickerData['content'];
-          if (contentData is Map && contentData['strokes'] != null) {
-            content = contentData; // {strokes: [...]} 형태 그대로 저장
-          } else {
-            return; // 그리기 데이터가 없으면 스킵
-          }
-          break;
-        case StickerType.image:
-          final contentData = stickerData['content'];
-          if (contentData is Map && contentData['bytes'] != null) {
-            // base64 문자열을 Uint8List로 복원
+      if (type == StickerType.image) {
+        final contentData = stickerData['content'];
+        if (contentData is Map) {
+          // URL + 크기 정보 또는 bytes
+          if (contentData['url'] != null) {
+            content = contentData; // {url, width, height} 그대로
+          } else if (contentData['bytes'] != null) {
+            // base64 문자열을 Uint8List로 복원 (레거시)
             final base64String = contentData['bytes'].toString();
             content = base64Decode(base64String);
           } else {
-            return; // 이미지 데이터가 없으면 스킵
+            return;
           }
-          break;
+        } else {
+          return;
+        }
+      } else {
+        // text, emoji, drawing 타입은 무시
+        return;
       }
 
       final sticker = Sticker(
@@ -444,18 +450,8 @@ class StickerService extends ChangeNotifier {
   }
 
   StickerType _parseStickerType(String typeString) {
-    switch (typeString) {
-      case 'text':
-        return StickerType.text;
-      case 'emoji':
-        return StickerType.emoji;
-      case 'image':
-        return StickerType.image;
-      case 'drawing':
-        return StickerType.drawing;
-      default:
-        return StickerType.text;
-    }
+    // 🎯 PNG 드로잉만 지원
+    return StickerType.image;
   }
 
   void remove(String id) {

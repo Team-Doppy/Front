@@ -1,3 +1,5 @@
+import 'package:doppy/utils/time_utils.dart';
+
 enum FriendStatus { REQUESTED, ACCEPTED, BLOCKED, UNKNOWN }
 
 class Friend {
@@ -45,7 +47,7 @@ class Friend {
       createdAt:
           (json['createdAt'] != null &&
                   (json['createdAt'] as String).isNotEmpty)
-              ? DateTime.parse(json['createdAt'])
+              ? TimeUtils.toLocalTime(json['createdAt'] as String)
               : DateTime.fromMillisecondsSinceEpoch(0),
       isRequester: (json['requester'] as bool?) ?? false,
     );

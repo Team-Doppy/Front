@@ -20,6 +20,10 @@ class ContentChangeDetector {
   /// - 스티커 (위치, 크기, 타입, 내용)
   /// - 정렬 (align)
   /// - 제목 메타데이터
+  ///
+  /// 다음 항목들은 무시됩니다 (별도로 관리):
+  /// - 공개범위 (accessLevel, visibility)
+  /// - 그룹 공유 (groupIds, sharedGroupIds)
   static bool hasContentChanged({
     required Map<String, dynamic> originalExported,
     required EditorService editorService,
@@ -34,7 +38,7 @@ class ContentChangeDetector {
         stickerService: stickerService,
       );
 
-      // 2. 문서 구조 비교
+      // 2. 문서 구조 비교 (공개범위, groupIds는 무시)
       if (_hasDocumentStructureChanged(originalExported, currentExported)) {
         print('[ContentChangeDetector] ✓ 문서 구조 변경 감지');
         return true;
@@ -105,112 +109,122 @@ class ContentChangeDetector {
 
   // 개별 노드 비교 함수들은 제거 (블록 단위 1:1 비교로 대체)
 
-  /// 스티커 비교
+  /// 스티커 비교 (정규화 후 비교)
   static bool _hasStickersChanged(
     Map<String, dynamic> original,
     Map<String, dynamic> current,
   ) {
-    final originalStickers = original['stickers'] as List?;
-    final currentStickers = current['stickers'] as List?;
+    // 🎯 content 안의 stickers를 추출
+    final originalContent = original['content'] as Map<String, dynamic>?;
+    final currentContent = current['content'] as Map<String, dynamic>?;
 
-    // null과 빈 배열을 동일하게 취급 (둘 다 "스티커 없음")
-    final originalEmpty = originalStickers == null || originalStickers.isEmpty;
-    final currentEmpty = currentStickers == null || currentStickers.isEmpty;
+    final originalStickers = originalContent?['stickers'] as List?;
+    final currentStickers = currentContent?['stickers'] as List?;
 
-    // 둘 다 비어있으면 변경 없음
-    if (originalEmpty && currentEmpty) {
+    print('[ContentChangeDetector] 🔍 스티커 비교 (content.stickers)');
+    print('  원본 스티커: ${originalStickers?.length ?? 0}개');
+    print('  현재 스티커: ${currentStickers?.length ?? 0}개');
+
+    // 둘 다 null이거나 빈 리스트면 변경 없음
+    if ((originalStickers == null || originalStickers.isEmpty) &&
+        (currentStickers == null || currentStickers.isEmpty)) {
+      print('[ContentChangeDetector] ✗ 스티커 변경 없음 (둘 다 비어있음)');
       return false;
     }
 
-    // 하나만 비어있으면 변경됨
-    if (originalEmpty != currentEmpty) {
-      print('[ContentChangeDetector] 스티커 존재 여부 변경');
-      final origCount = originalStickers?.length ?? 0;
-      final currCount = currentStickers?.length ?? 0;
-      print('  원본: ${originalEmpty ? "없음" : "$origCount개"}');
-      print('  현재: ${currentEmpty ? "없음" : "$currCount개"}');
+    // 하나만 null이거나 빈 리스트면 변경됨
+    if (originalStickers == null ||
+        originalStickers.isEmpty ||
+        currentStickers == null ||
+        currentStickers.isEmpty) {
+      print('[ContentChangeDetector] ✓ 스티커 변경 감지 (개수 차이)');
       return true;
     }
 
-    // 둘 다 null이 아닌 경우 (위에서 empty 체크 완료)
-    if (originalStickers == null || currentStickers == null) {
-      return false;
-    }
-
-    // 스티커 개수 비교
+    // 개수가 다르면 변경됨
     if (originalStickers.length != currentStickers.length) {
       print(
-        '[ContentChangeDetector] 스티커 개수 변경: ${originalStickers.length} → ${currentStickers.length}',
+        '[ContentChangeDetector] ✓ 스티커 변경 감지 (개수: ${originalStickers.length} → ${currentStickers.length})',
       );
       return true;
     }
 
-    // 각 스티커 비교
-    for (int i = 0; i < originalStickers.length; i++) {
-      final origSticker = originalStickers[i] as Map<String, dynamic>;
-      final currSticker = currentStickers[i] as Map<String, dynamic>;
+    // 각 스티커를 정규화하여 비교
+    try {
+      final normalizedOriginal = _normalizeStickers(originalStickers);
+      final normalizedCurrent = _normalizeStickers(currentStickers);
 
-      // 1. 타입
-      if (origSticker['type'] != currSticker['type']) {
-        print('[ContentChangeDetector] 스티커[$i] 타입 변경');
+      if (!_deepEquals(normalizedOriginal, normalizedCurrent)) {
+        print('[ContentChangeDetector] ✓ 스티커 변경 감지 (내용 차이)');
         return true;
       }
 
-      // 2. 위치
-      final origPos = origSticker['position'] as Map<String, dynamic>?;
-      final currPos = currSticker['position'] as Map<String, dynamic>?;
-
-      if (!_deepEquals(origPos, currPos)) {
-        print('[ContentChangeDetector] 스티커[$i] 위치 변경');
-        print('  원본: $origPos');
-        print('  현재: $currPos');
-        return true;
-      }
-
-      // 3. 크기
-      final origSize = origSticker['size'] as Map<String, dynamic>?;
-      final currSize = currSticker['size'] as Map<String, dynamic>?;
-
-      if (!_deepEquals(origSize, currSize)) {
-        print('[ContentChangeDetector] 스티커[$i] 크기 변경');
-        return true;
-      }
-
-      // 4. 앵커
-      final origAnchor = origSticker['anchor'] as Map<String, dynamic>?;
-      final currAnchor = currSticker['anchor'] as Map<String, dynamic>?;
-
-      if (!_deepEquals(origAnchor, currAnchor)) {
-        print('[ContentChangeDetector] 스티커[$i] 앵커 변경');
-        return true;
-      }
-
-      // 5. 타입별 추가 데이터
-      final stickerType = origSticker['type'];
-
-      switch (stickerType) {
-        case 'image':
-          // 이미지 URL, ID 비교 (deepEquals로 통합)
-          if (!_deepEquals(origSticker, currSticker)) {
-            print('[ContentChangeDetector] 스티커[$i] 이미지 데이터 변경');
-            return true;
-          }
-          break;
-
-        case 'drawing':
-          // 드로잉 strokes 비교
-          final origStrokes = origSticker['strokes'] as List?;
-          final currStrokes = currSticker['strokes'] as List?;
-
-          if (!_deepEquals(origStrokes, currStrokes)) {
-            print('[ContentChangeDetector] 스티커[$i] 드로잉 strokes 변경');
-            return true;
-          }
-          break;
-      }
+      print('[ContentChangeDetector] ✗ 스티커 변경 없음');
+      return false;
+    } catch (e, stackTrace) {
+      print('[ContentChangeDetector] ❌ 스티커 비교 에러: $e');
+      print('  스택 트레이스: $stackTrace');
+      // 에러 발생 시 안전하게 변경된 것으로 간주
+      return true;
     }
+  }
 
-    return false;
+  /// 스티커 데이터 정규화 (기본값 채우기, 메타데이터 포함)
+  static List<Map<String, dynamic>> _normalizeStickers(List stickers) {
+    return stickers.map((sticker) {
+      if (sticker is! Map<String, dynamic>) {
+        return <String, dynamic>{};
+      }
+
+      final normalized = <String, dynamic>{};
+
+      // 필수 필드
+      normalized['id'] = sticker['id'];
+      normalized['type'] = sticker['type'];
+
+      // 메타데이터 필드 (기본값 채우기)
+      normalized['scale'] = (sticker['scale'] as num?)?.toDouble() ?? 1.0;
+      normalized['zIndex'] = (sticker['zIndex'] as num?)?.toInt() ?? 0;
+      normalized['opacity'] = (sticker['opacity'] as num?)?.toDouble() ?? 1.0;
+      normalized['rotation'] = (sticker['rotation'] as num?)?.toDouble() ?? 0.0;
+
+      // content 필드 (URL 등)
+      if (sticker['content'] != null) {
+        normalized['content'] = sticker['content'];
+      }
+
+      // 위치 정보: anchor와 positionFallback 모두 비교
+      final anchor = sticker['anchor'] as Map<String, dynamic>?;
+      final positionFallback =
+          sticker['positionFallback'] as Map<String, dynamic>?;
+
+      if (anchor != null) {
+        // anchor 정보 정규화
+        normalized['anchor'] = {
+          'nodeId': anchor['nodeId'],
+          'localX': (anchor['localX'] as num?)?.toDouble(),
+          'localY': (anchor['localY'] as num?)?.toDouble(),
+          'refW': (anchor['refW'] as num?)?.toDouble(),
+        };
+      } else {
+        // anchor가 null이면 null로 명시적으로 저장
+        normalized['anchor'] = null;
+      }
+
+      if (positionFallback != null) {
+        // positionFallback 정보 정규화
+        normalized['positionFallback'] = {
+          'xPx': (positionFallback['xPx'] as num?)?.toDouble(),
+          'yPx': (positionFallback['yPx'] as num?)?.toDouble(),
+          'docWidth': (positionFallback['docWidth'] as num?)?.toDouble(),
+        };
+      } else {
+        // positionFallback이 null이면 null로 명시적으로 저장
+        normalized['positionFallback'] = null;
+      }
+
+      return normalized;
+    }).toList();
   }
 
   /// Deep equality 비교 (재귀적으로 Map, List 비교, 정규화 포함)
@@ -220,6 +234,7 @@ class ContentChangeDetector {
 
     if (a is Map && b is Map) {
       // 무시할 키 목록 (서버/클라이언트 차이로 인한 false positive 방지)
+      // 공개범위 및 그룹 공유 관련 키는 변경 감지에서 제외 (별도로 관리)
       const ignoredKeys = {
         'title',
         'isliked', // 클라이언트가 자동 추가
@@ -233,10 +248,10 @@ class ContentChangeDetector {
         'author', // 서버에서만 제공 (작성자)
         'position', // 서버에서만 제공 (순서)
         'id', // 노드 ID는 변경 여부와 무관 (순서만 중요)
-        'accessLevel', // 서버에서만 제공 (공개 범위) - 별도로 관리
-        'visibility', // 서버에서만 제공 (공개 범위) - 별도로 관리
-        'sharedGroupIds', // 서버에서만 제공 (그룹 공유) - 별도로 관리
-        'groupIds', // 서버에서만 제공 (그룹 공유) - 별도로 관리
+        'accessLevel', // 공개 범위 - 변경 감지에서 제외
+        'visibility', // 공개 범위 - 변경 감지에서 제외
+        'sharedGroupIds', // 그룹 공유 - 변경 감지에서 제외
+        'groupIds', // 그룹 공유 - 변경 감지에서 제외
         'thumbnailImageUrl', // 서버에서만 제공 (썸네일 URL) - 별도로 관리
         'summary', // 서버에서만 제공 (요약) - 별도로 관리
         'authorProfileImageUrl', // 서버에서만 제공 (작성자 프로필 이미지 URL) - 별도로 관리

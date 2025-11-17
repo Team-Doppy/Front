@@ -3,11 +3,16 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:ui' as ui;
 import 'package:doppy/utils/error_handler.dart';
+import 'package:doppy/l10n/app_localizations.dart';
 import 'package:flutter/material.dart';
 import 'package:doppy/theme/app_colors.dart';
 
 class LinkOverlay extends StatefulWidget {
-  const LinkOverlay({super.key, required this.onSubmit});
+  const LinkOverlay({
+    super.key,
+    required this.onSubmit,
+    this.autoSubmit = false, // 🎯 링크 추가 시 즉시 제출 (프로필 편집용)
+  });
 
   final void Function({
     required String url,
@@ -16,6 +21,8 @@ class LinkOverlay extends StatefulWidget {
     String? thumbnailUrl,
   })
   onSubmit;
+
+  final bool autoSubmit; // 🎯 true이면 _enqueueUrl에서 즉시 onSubmit 호출
 
   @override
   State<LinkOverlay> createState() => _LinkOverlayState();
@@ -144,7 +151,7 @@ class _LinkOverlayState extends State<LinkOverlay> {
             decoration: InputDecoration(
               filled: true,
               fillColor: Colors.white.withOpacity(0.1),
-              hintText: '링크 검색하기',
+              hintText: context.tr('search_link'),
               hintStyle: TextStyle(
                 color: Colors.white.withOpacity(0.6),
                 fontSize: 16,
@@ -634,7 +641,7 @@ class _LinkOverlayState extends State<LinkOverlay> {
 
       if (mounted && !hasMeta && !target.warned) {
         target.warned = true;
-        ErrorHandler.showInfo(context, '링크가 올바르지 않을 수 있어요.');
+        ErrorHandler.showInfo(context, context.tr('link_may_invalid'));
       }
     }
   }
@@ -654,7 +661,7 @@ class _LinkOverlayState extends State<LinkOverlay> {
     return u;
   }
 
-  void _enqueueUrl(String url) {
+  void _enqueueUrl(String url) async {
     final trimmed = url.trim();
     if (trimmed.isEmpty) return;
     // 중복 제거
@@ -665,6 +672,35 @@ class _LinkOverlayState extends State<LinkOverlay> {
     try {
       _focusNode.unfocus();
     } catch (_) {}
+
+    // 🎯 autoSubmit이 true이면 메타데이터를 가져온 후 onSubmit 호출 (프로필 편집용)
+    if (widget.autoSubmit) {
+      // 로딩 표시를 위해 URL 입력 필드 초기화
+      setState(() {
+        _url.clear();
+        _pTitle = null;
+        _pDesc = null;
+        _pThumb = null;
+      });
+
+      // 메타데이터 가져오기
+      await _fetchMeta(trimmed, target: item);
+
+      // 메타데이터를 가져온 후 onSubmit 호출
+      if (mounted) {
+        widget.onSubmit(
+          url: trimmed,
+          title: item.title,
+          description: item.description,
+          thumbnailUrl: item.thumbnailUrl,
+        );
+        // 🎯 LinkOverlay만 닫고 바텀시트는 열어둠
+        Navigator.of(context).pop();
+      }
+      return;
+    }
+
+    // 기존 동작 (에디터용)
     setState(() {
       _items.insert(0, item);
       _url.clear();
