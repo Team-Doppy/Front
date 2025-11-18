@@ -181,10 +181,10 @@ class CustomImageEditorScreen extends StatelessWidget {
       ),
       cropRotateEditor: CropRotateEditorConfigs(
         style: CropRotateEditorStyle(
-          appBarBackground: Theme.of(context).colorScheme.background,
-          appBarColor: Theme.of(context).colorScheme.onSurface,
-          bottomBarBackground: Theme.of(context).colorScheme.background,
-          background: Theme.of(context).colorScheme.background,
+          appBarBackground: barBgColor, // 🎯 bgColor와 일치
+          appBarColor: fgColor, // 🎯 fgColor와 일치
+          bottomBarBackground: barBgColor, // 🎯 bgColor와 일치
+          background: bgColor, // 🎯 bgColor로 통일
           cropCornerColor: Theme.of(
             context,
           ).colorScheme.onSurface.withOpacity(0.4),
@@ -202,14 +202,14 @@ class CustomImageEditorScreen extends StatelessWidget {
       ),
       tuneEditor: TuneEditorConfigs(
         style: TuneEditorStyle(
-          appBarBackground: Theme.of(context).colorScheme.background,
-          appBarColor: Theme.of(context).colorScheme.onSurface,
-          bottomBarBackground: Theme.of(context).colorScheme.background,
-          background: Theme.of(context).colorScheme.background,
-          bottomBarActiveItemColor: Theme.of(context).colorScheme.onSurface,
-          bottomBarInactiveItemColor: Theme.of(
-            context,
-          ).colorScheme.onSurface.withOpacity(0.4),
+          appBarBackground: barBgColor, // 🎯 bgColor와 일치
+          appBarColor: fgColor, // 🎯 fgColor와 일치
+          bottomBarBackground: barBgColor, // 🎯 bgColor와 일치
+          background: bgColor, // 🎯 bgColor로 통일
+          bottomBarActiveItemColor: fgColor, // 🎯 fgColor와 일치
+          bottomBarInactiveItemColor: fgColor.withOpacity(
+            0.4,
+          ), // 🎯 fgColor와 일치
         ),
         icons: TuneEditorIcons(
           backButton: Icons.arrow_back_ios_new,
@@ -230,18 +230,25 @@ class CustomImageEditorScreen extends StatelessWidget {
       ),
     );
 
-    return ProImageEditor.memory(
-      imageBytes,
-      callbacks: ProImageEditorCallbacks(
-        onImageEditingComplete: (Uint8List bytes) async {
-          // 편집 완료 시 NodeComponentService에 반영
-          if (selectedId != null) {
-            nodeService.applyEditedBytes(nodeId: selectedId, bytes: bytes);
-          }
-          Navigator.pop(context, bytes);
-        },
+    return Scaffold(
+      backgroundColor: bgColor, // 🎯 하단 바 밑 배경색 추가
+      body: SafeArea(
+        top: false, // 상단 SafeArea는 제거 (앱바가 있으므로)
+        bottom: true, // 하단 SafeArea는 유지
+        child: ProImageEditor.memory(
+          imageBytes,
+          callbacks: ProImageEditorCallbacks(
+            onImageEditingComplete: (Uint8List bytes) async {
+              // 편집 완료 시 NodeComponentService에 반영
+              if (selectedId != null) {
+                nodeService.applyEditedBytes(nodeId: selectedId, bytes: bytes);
+              }
+              Navigator.pop(context, bytes);
+            },
+          ),
+          configs: configs,
+        ),
       ),
-      configs: configs,
     );
   }
 }

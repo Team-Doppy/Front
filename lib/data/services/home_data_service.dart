@@ -214,7 +214,7 @@ class HomeDataService {
 
     final imagesToCache =
         posts
-            .take(3) // 최대 3개만
+            .take(10) // 🎯 최대 10개로 증가 (성능 개선)
             .where((post) => post.thumbnailImageUrl.isNotEmpty)
             .where((post) {
               // 🎯 비디오 파일(.mp4, .mov 등) 제외 - 이미지만 프리캐시

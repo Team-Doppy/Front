@@ -21,7 +21,7 @@ import 'package:doppy/providers/group_provider.dart';
 import 'package:doppy/providers/feed_provider/my_profile_feed_provider.dart';
 import 'package:doppy/providers/feed_provider/base_feed_provider.dart';
 import 'package:doppy/data/models/user_model.dart';
-import 'package:doppy/image/profile_image_bottom_sheet.dart';
+import 'package:doppy/pages/components/profile_edit_sheet.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'dart:io';
@@ -762,6 +762,8 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                   profileImageUrl: me.profileImageUrl,
                   bio: me.selfIntroduction,
                   friendCount: me.friendCount ?? 0,
+                  links: me.links,
+                  linkTitles: me.linkTitles,
                 );
               },
             ),
@@ -1114,8 +1116,8 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
       context: context,
       barrierColor:
           Theme.of(context).brightness == Brightness.dark
-              ? Colors.black.withOpacity(0.3)
-              : Colors.black.withOpacity(0.6),
+              ? Colors.black.withOpacity(0.85)
+              : Colors.grey.shade200.withOpacity(0.6),
       builder: (BuildContext context) {
         return Stack(
           children: [
@@ -1125,7 +1127,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
               child: Padding(
                 padding: const EdgeInsets.symmetric(
                   horizontal: 10,
-                  vertical: 20,
+                  vertical: 0,
                 ),
                 child: GestureDetector(
                   onTap: () {}, // 모달 컨텐츠 탭 시 배경으로 이벤트 전파 방지
@@ -1142,9 +1144,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                             maxWidth: MediaQuery.of(context).size.width,
                           ),
                           decoration: BoxDecoration(
-                            color: Theme.of(
-                              context,
-                            ).colorScheme.surface.withOpacity(0.95),
+                            color: Theme.of(context).colorScheme.surface,
                             borderRadius: BorderRadius.circular(30),
                           ),
                           child: Column(
@@ -1220,9 +1220,9 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                           ),
                         ),
 
-                        SizedBox(height: 15),
+                        SizedBox(height: 16),
                         Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 4),
+                          padding: const EdgeInsets.symmetric(horizontal: 0),
                           child: ElevatedButton(
                             style: ElevatedButton.styleFrom(
                               minimumSize: Size(double.infinity, 53),
@@ -1387,7 +1387,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
       backgroundColor: Colors.transparent,
 
       builder: (BuildContext context) {
-        return ProfileImageBottomSheet(
+        return ProfileEditBottomSheet(
           singleSelect: true,
           onClearProfileImage: _clearProfileImage,
           onImagesSelected: (files) => _handleImageSelected(files.first),
@@ -1420,6 +1420,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
             required String alias,
             required String description,
             List<String>? links, // 🎯 프로필 링크 목록 (최대 3개)
+            Map<String, String>? linkTitles, // 🎯 링크 타이틀 (URL -> 타이틀)
           }) async {
             // UserProvider를 통해 API 호출 및 상태 업데이트
             final userProvider = context.read<UserProvider>();
@@ -1428,6 +1429,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
               alias: alias,
               selfIntroduction: description,
               links: links,
+              linkTitles: linkTitles,
             );
 
             if (!success && mounted) {

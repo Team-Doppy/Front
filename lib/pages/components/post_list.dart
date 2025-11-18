@@ -1,15 +1,15 @@
-import 'dart:ui' as ui;
+import 'dart:async';
 import 'package:doppy/pages/components/post_card.dart';
 import 'package:doppy/pages/components/shimmer_box.dart';
 import 'package:doppy/pages/components/custom_refresh_indicator.dart';
 import 'package:doppy/pages/screens/post_reader_screen.dart';
-import 'package:doppy/l10n/app_localizations.dart';
 import 'package:flutter/material.dart';
 import 'package:doppy/data/models/post_data.dart';
 import 'package:doppy/data/services/like_service.dart';
 import 'package:doppy/utils/network_utils.dart';
 import 'package:flutter/rendering.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:doppy/l10n/app_localizations.dart';
 
 class PostList extends StatefulWidget {
   final double containerWidth;
@@ -22,18 +22,15 @@ class PostList extends StatefulWidget {
   final bool showCardShimmer;
 
   // 홈화면 앱바 관련 파라미터들
-  final bool isShowingSearchResults;
-  final String searchQuery;
-  final VoidCallback? onSearchChipTap;
-  final VoidCallback? onClearSearch;
-  final bool isShowingFriendsOnly;
-  final VoidCallback? onFilterTap;
+  final bool isShowingFriendsOnly; // 친구글 탭인지 전체글 탭인지
+  final VoidCallback? onFilterTap; // 섹션 전환 콜백
   final bool showAppBar; // 앱바 표시 여부
   final String? sectionLabel; // 섹션 레이블 (친구글/전체글)
   final double appBarOpacity; // 앱바 추가 투명도 (섹션 전환 시 페이드 효과)
   final NetworkError? networkError; // 네트워크 에러 상태
   final VoidCallback? onRetryError; // 에러 재시도 콜백
   final bool isTabActive; // 탭이 활성화되었는지 (다른 탭으로 이동하면 비디오 정지)
+  final Function(String?)? onBackgroundImageChanged; // 배경 이미지 URL 변경 콜백
 
   const PostList({
     super.key,
@@ -45,10 +42,6 @@ class PostList extends StatefulWidget {
     this.onRefresh,
     this.onPageChanged,
     this.showCardShimmer = false,
-    this.isShowingSearchResults = false,
-    this.searchQuery = '',
-    this.onSearchChipTap,
-    this.onClearSearch,
     this.isShowingFriendsOnly = false,
     this.onFilterTap,
     this.showAppBar = true, // 기본값은 true (기존 동작 유지)
@@ -57,6 +50,7 @@ class PostList extends StatefulWidget {
     this.networkError, // 네트워크 에러 상태
     this.onRetryError, // 에러 재시도 콜백
     this.isTabActive = true, // 기본값은 활성화
+    this.onBackgroundImageChanged, // 배경 이미지 URL 변경 콜백
   });
 
   @override
@@ -68,9 +62,52 @@ class _PostListState extends State<PostList> {
   final ScrollController _scrollController = ScrollController();
   int _currentIndex = 0;
   late List<PostData> _items;
+
+  // 🎯 친구글이 없을 때 보여줄 온보딩 플레이스홀더 아이템
+  final List<PostData> _noFriendPostItem = [
+    PostData(
+      id: 'onboarding_placeholder',
+      title: '아직 친구글이 없어요',
+      content: '', // 🎯 content는 빈 문자열로 (JSON 파싱 에러 방지)
+      author: '',
+      authorProfileImageUrl: 'test',
+      thumbnailImageUrl:
+          'https://i.pinimg.com/1200x/a4/94/e4/a494e4a6fdf63748f170dd2ad4be92d5.jpg',
+      createdAt: DateTime.now().toIso8601String(),
+      updatedAt: DateTime.now().toIso8601String(),
+      summary: '친구를 추가해주세요\n그룹을 만들고 공유해보세요', // 🎯 summary에 텍스트 넣기
+      accessLevel: AccessLevel.public,
+      viewCount: 0,
+      likeCount: 0,
+      commentCount: 0,
+      isLiked: false,
+    ),
+    PostData(
+      id: 'onboarding_placeholder33',
+      title: '프로필을 설정',
+      content: '', // 🎯 content는 빈 문자열로 (JSON 파싱 에러 방지)
+      author: 'test',
+      authorProfileImageUrl: 'test',
+      thumbnailImageUrl:
+          'https://i.pinimg.com/736x/db/6b/c6/db6bc6070a06ab10c04855325887f73b.jpg',
+      createdAt: DateTime.now().toIso8601String(),
+      updatedAt: DateTime.now().toIso8601String(),
+      summary: '프로필을 설정해주세요\n그룹을 만들고 공유해보세요', // 🎯 summary에 텍스트 넣기
+      accessLevel: AccessLevel.public,
+      viewCount: 0,
+      likeCount: 0,
+      commentCount: 0,
+      isLiked: false,
+    ),
+  ];
+
   final Set<String> _likingInFlight = <String>{};
   final LikeService _likeService = LikeService();
   bool _suppressVisibility = false; // 글 보기로 이동 시 일시적으로 재생 차단
+
+  // 🎯 타이틀 페이드 아웃용
+  double _titleOpacity = 1.0;
+  Timer? _titleFadeTimer;
 
   double _gestureAccumY = 0.0;
   double _gestureAccumX = 0.0;
@@ -90,6 +127,38 @@ class _PostListState extends State<PostList> {
 
     // 각 게시물의 좋아요 상태 확인
     _loadLikeStatusForAllPosts();
+
+    // 초기 배경 이미지 업데이트
+    _updateBackgroundImage();
+
+    // 🎯 타이틀 페이드 아웃 시작
+    _startTitleFadeOut();
+  }
+
+  // 🎯 타이틀 페이드 아웃 시작 (전체글 탭일 때만)
+  void _startTitleFadeOut() {
+    _titleFadeTimer?.cancel();
+
+    // 친구 탭이면 "Doppy"는 계속 표시
+    if (widget.isShowingFriendsOnly) {
+      setState(() {
+        _titleOpacity = 1.0;
+      });
+      return;
+    }
+
+    // 전체글 탭일 때만 페이드 아웃
+    setState(() {
+      _titleOpacity = 1.0;
+    });
+
+    _titleFadeTimer = Timer(Duration(milliseconds: 1500), () {
+      if (mounted && !widget.isShowingFriendsOnly) {
+        setState(() {
+          _titleOpacity = 0.0;
+        });
+      }
+    });
   }
 
   void _onLikeServiceChanged() {
@@ -106,6 +175,46 @@ class _PostListState extends State<PostList> {
         _likeService.setInitialLikeData(postId, post.isLiked, post.likeCount);
       }
     }
+  }
+
+  // 🎯 현재 포스트의 배경 이미지 URL을 계산해서 콜백으로 전달
+  void _updateBackgroundImage() {
+    if (widget.onBackgroundImageChanged == null) return;
+
+    // 빌드 중이 아닐 때만 콜백 호출 (addPostFrameCallback으로 지연)
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || widget.onBackgroundImageChanged == null) return;
+
+      // 친구글이 없을 때는 _noFriendPostItem 사용
+      final List<PostData> postsToUse =
+          _items.isEmpty && widget.isShowingFriendsOnly
+              ? _noFriendPostItem
+              : _items;
+
+      if (postsToUse.isEmpty) {
+        widget.onBackgroundImageChanged!(null);
+        return;
+      }
+
+      final safeIndex = _currentIndex.clamp(0, postsToUse.length - 1);
+      final currentPost = postsToUse[safeIndex];
+      final String imageUrl = currentPost.thumbnailImageUrl.trim();
+
+      // 비디오 URL 체크
+      final isVideoUrl =
+          imageUrl.toLowerCase().endsWith('.mp4') ||
+          imageUrl.toLowerCase().endsWith('.mov') ||
+          imageUrl.toLowerCase().endsWith('.avi') ||
+          imageUrl.toLowerCase().endsWith('.webm') ||
+          imageUrl.contains('/videos/');
+
+      // 네트워크 이미지이고 비디오가 아닐 때만 전달
+      if (imageUrl.startsWith('http') && !isVideoUrl) {
+        widget.onBackgroundImageChanged!(imageUrl);
+      } else {
+        widget.onBackgroundImageChanged!(null);
+      }
+    });
   }
 
   void _loadLikeStatusForNewPosts(List<PostData> newPosts) {
@@ -169,10 +278,19 @@ class _PostListState extends State<PostList> {
         }
       }
     }
+
+    // 배경 이미지 업데이트
+    _updateBackgroundImage();
+
+    // 🎯 섹션 레이블이 변경되면 타이틀 페이드 아웃 재시작
+    if (widget.sectionLabel != oldWidget.sectionLabel) {
+      _startTitleFadeOut();
+    }
   }
 
   @override
   void dispose() {
+    _titleFadeTimer?.cancel();
     _likeService.removeListener(_onLikeServiceChanged);
     _scrollController.dispose();
     _pageController.dispose();
@@ -198,126 +316,46 @@ class _PostListState extends State<PostList> {
             floating: true,
             snap: false,
             title: AnimatedOpacity(
-              opacity: (1.0 - _pullProgress) * widget.appBarOpacity,
+              opacity:
+                  widget.isShowingFriendsOnly
+                      ? (1.0 - _pullProgress) *
+                          widget
+                              .appBarOpacity // 🎯 친구 탭: "Doppy"는 계속 표시
+                      : (1.0 - _pullProgress) *
+                          widget.appBarOpacity *
+                          _titleOpacity, // 🎯 전체글 탭: 2초 후 페이드 아웃
               duration:
                   _pullProgress != 0.0
                       ? Duration(milliseconds: 0)
-                      : Duration(milliseconds: 100),
+                      : Duration(milliseconds: 300), // 🎯 페이드 아웃을 더 부드럽게
               curve: Curves.easeInOut,
-              child:
-                  widget.isShowingSearchResults
-                      ? Container() // 검색 결과일 때는 doppy 로고 숨김
-                      : Container(
-                        padding: const EdgeInsets.only(bottom: 5),
-                        child: Text(
-                          ' doppy',
-                          style: GoogleFonts.notoSansKr(
-                            fontSize: 22,
-                            fontWeight: FontWeight.bold,
+              child: Container(
+                padding: const EdgeInsets.only(bottom: 6),
+                child: Text(
+                  widget.isShowingFriendsOnly
+                      ? ' Doppy'
+                      : ' ${context.tr('all_posts')}',
+                  style:
+                      widget.isShowingFriendsOnly
+                          ? GoogleFonts.notoSansKr(
+                            fontSize: 20,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: -0.3,
+                            height: 1.2,
+                            color: Theme.of(context).colorScheme.primary,
+                          )
+                          : GoogleFonts.gothicA1(
+                            fontSize: 20,
+                            fontWeight: FontWeight.w400,
+                            letterSpacing: -0.3,
+                            height: 1.2,
                             color: Theme.of(context).colorScheme.primary,
                           ),
-                        ),
-                      ),
+                ),
+              ),
             ),
             centerTitle: false,
-            actions: [
-              // 검색 중이면 검색어 칩, 아니면 필터 아이콘
-              AnimatedOpacity(
-                opacity: (1.0 - _pullProgress) * widget.appBarOpacity,
-                duration: Duration(milliseconds: 150),
-                curve: Curves.easeInOut,
-                child:
-                    widget.isShowingSearchResults &&
-                            widget.searchQuery.isNotEmpty
-                        ? GestureDetector(
-                          onTap: widget.onSearchChipTap,
-                          child: Container(
-                            margin: const EdgeInsets.only(right: 8),
-                            child: ClipRRect(
-                              borderRadius: BorderRadius.circular(16),
-                              child: BackdropFilter(
-                                filter: ui.ImageFilter.blur(
-                                  sigmaX: 10,
-                                  sigmaY: 10,
-                                ),
-                                child: Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 12,
-                                    vertical: 6,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: Theme.of(
-                                      context,
-                                    ).colorScheme.surface.withOpacity(0.2),
-                                    borderRadius: BorderRadius.circular(16),
-                                    border: Border.all(
-                                      color: Theme.of(
-                                        context,
-                                      ).colorScheme.primary.withOpacity(0.3),
-                                      width: 1,
-                                    ),
-                                  ),
-                                  child: Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      const SizedBox(width: 8),
-                                      Text(
-                                        widget.searchQuery,
-                                        style: TextStyle(
-                                          color:
-                                              Theme.of(
-                                                context,
-                                              ).colorScheme.onSurface,
-                                          fontSize: 14,
-                                          fontWeight: FontWeight.w500,
-                                        ),
-                                      ),
-                                      const SizedBox(width: 10),
-                                      GestureDetector(
-                                        onTap: widget.onClearSearch,
-                                        child: Icon(
-                                          Icons.close,
-                                          size: 20,
-                                          color: Theme.of(context)
-                                              .colorScheme
-                                              .primary
-                                              .withOpacity(0.7),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ),
-                        )
-                        : Padding(
-                          padding: const EdgeInsets.only(right: 20, top: 6),
-                          child: GestureDetector(
-                            onTap: widget.onFilterTap,
-                            child: Row(
-                              children: [
-                                if (widget.sectionLabel != null)
-                                  Padding(
-                                    padding: const EdgeInsets.only(top: 2),
-                                    child: Text(
-                                      widget.sectionLabel!,
-                                      style: TextStyle(
-                                        color: Theme.of(
-                                          context,
-                                        ).colorScheme.primary.withOpacity(1),
-                                        fontSize: 16,
-                                        fontWeight: FontWeight.w600,
-                                      ),
-                                    ),
-                                  ),
-                                // 위로 가는 화살표 제거 (텍스트만 표시)
-                              ],
-                            ),
-                          ),
-                        ),
-              ),
-            ],
+            actions: [],
           ),
         SliverToBoxAdapter(
           child: Container(
@@ -327,65 +365,134 @@ class _PostListState extends State<PostList> {
         ),
 
         // PageView 또는 빈 상태
-        SliverToBoxAdapter(
-          child: Container(
-            height: 400,
-            decoration: BoxDecoration(color: Colors.transparent),
-            child:
-                _items.isEmpty && !widget.showCardShimmer && !widget.isLoading
-                    ? _buildEmptyState(context)
-                    : PageView.builder(
-                      scrollDirection: Axis.horizontal,
-                      controller: _pageController,
-                      pageSnapping: true,
-                      physics: const ClampingScrollPhysics(),
-                      clipBehavior: Clip.none,
-                      padEnds: true,
-                      onPageChanged: (index) {
-                        setState(() {
-                          _currentIndex = index;
-                        });
+        if (_items.isEmpty && !widget.showCardShimmer && !widget.isLoading)
+          // 🎯 친구글이 없을 때는 온보딩 플레이스홀더 표시
+          widget.isShowingFriendsOnly
+              ? SliverToBoxAdapter(
+                child: Container(
+                  height: 400,
+                  decoration: BoxDecoration(color: Colors.transparent),
+                  child: PageView.builder(
+                    scrollDirection: Axis.horizontal,
+                    controller: _pageController,
+                    pageSnapping: true,
+                    physics: const ClampingScrollPhysics(),
+                    clipBehavior: Clip.none,
+                    padEnds: true,
+                    onPageChanged: (index) {
+                      setState(() {
+                        _currentIndex = index;
+                      });
 
-                        // 페이지 변경 콜백 호출
-                        if (widget.onPageChanged != null) {
-                          widget.onPageChanged!(index);
-                        }
+                      // 페이지 변경 콜백 호출
+                      if (widget.onPageChanged != null) {
+                        widget.onPageChanged!(index);
+                      }
 
-                        // 무한 스크롤: 마지막 페이지 근처에서 더 로드
-                        if (widget.onLoadMore != null &&
-                            index >= _items.length - 2 &&
-                            !widget.isLoadingMore) {
-                          print(
-                            '🔄 로드 모어 실행! 현재 인덱스: $index, 전체 아이템: ${_items.length}',
-                          );
-                          widget.onLoadMore!();
-                        }
-                      },
-                      itemCount: _items.length + (widget.isLoadingMore ? 1 : 0),
-                      itemBuilder: (context, index) {
-                        if (index >= _items.length) {
-                          // 로딩 인디케이터
-                          return const Center(
-                            child: Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                CircularProgressIndicator(color: Colors.white),
-                                SizedBox(height: 16),
-                                Text(
-                                  '더 많은 포스트를 불러오는 중...',
-                                  style: TextStyle(color: Colors.white70),
-                                ),
-                              ],
-                            ),
-                          );
-                        }
-
-                        final post = _items[index];
-                        return _buildPostItem(context, post, index);
-                      },
+                      // 배경 이미지 업데이트
+                      _updateBackgroundImage();
+                    },
+                    itemCount: _noFriendPostItem.length,
+                    itemBuilder: (context, index) {
+                      final post = _noFriendPostItem[index];
+                      return _buildPostItem(context, post, index);
+                    },
+                  ),
+                ),
+              )
+              // 🎯 전체글이 비어있을 때는 빈 상태 표시
+              : SliverFillRemaining(
+                hasScrollBody: false,
+                child: Center(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 32),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(
+                          Icons.article_outlined,
+                          size: 64,
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.onSurface.withOpacity(0.3),
+                        ),
+                        const SizedBox(height: 16),
+                        Text(
+                          '포스트가 없습니다',
+                          style: GoogleFonts.notoSansKr(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w500,
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.onSurface.withOpacity(0.7),
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                      ],
                     ),
+                  ),
+                ),
+              )
+        else
+          SliverToBoxAdapter(
+            child: Container(
+              height: 400,
+              decoration: BoxDecoration(color: Colors.transparent),
+              child: PageView.builder(
+                scrollDirection: Axis.horizontal,
+                controller: _pageController,
+                pageSnapping: true,
+                physics: const ClampingScrollPhysics(),
+                clipBehavior: Clip.none,
+                padEnds: true,
+                onPageChanged: (index) {
+                  setState(() {
+                    _currentIndex = index;
+                  });
+
+                  // 페이지 변경 콜백 호출
+                  if (widget.onPageChanged != null) {
+                    widget.onPageChanged!(index);
+                  }
+
+                  // 배경 이미지 업데이트
+                  _updateBackgroundImage();
+
+                  // 무한 스크롤: 마지막 페이지 근처에서 더 로드 (더 일찍 트리거)
+                  if (widget.onLoadMore != null &&
+                      index >= _items.length - 5 &&
+                      !widget.isLoadingMore) {
+                    print(
+                      '🔄 로드 모어 실행! 현재 인덱스: $index, 전체 아이템: ${_items.length}',
+                    );
+                    widget.onLoadMore!();
+                  }
+                },
+                itemCount: _items.length + (widget.isLoadingMore ? 1 : 0),
+                itemBuilder: (context, index) {
+                  if (index >= _items.length) {
+                    // 로딩 인디케이터
+                    return const Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          CircularProgressIndicator(color: Colors.white),
+                          SizedBox(height: 16),
+                          Text(
+                            '더 많은 포스트를 불러오는 중...',
+                            style: TextStyle(color: Colors.white70),
+                          ),
+                        ],
+                      ),
+                    );
+                  }
+
+                  final post = _items[index];
+                  return _buildPostItem(context, post, index);
+                },
+              ),
+            ),
           ),
-        ),
 
         // Author Section
         SliverFillRemaining(
@@ -450,8 +557,7 @@ class _PostListState extends State<PostList> {
 
               // 위로 스와이프 감지 (섹션 전환용)
               if (_gestureAccumY < -_verticalSwipeThreshold &&
-                  widget.onFilterTap != null &&
-                  !widget.isShowingSearchResults) {
+                  widget.onFilterTap != null) {
                 print(
                   '⬆️ Listener로 위로 스와이프 감지! 섹션 전환 (임계값: $_verticalSwipeThreshold)',
                 );
@@ -825,108 +931,20 @@ class _PostListState extends State<PostList> {
     );
   }
 
-  Widget _buildEmptyState(BuildContext context) {
-    // 현재 탭에 따른 메시지 결정
-    String message;
-    String subtitle;
-    bool showRecommendButton = false;
-
-    if (widget.isShowingSearchResults) {
-      message = context.tr('no_search_results_short');
-      subtitle = '"${widget.searchQuery}"${context.tr('no_results_for_query')}';
-      showRecommendButton = false; // 검색 중에는 추천글 이동 버튼 숨김
-    } else if (widget.isShowingFriendsOnly) {
-      message = context.tr('no_friend_posts');
-      subtitle = context.tr('post_first_today');
-      showRecommendButton = true; // 친구글 탭에서만 추천글 버튼 표시
-    } else {
-      message = context.tr('no_posts_yet');
-      subtitle = context.tr('new_posts_coming_soon');
-    }
-
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          SizedBox(height: 200),
-          Text(
-            message,
-            style: TextStyle(
-              color: Theme.of(context).colorScheme.onSurface,
-              fontSize: 20,
-              fontWeight: FontWeight.w600,
-              letterSpacing: -0.2,
-            ),
-            textAlign: TextAlign.center,
-          ),
-          const SizedBox(height: 8),
-          Text(
-            subtitle,
-            style: TextStyle(
-              color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
-              fontSize: 14,
-              fontWeight: FontWeight.w400,
-              height: 1.4,
-            ),
-            textAlign: TextAlign.center,
-          ),
-
-          // 추천글 보러가기 버튼 (친구글 탭에서만 표시)
-          if (showRecommendButton) ...[
-            const SizedBox(height: 20),
-            GestureDetector(
-              onTap: () {
-                // 전체글 탭으로 전환 (위로 스와이프와 동일한 동작)
-                if (widget.onFilterTap != null) {
-                  widget.onFilterTap!();
-                }
-              },
-              child: Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 40,
-                  vertical: 12,
-                ),
-                decoration: BoxDecoration(
-                  color: Theme.of(context).colorScheme.primary,
-                  borderRadius: BorderRadius.circular(24),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Theme.of(
-                        context,
-                      ).colorScheme.primary.withOpacity(0.3),
-                      blurRadius: 8,
-                      offset: const Offset(0, 2),
-                    ),
-                  ],
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      context.tr('go_to_recommended'),
-                      style: TextStyle(
-                        color: Theme.of(context).colorScheme.onPrimary,
-                        fontSize: 14,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-
   Widget _textArea(BuildContext context) {
-    if (_items.isEmpty) {
+    // 🎯 친구글이 없을 때는 _noFriendPostItem 사용
+    final List<PostData> postsToUse =
+        _items.isEmpty && widget.isShowingFriendsOnly
+            ? _noFriendPostItem
+            : _items;
+
+    if (postsToUse.isEmpty) {
       // 빈 상태일 때는 빈 공간 표시
       return const SizedBox.shrink();
     }
-    final safeIndex = _currentIndex.clamp(0, _items.length - 1);
-    final post = _items[safeIndex];
+
+    final safeIndex = _currentIndex.clamp(0, postsToUse.length - 1);
+    final post = postsToUse[safeIndex];
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 0),

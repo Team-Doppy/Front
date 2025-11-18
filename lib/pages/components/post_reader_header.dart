@@ -429,7 +429,7 @@ class PostReaderAppBar extends StatelessWidget {
                     ),
                     const SizedBox(width: 15),
                     // 🎯 다른 사람 포스트일 때 타이틀 표시 (헤더가 보이지 않을 때만, 즉 300px 이상일 때만)
-                    if (!isMyPost && showAppBar)
+                    if (showAppBar)
                       Expanded(
                         child: AnimatedOpacity(
                           opacity: scrollOffset > 200.0 ? 1.0 : 0.0,

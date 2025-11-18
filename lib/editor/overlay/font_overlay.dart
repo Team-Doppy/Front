@@ -83,6 +83,24 @@ class _FontOverlayState extends State<FontOverlay> {
   void initState() {
     super.initState();
     _loadPrefs();
+    _preloadVisibleFonts();
+  }
+
+  /// 보이는 폰트들을 미리 프리로드 (깜빡임 방지)
+  Future<void> _preloadVisibleFonts() async {
+    // 우선순위가 높은 폰트들 먼저 프리로드 (현재 사용 중, 즐겨찾기, 손글씨, 산세리프)
+    final priorityFonts = FontCatalog.all.take(30).toList(); // 상위 30개만 프리로드
+
+    for (final font in priorityFonts) {
+      if (font.googleFont != null) {
+        try {
+          // 구글 폰트 프리로드
+          await font.googleFont!(fontWeight: FontWeight.w400, fontSize: 14);
+        } catch (e) {
+          // 폰트 로드 실패는 무시 (나중에 필요할 때 다시 시도)
+        }
+      }
+    }
   }
 
   Future<void> _loadPrefs() async {
@@ -95,7 +113,7 @@ class _FontOverlayState extends State<FontOverlay> {
       if ((widget.initialCurrentFamily ?? '').isNotEmpty) {
         _current = (widget.initialCurrentFamily, cur.$2);
       } else {
-      _current = cur;
+        _current = cur;
       }
     });
   }
@@ -264,7 +282,7 @@ class _FontOverlayState extends State<FontOverlay> {
                   );
                 }
 
-                // 즐겨찾기와 기타로 분류
+                // 즐겨찾기와 기타로 분류 (손글씨, 산세리프 우선)
                 final favorites =
                     filtered
                         .where(
@@ -273,6 +291,8 @@ class _FontOverlayState extends State<FontOverlay> {
                               f.identifier != currentChoice?.identifier,
                         )
                         .toList();
+
+                // 기타 폰트를 카테고리별로 분류
                 final others =
                     filtered
                         .where(
@@ -282,10 +302,26 @@ class _FontOverlayState extends State<FontOverlay> {
                         )
                         .toList();
 
+                // 손글씨 우선
+                final handwriting =
+                    others.where((f) => f.category == '손글씨').toList();
+                // 산세리프 (반듯한 서체) 우선
+                final sansSerif =
+                    others.where((f) => f.category == '산세리프').toList();
+                // 나머지
+                final rest =
+                    others
+                        .where(
+                          (f) => f.category != '손글씨' && f.category != '산세리프',
+                        )
+                        .toList();
+
                 final ordered = <FontItem>[
                   currentChoice,
                   ...favorites,
-                  ...others,
+                  ...handwriting,
+                  ...sansSerif,
+                  ...rest,
                 ];
 
                 return Center(
@@ -357,23 +393,10 @@ class _FontOverlayState extends State<FontOverlay> {
                                           ],
                                         ),
 
-                                        Text(
-                                          f.supportsKorean
-                                              ? '가나다 ABCD 1234'
-                                              : 'ABCD 1234 !?',
-                                          style: TextStyle(
-                                            color:
-                                                isCurrent
-                                                    ? onSurface
-                                                    : onSurface.withOpacity(
-                                                      0.5,
-                                                    ),
-                                            fontSize: isCurrent ? 18 : 14,
-                                            fontWeight:
-                                                isCurrent
-                                                    ? FontWeight.w600
-                                                    : FontWeight.w400,
-                                          ),
+                                        _FontPreviewText(
+                                          fontItem: f,
+                                          isCurrent: isCurrent,
+                                          onSurface: onSurface,
                                         ),
                                       ],
                                     ),
@@ -408,6 +431,124 @@ class _FontOverlayState extends State<FontOverlay> {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// 폰트 미리보기 텍스트 (폰트 로딩 안정화)
+class _FontPreviewText extends StatefulWidget {
+  final FontItem fontItem;
+  final bool isCurrent;
+  final Color onSurface;
+
+  const _FontPreviewText({
+    required this.fontItem,
+    required this.isCurrent,
+    required this.onSurface,
+  });
+
+  @override
+  State<_FontPreviewText> createState() => _FontPreviewTextState();
+}
+
+class _FontPreviewTextState extends State<_FontPreviewText> {
+  TextStyle? _cachedStyle;
+  bool _isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadFont();
+  }
+
+  @override
+  void didUpdateWidget(_FontPreviewText oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.fontItem != widget.fontItem ||
+        oldWidget.isCurrent != widget.isCurrent) {
+      _cachedStyle = null;
+      _isLoading = true;
+      _loadFont();
+    }
+  }
+
+  Future<void> _loadFont() async {
+    if (widget.fontItem.googleFont != null) {
+      try {
+        // 구글 폰트를 미리 로드하여 캐시
+        final style = widget.fontItem.googleFont!(
+          fontWeight: widget.isCurrent ? FontWeight.w600 : FontWeight.w400,
+          fontSize: widget.isCurrent ? 18 : 14,
+        );
+
+        // 폰트가 실제로 로드될 때까지 기다림
+        await Future.delayed(const Duration(milliseconds: 50));
+
+        if (mounted) {
+          setState(() {
+            _cachedStyle = style.copyWith(
+              color:
+                  widget.isCurrent
+                      ? widget.onSurface
+                      : widget.onSurface.withOpacity(0.5),
+            );
+            _isLoading = false;
+          });
+        }
+      } catch (e) {
+        // 폰트 로드 실패 시 기본 스타일 사용
+        if (mounted) {
+          setState(() {
+            _cachedStyle = widget.fontItem.getTextStyle(
+              fontWeight: widget.isCurrent ? FontWeight.w600 : FontWeight.w400,
+              fontSize: widget.isCurrent ? 18 : 14,
+              color:
+                  widget.isCurrent
+                      ? widget.onSurface
+                      : widget.onSurface.withOpacity(0.5),
+            );
+            _isLoading = false;
+          });
+        }
+      }
+    } else {
+      // 구글 폰트가 아닌 경우 즉시 적용
+      if (mounted) {
+        setState(() {
+          _cachedStyle = widget.fontItem.getTextStyle(
+            fontWeight: widget.isCurrent ? FontWeight.w600 : FontWeight.w400,
+            fontSize: widget.isCurrent ? 18 : 14,
+            color:
+                widget.isCurrent
+                    ? widget.onSurface
+                    : widget.onSurface.withOpacity(0.5),
+          );
+          _isLoading = false;
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_isLoading || _cachedStyle == null) {
+      // 로딩 중일 때는 기본 스타일로 표시 (깜빡임 최소화)
+      return Text(
+        widget.fontItem.supportsKorean ? '가나다 ABCD 1234' : 'ABCD 1234 !?',
+        style: TextStyle(
+          fontWeight: widget.isCurrent ? FontWeight.w600 : FontWeight.w400,
+          fontSize: widget.isCurrent ? 18 : 14,
+          color:
+              widget.isCurrent
+                  ? widget.onSurface
+                  : widget.onSurface.withOpacity(0.5),
+        ),
+      );
+    }
+
+    return Text(
+      widget.fontItem.supportsKorean ? '가나다 ABCD 1234' : 'ABCD 1234 !?',
+      style: _cachedStyle,
     );
   }
 }

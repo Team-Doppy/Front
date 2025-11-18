@@ -16,35 +16,38 @@ class TimeUtils {
         return dateTime.toLocal();
       }
 
-      // UTC로 표시되어 있지만 isUtc가 false인 경우 명시적으로 변환
-      // (예: ISO 문자열이 'Z'로 끝나는 경우)
-      if (utcString.endsWith('Z')) {
-        return DateTime.utc(
-          dateTime.year,
-          dateTime.month,
-          dateTime.day,
-          dateTime.hour,
-          dateTime.minute,
-          dateTime.second,
-          dateTime.millisecond,
-          dateTime.microsecond,
-        ).toLocal();
-      }
+      final hasTimeZoneInfo = _timeZoneRegex.hasMatch(
+        utcString.toUpperCase().trim(),
+      );
 
-      // UTC 오프셋이 포함된 경우 (예: "+09:00")
-      if (utcString.contains('+') || utcString.contains('-')) {
-        // ISO 문자열을 파싱하면 자동으로 변환됨
+      if (hasTimeZoneInfo) {
+        // ISO 문자열이 Z 또는 +hh:mm 오프셋을 포함하면 DateTime.parse가 이미 현지화 처리
         return dateTime.toLocal();
       }
 
-      // 이미 로컬 시간으로 파싱된 경우
-      return dateTime;
+      // 타임존 정보가 없지만 서버는 UTC로 보낸다고 가정 → UTC로 간주 후 변환
+      final assumedUtc = DateTime.utc(
+        dateTime.year,
+        dateTime.month,
+        dateTime.day,
+        dateTime.hour,
+        dateTime.minute,
+        dateTime.second,
+        dateTime.millisecond,
+        dateTime.microsecond,
+      );
+      return assumedUtc.toLocal();
     } catch (e) {
       // 파싱 실패 시 현재 시간 반환
       print('[TimeUtils] 시간 파싱 실패: $utcString, 에러: $e');
       return DateTime.now();
     }
   }
+
+  static final RegExp _timeZoneRegex = RegExp(
+    r'(Z|[+\-]\d{2}:\d{2})$',
+    caseSensitive: false,
+  );
 
   /// UTC DateTime을 로컬 DateTime으로 변환
   static DateTime utcToLocal(DateTime utcDateTime) {

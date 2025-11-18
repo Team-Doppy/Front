@@ -101,6 +101,7 @@ class _SharePostOverlayState extends State<SharePostOverlay> {
   bool _isSaving = false;
   bool _isCopied = false; // 🎯 복사 완료 상태
   bool _isBottomSheetCopied = false; // 🎯 바텀시트 내 복사 상태
+  bool _isSharingToInstagram = false; // 🎯 인스타그램 공유 중
   ShareTheme _currentTheme = ShareTheme.darkBlur; // 🎯 기본 테마
   String? _extractedThumbnailPath; // 🎯 비디오에서 추출한 썸네일 경로
   bool _isExtractingThumbnail = false; // 🎯 썸네일 추출 중
@@ -285,7 +286,12 @@ class _SharePostOverlayState extends State<SharePostOverlay> {
                     },
                     itemBuilder: (context, index) {
                       final theme = _themes[index % _themes.length];
-                      return _buildBackgroundForTheme(theme);
+                      // 🎯 드래그 중일 때는 블러 비활성화
+                      final isDragging = _verticalDragOffset > 0;
+                      return _buildBackgroundForTheme(
+                        theme,
+                        disableBlur: isDragging,
+                      );
                     },
                   ),
                 ),
@@ -297,9 +303,12 @@ class _SharePostOverlayState extends State<SharePostOverlay> {
                       key: _fullScreenKey,
                       child: Stack(
                         children: [
-                          // 🎯 캡처용 현재 테마 배경
+                          // 🎯 캡처용 현재 테마 배경 (캡처 시에는 블러 유지)
                           Positioned.fill(
-                            child: _buildBackgroundForTheme(_currentTheme),
+                            child: _buildBackgroundForTheme(
+                              _currentTheme,
+                              disableBlur: false,
+                            ),
                           ),
 
                           // 카드만 (헤더, 버튼 제외)
@@ -485,7 +494,10 @@ class _SharePostOverlayState extends State<SharePostOverlay> {
   }
 
   /// 🎯 테마별 배경 전체 (썸네일 + 필터)
-  Widget _buildBackgroundForTheme(ShareTheme theme) {
+  Widget _buildBackgroundForTheme(
+    ShareTheme theme, {
+    bool disableBlur = false,
+  }) {
     return Stack(
       children: [
         // 배경: 썸네일 이미지
@@ -504,20 +516,32 @@ class _SharePostOverlayState extends State<SharePostOverlay> {
           ),
         ),
         // 필터 효과
-        Positioned.fill(child: _buildBackgroundOverlay(theme)),
+        Positioned.fill(
+          child: _buildBackgroundOverlay(theme, disableBlur: disableBlur),
+        ),
       ],
     );
   }
 
   /// 🎯 배경 오버레이 (테마별)
-  Widget _buildBackgroundOverlay(ShareTheme theme) {
+  Widget _buildBackgroundOverlay(ShareTheme theme, {bool disableBlur = false}) {
     switch (theme) {
       case ShareTheme.darkBlur:
+        // 🎯 드래그 중일 때는 블러 비활성화 (부자연스러운 효과 방지)
+        if (disableBlur) {
+          return Container(color: Colors.black.withOpacity(0.7));
+        }
         return BackdropFilter(
           filter: ImageFilter.blur(sigmaX: 30, sigmaY: 30),
           child: Container(color: Colors.black.withOpacity(0.7)),
         );
       case ShareTheme.lightBlur:
+        // 🎯 드래그 중일 때는 블러 비활성화 (부자연스러운 효과 방지)
+        if (disableBlur) {
+          return Container(
+            color: const Color.fromARGB(255, 209, 209, 209).withOpacity(0.2),
+          );
+        }
         return BackdropFilter(
           filter: ImageFilter.blur(sigmaX: 30, sigmaY: 30),
           child: Container(
@@ -728,6 +752,7 @@ class _SharePostOverlayState extends State<SharePostOverlay> {
             onTap: _shareToInstagram,
             iconColor: _getTextColor(),
             backgroundColor: _getButtonBackgroundColor(),
+            isLoading: _isSharingToInstagram, // 🎯 로딩 상태 전달
           ),
         ],
       ),
@@ -1027,12 +1052,19 @@ class _SharePostOverlayState extends State<SharePostOverlay> {
 
   /// 🎯 Instagram 공유 (갤러리 선택 화면으로)
   Future<void> _shareToInstagram() async {
+    if (_isSharingToInstagram) return;
+
+    setState(() => _isSharingToInstagram = true);
+
     try {
       // 🎯 이미지를 갤러리에 먼저 저장
       final imageFile = await _captureCardAsImage();
 
       if (imageFile == null) {
         print('❌ 이미지 캡처 실패');
+        if (mounted) {
+          setState(() => _isSharingToInstagram = false);
+        }
         return;
       }
 
@@ -1056,6 +1088,7 @@ class _SharePostOverlayState extends State<SharePostOverlay> {
       // 저장 실패 시
       if (result == null || result['isSuccess'] != true) {
         if (mounted) {
+          setState(() => _isSharingToInstagram = false);
           ErrorHandler.showError(context, context.tr('image_save_failed'));
         }
         return;
@@ -1078,9 +1111,14 @@ class _SharePostOverlayState extends State<SharePostOverlay> {
           );
         }
       }
+
+      if (mounted) {
+        setState(() => _isSharingToInstagram = false);
+      }
     } catch (e) {
       print('❌ Instagram 공유 실패: $e');
       if (mounted) {
+        setState(() => _isSharingToInstagram = false);
         ErrorHandler.showError(context, context.tr('share_failed'));
       }
     }
@@ -1119,27 +1157,22 @@ class _SharePostOverlayState extends State<SharePostOverlay> {
 
       print('📏 원본 이미지 크기: ${originalImage.width}x${originalImage.height}');
 
-      // 🎯 3:4 비율 계산 (너비 기준) - 더 세로로 길게
-      final targetWidth = originalImage.width;
-      final targetHeight = (targetWidth * 4 / 3).round(); // 3:4 비율
-
-      // 🎯 상하를 균등하게 잘라냄 (중앙 정렬)
-      final cropY = ((originalImage.height - targetHeight) / 2).round().clamp(
-        0,
-        originalImage.height,
-      );
-      final cropHeight = targetHeight.clamp(0, originalImage.height);
+      // 🎯 세로 길이를 20% 줄이기 (위쪽 5%, 아래쪽 15% 제거) → 80%만 유지
+      final targetHeight = (originalImage.height * 0.9).round(); // 80%만 유지
+      final cropY = (originalImage.height).round(); // 위쪽 5% 제거
+      final cropWidth = originalImage.width;
+      final cropHeight = targetHeight;
 
       print(
-        '✂️ Crop 영역 (3:4): x=0, y=$cropY, width=$targetWidth, height=$cropHeight',
+        '✂️ Crop 영역 (세로 20% 줄임 - 위 5%, 아래 15%): x=0, y=$cropY, width=$cropWidth, height=$cropHeight',
       );
 
-      // 🎯 이미지 crop
+      // 🎯 이미지 crop (세로만 줄임)
       final croppedImage = img.copyCrop(
         originalImage,
         x: 0,
         y: cropY,
-        width: targetWidth,
+        width: cropWidth,
         height: cropHeight,
       );
 
@@ -1173,6 +1206,7 @@ class _ShareOption extends StatelessWidget {
   final VoidCallback onTap;
   final Color iconColor; // 🎯 아이콘 색상
   final Color backgroundColor; // 🎯 배경 색상
+  final bool isLoading; // 🎯 로딩 상태
 
   const _ShareOption({
     this.icon,
@@ -1181,6 +1215,7 @@ class _ShareOption extends StatelessWidget {
     required this.onTap,
     required this.iconColor,
     required this.backgroundColor,
+    this.isLoading = false, // 🎯 기본값 false
   });
 
   @override
@@ -1198,23 +1233,35 @@ class _ShareOption extends StatelessWidget {
               shape: BoxShape.circle,
             ),
             child:
-                imagePath != null
-                    ? Padding(
-                      padding: const EdgeInsets.all(16.0), // 🎯 SVG 여백
-                      child: SvgPicture.asset(
-                        imagePath!,
-                        colorFilter: ColorFilter.mode(
-                          iconColor,
-                          BlendMode.srcIn,
-                        ), // 🎯 테마별 색상 적용
-                        fit: BoxFit.contain,
+                isLoading
+                    ? Center(
+                      // 🎯 로딩 중일 때 스피너 표시
+                      child: SizedBox(
+                        width: 24,
+                        height: 24,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2.5,
+                          valueColor: AlwaysStoppedAnimation<Color>(iconColor),
+                        ),
                       ),
                     )
-                    : Icon(
-                      icon ?? Icons.share,
-                      color: iconColor,
-                      size: 26,
-                    ), // 🎯 테마별 색상
+                    : (imagePath != null
+                        ? Padding(
+                          padding: const EdgeInsets.all(16.0), // 🎯 SVG 여백
+                          child: SvgPicture.asset(
+                            imagePath!,
+                            colorFilter: ColorFilter.mode(
+                              iconColor,
+                              BlendMode.srcIn,
+                            ), // 🎯 테마별 색상 적용
+                            fit: BoxFit.contain,
+                          ),
+                        )
+                        : Icon(
+                          icon ?? Icons.share,
+                          color: iconColor,
+                          size: 26,
+                        )), // 🎯 테마별 색상
           ),
           const SizedBox(height: 8),
           Text(

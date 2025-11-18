@@ -277,6 +277,20 @@ class FriendProvider with ChangeNotifier {
     }
   }
 
+  /// 친구 요청 거절
+  Future<bool> rejectFriendRequest(String requesterUsername) async {
+    try {
+      await _friendService.rejectFriendRequest(requesterUsername);
+      // 받은 요청 목록에서 제거
+      _receivedRequests.removeWhere((f) => f.username == requesterUsername);
+      notifyListeners();
+      return true;
+    } catch (e) {
+      print("친구 요청 거절 실패: $e");
+      return false;
+    }
+  }
+
   Future<bool> cancelSentRequest(String targetUsername) async {
     try {
       await _friendService.cancelFriendRequest(targetUsername);

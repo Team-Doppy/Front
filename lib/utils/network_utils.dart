@@ -2,7 +2,6 @@ import 'dart:io';
 import 'dart:math';
 import 'dart:async';
 import 'package:dio/dio.dart';
-import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:doppy/data/services/base_api_service.dart';
 import 'dart:ui';
 
@@ -110,7 +109,6 @@ class NetworkManager {
   static bool _hasRecentError = false;
   static final StreamController<bool> _connectivityController =
       StreamController<bool>.broadcast();
-  static StreamSubscription<dynamic>? _connSub;
 
   /// 네트워크 에러 발생 시 호출
   static void setNetworkError(bool hasError) {
@@ -148,43 +146,13 @@ class NetworkManager {
   /// 현재 연결 상태
   static bool get isOnline => _isOnline;
 
-  /// connectivity_plus로 시스템 네트워크 변화를 구독하고, 온라인 징후 시 핑 체크 후 복구 신호 발행
+  /// 🎯 connectivity_plus 제거로 인해 비활성화
+  /// 네트워크 상태는 DioException을 통해서만 감지
   static void initConnectivityMonitor({
     String pingUrl = BaseApiService.baseUrl,
   }) {
-    // 중복 구독 방지
-    _connSub?.cancel();
-    _connSub = Connectivity().onConnectivityChanged.listen((result) async {
-      // 오프라인 신호
-      if (result == ConnectivityResult.none) {
-        setNetworkError(true);
-        return;
-      }
-      // 와이파이/모바일 등 온라인 징후 → 실제 핑으로 검증
-      try {
-        final ok = await _ping(pingUrl);
-        if (ok) {
-          setNetworkRecovered();
-        } else {
-          setNetworkError(true);
-        }
-      } catch (_) {
-        setNetworkError(true);
-      }
-    });
-  }
-
-  static Future<bool> _ping(String url) async {
-    try {
-      final client =
-          HttpClient()..connectionTimeout = const Duration(seconds: 2);
-      final req = await client.getUrl(Uri.parse(url));
-      final res = await req.close();
-      client.close(force: true);
-      return res.statusCode >= 200 && res.statusCode < 500;
-    } catch (_) {
-      return false;
-    }
+    // connectivity_plus 패키지 제거로 인해 비활성화
+    // 네트워크 상태는 DioException을 통해서만 감지됨
   }
 }
 

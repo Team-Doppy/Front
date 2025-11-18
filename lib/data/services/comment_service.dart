@@ -817,6 +817,9 @@ class CommentService extends ChangeNotifier {
     final tempId = 'temp_${DateTime.now().millisecondsSinceEpoch}';
 
     // 2️⃣ 낙관적 업데이트: 즉시 로컬에 댓글 추가
+    // 🎯 UTC 시간 사용 (서버 시간과 일치하도록)
+    final utcNow = DateTime.now().toUtc().toIso8601String();
+
     final optimisticComment = Comment(
       id: tempId,
       author: username,
@@ -826,8 +829,8 @@ class CommentService extends ChangeNotifier {
       parentId: parentId,
       imageUrl: imageUrl,
       visibility: 'PUBLIC',
-      createdAt: DateTime.now().toIso8601String(),
-      updatedAt: DateTime.now().toIso8601String(),
+      createdAt: utcNow, // 🎯 UTC 시간 사용
+      updatedAt: utcNow, // 🎯 UTC 시간 사용
       isPending: true, // 서버 전송 대기 중
       isFailed: false,
     );

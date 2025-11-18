@@ -10,6 +10,7 @@ class CustomRefreshIndicator extends StatefulWidget {
   final double triggerDistance;
   final double maxDistance;
   final double top;
+  final double startVisibleDistance; // 🎯 스피너가 처음 표시되는 거리
 
   const CustomRefreshIndicator({
     super.key,
@@ -19,6 +20,7 @@ class CustomRefreshIndicator extends StatefulWidget {
     this.onPullProgress,
     this.triggerDistance = 80.0, // 200.0에서 100.0으로 절반으로 줄임
     this.maxDistance = 160.0, // 300.0에서 150.0으로 절반으로 줄임
+    this.startVisibleDistance = 30.0, // 🎯 스피너가 처음 표시되는 거리 (기본값 30)
   });
 
   @override
@@ -119,13 +121,22 @@ class _CustomRefreshIndicatorState extends State<CustomRefreshIndicator>
   }
 
   double _getProgress() {
-    return (_pullDistance / widget.triggerDistance).clamp(0.0, 1.0);
+    // 🎯 startVisibleDistance부터 triggerDistance까지의 범위로 progress 계산
+    // 스피너가 보이기 시작할 때 progress가 0에 가깝게 시작하도록
+    if (_pullDistance <= widget.startVisibleDistance) {
+      return 0.0;
+    }
+    final effectiveDistance = _pullDistance - widget.startVisibleDistance;
+    final effectiveRange = widget.triggerDistance - widget.startVisibleDistance;
+    return (effectiveDistance / effectiveRange).clamp(0.0, 1.0);
   }
 
   @override
   Widget build(BuildContext context) {
     final progress = _getProgress();
-    final isVisible = _pullDistance > 30 || _isRefreshing; // 30 이상 당겨야 표시
+    final isVisible =
+        _pullDistance > widget.startVisibleDistance ||
+        _isRefreshing; // 🎯 startVisibleDistance 이상 당겨야 표시
 
     return Listener(
       onPointerUp: (_) {
@@ -145,10 +156,15 @@ class _CustomRefreshIndicatorState extends State<CustomRefreshIndicator>
                 left: 0,
                 right: 0,
                 child: Center(
-                  child: CustomSpinner(
-                    progress: progress,
-                    isAnimating: _isAnimating,
-                    rotation: _rotationAnimation.value,
+                  child: AnimatedBuilder(
+                    animation: _animationController,
+                    builder: (context, child) {
+                      return CustomSpinner(
+                        progress: progress,
+                        isAnimating: _isAnimating,
+                        rotation: _rotationAnimation.value,
+                      );
+                    },
                   ),
                 ),
               ),
@@ -242,7 +258,7 @@ class _SpinnerPainter extends CustomPainter {
   double _calculateOpacity(int wingIndex, double progress) {
     // 진행률에 따라 날개들의 투명도 계산
     // 1.5시 방향(wingIndex=1, 45도)부터 시계방향으로 하나씩 밝아짐
-    // 8등분해서 각 구간마다 날개가 한 번에 빡 채워짐
+    // 8등분해서 각 구간마다 날개가 한 번에 밝아짐
     final filledWings = (progress * 8).floor(); // 현재 밝아진 날개 개수 (0~8)
 
     // 각 날개가 밝아져야 하는 임계점 계산
@@ -253,7 +269,7 @@ class _SpinnerPainter extends CustomPainter {
     if (filledWings > threshold) {
       return 0.9; // 밝은 상태
     } else {
-      return 0.1; // 어두운 상태
+      return 0.0; // 완전히 어두운 상태
     }
   }
 

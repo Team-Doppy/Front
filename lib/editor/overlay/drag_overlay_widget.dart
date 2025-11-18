@@ -82,6 +82,7 @@ class _DragOverlayWidgetState extends State<DragOverlayWidget> {
     if (node == null) return const SizedBox.shrink();
 
     Widget preview;
+    print('widget.nodeType: ${widget.nodeType}');
 
     switch (widget.nodeType) {
       case 'image':

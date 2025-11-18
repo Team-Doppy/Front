@@ -44,6 +44,7 @@ class UserProvider with ChangeNotifier {
     required String alias,
     required String selfIntroduction,
     List<String>? links,
+    Map<String, String>? linkTitles,
   }) async {
     try {
       // API 호출
@@ -51,6 +52,7 @@ class UserProvider with ChangeNotifier {
         alias: alias,
         selfIntroduction: selfIntroduction,
         links: links,
+        linkTitles: linkTitles,
       );
 
       // 로컬 상태 업데이트
@@ -59,6 +61,7 @@ class UserProvider with ChangeNotifier {
           alias: alias,
           selfIntroduction: selfIntroduction,
           links: links,
+          linkTitles: linkTitles,
         );
         _currentUser = updatedUser;
 

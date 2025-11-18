@@ -97,6 +97,8 @@ class _PostReaderScreenState extends State<PostReaderScreen>
   int _bottomBarAnimationDuration = 300; // 하단 바 애니메이션 속도 (ms)
   bool _previousAppBarState = true; // 🎯 풀스크린/댓글 진입 전 앱바 상태 저장
   double _currentScrollOffset = 0.0; // 🎯 현재 스크롤 위치 (타이틀 표시용)
+  bool _showLoadingBackButton = true; // 🎯 로딩 화면 뒤로가기 버튼 표시 여부
+  bool _showErrorBackButton = true; // 🎯 에러 화면 뒤로가기 버튼 표시 여부
 
   // 순차 애니메이션 제거
 
@@ -531,6 +533,62 @@ class _PostReaderScreenState extends State<PostReaderScreen>
     }
   }
 
+  // 🎯 앱바를 먼저 숨기고 화면 닫기
+  void _closeScreen() {
+    // 앱바가 보이는 상태면 먼저 숨기기
+    if (_showAppBar) {
+      setState(() {
+        _showAppBar = false;
+        _bottomBarAnimationDuration = 200; // 빠른 애니메이션
+      });
+      // 앱바 숨김 애니메이션 후 화면 닫기
+      Future.delayed(const Duration(milliseconds: 200), () {
+        if (mounted) {
+          Navigator.of(context).pop();
+        }
+      });
+    } else {
+      // 앱바가 이미 숨겨져 있으면 바로 닫기
+      Navigator.of(context).pop();
+    }
+  }
+
+  // 🎯 로딩 화면 닫기 (뒤로가기 버튼 먼저 숨기고 닫기)
+  void _closeLoadingScreen() {
+    if (_showLoadingBackButton) {
+      setState(() {
+        _showLoadingBackButton = false;
+      });
+      // 뒤로가기 버튼 숨김 애니메이션 후 화면 닫기
+      Future.delayed(const Duration(milliseconds: 200), () {
+        if (mounted) {
+          Navigator.of(context).pop();
+        }
+      });
+    } else {
+      // 이미 숨겨져 있으면 바로 닫기
+      Navigator.of(context).pop();
+    }
+  }
+
+  // 🎯 에러 화면 닫기 (뒤로가기 버튼 먼저 숨기고 닫기)
+  void _closeErrorScreen() {
+    if (_showErrorBackButton) {
+      setState(() {
+        _showErrorBackButton = false;
+      });
+      // 뒤로가기 버튼 숨김 애니메이션 후 화면 닫기
+      Future.delayed(const Duration(milliseconds: 200), () {
+        if (mounted) {
+          Navigator.of(context).pop();
+        }
+      });
+    } else {
+      // 이미 숨겨져 있으면 바로 닫기
+      Navigator.of(context).pop();
+    }
+  }
+
   void _toggleLike() async {
     final postId = widget.exported['id']?.toString();
     if (postId == null || postId.isEmpty) {
@@ -555,10 +613,10 @@ class _PostReaderScreenState extends State<PostReaderScreen>
     // 삭제 확인 다이얼로그 (공통 다이얼로그 사용)
     final bool? shouldDelete = await DialogUtils.showConfirmDialog(
       context,
-      title: '게시물을 삭제하시겠습니까?',
-      message: '즉시 영구 삭제됩니다.\n삭제된 게시물의 조회수, 댓글, 좋아요 등의 데이터는 복구할 수 없습니다.',
-      confirmText: '삭제',
-      cancelText: '취소',
+      title: context.tr('delete_post_confirm_title'),
+      message: context.tr('delete_post_confirm_message'),
+      confirmText: context.tr('delete'),
+      cancelText: context.tr('cancel'),
       isDestructive: true,
     );
 
@@ -1080,11 +1138,43 @@ class _PostReaderScreenState extends State<PostReaderScreen>
 
         // 🎯 공개 범위가 변경되었으면 결과 반환 (피드 선택적 업데이트를 위해)
         if (_accessLevelChanged) {
-          Navigator.of(context).pop({
-            'accessLevelChanged': true,
-            'postId': widget.exported['id']?.toString(),
-            'accessLevel': _accessLevel,
-            'sharedGroupIds': _sharedGroupIds,
+          // 앱바를 먼저 숨기고 닫기
+          if (_showAppBar) {
+            setState(() {
+              _showAppBar = false;
+              _bottomBarAnimationDuration = 200;
+            });
+            Future.delayed(const Duration(milliseconds: 200), () {
+              if (mounted) {
+                Navigator.of(context).pop({
+                  'accessLevelChanged': true,
+                  'postId': widget.exported['id']?.toString(),
+                  'accessLevel': _accessLevel,
+                  'sharedGroupIds': _sharedGroupIds,
+                });
+              }
+            });
+          } else {
+            Navigator.of(context).pop({
+              'accessLevelChanged': true,
+              'postId': widget.exported['id']?.toString(),
+              'accessLevel': _accessLevel,
+              'sharedGroupIds': _sharedGroupIds,
+            });
+          }
+          return false; // Navigator.pop을 호출했으므로 false 반환
+        }
+
+        // 🎯 앱바를 먼저 숨기고 닫기
+        if (_showAppBar) {
+          setState(() {
+            _showAppBar = false;
+            _bottomBarAnimationDuration = 200;
+          });
+          Future.delayed(const Duration(milliseconds: 200), () {
+            if (mounted) {
+              Navigator.of(context).pop();
+            }
           });
           return false; // Navigator.pop을 호출했으므로 false 반환
         }
@@ -1102,13 +1192,13 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                   // 오른쪽으로 스와이프 (velocity.dx > 0)
                   if (details.primaryVelocity != null &&
                       details.primaryVelocity! > 300) {
-                    Navigator.of(context).pop();
+                    _closeLoadingScreen();
                   }
                 },
                 child: DoppyLoadingLogo(
                   opacity: _showLoadingLogo ? 1.0 : 0.0,
-                  showBackButton: true,
-                  onBack: () => Navigator.of(context).pop(),
+                  showBackButton: _showLoadingBackButton,
+                  onBack: _closeLoadingScreen,
                 ),
               );
             }
@@ -1125,46 +1215,83 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                   // 오른쪽으로 스와이프 (velocity.dx > 0)
                   if (details.primaryVelocity != null &&
                       details.primaryVelocity! > 300) {
-                    Navigator.of(context).pop();
+                    _closeLoadingScreen();
                   }
                 },
                 child: DoppyLoadingLogo(
                   opacity: _showLoadingLogo ? 1.0 : 0.0,
-                  showBackButton: true,
-                  onBack: () => Navigator.of(context).pop(),
+                  showBackButton: _showLoadingBackButton,
+                  onBack: _closeLoadingScreen,
                 ),
               );
             }
             if (snap.hasError) {
-              return Scaffold(
-                backgroundColor: Theme.of(context).colorScheme.background,
-                appBar: AppBar(
-                  backgroundColor: Colors.transparent,
-                  elevation: 0,
-                  leading: IconButton(
-                    icon: Icon(
-                      Icons.arrow_back_ios_new_rounded,
-                      size: 24,
-                      color: Theme.of(
-                        context,
-                      ).colorScheme.onSurface.withOpacity(0.75),
-                    ),
-                    onPressed: () => Navigator.of(context).pop(),
-                  ),
-                ),
-                body: Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(24),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Icon(Icons.warning_amber_rounded, size: 40),
-                        const SizedBox(height: 12),
-                        Text(
-                          '본문을 불러오지 못했어요',
-                          style: Theme.of(context).textTheme.bodyMedium,
-                        ),
-                      ],
+              return GestureDetector(
+                // 🎯 스와이프로 닫기 기능
+                onHorizontalDragStart: (details) {
+                  _horizontalDragDistance = 0.0;
+                },
+                onHorizontalDragUpdate: (details) {
+                  // 오른쪽으로 스와이프만 감지 (닫기)
+                  if (details.delta.dx > 0) {
+                    setState(() {
+                      _horizontalDragDistance += details.delta.dx;
+                    });
+                  }
+                },
+                onHorizontalDragEnd: (details) {
+                  final screenWidth = MediaQuery.of(context).size.width;
+                  final dragDistance = _horizontalDragDistance;
+                  final velocity = details.primaryVelocity ?? 0;
+
+                  // 🎯 스와이프 거리가 화면의 30% 이상이거나 빠른 속도로 스와이프하면 닫기
+                  if (dragDistance > screenWidth * 0.3 || velocity > 500) {
+                    _closeErrorScreen();
+                  } else {
+                    // 원래 위치로 복귀
+                    setState(() {
+                      _horizontalDragDistance = 0.0;
+                    });
+                  }
+                },
+                child: Scaffold(
+                  backgroundColor: Theme.of(context).colorScheme.background,
+                  appBar:
+                      _showErrorBackButton
+                          ? AppBar(
+                            backgroundColor: Colors.transparent,
+                            elevation: 0,
+                            leading: IconButton(
+                              icon: Icon(
+                                Icons.arrow_back_ios_new_rounded,
+                                size: 24,
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.onSurface.withOpacity(0.75),
+                              ),
+                              onPressed: _closeErrorScreen,
+                            ),
+                          )
+                          : AppBar(
+                            automaticallyImplyLeading: false,
+                            backgroundColor: Colors.transparent,
+                            elevation: 0,
+                          ),
+                  body: Center(
+                    child: Padding(
+                      padding: const EdgeInsets.all(24),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(Icons.warning_amber_rounded, size: 40),
+                          const SizedBox(height: 12),
+                          Text(
+                            '본문을 불러오지 못했어요',
+                            style: Theme.of(context).textTheme.bodyMedium,
+                          ),
+                          const SizedBox(height: 15),
+                        ],
+                      ),
                     ),
                   ),
                 ),
@@ -1258,7 +1385,7 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                     },
                     onHorizontalDragEnd: (details) {
                       if (_horizontalDragDistance > 100) {
-                        Navigator.of(context).pop();
+                        _closeScreen();
                       }
                       _horizontalDragDistance = 0.0;
                     },
@@ -1500,7 +1627,7 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                       showAppBar: _showAppBar,
                       barHeight: computedBarHeight,
                       isMyPost: isMyPost,
-                      onBack: () => Navigator.of(context).pop(),
+                      onBack: _closeScreen,
                       onEdit: () {
                         final dataToEdit =
                             _currentExportedData ?? widget.exported;
@@ -1734,7 +1861,7 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                                   onTap:
                                       isMyPost
                                           ? _handleAccessLevelOrShare
-                                          : null,
+                                          : _showShareOverlay,
                                   child: Padding(
                                     padding: const EdgeInsets.only(
                                       left: 8.0,

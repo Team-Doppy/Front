@@ -3,6 +3,7 @@ import 'package:doppy/data/models/friend_model.dart';
 import 'package:doppy/l10n/app_localizations.dart';
 import 'package:doppy/pages/components/common_profile_avatar.dart';
 import 'package:doppy/pages/components/friend_request_bottom_sheet.dart';
+import 'package:doppy/utils/error_handler.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../providers/friend_provider.dart';
@@ -158,10 +159,25 @@ class FriendRequestsListBottomSheet extends StatelessWidget {
       },
       onReject: () async {
         final friendProvider = context.read<FriendProvider>();
-        // 거절 기능 호출 (아직 구현되지 않았으면 나중에 추가)
-        // await friendProvider.rejectFriendRequest(friend.username);
-        // 임시로 받은 요청 목록에서 제거
-        await friendProvider.fetchAllFriendData(forceRefresh: true);
+        try {
+          // 🎯 거절 기능 호출
+          final success = await friendProvider.rejectFriendRequest(
+            friend.username,
+          );
+          if (!success && context.mounted) {
+            ErrorHandler.showError(
+              context,
+              context.tr('friend_request_reject_failed'),
+            );
+          }
+        } catch (e) {
+          if (context.mounted) {
+            ErrorHandler.showError(
+              context,
+              context.tr('friend_request_reject_failed'),
+            );
+          }
+        }
       },
     );
   }

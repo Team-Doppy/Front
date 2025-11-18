@@ -2,58 +2,53 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class LocaleProvider extends ChangeNotifier {
-  Locale _locale = const Locale('ko', 'KR'); // 기본값: 한국어
+  // OS 언어 기반으로 초기값 설정
+  Locale _locale = _getSystemLocale();
 
   Locale get locale => _locale;
 
   /// 지역 코드 (JWT에 사용)
+  /// 한국어면 KR, 아니면 다 US
   String get regionCode {
-    switch (_locale.languageCode) {
-      case 'ko':
-        return 'KR';
-      case 'en':
-        return 'US';
-      default:
-        return 'KR';
+    if (_locale.languageCode == 'ko') {
+      return 'KR';
+    } else {
+      return 'US';
     }
   }
 
   LocaleProvider() {
-    _loadLocale();
+    // OS 언어 기반으로 초기화
+    _initializeFromSystem();
   }
 
-  /// 저장된 언어 설정 로드
-  Future<void> _loadLocale() async {
+  /// OS 언어를 동기적으로 감지하여 초기 Locale 설정
+  static Locale _getSystemLocale() {
     try {
-      final prefs = await SharedPreferences.getInstance();
-      final languageCode = prefs.getString('languageCode');
-      final countryCode = prefs.getString('countryCode');
+      final systemLocale = WidgetsBinding.instance.platformDispatcher.locale;
 
-      if (languageCode != null) {
-        _locale = Locale(languageCode, countryCode);
-        notifyListeners();
+      // 한국어면 KR, 아니면 US
+      if (systemLocale.languageCode == 'ko') {
+        return const Locale('ko', 'KR');
       } else {
-        // 저장된 설정이 없으면 시스템 언어 감지
-        await _detectSystemLocale();
+        return const Locale('en', 'US');
       }
     } catch (e) {
-      print('[LocaleProvider] 언어 설정 로드 실패: $e');
+      print('[LocaleProvider] 시스템 언어 감지 실패: $e');
+      // 기본값: 영어
+      return const Locale('en', 'US');
     }
   }
 
-  /// 시스템 언어 감지 (네이티브)
-  Future<void> _detectSystemLocale() async {
+  /// OS 언어 기반으로 초기화 (비동기로 저장)
+  Future<void> _initializeFromSystem() async {
     try {
-      // Flutter가 감지한 시스템 언어
+      // OS 언어 감지
       final systemLocale = WidgetsBinding.instance.platformDispatcher.locale;
 
-      // 지원하는 언어인지 확인
       if (systemLocale.languageCode == 'ko') {
         _locale = const Locale('ko', 'KR');
-      } else if (systemLocale.languageCode == 'en') {
-        _locale = const Locale('en', 'US');
       } else {
-        // 기타 언어는 영어로 폴백
         _locale = const Locale('en', 'US');
       }
 
@@ -61,9 +56,9 @@ class LocaleProvider extends ChangeNotifier {
       await _saveLocale();
       notifyListeners();
 
-      print('[LocaleProvider] 시스템 언어 감지: ${_locale.languageCode}');
+      print('[LocaleProvider] OS 언어 기반 초기화: ${_locale.languageCode}');
     } catch (e) {
-      print('[LocaleProvider] 시스템 언어 감지 실패: $e');
+      print('[LocaleProvider] OS 언어 기반 초기화 실패: $e');
     }
   }
 

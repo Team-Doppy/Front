@@ -1,6 +1,10 @@
 import 'package:doppy/l10n/app_localizations.dart';
 import 'package:doppy/providers/auth_provider.dart';
 import 'package:doppy/providers/locale_provider.dart';
+import 'package:doppy/utils/error_handler.dart';
+import 'package:doppy/pages/screens/splash_screen.dart';
+import 'package:doppy/pages/screens/setting_screen.dart';
+import 'package:doppy/main.dart' show AppConstants;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../data/services/auth_service.dart';
@@ -146,9 +150,18 @@ class _JoinScreenState extends State<JoinScreen> {
           // 이용약관 및 개인정보 처리방침 보기
           InkWell(
             borderRadius: BorderRadius.circular(12),
-
             onTap: () {
-              // TODO: 이용약관/개인정보 처리방침 화면으로 이동 연결
+              // 🎯 이용약관 웹뷰로 이동 (AppConstants에서 URL 주입)
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder:
+                      (context) => WebViewScreen(
+                        url: AppConstants.termsOfServiceUrl,
+                        title: context.tr('terms_of_service'),
+                      ),
+                ),
+              );
             },
             child: Padding(
               padding: const EdgeInsets.symmetric(vertical: 6.0),
@@ -755,15 +768,15 @@ class _JoinScreenState extends State<JoinScreen> {
               SizedBox(height: 16),
               if (_passwordController.text.isNotEmpty) ...[
                 _buildPasswordRequirement(
-                  '6자 이상',
+                  context.tr('join_password_min_length'),
                   _passwordController.text.length >= 6,
                 ),
                 _buildPasswordRequirement(
-                  '영문 포함',
+                  context.tr('join_password_letter_required'),
                   RegExp(r'[a-zA-Z]').hasMatch(_passwordController.text),
                 ),
                 _buildPasswordRequirement(
-                  '숫자 포함',
+                  context.tr('join_password_number_required'),
                   RegExp(r'[0-9]').hasMatch(_passwordController.text),
                 ),
               ],
@@ -792,7 +805,7 @@ class _JoinScreenState extends State<JoinScreen> {
                   elevation: 0,
                 ),
                 child: Text(
-                  '다음',
+                  context.tr('next'),
                   style: TextStyle(
                     color:
                         _isPasswordValid
@@ -1080,13 +1093,9 @@ class _JoinScreenState extends State<JoinScreen> {
 
       // 에러 메시지 표시
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              context.tr('join_id_check_error').replaceAll('{error}', '$e'),
-            ),
-            backgroundColor: Colors.red,
-          ),
+        ErrorHandler.showError(
+          context,
+          context.tr('join_id_check_error').replaceAll('{error}', '$e'),
         );
       }
     }
@@ -1134,15 +1143,31 @@ class _JoinScreenState extends State<JoinScreen> {
     if (!mounted) return;
 
     if (success) {
-      Navigator.of(context).pushNamedAndRemoveUntil('/', (route) => false);
-    } else {
-      // 로그인 실패 시 사용자에게 피드백 제공
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(context.tr('login_failed_invalid_credentials')),
-          backgroundColor: Theme.of(context).colorScheme.error,
+      // 🎯 로그인 후 스플래시로 부드럽게 페이드 전환
+      Navigator.of(context).pushAndRemoveUntil(
+        PageRouteBuilder(
+          pageBuilder: (_, __, ___) => const SplashScreen(),
+          transitionDuration: const Duration(milliseconds: 400),
+          transitionsBuilder: (_, animation, __, child) {
+            return FadeTransition(
+              opacity: CurvedAnimation(
+                parent: animation,
+                curve: Curves.easeInOut,
+              ),
+              child: child,
+            );
+          },
         ),
+        (route) => false,
       );
+    } else {
+      ErrorHandler.showError(
+        context,
+        context.tr('login_failed_invalid_credentials'),
+      );
+      setState(() {
+        _isCheckingDuplicate = false;
+      });
     }
 
     setState(() {

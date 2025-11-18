@@ -44,7 +44,7 @@ class CustomBottomNavigationBar extends StatelessWidget {
           height: 72,
           decoration: BoxDecoration(
             color:
-                forceOpaqueBackground || (actualIndex ?? currentIndex) % 2 != 0
+                forceOpaqueBackground || (actualIndex ?? currentIndex) == 3
                     ? Theme.of(context).colorScheme.background
                     : Colors.transparent,
           ),

@@ -37,9 +37,15 @@ import 'utils/route_observer.dart';
 // Global NavigatorKey for accessing context from anywhere
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
-// 앱 버전
+// 앱 버전 및 상수
 class AppConstants {
   static const String appVersion = '1.0.0';
+
+  // 🎯 이용약관 및 개인정보 처리방침 URL
+  static const String termsOfServiceUrl =
+      'https://www.notion.so/doppy-2a594e338df780e1b6b9fddb9753e728';
+  static const String privacyPolicyUrl =
+      'https://www.notion.so/doppy-2a594e338df780e1b6b9fddb9753e728'; // TODO: 개인정보 처리방침 URL로 변경 필요
 }
 
 Future<void> main() async {

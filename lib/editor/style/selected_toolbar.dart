@@ -128,7 +128,7 @@ class _SelectedToolbarState extends State<SelectedToolbar> {
               ),
             SizedBox(width: 8),
 
-            if (widget.node is ImageNode)
+            if (widget.node is ImageNode) ...[
               _buildMainSvgIcon(
                 context: context,
                 svgPath:
@@ -143,8 +143,7 @@ class _SelectedToolbarState extends State<SelectedToolbar> {
                   }
                 },
               ),
-            SizedBox(width: 16),
-            if (widget.node is ImageNode)
+              SizedBox(width: 16),
               Padding(
                 padding: const EdgeInsets.only(top: 3),
                 child: _buildMainSvgIcon(
@@ -155,8 +154,9 @@ class _SelectedToolbarState extends State<SelectedToolbar> {
                   onTap: widget.onEdit,
                 ),
               ),
+              SizedBox(width: 8),
+            ],
           ],
-          SizedBox(width: 8),
 
           _buildMainSvgIcon(
             size: 28,

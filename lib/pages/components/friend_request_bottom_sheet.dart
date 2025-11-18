@@ -239,26 +239,31 @@ class _FriendRequestBottomSheetState extends State<FriendRequestBottomSheet> {
           groupProvider: groupProvider,
         );
       } else {
-        // 거절 기능이 없으면 단순히 false 반환
-        result = false;
+        // 🎯 거절 기능 구현
+        result = await friendProvider.rejectFriendRequest(widget.username);
       }
 
       if (mounted) {
         Navigator.pop(context); // 바텀시트 닫기
         if (result == false && mounted) {
-          // 일반 실패 메시지 표시
+          // 🎯 수락/거절에 따라 다른 실패 메시지 표시
           ErrorHandler.showError(
             context,
-            context.tr('friend_request_accept_failed'),
+            accept
+                ? context.tr('friend_request_accept_failed')
+                : context.tr('friend_request_reject_failed'),
           );
         }
       }
     } catch (e) {
       if (mounted) {
         Navigator.pop(context);
+        // 🎯 수락/거절에 따라 다른 실패 메시지 표시
         ErrorHandler.showError(
           context,
-          context.tr('friend_request_accept_failed'),
+          accept
+              ? context.tr('friend_request_accept_failed')
+              : context.tr('friend_request_reject_failed'),
         );
       }
     } finally {

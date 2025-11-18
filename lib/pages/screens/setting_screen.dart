@@ -335,10 +335,9 @@ class _SettingScreenState extends State<SettingScreen> {
                     context,
                     MaterialPageRoute(
                       builder:
-                          (context) => const WebViewScreen(
-                            url:
-                                'https://www.notion.so/doppy-2a594e338df780e1b6b9fddb9753e728',
-                            title: '이용약관',
+                          (context) => WebViewScreen(
+                            url: AppConstants.termsOfServiceUrl,
+                            title: context.tr('terms_of_service'),
                           ),
                     ),
                   );

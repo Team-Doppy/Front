@@ -659,6 +659,8 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer>
     final prev = List<MediaComment>.from(_imageComments);
     final currentUser = context.read<UserProvider>().currentUser;
 
+    final utcNow = DateTime.now().toUtc().toIso8601String();
+
     setState(() {
       _commentsByImage[_currentImageUrl] = [
         MediaComment(
@@ -666,8 +668,8 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer>
           author: currentUser?.username ?? '',
           text: text,
           authorProfileImageUrl: currentUser?.profileImageUrl ?? '',
-          createdAt: DateTime.now().toIso8601String(),
-          updatedAt: DateTime.now().toIso8601String(),
+          createdAt: utcNow, // 🎯 UTC 시간 사용
+          updatedAt: utcNow, // 🎯 UTC 시간 사용
         ),
         ..._imageComments,
       ];

@@ -5,6 +5,7 @@ import 'package:doppy/pages/components/common_profile_avatar.dart';
 import 'package:doppy/pages/components/custom_refresh_indicator.dart';
 import 'package:doppy/pages/components/shimmer_box.dart';
 import 'package:doppy/pages/screens/post_reader_screen.dart';
+import 'package:doppy/utils/time_utils.dart';
 import 'package:flutter/material.dart';
 
 // 🎯 그룹 포스트 읽은 사람 리스트 바텀시트
@@ -106,7 +107,7 @@ class _GroupPostReadersBottomSheetState
               'profileImageUrl': viewer['profileImageUrl'],
               'readAt':
                   viewer['viewedAt'] != null
-                      ? DateTime.parse(viewer['viewedAt'])
+                      ? TimeUtils.toLocalTime(viewer['viewedAt'].toString())
                       : null,
             };
           }).toList();
@@ -169,7 +170,7 @@ class _GroupPostReadersBottomSheetState
               'profileImageUrl': viewer['profileImageUrl'],
               'readAt':
                   viewer['viewedAt'] != null
-                      ? DateTime.parse(viewer['viewedAt'])
+                      ? TimeUtils.toLocalTime(viewer['viewedAt'].toString())
                       : null,
             };
           }).toList();

@@ -3,15 +3,14 @@ import 'package:doppy/data/models/user_model.dart';
 import 'package:doppy/l10n/app_localizations.dart';
 import 'package:doppy/editor/overlay/link_overlay.dart';
 import 'package:flutter/material.dart';
-import 'package:cached_network_image/cached_network_image.dart';
-import 'native_image_picker.dart';
+import '../../image/native_image_picker.dart';
 
-class ProfileImageBottomSheet extends StatelessWidget {
+class ProfileEditBottomSheet extends StatelessWidget {
   final Future<void> Function() onClearProfileImage;
   final Function(List<File>) onImagesSelected;
   final bool singleSelect;
 
-  const ProfileImageBottomSheet({
+  const ProfileEditBottomSheet({
     Key? key,
     required this.onClearProfileImage,
     required this.onImagesSelected,
@@ -128,6 +127,7 @@ class ProfileInfoEditBottomSheet extends StatefulWidget {
     required String alias,
     required String description,
     List<String>? links, // 🎯 프로필 링크 목록 (최대 3개)
+    Map<String, String>? linkTitles, // 🎯 링크 타이틀 (URL -> 타이틀)
   })?
   onSave;
 
@@ -156,7 +156,7 @@ class _ProfileInfoEditBottomSheetState
   late String _initialDescription;
   late List<String> _initialLinks; // 🎯 초기 링크 목록 (URL만)
   List<String> _links = []; // 🎯 현재 링크 목록 (URL만, 저장용)
-  Map<String, String> _linkThumbnails = {}; // 🎯 링크 썸네일 캐시 (URL -> 썸네일 URL)
+  Map<String, String> _linkTitles = {}; // 🎯 링크 타이틀 저장 (URL -> 타이틀)
 
   @override
   void initState() {
@@ -234,8 +234,9 @@ class _ProfileInfoEditBottomSheetState
     return DraggableScrollableSheet(
       // 기본 높이 고정: 화면의 85%
       initialChildSize: 0.85,
-      minChildSize: 0.4,
+      minChildSize: 0.6, // 🎯 자동 닫힘 역치 높임 (0.4 -> 0.6)
       maxChildSize: 0.95,
+      snap: true, // 🎯 스냅 기능 활성화 (더 많이 드래그해야 닫힘)
       builder: (context, scrollController) {
         return Container(
           padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
@@ -520,6 +521,7 @@ class _ProfileInfoEditBottomSheetState
                           alias: widget.nameController.text.trim(),
                           description: widget.descriptionController.text.trim(),
                           links: _links.isEmpty ? null : _links,
+                          linkTitles: _linkTitles.isEmpty ? null : _linkTitles,
                         );
 
                         // 저장 완료 후 잠시 대기
@@ -644,9 +646,9 @@ class _ProfileInfoEditBottomSheetState
                   if (_links.length < 3) {
                     setState(() {
                       _links.add(url);
-                      // 🎯 썸네일 정보 저장
-                      if (thumbnailUrl != null && thumbnailUrl.isNotEmpty) {
-                        _linkThumbnails[url] = thumbnailUrl;
+                      // 🎯 타이틀 저장 (직접 작성한 타이틀이 있으면 저장)
+                      if (title != null && title.isNotEmpty) {
+                        _linkTitles[url] = title;
                       }
                     });
                     // 🎯 LinkOverlay는 닫지 않고 계속 열어둠 (바텀시트도 열어둠)
@@ -693,7 +695,7 @@ class _ProfileInfoEditBottomSheetState
       ),
       child: Row(
         children: [
-          // 🎯 링크 썸네일 또는 아이콘
+          // 🎯 링크 썸네일 또는 아이콘 (나중에 인터넷에서 가져옴)
           Container(
             width: 40,
             height: 40,
@@ -702,29 +704,44 @@ class _ProfileInfoEditBottomSheetState
               borderRadius: BorderRadius.circular(8),
             ),
             clipBehavior: Clip.antiAlias,
-            child:
-                _linkThumbnails.containsKey(link) &&
-                        _linkThumbnails[link] != null &&
-                        _linkThumbnails[link]!.isNotEmpty
-                    ? CachedNetworkImage(
-                      imageUrl: _linkThumbnails[link]!,
+            child: Builder(
+              builder: (context) {
+                // 도메인에서 썸네일 URL 생성 (Google Favicon API)
+                String? thumbnailUrl;
+                try {
+                  final uri = Uri.parse(displayUrl);
+                  final domain = uri.host.replaceFirst('www.', '');
+                  thumbnailUrl =
+                      'https://www.google.com/s2/favicons?domain=$domain&sz=64';
+                } catch (_) {
+                  thumbnailUrl = null;
+                }
+
+                return thumbnailUrl != null
+                    ? Image.network(
+                      thumbnailUrl,
                       fit: BoxFit.cover,
-                      errorWidget:
-                          (context, url, error) => Icon(
-                            Icons.link,
-                            color: Theme.of(
-                              context,
-                            ).colorScheme.onSurface.withOpacity(0.7),
-                            size: 20,
-                          ),
-                      placeholder:
-                          (context, url) => Icon(
-                            Icons.link,
-                            color: Theme.of(
-                              context,
-                            ).colorScheme.onSurface.withOpacity(0.7),
-                            size: 20,
-                          ),
+                      errorBuilder: (context, error, stackTrace) {
+                        return Icon(
+                          Icons.link,
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.onSurface.withOpacity(0.7),
+                          size: 20,
+                        );
+                      },
+                      loadingBuilder: (context, child, loadingProgress) {
+                        if (loadingProgress == null) {
+                          return child;
+                        }
+                        return Icon(
+                          Icons.link,
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.onSurface.withOpacity(0.7),
+                          size: 20,
+                        );
+                      },
                     )
                     : Icon(
                       Icons.link,
@@ -732,7 +749,9 @@ class _ProfileInfoEditBottomSheetState
                         context,
                       ).colorScheme.onSurface.withOpacity(0.7),
                       size: 20,
-                    ),
+                    );
+              },
+            ),
           ),
           const SizedBox(width: 12),
           // 링크 정보
@@ -742,7 +761,10 @@ class _ProfileInfoEditBottomSheetState
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  domain,
+                  // 🎯 직접 작성한 타이틀이 있으면 표시, 없으면 도메인 표시
+                  _linkTitles.containsKey(link) && _linkTitles[link]!.isNotEmpty
+                      ? _linkTitles[link]!
+                      : domain,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
@@ -771,8 +793,8 @@ class _ProfileInfoEditBottomSheetState
             onTap: () {
               setState(() {
                 final removedUrl = _links.removeAt(index);
-                // 🎯 썸네일 캐시도 삭제
-                _linkThumbnails.remove(removedUrl);
+                // 🎯 타이틀도 함께 삭제
+                _linkTitles.remove(removedUrl);
               });
             },
             child: Container(

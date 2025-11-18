@@ -243,7 +243,7 @@ class _FriendsGridState extends State<FriendsGrid> {
             crossAxisCount: 3,
             mainAxisSpacing: 12,
             crossAxisSpacing: 6,
-            childAspectRatio: 0.82,
+            childAspectRatio: 0.75, // 🎯 텍스트 공간 확보를 위해 높이 증가 (0.82 -> 0.75)
           ),
           itemCount: tiles.length + (showLoadingIndicator ? 3 : 0),
           itemBuilder: (context, i) {
@@ -504,34 +504,45 @@ class FriendTile extends StatelessWidget {
     return Column(
       mainAxisSize: MainAxisSize.min,
       mainAxisAlignment: MainAxisAlignment.center,
+      crossAxisAlignment: CrossAxisAlignment.center,
       children: [
         avatar,
         const SizedBox(height: 6),
-        Flexible(
-          child: Text(
-            "@" + data.username,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              color: textColor,
-              fontWeight: FontWeight.w600,
-              fontSize: 13,
+        // 🎯 텍스트가 잘리지 않도록 SizedBox로 최소 높이 보장
+        SizedBox(
+          width: double.infinity,
+          height: 18, // 최소 높이 보장
+          child: Center(
+            child: Text(
+              "@" + data.username,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: textColor,
+                fontWeight: FontWeight.w600,
+                fontSize: 13,
+              ),
             ),
           ),
         ),
         if (data.alias != null && data.alias!.isNotEmpty) ...[
           const SizedBox(height: 2),
-          Flexible(
-            child: Text(
-              data.alias!,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                color: textColor.withOpacity(0.7),
-                fontWeight: FontWeight.w500,
-                fontSize: 12,
+          // 🎯 텍스트가 잘리지 않도록 SizedBox로 최소 높이 보장
+          SizedBox(
+            width: double.infinity,
+            height: 16, // 최소 높이 보장
+            child: Center(
+              child: Text(
+                data.alias!,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: textColor.withOpacity(0.7),
+                  fontWeight: FontWeight.w500,
+                  fontSize: 12,
+                ),
               ),
             ),
           ),

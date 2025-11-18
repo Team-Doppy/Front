@@ -507,7 +507,7 @@ class PostReaderService {
   Future<void> preloadImages(
     BuildContext context,
     List<String> imageUrls, {
-    int maxCount = 6,
+    int maxCount = 15, // 🎯 6 -> 15로 증가 (성능 개선)
   }) async {
     final imagesToPreload = imageUrls.take(maxCount).toList();
 
@@ -538,7 +538,7 @@ class PostReaderService {
   // ===== 영상 프리로드 컨트롤러 캐시 =====
   static final Map<String, VideoPlayerController> _preloadedControllers = {};
   static final Map<String, DateTime> _preloadTimestamps = {}; // 생성 시간 추적
-  static const int _maxPreloadCount = 20; // 최대 프리로드 개수 (모든 클립 지원)
+  static const int _maxPreloadCount = 30; // 🎯 최대 프리로드 개수 증가 (20 -> 30, 성능 개선)
 
   // ===== 프리로드 완료 알림 리스너 =====
   static final List<void Function(String)> _clipPreloadedListeners = [];

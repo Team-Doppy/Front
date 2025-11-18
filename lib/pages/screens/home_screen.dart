@@ -68,6 +68,10 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   // 새로고침 시 배경 이미지 유지용
   String? _previousBackgroundImageUrl;
 
+  // PostList에서 전달받은 배경 이미지 URL
+  String? _friendsBackgroundImageUrl;
+  String? _allBackgroundImageUrl;
+
   @override
   void initState() {
     super.initState();
@@ -82,13 +86,13 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       // 친구글 데이터 설정
       _friendsPosts = List<PostData>.from(homeData.friendsPosts);
       _friendsIsLoading = false;
-      _friendsHasMoreData = _friendsPosts.length == 10;
+      _friendsHasMoreData = _friendsPosts.length == 20; // 🎯 10 -> 20으로 변경
       _friendsCurrentPage = _friendsPosts.isNotEmpty ? 1 : 0;
 
       // 전체글 데이터 설정
       _allPosts = List<PostData>.from(homeData.allPosts);
       _allIsLoading = false;
-      _allHasMoreData = _allPosts.length == 10;
+      _allHasMoreData = _allPosts.length == 20; // 🎯 10 -> 20으로 변경
       _allCurrentPage = _allPosts.isNotEmpty ? 1 : 0;
     }
 
@@ -264,13 +268,16 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       // FeedDataService를 사용하여 캐시 우선 로드
       final posts = await _homeDataService.loadFriendsPosts(
         page: _friendsCurrentPage,
-        size: 10,
+        size: 20, // 🎯 10 -> 20으로 증가
         refresh: refresh,
       );
 
-      // 이미지 프리캐싱
+      // 이미지 프리캐싱 (더 많이 프리로드)
       if (posts.isNotEmpty) {
-        await _homeDataService.precacheImages(posts.take(3).toList(), context);
+        await _homeDataService.precacheImages(
+          posts.take(10).toList(),
+          context,
+        ); // 🎯 3 -> 10으로 증가
       }
 
       if (token != _friendsLoadTick) return;
@@ -284,7 +291,7 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         }
         _friendsIsLoading = false;
         _friendsIsLoadingMore = false;
-        _friendsHasMoreData = posts.length == 10;
+        _friendsHasMoreData = posts.length == 20; // 🎯 10 -> 20으로 변경
         _friendsCurrentPage++;
         _friendsIsCardShimmering = false; // 데이터 로드 완료 즉시 shimmer 해제
         _friendsError = null; // 성공 시 에러 클리어
@@ -341,13 +348,16 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       // FeedDataService를 사용하여 캐시 우선 로드
       final posts = await _homeDataService.loadAllPosts(
         page: _allCurrentPage,
-        size: 10,
+        size: 20, // 🎯 10 -> 20으로 증가
         refresh: refresh,
       );
 
-      // 이미지 프리캐싱
+      // 이미지 프리캐싱 (더 많이 프리로드)
       if (posts.isNotEmpty) {
-        await _homeDataService.precacheImages(posts.take(3).toList(), context);
+        await _homeDataService.precacheImages(
+          posts.take(10).toList(),
+          context,
+        ); // 🎯 3 -> 10으로 증가
       }
 
       if (token != _allLoadTick) return;
@@ -361,7 +371,7 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         }
         _allIsLoading = false;
         _allIsLoadingMore = false;
-        _allHasMoreData = posts.length == 10;
+        _allHasMoreData = posts.length == 20; // 🎯 10 -> 20으로 변경
         _allCurrentPage++;
         _allIsCardShimmering = false; // 데이터 로드 완료 즉시 shimmer 해제
         _allError = null; // 성공 시 에러 클리어
@@ -394,79 +404,25 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   }
 
   Widget _buildDynamicBackground() {
-    // 현재 섹션의 포스트 가져오기
-    final currentPosts = _currentSectionIndex == 0 ? _friendsPosts : _allPosts;
-    final currentPostIndex =
-        _currentSectionIndex == 0
-            ? _friendsCurrentPostIndex
-            : _allCurrentPostIndex;
-
-    // 새로고침 중이고 이전 배경 이미지가 있으면 그것을 사용
-    if (currentPosts.isEmpty && _previousBackgroundImageUrl != null) {
-      // 🎯 비디오 URL 체크
-      final isPreviousVideoUrl =
-          _previousBackgroundImageUrl!.toLowerCase().endsWith('.mp4') ||
-          _previousBackgroundImageUrl!.toLowerCase().endsWith('.mov') ||
-          _previousBackgroundImageUrl!.toLowerCase().endsWith('.avi') ||
-          _previousBackgroundImageUrl!.toLowerCase().endsWith('.webm') ||
-          _previousBackgroundImageUrl!.contains('/videos/');
-
-      return Positioned.fill(
-        child: Stack(
-          children: [
-            Theme.of(context).brightness == Brightness.dark &&
-                    !isPreviousVideoUrl
-                ? Positioned.fill(
-                  child: CachedNetworkImage(
-                    imageUrl: _previousBackgroundImageUrl!,
-                    fit: BoxFit.cover,
-                    key: ValueKey('bg-previous-$_previousBackgroundImageUrl'),
-                    placeholder:
-                        (context, url) => ShimmerBox(
-                          width: double.infinity,
-                          height: double.infinity,
-                        ),
-                    errorWidget:
-                        (context, url, error) => const Icon(Icons.error),
-                  ),
-                )
-                : SizedBox.shrink(),
-            Positioned.fill(
-              child: BackdropFilter(
-                filter: ui.ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-                child: Container(
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
-                      colors: [
-                        Theme.of(
-                          context,
-                        ).colorScheme.background.withOpacity(0.75),
-                        Theme.of(
-                          context,
-                        ).colorScheme.background.withOpacity(0.79),
-                        Theme.of(
-                          context,
-                        ).colorScheme.background.withOpacity(0.85),
-                      ],
-                      stops: const [0.0, 0.7, 1.0],
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
-      );
+    // 🎯 PostList에서 전달받은 배경 이미지 URL 사용
+    String? imageUrl;
+    if (_currentSectionIndex == 0) {
+      // 친구글 섹션
+      imageUrl = _friendsBackgroundImageUrl;
+    } else {
+      // 전체글 섹션
+      imageUrl = _allBackgroundImageUrl;
     }
 
-    if (currentPosts.isEmpty) return const SizedBox.shrink();
+    // 새로고침 중이고 이전 배경 이미지가 있으면 그것을 사용
+    if (imageUrl == null && _previousBackgroundImageUrl != null) {
+      imageUrl = _previousBackgroundImageUrl;
+    }
 
-    // 안전한 인덱스 범위 체크
-    final safeIndex = currentPostIndex.clamp(0, currentPosts.length - 1);
-    final currentPost = currentPosts[safeIndex];
-    final String imageUrl = currentPost.thumbnailImageUrl.trim();
+    // 이미지가 없으면 빈 위젯 반환
+    if (imageUrl == null) {
+      return const SizedBox.shrink();
+    }
 
     final bool isNetwork = imageUrl.startsWith('http');
 
@@ -515,7 +471,7 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           Theme.of(context).brightness == Brightness.dark
               ? Positioned.fill(
                 child: BackdropFilter(
-                  filter: ui.ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+                  filter: ui.ImageFilter.blur(sigmaX: 13, sigmaY: 10),
                   child: Container(
                     decoration: BoxDecoration(
                       gradient: LinearGradient(
@@ -524,13 +480,13 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                         colors: [
                           Theme.of(
                             context,
-                          ).colorScheme.background.withOpacity(0.65),
+                          ).colorScheme.background.withOpacity(0.7),
                           Theme.of(
                             context,
-                          ).colorScheme.background.withOpacity(0.75),
+                          ).colorScheme.background.withOpacity(0.82),
                           Theme.of(
                             context,
-                          ).colorScheme.background.withOpacity(0.8),
+                          ).colorScheme.background.withOpacity(0.88),
                         ],
                         stops: const [0.0, 0.7, 1.0],
                       ),
@@ -605,32 +561,77 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   Widget _buildContent(double screenWidth) {
     // 무한 루프 PageView로 친구글/전체글 섹션 구성
     // 위로만 스크롤 가능 (한 방향)
-    return PageView.builder(
-      controller: _sectionPageController,
-      scrollDirection: Axis.vertical,
-      physics: NeverScrollableScrollPhysics(), // 제스처 비활성화 (프로그래매틱하게만 전환)
-      onPageChanged: (index) {
-        final actualIndex = index % 2; // 0: 친구글, 1: 전체글
-        setState(() {
-          _currentSectionIndex = actualIndex;
-        });
-        print('[HomeScreen] 섹션 변경 완료: ${actualIndex == 0 ? "친구글" : "전체글"}');
+    return Stack(
+      children: [
+        PageView.builder(
+          controller: _sectionPageController,
+          scrollDirection: Axis.vertical,
+          physics: NeverScrollableScrollPhysics(), // 제스처 비활성화 (프로그래매틱하게만 전환)
+          onPageChanged: (index) {
+            final actualIndex = index % 2; // 0: 친구글, 1: 전체글
+            setState(() {
+              _currentSectionIndex = actualIndex;
+            });
+            print('[HomeScreen] 섹션 변경 완료: ${actualIndex == 0 ? "친구글" : "전체글"}');
 
-        // 섹션 전환 시 데이터가 비어있으면 자동 로드
-        if (actualIndex == 0 && _friendsPosts.isEmpty && !_friendsIsLoading) {
-          print('[HomeScreen] 친구글이 비어있음 - 자동 로드');
-          _loadFriendsPosts();
-        } else if (actualIndex == 1 && _allPosts.isEmpty && !_allIsLoading) {
-          print('[HomeScreen] 전체글이 비어있음 - 자동 로드');
-          _loadAllPosts();
-        }
+            // 섹션 전환 시 데이터가 비어있으면 자동 로드
+            if (actualIndex == 0 &&
+                _friendsPosts.isEmpty &&
+                !_friendsIsLoading) {
+              print('[HomeScreen] 친구글이 비어있음 - 자동 로드');
+              _loadFriendsPosts();
+            } else if (actualIndex == 1 &&
+                _allPosts.isEmpty &&
+                !_allIsLoading) {
+              print('[HomeScreen] 전체글이 비어있음 - 자동 로드');
+              _loadAllPosts();
+            }
+          },
+          itemBuilder: (context, index) {
+            final actualIndex = index % 2;
+            return actualIndex == 0
+                ? _buildFriendsSection(screenWidth)
+                : _buildAllPostsSection(screenWidth);
+          },
+        ),
+
+        Positioned(top: 60, right: 0, child: _buildGroupIndexIndicator()),
+      ],
+    );
+  }
+
+  // 그룹 인덱스 인디케이터 (가로 라인) - 클릭/드래그 가능
+  Widget _buildGroupIndexIndicator() {
+    // 🎯 그룹이 1개 이하면 생성 버튼 포함, 아니면 그룹만
+    final totalItems = 2;
+
+    return GestureDetector(
+      onTap: () {
+        _handleSectionSwitch();
       },
-      itemBuilder: (context, index) {
-        final actualIndex = index % 2;
-        return actualIndex == 0
-            ? _buildFriendsSection(screenWidth)
-            : _buildAllPostsSection(screenWidth);
-      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: List.generate(totalItems, (index) {
+            final isCurrent = index == _currentSectionIndex;
+            return Container(
+              width: 16,
+              height: 6,
+              margin: const EdgeInsets.symmetric(horizontal: 2, vertical: 2),
+              decoration: BoxDecoration(
+                color:
+                    isCurrent
+                        ? Theme.of(context).colorScheme.primary
+                        : Theme.of(
+                          context,
+                        ).colorScheme.onSurface.withOpacity(0.2),
+                borderRadius: BorderRadius.circular(3),
+              ),
+            );
+          }),
+        ),
+      ),
     );
   }
 
@@ -677,6 +678,11 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       networkError: _friendsError, // 에러 상태 전달
       onRetryError: () => _loadFriendsPosts(refresh: true), // 에러 재시도 콜백
       isTabActive: widget.isActive, // 탭 활성
+      onBackgroundImageChanged: (imageUrl) {
+        setState(() {
+          _friendsBackgroundImageUrl = imageUrl;
+        });
+      },
     );
   }
 
@@ -723,6 +729,11 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       networkError: _allError, // 에러 상태 전달
       onRetryError: () => _loadAllPosts(refresh: true), // 에러 재시도 콜백
       isTabActive: widget.isActive, // 탭 활성 + 오버레이 미표시
+      onBackgroundImageChanged: (imageUrl) {
+        setState(() {
+          _allBackgroundImageUrl = imageUrl;
+        });
+      },
     );
   }
 }

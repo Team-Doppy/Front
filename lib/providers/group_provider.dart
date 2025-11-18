@@ -27,6 +27,10 @@ class GroupProvider with ChangeNotifier {
 
   // 🎯 allFriends 그룹 메타데이터 캐시 (이미지 수정/순서 변경 시 사용)
   int? _allFriendsGroupId;
+
+  // 🎯 스마트 감지기: 최근 포스트가 추가/삭제된 그룹 ID 추적
+  final Set<int> _recentlyUpdatedGroupIds = {};
+
   @pragma('vm:entry-point')
   @pragma('vm:entry-point')
   // Getters
@@ -34,6 +38,19 @@ class GroupProvider with ChangeNotifier {
   bool get isLoading => _isLoadingGroups;
   bool get isGroupsCached => _isGroupsCached;
   int? get allFriendsGroupId => _allFriendsGroupId;
+
+  /// 🎯 최근 업데이트된 그룹 ID 목록 (스마트 감지기용)
+  Set<int> get recentlyUpdatedGroupIds =>
+      Set<int>.from(_recentlyUpdatedGroupIds);
+
+  /// 🎯 특정 그룹의 업데이트 상태를 확인하고 제거 (한 번만 감지)
+  bool checkAndClearGroupUpdate(int groupId) {
+    if (_recentlyUpdatedGroupIds.contains(groupId)) {
+      _recentlyUpdatedGroupIds.remove(groupId);
+      return true;
+    }
+    return false;
+  }
 
   List<GroupMember> membersOf(int groupId) =>
       _cachedGroupMembers[groupId] ?? const [];
@@ -482,6 +499,12 @@ class GroupProvider with ChangeNotifier {
     for (final entry in groupIdToDelta.entries) {
       final groupId = entry.key;
       final delta = entry.value;
+
+      // 🎯 포스트가 추가된 경우 (delta > 0)에만 스마트 감지기에 등록
+      if (delta > 0) {
+        _recentlyUpdatedGroupIds.add(groupId);
+        print('🎯 [GroupProvider] 스마트 감지기: 그룹 $groupId 포스트 추가 감지');
+      }
 
       final groupIndex = _cachedGroups.indexWhere((g) => g.id == groupId);
       if (groupIndex == -1) continue;

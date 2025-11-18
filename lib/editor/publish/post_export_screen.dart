@@ -498,7 +498,7 @@ class _PostExportScreenState extends State<PostExportScreen>
         // 🎯 포스트 생성 후 관련 그룹의 postCount만 선택적 업데이트 (전체 재조회 생략)
         final groupProvider = context.read<GroupProvider>();
 
-        // GROUPS 공개범위인 경우에만 관련 그룹의 postCount 업데이트
+        // 🎯 GROUPS 공개범위: 선택된 그룹들의 postCount 업데이트
         if (scopeLabel == 'GROUPS' && _selectedAudienceGroupIds.isNotEmpty) {
           final groupIdToDelta = <int, int>{};
           for (final groupId in _selectedAudienceGroupIds) {
@@ -509,7 +509,21 @@ class _PostExportScreenState extends State<PostExportScreen>
             '[PostExport] 관련 그룹 postCount 선택적 업데이트 완료: ${_selectedAudienceGroupIds.length}개 그룹',
           );
         }
-        // PUBLIC/FRIENDS/PRIVATE는 그룹 postCount에 영향 없음
+        // 🎯 FRIENDS 공개범위: allFriends 그룹의 postCount 업데이트
+        // ManageGroupScreen에서는 -1을 allFriends 그룹 ID로 사용하므로 -1도 함께 등록
+        else if (scopeLabel == 'FRIENDS') {
+          final allFriendsGroupId = groupProvider.allFriendsGroupId;
+          final groupIdToDelta = <int, int>{};
+          // 실제 그룹 ID로 업데이트 (postCount 업데이트용)
+          if (allFriendsGroupId != null) {
+            groupIdToDelta[allFriendsGroupId] = 1;
+          }
+          // ManageGroupScreen에서 사용하는 -1도 함께 등록 (스마트 감지기용)
+          groupIdToDelta[-1] = 1;
+          groupProvider.updateMultipleGroupsPostCount(groupIdToDelta);
+          print('[PostExport] allFriends 그룹 postCount 선택적 업데이트 완료');
+        }
+        // PUBLIC/PRIVATE는 그룹 postCount에 영향 없음
       } catch (e) {
         print('[PostExport] 백그라운드 재로드 실패: $e');
       }
@@ -1693,8 +1707,6 @@ class _PostExportScreenState extends State<PostExportScreen>
       mainAxisAlignment: MainAxisAlignment.center,
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
-        if (!_editMode && MediaQuery.of(context).viewInsets.bottom == 0)
-          const SizedBox(width: 48),
         Expanded(
           child: TextField(
             cursorColor: AppColors.darkTextPrimary,
@@ -1741,7 +1753,7 @@ class _PostExportScreenState extends State<PostExportScreen>
         letterSpacing: -0.1,
       ),
       cursorColor: AppColors.darkTextPrimary,
-      maxLines: 5,
+      maxLines: 4,
       minLines: 2,
       keyboardType: TextInputType.multiline,
       scrollPhysics: const NeverScrollableScrollPhysics(),

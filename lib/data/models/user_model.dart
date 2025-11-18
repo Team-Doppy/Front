@@ -5,6 +5,7 @@ class User {
   final String? profileImageUrl;
   final String? selfIntroduction;
   final List<String>? links; // 🎯 프로필 링크 목록 (최대 3개)
+  final Map<String, String>? linkTitles; // 🎯 링크 타이틀 (URL -> 타이틀)
   final int? friendCount;
 
   User({
@@ -14,6 +15,7 @@ class User {
     this.profileImageUrl,
     this.selfIntroduction,
     this.links,
+    this.linkTitles,
     this.friendCount,
   });
 
@@ -41,6 +43,18 @@ class User {
       }
     }
 
+    // 🎯 linkTitles 필드 처리 (Map<String, String> 또는 null)
+    Map<String, String>? linkTitles;
+    if (json['linkTitles'] != null) {
+      if (json['linkTitles'] is Map) {
+        linkTitles = Map<String, String>.from(
+          (json['linkTitles'] as Map).map(
+            (key, value) => MapEntry(key.toString(), value.toString()),
+          ),
+        );
+      }
+    }
+
     return User(
       username: (json['username'] ?? json['userId'] ?? '').toString(),
       role: json['role']?.toString(),
@@ -49,6 +63,7 @@ class User {
           json['profileImageUrl']?.toString() ?? json['imageUrl']?.toString(),
       selfIntroduction: json['selfIntroduction']?.toString(),
       links: links,
+      linkTitles: linkTitles,
       friendCount: (json['friendCount'] as num?)?.toInt(),
     );
   }
@@ -61,6 +76,7 @@ class User {
     String? profileImageUrl,
     String? selfIntroduction,
     List<String>? links,
+    Map<String, String>? linkTitles,
     int? friendCount,
   }) {
     return User(
@@ -70,6 +86,7 @@ class User {
       profileImageUrl: profileImageUrl ?? this.profileImageUrl,
       selfIntroduction: selfIntroduction ?? this.selfIntroduction,
       links: links ?? this.links,
+      linkTitles: linkTitles ?? this.linkTitles,
       friendCount: friendCount ?? this.friendCount,
     );
   }

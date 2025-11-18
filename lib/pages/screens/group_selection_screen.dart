@@ -38,6 +38,8 @@ class _GroupSelectionScreenState extends State<GroupSelectionScreen>
   Offset? _dragPosition; // 🎯 드래그 중인 위치
   int? _dragTargetIndex; // 🎯 드래그 중 드롭 타겟 인덱스 (시각적 표시용)
   bool _isRefreshing = false; // 🎯 새로고침 중인지 여부
+  double _swipeOffset = 0.0; // 🎯 가로 스와이프 오프셋
+  double _swipeStartX = 0.0; // 🎯 스와이프 시작 X 위치
 
   @override
   void initState() {
@@ -91,24 +93,37 @@ class _GroupSelectionScreenState extends State<GroupSelectionScreen>
 
     final page = _pageController.page ?? 0;
 
-    // 첫 페이지에서 조금만 스크롤해도 빠르게 사라지도록
-    // 0.15 이상 스크롤되면 사라짐 시작 (15% 스크롤)
-    if (page < 0.15) {
+    // 🎯 페이드 시작 지점과 범위 (아주 조금만 내려도 바로 페이드 시작)
+    const double fadeStart = 0.000; // 2% 스크롤만 해도 페이드 시작
+    const double fadeEnd = 0.05; // 완전히 사라지는 지점
+
+    if (page <= fadeStart) {
+      if (_headerOpacity != 1.0 || _iconOpacity != 1.0) {
+        setState(() {
+          _headerOpacity = 1.0;
+          _iconOpacity = 1.0;
+        });
+      }
+    } else if (page < fadeEnd) {
+      final progress = ((page - fadeStart) / (fadeEnd - fadeStart)).clamp(
+        0.0,
+        1.0,
+      );
+      final opacity = 1.0 - progress;
       setState(() {
-        final opacity = 1.0 - (page / 0.15);
         _headerOpacity = opacity;
-        _iconOpacity = opacity; // 🎯 아이콘도 스크롤에 따라 사라짐
+        _iconOpacity = opacity;
       });
     } else if (_headerOpacity > 0.0 || _iconOpacity > 0.0) {
       setState(() {
         _headerOpacity = 0.0;
-        _iconOpacity = 0.0; // 🎯 아이콘도 스크롤에 따라 사라짐
+        _iconOpacity = 0.0;
       });
     }
 
     // 다시 첫 페이지로 돌아올 때
     if (page >= 0.0 &&
-        page < 0.01 &&
+        page < fadeStart &&
         (_headerOpacity < 1.0 || _iconOpacity < 1.0)) {
       setState(() {
         _headerOpacity = 1.0;
@@ -134,88 +149,120 @@ class _GroupSelectionScreenState extends State<GroupSelectionScreen>
       resizeToAvoidBottomInset: false,
 
       body: SafeArea(
-        child: Stack(
-          children: [
-            Consumer<GroupProvider>(
-              builder: (context, groupProv, child) {
-                List<Group> groups = groupProv.myGroups;
+        child: GestureDetector(
+          // 🎯 가로 스와이프로 닫기 기능
+          onHorizontalDragStart: (details) {
+            _swipeStartX = details.globalPosition.dx;
+            _swipeOffset = 0.0;
+          },
+          onHorizontalDragUpdate: (details) {
+            // 오른쪽으로 스와이프만 감지 (닫기)
+            if (details.delta.dx > 0) {
+              setState(() {
+                _swipeOffset = details.globalPosition.dx - _swipeStartX;
+              });
+            }
+          },
+          onHorizontalDragEnd: (details) {
+            final screenWidth = MediaQuery.of(context).size.width;
+            final dragDistance = _swipeOffset;
+            final velocity = details.primaryVelocity ?? 0;
 
-                // 🎯 전체 그룹(allFriends) 보장 - 없으면 새로 로드
-                final hasAllFriendsGroup = groups.any(
-                  (g) => g.isSystem == true,
-                );
-                if (!groupProv.isLoading &&
-                    (groups.isEmpty || !hasAllFriendsGroup)) {
-                  WidgetsBinding.instance.addPostFrameCallback((_) async {
-                    if (!mounted) return;
-                    final friendProvider = context.read<FriendProvider>();
-                    print('🔄 [GroupSelectionScreen] 전체 그룹 보장 - 새로 로드');
-                    await groupProv.fetchMyGroups(
-                      forceRefresh: true,
-                      friendProvider: friendProvider,
-                    );
-                  });
-                }
+            // 🎯 스와이프 거리가 화면의 30% 이상이거나 빠른 속도로 스와이프하면 닫기
+            if (dragDistance > screenWidth * 0.3 || velocity > 500) {
+              Navigator.of(context).pop();
+            } else {
+              // 원래 위치로 복귀
+              setState(() {
+                _swipeOffset = 0.0;
+                _swipeStartX = 0.0;
+              });
+            }
+          },
+          child: Stack(
+            children: [
+              Consumer<GroupProvider>(
+                builder: (context, groupProv, child) {
+                  List<Group> groups = groupProv.myGroups;
 
-                // 🎯 서버에서 받은 순서 유지 (정렬 제거)
-                // displayOrder가 있다면 그 순서로 정렬, 없으면 createdAt 순서 유지
-                // groups는 이미 서버에서 displayOrder 순서로 정렬되어 옴
-
-                // 🎯 _groups 업데이트 (reorder를 위해) - 드래그 중이거나 reorder 중에는 업데이트 금지
-                if (!_isDragMode && !_isReordering) {
-                  // 그룹 수나 ID가 다르면 업데이트
-                  final needsUpdate =
-                      _groups.length != groups.length ||
-                      !_groups.every(
-                        (g) => groups.any((g2) => g2.id == g.id),
-                      ) ||
-                      _groups.asMap().entries.any((entry) {
-                        final index = entry.key;
-                        final group = entry.value;
-                        if (index >= groups.length) return true;
-                        final updatedGroup = groups[index];
-                        return updatedGroup.id != group.id ||
-                            updatedGroup.name != group.name ||
-                            updatedGroup.memberCount != group.memberCount ||
-                            updatedGroup.profileImageUrl !=
-                                group.profileImageUrl ||
-                            updatedGroup.description != group.description;
-                      });
-
-                  if (needsUpdate) {
-                    // 🎯 빌드 중에는 setState 호출 불가하므로 PostFrameCallback 사용
-                    WidgetsBinding.instance.addPostFrameCallback((_) {
-                      if (mounted && !_isDragMode && !_isReordering) {
-                        setState(() {
-                          _groups = List<Group>.from(groups);
-                          // ❌ _currentGroupIndex 직접 변경 금지 - PageView가 onPageChanged로 변경하도록 맡김
-                        });
-
-                        // PageView index 재동기화 (범위 체크)
-                        if (_pageController.hasClients && _groups.isNotEmpty) {
-                          if (_currentGroupIndex >= _groups.length) {
-                            // 인덱스가 범위를 벗어났을 때만 이동
-                            final targetIndex = (_groups.length - 1).clamp(
-                              0,
-                              _groups.length - 1,
-                            );
-                            _pageController.animateToPage(
-                              targetIndex,
-                              duration: const Duration(milliseconds: 1),
-                              curve: Curves.linear,
-                            );
-                          }
-                        }
-                      }
+                  // 🎯 전체 그룹(allFriends) 보장 - 없으면 새로 로드
+                  final hasAllFriendsGroup = groups.any(
+                    (g) => g.isSystem == true,
+                  );
+                  if (!groupProv.isLoading &&
+                      (groups.isEmpty || !hasAllFriendsGroup)) {
+                    WidgetsBinding.instance.addPostFrameCallback((_) async {
+                      if (!mounted) return;
+                      final friendProvider = context.read<FriendProvider>();
+                      print('🔄 [GroupSelectionScreen] 전체 그룹 보장 - 새로 로드');
+                      await groupProv.fetchMyGroups(
+                        forceRefresh: true,
+                        friendProvider: friendProvider,
+                      );
                     });
                   }
-                }
 
-                return _buildGroupSelectionContent(groups);
-              },
-            ),
-            Positioned(top: 6, left: 0, right: 0, child: _buildAppBar()),
-          ],
+                  // 🎯 서버에서 받은 순서 유지 (정렬 제거)
+                  // displayOrder가 있다면 그 순서로 정렬, 없으면 createdAt 순서 유지
+                  // groups는 이미 서버에서 displayOrder 순서로 정렬되어 옴
+
+                  // 🎯 _groups 업데이트 (reorder를 위해) - 드래그 중이거나 reorder 중에는 업데이트 금지
+                  if (!_isDragMode && !_isReordering) {
+                    // 그룹 수나 ID가 다르면 업데이트
+                    final needsUpdate =
+                        _groups.length != groups.length ||
+                        !_groups.every(
+                          (g) => groups.any((g2) => g2.id == g.id),
+                        ) ||
+                        _groups.asMap().entries.any((entry) {
+                          final index = entry.key;
+                          final group = entry.value;
+                          if (index >= groups.length) return true;
+                          final updatedGroup = groups[index];
+                          return updatedGroup.id != group.id ||
+                              updatedGroup.name != group.name ||
+                              updatedGroup.memberCount != group.memberCount ||
+                              updatedGroup.profileImageUrl !=
+                                  group.profileImageUrl ||
+                              updatedGroup.description != group.description;
+                        });
+
+                    if (needsUpdate) {
+                      // 🎯 빌드 중에는 setState 호출 불가하므로 PostFrameCallback 사용
+                      WidgetsBinding.instance.addPostFrameCallback((_) {
+                        if (mounted && !_isDragMode && !_isReordering) {
+                          setState(() {
+                            _groups = List<Group>.from(groups);
+                            // ❌ _currentGroupIndex 직접 변경 금지 - PageView가 onPageChanged로 변경하도록 맡김
+                          });
+
+                          // PageView index 재동기화 (범위 체크)
+                          if (_pageController.hasClients &&
+                              _groups.isNotEmpty) {
+                            if (_currentGroupIndex >= _groups.length) {
+                              // 인덱스가 범위를 벗어났을 때만 이동
+                              final targetIndex = (_groups.length - 1).clamp(
+                                0,
+                                _groups.length - 1,
+                              );
+                              _pageController.animateToPage(
+                                targetIndex,
+                                duration: const Duration(milliseconds: 1),
+                                curve: Curves.linear,
+                              );
+                            }
+                          }
+                        }
+                      });
+                    }
+                  }
+
+                  return _buildGroupSelectionContent(groups);
+                },
+              ),
+              Positioned(top: 6, left: 0, right: 0, child: _buildAppBar()),
+            ],
+          ),
         ),
       ),
     );
@@ -381,19 +428,31 @@ class _GroupSelectionScreenState extends State<GroupSelectionScreen>
 
   /// 🎯 당기는 진행률 업데이트 (스피너 표시 감지용)
   void _onPullProgress(double progress) {
-    // 스피너가 보일 정도로 당겼으면 (30 이상 당기면 스피너 표시, 약 0.4 progress)
-    final shouldHide = progress >= 0.5;
+    // 🎯 텍스트를 먼저 숨기고, 그 다음에 스피너 표시
+    final shouldStartHiding = progress >= 0.0; // 텍스트 숨기기 시작 (0부터)
+    final shouldShowSpinner = progress >= 0.5; // 스피너 표시
 
     setState(() {
-      if (shouldHide) {
-        // 당겨서 스피너가 보이면 숨기기
-        _isRefreshing = true;
-        _headerOpacity = 0.0; // 🎯 새로고침 시작 시 "내 그룹" 텍스트 숨기기
-      } else if (!shouldHide && progress < 0.5) {
-        // 다시 내려갔고 충분히 낮아졌으면 (실제 새로고침하지 않았을 때) 다시 보이기
-        _isRefreshing = false;
+      if (shouldStartHiding) {
+        // 🎯 텍스트를 먼저 부드럽게 숨기기 (progress 0.0 ~ 0.15에서 완전히 사라짐)
+        final hideProgress = (progress / 0.15).clamp(0.0, 1.0);
+        _headerOpacity = 1.0 - hideProgress;
+      } else {
+        // 다시 내려갔으면 텍스트 다시 보이기
         if (_currentGroupIndex == 0) {
-          _headerOpacity = 1.0; // 🎯 첫 페이지에 있으면 다시 보이기
+          _headerOpacity = 1.0;
+        }
+      }
+
+      if (shouldShowSpinner) {
+        // 🎯 텍스트가 거의 사라진 후 스피너 표시
+        _isRefreshing = true;
+        _headerOpacity = 0.0; // 완전히 숨김
+      } else if (progress < 0.5) {
+        // 다시 내려갔고 충분히 낮아졌으면 (실제 새로고침하지 않았을 때) 스피너 숨기기
+        _isRefreshing = false;
+        if (_currentGroupIndex == 0 && progress < 0.0) {
+          _headerOpacity = 1.0; // 🎯 첫 페이지에 있고 충분히 낮아졌으면 다시 보이기
         }
       }
     });

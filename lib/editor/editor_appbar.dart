@@ -383,7 +383,7 @@ class _EditModeAppBarState extends State<EditModeAppBar> {
     // 카테고리가 아직 로드되지 않았거나 비어있으면 표시하지 않음
     if (_cachedCategories == null || _cachedCategories!.isEmpty) {
       print('[EditModeAppBar] 카테고리가 아직 로드되지 않았거나 비어있습니다');
-      ErrorHandler.showWarning(context, '카테고리를 불러오는 중입니다');
+      ErrorHandler.showInfo(context, '카테고리를 불러오는 중입니다');
       return;
     }
 
@@ -735,7 +735,10 @@ class _EditModeAppBarState extends State<EditModeAppBar> {
 
                 // 그룹이 하나도 없으면 변경하지 않음
                 if (newGroupIds.isEmpty) {
-                  ErrorHandler.showWarning(context, '최소 1개 이상의 그룹을 선택해야 합니다');
+                  ErrorHandler.showError(
+                    context,
+                    context.tr('select_at_least_one_group'),
+                  );
                   // 드롭다운을 다시 열기
                   Future.delayed(const Duration(milliseconds: 100), () {
                     final RenderBox button =

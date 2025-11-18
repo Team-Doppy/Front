@@ -64,6 +64,7 @@ class UserService {
     required String alias,
     required String selfIntroduction,
     List<String>? links, // 🎯 프로필 링크 목록 (최대 3개)
+    Map<String, String>? linkTitles, // 🎯 링크 타이틀 (URL -> 타이틀)
   }) async {
     try {
       final data = <String, dynamic>{
@@ -74,6 +75,11 @@ class UserService {
       // 🎯 links가 있으면 추가 (최대 3개)
       if (links != null && links.isNotEmpty) {
         data['links'] = links.take(3).toList();
+      }
+
+      // 🎯 linkTitles가 있으면 추가
+      if (linkTitles != null && linkTitles.isNotEmpty) {
+        data['linkTitles'] = linkTitles;
       }
 
       final response = await _dio.put('/api/profile/info', data: data);

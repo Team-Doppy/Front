@@ -7,6 +7,7 @@ import 'package:doppy/pages/components/add_member_bottom_sheet.dart';
 import 'package:doppy/pages/components/group_post_readers_bottom_sheet.dart';
 import 'package:doppy/pages/components/friends_grid.dart';
 import 'package:doppy/pages/components/custom_refresh_indicator.dart';
+import 'package:doppy/pages/components/doppy_loading_logo.dart';
 import 'package:doppy/l10n/app_localizations.dart';
 import 'package:doppy/utils/dialog_utils.dart';
 import 'package:doppy/utils/error_handler.dart';
@@ -83,7 +84,8 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
   late final AnimationController _refreshAnimationController;
   late final Animation<double> _refreshRotationAnimation;
 
-  // 🎯 전체 친구 그룹 로컬 데이터 리로드 트리거
+  // 🎯 초기 로딩 상태 (화면 진입 시 로딩 로고 표시용)
+  bool _isInitialLoading = true;
 
   @override
   void initState() {
@@ -189,14 +191,14 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
       if (_selectedGroup == null || isSystemGroup) {
         // allFriends 그룹: 친구 데이터만 추가로 로드 (그룹 정보는 이미 위에서 로드됨)
         if (!friendProv.isLoading && friendProv.acceptedFriends.isEmpty) {
-          // 🎯 백그라운드 로드 (await 없이)
-          friendProv.fetchAllFriendData();
+          // 🎯 초기 로딩 완료 전에 친구 데이터 로드
+          await friendProv.fetchAllFriendData();
         }
       } else {
-        // 일반 그룹: 캐시 확인 후 멤버 목록 로드 (백그라운드)
+        // 일반 그룹: 캐시 확인 후 멤버 목록 로드
         if (!groupProv.isMembersCached(_selectedGroup!.id) &&
             !groupProv.isLoadingMembers(_selectedGroup!.id)) {
-          groupProv.fetchGroupMembers(_selectedGroup!.id);
+          await groupProv.fetchGroupMembers(_selectedGroup!.id);
         }
       }
 
@@ -210,6 +212,13 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
           // 포스트 탭으로 자동 전환하지 않고 백그라운드에서 로드
           _loadAllFriendsPosts();
         }
+      }
+
+      // 🎯 초기 로딩 완료 - 부드럽게 화면 전환
+      if (mounted) {
+        setState(() {
+          _isInitialLoading = false;
+        });
       }
     });
   }
@@ -231,15 +240,27 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
   Widget build(BuildContext context) {
     return Consumer<GroupProvider>(
       builder: (context, groupProv, child) {
-        // 🎯 로딩 중일 때는 shimmer만 표시 (DoppyLoadingLogo 제거)
-        // 초기 로딩도 shimmer로 처리
-        // if (groupProv.isLoading && !_isRefreshing) {
-        //   return Scaffold(...);
-        // }
-
         return Consumer<FriendProvider>(
           builder: (context, friendProv, child) {
-            return _buildScaffold(groupProv, friendProv);
+            // 🎯 초기 로딩 중일 때는 로딩 로고만 표시
+            if (_isInitialLoading) {
+              return Scaffold(
+                backgroundColor: Theme.of(context).colorScheme.background,
+                body: const Center(child: DoppyLoadingLogo()),
+              );
+            }
+
+            // 🎯 로딩 완료 후 부드럽게 실제 콘텐츠 표시
+            return AnimatedSwitcher(
+              duration: const Duration(milliseconds: 400),
+              transitionBuilder: (Widget child, Animation<double> animation) {
+                return FadeTransition(opacity: animation, child: child);
+              },
+              child: KeyedSubtree(
+                key: const ValueKey('manage_group_content'),
+                child: _buildScaffold(groupProv, friendProv),
+              ),
+            );
           },
         );
       },
@@ -565,67 +586,79 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
             Hero(
               tag: 'group-${group.id}',
               child: RepaintBoundary(
-                child: Container(
-                  width: 90,
-                  height: 90,
-                  decoration: BoxDecoration(shape: BoxShape.circle),
-                  child: Stack(
-                    children: [
-                      Container(
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: Theme.of(context).colorScheme.surface,
-                          border: Border.all(
-                            color: Theme.of(
-                              context,
-                            ).colorScheme.onSurface.withOpacity(0.1),
-                            width: 1,
+                child: GestureDetector(
+                  // 🎯 이미지 탭 시 편집 화면으로 이동
+                  onTap: () {
+                    if (!widget.embedded && !_isMultiSelectMode) {
+                      _showEditGroupSheet();
+                    }
+                  },
+                  child: Container(
+                    width: 90,
+                    height: 90,
+                    decoration: BoxDecoration(shape: BoxShape.circle),
+                    child: Stack(
+                      children: [
+                        Container(
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: Theme.of(context).colorScheme.surface,
+                            border: Border.all(
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.onSurface.withOpacity(0.1),
+                              width: 1,
+                            ),
                           ),
-                        ),
-                        child: ClipOval(
-                          child:
-                              displayImageUrl != null &&
-                                      displayImageUrl.isNotEmpty &&
-                                      (displayImageUrl.startsWith('http://') ||
-                                          displayImageUrl.startsWith(
-                                            'https://',
-                                          ))
-                                  ? CachedNetworkImage(
-                                    imageUrl: displayImageUrl,
-                                    fit: BoxFit.cover,
-                                    width: 90,
-                                    height: 90,
-                                    placeholder:
-                                        (context, url) => Container(
-                                          width: 90,
-                                          height: 90,
-                                          color:
-                                              Theme.of(
-                                                context,
-                                              ).colorScheme.surface,
-                                          child: Center(
-                                            child: CircularProgressIndicator(
-                                              strokeWidth: 2,
-                                              valueColor:
-                                                  AlwaysStoppedAnimation<Color>(
-                                                    Theme.of(context)
-                                                        .colorScheme
-                                                        .onSurface
-                                                        .withOpacity(0.3),
-                                                  ),
+                          child: ClipOval(
+                            child:
+                                displayImageUrl != null &&
+                                        displayImageUrl.isNotEmpty &&
+                                        (displayImageUrl.startsWith(
+                                              'http://',
+                                            ) ||
+                                            displayImageUrl.startsWith(
+                                              'https://',
+                                            ))
+                                    ? CachedNetworkImage(
+                                      imageUrl: displayImageUrl,
+                                      fit: BoxFit.cover,
+                                      width: 90,
+                                      height: 90,
+                                      placeholder:
+                                          (context, url) => Container(
+                                            width: 90,
+                                            height: 90,
+                                            color:
+                                                Theme.of(
+                                                  context,
+                                                ).colorScheme.surface,
+                                            child: Center(
+                                              child: CircularProgressIndicator(
+                                                strokeWidth: 2,
+                                                valueColor:
+                                                    AlwaysStoppedAnimation<
+                                                      Color
+                                                    >(
+                                                      Theme.of(context)
+                                                          .colorScheme
+                                                          .onSurface
+                                                          .withOpacity(0.3),
+                                                    ),
+                                              ),
                                             ),
                                           ),
-                                        ),
-                                    errorWidget: (context, url, error) {
-                                      return _buildGroupAvatarPlaceholder(
-                                        group,
-                                      );
-                                    },
-                                  )
-                                  : _buildGroupAvatarPlaceholder(group),
+                                      errorWidget: (context, url, error) {
+                                        return _buildGroupAvatarPlaceholder(
+                                          group,
+                                        );
+                                      },
+                                    )
+                                    : _buildGroupAvatarPlaceholder(group),
+                          ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
               ),
@@ -851,6 +884,22 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
         if (!mounted) return;
         _onGroupChanged(previousGroup, _selectedGroup, groupProv, friendProv);
       });
+    }
+
+    // 🎯 스마트 감지기: 포스트가 추가된 그룹 자동 새로고침
+    if (_selectedGroup != null && _currentViewIndex == 1) {
+      final isAllFriendsGroup = _selectedGroup!.isSystem == true;
+      final groupId = isAllFriendsGroup ? -1 : _selectedGroup!.id;
+
+      // 🎯 현재 그룹이 최근 업데이트된 그룹 목록에 있는지 확인
+      if (groupProv.checkAndClearGroupUpdate(groupId)) {
+        print('🎯 [ManageGroupScreen] 스마트 감지: 그룹 $groupId 포스트 추가 감지 - 자동 새로고침');
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          // 포스트 탭이 활성화되어 있고, 해당 그룹의 포스트가 있으면 새로고침
+          _refreshPosts();
+        });
+      }
     }
 
     // 🎯 검색은 멤버/포스트 검색이므로 그룹 필터링 제거
@@ -1359,7 +1408,8 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
             final post = posts[postIndex];
             final isSelected = _selectedPosts.contains(post.id);
 
-            if (postIndex == posts.length - 3 && hasMore && !isLoading) {
+            // 🎯 더 일찍 로드 모어 트리거 (마지막 5개 남았을 때)
+            if (postIndex == posts.length - 5 && hasMore && !isLoading) {
               WidgetsBinding.instance.addPostFrameCallback((_) {
                 if (mounted && _selectedGroup?.id == selectedGroup.id) {
                   if (isAllFriendsGroup) {
@@ -1461,7 +1511,7 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
       final response = await blogService.getGroupPosts(
         groupId: groupId,
         page: page,
-        size: 10,
+        size: 20, // 🎯 10 -> 20으로 증가
         includeContent: false,
       );
 
@@ -1477,7 +1527,7 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
               )
               .toList();
 
-      final hasMore = newPosts.length >= 10;
+      final hasMore = newPosts.length >= 20; // 🎯 10 -> 20으로 변경
 
       if (!mounted) return;
       setState(() {
@@ -1587,7 +1637,7 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
       // 🎯 새로운 엔드포인트 사용: 내가 작성한 FRIENDS 공개 범위 포스트만 조회
       final postsList = await blogService.getMyFriendsPosts(
         page: page,
-        size: 10,
+        size: 20, // 🎯 10 -> 20으로 증가
         includeContent: false,
       );
 
@@ -1596,7 +1646,7 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
       final newPosts =
           postsList.map<PostData>((item) => PostData.fromServer(item)).toList();
 
-      final hasMore = newPosts.length >= 10;
+      final hasMore = newPosts.length >= 20; // 🎯 10 -> 20으로 변경
 
       if (!mounted) return;
       setState(() {
@@ -1748,7 +1798,7 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
         crossAxisCount: 3,
         mainAxisSpacing: 50,
         crossAxisSpacing: 6,
-        childAspectRatio: 0.82,
+        childAspectRatio: 0.75, // 🎯 텍스트 공간 확보를 위해 높이 증가 (0.82 -> 0.75)
       ),
       delegate: SliverChildBuilderDelegate((context, index) {
         final tile = tiles[index];

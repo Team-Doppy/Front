@@ -2,7 +2,7 @@ import 'dart:io';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:doppy/data/models/group_model.dart';
 import 'package:doppy/data/services/upload_service.dart';
-import 'package:doppy/image/profile_image_bottom_sheet.dart';
+import 'package:doppy/pages/components/profile_edit_sheet.dart';
 import 'package:doppy/l10n/app_localizations.dart';
 import 'package:doppy/theme/app_colors.dart';
 import 'package:doppy/utils/dialog_utils.dart';
@@ -997,7 +997,7 @@ class GroupDropDown {
                                   fontSize: 18,
                                   fontWeight: FontWeight.w700,
                                   color:
-                                      hasChanges
+                                      (hasChanges && !_isImageUploading)
                                           ? Theme.of(
                                             context,
                                           ).colorScheme.onSurface
@@ -1099,22 +1099,41 @@ class GroupDropDown {
                               ),
                             ),
                       )
-                      : Image.file(
+                      : Stack(
                         key: ValueKey('local-${_selectedGroupImageUrl}'),
-                        File(_selectedGroupImageUrl!),
-                        fit: BoxFit.cover,
-                        errorBuilder:
-                            (context, error, stackTrace) => Container(
-                              color: Theme.of(context).colorScheme.surface,
+                        fit: StackFit.expand,
+                        children: [
+                          // 🎯 로컬 경로 이미지 (cover로 꽉차게)
+                          Image.file(
+                            File(_selectedGroupImageUrl!),
+                            fit: BoxFit.cover,
+                            errorBuilder:
+                                (context, error, stackTrace) => Container(
+                                  color: Theme.of(context).colorScheme.surface,
+                                  child: Center(
+                                    child: Icon(
+                                      Icons.image_not_supported,
+                                      color: Theme.of(
+                                        context,
+                                      ).colorScheme.onSurface.withOpacity(0.3),
+                                    ),
+                                  ),
+                                ),
+                          ),
+                          // 🎯 업로드 중일 때 로딩 표시
+                          if (_isImageUploading)
+                            Container(
+                              color: Colors.black.withOpacity(0.3),
                               child: Center(
-                                child: Icon(
-                                  Icons.image_not_supported,
-                                  color: Theme.of(
-                                    context,
-                                  ).colorScheme.onSurface.withOpacity(0.3),
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  valueColor: AlwaysStoppedAnimation<Color>(
+                                    Colors.white,
+                                  ),
                                 ),
                               ),
                             ),
+                        ],
                       )
                   : Container(
                     key: const ValueKey('placeholder'),
@@ -1148,7 +1167,7 @@ class GroupDropDown {
       context: context,
       backgroundColor: Colors.transparent,
       builder: (BuildContext pickerContext) {
-        return ProfileImageBottomSheet(
+        return ProfileEditBottomSheet(
           singleSelect: true,
           onClearProfileImage: () async {
             setModalState(() {

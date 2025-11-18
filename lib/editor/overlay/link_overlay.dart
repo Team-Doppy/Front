@@ -31,11 +31,15 @@ class LinkOverlay extends StatefulWidget {
 class _LinkOverlayState extends State<LinkOverlay> {
   final _url = TextEditingController();
   final FocusNode _focusNode = FocusNode();
+  final TextEditingController _customTitleController =
+      TextEditingController(); // 🎯 사용자 정의 타이틀
+  final FocusNode _titleFocusNode = FocusNode();
 
   Timer? _debounce;
   String? _pTitle;
   String? _pDesc;
   String? _pThumb;
+  bool _isFetchingMeta = false; // 메타데이터 가져오는 중인지
 
   double _dragStartY = 0.0;
   double _dragStartX = 0.0;
@@ -119,6 +123,8 @@ class _LinkOverlayState extends State<LinkOverlay> {
   void dispose() {
     _url.dispose();
     _focusNode.dispose();
+    _customTitleController.dispose();
+    _titleFocusNode.dispose();
 
     super.dispose();
   }
@@ -201,6 +207,18 @@ class _LinkOverlayState extends State<LinkOverlay> {
             onChanged: (value) {
               _onUrlChanged(value);
               _updateSuggestions(value);
+              // 🎯 autoSubmit일 때 URL이 유효하면 즉시 포커스 해제하여 미리보기 표시
+              if (widget.autoSubmit && value.trim().isNotEmpty) {
+                final normalized = _normalizeUrl(value.trim());
+                if (normalized != null && _isValidUrl(normalized)) {
+                  // 다음 프레임에서 포커스 해제 (입력 완료 후)
+                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                    if (mounted && _focusNode.hasFocus) {
+                      _focusNode.unfocus();
+                    }
+                  });
+                }
+              }
             },
             onSubmitted: (value) {
               _enqueueUrl(value.trim());
@@ -274,10 +292,11 @@ class _LinkOverlayState extends State<LinkOverlay> {
                   // 배경 탭 시 포커스 해제
                   _focusNode.unfocus();
                 },
-                child: BackdropFilter(
-                  filter: ui.ImageFilter.blur(sigmaX: 15, sigmaY: 15),
-                  child: Container(
-                    color: const ui.Color.fromARGB(235, 45, 45, 45),
+                child: Container(
+                  color: Colors.black.withOpacity(0.7),
+                  child: BackdropFilter(
+                    filter: ui.ImageFilter.blur(sigmaX: 15, sigmaY: 15),
+                    child: Container(color: Colors.transparent),
                   ),
                 ),
               ),
@@ -293,7 +312,12 @@ class _LinkOverlayState extends State<LinkOverlay> {
                         switchInCurve: Curves.easeOut,
                         switchOutCurve: Curves.easeIn,
                         child:
-                            _focusNode.hasFocus
+                            // 🎯 autoSubmit일 때 미리보기 표시 (URL이 있고 정규화 가능할 때)
+                            (widget.autoSubmit &&
+                                    _url.text.trim().isNotEmpty &&
+                                    _normalizeUrl(_url.text.trim()) != null)
+                                ? _buildPreviewCard()
+                                : _focusNode.hasFocus
                                 ? _buildSuggestions()
                                 : _items.isNotEmpty
                                 ? _buildItemsList()
@@ -314,7 +338,49 @@ class _LinkOverlayState extends State<LinkOverlay> {
                 ),
               ),
             ),
-            if (_items.isNotEmpty && !_focusNode.hasFocus)
+            // 🎯 autoSubmit일 때 미리보기 하단에 추가 버튼 표시 (URL이 정규화 가능할 때)
+            if (widget.autoSubmit &&
+                _url.text.trim().isNotEmpty &&
+                _normalizeUrl(_url.text.trim()) != null &&
+                !_focusNode.hasFocus)
+              Positioned(
+                left: 20,
+                right: 20,
+                bottom: 16,
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    minimumSize: Size(double.infinity, 50),
+                    backgroundColor: AppColors.darkTextPrimary,
+                    foregroundColor: AppColors.darkBackground,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                  ),
+                  onPressed: () {
+                    if (_url.text.trim().isNotEmpty) {
+                      // 🎯 사용자가 입력한 타이틀이 있으면 사용, 없으면 메타데이터 타이틀 또는 도메인 사용
+                      final finalTitle =
+                          _customTitleController.text.trim().isNotEmpty
+                              ? _customTitleController.text.trim()
+                              : (_pTitle?.isNotEmpty == true ? _pTitle : null);
+
+                      widget.onSubmit(
+                        url: _url.text.trim(),
+                        title: finalTitle,
+                        description: _pDesc,
+                        thumbnailUrl: _pThumb,
+                      );
+                      Navigator.of(context).pop();
+                    }
+                  },
+                  child: const Text(
+                    '추가',
+                    style: TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                ),
+              ),
+            // 기존 버튼 (에디터용)
+            if (!widget.autoSubmit && _items.isNotEmpty && !_focusNode.hasFocus)
               Positioned(
                 left: 20,
                 right: 20,
@@ -361,11 +427,14 @@ class _LinkOverlayState extends State<LinkOverlay> {
     final input = value.trim();
 
     // 입력이 변경되면 즉시 메타데이터 초기화 (유효하지 않은 URL일 수 있음)
-    if (input.isEmpty || !_isValidUrl(input)) {
+    final normalized = _normalizeUrl(input);
+    if (input.isEmpty || normalized == null) {
       setState(() {
         _pTitle = null;
         _pDesc = null;
         _pThumb = null;
+        _isFetchingMeta = false;
+        _customTitleController.clear(); // 🎯 URL이 변경되면 타이틀도 초기화
       });
     }
 
@@ -377,19 +446,42 @@ class _LinkOverlayState extends State<LinkOverlay> {
           _pTitle = null;
           _pDesc = null;
           _pThumb = null;
+          _isFetchingMeta = false;
+          _customTitleController.clear(); // 🎯 URL이 비어지면 타이틀도 초기화
         });
         return;
       }
 
-      // URL이 완전한 형태일 때만 메타데이터 가져오기
-      if (_isValidUrl(trimmedInput)) {
-        await _fetchMeta(trimmedInput);
+      // 정규화된 URL로 메타데이터 가져오기
+      final normalizedUrl = _normalizeUrl(trimmedInput);
+      if (normalizedUrl != null && _isValidUrl(normalizedUrl)) {
+        // 🎯 autoSubmit일 때는 포커스를 해제하여 미리보기 표시
+        if (widget.autoSubmit && _focusNode.hasFocus) {
+          _focusNode.unfocus();
+        }
+        setState(() {
+          _isFetchingMeta = true;
+        });
+        await _fetchMeta(normalizedUrl);
+        if (mounted) {
+          setState(() {
+            _isFetchingMeta = false;
+            // 메타데이터에서 타이틀이 가져와지면 커스텀 타이틀에 설정
+            if (_pTitle != null &&
+                _pTitle!.isNotEmpty &&
+                _customTitleController.text.isEmpty) {
+              _customTitleController.text = _pTitle!;
+            }
+          });
+        }
       } else {
         // URL이 완전하지 않으면 메타데이터 초기화
         setState(() {
           _pTitle = null;
           _pDesc = null;
           _pThumb = null;
+          _isFetchingMeta = false;
+          _customTitleController.clear(); // 🎯 URL이 유효하지 않으면 타이틀도 초기화
         });
       }
     });
@@ -562,8 +654,20 @@ class _LinkOverlayState extends State<LinkOverlay> {
 
   Future<void> _fetchMeta(String rawUrl, {_LinkItem? target}) async {
     final url = _normalizeUrl(rawUrl);
-    if (url == null) return;
+    if (url == null) {
+      if (target == null && mounted) {
+        setState(() {
+          _isFetchingMeta = false;
+        });
+      }
+      return;
+    }
     if (target == null) {
+      if (mounted) {
+        setState(() {
+          _isFetchingMeta = true;
+        });
+      }
     } else {
       setState(() => target.fetching = true);
     }
@@ -586,9 +690,17 @@ class _LinkOverlayState extends State<LinkOverlay> {
         _applyParsedMeta(html, target: target);
       }
     } catch (_) {
+      if (target == null && mounted) {
+        setState(() {
+          _isFetchingMeta = false;
+        });
+      }
     } finally {
       if (!mounted) return;
       if (target == null) {
+        setState(() {
+          _isFetchingMeta = false;
+        });
       } else {
         setState(() => target.fetching = false);
       }
@@ -655,8 +767,25 @@ class _LinkOverlayState extends State<LinkOverlay> {
   String? _normalizeUrl(String input) {
     String u = input.trim();
     if (u.isEmpty) return null;
+    // http:// 또는 https://로 시작하지 않으면 추가
     if (!u.startsWith('http://') && !u.startsWith('https://')) {
-      u = 'https://$u';
+      // 이미 도메인 형태인지 확인 (예: example.com)
+      if (RegExp(
+            r'^[a-zA-Z0-9][a-zA-Z0-9-]{0,61}[a-zA-Z0-9]?\.([a-zA-Z]{2,}|[a-zA-Z]{2,}\.[a-zA-Z]{2,})',
+          ).hasMatch(u) ||
+          RegExp(r'^\d+\.\d+\.\d+\.\d+').hasMatch(u)) {
+        u = 'https://$u';
+      } else {
+        // 도메인 형태가 아니면 null 반환
+        return null;
+      }
+    }
+    // 기본 URL 패턴 검증
+    if (!RegExp(
+      r'^https?://[^\s/$.?#].[^\s]*$',
+      caseSensitive: false,
+    ).hasMatch(u)) {
+      return null;
     }
     return u;
   }
@@ -673,29 +802,20 @@ class _LinkOverlayState extends State<LinkOverlay> {
       _focusNode.unfocus();
     } catch (_) {}
 
-    // 🎯 autoSubmit이 true이면 메타데이터를 가져온 후 onSubmit 호출 (프로필 편집용)
+    // 🎯 autoSubmit이 true이면 미리보기를 보여주고 메타데이터를 가져온 후 추가 (프로필 편집용)
     if (widget.autoSubmit) {
-      // 로딩 표시를 위해 URL 입력 필드 초기화
-      setState(() {
-        _url.clear();
-        _pTitle = null;
-        _pDesc = null;
-        _pThumb = null;
-      });
+      // 먼저 메타데이터 가져오기
+      await _fetchMeta(trimmed);
 
-      // 메타데이터 가져오기
-      await _fetchMeta(trimmed, target: item);
+      // 메타데이터를 가져온 후 미리보기 표시를 위해 상태 업데이트
+      // (이미 _fetchMeta에서 _pTitle, _pDesc, _pThumb가 설정됨)
 
-      // 메타데이터를 가져온 후 onSubmit 호출
+      // 미리보기가 표시되도록 포커스 해제
       if (mounted) {
-        widget.onSubmit(
-          url: trimmed,
-          title: item.title,
-          description: item.description,
-          thumbnailUrl: item.thumbnailUrl,
-        );
-        // 🎯 LinkOverlay만 닫고 바텀시트는 열어둠
-        Navigator.of(context).pop();
+        _focusNode.unfocus();
+        setState(() {
+          // 미리보기 표시를 위해 URL은 유지
+        });
       }
       return;
     }
@@ -709,6 +829,165 @@ class _LinkOverlayState extends State<LinkOverlay> {
       _pThumb = null;
     });
     _fetchMeta(trimmed, target: item);
+  }
+
+  // 🎯 autoSubmit일 때 미리보기 카드 빌드 (리스트 아이템 형태)
+  Widget _buildPreviewCard() {
+    final url = _url.text.trim();
+    if (url.isEmpty) {
+      return const SizedBox.shrink(key: ValueKey('empty_preview'));
+    }
+
+    // URL 정규화 (표시용)
+    String displayUrl = url;
+    if (!url.startsWith('http://') && !url.startsWith('https://')) {
+      displayUrl = 'https://$url';
+    }
+
+    // 도메인 추출 (표시용)
+    String domain = url;
+    try {
+      final uri = Uri.parse(displayUrl);
+      domain = uri.host.replaceFirst('www.', '');
+    } catch (_) {
+      domain = url;
+    }
+
+    return Padding(
+      key: const ValueKey('preview_card'),
+      padding: const EdgeInsets.symmetric(horizontal: 0, vertical: 12),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
+        decoration: BoxDecoration(
+          color: Colors.white.withOpacity(0.1),
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: IntrinsicHeight(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              // 🎯 링크 썸네일 또는 아이콘
+              Container(
+                width: 60,
+                height: 60,
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                clipBehavior: Clip.antiAlias,
+                child: Builder(
+                  builder: (context) {
+                    // 도메인에서 썸네일 URL 생성 (Google Favicon API)
+                    String? thumbnailUrl;
+                    try {
+                      final uri = Uri.parse(displayUrl);
+                      final domainForIcon = uri.host.replaceFirst('www.', '');
+                      thumbnailUrl =
+                          'https://www.google.com/s2/favicons?domain=$domainForIcon&sz=64';
+                    } catch (_) {
+                      thumbnailUrl = null;
+                    }
+
+                    // 메타데이터에서 썸네일이 있으면 우선 사용
+                    if (_pThumb != null && _pThumb!.isNotEmpty) {
+                      thumbnailUrl = _pThumb;
+                    }
+
+                    if (_isFetchingMeta && thumbnailUrl == null) {
+                      return const Center(
+                        child: SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white54,
+                          ),
+                        ),
+                      );
+                    }
+
+                    return thumbnailUrl != null
+                        ? Image.network(
+                          thumbnailUrl,
+                          fit: BoxFit.cover,
+                          errorBuilder: (context, error, stackTrace) {
+                            return const Icon(
+                              Icons.link,
+                              color: Colors.white54,
+                              size: 28,
+                            );
+                          },
+                          loadingBuilder: (context, child, loadingProgress) {
+                            if (loadingProgress == null) {
+                              return child;
+                            }
+                            return const Icon(
+                              Icons.link,
+                              color: Colors.white54,
+                              size: 28,
+                            );
+                          },
+                        )
+                        : const Icon(
+                          Icons.link,
+                          color: Colors.white54,
+                          size: 28,
+                        );
+                  },
+                ),
+              ),
+              const SizedBox(width: 16),
+              // 링크 정보 (타이틀 편집 가능)
+              Expanded(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // 🎯 타이틀 입력 필드 (편집 가능)
+                    TextField(
+                      controller: _customTitleController,
+                      focusNode: _titleFocusNode,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 20,
+                        fontWeight: FontWeight.w600,
+                      ),
+                      decoration: InputDecoration(
+                        hintText: domain,
+                        hintStyle: TextStyle(
+                          color: Colors.white.withOpacity(0.5),
+                          fontSize: 20,
+                          fontWeight: FontWeight.w600,
+                        ),
+                        border: InputBorder.none,
+                        isDense: true,
+                        contentPadding: EdgeInsets.zero,
+                      ),
+                      maxLines: 1,
+                      textInputAction: TextInputAction.done,
+                      onSubmitted: (_) {
+                        _titleFocusNode.unfocus();
+                      },
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      url,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.6),
+                        fontSize: 13,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   Widget _buildItemsList() {
