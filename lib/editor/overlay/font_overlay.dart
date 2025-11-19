@@ -2,6 +2,7 @@ import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:doppy/editor/style/font_catalog.dart';
+import 'package:doppy/editor/service/font_preload_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class FontPrefsService {
@@ -87,18 +88,39 @@ class _FontOverlayState extends State<FontOverlay> {
   }
 
   /// 보이는 폰트들을 미리 프리로드 (깜빡임 방지)
+  /// 이미 PostwriteScreen에서 미리 로드된 폰트는 건너뜀
   Future<void> _preloadVisibleFonts() async {
-    // 우선순위가 높은 폰트들 먼저 프리로드 (현재 사용 중, 즐겨찾기, 손글씨, 산세리프)
-    final priorityFonts = FontCatalog.all.take(30).toList(); // 상위 30개만 프리로드
+    final preloadService = FontPreloadService();
 
-    for (final font in priorityFonts) {
-      if (font.googleFont != null) {
-        try {
-          // 구글 폰트 프리로드
-          await font.googleFont!(fontWeight: FontWeight.w400, fontSize: 14);
-        } catch (e) {
-          // 폰트 로드 실패는 무시 (나중에 필요할 때 다시 시도)
-        }
+    // 이미 프리로드가 진행 중이거나 완료된 경우 추가 로드 불필요
+    // 우선순위 폰트들은 PostwriteScreen에서 이미 로드됨
+    // 여기서는 보이는 폰트 중 아직 로드되지 않은 것들만 로드
+    final priorityFonts = FontCatalog.all.take(50).toList(); // 상위 50개 확인
+
+    // 아직 로드되지 않은 폰트만 병렬로 로드
+    final fontsToLoad =
+        priorityFonts.where((font) {
+          return font.googleFont != null &&
+              !preloadService.isPreloaded(font.identifier);
+        }).toList();
+
+    if (fontsToLoad.isEmpty) {
+      print('[FontOverlay] 모든 우선순위 폰트가 이미 로드됨');
+      return;
+    }
+
+    // 병렬로 빠르게 로드 (최대 10개씩)
+    const batchSize = 10;
+    for (int i = 0; i < fontsToLoad.length; i += batchSize) {
+      final batch = fontsToLoad.skip(i).take(batchSize).toList();
+
+      await Future.wait(
+        batch.map((font) => preloadService.preloadFont(font)),
+        eagerError: false,
+      );
+
+      if (i + batchSize < fontsToLoad.length) {
+        await Future.delayed(const Duration(milliseconds: 20));
       }
     }
   }
@@ -475,14 +497,41 @@ class _FontPreviewTextState extends State<_FontPreviewText> {
   Future<void> _loadFont() async {
     if (widget.fontItem.googleFont != null) {
       try {
+        final preloadService = FontPreloadService();
+
+        // 이미 프리로드된 폰트인지 확인
+        final isPreloaded = preloadService.isPreloaded(
+          widget.fontItem.identifier,
+        );
+
+        if (isPreloaded) {
+          // 이미 로드된 폰트는 즉시 적용 (깜빡임 없음)
+          if (mounted) {
+            setState(() {
+              _cachedStyle = widget.fontItem.getTextStyle(
+                fontWeight:
+                    widget.isCurrent ? FontWeight.w600 : FontWeight.w400,
+                fontSize: widget.isCurrent ? 18 : 14,
+                color:
+                    widget.isCurrent
+                        ? widget.onSurface
+                        : widget.onSurface.withOpacity(0.5),
+              );
+              _isLoading = false;
+            });
+          }
+          return;
+        }
+
+        // 아직 로드되지 않은 폰트는 로드 시도
         // 구글 폰트를 미리 로드하여 캐시
         final style = widget.fontItem.googleFont!(
           fontWeight: widget.isCurrent ? FontWeight.w600 : FontWeight.w400,
           fontSize: widget.isCurrent ? 18 : 14,
         );
 
-        // 폰트가 실제로 로드될 때까지 기다림
-        await Future.delayed(const Duration(milliseconds: 50));
+        // 폰트가 실제로 로드될 때까지 짧게 대기 (프리로드되어 있으면 빠름)
+        await Future.delayed(Duration(milliseconds: isPreloaded ? 10 : 50));
 
         if (mounted) {
           setState(() {

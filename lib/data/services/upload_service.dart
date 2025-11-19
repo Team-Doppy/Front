@@ -4,6 +4,7 @@ import 'dart:collection';
 import 'dart:convert';
 import 'package:doppy/data/services/base_api_service.dart';
 import 'package:doppy/data/services/auth_service.dart';
+import 'package:doppy/data/services/r2_upload_service.dart';
 import 'package:flutter/foundation.dart';
 import 'package:dio/dio.dart';
 import 'package:http_parser/http_parser.dart';
@@ -241,12 +242,22 @@ class UploadService with ChangeNotifier {
 
       final started = DateTime.now();
       print('[Upload] start id=${task.id} attempt=${task.attempt}');
-      final Map<String, dynamic> result =
-          task.kind == UploadKind.profile
-              ? await _uploadProfileImage(task)
-              : task.kind == UploadKind.video
-              ? await _uploadVideo(task)
-              : await _uploadSingle(task); // group도 _uploadSingle 사용
+
+      // 🎯 R2 직접 업로드 사용 (모든 종류의 업로드)
+      Map<String, dynamic> result;
+      try {
+        result = await _uploadViaR2(task);
+      } catch (e) {
+        // R2 업로드 실패 시 기존 방식으로 폴백 (선택적)
+        print('[Upload] R2 업로드 실패, 기존 방식으로 폴백: $e');
+        result =
+            task.kind == UploadKind.profile
+                ? await _uploadProfileImage(task)
+                : task.kind == UploadKind.video
+                ? await _uploadVideo(task)
+                : await _uploadSingle(task); // group도 _uploadSingle 사용
+      }
+
       task.url = result['accessUrl'] as String?;
       task.imageId = result['imageId']?.toString();
       task._setProgress(1);
@@ -299,6 +310,55 @@ class UploadService with ChangeNotifier {
         notifyListeners();
         _pump();
       }
+    }
+  }
+
+  /// 🎯 R2 직접 업로드 (모든 종류의 업로드)
+  Future<Map<String, dynamic>> _uploadViaR2(UploadTask task) async {
+    try {
+      final r2Service = R2UploadService();
+      final file = task.file;
+
+      if (file == null) {
+        throw Exception('파일이 없습니다');
+      }
+
+      // 진행률 콜백 설정
+      task._setProgress(0.0);
+      task._setState(UploadState.uploading);
+
+      print('[Upload] R2 직접 업로드 시작: ${task.fileName} (kind: ${task.kind})');
+
+      // R2 직접 업로드 실행
+      final result = await r2Service.uploadMediaFiles(
+        [file],
+        onProgress: (message, progress) {
+          task._setProgress(progress);
+        },
+      );
+
+      if (!result.success ||
+          (result.imageUrls.isEmpty && result.videoUrls.isEmpty)) {
+        throw Exception(result.error ?? 'R2 업로드 실패');
+      }
+
+      // 성공한 URL 가져오기
+      final url =
+          result.imageUrls.isNotEmpty
+              ? result.imageUrls.first
+              : result.videoUrls.first;
+
+      print('[Upload] R2 업로드 성공: $url');
+
+      // 응답 형식 맞추기 (기존 UploadService와 호환)
+      return {
+        'accessUrl': url,
+        'url': url,
+        'imageId': null, // R2 직접 업로드에서는 imageId가 없을 수 있음
+      };
+    } catch (e) {
+      print('[Upload] R2 직접 업로드 실패: $e');
+      rethrow;
     }
   }
 

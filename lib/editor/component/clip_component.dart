@@ -727,7 +727,7 @@ class _ClipComponentState extends State<_ClipComponent> with DocumentComponent {
                       width: 28,
                       height: 28,
                       child: CircularProgressIndicator(
-                        strokeWidth: 2,
+                        strokeWidth: 3,
                         valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
                       ),
                     ),
@@ -767,7 +767,7 @@ class _ClipComponentState extends State<_ClipComponent> with DocumentComponent {
                     width: 28,
                     height: 28,
                     child: CircularProgressIndicator(
-                      strokeWidth: 2,
+                      strokeWidth: 3,
                       valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
                     ),
                   ),

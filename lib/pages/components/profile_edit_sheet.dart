@@ -169,9 +169,18 @@ class _ProfileInfoEditBottomSheetState
     _initialLinks = List<String>.from(widget.user?.links ?? []);
     _links = List<String>.from(_initialLinks);
 
+    // 🎯 초기 링크 타이틀 설정 (서버에서 받아온 linkTitles 초기화)
+    if (widget.user?.linkTitles != null &&
+        widget.user!.linkTitles!.isNotEmpty) {
+      _linkTitles = Map<String, String>.from(widget.user!.linkTitles!);
+    } else {
+      _linkTitles = {};
+    }
+
     print(
-      '[ProfileEdit] 초기값 저장 - 이름: "$_initialName", 소개: "$_initialDescription", 링크: ${_initialLinks.length}개',
+      '[ProfileEdit] 초기값 저장 - 이름: "$_initialName", 소개: "$_initialDescription", 링크: ${_initialLinks.length}개, 타이틀: ${_linkTitles.length}개',
     );
+    print('[ProfileEdit] 초기 링크 타이틀: $_linkTitles');
 
     // Bottom Sheet 열릴 때 자동으로 별명란에 포커스
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -199,6 +208,10 @@ class _ProfileInfoEditBottomSheetState
     // 🎯 링크 변경 체크 (순서 무관 비교)
     final hasLinksChange = !_listEquals(_links, _initialLinks);
 
+    // 🎯 링크 타이틀 변경 체크
+    final initialLinkTitles = widget.user?.linkTitles ?? {};
+    final hasLinkTitlesChange = !_mapEquals(_linkTitles, initialLinkTitles);
+
     print(
       '[ProfileEdit] 변경 체크 - 이름: "$currentName" vs "$_initialName" = $hasNameChange',
     );
@@ -208,13 +221,19 @@ class _ProfileInfoEditBottomSheetState
     print(
       '[ProfileEdit] 변경 체크 - 링크: ${_links.length}개 vs ${_initialLinks.length}개 = $hasLinksChange',
     );
+    print(
+      '[ProfileEdit] 변경 체크 - 링크 타이틀: ${_linkTitles.length}개 vs ${initialLinkTitles.length}개 = $hasLinkTitlesChange',
+    );
 
     // 별명이 비어있으면 변경사항이 있어도 저장 불가
     if (currentName.isEmpty) {
       return false;
     }
 
-    return hasNameChange || hasDescChange || hasLinksChange;
+    return hasNameChange ||
+        hasDescChange ||
+        hasLinksChange ||
+        hasLinkTitlesChange;
   }
 
   // 🎯 리스트 비교 헬퍼 (순서 무관)
@@ -224,6 +243,15 @@ class _ProfileInfoEditBottomSheetState
     final bSet = b.toSet();
     return aSet.length == bSet.length &&
         aSet.every((item) => bSet.contains(item));
+  }
+
+  // 🎯 맵 비교 헬퍼
+  bool _mapEquals(Map<String, String> a, Map<String, String> b) {
+    if (a.length != b.length) return false;
+    for (final key in a.keys) {
+      if (a[key] != b[key]) return false;
+    }
+    return true;
   }
 
   @override

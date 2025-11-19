@@ -106,10 +106,15 @@ class AuthService {
         await _saveUsername(loginResponse.username);
         await initAfterLogin();
 
-        // 🎯 FCM 토큰과 deviceId를 서버에 전송
-        _sendFcmTokenToServer(loginResponse.token).catchError((e) {
-          print('[AuthService] FCM 토큰 전송 실패 (무시): $e');
-        });
+        // 🎯 FCM 토큰과 deviceId를 서버에 전송 (비동기로 처리하여 로그인 속도 저하 방지)
+        print('[AuthService] 로그인 성공, FCM 토큰 서버 전송 시작');
+        _sendFcmTokenToServer(loginResponse.token)
+            .catchError((e) {
+              print('[AuthService] ❌ FCM 토큰 전송 실패 (무시): $e');
+            })
+            .then((_) {
+              print('[AuthService] ✅ FCM 토큰 서버 전송 완료');
+            });
 
         print('[-] [AuthService] login success: ${loginResponse.username}');
         return loginResponse;
@@ -177,13 +182,25 @@ class AuthService {
   }
 
   /// FCM 토큰과 deviceId를 서버에 전송
+  /// FCM 유효성 검사 후 문제 있으면 재발급하고 서버에 전송
   Future<void> _sendFcmTokenToServer(String authToken) async {
     try {
-      // 1. FCM 토큰 확인
       final fcmService = FcmService();
-      String? fcmToken = await fcmService.getToken();
 
-      // 2. 없으면 발급
+      // 1. 알림 권한 확인
+      final hasPermission = await fcmService.isNotificationPermissionGranted();
+      if (!hasPermission) {
+        print('[AuthService] 알림 권한이 없어 서버 전송을 건너뜁니다');
+        // 🎯 알림 권한이 없다는 것은 서버의 notificationEnabled / marketingConsent 플래그도 OFF로 동기화
+        await _syncNotificationSettingsOnDenied();
+        return;
+      }
+
+      // 2. FCM 토큰 검사 및 필요시 재발급
+      // 알림이 켜져있고 FCM에 문제가 있다면 새로 발급
+      String? fcmToken = await fcmService.checkAndRefreshTokenIfNeeded();
+
+      // 3. 토큰이 없으면 발급 시도
       if (fcmToken == null || fcmToken.isEmpty) {
         fcmToken = await fcmService.getToken();
         if (fcmToken == null || fcmToken.isEmpty) {
@@ -195,12 +212,15 @@ class AuthService {
         }
       }
 
-      // 3. deviceId 가져오기 (없으면 생성)
+      // 4. deviceId 가져오기 (없으면 생성, 기존 deviceId는 유지)
       final deviceId = await getDeviceId();
+      print('[AuthService] DeviceId: $deviceId');
 
-      // 4. 서버에 전송 (FCM 토큰과 deviceId)
+      // 5. 서버에 전송 (FCM 토큰과 deviceId)
+      print('[AuthService] FCM 토큰 서버 전송 시작...');
+      print('[AuthService] DeviceId: $deviceId');
       print(
-        '[AuthService] FCM 토큰 전송 준비 - deviceId: $deviceId, fcmToken: ${fcmToken.substring(0, 20)}...',
+        '[AuthService] FCM 토큰: ${fcmToken.substring(0, 20)}... (전체 길이: ${fcmToken.length})',
       );
       final url = Uri.parse('$baseUrl/api/fcm/tokens');
       final response = await http.post(
@@ -216,9 +236,12 @@ class AuthService {
       );
 
       if (response.statusCode == 200 || response.statusCode == 201) {
-        print('[AuthService] ✅ FCM 토큰 서버 전송 성공 (deviceId: $deviceId)');
+        print(
+          '[AuthService] ✅ FCM 토큰 서버 전송 성공 (deviceId: $deviceId, fcmToken: ${fcmToken.substring(0, 20)}...)',
+        );
       } else {
         print('[AuthService] ❌ FCM 토큰 서버 전송 실패: ${response.statusCode}');
+        print('[AuthService] 응답 본문: ${response.body}');
       }
     } catch (e) {
       print('[AuthService] ❌ FCM 토큰 서버 전송 오류: $e');
@@ -260,17 +283,35 @@ class AuthService {
   }
 
   /// 외부에서 호출할 수 있는 FCM 토큰/디바이스 정보 동기화 헬퍼
-  /// - 알림 설정을 켰을 때 등, 로그인 이후에도 재사용 가능
+  /// - 알림 설정을 켰을 때, 알림 설정 해제 시 등, 로그인 이후에도 재사용 가능
+  /// - FCM 유효성 검사 후 문제 있으면 재발급하고 서버에 전송
   Future<void> syncFcmTokenAndSettings() async {
     final authToken = await getToken();
     if (authToken == null || authToken.isEmpty) {
       print('[AuthService] syncFcmTokenAndSettings: 토큰 없음, 건너뜀');
       return;
     }
+
+    final fcmService = FcmService();
+
+    // 알림 권한 확인
+    final hasPermission = await fcmService.isNotificationPermissionGranted();
+    if (!hasPermission) {
+      print('[AuthService] syncFcmTokenAndSettings: 알림 권한 없음, 서버 설정 동기화');
+      // 알림 권한이 없으면 서버 설정도 OFF로 동기화
+      await _syncNotificationSettingsOnDenied();
+      return;
+    }
+
+    // FCM 토큰 검사 및 필요시 재발급 후 서버에 전송
     await _sendFcmTokenToServer(authToken);
   }
 
   Future<void> logout() async {
+    // FCM 토큰 초기화
+    final fcmService = FcmService();
+    fcmService.clearToken();
+
     await _storage.delete(key: _tokenKey);
     await _storage.delete(key: _refreshTokenKey);
     await _storage.delete(key: _usernameKey);

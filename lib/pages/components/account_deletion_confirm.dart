@@ -1,7 +1,10 @@
 import 'package:doppy/providers/auth_provider.dart';
+import 'package:doppy/data/services/user_service.dart';
+import 'package:doppy/data/services/account_deletion_service.dart';
 import 'package:doppy/l10n/app_localizations.dart';
 import 'package:doppy/theme/app_colors.dart';
 import 'package:doppy/utils/dialog_utils.dart';
+import 'package:doppy/utils/error_handler.dart';
 import 'package:flutter/material.dart';
 
 class AccountDeletionSheet extends StatefulWidget {
@@ -14,6 +17,7 @@ class AccountDeletionSheet extends StatefulWidget {
 class _AccountDeletionSheetState extends State<AccountDeletionSheet> {
   String? _selectedReason;
   final TextEditingController _detailController = TextEditingController();
+  bool _isDeleting = false;
 
   List<Map<String, String>> _getReasonsWithContext(BuildContext context) {
     return [
@@ -148,6 +152,10 @@ class _AccountDeletionSheetState extends State<AccountDeletionSheet> {
                                 onTap: () {
                                   setState(() {
                                     _selectedReason = reasonKey;
+                                    // 기타가 아닌 다른 이유 선택 시 상세 설명 초기화
+                                    if (reasonKey != 'other') {
+                                      _detailController.clear();
+                                    }
                                   });
                                 },
                                 borderRadius: BorderRadius.vertical(
@@ -212,6 +220,10 @@ class _AccountDeletionSheetState extends State<AccountDeletionSheet> {
                         controller: _detailController,
                         maxLines: 4,
                         maxLength: 200,
+                        onChanged:
+                            (value) => setState(
+                              () {},
+                            ), // 🎯 입력 시 상태 업데이트 (버튼 활성화/비활성화)
                         style: TextStyle(
                           color: Theme.of(context).colorScheme.onSurface,
                           fontSize: 16,
@@ -256,9 +268,25 @@ class _AccountDeletionSheetState extends State<AccountDeletionSheet> {
               child: SafeArea(
                 child: TextButton(
                   onPressed:
-                      _selectedReason == null
+                      (_selectedReason == null ||
+                              (_selectedReason == 'other' &&
+                                  _detailController.text.trim().isEmpty) ||
+                              _isDeleting)
                           ? null
                           : () async {
+                            // 🎯 기타 선택 시 상세 설명 필수 검증
+                            if (_selectedReason == 'other' &&
+                                _detailController.text.trim().isEmpty) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text('기타를 선택하셨을 경우 탈퇴 이유를 입력해주세요'),
+                                  backgroundColor:
+                                      Theme.of(context).colorScheme.error,
+                                ),
+                              );
+                              return;
+                            }
+
                             final confirmed =
                                 await DialogUtils.showConfirmDialog(
                                   context,
@@ -272,29 +300,24 @@ class _AccountDeletionSheetState extends State<AccountDeletionSheet> {
                                 );
 
                             if (confirmed == true) {
-                              // TODO: 회원탈퇴 API 호출
-                              // final reason = _selectedReason == 'other'
-                              //     ? _detailController.text
-                              //     : _getReasonsWithContext(context).firstWhere((r) => r['key'] == _selectedReason)['text'];
-
-                              Navigator.pop(context); // 바텀시트 닫기
-                              await AuthProvider().logout();
-                              Navigator.pushNamedAndRemoveUntil(
-                                context,
-                                '/login',
-                                (route) => false,
-                              );
+                              await _handleAccountDeletion(context);
                             }
                           },
                   style: TextButton.styleFrom(
                     backgroundColor:
-                        _selectedReason == null
+                        (_selectedReason == null ||
+                                (_selectedReason == 'other' &&
+                                    _detailController.text.trim().isEmpty) ||
+                                _isDeleting)
                             ? Theme.of(
                               context,
                             ).colorScheme.onSurface.withOpacity(0.1)
                             : (isDark ? Colors.white : AppColors.darkSurface),
                     foregroundColor:
-                        _selectedReason == null
+                        (_selectedReason == null ||
+                                (_selectedReason == 'other' &&
+                                    _detailController.text.trim().isEmpty) ||
+                                _isDeleting)
                             ? Theme.of(
                               context,
                             ).colorScheme.onSurface.withOpacity(0.4)
@@ -305,10 +328,25 @@ class _AccountDeletionSheetState extends State<AccountDeletionSheet> {
                     ),
                     padding: const EdgeInsets.symmetric(vertical: 16),
                   ),
-                  child: Text(
-                    context.tr('delete_action'),
-                    style: TextStyle(fontWeight: FontWeight.w600, fontSize: 17),
-                  ),
+                  child:
+                      _isDeleting
+                          ? SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              valueColor: AlwaysStoppedAnimation<Color>(
+                                Theme.of(context).colorScheme.onSurface,
+                              ),
+                            ),
+                          )
+                          : Text(
+                            context.tr('delete_action'),
+                            style: TextStyle(
+                              fontWeight: FontWeight.w600,
+                              fontSize: 17,
+                            ),
+                          ),
                 ),
               ),
             ),
@@ -316,5 +354,73 @@ class _AccountDeletionSheetState extends State<AccountDeletionSheet> {
         ),
       ),
     );
+  }
+
+  /// 회원 탈퇴 처리 (Firebase 저장 → API 호출 → 로그아웃)
+  Future<void> _handleAccountDeletion(BuildContext context) async {
+    if (_isDeleting) return;
+
+    setState(() {
+      _isDeleting = true;
+    });
+
+    try {
+      // 1. 탈퇴 이유 텍스트 가져오기
+      final reasons = _getReasonsWithContext(context);
+      final reasonData = reasons.firstWhere((r) => r['key'] == _selectedReason);
+      final reasonText = reasonData['text']!;
+      final reasonKey = _selectedReason!;
+
+      // 2. 기타 선택 시 상세 설명 가져오기
+      final detail =
+          reasonKey == 'other' ? _detailController.text.trim() : null;
+
+      // 3. Firebase Firestore에 탈퇴 이유 저장
+      try {
+        final deletionService = AccountDeletionService();
+        await deletionService.saveDeletionReason(
+          reason: reasonKey,
+          reasonText: reasonText,
+          detail: detail,
+        );
+        print('[AccountDeletionSheet] ✅ 탈퇴 이유 Firestore 저장 완료');
+      } catch (e) {
+        print('[AccountDeletionSheet] ⚠️ 탈퇴 이유 Firestore 저장 실패 (계속 진행): $e');
+        // Firestore 저장 실패해도 계속 진행 (API 호출은 수행)
+      }
+
+      // 4. 회원 탈퇴 API 호출
+      final userService = UserService();
+      await userService.deleteAccount();
+
+      if (!mounted) return;
+
+      // 5. 바텀시트 닫기
+      Navigator.pop(context);
+
+      // 6. 로그아웃 처리
+      await AuthProvider().logout();
+
+      // 7. 로그인 화면으로 이동
+      if (mounted) {
+        Navigator.pushNamedAndRemoveUntil(context, '/login', (route) => false);
+
+        // 8. 탈퇴 완료 메시지 표시 (ErrorHandler 사용)
+        if (context.mounted) {
+          ErrorHandler.showInfo(context, '회원 탈퇴가 완료되었습니다.');
+        }
+      }
+    } catch (e) {
+      print('[AccountDeletionSheet] ❌ 회원 탈퇴 실패: $e');
+      if (mounted) {
+        ErrorHandler.showError(context, e.toString());
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isDeleting = false;
+        });
+      }
+    }
   }
 }

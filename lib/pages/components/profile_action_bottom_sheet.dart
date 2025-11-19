@@ -440,9 +440,11 @@ class _ReportPageState extends State<_ReportPage> {
       // 🎯 신고 성공 안내
       ErrorHandler.showInfo(context, l10n.t('report_success'));
     } catch (e) {
-      print('[ReportPage] 신고 실패: $e');
+      // 상세 오류 로그는 콘솔에만 출력 (사용자에게는 일반화된 메시지 표시)
+      print('[ReportPage] ❌ 유저 신고 실패: $e');
       if (context.mounted) {
-        ErrorHandler.showError(context, e.toString());
+        // 일반화된 오류 메시지 표시 (로케일 적용)
+        ErrorHandler.showError(context, l10n.t('report_fail'));
       }
     } finally {
       if (mounted) {

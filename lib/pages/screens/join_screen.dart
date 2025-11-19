@@ -47,11 +47,16 @@ class _JoinScreenState extends State<JoinScreen> {
 
   List<String> get _stepTitles {
     if (_selectedMode == null) {
-      return ['인증 방식 선택'];
+      return [context.tr('join_auth_mode_selection')];
     } else if (_selectedMode == AuthMode.login) {
       return [context.tr('login')];
     }
-    return ['ID 입력', '비밀번호 설정', '비밀번호 확인', '완료'];
+    return [
+      context.tr('join_step_id'),
+      context.tr('join_step_password'),
+      context.tr('join_step_confirm_password'),
+      context.tr('join_step_complete'),
+    ];
   }
 
   @override
@@ -715,9 +720,10 @@ class _JoinScreenState extends State<JoinScreen> {
               TextField(
                 controller: _passwordController,
                 obscureText: _obscurePassword,
+                cursorColor: Theme.of(context).colorScheme.onSurface,
                 textInputAction: TextInputAction.done,
                 decoration: InputDecoration(
-                  hintText: '비밀번호를 입력하세요',
+                  hintText: context.tr('password_hint'),
                   hintStyle: TextStyle(color: Colors.grey[600]),
                   filled: true,
                   fillColor: Theme.of(context).colorScheme.surfaceVariant,
@@ -889,7 +895,7 @@ class _JoinScreenState extends State<JoinScreen> {
                 obscureText: _obscureConfirmPassword,
                 textInputAction: TextInputAction.done,
                 decoration: InputDecoration(
-                  hintText: '비밀번호를 다시 입력하세요',
+                  hintText: context.tr('join_confirm_password_hint'),
                   hintStyle: TextStyle(color: Colors.grey[600]),
                   filled: true,
                   fillColor: Theme.of(context).colorScheme.surfaceVariant,
@@ -1195,13 +1201,27 @@ class _JoinScreenState extends State<JoinScreen> {
         // 회원가입 성공
         _nextStep(); // 완료 화면으로 이동
 
-        // 1초 후 스플래시 화면으로 이동 (자동 로그인 및 데이터 로드)
+        // 1초 후 스플래시 화면으로 부드럽게 페이드 전환 (로그인 성공 시와 동일)
         await Future.delayed(const Duration(seconds: 1));
 
         if (mounted) {
-          // 모든 화면을 제거하고 스플래시 화면으로 이동
-          // 스플래시 화면에서 자동으로 로그인 시도 → 홈으로 이동
-          Navigator.of(context).pushNamedAndRemoveUntil('/', (route) => false);
+          // 🎯 회원가입 후 스플래시로 부드럽게 페이드 전환 (로그인 성공 시와 동일)
+          Navigator.of(context).pushAndRemoveUntil(
+            PageRouteBuilder(
+              pageBuilder: (_, __, ___) => const SplashScreen(),
+              transitionDuration: const Duration(milliseconds: 400),
+              transitionsBuilder: (_, animation, __, child) {
+                return FadeTransition(
+                  opacity: CurvedAnimation(
+                    parent: animation,
+                    curve: Curves.easeInOut,
+                  ),
+                  child: child,
+                );
+              },
+            ),
+            (route) => false,
+          );
         }
       } else {
         // 회원가입 실패

@@ -3,6 +3,7 @@ import 'package:doppy/pages/components/post_card.dart';
 import 'package:doppy/pages/components/shimmer_box.dart';
 import 'package:doppy/pages/components/custom_refresh_indicator.dart';
 import 'package:doppy/pages/screens/post_reader_screen.dart';
+import 'package:doppy/pages/screens/group_selection_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:doppy/data/models/post_data.dart';
 import 'package:doppy/data/services/like_service.dart';
@@ -75,7 +76,7 @@ class _PostListState extends State<PostList> {
           'https://i.pinimg.com/1200x/a4/94/e4/a494e4a6fdf63748f170dd2ad4be92d5.jpg',
       createdAt: DateTime.now().toIso8601String(),
       updatedAt: DateTime.now().toIso8601String(),
-      summary: '친구를 추가해주세요\n그룹을 만들고 공유해보세요', // 🎯 summary에 텍스트 넣기
+      summary: '친구를 초대해보세요!', // 🎯 summary에 텍스트 넣기
       accessLevel: AccessLevel.public,
       viewCount: 0,
       likeCount: 0,
@@ -83,8 +84,8 @@ class _PostListState extends State<PostList> {
       isLiked: false,
     ),
     PostData(
-      id: 'onboarding_placeholder33',
-      title: '프로필을 설정',
+      id: 'onboarding_placeholder2',
+      title: '글을 작성해보세요',
       content: '', // 🎯 content는 빈 문자열로 (JSON 파싱 에러 방지)
       author: 'test',
       authorProfileImageUrl: 'test',
@@ -92,7 +93,7 @@ class _PostListState extends State<PostList> {
           'https://i.pinimg.com/736x/db/6b/c6/db6bc6070a06ab10c04855325887f73b.jpg',
       createdAt: DateTime.now().toIso8601String(),
       updatedAt: DateTime.now().toIso8601String(),
-      summary: '프로필을 설정해주세요\n그룹을 만들고 공유해보세요', // 🎯 summary에 텍스트 넣기
+      summary: '첫 글을 작성해보세요!', // 🎯 summary에 텍스트 넣기
       accessLevel: AccessLevel.public,
       viewCount: 0,
       likeCount: 0,
@@ -115,6 +116,7 @@ class _PostListState extends State<PostList> {
   bool _isHorizontalGesture = false; // 가로 제스처 감지 여부
   double _pullProgress = 0.0; // 당기는 진행률 (0.0 ~ 1.0)
   double _verticalSwipeThreshold = 250.0; // 500.0에서 200.0으로 낮춤
+  bool _hideAllPostsButton = false; // 🎯 전체 글 보러가기 버튼 숨김 플래그
 
   @override
   void initState() {
@@ -152,7 +154,7 @@ class _PostListState extends State<PostList> {
       _titleOpacity = 1.0;
     });
 
-    _titleFadeTimer = Timer(Duration(milliseconds: 1500), () {
+    _titleFadeTimer = Timer(Duration(milliseconds: 2500), () {
       if (mounted && !widget.isShowingFriendsOnly) {
         setState(() {
           _titleOpacity = 0.0;
@@ -286,6 +288,11 @@ class _PostListState extends State<PostList> {
     if (widget.sectionLabel != oldWidget.sectionLabel) {
       _startTitleFadeOut();
     }
+
+    // 🎯 섹션이 변경되면 (친구글 -> 전체글) 버튼 숨김 플래그 리셋
+    if (widget.isShowingFriendsOnly != oldWidget.isShowingFriendsOnly) {
+      _hideAllPostsButton = false;
+    }
   }
 
   @override
@@ -332,25 +339,14 @@ class _PostListState extends State<PostList> {
               child: Container(
                 padding: const EdgeInsets.only(bottom: 6),
                 child: Text(
-                  widget.isShowingFriendsOnly
-                      ? ' Doppy'
-                      : ' ${context.tr('all_posts')}',
-                  style:
-                      widget.isShowingFriendsOnly
-                          ? GoogleFonts.notoSansKr(
-                            fontSize: 20,
-                            fontWeight: FontWeight.w700,
-                            letterSpacing: -0.3,
-                            height: 1.2,
-                            color: Theme.of(context).colorScheme.primary,
-                          )
-                          : GoogleFonts.gothicA1(
-                            fontSize: 20,
-                            fontWeight: FontWeight.w400,
-                            letterSpacing: -0.3,
-                            height: 1.2,
-                            color: Theme.of(context).colorScheme.primary,
-                          ),
+                  widget.isShowingFriendsOnly ? ' Doppy' : ' All Posts',
+                  style: GoogleFonts.notoSansKr(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: -0.3,
+                    height: 1.2,
+                    color: Theme.of(context).colorScheme.primary,
+                  ),
                 ),
               ),
             ),
@@ -376,9 +372,11 @@ class _PostListState extends State<PostList> {
                     scrollDirection: Axis.horizontal,
                     controller: _pageController,
                     pageSnapping: true,
-                    physics: const ClampingScrollPhysics(),
+                    physics:
+                        const ClampingScrollPhysics(), // 🎯 전체글 탭과 동일하게 끝에서 당겨지지 않도록
                     clipBehavior: Clip.none,
                     padEnds: true,
+                    allowImplicitScrolling: false,
                     onPageChanged: (index) {
                       setState(() {
                         _currentIndex = index;
@@ -527,6 +525,12 @@ class _PostListState extends State<PostList> {
 
               // 가로 제스처가 활성화되면 세로 누적값 무시
               if (_isHorizontalGesture) {
+                // 🎯 친구글이 없을 때는 _noFriendPostItem 사용
+                final List<PostData> postsToUse =
+                    _items.isEmpty && widget.isShowingFriendsOnly
+                        ? _noFriendPostItem
+                        : _items;
+
                 _gestureAccumX += details.delta.dx;
                 // 세로 움직임은 완전히 무시 (누적하지 않음)
 
@@ -540,7 +544,7 @@ class _PostListState extends State<PostList> {
                     );
                     _isGestureActive = false;
                   } else if (_gestureAccumX < 0 &&
-                      _currentIndex < _items.length - 1) {
+                      _currentIndex < postsToUse.length - 1) {
                     // 왼쪽으로 스크롤 - 다음 페이지
                     _pageController.nextPage(
                       duration: const Duration(milliseconds: 200),
@@ -576,12 +580,20 @@ class _PostListState extends State<PostList> {
             },
             child: GestureDetector(
               onTapUp: (details) async {
+                // 🎯 친구글이 없을 때는 _noFriendPostItem 사용
+                final List<PostData> postsToUse =
+                    _items.isEmpty && widget.isShowingFriendsOnly
+                        ? _noFriendPostItem
+                        : _items;
+
+                if (postsToUse.isEmpty) return;
+
                 // 텍스트 영역에서도 탭 위치에 따라 다른 동작
                 final screenWidth = MediaQuery.of(context).size.width;
                 final tapX = details.globalPosition.dx;
 
                 if (tapX < screenWidth * 0.2) {
-                  // 왼쪽 30% - 이전 페이지
+                  // 왼쪽 20% - 이전 페이지
                   if (_currentIndex > 0) {
                     _pageController.previousPage(
                       duration: const Duration(milliseconds: 200),
@@ -589,67 +601,96 @@ class _PostListState extends State<PostList> {
                     );
                   }
                 } else if (tapX > screenWidth * 0.8) {
-                  // 오른쪽 30% - 다음 페이지
-                  if (_currentIndex < _items.length - 1) {
+                  // 오른쪽 20% - 다음 페이지
+                  if (_currentIndex < postsToUse.length - 1) {
                     _pageController.nextPage(
                       duration: const Duration(milliseconds: 200),
                       curve: Curves.easeOutCubic,
                     );
                   }
                 } else {
-                  setState(() => _suppressVisibility = true);
-                  // 중앙 40% - 포스트 상세보기
-                  await Navigator.of(context).push(
-                    PageRouteBuilder(
-                      transitionDuration: const Duration(milliseconds: 340),
-                      reverseTransitionDuration: const Duration(
-                        milliseconds: 100,
-                      ),
-                      opaque: false,
-                      pageBuilder:
-                          (_, __, ___) => PostReaderScreen(
-                            exported: _items[_currentIndex].toExportedData(),
-                            heroTag:
-                                'post-hero-${widget.sectionLabel ?? "main"}-${_items[_currentIndex].id}-$_currentIndex-${widget.key?.hashCode ?? hashCode}',
-                          ),
-                      transitionsBuilder: (
-                        context,
-                        animation,
-                        secondaryAnimation,
-                        child,
-                      ) {
-                        const begin = Offset(0.0, 0.1);
-                        const end = Offset.zero;
-                        const curve = Curves.easeOutCubic;
-                        var tween = Tween(
-                          begin: begin,
-                          end: end,
-                        ).chain(CurveTween(curve: curve));
-                        var offsetAnimation = animation.drive(tween);
-                        var fadeAnimation = Tween<double>(
-                          begin: 0.0,
-                          end: 1.0,
-                        ).animate(
-                          CurvedAnimation(
-                            parent: animation,
-                            curve: Curves.easeOut,
-                          ),
-                        );
-                        return FadeTransition(
-                          opacity: fadeAnimation,
-                          child: SlideTransition(
-                            position: offsetAnimation,
-                            child: child,
-                          ),
-                        );
-                      },
-                    ),
-                  );
+                  // 중앙 60% - 포스트 상세보기 또는 글 작성 화면으로 이동
+                  // 🎯 친구글이 없을 때는 _noFriendPostItem 사용
+                  final List<PostData> postsToUse =
+                      _items.isEmpty && widget.isShowingFriendsOnly
+                          ? _noFriendPostItem
+                          : _items;
 
-                  // 🎯 공개 범위 변경 또는 삭제는 피드 자체가 처리하므로 여기서는 별도 처리 불필요
-                  // (home_screen.dart에서 피드가 자동으로 새로고침되어 PostList는 didUpdateWidget으로 업데이트됨)
-                  if (mounted) {
-                    setState(() => _suppressVisibility = false);
+                  if (postsToUse.isNotEmpty) {
+                    final safeIndex = _currentIndex.clamp(
+                      0,
+                      postsToUse.length - 1,
+                    );
+                    final currentPost = postsToUse[safeIndex];
+
+                    // 🎯 "아직 친구글이 없어요" 플레이스홀더를 클릭하면 그룹 선택 화면으로 이동
+                    if (currentPost.id == 'onboarding_placeholder') {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (context) => const GroupSelectionScreen(),
+                        ),
+                      );
+                    } else if (currentPost.id == 'onboarding_placeholder2') {
+                      // 🎯 "글을 작성해보세요" 플레이스홀더를 클릭하면 글 작성 화면으로 이동
+                      Navigator.pushNamed(context, '/post-write');
+                    } else if (_items.isNotEmpty &&
+                        !widget.isShowingFriendsOnly) {
+                      // 실제 포스트가 있을 때만 상세보기로 이동
+                      setState(() => _suppressVisibility = true);
+                      await Navigator.of(context).push(
+                        PageRouteBuilder(
+                          transitionDuration: const Duration(milliseconds: 340),
+                          reverseTransitionDuration: const Duration(
+                            milliseconds: 100,
+                          ),
+                          opaque: false,
+                          pageBuilder:
+                              (_, __, ___) => PostReaderScreen(
+                                exported:
+                                    _items[_currentIndex].toExportedData(),
+                                heroTag:
+                                    'post-hero-${widget.sectionLabel ?? "main"}-${_items[_currentIndex].id}-$_currentIndex-${widget.key?.hashCode ?? hashCode}',
+                              ),
+                          transitionsBuilder: (
+                            context,
+                            animation,
+                            secondaryAnimation,
+                            child,
+                          ) {
+                            const begin = Offset(0.0, 0.1);
+                            const end = Offset.zero;
+                            const curve = Curves.easeOutCubic;
+                            var tween = Tween(
+                              begin: begin,
+                              end: end,
+                            ).chain(CurveTween(curve: curve));
+                            var offsetAnimation = animation.drive(tween);
+                            var fadeAnimation = Tween<double>(
+                              begin: 0.0,
+                              end: 1.0,
+                            ).animate(
+                              CurvedAnimation(
+                                parent: animation,
+                                curve: Curves.easeOut,
+                              ),
+                            );
+                            return FadeTransition(
+                              opacity: fadeAnimation,
+                              child: SlideTransition(
+                                position: offsetAnimation,
+                                child: child,
+                              ),
+                            );
+                          },
+                        ),
+                      );
+
+                      // 🎯 공개 범위 변경 또는 삭제는 피드 자체가 처리하므로 여기서는 별도 처리 불필요
+                      // (home_screen.dart에서 피드가 자동으로 새로고침되어 PostList는 didUpdateWidget으로 업데이트됨)
+                      if (mounted) {
+                        setState(() => _suppressVisibility = false);
+                      }
+                    }
                   }
                 }
               },
@@ -671,19 +712,82 @@ class _PostListState extends State<PostList> {
 
   @override
   Widget build(BuildContext context) {
+    // 🎯 친구글이 없을 때 하단에 "전체 글 보러가기" 버튼 표시
+    final bool showAllPostsButton =
+        _items.isEmpty &&
+        !widget.showCardShimmer &&
+        !widget.isLoading &&
+        widget.isShowingFriendsOnly &&
+        widget.onFilterTap != null &&
+        _pullProgress == 0.0 && // 🎯 새로고침 당기기 시 숨김
+        !_hideAllPostsButton; // 🎯 버튼을 눌렀을 때 숨김
+
     return SafeArea(
-      child: CustomRefreshIndicator(
-        top: 50,
-        onRefresh: widget.onRefresh,
-        onPullProgress: (progress) {
-          setState(() {
-            _pullProgress = progress;
-          });
-        },
-        child:
-            widget.showCardShimmer
-                ? _buildRefreshingShimmer()
-                : _buildScrollView(context),
+      child: Stack(
+        children: [
+          CustomRefreshIndicator(
+            top: 50,
+            onRefresh: widget.onRefresh,
+            onPullProgress: (progress) {
+              setState(() {
+                _pullProgress = progress;
+              });
+            },
+            child:
+                widget.showCardShimmer
+                    ? _buildRefreshingShimmer()
+                    : _buildScrollView(context),
+          ),
+          // 🎯 친구글이 없을 때 하단에 "전체 글 보러가기" 버튼 표시
+          if (showAllPostsButton)
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 62,
+              child: Center(
+                child: GestureDetector(
+                  onTap: () {
+                    // 🎯 버튼을 눌렀을 때 즉시 숨김
+                    setState(() {
+                      _hideAllPostsButton = true;
+                    });
+                    widget.onFilterTap?.call();
+                  },
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 24,
+                      vertical: 10,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).colorScheme.surface.withOpacity(
+                        Theme.of(context).brightness == Brightness.dark
+                            ? 0.6
+                            : 0.9,
+                      ),
+                      borderRadius: BorderRadius.circular(24),
+                      border: Border.all(
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.onSurface.withOpacity(0.08),
+                        width: 1.3,
+                      ),
+                    ),
+                    child: Text(
+                      context.tr('view_all_posts'),
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w500,
+                        letterSpacing: -0.1,
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.onSurface.withOpacity(0.95),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+        ],
       ),
     );
   }
@@ -691,6 +795,14 @@ class _PostListState extends State<PostList> {
   Widget _buildPostItem(BuildContext context, PostData post, int index) {
     return GestureDetector(
       onTapUp: (details) {
+        // 🎯 친구글이 없을 때는 _noFriendPostItem 사용
+        final List<PostData> postsToUse =
+            _items.isEmpty && widget.isShowingFriendsOnly
+                ? _noFriendPostItem
+                : _items;
+
+        if (postsToUse.isEmpty) return;
+
         // 탭 위치에 따라 다른 동작
         final screenWidth = MediaQuery.of(context).size.width;
         final tapX = details.globalPosition.dx;
@@ -705,67 +817,80 @@ class _PostListState extends State<PostList> {
           }
         } else if (tapX > screenWidth * 0.7) {
           // 오른쪽 30% - 다음 페이지
-          if (_currentIndex < _items.length - 1) {
+          if (_currentIndex < postsToUse.length - 1) {
             _pageController.nextPage(
               duration: const Duration(milliseconds: 150),
               curve: Curves.easeOut,
             );
           }
         } else {
-          // 중앙 40% - 포스트 상세보기
-          // 먼저 현재 프레임에서 가시성 차단을 적용
-          setState(() => _suppressVisibility = true);
-          // 다음 프레임에서 push하여 정지가 먼저 반영되도록 함
-          WidgetsBinding.instance.addPostFrameCallback((_) async {
-            if (!mounted) return;
-            await Navigator.of(context).push(
-              PageRouteBuilder(
-                transitionDuration: const Duration(milliseconds: 340),
-                reverseTransitionDuration: const Duration(milliseconds: 100),
-                opaque: false,
-                pageBuilder:
-                    (_, __, ___) => PostReaderScreen(
-                      exported: post.toExportedData(),
-                      heroTag:
-                          'post-hero-${widget.sectionLabel ?? "main"}-${post.id}-$index-${widget.key?.hashCode ?? hashCode}',
-                    ),
-                transitionsBuilder: (
-                  context,
-                  animation,
-                  secondaryAnimation,
-                  child,
-                ) {
-                  const begin = Offset(0.0, 0.1);
-                  const end = Offset.zero;
-                  const curve = Curves.easeOutCubic;
-                  var tween = Tween(
-                    begin: begin,
-                    end: end,
-                  ).chain(CurveTween(curve: curve));
-                  var offsetAnimation = animation.drive(tween);
-                  var fadeAnimation = Tween<double>(
-                    begin: 0.0,
-                    end: 1.0,
-                  ).animate(
-                    CurvedAnimation(parent: animation, curve: Curves.easeOut),
-                  );
-                  return FadeTransition(
-                    opacity: fadeAnimation,
-                    child: SlideTransition(
-                      position: offsetAnimation,
-                      child: child,
-                    ),
-                  );
-                },
+          // 중앙 40% - 포스트 상세보기, 글 작성 화면, 또는 그룹 선택 화면으로 이동
+          // 🎯 "아직 친구글이 없어요" 플레이스홀더를 클릭하면 그룹 선택 화면으로 이동
+          if (post.id == 'onboarding_placeholder') {
+            Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (context) => const GroupSelectionScreen(),
               ),
             );
+          } else if (post.id == 'onboarding_placeholder2') {
+            // 🎯 "글을 작성해보세요" 플레이스홀더를 클릭하면 글 작성 화면으로 이동
+            Navigator.pushNamed(context, '/post-write');
+          } else if (_items.isNotEmpty &&
+              !post.id.startsWith('onboarding_placeholder')) {
+            // 먼저 현재 프레임에서 가시성 차단을 적용
+            setState(() => _suppressVisibility = true);
+            // 다음 프레임에서 push하여 정지가 먼저 반영되도록 함
+            WidgetsBinding.instance.addPostFrameCallback((_) async {
+              if (!mounted) return;
+              await Navigator.of(context).push(
+                PageRouteBuilder(
+                  transitionDuration: const Duration(milliseconds: 340),
+                  reverseTransitionDuration: const Duration(milliseconds: 100),
+                  opaque: false,
+                  pageBuilder:
+                      (_, __, ___) => PostReaderScreen(
+                        exported: post.toExportedData(),
+                        heroTag:
+                            'post-hero-${widget.sectionLabel ?? "main"}-${post.id}-$index-${widget.key?.hashCode ?? hashCode}',
+                      ),
+                  transitionsBuilder: (
+                    context,
+                    animation,
+                    secondaryAnimation,
+                    child,
+                  ) {
+                    const begin = Offset(0.0, 0.1);
+                    const end = Offset.zero;
+                    const curve = Curves.easeOutCubic;
+                    var tween = Tween(
+                      begin: begin,
+                      end: end,
+                    ).chain(CurveTween(curve: curve));
+                    var offsetAnimation = animation.drive(tween);
+                    var fadeAnimation = Tween<double>(
+                      begin: 0.0,
+                      end: 1.0,
+                    ).animate(
+                      CurvedAnimation(parent: animation, curve: Curves.easeOut),
+                    );
+                    return FadeTransition(
+                      opacity: fadeAnimation,
+                      child: SlideTransition(
+                        position: offsetAnimation,
+                        child: child,
+                      ),
+                    );
+                  },
+                ),
+              );
 
-            // 🎯 공개 범위 변경 또는 삭제는 피드 자체가 처리하므로 여기서는 별도 처리 불필요
-            // (home_screen.dart에서 피드가 자동으로 새로고침되어 PostList는 didUpdateWidget으로 업데이트됨)
-            if (mounted) {
-              setState(() => _suppressVisibility = false);
-            }
-          });
+              // 🎯 공개 범위 변경 또는 삭제는 피드 자체가 처리하므로 여기서는 별도 처리 불필요
+              // (home_screen.dart에서 피드가 자동으로 새로고침되어 PostList는 didUpdateWidget으로 업데이트됨)
+              if (mounted) {
+                setState(() => _suppressVisibility = false);
+              }
+            });
+          }
         }
       },
       child: AnimatedBuilder(

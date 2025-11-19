@@ -66,40 +66,40 @@ class _SettingScreenState extends State<SettingScreen> {
         });
       }
 
-      // 🎯 알림을 켠 경우, FCM 토큰/디바이스 정보도 서버와 동기화
-      if (newValue) {
-        try {
-          final authService = AuthService();
-          await authService.syncFcmTokenAndSettings();
+      // 🎯 알림 설정 변경 시 FCM 토큰 검사 및 서버 동기화
+      // 켠 경우: FCM 토큰 검사 후 필요시 재발급하고 서버에 전송
+      // 끈 경우: FCM 토큰 검사 후 서버 설정 동기화
+      try {
+        final authService = AuthService();
+        await authService.syncFcmTokenAndSettings();
 
-          // syncFcmTokenAndSettings 안에서 권한 거부 상태면
-          // 서버 플래그가 다시 OFF로 동기화되므로, UI도 맞춰줌
-          final settings = await _userService.getSettings();
-          final serverNotificationEnabled =
-              settings['notificationEnabled'] ?? false;
+        // syncFcmTokenAndSettings 안에서 권한 거부 상태면
+        // 서버 플래그가 다시 OFF로 동기화되므로, UI도 맞춰줌
+        final settings = await _userService.getSettings();
+        final serverNotificationEnabled =
+            settings['notificationEnabled'] ?? false;
 
-          if (mounted && !serverNotificationEnabled) {
-            // 서버가 다시 false로 내려왔다는 것은 여전히 권한이 없다는 의미
-            setState(() {
-              _notificationEnabled = false;
-            });
+        if (mounted && !serverNotificationEnabled && newValue) {
+          // 서버가 다시 false로 내려왔다는 것은 여전히 권한이 없다는 의미
+          setState(() {
+            _notificationEnabled = false;
+          });
 
-            final l10n = AppLocalizations.of(context);
-            final goToSettings = await DialogUtils.showConfirmDialog(
-              context,
-              title: l10n.t('notification_permission_required_title'),
-              message: l10n.t('notification_permission_required_message'),
-              confirmText: l10n.t('open_settings'),
-              cancelText: l10n.t('cancel'),
-            );
+          final l10n = AppLocalizations.of(context);
+          final goToSettings = await DialogUtils.showConfirmDialog(
+            context,
+            title: l10n.t('notification_permission_required_title'),
+            message: l10n.t('notification_permission_required_message'),
+            confirmText: l10n.t('open_settings'),
+            cancelText: l10n.t('cancel'),
+          );
 
-            if (goToSettings == true) {
-              await openAppSettings();
-            }
+          if (goToSettings == true) {
+            await openAppSettings();
           }
-        } catch (e) {
-          print('[SettingScreen] FCM 동기화 실패 (알림 ON): $e');
         }
+      } catch (e) {
+        print('[SettingScreen] FCM 동기화 실패 (알림 설정 변경): $e');
       }
     } catch (e) {
       print('[SettingScreen] 알림 토글 실패: $e');

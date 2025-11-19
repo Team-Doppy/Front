@@ -231,6 +231,8 @@ class PostActionBottomSheet extends StatelessWidget {
               postId: postId,
               postTitle: postTitle,
               thumbnailImageUrl: thumbnailImageUrl,
+              authorUsername:
+                  authorUsername, // 🎯 작성자 정보 전달 (신고 시 reportedUserId 설정용)
             ),
         fullscreenDialog: true,
       ),
@@ -318,11 +320,13 @@ class _PostReportPage extends StatefulWidget {
   final String postId;
   final String postTitle;
   final String? thumbnailImageUrl;
+  final String? authorUsername; // 🎯 작성자 정보 (신고 시 reportedUserId 설정용)
 
   const _PostReportPage({
     required this.postId,
     required this.postTitle,
     this.thumbnailImageUrl,
+    this.authorUsername,
   });
 
   @override
@@ -514,6 +518,8 @@ class _PostReportPageState extends State<_PostReportPage> {
         postId: widget.postId,
         reason: ReportReason.other, // 사용자가 입력한 description을 other로 분류
         description: reason,
+        authorUsername:
+            widget.authorUsername, // 🎯 작성자 정보 전달 (신고 시 reportedUserId 설정용)
       );
 
       if (!mounted) return;
@@ -522,9 +528,11 @@ class _PostReportPageState extends State<_PostReportPage> {
       // 🎯 신고 성공 안내
       ErrorHandler.showInfo(context, l10n.t('report_success'));
     } catch (e) {
-      print('[PostReportPage] 글 신고 실패: $e');
+      // 상세 오류 로그는 콘솔에만 출력 (사용자에게는 일반화된 메시지 표시)
+      print('[PostReportPage] ❌ 글 신고 실패: $e');
       if (context.mounted) {
-        ErrorHandler.showError(context, e.toString());
+        // 일반화된 오류 메시지 표시 (로케일 적용)
+        ErrorHandler.showError(context, l10n.t('report_fail'));
       }
     } finally {
       if (mounted) {

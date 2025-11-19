@@ -254,7 +254,7 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
               Theme.of(context).brightness == Brightness.dark
                   ? Positioned.fill(
                     child: BackdropFilter(
-                      filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+                      filter: ImageFilter.blur(sigmaX: 13, sigmaY: 13),
                       child: Container(
                         decoration: BoxDecoration(
                           gradient: LinearGradient(

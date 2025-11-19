@@ -408,8 +408,16 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                                                 isOther
                                                     ? (other?.links ?? [])
                                                     : (me?.links ?? []);
+                                            final linkTitles =
+                                                isOther
+                                                    ? (other?.linkTitles)
+                                                    : (me?.linkTitles);
                                             if (links.isNotEmpty) {
-                                              _showLinksModal(context, links);
+                                              _showLinksModal(
+                                                context,
+                                                links,
+                                                linkTitles,
+                                              );
                                             }
                                           },
                                           child: Container(
@@ -1110,160 +1118,124 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     );
   }
 
-  /// 🎯 링크 모달 표시
-  void _showLinksModal(BuildContext context, List<String> links) {
-    showDialog(
+  /// 🎯 링크 모달 표시 (드래그로 닫기 가능)
+  void _showLinksModal(
+    BuildContext context,
+    List<String> links,
+    Map<String, String>? linkTitles,
+  ) {
+    showModalBottomSheet(
       context: context,
-      barrierColor:
-          Theme.of(context).brightness == Brightness.dark
-              ? Colors.black.withOpacity(0.85)
-              : Colors.grey.shade200.withOpacity(0.6),
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      enableDrag: true, // 🎯 드래그로 닫기 활성화
+      isDismissible: true, // 🎯 배경 탭으로 닫기 활성화
       builder: (BuildContext context) {
-        return Stack(
-          children: [
-            // 🎯 모달 컨텐츠 (아래쪽 정렬)
-            Align(
-              alignment: Alignment.bottomCenter,
-              child: Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 10,
-                  vertical: 0,
+        return DraggableScrollableSheet(
+          initialChildSize: 0.5,
+          minChildSize: 0.4,
+          maxChildSize: 0.9,
+          builder: (context, scrollController) {
+            return Container(
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.surface,
+                borderRadius: const BorderRadius.only(
+                  topLeft: Radius.circular(30),
+                  topRight: Radius.circular(30),
                 ),
-                child: GestureDetector(
-                  onTap: () {}, // 모달 컨텐츠 탭 시 배경으로 이벤트 전파 방지
-                  child: Material(
-                    color: Colors.transparent,
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.center,
-                      mainAxisAlignment: MainAxisAlignment.center,
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // 드래그 핸들
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    child: Container(
+                      width: 40,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.onSurface.withOpacity(0.2),
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                  ),
+
+                  // 제목
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(24, 8, 24, 16),
+                    child: Row(
                       children: [
-                        Container(
-                          constraints: BoxConstraints(
-                            maxHeight: MediaQuery.of(context).size.height * 0.7,
-                            maxWidth: MediaQuery.of(context).size.width,
-                          ),
-                          decoration: BoxDecoration(
-                            color: Theme.of(context).colorScheme.surface,
-                            borderRadius: BorderRadius.circular(30),
-                          ),
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              // 제목
-                              Padding(
-                                padding: const EdgeInsets.fromLTRB(
-                                  24,
-                                  24,
-                                  24,
-                                  16,
-                                ),
-                                child: Row(
-                                  children: [
-                                    SvgPicture.asset(
-                                      'assets/icons/link.svg',
-                                      width: 20,
-                                      height: 20,
-                                      colorFilter: ColorFilter.mode(
-                                        Theme.of(context).colorScheme.onSurface,
-                                        BlendMode.srcIn,
-                                      ),
-                                    ),
-                                    const SizedBox(width: 10),
-
-                                    const Spacer(),
-                                    GestureDetector(
-                                      onTap: () => Navigator.of(context).pop(),
-                                      child: Icon(
-                                        Icons.close,
-                                        color: Theme.of(context)
-                                            .colorScheme
-                                            .onSurface
-                                            .withOpacity(0.6),
-                                        size: 24,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-
-                              // 링크 목록
-                              Flexible(
-                                child: ListView.separated(
-                                  shrinkWrap: true,
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 24,
-                                  ),
-                                  itemCount: links.length,
-                                  separatorBuilder: (context, index) {
-                                    return Divider(
-                                      height: 1,
-                                      thickness: 1,
-                                      color: Theme.of(
-                                        context,
-                                      ).colorScheme.onSurface.withOpacity(0.1),
-                                      indent: 0,
-                                      endIndent: 0,
-                                    );
-                                  },
-                                  itemBuilder: (context, index) {
-                                    return _buildLinkModalItem(
-                                      context,
-                                      links[index],
-                                    );
-                                  },
-                                ),
-                              ),
-
-                              const SizedBox(height: 24),
-                            ],
+                        SvgPicture.asset(
+                          'assets/icons/link.svg',
+                          width: 20,
+                          height: 20,
+                          colorFilter: ColorFilter.mode(
+                            Theme.of(context).colorScheme.onSurface,
+                            BlendMode.srcIn,
                           ),
                         ),
-
-                        SizedBox(height: 16),
-                        Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 0),
-                          child: ElevatedButton(
-                            style: ElevatedButton.styleFrom(
-                              minimumSize: Size(double.infinity, 53),
-                              backgroundColor:
-                                  Theme.of(context).colorScheme.surface,
-                              foregroundColor:
-                                  Theme.of(context).colorScheme.onSurface,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(20),
-                              ),
-
-                              textStyle: TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                            onPressed: () => Navigator.of(context).pop(),
-                            child: Text(
-                              '닫기',
-                              style: TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.w600,
-                                color: Theme.of(context).colorScheme.onSurface,
-                              ),
-                            ),
+                        const SizedBox(width: 10),
+                        const Spacer(),
+                        GestureDetector(
+                          onTap: () => Navigator.of(context).pop(),
+                          child: Icon(
+                            Icons.close,
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.onSurface.withOpacity(0.6),
+                            size: 24,
                           ),
                         ),
                       ],
                     ),
                   ),
-                ),
+
+                  // 링크 목록
+                  Flexible(
+                    child: ListView.separated(
+                      controller: scrollController,
+                      shrinkWrap: true,
+                      padding: const EdgeInsets.symmetric(horizontal: 24),
+                      itemCount: links.length,
+                      separatorBuilder: (context, index) {
+                        return Divider(
+                          height: 1,
+                          thickness: 1,
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.onSurface.withOpacity(0.1),
+                          indent: 0,
+                          endIndent: 0,
+                        );
+                      },
+                      itemBuilder: (context, index) {
+                        return _buildLinkModalItem(
+                          context,
+                          links[index],
+                          linkTitles,
+                        );
+                      },
+                    ),
+                  ),
+
+                  const SizedBox(height: 24),
+                ],
               ),
-            ),
-          ],
+            );
+          },
         );
       },
     );
   }
 
   /// 🎯 모달용 링크 아이템 위젯
-  Widget _buildLinkModalItem(BuildContext context, String url) {
+  Widget _buildLinkModalItem(
+    BuildContext context,
+    String url,
+    Map<String, String>? linkTitles,
+  ) {
     // URL 정규화
     String displayUrl = url;
     if (!url.startsWith('http://') && !url.startsWith('https://')) {
@@ -1282,6 +1254,10 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
       domain = url;
     }
 
+    // 🎯 사용자가 설정한 커스텀 타이틀 가져오기
+    final customTitle = linkTitles?[url];
+    final displayTitle = customTitle ?? domain; // 커스텀 타이틀이 있으면 사용, 없으면 도메인
+
     final theme = Theme.of(context);
 
     return GestureDetector(
@@ -1291,9 +1267,12 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
           if (await canLaunchUrl(uri)) {
             await launchUrl(uri, mode: LaunchMode.externalApplication);
           }
-          Navigator.of(context).pop();
+          // 바텀시트 닫기
+          if (context.mounted) {
+            Navigator.of(context).pop();
+          }
         } catch (e) {
-          if (mounted) {
+          if (context.mounted) {
             ErrorHandler.showError(context, '링크를 열 수 없습니다: $url');
           }
         }
@@ -1349,8 +1328,9 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  // 🎯 커스텀 타이틀 또는 도메인 표시
                   Text(
-                    domain,
+                    displayTitle,
                     style: TextStyle(
                       color: theme.colorScheme.onSurface,
                       fontSize: 14,
@@ -1360,8 +1340,9 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                     overflow: TextOverflow.ellipsis,
                   ),
                   const SizedBox(height: 4),
+                  // URL 표시 (커스텀 타이틀이 있으면 URL, 없으면 도메인)
                   Text(
-                    url,
+                    customTitle != null ? url : domain,
                     style: TextStyle(
                       color: theme.colorScheme.onSurface.withOpacity(0.7),
                       fontSize: 12,

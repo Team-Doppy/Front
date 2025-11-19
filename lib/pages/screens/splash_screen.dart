@@ -5,6 +5,7 @@ import 'package:doppy/providers/user_provider.dart';
 import 'package:doppy/providers/group_provider.dart';
 import 'package:doppy/data/services/home_data_service.dart';
 import 'package:doppy/data/services/search_service.dart';
+import 'package:doppy/data/services/auth_service.dart';
 import 'package:doppy/utils/network_utils.dart';
 
 import 'package:flutter/material.dart';
@@ -86,6 +87,9 @@ class _SplashScreenState extends State<SplashScreen>
         setState(() {
           _loadingStatus = '사용자 데이터를 불러오는 중...';
         });
+
+        // 🎯 앱 시작 시 FCM 토큰 검사 및 필요시 재발급 (비동기로 처리하여 앱 시작을 막지 않음)
+        _checkAndSyncFcmToken();
 
         // 🎯 앱 시작 시 필수 데이터만 로드 (그룹 스키마 포함)
         // 홈 데이터, 검색 기록, 유저 정보, 그룹 스키마를 병렬로 로드
@@ -204,6 +208,20 @@ class _SplashScreenState extends State<SplashScreen>
       );
     } catch (e) {
       // 트렌딩 데이터 로드 실패는 앱 시작을 막지 않음
+    }
+  }
+
+  /// 앱 시작 시 FCM 토큰 검사 및 필요시 재발급 후 서버에 전송
+  Future<void> _checkAndSyncFcmToken() async {
+    try {
+      final authService = AuthService();
+      // FCM 토큰 검사 및 필요시 재발급 후 서버에 전송
+      // 비동기로 처리하여 앱 시작을 막지 않음
+      authService.syncFcmTokenAndSettings().catchError((e) {
+        print('[SplashScreen] FCM 토큰 검사 및 동기화 실패 (무시): $e');
+      });
+    } catch (e) {
+      print('[SplashScreen] FCM 토큰 검사 오류 (무시): $e');
     }
   }
 

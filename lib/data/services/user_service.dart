@@ -192,4 +192,30 @@ class UserService {
       rethrow;
     }
   }
+
+  /// 회원 탈퇴 (DELETE /api/users/account)
+  Future<String> deleteAccount() async {
+    try {
+      print('[UserService] DELETE /api/users/account');
+      final response = await _dio.delete('/api/users/account');
+      if (response.statusCode == 200) {
+        final responseData = response.data;
+        final username = responseData['username']?.toString() ?? '';
+        print('[UserService] 회원 탈퇴 성공: $username');
+        return username;
+      }
+      throw Exception('회원 탈퇴 실패: ${response.statusCode}');
+    } catch (e) {
+      if (e is DioException) {
+        final statusCode = e.response?.statusCode;
+        final errorMessage =
+            e.response?.data?['error']?.toString() ??
+            e.response?.data?['message']?.toString() ??
+            '회원 탈퇴 실패: $statusCode';
+        print('[UserService] 회원 탈퇴 실패: $errorMessage');
+        throw Exception(errorMessage);
+      }
+      rethrow;
+    }
+  }
 }

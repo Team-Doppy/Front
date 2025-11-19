@@ -1124,7 +1124,7 @@ class _SharePostOverlayState extends State<SharePostOverlay> {
     }
   }
 
-  /// 🎯 전체 화면을 캡처하고 4:5 비율로 crop
+  /// 🎯 전체 화면을 캡처 (크롭 없이 전체 이미지)
   Future<File?> _captureCardAsImage() async {
     try {
       // 🎯 렌더링 완료 대기
@@ -1148,7 +1148,7 @@ class _SharePostOverlayState extends State<SharePostOverlay> {
         return null;
       }
 
-      // 🎯 이미지를 디코드하여 crop
+      // 🎯 이미지를 디코드 (크롭 없이 전체 이미지 사용)
       final originalImage = img.decodeImage(byteData.buffer.asUint8List());
       if (originalImage == null) {
         print('❌ 이미지 디코딩 실패');
@@ -1157,29 +1157,9 @@ class _SharePostOverlayState extends State<SharePostOverlay> {
 
       print('📏 원본 이미지 크기: ${originalImage.width}x${originalImage.height}');
 
-      // 🎯 세로 길이를 20% 줄이기 (위쪽 5%, 아래쪽 15% 제거) → 80%만 유지
-      final targetHeight = (originalImage.height * 0.9).round(); // 80%만 유지
-      final cropY = (originalImage.height).round(); // 위쪽 5% 제거
-      final cropWidth = originalImage.width;
-      final cropHeight = targetHeight;
-
-      print(
-        '✂️ Crop 영역 (세로 20% 줄임 - 위 5%, 아래 15%): x=0, y=$cropY, width=$cropWidth, height=$cropHeight',
-      );
-
-      // 🎯 이미지 crop (세로만 줄임)
-      final croppedImage = img.copyCrop(
-        originalImage,
-        x: 0,
-        y: cropY,
-        width: cropWidth,
-        height: cropHeight,
-      );
-
-      print('✅ Crop 완료: ${croppedImage.width}x${croppedImage.height}');
-
-      // 🎯 PNG로 인코딩
-      final pngBytes = img.encodePng(croppedImage);
+      // 🎯 크롭 없이 전체 이미지 사용
+      // PNG로 인코딩
+      final pngBytes = img.encodePng(originalImage);
 
       final tempDir = await getTemporaryDirectory();
       final fileName =
@@ -1188,7 +1168,7 @@ class _SharePostOverlayState extends State<SharePostOverlay> {
       final file = File(filePath);
 
       await file.writeAsBytes(pngBytes);
-      print('✅ 공유 이미지 생성 완료 (3:4 비율): $filePath');
+      print('✅ 공유 이미지 생성 완료 (전체 이미지): $filePath');
 
       return file;
     } catch (e) {

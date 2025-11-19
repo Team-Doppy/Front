@@ -24,11 +24,13 @@ import 'package:doppy/providers/search_provider.dart';
 import 'package:doppy/data/services/search_service.dart';
 import 'package:doppy/utils/network_utils.dart';
 import 'package:doppy/l10n/app_localizations.dart';
+import 'package:doppy/data/services/auth_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart' show defaultTargetPlatform;
 import 'firebase_options.dart';
 import 'theme/theme.dart';
@@ -36,6 +38,18 @@ import 'utils/route_observer.dart';
 
 // Global NavigatorKey for accessing context from anywhere
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
+
+// 🎯 FCM Background 메시지 핸들러 (top-level 함수로 선언)
+@pragma('vm:entry-point')
+Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
+  // Firebase 초기화 필요 (background isolate에서는 별도로 초기화해야 함)
+  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+  print('[FCM] 백그라운드 메시지 수신: ${message.messageId}');
+  print('[FCM] 데이터: ${message.data}');
+  print(
+    '[FCM] 알림: ${message.notification?.title} - ${message.notification?.body}',
+  );
+}
 
 // 앱 버전 및 상수
 class AppConstants {
@@ -57,6 +71,38 @@ Future<void> main() async {
     print('[Firebase] 플랫폼: ${defaultTargetPlatform}');
 
     await Firebase.initializeApp(options: options);
+
+    // 🎯 FCM 백그라운드 메시지 핸들러 등록 (Firebase 초기화 후)
+    FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+    print('[FCM] 백그라운드 메시지 핸들러 등록 완료');
+
+    // 🎯 FCM 포그라운드 메시지 핸들러 등록
+    FirebaseMessaging.onMessage.listen((RemoteMessage message) {
+      print('[FCM] 포그라운드 메시지 수신: ${message.messageId}');
+      print('[FCM] 데이터: ${message.data}');
+      print(
+        '[FCM] 알림: ${message.notification?.title} - ${message.notification?.body}',
+      );
+
+      // 포그라운드에서 알림 표시 (선택적)
+      // Flutter Local Notifications를 사용하여 앱 내 알림 표시 가능
+    });
+
+    // 🎯 FCM 메시지 클릭 핸들러 등록
+    FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
+      print('[FCM] 알림 클릭으로 앱 열림: ${message.messageId}');
+      print('[FCM] 데이터: ${message.data}');
+      // 필요한 경우 특정 화면으로 네비게이션
+    });
+
+    // 🎯 앱이 종료된 상태에서 알림 클릭으로 열린 경우 확인
+    final initialMessage = await FirebaseMessaging.instance.getInitialMessage();
+    if (initialMessage != null) {
+      print('[FCM] 종료된 앱에서 알림 클릭으로 열림: ${initialMessage.messageId}');
+      print('[FCM] 데이터: ${initialMessage.data}');
+    }
+
+    print('[FCM] 포그라운드/백그라운드 메시지 핸들러 등록 완료');
   } catch (e) {
     print('[Firebase] 초기화 실패: $e');
   }
@@ -162,7 +208,7 @@ class RootShell extends StatefulWidget {
   State<RootShell> createState() => _RootShellState();
 }
 
-class _RootShellState extends State<RootShell> {
+class _RootShellState extends State<RootShell> with WidgetsBindingObserver {
   late int _index;
   String? _searchInitialQuery; // 검색 화면 초기 검색어
 
@@ -170,11 +216,43 @@ class _RootShellState extends State<RootShell> {
   void initState() {
     super.initState();
     _index = widget.initialIndex;
+    // 라이프사이클 옵저버 등록
+    WidgetsBinding.instance.addObserver(this);
   }
 
   @override
   void dispose() {
+    // 라이프사이클 옵저버 해제
+    WidgetsBinding.instance.removeObserver(this);
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+
+    // 포그라운드로 전환 시 FCM 토큰 검사 및 필요시 재발급
+    if (state == AppLifecycleState.resumed) {
+      _checkAndSyncFcmTokenOnForeground();
+    }
+  }
+
+  /// 포그라운드 전환 시 FCM 토큰 검사 및 필요시 재발급 후 서버에 전송
+  void _checkAndSyncFcmTokenOnForeground() {
+    // 로그인 상태 확인 후 FCM 토큰 검사
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    if (authProvider.isLoggedIn) {
+      try {
+        final authService = AuthService();
+        // FCM 토큰 검사 및 필요시 재발급 후 서버에 전송
+        // 비동기로 처리하여 UI를 막지 않음
+        authService.syncFcmTokenAndSettings().catchError((e) {
+          print('[RootShell] 포그라운드 전환 시 FCM 토큰 검사 및 동기화 실패 (무시): $e');
+        });
+      } catch (e) {
+        print('[RootShell] 포그라운드 전환 시 FCM 토큰 검사 오류 (무시): $e');
+      }
+    }
   }
 
   // 검색 화면 열기

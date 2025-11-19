@@ -22,6 +22,8 @@ import 'package:doppy/editor/service/node_component_service.dart';
 import 'package:doppy/editor/service/sticker_service.dart';
 import 'package:doppy/editor/service/post_reader_service.dart';
 import 'package:doppy/editor/service/content_change_detector.dart';
+import 'package:doppy/editor/service/font_preload_service.dart';
+import 'package:doppy/editor/overlay/font_overlay.dart';
 import 'package:doppy/utils/dialog_utils.dart';
 import 'package:doppy/editor/style/style_sheet.dart';
 import 'package:doppy/editor/style/defualt_toolbar.dart';
@@ -260,7 +262,32 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
 
       // 스크롤 리스너 추가
       scrollController.addListener(_onScrollChanged);
+
+      // 🎯 폰트 미리 로드 시작 (백그라운드에서 병렬 처리)
+      _preloadFonts();
     });
+  }
+
+  /// 폰트 미리 로드 (에디터 초기화 시 백그라운드에서 실행)
+  Future<void> _preloadFonts() async {
+    try {
+      final fontPrefs = FontPrefsService();
+      final currentFont = await fontPrefs.loadCurrentFont();
+      final favorites = await fontPrefs.loadFavorites();
+
+      // 폰트 프리로드 서비스를 통해 우선순위 폰트 미리 로드
+      final preloadService = FontPreloadService();
+      preloadService
+          .preloadPriorityFonts(
+            currentFontIdentifier: currentFont.$1,
+            favoriteIdentifiers: favorites.isNotEmpty ? favorites : null,
+          )
+          .catchError((e) {
+            print('[PostwriteScreen] 폰트 프리로드 실패 (무시): $e');
+          });
+    } catch (e) {
+      print('[PostwriteScreen] 폰트 프리로드 초기화 실패 (무시): $e');
+    }
   }
 
   bool _showAppBar = true;
