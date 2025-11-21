@@ -497,10 +497,8 @@ class _ShareBottomSheetState extends State<ShareBottomSheet> {
     setState(() => _isSharing = true);
 
     try {
-      // 🎯 딥링크 공유 - 링크를 바로 연결할 수 있도록 shareUrl 포함
-      final shareContent =
-          '${widget.shareTextWithoutImage}\n\n${widget.shareUrl}';
-      await Share.share(shareContent, subject: widget.title);
+      // 🎯 shareTextWithoutImage에는 이미 링크가 포함되어 있으므로 중복 추가하지 않음
+      await Share.share(widget.shareTextWithoutImage, subject: widget.title);
 
       setState(() => _isSharing = false);
     } catch (e) {

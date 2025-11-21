@@ -1376,7 +1376,7 @@ class _TrendingKeywordsWithPreloadState
         children: [
           // 🎯 실시간 검색어 리스트
           if (widget.keywords.isNotEmpty) ...[
-            ...widget.keywords.take(3).map((keyword) {
+            ...widget.keywords.take(4).map((keyword) {
               return _AccountListItem(
                 account: SearchContentItem.blogKeyword(
                   id: 'trending_$keyword',
