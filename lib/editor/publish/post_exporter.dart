@@ -134,6 +134,13 @@ class PostExporter {
         final isTitle = meta['isTitle'] == true;
         final fontFamily = meta['fontFamily'] as String?;
 
+        // 🎯 폰트 메타데이터 디버그 로그
+        if (fontFamily != null && fontFamily.isNotEmpty) {
+          print(
+            '[PostExporter] 📝 ParagraphNode ${node.id} - fontFamily 메타데이터 발견: $fontFamily',
+          );
+        }
+
         final nodeMap = <String, dynamic>{
           'id': node.id,
           'type': 'paragraph',
@@ -150,6 +157,9 @@ class PostExporter {
         }
         if (fontFamily != null && fontFamily.isNotEmpty) {
           nodeMap['fontFamily'] = fontFamily;
+          print(
+            '[PostExporter] ✅ JSON에 fontFamily 추가: $fontFamily (노드 ID: ${node.id})',
+          );
         }
         // spoiler는 spans에서 처리하므로 노드 레벨에서는 제거
 
@@ -480,6 +490,7 @@ class PostExporter {
     double? fontSize;
     ui.Color? color;
     ui.Color? highlight;
+    String? fontFamily; // 🎯 span 단위 폰트 지원
 
     for (final a in atts) {
       if (a == boldAttribution) {
@@ -500,6 +511,10 @@ class PostExporter {
         color = a.color;
       } else if (a is FontSizeAttribution) {
         fontSize = a.fontSize;
+      } else if (a is FontFamilyAttribution) {
+        // 🎯 span 단위 폰트 패밀리 (Attribution 기반 정교한 적용)
+        fontFamily = a.fontFamily;
+        print('[PostExporter] 📝 Span에 FontFamilyAttribution 발견: $fontFamily');
       }
     }
 
@@ -512,7 +527,13 @@ class PostExporter {
       if (fontSize != null) 'font_size': fontSize,
       if (color != null) 'color': _hexColor(color),
       if (highlight != null) 'highlight': _hexColor(highlight),
+      if (fontFamily != null && fontFamily.isNotEmpty)
+        'fontFamily': fontFamily, // 🎯 span 단위 폰트 export
     };
+
+    if (fontFamily != null && fontFamily.isNotEmpty) {
+      print('[PostExporter] ✅ Span에 fontFamily 추가: $fontFamily');
+    }
 
     return map;
   }

@@ -244,23 +244,14 @@ class DraftService {
         }
       }
 
-      // 3. 선택 상태 초기화
+      // 3. 선택 상태 초기화만 수행 (선택 설정하지 않음)
+      // 🎯 임시저장 불러올 때는 선택을 설정하지 않음
+      // - setSelectionWithReason은 포커스를 요청할 수 있음
+      // - 선택이 없어도 사용자가 나중에 탭하면 자동으로 선택이 설정됨
       editorService.editor.composer.clearSelection();
 
-      // 4. 첫 번째 문단으로 커서 이동
-      if (newDocument.length > 0) {
-        final firstNode = newDocument.getNodeAt(0);
-        if (firstNode is ParagraphNode) {
-          final position = DocumentPosition(
-            nodeId: firstNode.id,
-            nodePosition: TextNodePosition(offset: firstNode.text.text.length),
-          );
-          editorService.editor.composer.setSelectionWithReason(
-            DocumentSelection.collapsed(position: position),
-            SelectionReason.userInteraction,
-          );
-        }
-      }
+      // 선택 설정 제거 (포커스 요청 방지)
+      // 사용자가 필요시 직접 탭하여 선택을 설정할 수 있음
     } catch (e) {
       print('[DraftService] Error replacing document: $e');
       // 실패 시 기본 문서로 복구

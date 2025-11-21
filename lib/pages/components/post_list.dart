@@ -72,11 +72,10 @@ class _PostListState extends State<PostList> {
       content: '', // 🎯 content는 빈 문자열로 (JSON 파싱 에러 방지)
       author: '',
       authorProfileImageUrl: 'test',
-      thumbnailImageUrl:
-          'https://i.pinimg.com/1200x/a4/94/e4/a494e4a6fdf63748f170dd2ad4be92d5.jpg',
+      thumbnailImageUrl: 'assets/images/onboarding1.png',
       createdAt: DateTime.now().toIso8601String(),
       updatedAt: DateTime.now().toIso8601String(),
-      summary: '친구를 초대해보세요!', // 🎯 summary에 텍스트 넣기
+      summary: '친구 초대하고 그룹 만들기', // 🎯 summary에 텍스트 넣기
       accessLevel: AccessLevel.public,
       viewCount: 0,
       likeCount: 0,
@@ -85,15 +84,14 @@ class _PostListState extends State<PostList> {
     ),
     PostData(
       id: 'onboarding_placeholder2',
-      title: '글을 작성해보세요',
+      title: '포스트를 게시해보세요',
       content: '', // 🎯 content는 빈 문자열로 (JSON 파싱 에러 방지)
       author: 'test',
       authorProfileImageUrl: 'test',
-      thumbnailImageUrl:
-          'https://i.pinimg.com/736x/db/6b/c6/db6bc6070a06ab10c04855325887f73b.jpg',
+      thumbnailImageUrl: 'assets/images/onboarding2.png',
       createdAt: DateTime.now().toIso8601String(),
       updatedAt: DateTime.now().toIso8601String(),
-      summary: '첫 글을 작성해보세요!', // 🎯 summary에 텍스트 넣기
+      summary: '지금 바로 작성하기', // 🎯 summary에 텍스트 넣기
       accessLevel: AccessLevel.public,
       viewCount: 0,
       likeCount: 0,
@@ -105,10 +103,6 @@ class _PostListState extends State<PostList> {
   final Set<String> _likingInFlight = <String>{};
   final LikeService _likeService = LikeService();
   bool _suppressVisibility = false; // 글 보기로 이동 시 일시적으로 재생 차단
-
-  // 🎯 타이틀 페이드 아웃용
-  double _titleOpacity = 1.0;
-  Timer? _titleFadeTimer;
 
   double _gestureAccumY = 0.0;
   double _gestureAccumX = 0.0;
@@ -132,35 +126,6 @@ class _PostListState extends State<PostList> {
 
     // 초기 배경 이미지 업데이트
     _updateBackgroundImage();
-
-    // 🎯 타이틀 페이드 아웃 시작
-    _startTitleFadeOut();
-  }
-
-  // 🎯 타이틀 페이드 아웃 시작 (전체글 탭일 때만)
-  void _startTitleFadeOut() {
-    _titleFadeTimer?.cancel();
-
-    // 친구 탭이면 "Doppy"는 계속 표시
-    if (widget.isShowingFriendsOnly) {
-      setState(() {
-        _titleOpacity = 1.0;
-      });
-      return;
-    }
-
-    // 전체글 탭일 때만 페이드 아웃
-    setState(() {
-      _titleOpacity = 1.0;
-    });
-
-    _titleFadeTimer = Timer(Duration(milliseconds: 2500), () {
-      if (mounted && !widget.isShowingFriendsOnly) {
-        setState(() {
-          _titleOpacity = 0.0;
-        });
-      }
-    });
   }
 
   void _onLikeServiceChanged() {
@@ -202,16 +167,10 @@ class _PostListState extends State<PostList> {
       final currentPost = postsToUse[safeIndex];
       final String imageUrl = currentPost.thumbnailImageUrl.trim();
 
-      // 비디오 URL 체크
-      final isVideoUrl =
-          imageUrl.toLowerCase().endsWith('.mp4') ||
-          imageUrl.toLowerCase().endsWith('.mov') ||
-          imageUrl.toLowerCase().endsWith('.avi') ||
-          imageUrl.toLowerCase().endsWith('.webm') ||
-          imageUrl.contains('/videos/');
-
-      // 네트워크 이미지이고 비디오가 아닐 때만 전달
-      if (imageUrl.startsWith('http') && !isVideoUrl) {
+      // 🎯 네트워크 이미지 또는 로컬 에셋 전달 (비디오는 VideoCacheService로 프리로드)
+      if (imageUrl.isNotEmpty) {
+        // 네트워크 이미지인 경우 비디오도 포함하여 전달
+        // 로컬 에셋인 경우도 전달하여 배경에 표시
         widget.onBackgroundImageChanged!(imageUrl);
       } else {
         widget.onBackgroundImageChanged!(null);
@@ -284,11 +243,6 @@ class _PostListState extends State<PostList> {
     // 배경 이미지 업데이트
     _updateBackgroundImage();
 
-    // 🎯 섹션 레이블이 변경되면 타이틀 페이드 아웃 재시작
-    if (widget.sectionLabel != oldWidget.sectionLabel) {
-      _startTitleFadeOut();
-    }
-
     // 🎯 섹션이 변경되면 (친구글 -> 전체글) 버튼 숨김 플래그 리셋
     if (widget.isShowingFriendsOnly != oldWidget.isShowingFriendsOnly) {
       _hideAllPostsButton = false;
@@ -297,7 +251,6 @@ class _PostListState extends State<PostList> {
 
   @override
   void dispose() {
-    _titleFadeTimer?.cancel();
     _likeService.removeListener(_onLikeServiceChanged);
     _scrollController.dispose();
     _pageController.dispose();
@@ -324,13 +277,8 @@ class _PostListState extends State<PostList> {
             snap: false,
             title: AnimatedOpacity(
               opacity:
-                  widget.isShowingFriendsOnly
-                      ? (1.0 - _pullProgress) *
-                          widget
-                              .appBarOpacity // 🎯 친구 탭: "Doppy"는 계속 표시
-                      : (1.0 - _pullProgress) *
-                          widget.appBarOpacity *
-                          _titleOpacity, // 🎯 전체글 탭: 2초 후 페이드 아웃
+                  (1.0 - _pullProgress) *
+                  widget.appBarOpacity, // 🎯 친구 탭과 전체글 탭 모두 계속 표시
               duration:
                   _pullProgress != 0.0
                       ? Duration(milliseconds: 0)
@@ -759,11 +707,9 @@ class _PostListState extends State<PostList> {
                       vertical: 10,
                     ),
                     decoration: BoxDecoration(
-                      color: Theme.of(context).colorScheme.surface.withOpacity(
-                        Theme.of(context).brightness == Brightness.dark
-                            ? 0.6
-                            : 0.9,
-                      ),
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.background.withOpacity(0.5),
                       borderRadius: BorderRadius.circular(24),
                       border: Border.all(
                         color: Theme.of(
@@ -1071,45 +1017,114 @@ class _PostListState extends State<PostList> {
     final safeIndex = _currentIndex.clamp(0, postsToUse.length - 1);
     final post = postsToUse[safeIndex];
 
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.center,
-        mainAxisAlignment: MainAxisAlignment.start,
-        children: [
-          SizedBox(height: 10),
-          // 제목
-          Text(
-            post.title,
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              color: Theme.of(context).colorScheme.onSurface,
-              fontSize: 32,
-              fontWeight: FontWeight.bold,
-              letterSpacing: -0.2,
+    return GestureDetector(
+      onTap: () {
+        // 🎯 텍스트 영역 클릭 시 포스트 상세보기로 이동
+        if (post.id == 'onboarding_placeholder') {
+          Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (context) => const GroupSelectionScreen(),
             ),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
+          );
+        } else if (post.id == 'onboarding_placeholder2') {
+          Navigator.pushNamed(context, '/post-write');
+        } else if (_items.isNotEmpty &&
+            !post.id.startsWith('onboarding_placeholder')) {
+          // 먼저 현재 프레임에서 가시성 차단을 적용
+          setState(() => _suppressVisibility = true);
+          // 다음 프레임에서 push하여 정지가 먼저 반영되도록 함
+          WidgetsBinding.instance.addPostFrameCallback((_) async {
+            if (!mounted) return;
+            await Navigator.of(context).push(
+              PageRouteBuilder(
+                transitionDuration: const Duration(milliseconds: 340),
+                reverseTransitionDuration: const Duration(milliseconds: 100),
+                opaque: false,
+                pageBuilder:
+                    (_, __, ___) => PostReaderScreen(
+                      exported: post.toExportedData(),
+                      heroTag:
+                          'post-hero-${widget.sectionLabel ?? "main"}-${post.id}-$safeIndex-${widget.key?.hashCode ?? hashCode}',
+                    ),
+                transitionsBuilder: (
+                  context,
+                  animation,
+                  secondaryAnimation,
+                  child,
+                ) {
+                  const begin = Offset(0.0, 0.1);
+                  const end = Offset.zero;
+                  const curve = Curves.easeOutCubic;
+                  var tween = Tween(
+                    begin: begin,
+                    end: end,
+                  ).chain(CurveTween(curve: curve));
+                  var offsetAnimation = animation.drive(tween);
+                  var fadeAnimation = Tween<double>(
+                    begin: 0.0,
+                    end: 1.0,
+                  ).animate(
+                    CurvedAnimation(parent: animation, curve: Curves.easeOut),
+                  );
+                  return FadeTransition(
+                    opacity: fadeAnimation,
+                    child: SlideTransition(
+                      position: offsetAnimation,
+                      child: child,
+                    ),
+                  );
+                },
+              ),
+            );
 
-          // 내용 (남은 공간 모두 사용)
-          Expanded(
-            child: Text(
-              post.parsedContent,
+            if (mounted) {
+              setState(() => _suppressVisibility = false);
+            }
+          });
+        }
+      },
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          mainAxisAlignment: MainAxisAlignment.start,
+          children: [
+            SizedBox(height: 10),
+            // 제목
+            Text(
+              post.title,
               textAlign: TextAlign.center,
               style: TextStyle(
-                color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
-                fontSize: 14,
-                fontWeight: FontWeight.w300,
-                height: 1.8,
-                letterSpacing: -0.1,
+                color: Theme.of(context).colorScheme.onSurface,
+                fontSize: 32,
+                fontWeight: FontWeight.bold,
+                letterSpacing: -0.2,
               ),
-              maxLines: 5,
+              maxLines: 1,
               overflow: TextOverflow.ellipsis,
             ),
-          ),
-          const SizedBox(height: 30),
-        ],
+
+            // 내용 (남은 공간 모두 사용)
+            Expanded(
+              child: Text(
+                post.parsedContent,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: Theme.of(
+                    context,
+                  ).colorScheme.onSurface.withOpacity(0.7),
+                  fontSize: 14,
+                  fontWeight: FontWeight.w300,
+                  height: 1.8,
+                  letterSpacing: -0.1,
+                ),
+                maxLines: 5,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            const SizedBox(height: 30),
+          ],
+        ),
       ),
     );
   }

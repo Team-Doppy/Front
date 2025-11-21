@@ -384,19 +384,19 @@ class _LinkComponentState extends State<_LinkComponent>
       padding: const EdgeInsets.symmetric(horizontal: 20),
       child: GestureDetector(
         behavior: HitTestBehavior.opaque, // 🎯 불투명 영역만 탭 감지
-      onTap:
-          widget.isEditing
-              ? () {
-                imageService.selectImage(widget.nodeId);
-              }
-              : null,
-      onLongPressStart:
-          widget.isEditing ? null : (d) => _showPreview(d.globalPosition),
-      onLongPressMoveUpdate:
-          widget.isEditing
-              ? null
-              : (d) => _updatePreviewPosition(d.globalPosition),
-      onLongPressEnd: widget.isEditing ? null : (_) => _hidePreview(),
+        onTap:
+            widget.isEditing
+                ? () {
+                  imageService.selectImage(widget.nodeId);
+                }
+                : null,
+        onLongPressStart:
+            widget.isEditing ? null : (d) => _showPreview(d.globalPosition),
+        onLongPressMoveUpdate:
+            widget.isEditing
+                ? null
+                : (d) => _updatePreviewPosition(d.globalPosition),
+        onLongPressEnd: widget.isEditing ? null : (_) => _hidePreview(),
         child: Container(
           margin: EdgeInsets.only(top: marginTop, bottom: marginBottom),
           decoration: BoxDecoration(
@@ -471,23 +471,6 @@ class _LinkComponentState extends State<_LinkComponent>
                         height: 1.2,
                       ),
                     ),
-                    // 설명 (있을 경우)
-                    if (widget.description.isNotEmpty) ...[
-                      const SizedBox(height: 4),
-                      Text(
-                        widget.description,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color:
-                              widget.isDarkMode
-                                  ? Colors.white.withOpacity(0.65)
-                                  : Colors.black.withOpacity(0.65),
-                          fontSize: 13,
-                          height: 1.3,
-                        ),
-                      ),
-                    ],
                   ],
                 ),
               ),
@@ -534,7 +517,7 @@ class _LinkComponentState extends State<_LinkComponent>
                     ),
                     decoration: BoxDecoration(
                       borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: AppColors.primary, width: 5),
+                      border: Border.all(color: AppColors.primary, width: 4),
                     ),
                   ),
                 ),
@@ -654,6 +637,9 @@ class _LinkComponentState extends State<_LinkComponent>
     final current = _getCurrentNodeIndex();
     if (current == -1) return false;
 
+    // 자기 자신을 드래그 중인 경우 드롭 라인 표시하지 않음
+    if (svc.draggingNodeId == widget.nodeId) return false;
+
     // 이 노드 위에 삽입하는 경우
     if (di == current) {
       return _shouldShowInsertionLine(current, true);
@@ -669,6 +655,9 @@ class _LinkComponentState extends State<_LinkComponent>
     if (di == null) return false;
     final current = _getCurrentNodeIndex();
     if (current == -1) return false;
+
+    // 자기 자신을 드래그 중인 경우 드롭 라인 표시하지 않음
+    if (svc.draggingNodeId == widget.nodeId) return false;
 
     // 마지막 노드인지 확인
     final documentLength = svc.editorService.document.length;

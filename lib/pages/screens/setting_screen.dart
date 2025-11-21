@@ -67,36 +67,42 @@ class _SettingScreenState extends State<SettingScreen> {
       }
 
       // 🎯 알림 설정 변경 시 FCM 토큰 검사 및 서버 동기화
-      // 켠 경우: FCM 토큰 검사 후 필요시 재발급하고 서버에 전송
-      // 끈 경우: FCM 토큰 검사 후 서버 설정 동기화
       try {
         final authService = AuthService();
-        await authService.syncFcmTokenAndSettings();
 
-        // syncFcmTokenAndSettings 안에서 권한 거부 상태면
-        // 서버 플래그가 다시 OFF로 동기화되므로, UI도 맞춰줌
-        final settings = await _userService.getSettings();
-        final serverNotificationEnabled =
-            settings['notificationEnabled'] ?? false;
+        if (newValue) {
+          // 🎯 알림을 켠 경우: FCM 토큰 검사 후 필요시 재발급하고 서버에 전송
+          await authService.syncFcmTokenAndSettings();
 
-        if (mounted && !serverNotificationEnabled && newValue) {
-          // 서버가 다시 false로 내려왔다는 것은 여전히 권한이 없다는 의미
-          setState(() {
-            _notificationEnabled = false;
-          });
+          // syncFcmTokenAndSettings 안에서 권한 거부 상태면
+          // 서버 플래그가 다시 OFF로 동기화되므로, UI도 맞춰줌
+          final settings = await _userService.getSettings();
+          final serverNotificationEnabled =
+              settings['notificationEnabled'] ?? false;
 
-          final l10n = AppLocalizations.of(context);
-          final goToSettings = await DialogUtils.showConfirmDialog(
-            context,
-            title: l10n.t('notification_permission_required_title'),
-            message: l10n.t('notification_permission_required_message'),
-            confirmText: l10n.t('open_settings'),
-            cancelText: l10n.t('cancel'),
-          );
+          if (mounted && !serverNotificationEnabled) {
+            // 서버가 다시 false로 내려왔다는 것은 여전히 권한이 없다는 의미
+            setState(() {
+              _notificationEnabled = false;
+            });
 
-          if (goToSettings == true) {
-            await openAppSettings();
+            final l10n = AppLocalizations.of(context);
+            final goToSettings = await DialogUtils.showConfirmDialog(
+              context,
+              title: l10n.t('notification_permission_required_title'),
+              message: l10n.t('notification_permission_required_message'),
+              confirmText: l10n.t('open_settings'),
+              cancelText: l10n.t('cancel'),
+            );
+
+            if (goToSettings == true) {
+              await openAppSettings();
+            }
           }
+        } else {
+          // 🎯 알림을 끈 경우: 서버 설정만 OFF로 변경됨 (이미 toggleNotificationEnabled()에서 처리됨)
+          // 추가로 할 일 없음 (토큰은 서버에 남아있어도 괜찮음, 서버 설정이 OFF이므로 푸시 발송 안 됨)
+          print('[SettingScreen] 알림 설정 OFF로 변경 완료');
         }
       } catch (e) {
         print('[SettingScreen] FCM 동기화 실패 (알림 설정 변경): $e');
@@ -359,7 +365,7 @@ class _SettingScreenState extends State<SettingScreen> {
                 onTap: () async {
                   final Uri emailUri = Uri(
                     scheme: 'mailto',
-                    path: 'support@doppy.app',
+                    path: AppConstants.contactEmail,
                     query: 'subject=Doppy 문의&body=',
                   );
 
@@ -369,7 +375,7 @@ class _SettingScreenState extends State<SettingScreen> {
                     // 이메일 앱이 없으면 웹 Gmail로 대체
                     if (context.mounted) {
                       final gmailWebUrl = Uri.parse(
-                        'https://mail.google.com/mail/?view=cm&fs=1&to=support@doppy.app&su=Doppy 문의',
+                        'https://mail.google.com/mail/?view=cm&fs=1&to=${AppConstants.contactEmail}&su=Doppy 문의',
                       );
 
                       Navigator.push(

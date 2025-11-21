@@ -657,6 +657,28 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
                                     : _buildGroupAvatarPlaceholder(group),
                           ),
                         ),
+                        // 🎯 카메라 아이콘 (우측 하단)
+                        Positioned(
+                          right: 0,
+                          bottom: 0,
+                          child: Container(
+                            width: 28,
+                            height: 28,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: Theme.of(context).colorScheme.onSurface,
+                              border: Border.all(
+                                color: Theme.of(context).colorScheme.surface,
+                                width: 1.5,
+                              ),
+                            ),
+                            child: Icon(
+                              Icons.camera_alt,
+                              size: 14,
+                              color: Theme.of(context).colorScheme.surface,
+                            ),
+                          ),
+                        ),
                       ],
                     ),
                   ),

@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class ThemeProvider extends ChangeNotifier {
-  ThemeMode _themeMode = ThemeMode.light; // 기본값: 라이트
+  ThemeMode _themeMode = ThemeMode.dark; // 🎯 기본값: 다크 테마
   static const String _themeKey = 'theme_mode';
 
   ThemeProvider() {
@@ -44,7 +44,7 @@ class ThemeProvider extends ChangeNotifier {
       if (savedTheme != null) {
         _themeMode = ThemeMode.values.firstWhere(
           (mode) => mode.name == savedTheme,
-          orElse: () => ThemeMode.light,
+          orElse: () => ThemeMode.dark, // 🎯 저장된 테마가 없을 때 기본값: 다크 테마
         );
         notifyListeners();
       }

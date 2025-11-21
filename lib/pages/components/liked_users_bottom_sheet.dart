@@ -364,8 +364,10 @@ class _LikedUsersBottomSheetState extends State<LikedUsersBottomSheet> {
             child: BackdropFilter(
               filter: ui.ImageFilter.blur(sigmaX: 30, sigmaY: 30),
               child: Container(
-                decoration: const BoxDecoration(
-                  color: ui.Color.fromARGB(207, 50, 50, 50),
+                decoration: BoxDecoration(
+                  color: Theme.of(
+                    context,
+                  ).colorScheme.background.withOpacity(0.95),
                 ),
                 child: Scaffold(
                   backgroundColor: Colors.transparent,

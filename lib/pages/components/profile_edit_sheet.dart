@@ -119,23 +119,24 @@ class ProfileEditBottomSheet extends StatelessWidget {
 
 class ProfileInfoEditBottomSheet extends StatefulWidget {
   final User? user;
-  final TextEditingController nameController;
-  final TextEditingController descriptionController;
+  final TextEditingController? nameController; // 🎯 Optional로 변경
+  final TextEditingController? descriptionController; // 🎯 Optional로 변경
   final Future<void> Function()? onClearProfileImage;
   final Function(List<File>)? onImagesSelected;
   final Future<void> Function({
     required String alias,
     required String description,
-    List<String>? links, // 🎯 프로필 링크 목록 (최대 3개)
+    List<String>? links, // 🎯 프로필 링크 목록
     Map<String, String>? linkTitles, // 🎯 링크 타이틀 (URL -> 타이틀)
+    Map<String, String>? linkThumbnails, // 🎯 링크 썸네일 (URL -> thumbnailUrl)
   })?
   onSave;
 
   const ProfileInfoEditBottomSheet({
     super.key,
     required this.user,
-    required this.nameController,
-    required this.descriptionController,
+    this.nameController, // 🎯 Optional
+    this.descriptionController, // 🎯 Optional
     this.onClearProfileImage,
     this.onImagesSelected,
     this.onSave,
@@ -152,18 +153,41 @@ class _ProfileInfoEditBottomSheetState
   final FocusNode _nameFocus = FocusNode();
   final FocusNode _descriptionFocus = FocusNode();
 
+  // 🎯 Controller를 내부에서 관리 (외부에서 제공되지 않은 경우)
+  late final TextEditingController _nameController;
+  late final TextEditingController _descriptionController;
+  late final bool _ownsControllers; // 🎯 Controller를 소유하는지 여부
+
   late String _initialName;
   late String _initialDescription;
   late List<String> _initialLinks; // 🎯 초기 링크 목록 (URL만)
   List<String> _links = []; // 🎯 현재 링크 목록 (URL만, 저장용)
   Map<String, String> _linkTitles = {}; // 🎯 링크 타이틀 저장 (URL -> 타이틀)
+  Map<String, String> _linkThumbnails =
+      {}; // 🎯 링크 썸네일 URL 저장 (URL -> thumbnailUrl)
 
   @override
   void initState() {
     super.initState();
+
+    // 🎯 외부에서 controller가 제공되었는지 확인
+    if (widget.nameController != null && widget.descriptionController != null) {
+      // 외부에서 제공된 경우 사용
+      _nameController = widget.nameController!;
+      _descriptionController = widget.descriptionController!;
+      _ownsControllers = false; // dispose 안 함
+    } else {
+      // 내부에서 생성
+      _nameController = TextEditingController(text: widget.user?.alias ?? '');
+      _descriptionController = TextEditingController(
+        text: widget.user?.selfIntroduction ?? '',
+      );
+      _ownsControllers = true; // dispose 필요
+    }
+
     // trim()된 값으로 초기값 저장
-    _initialName = widget.nameController.text.trim();
-    _initialDescription = widget.descriptionController.text.trim();
+    _initialName = _nameController.text.trim();
+    _initialDescription = _descriptionController.text.trim();
 
     // 🎯 초기 링크 목록 설정
     _initialLinks = List<String>.from(widget.user?.links ?? []);
@@ -177,31 +201,37 @@ class _ProfileInfoEditBottomSheetState
       _linkTitles = {};
     }
 
+    // 🎯 초기 링크 썸네일 설정 (서버에서 받아온 linkThumbnails 초기화)
+    if (widget.user?.linkThumbnails != null &&
+        widget.user!.linkThumbnails!.isNotEmpty) {
+      _linkThumbnails = Map<String, String>.from(widget.user!.linkThumbnails!);
+    } else {
+      _linkThumbnails = {};
+    }
+
     print(
       '[ProfileEdit] 초기값 저장 - 이름: "$_initialName", 소개: "$_initialDescription", 링크: ${_initialLinks.length}개, 타이틀: ${_linkTitles.length}개',
     );
     print('[ProfileEdit] 초기 링크 타이틀: $_linkTitles');
 
-    // Bottom Sheet 열릴 때 자동으로 별명란에 포커스
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      Future.delayed(const Duration(milliseconds: 100), () {
-        if (mounted) {
-          _nameFocus.requestFocus();
-        }
-      });
-    });
+    // 🎯 자동 포커스 제거 (사용자가 직접 필드를 탭할 때만 키보드가 올라오도록)
   }
 
   @override
   void dispose() {
     _nameFocus.dispose();
     _descriptionFocus.dispose();
+    // 🎯 내부에서 생성한 controller만 dispose
+    if (_ownsControllers) {
+      _nameController.dispose();
+      _descriptionController.dispose();
+    }
     super.dispose();
   }
 
   bool get _hasChanges {
-    final currentName = widget.nameController.text.trim();
-    final currentDescription = widget.descriptionController.text.trim();
+    final currentName = _nameController.text.trim();
+    final currentDescription = _descriptionController.text.trim();
 
     final hasNameChange = currentName != _initialName;
     final hasDescChange = currentDescription != _initialDescription;
@@ -352,7 +382,7 @@ class _ProfileInfoEditBottomSheetState
                 ),
                 // 별명 텍스트필드
                 TextField(
-                  controller: widget.nameController,
+                  controller: _nameController,
                   focusNode: _nameFocus,
                   textAlign: TextAlign.center,
                   onChanged: (value) => setState(() {}),
@@ -399,7 +429,7 @@ class _ProfileInfoEditBottomSheetState
                       borderRadius: BorderRadius.circular(16),
                     ),
                     errorText:
-                        widget.nameController.text.trim().isEmpty
+                        _nameController.text.trim().isEmpty
                             ? AppLocalizations.of(
                               context,
                             ).translate('nickname_required')
@@ -419,7 +449,7 @@ class _ProfileInfoEditBottomSheetState
                 ),
                 // 소개글 텍스트필드
                 TextField(
-                  controller: widget.descriptionController,
+                  controller: _descriptionController,
                   focusNode: _descriptionFocus,
                   textAlign: TextAlign.center,
                   maxLines: 1,
@@ -470,23 +500,22 @@ class _ProfileInfoEditBottomSheetState
                       ),
                     ),
                     const Spacer(),
-                    if (_links.length < 3)
-                      GestureDetector(
-                        onTap: () => _showLinkOverlay(context),
-                        child: Container(
-                          width: 28,
-                          height: 28,
-                          decoration: BoxDecoration(
-                            color: Theme.of(context).colorScheme.onSurface,
-                            shape: BoxShape.circle,
-                          ),
-                          child: Icon(
-                            Icons.add,
-                            color: Theme.of(context).colorScheme.surface,
-                            size: 20,
-                          ),
+                    GestureDetector(
+                      onTap: () => _showLinkOverlay(context),
+                      child: Container(
+                        width: 28,
+                        height: 28,
+                        decoration: BoxDecoration(
+                          color: Theme.of(context).colorScheme.onSurface,
+                          shape: BoxShape.circle,
+                        ),
+                        child: Icon(
+                          Icons.add,
+                          color: Theme.of(context).colorScheme.surface,
+                          size: 20,
                         ),
                       ),
+                    ),
                   ],
                 ),
                 const SizedBox(height: 8),
@@ -531,7 +560,7 @@ class _ProfileInfoEditBottomSheetState
                 // 저장 버튼 (별명이 있고 변경사항이 있을 때만)
                 if (widget.onSave != null &&
                     _hasChanges &&
-                    widget.nameController.text.trim().isNotEmpty)
+                    _nameController.text.trim().isNotEmpty)
                   _buildActionButton(
                     context: context,
                     icon: Icons.save,
@@ -546,10 +575,12 @@ class _ProfileInfoEditBottomSheetState
 
                       try {
                         await widget.onSave!(
-                          alias: widget.nameController.text.trim(),
-                          description: widget.descriptionController.text.trim(),
-                          links: _links.isEmpty ? null : _links,
+                          alias: _nameController.text.trim(),
+                          description: _descriptionController.text.trim(),
+                          links: _links, // 🎯 빈 배열도 전달하여 링크 삭제 가능하게
                           linkTitles: _linkTitles.isEmpty ? null : _linkTitles,
+                          linkThumbnails:
+                              _linkThumbnails.isEmpty ? null : _linkThumbnails,
                         );
 
                         // 저장 완료 후 잠시 대기
@@ -658,7 +689,7 @@ class _ProfileInfoEditBottomSheetState
                 String? description,
                 String? thumbnailUrl,
               }) {
-                // 🎯 링크 추가 (최대 3개, 즉시 추가)
+                // 🎯 링크 추가 (개수 제한 없음, 즉시 추가)
                 if (mounted) {
                   // 중복 링크 체크
                   if (_links.contains(url)) {
@@ -671,24 +702,18 @@ class _ProfileInfoEditBottomSheetState
                     return;
                   }
 
-                  if (_links.length < 3) {
-                    setState(() {
-                      _links.add(url);
-                      // 🎯 타이틀 저장 (직접 작성한 타이틀이 있으면 저장)
-                      if (title != null && title.isNotEmpty) {
-                        _linkTitles[url] = title;
-                      }
-                    });
-                    // 🎯 LinkOverlay는 닫지 않고 계속 열어둠 (바텀시트도 열어둠)
-                  } else {
-                    // 이미 3개가 있으면 에러 메시지
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text('링크는 최대 3개까지 추가할 수 있습니다'),
-                        backgroundColor: Theme.of(context).colorScheme.error,
-                      ),
-                    );
-                  }
+                  setState(() {
+                    _links.add(url);
+                    // 🎯 타이틀 저장 (직접 작성한 타이틀이 있으면 저장)
+                    if (title != null && title.isNotEmpty) {
+                      _linkTitles[url] = title;
+                    }
+                    // 🎯 썸네일 URL 저장 (메타데이터에서 가져온 썸네일 저장)
+                    if (thumbnailUrl != null && thumbnailUrl.isNotEmpty) {
+                      _linkThumbnails[url] = thumbnailUrl;
+                    }
+                  });
+                  // 🎯 LinkOverlay는 닫지 않고 계속 열어둠 (바텀시트도 열어둠)
                 }
               },
             ),
@@ -723,7 +748,7 @@ class _ProfileInfoEditBottomSheetState
       ),
       child: Row(
         children: [
-          // 🎯 링크 썸네일 또는 아이콘 (나중에 인터넷에서 가져옴)
+          // 🎯 링크 썸네일 또는 아이콘 (저장된 썸네일 우선, 없으면 Google Favicon API)
           Container(
             width: 40,
             height: 40,
@@ -734,15 +759,19 @@ class _ProfileInfoEditBottomSheetState
             clipBehavior: Clip.antiAlias,
             child: Builder(
               builder: (context) {
-                // 도메인에서 썸네일 URL 생성 (Google Favicon API)
-                String? thumbnailUrl;
-                try {
-                  final uri = Uri.parse(displayUrl);
-                  final domain = uri.host.replaceFirst('www.', '');
-                  thumbnailUrl =
-                      'https://www.google.com/s2/favicons?domain=$domain&sz=64';
-                } catch (_) {
-                  thumbnailUrl = null;
+                // 🎯 저장된 썸네일 URL 우선 사용 (등록 시 메타데이터에서 가져온 썸네일)
+                String? thumbnailUrl = _linkThumbnails[link];
+
+                // 저장된 썸네일이 없으면 Google Favicon API 사용
+                if (thumbnailUrl == null || thumbnailUrl.isEmpty) {
+                  try {
+                    final uri = Uri.parse(displayUrl);
+                    final domain = uri.host.replaceFirst('www.', '');
+                    thumbnailUrl =
+                        'https://www.google.com/s2/favicons?domain=$domain&sz=64';
+                  } catch (_) {
+                    thumbnailUrl = null;
+                  }
                 }
 
                 return thumbnailUrl != null

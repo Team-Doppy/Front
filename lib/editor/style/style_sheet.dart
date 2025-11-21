@@ -17,7 +17,11 @@ void setGlobalTextStylingService(TextStylingService? service) {
 }
 
 /// 커스텀 스타일시트 (테마에 따라 텍스트/타이틀 색을 적용)
-Stylesheet buildCustomStylesheet(BuildContext context) {
+/// [isReadOnly] true인 경우 전역 폰트를 사용하지 않고 블록의 metadata만 사용
+Stylesheet buildCustomStylesheet(
+  BuildContext context, {
+  bool isReadOnly = false,
+}) {
   final bool isDark =
       context.watch<ThemeProvider>().themeMode == ThemeMode.dark;
   final Color titleColor =
@@ -48,15 +52,19 @@ Stylesheet buildCustomStylesheet(BuildContext context) {
               height: 0,
             );
 
-            // 구글 폰트 적용
+            // 🎯 구글 폰트 적용 (메타데이터 기반)
             if (fontFamily != null && fontFamily.isNotEmpty) {
+              print(
+                '[StyleSheet] 🎨 제목 폰트 적용 시도: $fontFamily (노드 ID: ${docNode.id})',
+              );
               try {
                 titleStyle = GoogleFonts.getFont(
                   fontFamily,
                   textStyle: titleStyle,
                 );
+                print('[StyleSheet] ✅ 제목 GoogleFonts 적용 성공: $fontFamily');
               } catch (e) {
-                print('[FontDebug] 제목 폰트 적용 실패: $fontFamily (오류: $e)');
+                print('[StyleSheet] ❌ 제목 폰트 적용 실패: $fontFamily (오류: $e)');
                 titleStyle = titleStyle.copyWith(fontFamily: fontFamily);
               }
             }
@@ -118,12 +126,16 @@ Stylesheet buildCustomStylesheet(BuildContext context) {
             height: 1.4,
           );
 
-          // 구글 폰트 적용
+          // 🎯 구글 폰트 적용 (메타데이터 기반)
           if (fontFamily != null && fontFamily.isNotEmpty) {
+            print(
+              '[StyleSheet] 🎨 본문 폰트 적용 시도: $fontFamily (노드 ID: ${docNode.id})',
+            );
             try {
               bodyStyle = GoogleFonts.getFont(fontFamily, textStyle: bodyStyle);
+              print('[StyleSheet] ✅ 본문 GoogleFonts 적용 성공: $fontFamily');
             } catch (e) {
-              print('[FontDebug] 본문 폰트 적용 실패: $fontFamily (오류: $e)');
+              print('[StyleSheet] ❌ 본문 폰트 적용 실패: $fontFamily (오류: $e)');
               bodyStyle = bodyStyle.copyWith(fontFamily: fontFamily);
             }
           }
@@ -186,6 +198,14 @@ Stylesheet buildCustomStylesheet(BuildContext context) {
       bool isSpoiler = false;
       String? fontFamily;
 
+      // 🎯 existingStyle에서 폰트 패밀리 추출 (StyleRule에서 metadata 기반으로 설정된 폰트)
+      String? existingFontFamily = existingStyle.fontFamily;
+      if (existingFontFamily != null && existingFontFamily.isNotEmpty) {
+        print(
+          '[StyleSheet] 📝 existingStyle에서 폰트 감지: $existingFontFamily (StyleRule에서 metadata 기반 적용)',
+        );
+      }
+
       for (final attribution in attributions) {
         if (attribution == boldAttribution) {
           isBold = true;
@@ -210,7 +230,11 @@ Stylesheet buildCustomStylesheet(BuildContext context) {
             height: 1.2, // 커서가 텍스트에 맞도록 line height 조정
           );
         } else if (attribution is FontFamilyAttribution) {
+          // 🎯 span 단위 폰트 (Attribution 기반 정교한 적용) - 최우선 적용
           fontFamily = attribution.fontFamily;
+          print(
+            '[StyleSheet] 📝 Span 단위 FontFamilyAttribution 감지: ${attribution.fontFamily} (최우선 적용)',
+          );
         }
       }
 
@@ -229,24 +253,48 @@ Stylesheet buildCustomStylesheet(BuildContext context) {
         // ColorAttribution이 없으면 기본 bodyColor 유지
       }
 
-      // 🎨 폰트 패밀리 적용 (Google Fonts 로더 통해 동적 로드)
-      // Attribution이 없으면 전역 폰트 사용
+      // 🎨 폰트 패밀리 적용 우선순위:
+      // 1. FontFamilyAttribution (span 단위 정교한 적용) - 최우선 ✅
+      // 2. existingStyle의 fontFamily (StyleRule에서 metadata 기반으로 설정된 폰트) - 차순위
+      // 3. 전역 폰트 (에디터 모드일 때만, Attribution과 metadata가 없을 때) - 마지막
       if (fontFamily == null || fontFamily.isEmpty) {
-        fontFamily = _globalTextStylingService?.globalFontFamily;
-        if (fontFamily != null) {
-          print('[FontDebug] 전역 폰트 사용: $fontFamily');
+        // Attribution이 없으면 existingStyle의 폰트 사용 (StyleRule에서 metadata 기반으로 설정)
+        if (existingFontFamily != null && existingFontFamily.isNotEmpty) {
+          fontFamily = existingFontFamily;
+          print(
+            '[StyleSheet] 📝 existingStyle의 폰트 사용: $fontFamily (metadata 기반, StyleRule에서 설정됨)',
+          );
+        } else if (!isReadOnly) {
+          // 에디터 모드일 때만 전역 폰트 사용 (Attribution과 metadata가 모두 없을 때만)
+          fontFamily = _globalTextStylingService?.globalFontFamily;
+          if (fontFamily != null) {
+            print('[StyleSheet] 전역 폰트 사용: $fontFamily');
+          }
         }
+        // 읽기 모드에서는 전역 폰트를 사용하지 않음 (블록 metadata만 적용)
       }
 
+      // 🎯 폰트 적용 (우선순위: Attribution > metadata > 전역 폰트)
       if (fontFamily != null && fontFamily.isNotEmpty) {
-        print('[FontDebug] inlineTextStyler 폰트 감지: $fontFamily');
+        print('[StyleSheet] 🎨 inlineTextStyler에서 최종 폰트 적용: $fontFamily');
         try {
           style = GoogleFonts.getFont(fontFamily, textStyle: style);
-          print('[FontDebug] GoogleFonts.getFont 성공: $fontFamily');
+          print('[StyleSheet] ✅ GoogleFonts.getFont 성공: $fontFamily');
         } catch (e) {
-          print('[FontDebug] GoogleFonts.getFont 실패: $fontFamily (오류: $e)');
+          print('[StyleSheet] ❌ GoogleFonts.getFont 실패: $fontFamily (오류: $e)');
           // 폰트명이 GoogleFonts에 없을 경우 fallback으로 family만 지정
           style = style.copyWith(fontFamily: fontFamily);
+        }
+      } else {
+        // 폰트가 설정되지 않았지만 existingStyle에 이미 폰트가 적용되어 있을 수 있음
+        // (StyleRule에서 GoogleFonts.getFont로 생성된 경우)
+        // 이 경우 그대로 유지하면 됨
+        if (existingFontFamily != null && existingFontFamily.isNotEmpty) {
+          print(
+            '[StyleSheet] 📝 existingStyle의 폰트 유지: $existingFontFamily (이미 GoogleFonts 적용됨)',
+          );
+        } else {
+          print('[StyleSheet] ℹ️ 폰트가 설정되지 않음 (기본 폰트 사용)');
         }
       }
       // 본문/타이틀 기본 색을 테마에 맞춰 적용 (인라인 컬러 지정이 없는 경우)

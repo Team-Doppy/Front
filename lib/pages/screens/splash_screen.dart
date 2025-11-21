@@ -133,7 +133,7 @@ class _SplashScreenState extends State<SplashScreen>
       // 통합 피드 데이터 서비스를 사용하여 두 섹션 동시 로드
       final homeData = await _homeDataService.preloadAllSections(
         page: 0,
-        size: 10,
+        size: 20, // 🎯 10 -> 20으로 증가 (앱 시작 시에도 20개 로드)
       );
 
       setState(() {

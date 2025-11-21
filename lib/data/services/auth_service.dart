@@ -18,6 +18,8 @@ class AuthService {
   final String _refreshTokenKey = 'refresh_token';
   final String _usernameKey = 'username';
   final String _deviceIdKey = 'device_id';
+  final String _lastSentFcmTokenKey =
+      'last_sent_fcm_token'; // 🎯 마지막으로 서버에 전송한 FCM 토큰
   static const String baseUrl = BaseApiService.baseUrl;
   static const _uuid = Uuid();
 
@@ -212,11 +214,21 @@ class AuthService {
         }
       }
 
-      // 4. deviceId 가져오기 (없으면 생성, 기존 deviceId는 유지)
+      // 4. 마지막으로 서버에 전송한 토큰 확인 (중복 전송 방지)
+      final prefs = await SharedPreferences.getInstance();
+      final lastSentToken = prefs.getString(_lastSentFcmTokenKey);
+
+      // 🎯 토큰이 변경되지 않았으면 서버에 전송하지 않음
+      if (lastSentToken == fcmToken) {
+        print('[AuthService] ⏭️ FCM 토큰이 변경되지 않아 서버 전송을 건너뜁니다 (마지막 전송 토큰과 동일)');
+        return;
+      }
+
+      // 5. deviceId 가져오기 (없으면 생성, 기존 deviceId는 유지)
       final deviceId = await getDeviceId();
       print('[AuthService] DeviceId: $deviceId');
 
-      // 5. 서버에 전송 (FCM 토큰과 deviceId)
+      // 6. 서버에 전송 (FCM 토큰과 deviceId)
       print('[AuthService] FCM 토큰 서버 전송 시작...');
       print('[AuthService] DeviceId: $deviceId');
       print(
@@ -236,6 +248,8 @@ class AuthService {
       );
 
       if (response.statusCode == 200 || response.statusCode == 201) {
+        // 🎯 서버 전송 성공 시 마지막 전송 토큰 저장
+        await prefs.setString(_lastSentFcmTokenKey, fcmToken);
         print(
           '[AuthService] ✅ FCM 토큰 서버 전송 성공 (deviceId: $deviceId, fcmToken: ${fcmToken.substring(0, 20)}...)',
         );
@@ -311,6 +325,10 @@ class AuthService {
     // FCM 토큰 초기화
     final fcmService = FcmService();
     fcmService.clearToken();
+
+    // 🎯 마지막 전송한 FCM 토큰도 초기화
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_lastSentFcmTokenKey);
 
     await _storage.delete(key: _tokenKey);
     await _storage.delete(key: _refreshTokenKey);

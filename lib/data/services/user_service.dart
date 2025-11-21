@@ -63,8 +63,9 @@ class UserService {
   Future<void> updateProfileInfo({
     required String alias,
     required String selfIntroduction,
-    List<String>? links, // 🎯 프로필 링크 목록 (최대 3개)
+    List<String>? links, // 🎯 프로필 링크 목록
     Map<String, String>? linkTitles, // 🎯 링크 타이틀 (URL -> 타이틀)
+    Map<String, String>? linkThumbnails, // 🎯 링크 썸네일 (URL -> thumbnailUrl)
   }) async {
     try {
       final data = <String, dynamic>{
@@ -72,14 +73,19 @@ class UserService {
         'selfIntroduction': selfIntroduction,
       };
 
-      // 🎯 links가 있으면 추가 (최대 3개)
-      if (links != null && links.isNotEmpty) {
-        data['links'] = links.take(3).toList();
+      // 🎯 links가 null이 아닐 때 항상 추가 (빈 배열도 전달하여 삭제 가능하게)
+      if (links != null) {
+        data['links'] = links;
       }
 
-      // 🎯 linkTitles가 있으면 추가
-      if (linkTitles != null && linkTitles.isNotEmpty) {
+      // 🎯 linkTitles가 있으면 추가 (빈 맵도 전달 가능)
+      if (linkTitles != null) {
         data['linkTitles'] = linkTitles;
+      }
+
+      // 🎯 linkThumbnails가 있으면 추가 (빈 맵도 전달 가능)
+      if (linkThumbnails != null) {
+        data['linkThumbnails'] = linkThumbnails;
       }
 
       final response = await _dio.put('/api/profile/info', data: data);

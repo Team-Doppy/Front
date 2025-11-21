@@ -71,6 +71,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
   late final MutableDocument document;
   late final MutableDocumentComposer composer;
   late final FocusNode _editorFocusNode;
+  bool _isLoadingDraft = false; // 🎯 임시저장 불러오는 중 플래그
 
   //service
   late final EditorService editorService;
@@ -637,7 +638,10 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                   ),
                   'user_tap_after_special_node',
                 );
-                _editorFocusNode.requestFocus();
+                // 🎯 임시저장 불러오는 중이 아니면 포커스 요청
+                if (!_isLoadingDraft) {
+                  _editorFocusNode.requestFocus();
+                }
               }
             }
           });
@@ -1640,6 +1644,15 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
 
       // 임시저장 후에는 매핑 맵을 유지 (계속 작업할 수 있도록)
 
+      // 🎯 키보드 내리고 드롭다운 열기
+      if (mounted) {
+        FocusManager.instance.primaryFocus?.unfocus();
+        // 키보드가 완전히 내려갈 때까지 잠시 대기
+        await Future.delayed(const Duration(milliseconds: 100));
+        // 드롭다운 열기
+        await _showDraftList();
+      }
+
       return true; // ✅ 성공 반환
     } catch (e) {
       if (mounted) {
@@ -1845,6 +1858,9 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     try {
       if (!mounted) return;
 
+      // 🎯 툴바의 오른쪽 끝 화살표를 눌렀을 때와 완전히 같은 방식으로 키보드 닫기
+      _editorFocusNode.unfocus();
+
       Navigator.of(context).push(
         PageRouteBuilder(
           opaque: false,
@@ -1853,12 +1869,26 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
               (_, __, ___) => DraftListOverlay(
                 currentDraftId: currentDraftId,
                 onLoadDraft: (draftId) async {
+                  // 🎯 임시저장 불러오기 시작 - 포커스 요청 차단
+                  setState(() {
+                    _isLoadingDraft = true;
+                  });
+
                   try {
                     nodeComponentService.clearHighlightedSelectionSilently();
                     nodeComponentService.clearSelectionSilently();
                     composer.clearSelection();
+
+                    // 🎯 포커스 해제
+                    _editorFocusNode.unfocus();
+                    FocusManager.instance.primaryFocus?.unfocus();
                   } catch (_) {}
-                  if (!mounted) return;
+
+                  if (!mounted) {
+                    setState(() => _isLoadingDraft = false);
+                    return;
+                  }
+
                   final success = await draftService.loadDraft(
                     draftId: draftId,
                     editorService: editorService,
@@ -1871,7 +1901,30 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                     // 불러온 상태를 저장 스냅샷으로 간주
                     editorService.markSavedSnapshot();
                     stickerService.saveInitialState();
-                  } else if (!success && mounted) {
+
+                    // 🎯 포커스 확실히 해제
+                    _editorFocusNode.unfocus();
+                    FocusManager.instance.primaryFocus?.unfocus();
+
+                    // 다음 프레임에서도 포커스 해제 및 플래그 해제
+                    WidgetsBinding.instance.addPostFrameCallback((_) {
+                      if (mounted) {
+                        _editorFocusNode.unfocus();
+                        FocusManager.instance.primaryFocus?.unfocus();
+                        setState(() {
+                          _isLoadingDraft = false;
+                        });
+                      }
+                    });
+                  } else {
+                    if (mounted) {
+                      setState(() {
+                        _isLoadingDraft = false;
+                      });
+                    }
+                  }
+
+                  if (!success && mounted) {
                     ErrorHandler.showError(
                       context,
                       context.tr('draft_load_failed'),

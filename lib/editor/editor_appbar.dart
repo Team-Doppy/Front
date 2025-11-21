@@ -711,112 +711,125 @@ class _EditModeAppBarState extends State<EditModeAppBar> {
           ),
         ),
 
-        // 그룹 리스트
-        ...groupProvider.myGroups.asMap().entries.map((entry) {
-          final group = entry.value;
-          final isSelected = _selectedGroupIds.contains(group.id);
+        // 그룹 리스트 (allFriends 시스템 그룹 제외)
+        ...groupProvider.myGroups
+            .where((group) => group.isSystem != true) // 🎯 시스템 그룹 제외
+            .toList()
+            .asMap()
+            .entries
+            .map((entry) {
+              final group = entry.value;
+              final isSelected = _selectedGroupIds.contains(group.id);
 
-          return PopupMenuItem<String>(
-            value: 'group_${group.id}',
-            child: _buildGroupDropdownItem(
-              context: context,
-              groupName: group.name,
-              isSelected: isSelected,
-            ),
-            onTap: () {
-              Future.delayed(Duration.zero, () async {
-                // 그룹 선택/해제 로직
-                List<int> newGroupIds = List.from(_selectedGroupIds);
-                if (isSelected) {
-                  newGroupIds.remove(group.id);
-                } else {
-                  newGroupIds.add(group.id);
-                }
+              return PopupMenuItem<String>(
+                value: 'group_${group.id}',
+                child: _buildGroupDropdownItem(
+                  context: context,
+                  groupName: group.name,
+                  isSelected: isSelected,
+                ),
+                onTap: () {
+                  Future.delayed(Duration.zero, () async {
+                    // 그룹 선택/해제 로직
+                    List<int> newGroupIds = List.from(_selectedGroupIds);
+                    if (isSelected) {
+                      newGroupIds.remove(group.id);
+                    } else {
+                      newGroupIds.add(group.id);
+                    }
 
-                // 그룹이 하나도 없으면 변경하지 않음
-                if (newGroupIds.isEmpty) {
-                  ErrorHandler.showError(
-                    context,
-                    context.tr('select_at_least_one_group'),
-                  );
-                  // 드롭다운을 다시 열기
-                  Future.delayed(const Duration(milliseconds: 100), () {
-                    final RenderBox button =
-                        context.findRenderObject() as RenderBox;
-                    final Offset position = button.localToGlobal(Offset.zero);
-                    _showGroupSelectionMenu(context, position);
-                  });
-                  return;
-                }
+                    // 그룹이 하나도 없으면 변경하지 않음
+                    if (newGroupIds.isEmpty) {
+                      ErrorHandler.showError(
+                        context,
+                        context.tr('select_at_least_one_group'),
+                      );
+                      // 드롭다운을 다시 열기
+                      Future.delayed(const Duration(milliseconds: 100), () {
+                        final RenderBox button =
+                            context.findRenderObject() as RenderBox;
+                        final Offset position = button.localToGlobal(
+                          Offset.zero,
+                        );
+                        _showGroupSelectionMenu(context, position);
+                      });
+                      return;
+                    }
 
-                if (widget.postId == null) {
-                  print('[EditModeAppBar] postId가 없습니다');
-                  return;
-                }
+                    if (widget.postId == null) {
+                      print('[EditModeAppBar] postId가 없습니다');
+                      return;
+                    }
 
-                // 변경 없음 가드 (선택된 그룹 집합 동일 + 이미 partial)
-                final Set<int> beforeSet = Set<int>.from(_selectedGroupIds);
-                final Set<int> afterSet = Set<int>.from(newGroupIds);
-                if (_selectedVisibility == 'partial' &&
-                    beforeSet.length == afterSet.length &&
-                    beforeSet.containsAll(afterSet)) {
-                  print('[EditModeAppBar] 공개 그룹 변경 없음 - API 호출 생략');
-                  ErrorHandler.showInfo(
-                    context,
-                    context.tr('already_selected_group'),
-                  );
-                  // 드롭다운을 다시 열기
-                  Future.delayed(const Duration(milliseconds: 100), () {
-                    final RenderBox button =
-                        context.findRenderObject() as RenderBox;
-                    final Offset position = button.localToGlobal(Offset.zero);
-                    _showGroupSelectionMenu(context, position);
-                  });
-                  return;
-                }
+                    // 변경 없음 가드 (선택된 그룹 집합 동일 + 이미 partial)
+                    final Set<int> beforeSet = Set<int>.from(_selectedGroupIds);
+                    final Set<int> afterSet = Set<int>.from(newGroupIds);
+                    if (_selectedVisibility == 'partial' &&
+                        beforeSet.length == afterSet.length &&
+                        beforeSet.containsAll(afterSet)) {
+                      print('[EditModeAppBar] 공개 그룹 변경 없음 - API 호출 생략');
+                      ErrorHandler.showInfo(
+                        context,
+                        context.tr('already_selected_group'),
+                      );
+                      // 드롭다운을 다시 열기
+                      Future.delayed(const Duration(milliseconds: 100), () {
+                        final RenderBox button =
+                            context.findRenderObject() as RenderBox;
+                        final Offset position = button.localToGlobal(
+                          Offset.zero,
+                        );
+                        _showGroupSelectionMenu(context, position);
+                      });
+                      return;
+                    }
 
-                try {
-                  // 서버에 공개범위 변경 요청
-                  await BlogService().updatePostAccessLevel(
-                    postId: int.parse(widget.postId!),
-                    accessLevel: 'GROUPS',
-                    sharedGroupIds: newGroupIds,
-                  );
+                    try {
+                      // 서버에 공개범위 변경 요청
+                      await BlogService().updatePostAccessLevel(
+                        postId: int.parse(widget.postId!),
+                        accessLevel: 'GROUPS',
+                        sharedGroupIds: newGroupIds,
+                      );
 
-                  // 🎯 낙관적 업데이트 (서버 호출 성공 시)
-                  if (mounted) {
-                    setState(() {
-                      _selectedVisibility = 'partial';
-                      _selectedGroupIds = newGroupIds;
+                      // 🎯 낙관적 업데이트 (서버 호출 성공 시)
+                      if (mounted) {
+                        setState(() {
+                          _selectedVisibility = 'partial';
+                          _selectedGroupIds = newGroupIds;
+                        });
+                      }
+
+                      if (mounted) {
+                        widget.onVisibilityChanged?.call(
+                          _selectedVisibility,
+                          _selectedGroupIds,
+                        );
+                        ErrorHandler.showInfo(
+                          context,
+                          context.tr('group_changed'),
+                        );
+                        print('[EditModeAppBar] 그룹 변경 성공: $newGroupIds');
+                      }
+                    } catch (e) {
+                      print('[EditModeAppBar] 그룹 변경 실패: $e');
+                      if (mounted) {
+                        ErrorHandler.handleError(context, e);
+                      }
+                    }
+
+                    // 드롭다운을 다시 열기
+                    Future.delayed(const Duration(milliseconds: 100), () {
+                      final RenderBox button =
+                          context.findRenderObject() as RenderBox;
+                      final Offset position = button.localToGlobal(Offset.zero);
+                      _showGroupSelectionMenu(context, position);
                     });
-                  }
-
-                  if (mounted) {
-                    widget.onVisibilityChanged?.call(
-                      _selectedVisibility,
-                      _selectedGroupIds,
-                    );
-                    ErrorHandler.showInfo(context, context.tr('group_changed'));
-                    print('[EditModeAppBar] 그룹 변경 성공: $newGroupIds');
-                  }
-                } catch (e) {
-                  print('[EditModeAppBar] 그룹 변경 실패: $e');
-                  if (mounted) {
-                    ErrorHandler.handleError(context, e);
-                  }
-                }
-
-                // 드롭다운을 다시 열기
-                Future.delayed(const Duration(milliseconds: 100), () {
-                  final RenderBox button =
-                      context.findRenderObject() as RenderBox;
-                  final Offset position = button.localToGlobal(Offset.zero);
-                  _showGroupSelectionMenu(context, position);
-                });
-              });
-            },
-          );
-        }).toList(),
+                  });
+                },
+              );
+            })
+            .toList(),
       ],
     );
   }

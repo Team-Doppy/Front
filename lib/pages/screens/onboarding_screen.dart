@@ -1,9 +1,10 @@
 import 'package:doppy/pages/screens/join_screen.dart';
+import 'package:doppy/pages/screens/setting_screen.dart';
+import 'package:doppy/main.dart' show AppConstants;
+import 'package:doppy/l10n/app_localizations.dart';
 import 'package:flutter/material.dart';
 import 'dart:ui';
 import 'dart:math' as math;
-import 'dart:async';
-import 'package:google_fonts/google_fonts.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -12,155 +13,218 @@ class LoginScreen extends StatefulWidget {
   State<LoginScreen> createState() => _LoginScreenState();
 }
 
-class _LoginScreenState extends State<LoginScreen> {
+class _LoginScreenState extends State<LoginScreen>
+    with TickerProviderStateMixin {
+  late AnimationController _typingController;
+  late AnimationController _fadeController;
+
+  @override
+  void initState() {
+    super.initState();
+    _typingController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 2400), // 느린 회전
+    )..repeat();
+    _fadeController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 300),
+    );
+  }
+
+  @override
+  void dispose() {
+    _typingController.dispose();
+    _fadeController.dispose();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final backgroundColor = isDark ? Colors.black : Colors.black;
+
     return Scaffold(
-      backgroundColor:
-          Theme.of(context).brightness == Brightness.dark
-              ? Theme.of(context).colorScheme.background
-              : Colors.white,
+      backgroundColor: backgroundColor,
       body: Stack(
         children: [
+          // 배경 이미지
+          Positioned.fill(
+            child: Image.asset(
+              'assets/images/onboarding0.png',
+              fit: BoxFit.cover,
+            ),
+          ),
+          // 배경 이미지
+          Positioned.fill(
+            child: Container(
+              color: Theme.of(context).colorScheme.background.withOpacity(0.3),
+            ),
+          ),
           // 메인 콘텐츠
           SafeArea(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // 로고/타이틀 영역
-                Expanded(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      SizedBox(height: 50),
-                      Spacer(),
+                const SizedBox(height: 180),
+                const Spacer(),
 
-                      SizedBox(
-                        height: 300,
-
-                        child: OnboardingPlaceholder(reverse: true),
-                      ),
-
-                      Spacer(flex: 2),
-
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 34),
-                        child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.center,
-                          children: [
-                            Text(
-                              "d",
-                              style: GoogleFonts.jost(
-                                color: Theme.of(context).colorScheme.onSurface,
-                                fontWeight: FontWeight.bold,
-                                letterSpacing: -3,
-                                fontSize: 68,
-                              ),
-                            ),
-                            Padding(
-                              padding: const EdgeInsets.only(top: 8),
-                              child: _SlowCircularProgressIndicator(
-                                color: Theme.of(context).colorScheme.onSurface,
-                                strokeWidth: 8.4,
-                                backgroundColor: Theme.of(
-                                  context,
-                                ).colorScheme.onSurface.withOpacity(0.2),
-                              ),
-                            ),
-
-                            Text(
-                              "ppy",
-                              style: GoogleFonts.jost(
-                                color: Theme.of(context).colorScheme.onSurface,
-                                fontWeight: FontWeight.bold,
-                                letterSpacing: -3,
-                                fontSize: 68,
-                              ),
-                            ),
-                          ],
+                // Doppy 로딩 로고 스타일 제목
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 24),
+                  child: AnimatedBuilder(
+                    animation: _typingController,
+                    builder: (context, child) {
+                      return _buildTitleText(
+                        context,
+                        "Doppy",
+                        ValueKey("Doppy"),
+                      );
+                    },
+                  ),
+                ),
+                // 서브 텍스트
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 30),
+                  child: Text(
+                    context.tr('onboarding_subtitle'),
+                    textAlign: TextAlign.left,
+                    style: TextStyle(
+                      color: const Color.fromARGB(255, 190, 190, 190),
+                      fontSize: 18,
+                      fontWeight: FontWeight.w400,
+                    ),
+                  ),
+                ),
+                const Spacer(),
+                // 하단 시작하기 버튼
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 24),
+                  child: Padding(
+                    padding: const EdgeInsets.only(bottom: 0),
+                    child: ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(20),
                         ),
+                        backgroundColor: Colors.white,
+                        foregroundColor: Colors.black,
+                        minimumSize: Size(double.infinity, 56),
+                        elevation: 0,
                       ),
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 40),
-                        child: Text(
-                          "너희만 봐.",
-                          style: GoogleFonts.comfortaa(
-                            color: Theme.of(context).colorScheme.onSurface,
-                            fontWeight: FontWeight.w500,
-                            fontSize: 20,
-                          ),
-                        ),
-                      ),
-
-                      Spacer(),
-
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 30),
-                        child: ElevatedButton(
-                          style: ElevatedButton.styleFrom(
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(25),
+                      onPressed: () {
+                        showModalBottomSheet(
+                          context: context,
+                          isScrollControlled: true,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.vertical(
+                              top: Radius.circular(16),
                             ),
-                            backgroundColor:
-                                Theme.of(context).colorScheme.onSurface,
-                            foregroundColor:
-                                Theme.of(context).colorScheme.surface,
-                            minimumSize: Size(double.infinity, 60),
                           ),
-                          onPressed: () {
-                            showModalBottomSheet(
-                              context: context,
-                              isScrollControlled: true,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.vertical(
-                                  top: Radius.circular(16),
+                          builder:
+                              (context) => Container(
+                                height:
+                                    MediaQuery.of(context).size.height * 0.92,
+                                decoration: BoxDecoration(
+                                  borderRadius: BorderRadius.vertical(
+                                    top: Radius.circular(16),
+                                  ),
                                 ),
-                              ),
-                              builder:
-                                  (context) => Container(
-                                    height:
-                                        MediaQuery.of(context).size.height *
-                                        0.92,
-                                    decoration: BoxDecoration(
-                                      borderRadius: BorderRadius.vertical(
-                                        top: Radius.circular(16),
+                                child: Column(
+                                  children: [
+                                    // 핸들
+                                    Container(
+                                      margin: EdgeInsets.only(top: 8),
+                                      width: 40,
+                                      height: 4,
+                                      decoration: BoxDecoration(
+                                        color: Colors.grey[400],
+                                        borderRadius: BorderRadius.circular(2),
                                       ),
                                     ),
-                                    child: Column(
-                                      children: [
-                                        // 핸들
-                                        Container(
-                                          margin: EdgeInsets.only(top: 8),
-                                          width: 40,
-                                          height: 4,
-                                          decoration: BoxDecoration(
-                                            color: Colors.grey[400],
-                                            borderRadius: BorderRadius.circular(
-                                              2,
-                                            ),
-                                          ),
-                                        ),
-                                        Expanded(child: JoinScreen()),
-                                      ],
-                                    ),
-                                  ),
-                            );
-                          },
-                          child: Text(
-                            '시작하기',
-                            style: TextStyle(
-                              fontSize: 18,
-                              color: Theme.of(context).colorScheme.surface,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
+                                    Expanded(child: JoinScreen()),
+                                  ],
+                                ),
+                              ),
+                        );
+                      },
+                      child: Text(
+                        context.tr('onboarding_start_button'),
+                        style: TextStyle(
+                          fontSize: 18,
+                          color: Colors.black,
+                          fontWeight: FontWeight.bold,
                         ),
                       ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 20),
+                // 하단 푸터 정보
+                Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        "© 2025 Doppy",
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.white.withOpacity(0.7),
+                          fontWeight: FontWeight.w400,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
                     ],
                   ),
                 ),
+                const SizedBox(height: 10),
               ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Doppy 로딩 로고 스타일 제목 (o에 스핀)
+  Widget _buildTitleText(BuildContext context, String text, Key key) {
+    return Container(
+      key: key,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // "D"
+          Text(
+            "D",
+            style: TextStyle(
+              fontSize: 72,
+              fontWeight: FontWeight.w800,
+              color: Colors.white,
+              letterSpacing: 2,
+            ),
+          ),
+          // "o" - 회전하는 스피너 (Painter 사용)
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: SizedBox(
+              width: 48,
+              height: 48,
+              child: CustomPaint(
+                painter: _DoppyOSpinnerPainter(
+                  progress: _typingController.value,
+                  color: Theme.of(context).colorScheme.primary,
+                  strokeWidth: 9,
+                ),
+              ),
+            ),
+          ),
+          // "ppy"
+          Text(
+            "ppy",
+            style: TextStyle(
+              fontSize: 72,
+              fontWeight: FontWeight.w800,
+              color: Colors.white,
+              letterSpacing: 2,
             ),
           ),
         ],
@@ -284,172 +348,6 @@ class ORingPainter extends CustomPainter {
   bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
 }
 
-class OnboardingPlaceholder extends StatefulWidget {
-  final bool reverse; // true면 오른쪽→왼쪽, false면 왼쪽→오른쪽
-
-  const OnboardingPlaceholder({super.key, this.reverse = false});
-
-  @override
-  State<OnboardingPlaceholder> createState() => _OnboardingPlaceholderState();
-}
-
-class _OnboardingPlaceholderState extends State<OnboardingPlaceholder> {
-  late final PageController _pageController;
-  Timer? _autoScrollTimer;
-
-  // 카드 데이터
-  final List<_OnboardingCardData> _cards = const [
-    _OnboardingCardData(
-      title: '나와 맞는 글만 골라보기',
-      subtitle: '친구 · 그룹 · 팔로우 기반 피드',
-      imageUrl:
-          'https://images.pexels.com/photos/261949/pexels-photo-261949.jpeg?auto=compress&cs=tinysrgb&w=800',
-    ),
-    _OnboardingCardData(
-      title: '조용히, 깊이 있게',
-      subtitle: '집중을 돕는 미니멀한 리더',
-      imageUrl:
-          'https://images.pexels.com/photos/7134982/pexels-photo-7134982.jpeg?auto=compress&cs=tinysrgb&w=800',
-    ),
-    _OnboardingCardData(
-      title: '링크와 함께 기록하기',
-      subtitle: '나만의 컬렉션을 만들어 보세요',
-      imageUrl:
-          'https://images.pexels.com/photos/1181671/pexels-photo-1181671.jpeg?auto=compress&cs=tinysrgb&w=800',
-    ),
-  ];
-
-  @override
-  void initState() {
-    super.initState();
-    // 가운데 근처 페이지에서 시작해서 양방향 무한 루프 느낌
-    _pageController = PageController(viewportFraction: 0.8, initialPage: 1000);
-
-    _startAutoScroll();
-  }
-
-  void _startAutoScroll() {
-    _autoScrollTimer?.cancel();
-    _autoScrollTimer = Timer.periodic(const Duration(seconds: 4), (_) async {
-      if (!_pageController.hasClients) return;
-
-      final currentPage = _pageController.page ?? _pageController.initialPage;
-      final nextPage = widget.reverse ? currentPage - 1 : currentPage + 1;
-
-      try {
-        await _pageController.animateToPage(
-          nextPage.round(),
-          duration: const Duration(milliseconds: 900),
-          curve: Curves.easeInOutCubic,
-        );
-      } catch (_) {
-        // 컨트롤러 dispose 시 예외 무시
-      }
-    });
-  }
-
-  @override
-  void dispose() {
-    _autoScrollTimer?.cancel();
-    _pageController.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    // 로그인 화면 안에서 쓰이는 가로 슬라이드 카드 플레이스홀더
-    return ClipRRect(
-      //borderRadius: BorderRadius.circular(18),
-      child: PageView.builder(
-        controller: _pageController,
-        physics: const NeverScrollableScrollPhysics(), // 손 스와이프 비활성화
-        itemBuilder: (context, index) {
-          final card = _cards[index % _cards.length];
-          return _buildCard(
-            context,
-            title: card.title,
-            subtitle: card.subtitle,
-            imageUrl: card.imageUrl,
-          );
-        },
-      ),
-    );
-  }
-
-  Widget _buildCard(
-    BuildContext context, {
-    required String title,
-    required String subtitle,
-    required String imageUrl,
-  }) {
-    return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 2),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(18),
-        color: Colors.grey.shade900,
-      ),
-      clipBehavior: Clip.antiAlias,
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          // 임시 이미지 (네트워크)
-          Image.network(imageUrl, fit: BoxFit.cover),
-          // 위에 어두운 그라디언트 깔기
-          Container(
-            decoration: const BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                colors: [Colors.transparent, Colors.black54],
-              ),
-            ),
-          ),
-          // 텍스트
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-                Text(
-                  title,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 15,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: -0.2,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  subtitle,
-                  style: TextStyle(
-                    color: Colors.white.withOpacity(0.85),
-                    fontSize: 12,
-                    fontWeight: FontWeight.w400,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _OnboardingCardData {
-  final String title;
-  final String subtitle;
-  final String imageUrl;
-
-  const _OnboardingCardData({
-    required this.title,
-    required this.subtitle,
-    required this.imageUrl,
-  });
-}
-
 /// 🐌 느린 속도의 CircularProgressIndicator
 class _SlowCircularProgressIndicator extends StatefulWidget {
   final Color color;
@@ -563,5 +461,68 @@ class _SlowCircularProgressPainter extends CustomPainter {
         oldDelegate.color != color ||
         oldDelegate.strokeWidth != strokeWidth ||
         oldDelegate.backgroundColor != backgroundColor;
+  }
+}
+
+/// Doppy "o" 스피너 Painter (감각적인 스타일)
+class _DoppyOSpinnerPainter extends CustomPainter {
+  final double progress; // 0~1
+  final Color color;
+  final double strokeWidth;
+
+  _DoppyOSpinnerPainter({
+    required this.progress,
+    required this.color,
+    required this.strokeWidth,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = Offset(size.width / 2, size.height / 2);
+    final radius = (size.width - strokeWidth) / 2;
+
+    // 기본 원형 스피너
+    final paint =
+        Paint()
+          ..color = color
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = strokeWidth
+          ..strokeCap = StrokeCap.butt;
+
+    // 270도 (3/4 원) 길이의 원호
+    const sweepAngle = 3 * math.pi / 2; // 270도
+    final startAngle = -math.pi / 2 + (progress * 2 * math.pi);
+
+    canvas.drawArc(
+      Rect.fromCircle(center: center, radius: radius),
+      startAngle,
+      sweepAngle,
+      false,
+      paint,
+    );
+
+    // 글로우 효과를 위한 추가 레이어
+    final glowPaint =
+        Paint()
+          ..color = color.withOpacity(0.3)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = strokeWidth * 1.5
+          ..strokeCap = StrokeCap.butt
+          ..maskFilter = MaskFilter.blur(BlurStyle.normal, 4);
+
+    canvas.drawArc(
+      Rect.fromCircle(center: center, radius: radius),
+      startAngle,
+      sweepAngle,
+      false,
+      glowPaint,
+    );
+  }
+
+  @override
+  bool shouldRepaint(_DoppyOSpinnerPainter oldDelegate) {
+    return oldDelegate.progress != progress ||
+        oldDelegate.color != color ||
+        oldDelegate.strokeWidth != strokeWidth;
   }
 }

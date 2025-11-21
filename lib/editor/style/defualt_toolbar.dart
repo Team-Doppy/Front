@@ -670,44 +670,26 @@ class TextStylingService extends ChangeNotifier {
     }
 
     if (selection != null && !selection.isCollapsed) {
-      // ✅ 선택 영역이 있으면: Attribution으로 폰트 적용 (기존 폰트 덮어쓰기)
-      print('[FontDebug] 선택 영역에 Attribution으로 폰트 적용: $targetFamily');
+      // ✅ 선택 영역이 있으면: Attribution + 메타데이터 동시 적용
+      print('[FontDebug] 선택 영역에 Attribution + 메타데이터로 폰트 적용: $targetFamily');
 
-      // 1. 먼저 선택 영역의 기존 폰트 attribution을 모두 제거
-      final selectedNodes = editor.document.getNodesInside(
-        selection.extent,
-        selection.base,
+      // 1. 선택 영역의 기존 FontFamilyAttribution만 제거 (선택 영역 내에서만)
+      final existingAttributions = _getAttributionsInSelection(
+        selectionOverride: selection,
       );
+      final fontAttributions =
+          existingAttributions.whereType<FontFamilyAttribution>().toSet();
 
-      for (final node in selectedNodes) {
-        if (node is ParagraphNode) {
-          final text = node.text;
-          // 선택 영역 내에서 폰트 attribution 제거
-          final mutableText = text.copyText(0);
-          for (int i = 0; i < text.text.length; i++) {
-            final attributions = text.getAllAttributionsAt(i);
-            for (final attr in attributions) {
-              if (attr is FontFamilyAttribution) {
-                mutableText.removeAttribution(attr, SpanRange(i, i));
-              }
-            }
-          }
-
-          // 노드 교체
-          if (mutableText.text != text.text || mutableText != text) {
-            final newNode = ParagraphNode(
-              id: node.id,
-              text: mutableText,
-              metadata: node.metadata,
-            );
-            editor.execute([
-              ReplaceNodeRequest(existingNodeId: node.id, newNode: newNode),
-            ]);
-          }
-        }
+      if (fontAttributions.isNotEmpty) {
+        editor.execute([
+          RemoveTextAttributionsRequest(
+            documentRange: selection,
+            attributions: fontAttributions,
+          ),
+        ]);
       }
 
-      // 2. 새로운 폰트 attribution 추가
+      // 2. 새로운 폰트 attribution 추가 (선택 영역에만)
       if (targetFamily.isNotEmpty) {
         final newAttribution = FontFamilyAttribution(targetFamily);
         editor.execute([
@@ -717,30 +699,32 @@ class TextStylingService extends ChangeNotifier {
           ),
         ]);
       }
-    } else {
-      // ✅ 선택 영역이 없으면: 모든 ParagraphNode에 전역 폰트 적용
 
-      // 전역 폰트 설정
-      if (_globalFontFamily != targetFamily) {
-        _globalFontFamily = targetFamily.isNotEmpty ? targetFamily : null;
-        notifyListeners();
-      }
+      // 3. 선택된 노드들의 메타데이터도 업데이트
+      final selectedNodes = editor.document.getNodesInside(
+        selection.extent,
+        selection.base,
+      );
 
-      // 모든 ParagraphNode에 폰트 적용
-      for (int i = 0; i < editor.document.length; i++) {
-        final node = editor.document.getNodeAt(i);
+      for (final node in selectedNodes) {
         if (node is ParagraphNode) {
           final updatedMetadata = Map<String, dynamic>.from(node.metadata);
           if (targetFamily.isNotEmpty) {
             updatedMetadata['fontFamily'] = targetFamily;
+            print(
+              '[TextStylingService] 📝 선택된 ParagraphNode ${node.id}에 fontFamily 메타데이터 저장: $targetFamily',
+            );
           } else {
             updatedMetadata.remove('fontFamily');
+            print(
+              '[TextStylingService] 📝 선택된 ParagraphNode ${node.id}에서 fontFamily 메타데이터 제거',
+            );
           }
 
-          // 노드 교체로 메타데이터 업데이트
+          // 노드 교체로 메타데이터 업데이트 (텍스트와 Attribution은 그대로 유지)
           final newNode = ParagraphNode(
             id: node.id,
-            text: node.text,
+            text: node.text, // 🎯 기존 텍스트와 Attribution 그대로 유지
             metadata: updatedMetadata,
           );
 
@@ -748,6 +732,70 @@ class TextStylingService extends ChangeNotifier {
             ReplaceNodeRequest(existingNodeId: node.id, newNode: newNode),
           ]);
         }
+      }
+    } else {
+      // ✅ 선택 영역이 없으면: 모든 ParagraphNode에 메타데이터만 설정 (기존 Attribution 유지)
+
+      // 전역 폰트 설정
+      if (_globalFontFamily != targetFamily) {
+        _globalFontFamily = targetFamily.isNotEmpty ? targetFamily : null;
+        notifyListeners();
+      }
+
+      // 모든 ParagraphNode에 메타데이터만 업데이트 (기존 Attribution은 그대로 유지)
+      final requests = <EditRequest>[];
+
+      for (int i = 0; i < editor.document.length; i++) {
+        final node = editor.document.getNodeAt(i);
+        if (node is ParagraphNode) {
+          final updatedMetadata = Map<String, dynamic>.from(node.metadata);
+
+          // 🎯 기존 Attribution이 있는지 확인
+          bool hasExistingAttribution = false;
+          for (int j = 0; j < node.text.text.length; j++) {
+            final attributions = node.text.getAllAttributionsAt(j);
+            if (attributions.any((attr) => attr is FontFamilyAttribution)) {
+              hasExistingAttribution = true;
+              break;
+            }
+          }
+
+          // 메타데이터만 업데이트 (기존 Attribution은 유지)
+          if (targetFamily.isNotEmpty) {
+            updatedMetadata['fontFamily'] = targetFamily;
+            print(
+              '[TextStylingService] 📝 ParagraphNode ${node.id}에 fontFamily 메타데이터 저장: $targetFamily (기존 Attribution 유지: $hasExistingAttribution)',
+            );
+          } else {
+            // 🎯 기존 Attribution이 없을 때만 메타데이터 제거
+            if (!hasExistingAttribution) {
+              updatedMetadata.remove('fontFamily');
+              print(
+                '[TextStylingService] 📝 ParagraphNode ${node.id}에서 fontFamily 메타데이터 제거 (기존 Attribution 없음)',
+              );
+            } else {
+              print(
+                '[TextStylingService] ⚠️ ParagraphNode ${node.id}에서 메타데이터 유지 (기존 Attribution 있음)',
+              );
+            }
+          }
+
+          // 노드 교체로 메타데이터 업데이트 (텍스트와 Attribution은 그대로 유지)
+          final newNode = ParagraphNode(
+            id: node.id,
+            text: node.text, // 🎯 기존 텍스트와 Attribution 그대로 유지
+            metadata: updatedMetadata,
+          );
+
+          requests.add(
+            ReplaceNodeRequest(existingNodeId: node.id, newNode: newNode),
+          );
+        }
+      }
+
+      // 한 번에 실행
+      if (requests.isNotEmpty) {
+        editor.execute(requests);
       }
     }
   }
@@ -925,6 +973,7 @@ extension _TopExpandedRow on _DefaultToolbarState {
                       reverseTransitionDuration: Duration.zero,
                       pageBuilder:
                           (_, __, ___) => LinkOverlay(
+                            autoSubmit: true, // 🎯 프로필과 동일하게 즉시 미리보기 표시
                             onSubmit: ({
                               required String url,
                               String? title,

@@ -243,19 +243,24 @@ class UploadService with ChangeNotifier {
       final started = DateTime.now();
       print('[Upload] start id=${task.id} attempt=${task.attempt}');
 
-      // 🎯 R2 직접 업로드 사용 (모든 종류의 업로드)
+      // 🎯 프로필 이미지는 서버를 거치는 기존 방식 사용
       Map<String, dynamic> result;
-      try {
-        result = await _uploadViaR2(task);
-      } catch (e) {
-        // R2 업로드 실패 시 기존 방식으로 폴백 (선택적)
-        print('[Upload] R2 업로드 실패, 기존 방식으로 폴백: $e');
-        result =
-            task.kind == UploadKind.profile
-                ? await _uploadProfileImage(task)
-                : task.kind == UploadKind.video
-                ? await _uploadVideo(task)
-                : await _uploadSingle(task); // group도 _uploadSingle 사용
+      if (task.kind == UploadKind.profile) {
+        // 프로필 이미지는 서버를 거치는 방식만 사용
+        print('[Upload] 프로필 이미지 업로드: 서버를 거치는 기존 방식 사용');
+        result = await _uploadProfileImage(task);
+      } else {
+        // 다른 종류는 R2 직접 업로드 사용
+        try {
+          result = await _uploadViaR2(task);
+        } catch (e) {
+          // R2 업로드 실패 시 기존 방식으로 폴백
+          print('[Upload] R2 업로드 실패, 기존 방식으로 폴백: $e');
+          result =
+              task.kind == UploadKind.video
+                  ? await _uploadVideo(task)
+                  : await _uploadSingle(task); // group도 _uploadSingle 사용
+        }
       }
 
       task.url = result['accessUrl'] as String?;

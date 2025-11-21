@@ -1462,7 +1462,11 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                           // SuperEditor 슬리버
                           SuperEditor(
                             editor: _editor,
-                            stylesheet: buildCustomStylesheet(context),
+                            stylesheet: buildCustomStylesheet(
+                              context,
+                              isReadOnly:
+                                  true, // 🎯 읽기 모드: 전역 폰트 사용 안 함, 블록 metadata만 사용
+                            ),
                             selectionStyle: SelectionStyles(
                               selectionColor: Colors.transparent,
                               highlightEmptyTextBlocks: false,

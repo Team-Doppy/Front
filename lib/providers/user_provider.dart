@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:doppy/l10n/app_localizations.dart';
 import 'package:doppy/utils/error_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -45,6 +46,7 @@ class UserProvider with ChangeNotifier {
     required String selfIntroduction,
     List<String>? links,
     Map<String, String>? linkTitles,
+    Map<String, String>? linkThumbnails,
   }) async {
     try {
       // API 호출
@@ -53,15 +55,18 @@ class UserProvider with ChangeNotifier {
         selfIntroduction: selfIntroduction,
         links: links,
         linkTitles: linkTitles,
+        linkThumbnails: linkThumbnails,
       );
 
       // 로컬 상태 업데이트
       if (_currentUser != null) {
+        // 🎯 빈 배열([])을 전달하면 링크 삭제, null이면 기존 유지
         final updatedUser = _currentUser!.copyWith(
           alias: alias,
           selfIntroduction: selfIntroduction,
-          links: links,
+          links: links, // null이면 기존 유지, 빈 배열이면 삭제됨
           linkTitles: linkTitles,
+          linkThumbnails: linkThumbnails,
         );
         _currentUser = updatedUser;
 
@@ -195,6 +200,8 @@ class UserProvider with ChangeNotifier {
   static const _kProfileImageUrl = 'user_profileImageUrl';
   static const _kSelfIntroduction = 'user_selfIntroduction';
   static const _kLinks = 'user_links'; // 🎯 프로필 링크 목록
+  static const _kLinkTitles = 'user_linkTitles'; // 🎯 링크 타이틀 맵
+  static const _kLinkThumbnails = 'user_linkThumbnails'; // 🎯 링크 썸네일 맵
   static const _kFriendCount = 'user_friendCount';
 
   Future<void> _persistCurrentUser() async {
@@ -211,6 +218,18 @@ class UserProvider with ChangeNotifier {
         await prefs.setStringList(_kLinks, u.links!);
       } else {
         await prefs.remove(_kLinks);
+      }
+      // 🎯 linkTitles 저장 (JSON 문자열로 변환)
+      if (u.linkTitles != null && u.linkTitles!.isNotEmpty) {
+        await prefs.setString(_kLinkTitles, jsonEncode(u.linkTitles));
+      } else {
+        await prefs.remove(_kLinkTitles);
+      }
+      // 🎯 linkThumbnails 저장 (JSON 문자열로 변환)
+      if (u.linkThumbnails != null && u.linkThumbnails!.isNotEmpty) {
+        await prefs.setString(_kLinkThumbnails, jsonEncode(u.linkThumbnails));
+      } else {
+        await prefs.remove(_kLinkThumbnails);
       }
       await prefs.setInt(_kFriendCount, u.friendCount ?? 0);
       print('[UserProvider] 사용자 정보 로컬 저장 완료');
@@ -234,6 +253,46 @@ class UserProvider with ChangeNotifier {
         }
       }
 
+      // 🎯 linkTitles 복구 (JSON 문자열에서 Map으로 변환)
+      Map<String, String>? linkTitles;
+      if (prefs.containsKey(_kLinkTitles)) {
+        try {
+          final linkTitlesStr = prefs.getString(_kLinkTitles);
+          if (linkTitlesStr != null && linkTitlesStr.isNotEmpty) {
+            final decoded = jsonDecode(linkTitlesStr);
+            if (decoded is Map) {
+              linkTitles = Map<String, String>.from(
+                decoded.map(
+                  (key, value) => MapEntry(key.toString(), value.toString()),
+                ),
+              );
+            }
+          }
+        } catch (e) {
+          print('[UserProvider] linkTitles 복구 실패: $e');
+        }
+      }
+
+      // 🎯 linkThumbnails 복구 (JSON 문자열에서 Map으로 변환)
+      Map<String, String>? linkThumbnails;
+      if (prefs.containsKey(_kLinkThumbnails)) {
+        try {
+          final linkThumbnailsStr = prefs.getString(_kLinkThumbnails);
+          if (linkThumbnailsStr != null && linkThumbnailsStr.isNotEmpty) {
+            final decoded = jsonDecode(linkThumbnailsStr);
+            if (decoded is Map) {
+              linkThumbnails = Map<String, String>.from(
+                decoded.map(
+                  (key, value) => MapEntry(key.toString(), value.toString()),
+                ),
+              );
+            }
+          }
+        } catch (e) {
+          print('[UserProvider] linkThumbnails 복구 실패: $e');
+        }
+      }
+
       final user = User(
         username: prefs.getString(_kUsername) ?? '',
         role: null,
@@ -241,6 +300,8 @@ class UserProvider with ChangeNotifier {
         profileImageUrl: prefs.getString(_kProfileImageUrl),
         selfIntroduction: prefs.getString(_kSelfIntroduction),
         links: links,
+        linkTitles: linkTitles,
+        linkThumbnails: linkThumbnails,
         friendCount: prefs.getInt(_kFriendCount),
       );
       _currentUser = user;
@@ -259,6 +320,8 @@ class UserProvider with ChangeNotifier {
       await prefs.remove(_kProfileImageUrl);
       await prefs.remove(_kSelfIntroduction);
       await prefs.remove(_kLinks); // 🎯 links 삭제
+      await prefs.remove(_kLinkTitles); // 🎯 linkTitles 삭제
+      await prefs.remove(_kLinkThumbnails); // 🎯 linkThumbnails 삭제
       await prefs.remove(_kFriendCount);
       print('[UserProvider] 로컬 사용자 정보 삭제 완료');
     } catch (e) {

@@ -48,6 +48,7 @@ class AppLocalizations {
       'light': '라이트',
       'favorites': '내가 좋아한',
       'app_info': '앱 정보',
+      'start_doppy': '도피 시작하기',
       'app_version': '앱 버전',
       'others': '기타',
       'license': '라이선스',
@@ -93,7 +94,7 @@ class AppLocalizations {
       'friends_posts': '친구글',
       'my_network_feed': '',
       'all_posts': '전체글',
-      'all': '전체',
+      'all': '모든 포스트',
       'public': '전체공개',
       'private': '나만보기',
       'friends': '친구공개',
@@ -128,6 +129,8 @@ class AppLocalizations {
       'load_more': '더 보기',
       'create_new_category': '새 카테고리 만들기',
       'new_category_name': '새 카테고리 이름',
+      'delete_category_title': '카테고리 삭제',
+      'delete_category_message': '카테고리를 삭제하시겠습니까?\n이 카테고리의 포스트는 지워지지 않아요.',
 
       // 포스트
       'post': '포스트',
@@ -379,6 +382,10 @@ class AppLocalizations {
       'go_to_post': '글 보러가기',
       'readers_count': '읽은 사람 ({count})',
 
+      // 온보딩 (OnboardingScreen)
+      'onboarding_subtitle': '모두가 다 같은 친구는 아니니까',
+      'onboarding_start_button': '시작하기',
+
       // 회원가입 / 로그인 (JoinScreen)
       'join_previous': '이전',
       'join_welcome_title': '도피에 오신 것을 환영해요',
@@ -543,6 +550,7 @@ class AppLocalizations {
       'light': 'Light',
       'favorites': 'Favorites',
       'app_info': 'App Info',
+      'start_doppy': 'Start Doppy',
       'app_version': 'App Version',
       'others': 'Others',
       'license': 'Licenses',
@@ -627,6 +635,9 @@ class AppLocalizations {
       'load_more': 'Load More',
       'create_new_category': 'Create New Category',
       'new_category_name': 'New Category Name',
+      'delete_category_title': 'Delete Category',
+      'delete_category_message':
+          'Do you want to delete this category?\nPosts in this category will not be deleted.',
 
       // Post
       'post': 'Post',
@@ -885,6 +896,10 @@ class AppLocalizations {
       'delete_comment': 'Delete Comment',
       'all_comments': 'All Comments',
       'first_reaction': 'Leave First Reaction...',
+      // Onboarding Screen
+      'onboarding_subtitle': 'Not all friends are the same',
+      'onboarding_start_button': 'Get Started',
+
       // Auth / Join
       'join_previous': 'Previous',
       'join_welcome_title': 'Welcome to Doppy',

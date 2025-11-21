@@ -10,6 +10,7 @@ import 'package:doppy/providers/feed_provider/base_feed_provider.dart';
 import 'package:doppy/providers/feed_provider/my_profile_feed_provider.dart';
 import 'package:doppy/utils/network_utils.dart';
 import 'package:doppy/pages/components/error_state_widget.dart';
+import 'package:doppy/pages/components/profile_empty_state_mission_cards.dart';
 import 'package:doppy/l10n/app_localizations.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -307,24 +308,8 @@ class Feed {
                   ),
             );
           }
-          return SliverToBoxAdapter(
-            child: Column(
-              children: [
-                SizedBox(height: 150),
-
-                Text(
-                  context.tr('no_posts_on_profile'),
-                  style: TextStyle(
-                    fontSize: 16,
-                    color: Theme.of(
-                      context,
-                    ).colorScheme.onSurface.withOpacity(0.3),
-                  ),
-                ),
-                SizedBox(height: 300),
-              ],
-            ),
-          );
+          // 내 프로필일 때는 미션 카드 표시, 타인 프로필일 때는 빈 메시지 표시
+          return ProfileEmptyStateMissionCards(feedProvider: feedProvider);
         }
 
         // 글이 있을 때

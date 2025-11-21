@@ -66,9 +66,13 @@ class PostReaderService {
 
           final meta = <String, dynamic>{'textAlign': align};
 
-          // fontFamily를 메타데이터에서 추출하여 추가
+          // 🎯 fontFamily를 메타데이터에서 추출하여 추가
           if (m['fontFamily'] != null) {
-            meta['fontFamily'] = m['fontFamily'];
+            final fontFamily = m['fontFamily'].toString();
+            meta['fontFamily'] = fontFamily;
+            print(
+              '[PostReaderService] 📖 JSON에서 fontFamily 읽기: $fontFamily (노드 ID: $id)',
+            );
           }
 
           // isTitle 정보도 메타데이터에 추가 (드래프트 복구시 제목 노드 인식용)
@@ -404,10 +408,13 @@ class PostReaderService {
           atts.add(HighlightAttribution(highlightColor));
         }
 
-        // 폰트 패밀리 속성
+        // 🎯 폰트 패밀리 속성 (span 단위 정교한 적용)
         final fontFamily = ann['fontFamily'] as String?;
         if (fontFamily != null && fontFamily.isNotEmpty) {
           atts.add(FontFamilyAttribution(fontFamily));
+          print(
+            '[PostReaderService] 📖 Span에서 fontFamily 복원: $fontFamily (start=$start, end=$end)',
+          );
         }
 
         // 스포일러 속성

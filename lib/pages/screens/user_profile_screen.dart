@@ -412,11 +412,16 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                                                 isOther
                                                     ? (other?.linkTitles)
                                                     : (me?.linkTitles);
+                                            final linkThumbnails =
+                                                isOther
+                                                    ? (other?.linkThumbnails)
+                                                    : (me?.linkThumbnails);
                                             if (links.isNotEmpty) {
                                               _showLinksModal(
                                                 context,
                                                 links,
                                                 linkTitles,
+                                                linkThumbnails,
                                               );
                                             }
                                           },
@@ -493,23 +498,45 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                                   const SizedBox(height: 50),
 
                                   // 원형 아바타 (링크 아래에 위치)
-                                  CommonProfileAvatar(
-                                    imageUrl: _displayImageUrl,
-                                    username: _displayUsername,
-                                    size: 150,
-                                    borderWidth:
-                                        _isUploadingProfileImage ? 0 : 3,
-                                    borderColor:
-                                        Theme.of(context).brightness ==
-                                                Brightness.dark
-                                            ? Colors.grey.shade300
-                                            : Colors.grey.shade400,
-                                    isUploading: _isUploadingProfileImage,
-                                    onTap:
-                                        _isOwnProfile &&
-                                                !_isUploadingProfileImage
-                                            ? _changeProfileImage
-                                            : null,
+                                  // 🎯 Consumer로 UploadService 감시하여 프로필 이미지 업로드 상태 자동 감지
+                                  Consumer<UploadService>(
+                                    builder: (context, uploadService, _) {
+                                      // 프로필 이미지 업로드 중인 태스크 확인
+                                      final profileUploadTasks =
+                                          uploadService.tasks
+                                              .where(
+                                                (task) =>
+                                                    task.kind ==
+                                                        UploadKind.profile &&
+                                                    (task.state ==
+                                                            UploadState
+                                                                .pending ||
+                                                        task.state ==
+                                                            UploadState
+                                                                .uploading),
+                                              )
+                                              .toList();
+                                      final isUploading =
+                                          profileUploadTasks.isNotEmpty ||
+                                          _isUploadingProfileImage;
+
+                                      return CommonProfileAvatar(
+                                        imageUrl: _displayImageUrl,
+                                        username: _displayUsername,
+                                        size: 150,
+                                        borderWidth: isUploading ? 0 : 3,
+                                        borderColor:
+                                            Theme.of(context).brightness ==
+                                                    Brightness.dark
+                                                ? Colors.grey.shade300
+                                                : Colors.grey.shade400,
+                                        isUploading: isUploading,
+                                        onTap:
+                                            _isOwnProfile && !isUploading
+                                                ? _changeProfileImage
+                                                : null,
+                                      );
+                                    },
                                   ),
 
                                   const SizedBox(height: 20),
@@ -770,8 +797,6 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                   profileImageUrl: me.profileImageUrl,
                   bio: me.selfIntroduction,
                   friendCount: me.friendCount ?? 0,
-                  links: me.links,
-                  linkTitles: me.linkTitles,
                 );
               },
             ),
@@ -1123,6 +1148,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     BuildContext context,
     List<String> links,
     Map<String, String>? linkTitles,
+    Map<String, String>? linkThumbnails,
   ) {
     showModalBottomSheet(
       context: context,
@@ -1211,10 +1237,19 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                         );
                       },
                       itemBuilder: (context, index) {
+                        final isOther = widget.otherUser != null;
+                        final userProvider = context.read<UserProvider>();
+                        final me = userProvider.currentUser;
+                        final other = widget.otherUser;
+                        final linkThumbnails =
+                            isOther
+                                ? (other?.linkThumbnails)
+                                : (me?.linkThumbnails);
                         return _buildLinkModalItem(
                           context,
                           links[index],
                           linkTitles,
+                          linkThumbnails,
                         );
                       },
                     ),
@@ -1235,6 +1270,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     BuildContext context,
     String url,
     Map<String, String>? linkTitles,
+    Map<String, String>? linkThumbnails,
   ) {
     // URL 정규화
     String displayUrl = url;
@@ -1245,13 +1281,76 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     // 도메인 추출
     String domain = url;
     String? thumbnailUrl;
-    try {
-      final uri = Uri.parse(displayUrl);
-      domain = uri.host.replaceFirst('www.', '');
-      // 🎯 썸네일 URL 생성 (Google Favicon API 또는 도메인 기반)
-      thumbnailUrl = 'https://www.google.com/s2/favicons?domain=$domain&sz=64';
-    } catch (_) {
-      domain = url;
+
+    // 🎯 저장된 썸네일 우선 사용 (서버에서 받아온 linkThumbnails)
+    // 원본 URL과 정규화된 URL 모두 확인 (URL 정규화 차이 대응)
+    if (linkThumbnails != null) {
+      // 원본 URL로 먼저 확인
+      thumbnailUrl = linkThumbnails[url];
+      // 정규화된 URL로도 확인
+      if ((thumbnailUrl == null || thumbnailUrl.isEmpty) &&
+          linkThumbnails.containsKey(displayUrl)) {
+        thumbnailUrl = linkThumbnails[displayUrl];
+      }
+      // 역방향도 확인 (정규화된 URL이 키인 경우)
+      // Uri.parse를 사용하여 query parameter를 제외하고 비교
+      if ((thumbnailUrl == null || thumbnailUrl.isEmpty)) {
+        try {
+          final urlUri = Uri.parse(displayUrl);
+          final urlBase = '${urlUri.scheme}://${urlUri.host}${urlUri.path}';
+          for (final entry in linkThumbnails.entries) {
+            final keyUrl = entry.key;
+            try {
+              final keyUri = Uri.parse(
+                keyUrl.startsWith('http://') || keyUrl.startsWith('https://')
+                    ? keyUrl
+                    : 'https://$keyUrl',
+              );
+              final keyBase = '${keyUri.scheme}://${keyUri.host}${keyUri.path}';
+              // 기본 URL이 일치하면 (query parameter 무시)
+              if (urlBase == keyBase || keyUrl == url || keyUrl == displayUrl) {
+                thumbnailUrl = entry.value;
+                break;
+              }
+            } catch (_) {
+              // 파싱 실패 시 문자열 비교
+              if (keyUrl == url || keyUrl == displayUrl) {
+                thumbnailUrl = entry.value;
+                break;
+              }
+            }
+          }
+        } catch (_) {
+          // 파싱 실패 시 문자열 비교
+          for (final entry in linkThumbnails.entries) {
+            if (entry.key == url || entry.key == displayUrl) {
+              thumbnailUrl = entry.value;
+              break;
+            }
+          }
+        }
+      }
+    }
+
+    // 저장된 썸네일이 없으면 Google Favicon API 사용
+    if (thumbnailUrl == null || thumbnailUrl.isEmpty) {
+      try {
+        final uri = Uri.parse(displayUrl);
+        domain = uri.host.replaceFirst('www.', '');
+        // 🎯 썸네일 URL 생성 (Google Favicon API 또는 도메인 기반)
+        thumbnailUrl =
+            'https://www.google.com/s2/favicons?domain=$domain&sz=64';
+      } catch (_) {
+        domain = url;
+      }
+    } else {
+      // 썸네일이 있으면 도메인만 추출 (표시용)
+      try {
+        final uri = Uri.parse(displayUrl);
+        domain = uri.host.replaceFirst('www.', '');
+      } catch (_) {
+        domain = url;
+      }
     }
 
     // 🎯 사용자가 설정한 커스텀 타이틀 가져오기
@@ -1260,7 +1359,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
 
     final theme = Theme.of(context);
 
-    return GestureDetector(
+    return InkWell(
       onTap: () async {
         try {
           final uri = Uri.parse(displayUrl);
@@ -1279,7 +1378,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
       },
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 0, vertical: 16),
-
+        width: double.infinity,
         child: Row(
           children: [
             // 🎯 링크 썸네일
@@ -1312,7 +1411,17 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                             if (loadingProgress == null) {
                               return child;
                             }
-                            return Center();
+                            return Center(
+                              child: SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: theme.colorScheme.onSurface
+                                      .withOpacity(0.3),
+                                ),
+                              ),
+                            );
                           },
                         ),
                       )
@@ -1323,7 +1432,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                       ),
             ),
             const SizedBox(width: 16),
-            // 링크 정보
+            // 링크 정보 (텍스트 영역도 클릭 가능)
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -1400,8 +1509,10 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
           onSave: ({
             required String alias,
             required String description,
-            List<String>? links, // 🎯 프로필 링크 목록 (최대 3개)
+            List<String>? links, // 🎯 프로필 링크 목록
             Map<String, String>? linkTitles, // 🎯 링크 타이틀 (URL -> 타이틀)
+            Map<String, String>?
+            linkThumbnails, // 🎯 링크 썸네일 (URL -> thumbnailUrl)
           }) async {
             // UserProvider를 통해 API 호출 및 상태 업데이트
             final userProvider = context.read<UserProvider>();
@@ -1411,6 +1522,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
               selfIntroduction: description,
               links: links,
               linkTitles: linkTitles,
+              linkThumbnails: linkThumbnails,
             );
 
             if (!success && mounted) {

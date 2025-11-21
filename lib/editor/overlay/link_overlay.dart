@@ -6,6 +6,7 @@ import 'package:doppy/utils/error_handler.dart';
 import 'package:doppy/l10n/app_localizations.dart';
 import 'package:flutter/material.dart';
 import 'package:doppy/theme/app_colors.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class LinkOverlay extends StatefulWidget {
   const LinkOverlay({
@@ -47,6 +48,10 @@ class _LinkOverlayState extends State<LinkOverlay> {
 
   final List<_LinkItem> _items = <_LinkItem>[]; // 여러 링크 큐
   List<String> _suggestions = <String>[]; // URL 추천 목록
+  List<String> _linkHistory = <String>[]; // 🎯 링크 추가 기록
+
+  // SharedPreferences 키
+  static const String _linkHistoryKey = 'link_overlay_history';
 
   // 유명 사이트 목록 (미국 사이트 위주)
   static const List<Map<String, String>> _popularSites = [
@@ -96,27 +101,79 @@ class _LinkOverlayState extends State<LinkOverlay> {
   @override
   void initState() {
     super.initState();
-    // 초기 상태에서 유명 사이트 추천 표시
-    _suggestions = _popularSites.map((site) => site['url']!).toList();
+    _loadLinkHistory();
     _focusNode.addListener(() {
       // 포커스 변화 시 UI 갱신 (추천/리스트 토글)
       if (mounted) {
-        // 포커스를 받았을 때 추천 목록이 비어있으면 초기 추천 목록으로 설정
+        // 포커스를 받았을 때 추천 목록이 비어있으면 기록 또는 기본 추천 목록으로 설정
         if (_focusNode.hasFocus && _suggestions.isEmpty && _url.text.isEmpty) {
-          _suggestions = _popularSites.map((site) => site['url']!).toList();
+          _updateSuggestionsForFocus();
           // 다음 프레임에서 상태 업데이트하여 깜빡임 방지
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (mounted) setState(() {});
           });
           return;
         }
-        // 포커스를 잃었을 때 입력이 비어있으면 추천 목록 초기화
+        // 포커스를 잃었을 때 입력이 비어있으면 기록 또는 기본 추천 목록으로 설정
         if (!_focusNode.hasFocus && _url.text.isEmpty) {
-          _suggestions = _popularSites.map((site) => site['url']!).toList();
+          _updateSuggestionsForFocus();
         }
         setState(() {});
       }
     });
+  }
+
+  // 🎯 링크 기록 불러오기
+  Future<void> _loadLinkHistory() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final history = prefs.getStringList(_linkHistoryKey) ?? <String>[];
+      if (mounted) {
+        setState(() {
+          _linkHistory = history;
+          // 기록이 있으면 기록을 먼저 표시, 없으면 기본 링크 표시
+          _updateSuggestionsForFocus();
+        });
+      }
+    } catch (e) {
+      print('[LinkOverlay] 링크 기록 불러오기 실패: $e');
+      // 실패 시 기본 추천 목록 표시
+      if (mounted) {
+        setState(() {
+          _suggestions = _popularSites.map((site) => site['url']!).toList();
+        });
+      }
+    }
+  }
+
+  // 🎯 링크 기록 저장하기 (최대 20개, 중복 제거, 최신순)
+  Future<void> _saveLinkHistory(String url) async {
+    try {
+      // 중복 제거 및 최신순 정렬
+      _linkHistory.remove(url); // 기존에 있으면 제거
+      _linkHistory.insert(0, url); // 맨 앞에 추가
+
+      // 최대 20개만 유지
+      if (_linkHistory.length > 20) {
+        _linkHistory = _linkHistory.take(20).toList();
+      }
+
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setStringList(_linkHistoryKey, _linkHistory);
+    } catch (e) {
+      print('[LinkOverlay] 링크 기록 저장 실패: $e');
+    }
+  }
+
+  // 🎯 포커스 상태에 따라 추천 목록 업데이트 (기록 우선)
+  void _updateSuggestionsForFocus() {
+    if (_linkHistory.isNotEmpty) {
+      // 기록이 있으면 기록을 먼저 표시
+      _suggestions = List<String>.from(_linkHistory);
+    } else {
+      // 기록이 없으면 기본 링크 표시
+      _suggestions = _popularSites.map((site) => site['url']!).toList();
+    }
   }
 
   @override
@@ -356,8 +413,14 @@ class _LinkOverlayState extends State<LinkOverlay> {
                       borderRadius: BorderRadius.circular(20),
                     ),
                   ),
-                  onPressed: () {
+                  onPressed: () async {
                     if (_url.text.trim().isNotEmpty) {
+                      // 🎯 URL 정규화하여 기록에 저장
+                      final normalizedUrl = _normalizeUrl(_url.text.trim());
+                      if (normalizedUrl != null) {
+                        await _saveLinkHistory(normalizedUrl);
+                      }
+
                       // 🎯 사용자가 입력한 타이틀이 있으면 사용, 없으면 메타데이터 타이틀 또는 도메인 사용
                       final finalTitle =
                           _customTitleController.text.trim().isNotEmpty
@@ -365,7 +428,7 @@ class _LinkOverlayState extends State<LinkOverlay> {
                               : (_pTitle?.isNotEmpty == true ? _pTitle : null);
 
                       widget.onSubmit(
-                        url: _url.text.trim(),
+                        url: normalizedUrl ?? _url.text.trim(),
                         title: finalTitle,
                         description: _pDesc,
                         thumbnailUrl: _pThumb,
@@ -399,11 +462,17 @@ class _LinkOverlayState extends State<LinkOverlay> {
                   onPressed:
                       _items.isEmpty
                           ? null
-                          : () {
+                          : () async {
                             _focusNode.unfocus();
                             for (final it in _items) {
+                              // 🎯 URL 정규화하여 기록에 저장
+                              final normalizedUrl = _normalizeUrl(it.url);
+                              if (normalizedUrl != null) {
+                                await _saveLinkHistory(normalizedUrl);
+                              }
+
                               widget.onSubmit(
-                                url: it.url,
+                                url: normalizedUrl ?? it.url,
                                 title: it.title,
                                 description: it.description,
                                 thumbnailUrl: it.thumbnailUrl,
@@ -473,6 +542,16 @@ class _LinkOverlayState extends State<LinkOverlay> {
               _customTitleController.text = _pTitle!;
             }
           });
+
+          // 🎯 autoSubmit일 때 커스텀 제목 필드에 자동 포커스
+          if (widget.autoSubmit) {
+            // 메타데이터 가져오기 완료 후 포커스 (약간의 딜레이 추가)
+            Future.delayed(const Duration(milliseconds: 300), () {
+              if (mounted && _titleFocusNode.canRequestFocus) {
+                _titleFocusNode.requestFocus();
+              }
+            });
+          }
         }
       } else {
         // URL이 완전하지 않으면 메타데이터 초기화
@@ -520,12 +599,20 @@ class _LinkOverlayState extends State<LinkOverlay> {
     final trimmed = input.trim().toLowerCase();
     final suggestions = <String>[];
 
-    // 입력이 비어있으면 유명 사이트만 표시
+    // 입력이 비어있으면 기록 또는 기본 링크 표시
     if (trimmed.isEmpty) {
-      setState(() {
-        _suggestions = _popularSites.map((site) => site['url']!).toList();
-      });
+      _updateSuggestionsForFocus();
+      if (mounted) {
+        setState(() {});
+      }
       return;
+    }
+
+    // 🎯 기록에서 먼저 검색 (입력과 일치하는 기록이 있으면 우선 표시)
+    for (final historyUrl in _linkHistory) {
+      if (historyUrl.toLowerCase().contains(trimmed)) {
+        suggestions.add(historyUrl);
+      }
     }
 
     // URL 패턴 감지 및 자동 완성
@@ -578,12 +665,82 @@ class _LinkOverlayState extends State<LinkOverlay> {
       }
     }
 
-    // 중복 제거 및 정렬
+    // 🎯 유명 사이트 검색 (기록에 없는 것만)
+    for (final site in _popularSites) {
+      final siteName = site['name']!.toLowerCase();
+      final siteUrl = site['url']!.toLowerCase();
+
+      if ((siteName.contains(trimmed) || siteUrl.contains(trimmed)) &&
+          !suggestions.contains(site['url']!)) {
+        suggestions.add(site['url']!);
+      }
+    }
+
+    // URL 패턴 자동 완성 (기록에 없는 것만)
+    if (!hasHttp && !hasDomain) {
+      // 도메인 패턴 감지: youtube, naver, google 등
+      if (RegExp(r'^[a-zA-Z0-9-]+\.[a-zA-Z]{2,}$').hasMatch(trimmed)) {
+        // 이미 도메인 형태면 https:// 추가
+        final suggested = 'https://$trimmed';
+        if (!suggestions.contains(suggested)) {
+          suggestions.add(suggested);
+        }
+      } else if (RegExp(r'^[a-zA-Z0-9-]+$').hasMatch(trimmed)) {
+        // 단어만 입력된 경우 .com 추가
+        final suggestionsToAdd = [
+          'https://www.$trimmed.com',
+          'https://$trimmed.com',
+          'https://www.$trimmed.kr',
+          'https://$trimmed.kr',
+        ];
+        for (final suggested in suggestionsToAdd) {
+          if (!suggestions.contains(suggested)) {
+            suggestions.add(suggested);
+          }
+        }
+      }
+    } else if (hasHttp && !hasDomain) {
+      // http/https는 있지만 도메인이 완전하지 않은 경우
+      final withoutProtocol = trimmed.replaceFirst(RegExp(r'^https?://'), '');
+      if (RegExp(r'^[a-zA-Z0-9.-]+$').hasMatch(withoutProtocol)) {
+        final suggested = 'https://$withoutProtocol';
+        if (!suggestions.contains(suggested)) {
+          suggestions.add(suggested);
+        }
+        if (!withoutProtocol.contains('www.')) {
+          final suggestedWithWww = 'https://www.$withoutProtocol';
+          if (!suggestions.contains(suggestedWithWww)) {
+            suggestions.add(suggestedWithWww);
+          }
+        }
+      }
+    } else if (!hasHttp && hasDomain) {
+      // 도메인은 있지만 프로토콜이 없는 경우
+      final suggested = 'https://$trimmed';
+      if (!suggestions.contains(suggested)) {
+        suggestions.add(suggested);
+      }
+      if (!trimmed.contains('www.')) {
+        final suggestedWithWww = 'https://www.$trimmed';
+        if (!suggestions.contains(suggestedWithWww)) {
+          suggestions.add(suggestedWithWww);
+        }
+      }
+    }
+
+    // 중복 제거 및 정렬 (기록 우선, 그 다음 유명 사이트/자동완성)
     final uniqueSuggestions = suggestions.toSet().toList();
-    uniqueSuggestions.sort();
+    uniqueSuggestions.sort((a, b) {
+      // 기록에 있는 것이 먼저 오도록 정렬
+      final aInHistory = _linkHistory.contains(a);
+      final bInHistory = _linkHistory.contains(b);
+      if (aInHistory && !bInHistory) return -1;
+      if (!aInHistory && bInHistory) return 1;
+      return a.compareTo(b);
+    });
 
     setState(() {
-      _suggestions = uniqueSuggestions.take(5).toList(); // 최대 5개만 표시
+      _suggestions = uniqueSuggestions.take(10).toList(); // 최대 10개 표시
     });
   }
 
@@ -793,6 +950,15 @@ class _LinkOverlayState extends State<LinkOverlay> {
   void _enqueueUrl(String url) async {
     final trimmed = url.trim();
     if (trimmed.isEmpty) return;
+
+    // 🎯 URL 정규화하여 기록에 저장
+    final normalizedUrl = _normalizeUrl(trimmed);
+    if (normalizedUrl != null) {
+      await _saveLinkHistory(normalizedUrl);
+      // 기록 저장 후 목록 업데이트
+      await _loadLinkHistory();
+    }
+
     // 중복 제거
     final exists = _items.any((e) => e.url == trimmed);
     if (exists) return;
@@ -814,7 +980,20 @@ class _LinkOverlayState extends State<LinkOverlay> {
       if (mounted) {
         _focusNode.unfocus();
         setState(() {
+          // 메타데이터에서 타이틀이 가져와지면 커스텀 타이틀에 설정
+          if (_pTitle != null &&
+              _pTitle!.isNotEmpty &&
+              _customTitleController.text.isEmpty) {
+            _customTitleController.text = _pTitle!;
+          }
           // 미리보기 표시를 위해 URL은 유지
+        });
+
+        // 🎯 커스텀 제목 필드에 자동 포커스 (약간의 딜레이 추가)
+        Future.delayed(const Duration(milliseconds: 300), () {
+          if (mounted && _titleFocusNode.canRequestFocus) {
+            _titleFocusNode.requestFocus();
+          }
         });
       }
       return;

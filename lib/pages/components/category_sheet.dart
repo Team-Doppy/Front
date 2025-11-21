@@ -630,25 +630,30 @@ class CategoryDropDown {
                     }
                   }
                 },
-                onDelete: () {
-                  () async {
-                    final int? catId = c['id'] as int?;
-                    if (catId == 0) {
-                      return;
-                    }
-                    final bool? confirmed = await DialogUtils.showConfirmDialog(
+                onDelete: () async {
+                  final int? catId = c['id'] as int?;
+                  if (catId == 0) {
+                    return;
+                  }
+                  final l10n = AppLocalizations.of(context);
+                  final bool? confirmed = await DialogUtils.showConfirmDialog(
+                    context,
+                    title: l10n.t('delete_category_title'),
+                    message: l10n.t('delete_category_message'),
+                    confirmText: l10n.t('delete'),
+                    cancelText: l10n.t('cancel'),
+                    isDestructive: true,
+                  );
+                  if (confirmed == true &&
+                      feedProvider is MyProfileFeedProvider) {
+                    // 🎯 삭제 후 즉시 재빌드
+                    await _deleteCategory(
                       context,
-                      title: '카테고리 삭제',
-                      message: '정말 삭제하시겠어요? 되돌릴 수 없어요.\n이 카테고리의 포스트는 지워지지 않아요.',
-                      confirmText: '삭제',
-                      cancelText: '취소',
-                      isDestructive: true,
+                      feedProvider,
+                      c['id'],
+                      setModalState,
                     );
-                    if (confirmed == true &&
-                        feedProvider is MyProfileFeedProvider) {
-                      _deleteCategory(context, feedProvider, c['id']);
-                    }
-                  }();
+                  }
                 },
               ),
             );
@@ -936,6 +941,7 @@ class CategoryDropDown {
     BuildContext context,
     MyProfileFeedProvider myProfileFeedProvider,
     int categoryId,
+    StateSetter setModalState,
   ) async {
     try {
       print('[CategoryDropDown] 카테고리 삭제 시작: $categoryId');
@@ -947,6 +953,9 @@ class CategoryDropDown {
       print('[CategoryDropDown] 카테고리 삭제 성공');
       // 전체 피드 데이터 강제 재로딩 (카테고리/포스트 등 전부)
       await myProfileFeedProvider.refresh();
+
+      // 🎯 바텀시트 즉시 재빌드하여 삭제된 카테고리 제거
+      setModalState(() {});
       _onCategoryChanged?.call();
 
       // 성공 메시지

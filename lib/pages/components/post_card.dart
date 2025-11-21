@@ -277,8 +277,14 @@ class _PostCardState extends State<PostCard>
   }
 
   Widget _buildImage() {
-    // URL인지 로컬 에셋인지 판단
-    if (widget.thumbnailImageUrl.isNotEmpty) {
+    // 🎯 네트워크 URL인지 먼저 판단 (대부분의 경우)
+    final isNetworkUrl =
+        widget.thumbnailImageUrl.isNotEmpty &&
+        (widget.thumbnailImageUrl.startsWith('http://') ||
+            widget.thumbnailImageUrl.startsWith('https://'));
+
+    if (isNetworkUrl) {
+      // 네트워크 이미지/영상
       return Container(
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(13),
@@ -411,14 +417,21 @@ class _PostCardState extends State<PostCard>
         ),
       );
     } else {
-      // 로컬 에셋
+      // 로컬 에셋 또는 빈 URL
       return Container(
-        decoration: BoxDecoration(borderRadius: BorderRadius.circular(12)),
-        child: Center(
-          child: Icon(
-            Icons.error,
-            color: Theme.of(context).colorScheme.onSurface.withOpacity(0.54),
-            size: 40,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: Theme.of(context).colorScheme.onSurface.withOpacity(0.3),
+          ),
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(12),
+          child: Image.asset(
+            widget.thumbnailImageUrl,
+            width: double.infinity,
+            height: double.infinity,
+            fit: BoxFit.cover,
           ),
         ),
       );
@@ -428,71 +441,115 @@ class _PostCardState extends State<PostCard>
   @override
   Widget build(BuildContext context) {
     super.build(context); // AutomaticKeepAliveClientMixin 필수
+    // 🎯 로컬 에셋 기반 포스트인지 확인 (온보딩 플레이스홀더)
+    final isOnboardingPost = widget.postId.startsWith('onboarding_placeholder');
+
     return Stack(
       children: [
-        // 배경 이미지 - 전체 카드를 덮음
-        Positioned.fill(
-          child:
-              (widget.heroTag == null)
-                  ? _buildImage()
-                  : Hero(tag: widget.heroTag!, child: _buildImage()),
-        ),
+        _buildImage(),
+        // 🎯 작성자 정보 (이미지 위 상단 오버레이) - 로컬 에셋이 아닐 때만 표시
+        if (!isOnboardingPost)
+          Positioned(
+            left: 10,
+            bottom: 8,
+            child: GestureDetector(
+              onTap: () {
+                final currentUser = context.read<UserProvider>().currentUser;
+                final isMyPost = widget.author == currentUser?.username;
 
-        /*
-        Positioned(
-          left: 3,
-          bottom: 3,
-          child: GestureDetector(
-            onTap: () {
-              final isMyPost =
-                  widget.author ==
-                  context.read<UserProvider>().currentUser?.username;
-
-              if (isMyPost) {
-                return;
-              }
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder:
-                      (context) => UserProfileScreen(
-                        otherUser:
-                            isMyPost
-                                ? null
-                                : User(
-                                  id: 0,
-                                  username: widget.author,
-                                  alias: widget.author,
-                                  profileImageUrl: widget.authorProfileImageUrl,
-                                ),
-                      ),
-                ),
-              );
-            },
-            behavior: HitTestBehavior.opaque,
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(35),
-              child: Container(
-                decoration: BoxDecoration(
-                  color: Theme.of(
-                    context,
-                  ).colorScheme.onSurface.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(35),
-                ),
-                child: Row(
-                  children: [
-                    CommonProfileAvatar(
-                      imageUrl: widget.authorProfileImageUrl ?? "",
-                      username: widget.author,
-                      size: 35,
-                      borderWidth: 1,
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder:
+                        (context) => UserProfileScreen(
+                          otherUser:
+                              isMyPost
+                                  ? null // 내 프로필일 때는 null로 내 프로필 표시
+                                  : User(
+                                    username: widget.author,
+                                    alias: widget.author,
+                                    profileImageUrl:
+                                        widget.authorProfileImageUrl,
+                                  ),
+                        ),
+                  ),
+                );
+              },
+              behavior: HitTestBehavior.opaque,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  CommonProfileAvatar(
+                    imageUrl: widget.authorProfileImageUrl ?? "",
+                    username: widget.author,
+                    size: 28,
+                    borderWidth: 1,
+                    borderColor: Theme.of(context).colorScheme.onSurface,
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    widget.author,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w500,
+                      shadows: [
+                        Shadow(
+                          offset: Offset(0, 1),
+                          blurRadius: 3,
+                          color: Colors.black54,
+                        ),
+                      ],
                     ),
-                  ],
-                ),
+                  ),
+                ],
               ),
             ),
           ),
-        ),*/
+        // 🎯 좋아요 정보 (오른쪽 하단) - 로컬 에셋이 아닐 때만 표시
+        if (!isOnboardingPost)
+          Positioned(
+            right: 10,
+            bottom: 10,
+            child: GestureDetector(
+              onTap: widget.onLikePressed,
+              behavior: HitTestBehavior.opaque,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    widget.isLiked ? Icons.favorite : Icons.favorite_border,
+                    color:
+                        widget.isLiked ? const Color(0xFFFF5959) : Colors.white,
+                    size: 20,
+                    shadows: const [
+                      Shadow(
+                        offset: Offset(0, 1),
+                        blurRadius: 3,
+                        color: Colors.black54,
+                      ),
+                    ],
+                  ),
+                  const SizedBox(width: 3),
+                  Text(
+                    '${widget.likeCount}',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w500,
+                      shadows: [
+                        Shadow(
+                          offset: Offset(0, 1),
+                          blurRadius: 3,
+                          color: Colors.black54,
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
       ],
     );
   }

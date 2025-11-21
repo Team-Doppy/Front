@@ -60,6 +60,9 @@ class AppConstants {
       'https://www.notion.so/doppy-2a594e338df780e1b6b9fddb9753e728';
   static const String privacyPolicyUrl =
       'https://www.notion.so/doppy-2a594e338df780e1b6b9fddb9753e728'; // TODO: 개인정보 처리방침 URL로 변경 필요
+
+  // 🎯 문의하기 이메일 주소
+  static const String contactEmail = 'app.doppy@gmail.com';
 }
 
 Future<void> main() async {
@@ -83,9 +86,7 @@ Future<void> main() async {
       print(
         '[FCM] 알림: ${message.notification?.title} - ${message.notification?.body}',
       );
-
-      // 포그라운드에서 알림 표시 (선택적)
-      // Flutter Local Notifications를 사용하여 앱 내 알림 표시 가능
+      // 포그라운드에서는 알림을 표시하지 않음
     });
 
     // 🎯 FCM 메시지 클릭 핸들러 등록

@@ -4,8 +4,9 @@ class User {
   final String? alias; // alias 필드 추가
   final String? profileImageUrl;
   final String? selfIntroduction;
-  final List<String>? links; // 🎯 프로필 링크 목록 (최대 3개)
+  final List<String>? links; // 🎯 프로필 링크 목록
   final Map<String, String>? linkTitles; // 🎯 링크 타이틀 (URL -> 타이틀)
+  final Map<String, String>? linkThumbnails; // 🎯 링크 썸네일 (URL -> thumbnailUrl)
   final int? friendCount;
 
   User({
@@ -16,6 +17,7 @@ class User {
     this.selfIntroduction,
     this.links,
     this.linkTitles,
+    this.linkThumbnails,
     this.friendCount,
   });
 
@@ -55,6 +57,18 @@ class User {
       }
     }
 
+    // 🎯 linkThumbnails 필드 처리 (Map<String, String> 또는 null)
+    Map<String, String>? linkThumbnails;
+    if (json['linkThumbnails'] != null) {
+      if (json['linkThumbnails'] is Map) {
+        linkThumbnails = Map<String, String>.from(
+          (json['linkThumbnails'] as Map).map(
+            (key, value) => MapEntry(key.toString(), value.toString()),
+          ),
+        );
+      }
+    }
+
     return User(
       username: (json['username'] ?? json['userId'] ?? '').toString(),
       role: json['role']?.toString(),
@@ -64,6 +78,7 @@ class User {
       selfIntroduction: json['selfIntroduction']?.toString(),
       links: links,
       linkTitles: linkTitles,
+      linkThumbnails: linkThumbnails,
       friendCount: (json['friendCount'] as num?)?.toInt(),
     );
   }
@@ -77,6 +92,7 @@ class User {
     String? selfIntroduction,
     List<String>? links,
     Map<String, String>? linkTitles,
+    Map<String, String>? linkThumbnails,
     int? friendCount,
   }) {
     return User(
@@ -87,6 +103,7 @@ class User {
       selfIntroduction: selfIntroduction ?? this.selfIntroduction,
       links: links ?? this.links,
       linkTitles: linkTitles ?? this.linkTitles,
+      linkThumbnails: linkThumbnails ?? this.linkThumbnails,
       friendCount: friendCount ?? this.friendCount,
     );
   }

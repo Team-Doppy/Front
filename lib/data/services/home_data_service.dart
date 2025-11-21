@@ -1,5 +1,6 @@
 import 'package:doppy/data/models/post_data.dart';
 import 'package:doppy/data/services/blog_service.dart';
+import 'package:doppy/data/services/video_cache_service.dart';
 import 'package:flutter/material.dart';
 
 /// 피드 데이터 컨테이너
@@ -116,7 +117,7 @@ class HomeDataService {
   final SmartFeedCache _cache = SmartFeedCache();
 
   /// 스플래시에서 사용: 두 섹션 데이터 동시 로드
-  Future<HomeData> preloadAllSections({int page = 0, int size = 10}) async {
+  Future<HomeData> preloadAllSections({int page = 0, int size = 20}) async {
     try {
       // 두 섹션 데이터를 병렬로 로드
       final results = await Future.wait([
@@ -144,7 +145,7 @@ class HomeDataService {
   /// 친구글 로드 (캐시 우선)
   Future<List<PostData>> loadFriendsPosts({
     int page = 0,
-    int size = 10,
+    int size = 20, // 🎯 10 -> 20으로 변경
     bool refresh = false,
   }) async {
     // 새로고침이면 캐시 완전히 비우기
@@ -176,7 +177,7 @@ class HomeDataService {
   /// 전체글 로드 (캐시 우선)
   Future<List<PostData>> loadAllPosts({
     int page = 0,
-    int size = 10,
+    int size = 20, // 🎯 10 -> 20으로 변경
     bool refresh = false,
   }) async {
     // 새로고침이면 캐시 완전히 비우기
@@ -205,16 +206,16 @@ class HomeDataService {
     }
   }
 
-  /// 이미지 프리캐싱 (최적화된 버전)
+  /// 이미지와 비디오 배치 프리캐싱 (20개 전체)
   Future<void> precacheImages(
     List<PostData> posts,
     BuildContext context,
   ) async {
     if (posts.isEmpty) return;
 
+    // 🎯 이미지 URL 추출 (비디오 제외)
     final imagesToCache =
         posts
-            .take(10) // 🎯 최대 10개로 증가 (성능 개선)
             .where((post) => post.thumbnailImageUrl.isNotEmpty)
             .where((post) {
               // 🎯 비디오 파일(.mp4, .mov 등) 제외 - 이미지만 프리캐시
@@ -222,25 +223,69 @@ class HomeDataService {
               return !url.endsWith('.mp4') &&
                   !url.endsWith('.mov') &&
                   !url.endsWith('.avi') &&
-                  !url.endsWith('.webm');
+                  !url.endsWith('.webm') &&
+                  !url.contains('/videos/');
             })
             .map((post) => post.thumbnailImageUrl)
             .toSet() // 중복 제거
             .toList();
 
-    if (imagesToCache.isEmpty) return;
+    // 🎯 비디오 URL 추출
+    final videosToCache =
+        posts
+            .where((post) => post.thumbnailImageUrl.isNotEmpty)
+            .where((post) {
+              final url = post.thumbnailImageUrl.toLowerCase();
+              return url.endsWith('.mp4') ||
+                  url.endsWith('.mov') ||
+                  url.endsWith('.avi') ||
+                  url.endsWith('.webm') ||
+                  url.contains('/videos/');
+            })
+            .map((post) => post.thumbnailImageUrl)
+            .toSet() // 중복 제거
+            .toList();
 
-    final futures =
-        imagesToCache.map((url) {
-          return precacheImage(NetworkImage(url), context).catchError((_) {
-            // 실패해도 무시 (로그 최소화)
-          });
-        }).toList();
+    // 🎯 이미지 프리캐싱 (병렬 처리)
+    if (imagesToCache.isNotEmpty) {
+      print('[HomeDataService] 이미지 ${imagesToCache.length}개 배치 프리로드 시작');
+      final imageFutures =
+          imagesToCache.map((url) {
+            return precacheImage(NetworkImage(url), context).catchError((e) {
+              print('[HomeDataService] 이미지 프리캐싱 실패: $url');
+            });
+          }).toList();
 
-    try {
-      await Future.wait(futures, eagerError: false);
-    } catch (_) {
-      // 프리캐싱 실패해도 앱 동작에 영향 없음
+      try {
+        await Future.wait(imageFutures, eagerError: false);
+        print('[HomeDataService] ✅ 이미지 배치 프리로드 완료: ${imagesToCache.length}개');
+      } catch (e) {
+        print('[HomeDataService] 이미지 배치 프리로드 중 오류: $e');
+      }
+    }
+
+    // 🎯 비디오 프리로드 (VideoCacheService 사용, 비동기 처리)
+    if (videosToCache.isNotEmpty) {
+      print('[HomeDataService] 비디오 ${videosToCache.length}개 배치 프리로드 시작');
+      // 비동기로 처리 (이미지 로드를 막지 않음)
+      Future.microtask(() async {
+        final videoCacheService = VideoCacheService();
+        for (final videoUrl in videosToCache) {
+          try {
+            // VideoCacheService를 통해 컨트롤러 생성 (프리로드)
+            videoCacheService.getOrCreateController(
+              videoUrl,
+              namespace: 'home',
+            );
+            print('[HomeDataService] 비디오 프리로드 시작: $videoUrl');
+          } catch (e) {
+            print('[HomeDataService] 비디오 프리로드 실패: $videoUrl - $e');
+          }
+        }
+        print(
+          '[HomeDataService] ✅ 비디오 배치 프리로드 요청 완료: ${videosToCache.length}개',
+        );
+      });
     }
   }
 

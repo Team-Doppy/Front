@@ -18,6 +18,7 @@ import 'package:provider/provider.dart';
 import 'package:video_player/video_player.dart';
 import '../../../theme/app_text_styles.dart';
 import '../../../data/services/search_service.dart';
+import '../../../data/services/video_cache_service.dart';
 
 class SearchScreenOverlay extends StatefulWidget {
   final VoidCallback? onClose;
@@ -178,12 +179,8 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
       final currentPost = _searchResults[safeIndex];
       final imageUrl = currentPost.thumbnailImageUrl.trim();
 
-      if (imageUrl.startsWith('http') &&
-          !imageUrl.toLowerCase().endsWith('.mp4') &&
-          !imageUrl.toLowerCase().endsWith('.mov') &&
-          !imageUrl.toLowerCase().endsWith('.avi') &&
-          !imageUrl.toLowerCase().endsWith('.webm') &&
-          !imageUrl.contains('/videos/')) {
+      // 🎯 네트워크 이미지이면 비디오도 포함하여 전달 (비디오는 VideoCacheService로 프리로드)
+      if (imageUrl.startsWith('http')) {
         return imageUrl;
       }
     }
@@ -197,12 +194,8 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
       final currentPost = searchService.recommendedPosts[safeIndex];
       final imageUrl = currentPost.imageUrl?.trim() ?? '';
 
-      if (imageUrl.startsWith('http') &&
-          !imageUrl.toLowerCase().endsWith('.mp4') &&
-          !imageUrl.toLowerCase().endsWith('.mov') &&
-          !imageUrl.toLowerCase().endsWith('.avi') &&
-          !imageUrl.toLowerCase().endsWith('.webm') &&
-          !imageUrl.contains('/videos/')) {
+      // 🎯 네트워크 이미지이면 비디오도 포함하여 전달 (비디오는 VideoCacheService로 프리로드)
+      if (imageUrl.startsWith('http')) {
         return imageUrl;
       }
     }
@@ -233,20 +226,54 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
                   },
                   child:
                       backgroundImageUrl != null
-                          ? CachedNetworkImage(
-                            imageUrl: backgroundImageUrl,
-                            fit: BoxFit.cover,
-                            width: double.infinity,
-                            height: double.infinity,
-                            key: ValueKey('bg-$backgroundImageUrl'),
-                            placeholder:
-                                (context, url) => ShimmerBox(
+                          ? Builder(
+                            builder: (context) {
+                              // 비디오 URL 체크
+                              final isVideoUrl =
+                                  backgroundImageUrl.toLowerCase().endsWith(
+                                    '.mp4',
+                                  ) ||
+                                  backgroundImageUrl.toLowerCase().endsWith(
+                                    '.mov',
+                                  ) ||
+                                  backgroundImageUrl.toLowerCase().endsWith(
+                                    '.avi',
+                                  ) ||
+                                  backgroundImageUrl.toLowerCase().endsWith(
+                                    '.webm',
+                                  ) ||
+                                  backgroundImageUrl.contains('/videos/');
+
+                              // 비디오인 경우 VideoPlayer 사용
+                              if (isVideoUrl) {
+                                return _SearchBackgroundVideoWidget(
+                                  videoUrl: backgroundImageUrl,
+                                  key: ValueKey('bg-video-$backgroundImageUrl'),
+                                );
+                              } else {
+                                return CachedNetworkImage(
+                                  imageUrl: backgroundImageUrl,
+                                  fit: BoxFit.cover,
                                   width: double.infinity,
                                   height: double.infinity,
-                                ),
-                            errorWidget:
-                                (context, url, error) =>
-                                    const SizedBox.shrink(),
+                                  key: ValueKey('bg-$backgroundImageUrl'),
+                                  fadeInDuration: const Duration(
+                                    milliseconds: 200,
+                                  ), // 🎯 배경 이미지 변경 시 페이드 인 효과
+                                  fadeOutDuration: const Duration(
+                                    milliseconds: 300,
+                                  ), // 🎯 이전 이미지 페이드 아웃
+                                  placeholder:
+                                      (context, url) => ShimmerBox(
+                                        width: double.infinity,
+                                        height: double.infinity,
+                                      ),
+                                  errorWidget:
+                                      (context, url, error) =>
+                                          const SizedBox.shrink(),
+                                );
+                              }
+                            },
                           )
                           : const SizedBox.shrink(),
                 ),
@@ -261,15 +288,24 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
                             begin: Alignment.topCenter,
                             end: Alignment.bottomCenter,
                             colors: [
-                              Theme.of(
-                                context,
-                              ).colorScheme.background.withOpacity(0.7),
-                              Theme.of(
-                                context,
-                              ).colorScheme.background.withOpacity(0.7),
-                              Theme.of(
-                                context,
-                              ).colorScheme.background.withOpacity(0.7),
+                              const Color.fromARGB(
+                                255,
+                                25,
+                                25,
+                                25,
+                              ).withOpacity(0.7),
+                              const Color.fromARGB(
+                                255,
+                                35,
+                                35,
+                                35,
+                              ).withOpacity(0.7),
+                              const Color.fromARGB(
+                                255,
+                                35,
+                                35,
+                                35,
+                              ).withOpacity(0.7),
                             ],
                             stops: const [0.0, 0.7, 1.0],
                           ),
@@ -1055,6 +1091,7 @@ class _SearchTopBar extends StatelessWidget {
       child: Row(
         children: [
           if (searchService.isFocused) ...[
+            SizedBox(width: 10),
             SizedBox(
               width: 28,
               child: IgnorePointer(
@@ -1338,7 +1375,6 @@ class _TrendingKeywordsWithPreloadState
         padding: const EdgeInsets.symmetric(vertical: 8),
         children: [
           // 🎯 실시간 검색어 리스트
-          /*
           if (widget.keywords.isNotEmpty) ...[
             ...widget.keywords.take(3).map((keyword) {
               return _AccountListItem(
@@ -1351,7 +1387,7 @@ class _TrendingKeywordsWithPreloadState
               );
             }).toList(),
             const SizedBox(height: 30),
-          ],*/
+          ],
           // 🎯 추천 콘텐츠 섹션 (실제 데이터)
           if (widget.recommendedPosts.isNotEmpty) ...[
             Builder(
@@ -1566,7 +1602,7 @@ class _RecommendedContentSectionState
     final screenWidth = MediaQuery.of(context).size.width;
     final cardWidth = (screenWidth - 16) / 1.3; // 좌우 패딩 16씩 제외 후 1.5개 표시
     final cardImageHeight = cardWidth * 4.6 / 4; // 4:5 비율
-    final cardTotalHeight = cardImageHeight + 120; // 이미지 + 타이틀 영역
+    final cardTotalHeight = cardImageHeight + 60; // 이미지 + 제목 영역
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1676,108 +1712,96 @@ class _PostCardState extends State<_PostCard>
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // 🎯 썸네일 이미지 (4:5 비율)
-          Stack(
-            children: [
-              Container(
-                width: widget.cardWidth,
-                height: widget.cardImageHeight,
-                decoration: BoxDecoration(
-                  color: Theme.of(context).colorScheme.surfaceVariant,
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(
-                    color: Theme.of(
-                      context,
-                    ).colorScheme.onSurface.withOpacity(0.2),
-                    width: 0.5,
+          // 🎯 썸네일 이미지/비디오 (4:5 비율)
+          SizedBox(
+            width: widget.cardWidth,
+            height: widget.cardImageHeight,
+            child: Stack(
+              children: [
+                Container(
+                  width: widget.cardWidth,
+                  height: widget.cardImageHeight,
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.surfaceVariant,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.onSurface.withOpacity(0.2),
+                      width: 0.5,
+                    ),
                   ),
+                  child:
+                      isVideoUrl
+                          ? ClipRRect(
+                            borderRadius: BorderRadius.circular(12),
+                            child: _ThumbnailVideoPlayer(
+                              videoUrl: widget.post.imageUrl!,
+                              width: widget.cardWidth,
+                              height: widget.cardImageHeight,
+                            ),
+                          )
+                          : shouldShowImage
+                          ? ClipRRect(
+                            borderRadius: BorderRadius.circular(12),
+                            child: Image.network(
+                              widget.post.imageUrl!,
+                              width: widget.cardWidth,
+                              height: widget.cardImageHeight,
+                              fit: BoxFit.cover,
+                              errorBuilder: (context, error, stackTrace) {
+                                return Center(
+                                  child: Icon(
+                                    Icons.image,
+                                    size: 40,
+                                    color: Theme.of(context)
+                                        .colorScheme
+                                        .onSurfaceVariant
+                                        .withOpacity(0.3),
+                                  ),
+                                );
+                              },
+                            ),
+                          )
+                          : Center(
+                            child: Icon(
+                              Icons.image,
+                              size: 40,
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.onSurfaceVariant.withOpacity(0.3),
+                            ),
+                          ),
                 ),
-                child:
-                    isVideoUrl
-                        ? ClipRRect(
-                          borderRadius: BorderRadius.circular(20),
-                          child: _ThumbnailVideoPlayer(
-                            videoUrl: widget.post.imageUrl!,
-                            width: widget.cardWidth,
-                            height: widget.cardImageHeight,
-                          ),
-                        )
-                        : shouldShowImage
-                        ? ClipRRect(
-                          borderRadius: BorderRadius.circular(20),
-                          child: Image.network(
-                            widget.post.imageUrl!,
-                            width: widget.cardWidth,
-                            height: widget.cardImageHeight,
-                            fit: BoxFit.cover,
-                            errorBuilder: (context, error, stackTrace) {
-                              return Center(
-                                child: Icon(
-                                  Icons.image,
-                                  size: 40,
-                                  color: Theme.of(context)
-                                      .colorScheme
-                                      .onSurfaceVariant
-                                      .withOpacity(0.3),
-                                ),
-                              );
-                            },
-                          ),
-                        )
-                        : Center(
-                          child: Icon(
-                            Icons.image,
-                            size: 40,
-                            color: Theme.of(
-                              context,
-                            ).colorScheme.onSurfaceVariant.withOpacity(0.3),
-                          ),
-                        ),
-              ),
-              Positioned(
-                top: 10,
-                left: 0,
-                child: CommonProfileAvatar(
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+          // 🎯 프로필 이미지 + 제목 (카드 아래)
+          SizedBox(
+            width: widget.cardWidth,
+            child: Row(
+              children: [
+                CommonProfileAvatar(
                   imageUrl: widget.post.profileImageUrl,
                   username: widget.post.author ?? '',
                   size: 28,
-                  borderColor: Theme.of(
-                    context,
-                  ).colorScheme.onSurface.withOpacity(0.6),
-                  borderWidth: 0.4,
+                  borderWidth: 0,
                 ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                widget.post.title ?? '제목 없음',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-
-              SizedBox(height: 4),
-              Container(
-                width: widget.cardWidth,
-                padding: const EdgeInsets.only(right: 6),
-                child: Text(
-                  widget.post.summary ?? '작성자 없음',
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w300,
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    widget.post.title ?? '제목 없음',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ],
       ),
@@ -1816,29 +1840,41 @@ class _ThumbnailVideoPlayerState extends State<_ThumbnailVideoPlayer>
     _initializeVideo();
   }
 
+  @override
+  void didUpdateWidget(_ThumbnailVideoPlayer oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.videoUrl != widget.videoUrl) {
+      _disposeVideo();
+      _initializeVideo();
+    }
+  }
+
   Future<void> _initializeVideo() async {
     try {
       debugPrint('[ThumbnailVideoPlayer] 초기화 시작: ${widget.videoUrl}');
 
-      _controller = VideoPlayerController.networkUrl(
-        Uri.parse(widget.videoUrl),
+      // 🎯 VideoCacheService에서 컨트롤러 가져오기 (프리로드)
+      _controller = VideoCacheService().getOrCreateController(
+        widget.videoUrl,
+        namespace: 'search_trending',
       );
 
-      await _controller!.initialize();
-
-      debugPrint('[ThumbnailVideoPlayer] 초기화 완료');
-
-      if (mounted) {
-        setState(() {
-          _isInitialized = true;
-        });
-
-        // 🎯 음소거 및 자동 재생
-        await _controller!.setVolume(0.0);
-        await _controller!.setLooping(true);
-        await _controller!.play();
-
-        debugPrint('[ThumbnailVideoPlayer] 재생 시작');
+      // 이미 초기화된 경우
+      if (_controller!.value.isInitialized) {
+        debugPrint('[ThumbnailVideoPlayer] 초기화 완료 (캐시에서)');
+        if (mounted) {
+          setState(() {
+            _isInitialized = true;
+          });
+          // 🎯 음소거 및 자동 재생
+          await _controller!.setVolume(0.0);
+          await _controller!.setLooping(true);
+          await _controller!.play();
+          debugPrint('[ThumbnailVideoPlayer] 재생 시작');
+        }
+      } else {
+        // 초기화 대기
+        _controller!.addListener(_onVideoInitialized);
       }
     } catch (e) {
       debugPrint('[ThumbnailVideoPlayer] error: $e');
@@ -1850,10 +1886,37 @@ class _ThumbnailVideoPlayerState extends State<_ThumbnailVideoPlayer>
     }
   }
 
+  void _onVideoInitialized() {
+    if (_controller?.value.isInitialized ?? false) {
+      _controller?.removeListener(_onVideoInitialized);
+      if (mounted) {
+        setState(() {
+          _isInitialized = true;
+        });
+        // 🎯 음소거 및 자동 재생
+        _controller!.setVolume(0.0);
+        _controller!.setLooping(true);
+        _controller!.play();
+        debugPrint('[ThumbnailVideoPlayer] 재생 시작');
+      }
+    }
+  }
+
+  void _disposeVideo() {
+    _controller?.removeListener(_onVideoInitialized);
+    if (_controller != null) {
+      VideoCacheService().releaseController(
+        widget.videoUrl,
+        namespace: 'search_trending',
+      );
+      _controller = null;
+    }
+  }
+
   @override
   void dispose() {
     debugPrint('[ThumbnailVideoPlayer] dispose - ${widget.videoUrl}');
-    _controller?.dispose();
+    _disposeVideo();
     super.dispose();
   }
 
@@ -1939,6 +2002,12 @@ class _SearchResultsViewState extends State<_SearchResultsView> {
   bool _suppressVisibility = false;
   double _pullProgress = 0.0;
 
+  // 🎯 가로/세로 제스처 감지 (PostList와 동일)
+  double _gestureAccumY = 0.0;
+  double _gestureAccumX = 0.0;
+  bool _isGestureActive = false;
+  bool _isHorizontalGesture = false; // 가로 제스처 감지 여부
+
   @override
   void initState() {
     super.initState();
@@ -1981,300 +2050,366 @@ class _SearchResultsViewState extends State<_SearchResultsView> {
   Widget _buildScrollView(BuildContext context) {
     final screenWidth = MediaQuery.of(context).size.width;
 
-    return CustomScrollView(
-      controller: _scrollController,
-      physics: const AlwaysScrollableScrollPhysics(),
-      slivers: [
-        // AppBar with 검색 칩
-        SliverAppBar(
-          toolbarHeight: 35,
-          backgroundColor: Colors.transparent,
-          elevation: 0,
-          scrolledUnderElevation: 0,
-          pinned: false,
-          floating: true,
-          snap: false,
-          title: AnimatedOpacity(
-            opacity: (1.0 - _pullProgress),
-            duration:
-                _pullProgress != 0.0
-                    ? Duration(milliseconds: 0)
-                    : Duration(milliseconds: 100),
-            curve: Curves.easeInOut,
-            child: Container(
-              padding: const EdgeInsets.only(bottom: 6),
-              child: Text(
-                '',
-                style: GoogleFonts.notoSansKr(
-                  fontSize: 20,
-                  fontWeight: FontWeight.bold,
-                  color: Theme.of(context).colorScheme.primary,
+    return Listener(
+      // 🎯 가로/세로 제스처 감지 (PostList와 동일)
+      onPointerMove: (details) {
+        if (!_isGestureActive) {
+          setState(() {
+            _isGestureActive = true;
+          });
+        }
+
+        // 제스처 방향 결정 (더 빠르게, 더 민감하게)
+        if (!_isHorizontalGesture) {
+          _gestureAccumY += details.delta.dy;
+          _gestureAccumX += details.delta.dx;
+
+          // 제스처 방향 빠르게 결정 (3px 이상 움직임 시)
+          if (_gestureAccumX.abs() > 3 || _gestureAccumY.abs() > 3) {
+            // 가로 움직임이 세로보다 크면 가로 제스처로 고정
+            if (_gestureAccumX.abs() > _gestureAccumY.abs()) {
+              setState(() {
+                _isHorizontalGesture = true;
+              });
+            }
+          }
+        }
+
+        // 가로 제스처가 활성화되면 세로 누적값 무시
+        if (_isHorizontalGesture) {
+          _gestureAccumX += details.delta.dx;
+          // 세로 움직임은 완전히 무시 (누적하지 않음)
+
+          // 수평 스크롤만 처리
+          if (_gestureAccumX.abs() > 30) {
+            if (_gestureAccumX > 0 && _currentIndex > 0) {
+              // 오른쪽으로 스크롤 - 이전 페이지
+              _pageController.previousPage(
+                duration: const Duration(milliseconds: 200),
+                curve: Curves.easeInOut,
+              );
+              _isGestureActive = false;
+            } else if (_gestureAccumX < 0 &&
+                _currentIndex < widget.posts.length - 1) {
+              // 왼쪽으로 스크롤 - 다음 페이지
+              _pageController.nextPage(
+                duration: const Duration(milliseconds: 200),
+                curve: Curves.easeInOut,
+              );
+              _isGestureActive = false;
+            }
+          }
+          return; // 세로 동작 완전 차단
+        }
+      },
+      onPointerUp: (details) {
+        setState(() {
+          _isGestureActive = false;
+          _isHorizontalGesture = false;
+        });
+        _gestureAccumY = 0.0;
+        _gestureAccumX = 0.0;
+      },
+      child: CustomScrollView(
+        controller: _scrollController,
+        physics:
+            _isHorizontalGesture
+                ? const NeverScrollableScrollPhysics() // 🎯 가로 제스처 감지 시 세로 스크롤 차단
+                : const AlwaysScrollableScrollPhysics(),
+        slivers: [
+          // AppBar with 검색 칩
+          SliverAppBar(
+            toolbarHeight: 35,
+            backgroundColor: Colors.transparent,
+            elevation: 0,
+            scrolledUnderElevation: 0,
+            pinned: false,
+            floating: true,
+            snap: false,
+            title: AnimatedOpacity(
+              opacity: (1.0 - _pullProgress),
+              duration:
+                  _pullProgress != 0.0
+                      ? Duration(milliseconds: 0)
+                      : Duration(milliseconds: 100),
+              curve: Curves.easeInOut,
+              child: Container(
+                padding: const EdgeInsets.only(bottom: 6),
+                child: Text(
+                  '',
+                  style: GoogleFonts.notoSansKr(
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                    color: Theme.of(context).colorScheme.primary,
+                  ),
                 ),
               ),
             ),
-          ),
-          centerTitle: false,
-          actions: [
-            AnimatedOpacity(
-              opacity: (1.0 - _pullProgress),
-              duration: Duration(milliseconds: 150),
-              curve: Curves.easeInOut,
-              child:
-                  widget.searchQuery.isNotEmpty
-                      ? GestureDetector(
-                        onTap: widget.onSearchChipTap,
-                        child: Container(
-                          margin: const EdgeInsets.only(right: 8),
-                          child: ClipRRect(
-                            borderRadius: BorderRadius.circular(16),
-                            child: BackdropFilter(
-                              filter: ui.ImageFilter.blur(
-                                sigmaX: 10,
-                                sigmaY: 10,
-                              ),
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 12,
-                                  vertical: 6,
+            centerTitle: false,
+            actions: [
+              AnimatedOpacity(
+                opacity: (1.0 - _pullProgress),
+                duration: Duration(milliseconds: 150),
+                curve: Curves.easeInOut,
+                child:
+                    widget.searchQuery.isNotEmpty
+                        ? GestureDetector(
+                          onTap: widget.onSearchChipTap,
+                          child: Container(
+                            margin: const EdgeInsets.only(right: 8),
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(16),
+                              child: BackdropFilter(
+                                filter: ui.ImageFilter.blur(
+                                  sigmaX: 10,
+                                  sigmaY: 10,
                                 ),
-                                decoration: BoxDecoration(
-                                  color: Theme.of(
-                                    context,
-                                  ).colorScheme.surface.withOpacity(0.2),
-                                  borderRadius: BorderRadius.circular(16),
-                                  border: Border.all(
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 12,
+                                    vertical: 6,
+                                  ),
+                                  decoration: BoxDecoration(
                                     color: Theme.of(
                                       context,
-                                    ).colorScheme.primary.withOpacity(0.3),
-                                    width: 1,
+                                    ).colorScheme.surface.withOpacity(0.2),
+                                    borderRadius: BorderRadius.circular(16),
+                                    border: Border.all(
+                                      color: Theme.of(
+                                        context,
+                                      ).colorScheme.primary.withOpacity(0.3),
+                                      width: 1,
+                                    ),
                                   ),
-                                ),
-                                child: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    const SizedBox(width: 8),
-                                    Text(
-                                      widget.searchQuery,
-                                      style: TextStyle(
-                                        color:
-                                            Theme.of(
-                                              context,
-                                            ).colorScheme.onSurface,
-                                        fontSize: 14,
-                                        fontWeight: FontWeight.w500,
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      const SizedBox(width: 8),
+                                      Text(
+                                        widget.searchQuery,
+                                        style: TextStyle(
+                                          color:
+                                              Theme.of(
+                                                context,
+                                              ).colorScheme.onSurface,
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.w500,
+                                        ),
                                       ),
-                                    ),
-                                    const SizedBox(width: 10),
-                                    GestureDetector(
-                                      onTap: widget.onClearSearch,
-                                      child: Icon(
-                                        Icons.close,
-                                        size: 20,
-                                        color: Theme.of(
-                                          context,
-                                        ).colorScheme.primary.withOpacity(0.7),
+                                      const SizedBox(width: 10),
+                                      GestureDetector(
+                                        onTap: widget.onClearSearch,
+                                        child: Icon(
+                                          Icons.close,
+                                          size: 20,
+                                          color: Theme.of(context)
+                                              .colorScheme
+                                              .primary
+                                              .withOpacity(0.7),
+                                        ),
                                       ),
-                                    ),
-                                  ],
+                                    ],
+                                  ),
                                 ),
                               ),
                             ),
                           ),
-                        ),
-                      )
-                      : const SizedBox.shrink(),
-            ),
-          ],
-        ),
-        SliverToBoxAdapter(
-          child: Container(
-            height: 50,
-            decoration: BoxDecoration(color: Colors.transparent),
+                        )
+                        : const SizedBox.shrink(),
+              ),
+            ],
           ),
-        ),
+          SliverToBoxAdapter(
+            child: Container(
+              height: 50,
+              decoration: BoxDecoration(color: Colors.transparent),
+            ),
+          ),
 
-        // PageView 또는 빈 상태
-        if (widget.posts.isEmpty && !widget.isLoading)
-          SliverFillRemaining(
-            hasScrollBody: false,
-            child: Center(
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 32),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(
-                      Icons.search_off,
-                      size: 64,
-                      color: Theme.of(
-                        context,
-                      ).colorScheme.onSurface.withOpacity(0.3),
-                    ),
-                    const SizedBox(height: 16),
-                    Text(
-                      '검색 결과가 없습니다',
-                      style: GoogleFonts.notoSansKr(
-                        fontSize: 18,
-                        fontWeight: FontWeight.w500,
+          // PageView 또는 빈 상태
+          if (widget.posts.isEmpty && !widget.isLoading)
+            SliverFillRemaining(
+              hasScrollBody: false,
+              child: Center(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 32),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(
+                        Icons.search_off,
+                        size: 64,
                         color: Theme.of(
                           context,
-                        ).colorScheme.onSurface.withOpacity(0.7),
+                        ).colorScheme.onSurface.withOpacity(0.3),
                       ),
-                      textAlign: TextAlign.center,
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      '다른 검색어로 시도해보세요',
-                      style: GoogleFonts.notoSansKr(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w400,
-                        color: Theme.of(
-                          context,
-                        ).colorScheme.onSurface.withOpacity(0.5),
+                      const SizedBox(height: 16),
+                      Text(
+                        '검색 결과가 없습니다',
+                        style: GoogleFonts.notoSansKr(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w500,
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.onSurface.withOpacity(0.7),
+                        ),
+                        textAlign: TextAlign.center,
                       ),
-                      textAlign: TextAlign.center,
-                    ),
-                  ],
+                      const SizedBox(height: 8),
+                      Text(
+                        '다른 검색어로 시도해보세요',
+                        style: GoogleFonts.notoSansKr(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w400,
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.onSurface.withOpacity(0.5),
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            )
+          else
+            SliverToBoxAdapter(
+              child: Container(
+                height: 400,
+                decoration: BoxDecoration(color: Colors.transparent),
+                child: PageView.builder(
+                  scrollDirection: Axis.horizontal,
+                  controller: _pageController,
+                  pageSnapping: true,
+                  physics: const ClampingScrollPhysics(),
+                  clipBehavior: Clip.none,
+                  padEnds: true,
+                  onPageChanged: (index) {
+                    setState(() {
+                      _currentIndex = index;
+                    });
+
+                    if (widget.onPageChanged != null) {
+                      widget.onPageChanged!(index);
+                    }
+
+                    // 무한 스크롤
+                    if (widget.onLoadMore != null &&
+                        index >= widget.posts.length - 5 &&
+                        !widget.isLoadingMore) {
+                      widget.onLoadMore!();
+                    }
+                  },
+                  itemCount:
+                      widget.posts.length + (widget.isLoadingMore ? 1 : 0),
+                  itemBuilder: (context, index) {
+                    if (index >= widget.posts.length) {
+                      return const Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            CircularProgressIndicator(color: Colors.white),
+                            SizedBox(height: 16),
+                            Text(
+                              '더 많은 포스트를 불러오는 중...',
+                              style: TextStyle(color: Colors.white70),
+                            ),
+                          ],
+                        ),
+                      );
+                    }
+
+                    final post = widget.posts[index];
+                    return _buildPostItem(context, post, index, screenWidth);
+                  },
                 ),
               ),
             ),
-          )
-        else
-          SliverToBoxAdapter(
-            child: Container(
-              height: 400,
-              decoration: BoxDecoration(color: Colors.transparent),
-              child: PageView.builder(
-                scrollDirection: Axis.horizontal,
-                controller: _pageController,
-                pageSnapping: true,
-                physics: const ClampingScrollPhysics(),
-                clipBehavior: Clip.none,
-                padEnds: true,
-                onPageChanged: (index) {
-                  setState(() {
-                    _currentIndex = index;
-                  });
 
-                  if (widget.onPageChanged != null) {
-                    widget.onPageChanged!(index);
-                  }
+          // Author Section
+          SliverFillRemaining(
+            hasScrollBody: false,
+            child: GestureDetector(
+              onTapUp: (details) async {
+                final screenWidth = MediaQuery.of(context).size.width;
+                final tapX = details.globalPosition.dx;
 
-                  // 무한 스크롤
-                  if (widget.onLoadMore != null &&
-                      index >= widget.posts.length - 5 &&
-                      !widget.isLoadingMore) {
-                    widget.onLoadMore!();
-                  }
-                },
-                itemCount: widget.posts.length + (widget.isLoadingMore ? 1 : 0),
-                itemBuilder: (context, index) {
-                  if (index >= widget.posts.length) {
-                    return const Center(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          CircularProgressIndicator(color: Colors.white),
-                          SizedBox(height: 16),
-                          Text(
-                            '더 많은 포스트를 불러오는 중...',
-                            style: TextStyle(color: Colors.white70),
-                          ),
-                        ],
-                      ),
+                if (tapX < screenWidth * 0.2) {
+                  if (_currentIndex > 0) {
+                    _pageController.previousPage(
+                      duration: const Duration(milliseconds: 200),
+                      curve: Curves.easeOutCubic,
                     );
                   }
-
-                  final post = widget.posts[index];
-                  return _buildPostItem(context, post, index, screenWidth);
-                },
+                } else if (tapX > screenWidth * 0.8) {
+                  if (_currentIndex < widget.posts.length - 1) {
+                    _pageController.nextPage(
+                      duration: const Duration(milliseconds: 200),
+                      curve: Curves.easeOutCubic,
+                    );
+                  }
+                } else {
+                  setState(() => _suppressVisibility = true);
+                  await Navigator.of(context).push(
+                    PageRouteBuilder(
+                      transitionDuration: const Duration(milliseconds: 340),
+                      reverseTransitionDuration: const Duration(
+                        milliseconds: 100,
+                      ),
+                      opaque: false,
+                      pageBuilder:
+                          (_, __, ___) => PostReaderScreen(
+                            exported:
+                                widget.posts[_currentIndex].toExportedData(),
+                            heroTag:
+                                'search-post-${widget.posts[_currentIndex].id}-$_currentIndex',
+                          ),
+                      transitionsBuilder: (
+                        context,
+                        animation,
+                        secondaryAnimation,
+                        child,
+                      ) {
+                        const begin = Offset(0.0, 0.1);
+                        const end = Offset.zero;
+                        const curve = Curves.easeOutCubic;
+                        var tween = Tween(
+                          begin: begin,
+                          end: end,
+                        ).chain(CurveTween(curve: curve));
+                        var offsetAnimation = animation.drive(tween);
+                        var fadeAnimation = Tween<double>(
+                          begin: 0.0,
+                          end: 1.0,
+                        ).animate(
+                          CurvedAnimation(
+                            parent: animation,
+                            curve: Curves.easeOut,
+                          ),
+                        );
+                        return FadeTransition(
+                          opacity: fadeAnimation,
+                          child: SlideTransition(
+                            position: offsetAnimation,
+                            child: child,
+                          ),
+                        );
+                      },
+                    ),
+                  );
+                  if (mounted) {
+                    setState(() => _suppressVisibility = false);
+                  }
+                }
+              },
+              child: Container(
+                decoration: BoxDecoration(color: Colors.transparent),
+                child: _textArea(context),
               ),
             ),
           ),
-
-        // Author Section
-        SliverFillRemaining(
-          hasScrollBody: false,
-          child: GestureDetector(
-            onTapUp: (details) async {
-              final screenWidth = MediaQuery.of(context).size.width;
-              final tapX = details.globalPosition.dx;
-
-              if (tapX < screenWidth * 0.2) {
-                if (_currentIndex > 0) {
-                  _pageController.previousPage(
-                    duration: const Duration(milliseconds: 200),
-                    curve: Curves.easeOutCubic,
-                  );
-                }
-              } else if (tapX > screenWidth * 0.8) {
-                if (_currentIndex < widget.posts.length - 1) {
-                  _pageController.nextPage(
-                    duration: const Duration(milliseconds: 200),
-                    curve: Curves.easeOutCubic,
-                  );
-                }
-              } else {
-                setState(() => _suppressVisibility = true);
-                await Navigator.of(context).push(
-                  PageRouteBuilder(
-                    transitionDuration: const Duration(milliseconds: 340),
-                    reverseTransitionDuration: const Duration(
-                      milliseconds: 100,
-                    ),
-                    opaque: false,
-                    pageBuilder:
-                        (_, __, ___) => PostReaderScreen(
-                          exported:
-                              widget.posts[_currentIndex].toExportedData(),
-                          heroTag:
-                              'search-post-${widget.posts[_currentIndex].id}-$_currentIndex',
-                        ),
-                    transitionsBuilder: (
-                      context,
-                      animation,
-                      secondaryAnimation,
-                      child,
-                    ) {
-                      const begin = Offset(0.0, 0.1);
-                      const end = Offset.zero;
-                      const curve = Curves.easeOutCubic;
-                      var tween = Tween(
-                        begin: begin,
-                        end: end,
-                      ).chain(CurveTween(curve: curve));
-                      var offsetAnimation = animation.drive(tween);
-                      var fadeAnimation = Tween<double>(
-                        begin: 0.0,
-                        end: 1.0,
-                      ).animate(
-                        CurvedAnimation(
-                          parent: animation,
-                          curve: Curves.easeOut,
-                        ),
-                      );
-                      return FadeTransition(
-                        opacity: fadeAnimation,
-                        child: SlideTransition(
-                          position: offsetAnimation,
-                          child: child,
-                        ),
-                      );
-                    },
-                  ),
-                );
-                if (mounted) {
-                  setState(() => _suppressVisibility = false);
-                }
-              }
-            },
-            child: Container(
-              decoration: BoxDecoration(color: Colors.transparent),
-              child: _textArea(context),
-            ),
-          ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 
@@ -2520,6 +2655,110 @@ class _SearchResultsViewState extends State<_SearchResultsView> {
         ),
         SliverFillRemaining(hasScrollBody: false, child: Container()),
       ],
+    );
+  }
+}
+
+/// 🎯 배경 비디오 위젯 (VideoCacheService로 프리로드) - 검색 화면용
+class _SearchBackgroundVideoWidget extends StatefulWidget {
+  final String videoUrl;
+
+  const _SearchBackgroundVideoWidget({super.key, required this.videoUrl});
+
+  @override
+  State<_SearchBackgroundVideoWidget> createState() =>
+      _SearchBackgroundVideoWidgetState();
+}
+
+class _SearchBackgroundVideoWidgetState
+    extends State<_SearchBackgroundVideoWidget> {
+  VideoPlayerController? _videoController;
+  bool _isInitialized = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _initializeVideo();
+  }
+
+  @override
+  void didUpdateWidget(_SearchBackgroundVideoWidget oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.videoUrl != widget.videoUrl) {
+      _disposeVideo();
+      _initializeVideo();
+    }
+  }
+
+  @override
+  void dispose() {
+    _disposeVideo();
+    super.dispose();
+  }
+
+  void _initializeVideo() {
+    // 🎯 VideoCacheService에서 컨트롤러 가져오기 (프리로드)
+    _videoController = VideoCacheService().getOrCreateController(
+      widget.videoUrl,
+      namespace: 'search_background',
+    );
+
+    // 이미 초기화된 경우
+    if (_videoController!.value.isInitialized) {
+      setState(() {
+        _isInitialized = true;
+      });
+      // 첫 프레임에서 멈춤 (배경으로 사용)
+      _videoController!.seekTo(Duration.zero);
+      _videoController!.pause();
+      _videoController!.setVolume(0);
+    } else {
+      // 초기화 대기
+      _videoController!.addListener(_onVideoInitialized);
+    }
+  }
+
+  void _onVideoInitialized() {
+    if (_videoController?.value.isInitialized ?? false) {
+      _videoController?.removeListener(_onVideoInitialized);
+      if (mounted) {
+        setState(() {
+          _isInitialized = true;
+        });
+        // 첫 프레임에서 멈춤 (배경으로 사용)
+        _videoController!.seekTo(Duration.zero);
+        _videoController!.pause();
+        _videoController!.setVolume(0);
+      }
+    }
+  }
+
+  void _disposeVideo() {
+    _videoController?.removeListener(_onVideoInitialized);
+    if (_videoController != null) {
+      VideoCacheService().releaseController(
+        widget.videoUrl,
+        namespace: 'search_background',
+      );
+      _videoController = null;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_isInitialized || _videoController == null) {
+      return ShimmerBox(width: double.infinity, height: double.infinity);
+    }
+
+    return SizedBox.expand(
+      child: FittedBox(
+        fit: BoxFit.cover,
+        child: SizedBox(
+          width: _videoController!.value.size.width,
+          height: _videoController!.value.size.height,
+          child: VideoPlayer(_videoController!),
+        ),
+      ),
     );
   }
 }

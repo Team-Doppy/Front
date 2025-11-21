@@ -126,13 +126,13 @@ class _SharePostOverlayState extends State<SharePostOverlay> {
     return raw.replaceAll(RegExp(r'\s+'), '-');
   }
 
-  /// 🎯 공유용 URL (https://doppy.app/post/{postId}/{slug})
+  /// 🎯 공유용 URL (https://doppy.app/{postId}/{slug})
   String get _shareUrl {
     final slug = _slug;
     if (slug.isEmpty) {
-      return 'https://doppy.app/post/${widget.postId}';
+      return 'https://doppy.app/${widget.postId}';
     }
-    return 'https://doppy.app/post/${widget.postId}/$slug';
+    return 'https://doppy.app/${widget.postId}/$slug';
   }
 
   @override
@@ -610,7 +610,8 @@ class _SharePostOverlayState extends State<SharePostOverlay> {
                 child: Row(
                   children: [
                     // 작성자 프로필 (원형) - 🎯 authorProfileImageUrl 사용
-                    if (widget.authorProfileImageUrl!.isNotEmpty)
+                    if (widget.authorProfileImageUrl != null &&
+                        widget.authorProfileImageUrl!.isNotEmpty)
                       Padding(
                         padding: const EdgeInsets.only(right: 10.0),
                         child: CommonProfileAvatar(
@@ -624,7 +625,8 @@ class _SharePostOverlayState extends State<SharePostOverlay> {
                     // 작성자 이름
                     Expanded(
                       child: Text(
-                        widget.authorProfileImageUrl!.isNotEmpty
+                        (widget.authorProfileImageUrl != null &&
+                                widget.authorProfileImageUrl!.isNotEmpty)
                             ? widget.authorUsername
                             : '@' + widget.authorUsername,
                         style: TextStyle(
@@ -683,8 +685,8 @@ class _SharePostOverlayState extends State<SharePostOverlay> {
                       child: AspectRatio(
                         aspectRatio: 4 / 5,
                         child:
-                            _displayThumbnail != null &&
-                                    _displayThumbnail!.isNotEmpty
+                            (_displayThumbnail != null &&
+                                    _displayThumbnail!.isNotEmpty)
                                 ? _buildThumbnailImage(
                                   fit: BoxFit.cover,
                                   errorWidget: Container(
@@ -695,7 +697,10 @@ class _SharePostOverlayState extends State<SharePostOverlay> {
                                   color: Color(0xFF667EEA),
                                   child: Center(
                                     child: Text(
-                                      widget.authorUsername[0].toUpperCase(),
+                                      widget.authorUsername.isNotEmpty
+                                          ? widget.authorUsername[0]
+                                              .toUpperCase()
+                                          : '?',
                                       style: TextStyle(
                                         fontSize: 24,
                                         fontWeight: FontWeight.bold,

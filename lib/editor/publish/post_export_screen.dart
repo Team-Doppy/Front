@@ -1,30 +1,21 @@
 import 'dart:convert';
-import 'dart:typed_data';
 import 'dart:ui' as ui;
-import 'package:doppy/data/services/upload_service.dart';
-import 'package:doppy/image/native_image_picker.dart';
-import 'package:doppy/image/custom_image_editor_screen.dart';
 import 'package:doppy/editor/service/node_component_service.dart';
 import 'package:doppy/editor/service/sticker_service.dart';
 import 'package:doppy/pages/components/share_post_overlay.dart';
 import 'package:doppy/providers/feed_provider/my_profile_feed_provider.dart';
-import 'package:doppy/providers/user_provider.dart';
 import 'package:doppy/theme/app_colors.dart';
 import 'package:doppy/l10n/app_localizations.dart';
-import 'package:doppy/data/models/system_category_keys.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:doppy/providers/group_provider.dart';
-import 'package:doppy/data/models/group_model.dart';
-import 'package:doppy/editor/publish/post_exporter.dart';
-import 'package:doppy/data/services/blog_service.dart';
+import 'package:doppy/editor/publish/service/post_publish_service.dart';
 import 'package:doppy/utils/error_handler.dart';
-import 'package:doppy/utils/dialog_utils.dart';
 import 'package:doppy/utils/access_level_parser.dart';
-import 'package:doppy/editor/utils/video_upload_utils.dart';
 import 'package:doppy/data/services/video_cache_service.dart';
-import 'package:http/http.dart' as http;
+import 'package:doppy/editor/publish/component/step1_thumbnail_edit.dart';
+import 'package:doppy/editor/publish/component/step2_audience_selection.dart';
+import 'package:doppy/editor/publish/component/step3_category_selection.dart';
 import 'dart:io';
 import 'package:video_player/video_player.dart';
 
@@ -74,8 +65,6 @@ class _PostExportScreenState extends State<PostExportScreen>
 
   // Step 3: 카테고리 선택
   int? _selectedCategoryId = 0; // 기본값: 미지정 카테고리 (ID: 0)
-  bool _isCreatingCategory = false;
-  final TextEditingController _newCategoryController = TextEditingController();
   List<Map<String, dynamic>>? _cachedCategories; // 캐시된 카테고리 목록
   bool _isLoadingCategories = false; // 카테고리 로딩 상태
   bool _showCategoryLoading = false; // 1초 후에만 표시할 카테고리 로딩
@@ -92,7 +81,7 @@ class _PostExportScreenState extends State<PostExportScreen>
 
   late final AnimationController _controller = AnimationController(
     vsync: this,
-    duration: const Duration(milliseconds: 220),
+    duration: const Duration(milliseconds: 150),
   );
   late final AnimationController _intro = AnimationController(
     vsync: this,
@@ -109,6 +98,8 @@ class _PostExportScreenState extends State<PostExportScreen>
     _intro.forward();
     _titleFocusNode.addListener(_onEditFocusChange);
     _excerptFocusNode.addListener(_onEditFocusChange);
+
+    // 카테고리는 Step3 컴포넌트에서 로드함
   }
 
   @override
@@ -160,7 +151,10 @@ class _PostExportScreenState extends State<PostExportScreen>
   void _hydrateFromExported(Map<String, dynamic> exported) {
     _exportedBase = exported;
     // 제목
-    final String? exportedTitle = _readString(exported, keys: const ['title']);
+    final String? exportedTitle = PostContentUtils.readString(
+      exported,
+      keys: const ['title'],
+    );
     if (exportedTitle != null && exportedTitle.trim().isNotEmpty) {
       _title = exportedTitle.trim();
       _titleController.text = _title;
@@ -186,14 +180,25 @@ class _PostExportScreenState extends State<PostExportScreen>
       final videoFile = File(persistedVideoPath);
       if (videoFile.existsSync()) {
         _localVideoFile = videoFile;
-        _videoController = VideoPlayerController.file(videoFile)
-          ..initialize().then((_) {
-            if (mounted) {
-              _videoController?.play();
-              _videoController?.setLooping(true);
-              setState(() {});
-            }
-          });
+        _videoController?.dispose();
+        _videoController = VideoPlayerController.file(videoFile);
+        _videoController!
+            .initialize()
+            .then((_) {
+              if (mounted && _videoController != null) {
+                _videoController?.play();
+                _videoController?.setLooping(true);
+                setState(() {});
+              }
+            })
+            .catchError((error) {
+              print('[PostExport] 비디오 컨트롤러 초기화 실패: $error');
+              if (mounted) {
+                _videoController?.dispose();
+                _videoController = null;
+                setState(() {});
+              }
+            });
         print('[PostExport] 영상 파일 복원: $persistedVideoPath');
 
         // 영상 로컬 썸네일도 복원
@@ -212,29 +217,12 @@ class _PostExportScreenState extends State<PostExportScreen>
     }
 
     // 🎯 Summary는 항상 자동 추출
-    String collected = _collectText(exported);
-    collected =
-        collected
-            .replaceAll(RegExp('\\s+'), ' ')
-            .replaceAll('\u200B', '')
-            .trim();
-    // 제목이 포함되어 있으면 제목 부분 제거
-    String preview = collected;
-    if (_title.isNotEmpty && preview.startsWith(_title)) {
-      preview = preview.substring(_title.length).trim();
-    }
-
-    // 4줄 분량 정도로 제한 (약 80-120자 정도)
-    if (preview.length > 100) {
-      // 마지막 공백 또는 마침표에서 자르기
-      int cutIndex = preview.lastIndexOf(' ', 100);
-      if (cutIndex == -1 || cutIndex < 80) {
-        cutIndex = 100;
-      }
-      preview = '${preview.substring(0, cutIndex).trim()}...';
-    }
-
-    _excerpt = preview;
+    final collected = PostContentUtils.collectText(exported);
+    _excerpt = PostContentUtils.extractSummary(
+      collectedText: collected,
+      title: _title,
+      maxLength: 100,
+    );
     _excerptController.text = _excerpt;
     print('[PostExport] ℹ️ 자동 추출 summary 사용: $_excerpt');
 
@@ -272,58 +260,6 @@ class _PostExportScreenState extends State<PostExportScreen>
         ..addAll(groups);
     } catch (_) {}
     setState(() {});
-  }
-
-  String? _readString(Map<String, dynamic> map, {required List<String> keys}) {
-    for (final k in keys) {
-      final v = map[k];
-      if (v is String) return v;
-    }
-    return null;
-  }
-
-  String _collectText(dynamic node) {
-    final buffer = StringBuffer();
-    void walk(dynamic n) {
-      if (n is Map) {
-        // 제목 노드는 건너뛰기
-        if (n['isTitle'] == true) {
-          return;
-        }
-
-        n.forEach((key, value) {
-          final k = key.toString().toLowerCase();
-          if (value is String) {
-            if (k.contains('text') ||
-                k.contains('content') ||
-                k.contains('paragraph') ||
-                k.contains('description') ||
-                k.contains('body')) {
-              buffer.write(' ');
-              buffer.write(value);
-            }
-          } else {
-            walk(value);
-          }
-        });
-      } else if (n is List) {
-        for (final item in n) {
-          walk(item);
-        }
-      }
-    }
-
-    walk(node);
-    return buffer.toString();
-  }
-
-  void _toggleEditMode() {
-    setState(() => _editMode = !_editMode);
-    if (_editMode) {
-      _controller.forward();
-    } else {
-      _controller.reverse();
-    }
   }
 
   // 부드러운 애니메이션과 함께 닫기
@@ -443,7 +379,20 @@ class _PostExportScreenState extends State<PostExportScreen>
         _isUploading = true;
       });
 
-      final Map<String, dynamic> payload = await _buildFinalJson();
+      // 🎯 포스트 발행 서비스를 통한 최종 JSON 빌드
+      final publishService = PostPublishService();
+      final Map<String, dynamic> payload = await publishService
+          .buildFinalPayload(
+            exportedBase: _exportedBase,
+            title: finalTitle,
+            excerpt: finalExcerpt,
+            thumbnailImageUrl: _exportedThumbnailImageUrl,
+            privateOnly: _audiencePrivateOnly,
+            publicOnly: _audienceSelectAll,
+            friendsOnly: _audienceFriendsOnly,
+            selectedGroupIds: _selectedAudienceGroupIds.toList(),
+            categoryId: _selectedCategoryId,
+          );
 
       // 최종 검증된 데이터 로깅
       final String json = const JsonEncoder.withIndent('  ').convert(payload);
@@ -466,14 +415,10 @@ class _PostExportScreenState extends State<PostExportScreen>
 
       if (!mounted) return;
 
-      // BlogService를 통한 서버 업로드
-
-      final blogService = BlogService();
-      // 매핑 제거: 서버로 전달할 썸네일 ID는 업로더가 반환한 값만 사용 (없으면 null)
-      final String? resolvedThumbId = _thumbnailImageId?.toString();
-      final uploadResult = await blogService.uploadPost(
-        postData: payload,
-        thumbnailImageId: resolvedThumbId,
+      // 🎯 포스트 발행 서비스를 통한 서버 업로드
+      final uploadResult = await publishService.publishPost(
+        payload: payload,
+        thumbnailImageId: _thumbnailImageId?.toString(),
       );
 
       debugPrint('===== UPLOAD RESULT =====');
@@ -564,626 +509,6 @@ class _PostExportScreenState extends State<PostExportScreen>
     }
   }
 
-  Future<Map<String, dynamic>> _buildFinalJson() async {
-    // 사용자가 최종 편집한 제목과 본문 사용
-    final editedTitle = _titleController.text.trim();
-    final editedExcerpt = _excerptController.text.trim();
-
-    // 기존 exportedBase를 복사하고 편집된 내용으로 덮어쓰기
-    final editedBase = Map<String, dynamic>.from(_exportedBase);
-
-    // 제목과 본문을 편집된 내용으로 업데이트
-    editedBase['title'] = editedTitle;
-    editedBase['summary'] = editedExcerpt; // 사용자가 편집한 내용을 summary로 설정
-
-    // 발행 직전 정리: 서버에 업로드되지 않은 로컬 이미지/영상 노드 제거
-    try {
-      bool _isHttpUrl(String u) =>
-          u.startsWith('http://') || u.startsWith('https://');
-      final dynamic contentDyn = editedBase['content'];
-      if (contentDyn is Map) {
-        final List<dynamic> nodes = List<dynamic>.from(
-          contentDyn['nodes'] as List? ?? const [],
-        );
-        final List<dynamic> cleaned = [];
-        for (final n in nodes) {
-          if (n is! Map) continue;
-          final String type = (n['type'] ?? '').toString();
-          if (type == 'image') {
-            final Map<String, dynamic>? data =
-                (n['data'] as Map?)?.cast<String, dynamic>();
-            final String url = (data?['url'] ?? n['url'] ?? '').toString();
-            if (_isHttpUrl(url)) cleaned.add(n);
-          } else if (type == 'imageRow') {
-            final List<dynamic> urls = List<dynamic>.from(
-              n['urls'] ?? const [],
-            );
-            final List<String> httpUrls =
-                urls.map((e) => e.toString()).where(_isHttpUrl).toList();
-            if (httpUrls.isNotEmpty) {
-              n['urls'] = httpUrls;
-              cleaned.add(n);
-            }
-          } else if (type == 'video' || type == 'clip') {
-            final Map<String, dynamic>? data =
-                (n['data'] as Map?)?.cast<String, dynamic>();
-            final String url = (data?['url'] ?? n['url'] ?? '').toString();
-            if (_isHttpUrl(url)) cleaned.add(n);
-          } else {
-            cleaned.add(n); // 그 외 노드는 그대로 유지
-          }
-        }
-        editedBase['content'] = {...contentDyn, 'nodes': cleaned};
-      }
-    } catch (e) {
-      debugPrint('[PostExport] 로컬 미디어 정리 중 오류: $e');
-    }
-
-    // 🎯 usedImageUrls 재수집 (PNG 드로잉 포함)
-    final Set<String> usedUrls = <String>{};
-
-    // 썸네일
-    if (_exportedThumbnailImageUrl.trim().isNotEmpty) {
-      usedUrls.add(_exportedThumbnailImageUrl.trim());
-    }
-
-    // content의 이미지/비디오 노드
-    final dynamic contentDyn = editedBase['content'];
-    if (contentDyn is Map) {
-      final nodes = List<dynamic>.from(contentDyn['nodes'] as List? ?? []);
-      for (final n in nodes) {
-        if (n is! Map) continue;
-        final type = (n['type'] ?? '').toString();
-        if (type == 'image') {
-          final url =
-              ((n['data'] as Map?)?['url'] ?? n['url'] ?? '').toString();
-          if (url.isNotEmpty) usedUrls.add(url);
-        } else if (type == 'imageRow') {
-          final urls = List<dynamic>.from(n['urls'] ?? []);
-          for (final u in urls) {
-            if (u.toString().isNotEmpty) usedUrls.add(u.toString());
-          }
-        } else if (type == 'video' || type == 'clip') {
-          final url = ((n['data'] as Map?)?['url'] ?? '').toString();
-          if (url.isNotEmpty) usedUrls.add(url);
-        }
-      }
-
-      // 🎯 스티커 이미지 URL (PNG 드로잉 포함)
-      final stickers = List<dynamic>.from(
-        contentDyn['stickers'] as List? ?? [],
-      );
-      print('[PostExport] 🎨 스티커 개수: ${stickers.length}');
-      for (final s in stickers) {
-        if (s is! Map) continue;
-        if ((s['type'] ?? '') == 'image') {
-          final contentMap = s['content'] as Map<String, dynamic>?;
-          final url = (contentMap?['url'] ?? '').toString();
-          print('[PostExport] 🎨 스티커 URL: $url');
-          if (url.isNotEmpty) {
-            usedUrls.add(url);
-            print('[PostExport] ✅ PNG 드로잉 URL 추가!');
-          }
-        }
-      }
-    }
-
-    editedBase['usedImageUrls'] = usedUrls.toList();
-    print('[PostExport] 📦 최종 usedImageUrls: ${usedUrls.length}개');
-    for (final url in usedUrls) {
-      print('  - $url');
-    }
-
-    // 디버그 로깅: 실제 전달되는 값 확인
-    debugPrint('===== [_buildFinalJson] 공개 범위 설정 =====');
-    debugPrint('_audiencePrivateOnly: $_audiencePrivateOnly');
-    debugPrint('_audienceSelectAll: $_audienceSelectAll');
-    debugPrint('_selectedAudienceGroupIds: $_selectedAudienceGroupIds');
-
-    return PostExporter.composeFinalPayload(
-      thumbnailImageUrl: _exportedThumbnailImageUrl,
-      base: editedBase,
-      privateOnly: _audiencePrivateOnly,
-      publicOnly: _audienceSelectAll,
-      friendsOnly: _audienceFriendsOnly,
-      selectedGroupIds: _selectedAudienceGroupIds.toList(),
-      categoryId: _selectedCategoryId, // 카테고리 ID 전달
-      createdAt: DateTime.now(),
-    );
-  }
-
-  Future<void> _openGalleryPicker() async {
-    // 🎯 편집 모드 비활성화 및 포커스 해제
-    setState(() {
-      _editMode = false;
-    });
-    _controller.reverse();
-    FocusScope.of(context).unfocus();
-
-    // 이미지 또는 비디오 선택 옵션 제공
-    String? mode;
-    final mediaType = await showModalBottomSheet<String>(
-      backgroundColor: Colors.transparent,
-      context: context,
-      builder:
-          (context) => ClipRRect(
-            borderRadius: BorderRadius.circular(16),
-            child: BackdropFilter(
-              filter: ui.ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-              child: Container(
-                decoration: BoxDecoration(
-                  color: Theme.of(context).colorScheme.surface.withOpacity(0.9),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                height: 180,
-                width: double.infinity,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.center,
-                  children: [
-                    const SizedBox(height: 8),
-                    Container(
-                      width: 50,
-                      height: 5,
-                      decoration: BoxDecoration(
-                        color: Theme.of(
-                          context,
-                        ).colorScheme.onSurface.withOpacity(0.3),
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    ListTile(
-                      onTap: () async {
-                        mode = 'image';
-                        return Navigator.of(context).pop(mode);
-                      },
-                      title: Text(context.tr('select_image')),
-                    ),
-                    ListTile(
-                      onTap: () async {
-                        mode = 'video';
-                        return Navigator.of(context).pop(mode);
-                      },
-                      title: Text(context.tr('select_video')),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-    );
-
-    if (mediaType == null || !mounted) return;
-
-    if (mediaType == 'image') {
-      await _pickAndUploadImage();
-    } else if (mediaType == 'video') {
-      await _pickAndExtractVideoThumbnail();
-    }
-  }
-
-  /// 이미지 선택 및 업로드
-  Future<void> _pickAndUploadImage() async {
-    final picker = NativeImagePicker();
-    final file = await picker.pickSingleImage();
-
-    if (file != null) {
-      if (!mounted) return;
-
-      // 즉시 로컬 파일 미리보기 표시 (영상 제거)
-      setState(() {
-        _localThumbnailFile = file;
-        _isUploadingThumb = true;
-        // 영상 파일 정리
-        _videoController?.dispose();
-        _videoController = null;
-        _localVideoFile = null;
-      });
-
-      // 영상 파일 persist 정리
-      final svc = NodeComponentService();
-      svc.clearTempVideoFile(_nsKey);
-
-      try {
-        final upload = context.read<UploadService>();
-        final tasks = await upload.uploadFilesViaServerBatches([
-          file,
-        ], kind: UploadKind.editorImage);
-        if (tasks.isNotEmpty) {
-          final t = tasks.first;
-          final hasUrl = (t.url ?? '').isNotEmpty;
-          final hasServerImageId = (t.imageId ?? '').toString().isNotEmpty;
-          if (t.state == UploadState.success && hasUrl && hasServerImageId) {
-            // 서버 URL로 교체
-            _exportedThumbnailImageUrl = t.url!;
-            _thumbnailImageId = t.imageId;
-
-            // 🎯 네트워크 이미지 미리 로드 (깜빡임 방지)
-            await precacheImage(
-              NetworkImage(_exportedThumbnailImageUrl),
-              context,
-            );
-
-            if (mounted) {
-              setState(() {
-                _localThumbnailFile = null; // 로컬 파일 제거 (네트워크 이미지 준비 완료)
-              });
-            }
-          } else {
-            if (mounted) {
-              ErrorHandler.showError(
-                context,
-                context.tr('thumbnail_upload_failed'),
-              );
-              setState(() {
-                _localThumbnailFile = null;
-              });
-            }
-          }
-        }
-      } catch (e) {
-        if (mounted) {
-          ErrorHandler.handleError(context, e, customMessage: '업로드 오류');
-          setState(() {
-            _localThumbnailFile = null;
-          });
-        }
-      } finally {
-        if (mounted) {
-          setState(() {
-            _isUploadingThumb = false;
-            // 🎯 이미지 선택 후 편집 모드 비활성화 유지
-            _editMode = false;
-          });
-          _controller.reverse();
-          // 🎯 포커스 해제하여 편집 모드 자동 활성화 방지
-          FocusScope.of(context).unfocus();
-        }
-      }
-    }
-  }
-
-  /// 비디오 선택 및 업로드 (썸네일로 사용)
-  Future<void> _pickAndExtractVideoThumbnail() async {
-    final picker = NativeImagePicker();
-    final videoFile = await picker.pickSingleVideo();
-
-    if (videoFile == null || !mounted) return;
-
-    // 클라이언트 측 파일 검증 (확장자 + 크기)
-    final validationError = await VideoUploadUtils.validateFile(
-      context,
-      videoFile.path,
-    );
-    if (validationError != null) return;
-
-    setState(() => _isUploadingThumb = true);
-
-    try {
-      // 원본 비디오에서 썸네일 생성 (업로드 중 플레이스홀더로 사용)
-      final thumbnail = await VideoUploadUtils.generateThumbnail(
-        videoFile.path,
-      );
-      if (thumbnail == null) {
-        throw Exception('썸네일 생성 실패');
-      }
-
-      // 비디오 플레이어 초기화 (즉시 재생 - 원본)
-      _videoController?.dispose();
-      _videoController = VideoPlayerController.file(videoFile)
-        ..initialize().then((_) {
-          if (mounted) {
-            _videoController?.play();
-            _videoController?.setLooping(true);
-            setState(() {});
-          }
-        });
-
-      // 즉시 영상 파일 저장 + 로컬 썸네일 표시 (플레이어용 + persist)
-      if (mounted) {
-        setState(() {
-          _localVideoFile = videoFile;
-          _localThumbnailFile = thumbnail; // 업로드 중 플레이스홀더로 썸네일 사용
-        });
-        // 영상 파일 경로 + 로컬 썸네일 경로 persist
-        final svc = NodeComponentService();
-        svc.setTempVideoFile(_nsKey, videoFile.path);
-        svc.setTempVideoThumbnail(_nsKey, thumbnail.path);
-      }
-
-      // MOV/M4V를 MP4로 변환 (원본 화질 유지)
-      final mp4File = await VideoUploadUtils.compressVideo(videoFile.path);
-      if (mp4File == null) {
-        if (mounted) {
-          await DialogUtils.showInfoDialog(
-            context,
-            title: '업로드 불가',
-            message: '파일이 너무 큽니다.',
-          );
-          _videoController?.dispose();
-          _videoController = null;
-          setState(() {
-            _localVideoFile = null;
-            _localThumbnailFile = null;
-            _isUploadingThumb = false;
-          });
-        }
-        return;
-      }
-
-      // 압축된 MP4 파일을 서버에 업로드
-      final upload = context.read<UploadService>();
-      final task = upload.enqueueFile(mp4File, kind: UploadKind.video);
-
-      // 리스너로 상태 변화 감지
-      bool handled = false;
-      void listener() async {
-        if (handled) return;
-
-        if (task.state == UploadState.success) {
-          handled = true;
-          final videoUrl = task.url;
-          final videoId = task.imageId;
-
-          if (videoUrl == null || videoUrl.isEmpty) {
-            if (mounted) {
-              ErrorHandler.showError(context, context.tr('video_url_failed'));
-              _videoController?.dispose();
-              _videoController = null;
-              setState(() {
-                _localVideoFile = null;
-                _isUploadingThumb = false;
-              });
-            }
-            return;
-          }
-
-          // 영상 URL을 썸네일로 저장
-          _exportedThumbnailImageUrl = videoUrl;
-          _thumbnailImageId = videoId;
-
-          if (mounted) {
-            setState(() {
-              // 로컬 썸네일은 유지 (영상의 배경으로 계속 표시)
-              _isUploadingThumb = false;
-              // 🎯 비디오 선택 후 편집 모드 비활성화 유지
-              _editMode = false;
-            });
-            _controller.reverse();
-            // 🎯 포커스 해제하여 편집 모드 자동 활성화 방지
-            FocusScope.of(context).unfocus();
-          }
-        } else if (task.state == UploadState.failed) {
-          handled = true;
-          if (mounted) {
-            await VideoUploadUtils.showUploadFailedDialog(context, task.error);
-            _videoController?.dispose();
-            _videoController = null;
-            setState(() {
-              _localVideoFile = null;
-              _localThumbnailFile = null;
-              _isUploadingThumb = false;
-              // 🎯 비디오 선택 실패 시에도 편집 모드 비활성화 유지
-              _editMode = false;
-            });
-            _controller.reverse();
-            FocusScope.of(context).unfocus();
-          }
-        } else if (task.state == UploadState.cancelled) {
-          handled = true;
-          if (mounted) {
-            await VideoUploadUtils.showUploadCancelledDialog(context);
-            _videoController?.dispose();
-            _videoController = null;
-            setState(() {
-              _localVideoFile = null;
-              _localThumbnailFile = null;
-              _isUploadingThumb = false;
-              // 🎯 비디오 선택 취소 시에도 편집 모드 비활성화 유지
-              _editMode = false;
-            });
-            _controller.reverse();
-            FocusScope.of(context).unfocus();
-          }
-        }
-      }
-
-      task.addListener(listener);
-
-      // 안전 타임아웃 (2분)
-      Future.delayed(const Duration(minutes: 2), () async {
-        if (!handled && mounted) {
-          task.removeListener(listener);
-          await VideoUploadUtils.showUploadTimeoutDialog(context);
-          _videoController?.dispose();
-          _videoController = null;
-          setState(() {
-            _localVideoFile = null;
-            _localThumbnailFile = null;
-            _isUploadingThumb = false;
-            // 🎯 비디오 선택 타임아웃 시에도 편집 모드 비활성화 유지
-            _editMode = false;
-          });
-          _controller.reverse();
-          FocusScope.of(context).unfocus();
-        }
-      });
-    } catch (e) {
-      if (mounted) {
-        await VideoUploadUtils.showGeneralErrorDialog(context);
-        _videoController?.dispose();
-        _videoController = null;
-        setState(() {
-          _localVideoFile = null;
-          _localThumbnailFile = null;
-          _isUploadingThumb = false;
-          // 🎯 비디오 선택 에러 시에도 편집 모드 비활성화 유지
-          _editMode = false;
-        });
-        _controller.reverse();
-        FocusScope.of(context).unfocus();
-      }
-    }
-  }
-
-  /// 썸네일 편집/변경 옵션 선택
-  Future<void> _editThumbnail() async {
-    // 🎯 편집 모드 비활성화 및 포커스 해제
-    setState(() {
-      _editMode = false;
-    });
-    _controller.reverse();
-    FocusScope.of(context).unfocus();
-
-    // 🎯 썸네일이 없거나 영상일 때는 바로 갤러리 피커 열기
-    if (_exportedThumbnailImageUrl.isEmpty || _localVideoFile != null) {
-      await _openGalleryPicker();
-      return;
-    }
-
-    // 🎯 이미지일 때만 편집/변경 옵션 선택
-    final action = await showModalBottomSheet<String>(
-      backgroundColor: Colors.transparent,
-      context: context,
-      builder:
-          (context) => ClipRRect(
-            borderRadius: BorderRadius.circular(16),
-            child: BackdropFilter(
-              filter: ui.ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-              child: Container(
-                decoration: BoxDecoration(
-                  color: Theme.of(context).colorScheme.surface.withOpacity(0.9),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                height: 180,
-                width: double.infinity,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.center,
-                  children: [
-                    const SizedBox(height: 8),
-                    Container(
-                      width: 50,
-                      height: 5,
-                      decoration: BoxDecoration(
-                        color: Theme.of(
-                          context,
-                        ).colorScheme.onSurface.withOpacity(0.3),
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    ListTile(
-                      onTap: () => Navigator.of(context).pop('edit'),
-                      title: Text(context.tr('edit_thumbnail')),
-                    ),
-                    ListTile(
-                      onTap: () => Navigator.of(context).pop('change'),
-                      title: Text(context.tr('change_thumbnail')),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-    );
-
-    if (action == null || !mounted) return;
-
-    if (action == 'edit') {
-      await _editThumbnailImage();
-    } else if (action == 'change') {
-      await _openGalleryPicker();
-    }
-  }
-
-  /// 썸네일 이미지 편집 (커스텀 이미지 에디터 사용)
-  Future<void> _editThumbnailImage() async {
-    try {
-      // 🎯 편집 모드 비활성화 및 포커스 해제
-      setState(() {
-        _editMode = false;
-      });
-      _controller.reverse();
-      FocusScope.of(context).unfocus();
-
-      // 현재 썸네일 이미지를 네트워크에서 로드
-      final response = await http.get(Uri.parse(_exportedThumbnailImageUrl));
-      if (response.statusCode != 200) {
-        if (mounted) {
-          ErrorHandler.showError(context, context.tr('image_load_failed'));
-        }
-        return;
-      }
-
-      final imageBytes = response.bodyBytes;
-
-      // 커스텀 이미지 에디터 열기
-      final editedBytes = await Navigator.push<Uint8List?>(
-        context,
-        MaterialPageRoute(
-          builder: (context) => CustomImageEditorScreen(imageBytes: imageBytes),
-          fullscreenDialog: true,
-        ),
-      );
-
-      if (editedBytes == null || !mounted) return;
-
-      // 편집된 이미지를 서버에 업로드
-      setState(() => _isUploadingThumb = true);
-
-      final upload = context.read<UploadService>();
-      final tempFile = File(
-        '${Directory.systemTemp.path}/edited_thumbnail_${DateTime.now().millisecondsSinceEpoch}.jpg',
-      );
-      await tempFile.writeAsBytes(editedBytes);
-
-      final tasks = await upload.uploadFilesViaServerBatches([
-        tempFile,
-      ], kind: UploadKind.editorImage);
-
-      // 임시 파일 삭제
-      try {
-        await tempFile.delete();
-      } catch (_) {}
-
-      if (tasks.isEmpty || tasks.first.state != UploadState.success) {
-        if (mounted) {
-          ErrorHandler.showError(
-            context,
-            context.tr('thumbnail_upload_failed'),
-          );
-        }
-        return;
-      }
-
-      final newUrl = tasks.first.url;
-      final newId = tasks.first.imageId;
-
-      if (newUrl == null || newUrl.isEmpty) {
-        if (mounted) {
-          ErrorHandler.showError(context, context.tr('upload_url_failed'));
-        }
-        return;
-      }
-
-      // 새 썸네일 정보 저장
-      _exportedThumbnailImageUrl = newUrl;
-      _thumbnailImageId = newId;
-
-      if (mounted) {
-        setState(() {});
-      }
-    } catch (e) {
-      if (mounted) {
-        ErrorHandler.handleError(context, e, customMessage: '편집 중 오류가 발생했습니다');
-      }
-    } finally {
-      if (mounted) {
-        setState(() => _isUploadingThumb = false);
-      }
-    }
-  }
-
   Widget _buildDynamicBackground() {
     return Positioned.fill(
       child: Stack(
@@ -1259,10 +584,7 @@ class _PostExportScreenState extends State<PostExportScreen>
         _editMode = false;
       });
 
-      // Step 3(카테고리) 진입 시 카테고리 로드
-      if (_currentStep == 2 && _cachedCategories == null) {
-        _loadCategoriesOnce();
-      }
+      // 카테고리는 Step3 컴포넌트에서 로드함
     }
   }
 
@@ -1330,9 +652,143 @@ class _PostExportScreenState extends State<PostExportScreen>
                 child: IndexedStack(
                   index: _currentStep,
                   children: [
-                    _buildStep1ThumbnailAndEdit(cardRadius),
-                    _buildStep2AudienceSelection(),
-                    _buildStep3CategorySelection(),
+                    Step1ThumbnailEdit(
+                      sessionKey: _nsKey,
+                      cardRadius: cardRadius,
+                      titleController: _titleController,
+                      excerptController: _excerptController,
+                      titleFocusNode: _titleFocusNode,
+                      excerptFocusNode: _excerptFocusNode,
+                      exportedThumbnailImageUrl: _exportedThumbnailImageUrl,
+                      editMode: _editMode,
+                      isUploadingThumb: _isUploadingThumb,
+                      localThumbnailFile: _localThumbnailFile,
+                      localVideoFile: _localVideoFile,
+                      videoController: _videoController,
+                      controller: _controller,
+                      onThumbnailUrlChanged: (url) {
+                        setState(() {
+                          _exportedThumbnailImageUrl = url;
+                        });
+                      },
+                      onThumbnailIdChanged: (id) {
+                        setState(() {
+                          _thumbnailImageId = id;
+                        });
+                      },
+                      onLocalThumbnailChanged: (file) {
+                        setState(() {
+                          _localThumbnailFile = file;
+                        });
+                      },
+                      onLocalVideoChanged: (file) {
+                        setState(() {
+                          _localVideoFile = file;
+                        });
+                      },
+                      onVideoControllerChanged: (controller) {
+                        setState(() {
+                          _videoController?.dispose();
+                          _videoController = controller;
+                        });
+                      },
+                      onIsUploadingThumbChanged: (value) {
+                        setState(() {
+                          _isUploadingThumb = value;
+                        });
+                      },
+                      onEditModeChanged: (value) {
+                        setState(() {
+                          _editMode = value;
+                          if (value) {
+                            _controller.forward();
+                          } else {
+                            _controller.reverse();
+                          }
+                        });
+                      },
+                      onEditFocusChange: _onEditFocusChange,
+                    ),
+                    Step2AudienceSelection(
+                      selectedAudienceGroupIds: _selectedAudienceGroupIds,
+                      audienceSelectAll: _audienceSelectAll,
+                      audiencePrivateOnly: _audiencePrivateOnly,
+                      audienceFriendsOnly: _audienceFriendsOnly,
+                      onAudienceSelectAllChanged: (value) {
+                        setState(() {
+                          _audienceSelectAll = value;
+                          if (value) {
+                            _audiencePrivateOnly = false;
+                            _audienceFriendsOnly = false;
+                            _selectedAudienceGroupIds.clear();
+                          }
+                        });
+                      },
+                      onAudiencePrivateOnlyChanged: (value) {
+                        setState(() {
+                          _audiencePrivateOnly = value;
+                          if (value) {
+                            _audienceSelectAll = false;
+                            _audienceFriendsOnly = false;
+                            _selectedAudienceGroupIds.clear();
+                          }
+                        });
+                      },
+                      onAudienceFriendsOnlyChanged: (value) {
+                        setState(() {
+                          _audienceFriendsOnly = value;
+                          if (value) {
+                            _audienceSelectAll = false;
+                            _audiencePrivateOnly = false;
+                            _selectedAudienceGroupIds.clear();
+                          }
+                        });
+                      },
+                      onSelectedAudienceGroupIdsChanged: (ids) {
+                        setState(() {
+                          _selectedAudienceGroupIds.clear();
+                          _selectedAudienceGroupIds.addAll(ids);
+                        });
+                      },
+                      showGroupLoading: _showGroupLoading,
+                      isGroupLoadingStarted: _isGroupLoadingStarted,
+                      onShowGroupLoadingChanged: (value) {
+                        setState(() {
+                          _showGroupLoading = value;
+                        });
+                      },
+                      onIsGroupLoadingStartedChanged: (value) {
+                        setState(() {
+                          _isGroupLoadingStarted = value;
+                        });
+                      },
+                    ),
+                    Step3CategorySelection(
+                      selectedCategoryId: _selectedCategoryId,
+                      onSelectedCategoryIdChanged: (id) {
+                        setState(() {
+                          _selectedCategoryId = id;
+                        });
+                      },
+                      cachedCategories: _cachedCategories,
+                      onCachedCategoriesChanged: (categories) {
+                        setState(() {
+                          _cachedCategories = categories;
+                        });
+                      },
+                      isLoadingCategories: _isLoadingCategories,
+                      onIsLoadingCategoriesChanged: (value) {
+                        setState(() {
+                          _isLoadingCategories = value;
+                        });
+                      },
+                      showCategoryLoading: _showCategoryLoading,
+                      onShowCategoryLoadingChanged: (value) {
+                        setState(() {
+                          _showCategoryLoading = value;
+                        });
+                      },
+                    ),
                   ],
                 ),
               ),
@@ -1366,10 +822,24 @@ class _PostExportScreenState extends State<PostExportScreen>
           padding: const EdgeInsets.symmetric(horizontal: 10.0),
           child: TextButton(
             onPressed: () {
+              // 🎯 수정완료 시 명시적으로 포커스 노드 모두 해제
+              _titleFocusNode.unfocus();
+              _excerptFocusNode.unfocus();
+              FocusScope.of(context).unfocus();
+
               setState(() {
                 _editMode = false;
               });
-              FocusScope.of(context).unfocus();
+              _controller.reverse();
+
+              // 추가로 포커스가 완전히 해제될 때까지 약간 대기
+              Future.delayed(const Duration(milliseconds: 100), () {
+                if (mounted) {
+                  _titleFocusNode.unfocus();
+                  _excerptFocusNode.unfocus();
+                  FocusScope.of(context).unfocus();
+                }
+              });
             },
             child: Text(
               context.tr('modify_complete'),
@@ -1498,1566 +968,6 @@ class _PostExportScreenState extends State<PostExportScreen>
           ),
         ),
       ),
-    );
-  }
-
-  // Step 1: 썸네일 & 글 편집 (인스타그램 스타일 부드러운 애니메이션)
-  Widget _buildStep1ThumbnailAndEdit(double cardRadius) {
-    final isKeyboardVisible = MediaQuery.of(context).viewInsets.bottom > 0;
-
-    return Column(
-      children: [
-        Expanded(
-          child: SingleChildScrollView(
-            physics: const NeverScrollableScrollPhysics(),
-            child: Column(
-              children: [
-                const SizedBox(height: 40),
-                // 🎯 썸네일 영역 (부드럽게 사라짐)
-                AnimatedContainer(
-                  duration: const Duration(milliseconds: 260),
-                  curve: Curves.easeInOut,
-                  height: isKeyboardVisible ? 8 : 400,
-                  child: AnimatedOpacity(
-                    duration: const Duration(milliseconds: 260),
-                    curve: Curves.easeInOut,
-                    opacity: isKeyboardVisible ? 0 : 1,
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 40.0),
-                      child: _buildAnimatedThumbnail(cardRadius),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 20),
-                // 🎯 텍스트 영역
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(30, 30, 30, 16),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.center,
-                    children: [
-                      _buildTitleField(),
-                      const SizedBox(height: 12),
-                      _buildExcerptField(),
-                    ],
-                  ),
-                ),
-                // 키보드 여유 공간
-                SizedBox(height: isKeyboardVisible ? 50 : 150),
-              ],
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  // 🎯 썸네일 부분 전용 위젯 (기존 로직 그대로 유지)
-  Widget _buildAnimatedThumbnail(double cardRadius) {
-    return Center(
-      child: AspectRatio(
-        aspectRatio: 4 / 5,
-        child: GestureDetector(
-          onTap: _openGalleryPicker,
-          onLongPress: _toggleEditMode,
-          child: Container(
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(cardRadius + 2),
-              border: Border.all(
-                color: Theme.of(context).colorScheme.onSurface.withOpacity(0.1),
-                width: 2,
-              ),
-            ),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(cardRadius),
-              child: Stack(
-                children: [
-                  // 🎯 이미지/비디오 전환
-                  Positioned.fill(
-                    child: RepaintBoundary(
-                      child: AnimatedSwitcher(
-                        duration: const Duration(milliseconds: 250),
-                        switchInCurve: Curves.easeInOut,
-                        switchOutCurve: Curves.easeInOut,
-                        child: _buildThumbnailContent(),
-                      ),
-                    ),
-                  ),
-
-                  // 업로드 중 로딩 오버레이
-                  if (_isUploadingThumb)
-                    Positioned.fill(
-                      child: Container(
-                        color: Colors.black.withOpacity(0.3),
-                        child: const Center(
-                          child: CircularProgressIndicator(
-                            valueColor: AlwaysStoppedAnimation<Color>(
-                              Colors.white,
-                            ),
-                            strokeWidth: 3,
-                          ),
-                        ),
-                      ),
-                    ),
-
-                  // 음소거 버튼 (영상일 때만 표시)
-                  if (_localVideoFile != null &&
-                      _videoController != null &&
-                      _videoController!.value.isInitialized)
-                    Positioned(
-                      right: 12,
-                      bottom: 12,
-                      child: RepaintBoundary(
-                        child: AnimatedOpacity(
-                          opacity: _editMode ? 0.3 : 1.0,
-                          duration: const Duration(milliseconds: 150),
-                          child: GestureDetector(
-                            onTap: () {
-                              setState(() {
-                                if (_videoController!.value.volume > 0) {
-                                  _videoController!.setVolume(0);
-                                } else {
-                                  _videoController!.setVolume(1);
-                                }
-                              });
-                            },
-                            child: Container(
-                              padding: const EdgeInsets.all(8),
-                              decoration: BoxDecoration(
-                                color: Colors.black.withOpacity(0.5),
-                                shape: BoxShape.circle,
-                              ),
-                              child: Icon(
-                                _videoController!.value.volume > 0
-                                    ? Icons.volume_up_rounded
-                                    : Icons.volume_off_rounded,
-                                color: Colors.white,
-                                size: 20,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-
-                  // 편집/변경 버튼
-                  Positioned(
-                    left: 6,
-                    bottom: 6,
-                    child: GestureDetector(
-                      onTap: _editThumbnail,
-                      child: _buildEditButton(),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  // 🎯 썸네일 컨텐츠 빌드 (비디오/이미지 로직)
-  Widget _buildThumbnailContent() {
-    if (_localVideoFile != null && _videoController != null) {
-      return SizedBox.expand(
-        key: ValueKey('video_${_localVideoFile!.path}'),
-        child: Stack(
-          fit: StackFit.expand,
-          children: [
-            if (_localThumbnailFile != null)
-              Image.file(_localThumbnailFile!, fit: BoxFit.cover),
-            if (_videoController!.value.isInitialized)
-              FittedBox(
-                fit: BoxFit.cover,
-                child: SizedBox(
-                  width: _videoController!.value.size.width,
-                  height: _videoController!.value.size.height,
-                  child: VideoPlayer(_videoController!),
-                ),
-              ),
-          ],
-        ),
-      );
-    } else if (_localThumbnailFile != null) {
-      return SizedBox.expand(
-        key: ValueKey('local_${_localThumbnailFile!.path}'),
-        child: Image.file(_localThumbnailFile!, fit: BoxFit.cover),
-      );
-    } else if (_exportedThumbnailImageUrl.isEmpty) {
-      return const SizedBox.expand(
-        key: ValueKey('empty'),
-        child: _EmptyImagePlaceholder(),
-      );
-    } else {
-      return SizedBox.expand(
-        key: ValueKey('network_$_exportedThumbnailImageUrl'),
-        child: Image.network(
-          _exportedThumbnailImageUrl,
-          fit: BoxFit.cover,
-          errorBuilder: (c, e, s) => const _EmptyImagePlaceholder(),
-        ),
-      );
-    }
-  }
-
-  // 🎯 제목 필드
-  Widget _buildTitleField() {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.center,
-      crossAxisAlignment: CrossAxisAlignment.center,
-      children: [
-        Expanded(
-          child: TextField(
-            cursorColor: AppColors.darkTextPrimary,
-            controller: _titleController,
-            focusNode: _titleFocusNode,
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              color: AppColors.darkTextPrimary,
-              fontSize: 28,
-              fontWeight: FontWeight.bold,
-              letterSpacing: -0.2,
-            ),
-            maxLines: 1,
-            scrollPhysics: const NeverScrollableScrollPhysics(),
-            decoration: InputDecoration(
-              hintText: context.tr('title_input_placeholder'),
-              hintStyle: TextStyle(
-                color: Theme.of(context).colorScheme.onSurface.withOpacity(0.3),
-              ),
-              border: InputBorder.none,
-              isCollapsed: true,
-              contentPadding: EdgeInsets.zero,
-            ),
-            onTap: () {
-              setState(() => _editMode = true);
-            },
-          ),
-        ),
-      ],
-    );
-  }
-
-  // 🎯 본문 필드
-  Widget _buildExcerptField() {
-    return TextField(
-      controller: _excerptController,
-      focusNode: _excerptFocusNode,
-      textAlign: TextAlign.center,
-      style: TextStyle(
-        color: AppColors.darkTextPrimary.withOpacity(0.9),
-        fontSize: 15,
-        fontWeight: FontWeight.w300,
-        height: 1.6,
-        letterSpacing: -0.1,
-      ),
-      cursorColor: AppColors.darkTextPrimary,
-      maxLines: 4,
-      minLines: 2,
-      keyboardType: TextInputType.multiline,
-      scrollPhysics: const NeverScrollableScrollPhysics(),
-      decoration: InputDecoration(
-        hintText: context.tr('content_input_placeholder'),
-        hintStyle: TextStyle(
-          color: Theme.of(context).colorScheme.onSurface.withOpacity(0.3),
-        ),
-        border: InputBorder.none,
-        isCollapsed: true,
-        contentPadding: EdgeInsets.zero,
-      ),
-      onTap: () {
-        setState(() => _editMode = true);
-      },
-    );
-  }
-
-  // Step 2: 공개 범위 선택
-  Widget _buildStep2AudienceSelection() {
-    return Consumer<GroupProvider>(
-      builder: (context, groupProvider, child) {
-        // 그룹 목록 로드
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (groupProvider.myGroups.isEmpty &&
-              !groupProvider.isLoading &&
-              !_isGroupLoadingStarted) {
-            _isGroupLoadingStarted = true;
-            _showGroupLoading = false;
-
-            // 1초 후에 로딩 표시
-            Future.delayed(const Duration(milliseconds: 1000), () {
-              if (mounted && groupProvider.isLoading) {
-                setState(() {
-                  _showGroupLoading = true;
-                });
-              }
-            });
-
-            groupProvider.fetchMyGroups();
-          }
-        });
-
-        return Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 10),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const SizedBox(height: 36),
-              Text(
-                '누구에게 공개할까요?',
-                style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                  fontWeight: FontWeight.bold,
-                  fontSize: 22,
-                  color: AppColors.darkTextPrimary,
-                ),
-              ),
-              const SizedBox(height: 20),
-
-              // 전체공개/나만보기 선택 영역
-              Container(
-                margin: const EdgeInsets.only(bottom: 8),
-                child: Column(
-                  children: [
-                    // 전체공개
-                    Container(
-                      width: double.infinity,
-                      margin: const EdgeInsets.only(bottom: 12),
-                      decoration: BoxDecoration(
-                        color:
-                            _audienceSelectAll
-                                ? Colors.white.withOpacity(0.4)
-                                : Colors.white.withOpacity(0.1),
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                      child: Material(
-                        color: Colors.transparent,
-                        child: InkWell(
-                          borderRadius: BorderRadius.circular(16),
-                          onTap: () {
-                            setState(() {
-                              _audienceSelectAll = true;
-                              _audiencePrivateOnly = false;
-                              _selectedAudienceGroupIds.clear();
-                            });
-                          },
-                          child: Padding(
-                            padding: const EdgeInsets.all(16),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Row(
-                                  children: [
-                                    Expanded(
-                                      child: Text(
-                                        SystemCategoryKeys.getDisplayText(
-                                          context,
-                                          SystemCategoryKeys.public,
-                                        ),
-                                        style: TextStyle(
-                                          fontSize: 16,
-                                          fontWeight: FontWeight.w600,
-                                          color: Colors.white,
-                                        ),
-                                      ),
-                                    ),
-                                    if (_audienceSelectAll)
-                                      Icon(
-                                        Icons.check,
-                                        color: Colors.white,
-                                        size: 20,
-                                      ),
-                                  ],
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                    // 나만보기
-                    Container(
-                      width: double.infinity,
-                      decoration: BoxDecoration(
-                        color:
-                            _audiencePrivateOnly
-                                ? Colors.white.withOpacity(0.4)
-                                : Colors.white.withOpacity(0.1),
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                      child: Material(
-                        color: Colors.transparent,
-                        child: InkWell(
-                          borderRadius: BorderRadius.circular(16),
-                          onTap: () {
-                            setState(() {
-                              _audiencePrivateOnly = true;
-                              _audienceSelectAll = false;
-                              _audienceFriendsOnly = false;
-                              _selectedAudienceGroupIds.clear();
-                            });
-                          },
-                          child: Padding(
-                            padding: const EdgeInsets.all(16),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Row(
-                                  children: [
-                                    Expanded(
-                                      child: Text(
-                                        SystemCategoryKeys.getDisplayText(
-                                          context,
-                                          SystemCategoryKeys.private,
-                                        ),
-                                        style: TextStyle(
-                                          fontSize: 16,
-                                          fontWeight: FontWeight.w600,
-                                          color: Colors.white,
-                                        ),
-                                      ),
-                                    ),
-                                    if (_audiencePrivateOnly)
-                                      Icon(
-                                        Icons.check,
-                                        color: Colors.white,
-                                        size: 20,
-                                      ),
-                                  ],
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    // 친구공유
-                    Container(
-                      width: double.infinity,
-                      decoration: BoxDecoration(
-                        color:
-                            _audienceFriendsOnly
-                                ? Colors.white.withOpacity(0.4)
-                                : Colors.white.withOpacity(0.1),
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                      child: Material(
-                        color: Colors.transparent,
-                        child: InkWell(
-                          borderRadius: BorderRadius.circular(16),
-                          onTap: () {
-                            setState(() {
-                              _audienceFriendsOnly = true;
-                              _audiencePrivateOnly = false;
-                              _audienceSelectAll = false;
-                              _selectedAudienceGroupIds.clear();
-                            });
-                          },
-                          child: Padding(
-                            padding: const EdgeInsets.all(16),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Row(
-                                  children: [
-                                    Expanded(
-                                      child: Text(
-                                        SystemCategoryKeys.getDisplayText(
-                                          context,
-                                          SystemCategoryKeys.friends,
-                                        ),
-                                        style: TextStyle(
-                                          fontSize: 16,
-                                          fontWeight: FontWeight.w600,
-                                          color: Colors.white,
-                                        ),
-                                      ),
-                                    ),
-                                    if (_audienceFriendsOnly)
-                                      const Icon(
-                                        Icons.check,
-                                        color: Colors.white,
-                                        size: 20,
-                                      ),
-                                  ],
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-
-              // 🎯 그룹이 있을 때만 그룹 섹션 표시
-              if (groupProvider.isLoading ||
-                  groupProvider.myGroups.isNotEmpty) ...[
-                // 그룹 공유 헤더
-                Padding(
-                  padding: const EdgeInsets.only(top: 16, bottom: 8),
-                  child: Text(
-                    '그룹',
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                      color: Colors.white.withOpacity(0.6),
-                    ),
-                  ),
-                ),
-
-                // 그룹 리스트
-                Expanded(
-                  child:
-                      groupProvider.isLoading
-                          ? (_showGroupLoading
-                              ? Center(
-                                child: CircularProgressIndicator(
-                                  valueColor:
-                                      const AlwaysStoppedAnimation<Color>(
-                                        Colors.white,
-                                      ),
-                                ),
-                              )
-                              : const SizedBox.shrink()) // 로딩이 1초 미만이면 아무것도 표시하지 않음
-                          : ListView.builder(
-                            itemCount: groupProvider.myGroups.length,
-                            itemBuilder: (context, index) {
-                              final group = groupProvider.myGroups[index];
-                              final isSelected = _selectedAudienceGroupIds
-                                  .contains(group.id);
-
-                              return Container(
-                                margin: const EdgeInsets.only(bottom: 8),
-                                decoration: BoxDecoration(
-                                  color:
-                                      isSelected
-                                          ? Colors.white.withOpacity(0.4)
-                                          : Colors.white.withOpacity(0.1),
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                                child: Material(
-                                  color: Colors.transparent,
-                                  child: InkWell(
-                                    borderRadius: BorderRadius.circular(12),
-                                    onTap: () {
-                                      setState(() {
-                                        if (isSelected) {
-                                          _selectedAudienceGroupIds.remove(
-                                            group.id,
-                                          );
-                                        } else {
-                                          // 그룹 선택 시 전체공개/나만보기 먼저 해제
-                                          _audienceSelectAll = false;
-                                          _audiencePrivateOnly = false;
-                                          _audienceFriendsOnly = false;
-                                          _selectedAudienceGroupIds.add(
-                                            group.id,
-                                          );
-                                        }
-                                      });
-                                    },
-                                    child: Padding(
-                                      padding: const EdgeInsets.all(16),
-                                      child: Row(
-                                        children: [
-                                          Expanded(
-                                            child: Text(
-                                              group.name,
-                                              style: TextStyle(
-                                                color: Colors.white,
-                                                fontSize: 16,
-                                                fontWeight: FontWeight.w600,
-                                              ),
-                                            ),
-                                          ),
-                                          if (isSelected)
-                                            Icon(
-                                              Icons.check,
-                                              color: Colors.white,
-                                              size: 22,
-                                            ),
-                                        ],
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              );
-                            },
-                          ),
-                ),
-              ],
-            ],
-          ),
-        );
-      },
-    );
-  }
-
-  // Step 3: 카테고리 선택
-  Widget _buildStep3CategorySelection() {
-    final isDarkMode = true; // 항상 다크모드 UI 사용
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 10),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const SizedBox(height: 36),
-          Text(
-            '어느 카테고리에 저장할까요?',
-            style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-              fontWeight: FontWeight.bold,
-              fontSize: 22,
-              color: Colors.white,
-            ),
-          ),
-
-          const SizedBox(height: 20),
-          Expanded(
-            child:
-                _cachedCategories == null
-                    ? (_showCategoryLoading
-                        ? const Center(
-                          child: CircularProgressIndicator(
-                            valueColor: AlwaysStoppedAnimation<Color>(
-                              Colors.white,
-                            ),
-                          ),
-                        )
-                        : const SizedBox.shrink()) // 로딩이 1초 미만이면 아무것도 표시하지 않음
-                    : ListView(
-                      children: [
-                        // 새 카테고리 만들기 버튼
-                        _buildCreateCategoryButton(isDarkMode: isDarkMode),
-                        const SizedBox(height: 12),
-                        // 실제 카테고리 목록
-                        ..._cachedCategories!.map((category) {
-                          final id = category['id'] as int?;
-                          var name =
-                              category['name'] as String? ??
-                              context.tr('no_name');
-
-                          if (name == 'system_doppy_uncategorized') {
-                            name = context.tr('uncategorized');
-                          }
-
-                          return _buildCategoryOption(
-                            title: name,
-                            isSelected: _selectedCategoryId == id,
-                            isDarkMode: isDarkMode,
-                            onTap: () {
-                              setState(() {
-                                _selectedCategoryId = id;
-                              });
-                            },
-                          );
-                        }).toList(),
-                      ],
-                    ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Future<void> _loadCategoriesOnce() async {
-    if (_cachedCategories != null || _isLoadingCategories)
-      return; // 이미 로드 중이거나 완료됨
-
-    setState(() {
-      _isLoadingCategories = true;
-      _showCategoryLoading = false; // 초기에는 로딩 숨김
-    });
-
-    // 1초 후에 로딩 표시
-    Future.delayed(const Duration(milliseconds: 1000), () {
-      if (mounted && _isLoadingCategories) {
-        setState(() {
-          _showCategoryLoading = true;
-        });
-      }
-    });
-
-    try {
-      final currentUser =
-          Provider.of<UserProvider>(context, listen: false).currentUser;
-      final username = currentUser?.username ?? '';
-
-      if (username.isEmpty) {
-        throw Exception('사용자 정보를 찾을 수 없습니다.');
-      }
-
-      final categories = await BlogService().getUserCategories(username);
-      if (mounted) {
-        setState(() {
-          _cachedCategories = categories;
-          _isLoadingCategories = false;
-          _showCategoryLoading = false;
-
-          // 🎯 기본 카테고리 자동 선택
-          if (_selectedCategoryId == 0 && categories.isNotEmpty) {
-            // ID가 0인 카테고리(미지정)가 있는지 확인
-            final hasUncategorized = categories.any((cat) => cat['id'] == 0);
-            if (!hasUncategorized) {
-              // 없으면 첫 번째 카테고리를 선택
-              _selectedCategoryId = categories.first['id'] as int?;
-              print('[PostExportScreen] 기본 카테고리 자동 선택: $_selectedCategoryId');
-            }
-          }
-        });
-      }
-    } catch (e) {
-      print('[PostExportScreen] 카테고리 로드 실패: $e');
-      if (mounted) {
-        // 에러 발생 시 빈 리스트로 설정하여 재시도 방지
-        setState(() {
-          _cachedCategories = [];
-          _isLoadingCategories = false;
-          _showCategoryLoading = false;
-        });
-      }
-    }
-  }
-
-  Widget _buildCreateCategoryButton({required bool isDarkMode}) {
-    if (_isCreatingCategory) {
-      // 인라인 텍스트 필드 표시
-      return Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color:
-              isDarkMode
-                  ? Colors.grey.withOpacity(0.15)
-                  : Colors.grey.shade200.withOpacity(0.3),
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Column(
-          children: [
-            TextField(
-              cursorColor:
-                  isDarkMode ? Colors.white : AppColors.darkTextPrimary,
-              controller: _newCategoryController,
-              autofocus: true,
-              style: TextStyle(
-                color: isDarkMode ? Colors.white : AppColors.darkTextPrimary,
-                fontSize: 16,
-              ),
-              decoration: InputDecoration(
-                hintText: context.tr('category_name_input'),
-                hintStyle: TextStyle(
-                  color:
-                      isDarkMode
-                          ? Colors.white.withOpacity(0.5)
-                          : Theme.of(
-                            context,
-                          ).colorScheme.onSurface.withOpacity(0.5),
-                  fontSize: 16,
-                ),
-                border: InputBorder.none,
-                contentPadding: EdgeInsets.zero,
-              ),
-            ),
-            const SizedBox(height: 12),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-                TextButton(
-                  onPressed: () {
-                    setState(() {
-                      _isCreatingCategory = false;
-                      _newCategoryController.clear();
-                    });
-                  },
-                  child: Text(
-                    '취소',
-                    style: TextStyle(
-                      color:
-                          isDarkMode
-                              ? Colors.white.withOpacity(0.7)
-                              : Theme.of(
-                                context,
-                              ).colorScheme.onSurface.withOpacity(0.7),
-                      fontSize: 14,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                ElevatedButton(
-                  onPressed: _createNewCategory,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor:
-                        isDarkMode
-                            ? Colors.white.withOpacity(0.9)
-                            : AppColors.darkTextPrimary,
-                    foregroundColor:
-                        isDarkMode ? Colors.black : AppColors.darkBackground,
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 20,
-                      vertical: 10,
-                    ),
-                  ),
-                  child: Text(
-                    context.tr('add'),
-                    style: const TextStyle(fontSize: 14),
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
-      );
-    }
-
-    // 새 카테고리 만들기 버튼
-    return GestureDetector(
-      onTap: () {
-        setState(() {
-          _isCreatingCategory = true;
-        });
-      },
-      child: Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: Colors.white.withOpacity(0.1),
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Row(
-          children: [
-            Expanded(
-              child: Text(
-                context.tr('create_new_category'),
-                style: TextStyle(
-                  color:
-                      isDarkMode
-                          ? Colors.white
-                          : Theme.of(
-                            context,
-                          ).colorScheme.onSurface.withOpacity(0.9),
-                  fontSize: 16,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Future<void> _createNewCategory() async {
-    final name = _newCategoryController.text.trim();
-    if (name.isEmpty) {
-      ErrorHandler.showError(context, context.tr('category_name_required'));
-      return;
-    }
-
-    try {
-      await BlogService().createCategory(
-        name: name,
-        isPrivate: false,
-        description: '',
-      );
-
-      if (mounted) {
-        // 캐시 무효화하여 다음 로드 시 새로고침
-        _cachedCategories = null;
-
-        setState(() {
-          _isCreatingCategory = false;
-          _newCategoryController.clear();
-        });
-
-        // 카테고리 목록 즉시 새로고침
-        await _loadCategoriesOnce();
-      }
-    } catch (e) {
-      if (mounted) {
-        ErrorHandler.handleError(context, e, customMessage: '카테고리 생성 실패');
-      }
-    }
-  }
-
-  Widget _buildCategoryOption({
-    required String title,
-    required bool isSelected,
-    required bool isDarkMode,
-    required VoidCallback onTap,
-  }) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 12),
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color:
-              isSelected
-                  ? Colors.white.withOpacity(0.4)
-                  : Colors.white.withOpacity(0.1),
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Row(
-          children: [
-            Expanded(
-              child: Text(
-                title,
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 16,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ),
-            if (isSelected)
-              Icon(
-                Icons.check,
-                color: isDarkMode ? Colors.white : AppColors.darkTextPrimary,
-                size: 22,
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // PostCard와 동일한 좌하단 작성자 정보
-  Widget _buildEditButton() {
-    // 🎯 영상일 때와 이미지일 때 다르게 표시
-    final bool isVideo = _localVideoFile != null;
-    final String buttonText =
-        isVideo ? context.tr('change_thumbnail') : context.tr('edit_thumbnail');
-
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(35),
-      child: BackdropFilter(
-        filter: ui.ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-          decoration: BoxDecoration(
-            color: const ui.Color.fromARGB(255, 44, 44, 44).withOpacity(0.4),
-            borderRadius: BorderRadius.circular(35),
-          ),
-          child: Row(
-            children: [
-              Text(
-                buttonText,
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 14,
-                  fontWeight: FontWeight.w300,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _AudiencePicker extends StatefulWidget {
-  final String title;
-  final String excerpt;
-  final String thumbnailImageUrl;
-  final Function(
-    bool selectAll,
-    bool privateOnly,
-    Set<int> selectedGroupIds,
-    List<String> selectedNames,
-  )
-  onSelectionChanged;
-
-  const _AudiencePicker({
-    required this.title,
-    required this.excerpt,
-    required this.thumbnailImageUrl,
-    required this.onSelectionChanged,
-  });
-
-  @override
-  State<_AudiencePicker> createState() => _AudiencePickerState();
-}
-
-class _AudiencePickerState extends State<_AudiencePicker> {
-  final Set<int> _selectedGroupIds = {};
-  bool _selectAll = true; // 전체공개 토글
-  bool _privateOnly = false; // 나만보기
-
-  @override
-  void initState() {
-    super.initState();
-
-    // 바텀시트 진입 시 실제 그룹 목록 로드
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      try {
-        if (context.read<GroupProvider>().myGroups.isEmpty) {
-          context.read<GroupProvider>().fetchMyGroups();
-        }
-      } catch (_) {}
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final groupProv = context.watch<GroupProvider>();
-    final List<Group> groups = groupProv.myGroups;
-    return Container(
-      decoration: BoxDecoration(
-        color: AppColors.darkBackground,
-        borderRadius: BorderRadius.circular(16),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 15),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const SizedBox(height: 12),
-            Center(
-              child: Container(
-                width: 44,
-                height: 5,
-                decoration: BoxDecoration(
-                  color: Theme.of(
-                    context,
-                  ).colorScheme.onSurface.withOpacity(0.24),
-                  borderRadius: BorderRadius.circular(3),
-                ),
-              ),
-            ),
-            const SizedBox(height: 15),
-            Padding(
-              padding: const EdgeInsets.only(left: 8, right: 8),
-              child: Row(
-                children: [
-                  Text(
-                    '공개 범위 선택',
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                      color: Theme.of(
-                        context,
-                      ).colorScheme.onSurface.withOpacity(0.6),
-                    ),
-                  ),
-                  Spacer(),
-                  GestureDetector(
-                    onTap: () {
-                      Navigator.pop(context);
-                    },
-                    child: Icon(
-                      Icons.close_outlined,
-                      color: Theme.of(
-                        context,
-                      ).colorScheme.onSurface.withOpacity(0.5),
-                      size: 20,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-
-            Expanded(
-              child: Builder(
-                builder: (context) {
-                  final list = _displayGroups(groups, groupProv.isLoading);
-
-                  return ListView.builder(
-                    itemCount:
-                        list.length + 1, // +1 for the audience options row
-                    itemBuilder: (context, i) {
-                      // 첫 번째 아이템: 전체공개-나만보기 로우
-                      if (i == 0) {
-                        return Container(
-                          margin: const EdgeInsets.only(bottom: 8, top: 8),
-                          child: Column(
-                            children: [
-                              // 전체공개
-                              Expanded(
-                                child: Container(
-                                  margin: const EdgeInsets.only(right: 3),
-                                  decoration: BoxDecoration(
-                                    color:
-                                        _selectAll
-                                            ? Theme.of(
-                                              context,
-                                            ).colorScheme.onSurface
-                                            : Theme.of(context)
-                                                .colorScheme
-                                                .surface
-                                                .withOpacity(1),
-                                    borderRadius: BorderRadius.circular(16),
-                                  ),
-                                  child: Material(
-                                    color: Colors.transparent,
-                                    child: InkWell(
-                                      borderRadius: BorderRadius.circular(16),
-                                      onTap: () {
-                                        setState(() {
-                                          _selectAll = true;
-                                          _privateOnly = false;
-                                          _selectedGroupIds.clear();
-                                        });
-                                        _notifySelectionChanged();
-                                      },
-                                      child: Padding(
-                                        padding: const EdgeInsets.all(16),
-                                        child: Column(
-                                          crossAxisAlignment:
-                                              CrossAxisAlignment.start,
-                                          children: [
-                                            Row(
-                                              children: [
-                                                Expanded(
-                                                  child: Text(
-                                                    SystemCategoryKeys.getDisplayText(
-                                                      context,
-                                                      SystemCategoryKeys.public,
-                                                    ),
-                                                    style: TextStyle(
-                                                      fontSize: 16,
-                                                      fontWeight:
-                                                          FontWeight.w600,
-                                                      color:
-                                                          _selectAll
-                                                              ? Theme.of(
-                                                                    context,
-                                                                  )
-                                                                  .colorScheme
-                                                                  .surface
-                                                              : Theme.of(
-                                                                    context,
-                                                                  )
-                                                                  .colorScheme
-                                                                  .onSurface,
-                                                    ),
-                                                  ),
-                                                ),
-                                                if (_selectAll)
-                                                  Icon(
-                                                    Icons.check,
-                                                    color:
-                                                        Theme.of(
-                                                          context,
-                                                        ).colorScheme.surface,
-                                                    size: 20,
-                                                  ),
-                                              ],
-                                            ),
-                                            const SizedBox(height: 4),
-                                            Text(
-                                              '모든 사용자에게 공개',
-                                              style: TextStyle(
-                                                fontSize: 13,
-                                                color:
-                                                    _selectAll
-                                                        ? Theme.of(context)
-                                                            .colorScheme
-                                                            .surface
-                                                            .withOpacity(0.8)
-                                                        : Theme.of(context)
-                                                            .colorScheme
-                                                            .onSurface
-                                                            .withOpacity(0.7),
-                                                height: 1.2,
-                                              ),
-                                              maxLines: 2,
-                                              overflow: TextOverflow.ellipsis,
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                              // 나만보기
-                              Expanded(
-                                child: Container(
-                                  margin: const EdgeInsets.only(left: 3),
-                                  decoration: BoxDecoration(
-                                    color:
-                                        _privateOnly
-                                            ? Theme.of(
-                                              context,
-                                            ).colorScheme.onSurface
-                                            : Theme.of(context)
-                                                .colorScheme
-                                                .surface
-                                                .withOpacity(1),
-                                    borderRadius: BorderRadius.circular(16),
-                                  ),
-                                  child: Material(
-                                    color: Colors.transparent,
-                                    child: InkWell(
-                                      borderRadius: BorderRadius.circular(16),
-                                      onTap: () {
-                                        setState(() {
-                                          _privateOnly = true;
-                                          _selectAll = false;
-                                          _selectedGroupIds.clear();
-                                        });
-                                        _notifySelectionChanged();
-                                      },
-                                      child: Padding(
-                                        padding: const EdgeInsets.all(16),
-                                        child: Column(
-                                          crossAxisAlignment:
-                                              CrossAxisAlignment.start,
-                                          children: [
-                                            Row(
-                                              children: [
-                                                Expanded(
-                                                  child: Text(
-                                                    SystemCategoryKeys.getDisplayText(
-                                                      context,
-                                                      SystemCategoryKeys
-                                                          .private,
-                                                    ),
-                                                    style: TextStyle(
-                                                      fontSize: 16,
-                                                      fontWeight:
-                                                          FontWeight.w600,
-                                                      color:
-                                                          _privateOnly
-                                                              ? Theme.of(
-                                                                    context,
-                                                                  )
-                                                                  .colorScheme
-                                                                  .surface
-                                                              : Theme.of(
-                                                                    context,
-                                                                  )
-                                                                  .colorScheme
-                                                                  .onSurface,
-                                                    ),
-                                                  ),
-                                                ),
-                                                if (_privateOnly)
-                                                  Icon(
-                                                    Icons.check,
-                                                    color:
-                                                        Theme.of(
-                                                          context,
-                                                        ).colorScheme.surface,
-                                                    size: 20,
-                                                  ),
-                                              ],
-                                            ),
-                                            const SizedBox(height: 4),
-                                            Text(
-                                              '본인만 볼 수 있음',
-                                              style: TextStyle(
-                                                fontSize: 13,
-                                                color:
-                                                    _privateOnly
-                                                        ? Theme.of(context)
-                                                            .colorScheme
-                                                            .surface
-                                                            .withOpacity(0.8)
-                                                        : Theme.of(context)
-                                                            .colorScheme
-                                                            .onSurface
-                                                            .withOpacity(0.7),
-                                                height: 1.2,
-                                              ),
-                                              maxLines: 2,
-                                              overflow: TextOverflow.ellipsis,
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        );
-                      }
-
-                      // 그룹 아이템들 (i-1로 인덱스 조정)
-                      final g = list[i - 1];
-                      final checked = _selectedGroupIds.contains(g.id);
-                      return Container(
-                        margin: const EdgeInsets.only(bottom: 8),
-
-                        child: Material(
-                          color: Colors.transparent,
-                          child: InkWell(
-                            borderRadius: BorderRadius.circular(16),
-                            onTap: () {
-                              setState(() {
-                                if (checked) {
-                                  _selectedGroupIds.remove(g.id);
-                                } else {
-                                  // 그룹 선택 시 다른 옵션들 취소
-                                  _selectAll = false;
-                                  _privateOnly = false;
-                                  _selectedGroupIds.add(g.id);
-                                }
-                              });
-                              _notifySelectionChanged();
-                            },
-                            child: Padding(
-                              padding: const EdgeInsets.all(16),
-                              child: Row(
-                                children: [
-                                  // 그룹 정보
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        Text(
-                                          g.name,
-                                          style: TextStyle(
-                                            fontSize: 16,
-                                            fontWeight: FontWeight.w600,
-                                            color:
-                                                checked
-                                                    ? Theme.of(
-                                                      context,
-                                                    ).colorScheme.surface
-                                                    : Theme.of(
-                                                      context,
-                                                    ).colorScheme.onSurface,
-                                          ),
-                                        ),
-                                        const SizedBox(height: 4),
-                                        Text(
-                                          g.description,
-                                          style: TextStyle(
-                                            fontSize: 14,
-                                            color:
-                                                checked
-                                                    ? Theme.of(context)
-                                                        .colorScheme
-                                                        .surface
-                                                        .withOpacity(0.8)
-                                                    : Theme.of(context)
-                                                        .colorScheme
-                                                        .onSurface
-                                                        .withOpacity(0.7),
-                                            height: 1.3,
-                                          ),
-                                          maxLines: 2,
-                                          overflow: TextOverflow.ellipsis,
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                  // 선택 아이콘
-                                  checked
-                                      ? Icon(
-                                        Icons.check,
-                                        color:
-                                            Theme.of(
-                                              context,
-                                            ).colorScheme.surface,
-                                        size: 20,
-                                      )
-                                      : Icon(
-                                        Icons.circle_outlined,
-                                        color: Theme.of(context)
-                                            .colorScheme
-                                            .onSurface
-                                            .withOpacity(0.4),
-                                        size: 20,
-                                      ),
-                                ],
-                              ),
-                            ),
-                          ),
-                        ),
-                      );
-                    },
-                  );
-                },
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  List<Group> _displayGroups(List<Group> original, bool isLoading) {
-    return List<Group>.from(original);
-  }
-
-  void _notifySelectionChanged() {
-    final current = _displayGroups(
-      context.read<GroupProvider>().myGroups,
-      false,
-    );
-    final selectedNames =
-        current
-            .where((g) => _selectedGroupIds.contains(g.id))
-            .map((g) => g.name)
-            .toList();
-
-    widget.onSelectionChanged(
-      _selectAll,
-      _privateOnly,
-      _selectedGroupIds,
-      selectedNames,
-    );
-  }
-}
-
-enum _StickerType { text, emoji, image }
-
-class _Sticker {
-  final _StickerType type;
-  final String text;
-  final Uint8List? bytes;
-  Offset offset;
-
-  _Sticker({
-    required this.type,
-    required this.text,
-    required this.bytes,
-    required this.offset,
-  });
-}
-
-class _DraggableSticker extends StatefulWidget {
-  final _Sticker sticker;
-  final bool enabled;
-
-  const _DraggableSticker({required this.sticker, required this.enabled});
-
-  @override
-  State<_DraggableSticker> createState() => _DraggableStickerState();
-}
-
-class _DraggableStickerState extends State<_DraggableSticker> {
-  @override
-  Widget build(BuildContext context) {
-    final Widget child;
-    switch (widget.sticker.type) {
-      case _StickerType.text:
-        child = _buildTextChip(widget.sticker.text);
-        break;
-      case _StickerType.emoji:
-        child = _buildEmoji(widget.sticker.text);
-        break;
-      case _StickerType.image:
-        child = _buildImageSticker(widget.sticker.bytes);
-        break;
-    }
-
-    return Positioned(
-      left: widget.sticker.offset.dx,
-      top: widget.sticker.offset.dy,
-      child:
-          widget.enabled
-              ? GestureDetector(
-                onPanUpdate: (d) {
-                  setState(() {
-                    widget.sticker.offset += d.delta;
-                  });
-                },
-                child: child,
-              )
-              : child,
-    );
-  }
-
-  Widget _buildTextChip(String text) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-      decoration: BoxDecoration(
-        color: Colors.black.withOpacity(0.55),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Text(
-        text,
-        style: const TextStyle(
-          color: Colors.white,
-          fontWeight: FontWeight.w700,
-        ),
-      ),
-    );
-  }
-
-  Widget _buildEmoji(String emoji) {
-    return Text(emoji, style: const TextStyle(fontSize: 28));
-  }
-
-  Widget _buildImageSticker(Uint8List? bytes) {
-    if (bytes == null) return const SizedBox.shrink();
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(6),
-      child: Image.memory(bytes, width: 96, height: 96, fit: BoxFit.cover),
-    );
-  }
-}
-
-/// 빈 이미지 자리표시자 (업로드 전/오류 시 사용)
-class _EmptyImagePlaceholder extends StatelessWidget {
-  const _EmptyImagePlaceholder();
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      color: Theme.of(context).colorScheme.surfaceContainerHighest,
-      child: Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              context.tr('tap_to_select_thumbnail'),
-              style: TextStyle(
-                color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
-                fontSize: 15,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-/// 간단한 쉬머 플레이스홀더 (썸네일 업로드 중 표시)
-class _ShimmerPlaceholder extends StatefulWidget {
-  const _ShimmerPlaceholder();
-
-  @override
-  State<_ShimmerPlaceholder> createState() => _ShimmerPlaceholderState();
-}
-
-class _ShimmerPlaceholderState extends State<_ShimmerPlaceholder>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _ctrl = AnimationController(
-    vsync: this,
-    duration: const Duration(milliseconds: 1200),
-  )..repeat();
-
-  @override
-  void dispose() {
-    _ctrl.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: _ctrl,
-      builder: (context, _) {
-        final gradient = LinearGradient(
-          begin: Alignment(-1.0 + 2.0 * _ctrl.value, 0),
-          end: Alignment(1.0 + 2.0 * _ctrl.value, 0),
-          colors: [
-            Colors.grey.shade800,
-            Colors.grey.shade700,
-            Colors.grey.shade800,
-          ],
-          stops: const [0.25, 0.5, 0.75],
-        );
-        return Container(decoration: BoxDecoration(gradient: gradient));
-      },
     );
   }
 }
