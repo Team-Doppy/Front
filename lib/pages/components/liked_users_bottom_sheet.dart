@@ -1,11 +1,14 @@
 import 'dart:ui' as ui;
+import 'package:doppy/l10n/app_localizations.dart';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import 'package:dio/dio.dart';
 import 'package:doppy/data/services/base_api_service.dart';
 import 'package:doppy/pages/components/common_profile_avatar.dart';
 import 'package:doppy/pages/components/shimmer_box.dart';
 import 'package:doppy/pages/components/custom_refresh_indicator.dart';
 import 'package:doppy/pages/components/profile_action_bottom_sheet.dart';
+import 'package:doppy/providers/user_provider.dart';
 
 /// 🎯 좋아요를 누른 사용자 목록 오버레이
 class LikedUsersBottomSheet extends StatefulWidget {
@@ -401,9 +404,9 @@ class _LikedUsersBottomSheetState extends State<LikedUsersBottomSheet> {
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                const Text(
-                                  '좋아요',
-                                  style: TextStyle(
+                                Text(
+                                  AppLocalizations.of(context).t('like'),
+                                  style: const TextStyle(
                                     color: Colors.white,
                                     fontSize: 16,
                                     fontWeight: FontWeight.w600,
@@ -415,7 +418,12 @@ class _LikedUsersBottomSheetState extends State<LikedUsersBottomSheet> {
                                       ? ''
                                       : _error != null
                                       ? _error!
-                                      : '${widget.likeCount}명이 좋아요를 눌렀습니다',
+                                      : AppLocalizations.of(context)
+                                          .t('people_liked')
+                                          .replaceAll(
+                                            '{count}',
+                                            '${widget.likeCount}',
+                                          ),
                                   style: TextStyle(
                                     color: Colors.white.withOpacity(0.7),
                                     fontSize: 12,
@@ -571,7 +579,7 @@ class _LikedUsersBottomSheetState extends State<LikedUsersBottomSheet> {
                                               imageUrl: profileImageUrl,
                                               username: username,
                                               size: 56,
-                                              borderWidth: 0,
+                                              borderWidth: 1,
                                             ),
                                             // 좋아요 아이콘 배지
                                             Positioned(
@@ -623,26 +631,47 @@ class _LikedUsersBottomSheetState extends State<LikedUsersBottomSheet> {
                                             ],
                                           ),
                                         ),
-                                        // 더보기 아이콘
-                                        GestureDetector(
-                                          onTap: () {
-                                            ProfileActionBottomSheet.show(
-                                              context,
-                                              username: username,
-                                              alias: alias,
-                                              profileImageUrl: profileImageUrl,
+                                        // 더보기 아이콘 (본인이 아니면만 표시)
+                                        Builder(
+                                          builder: (context) {
+                                            // 🎯 현재 사용자 확인
+                                            final currentUser =
+                                                context
+                                                    .read<UserProvider>()
+                                                    .currentUser;
+                                            final isMe =
+                                                currentUser != null &&
+                                                currentUser.username ==
+                                                    username;
+
+                                            // 본인이면 더보기 아이콘 숨김
+                                            if (isMe) {
+                                              return const SizedBox.shrink();
+                                            }
+
+                                            return GestureDetector(
+                                              onTap: () {
+                                                ProfileActionBottomSheet.show(
+                                                  context,
+                                                  username: username,
+                                                  alias: alias,
+                                                  profileImageUrl:
+                                                      profileImageUrl,
+                                                );
+                                              },
+                                              child: Padding(
+                                                padding: const EdgeInsets.all(
+                                                  8,
+                                                ),
+                                                child: Icon(
+                                                  Icons.more_vert,
+                                                  color: Colors.white
+                                                      .withOpacity(0.6),
+                                                  size: 24,
+                                                ),
+                                              ),
                                             );
                                           },
-                                          child: Padding(
-                                            padding: const EdgeInsets.all(8),
-                                            child: Icon(
-                                              Icons.more_vert,
-                                              color: Colors.white.withOpacity(
-                                                0.6,
-                                              ),
-                                              size: 24,
-                                            ),
-                                          ),
                                         ),
                                       ],
                                     ),

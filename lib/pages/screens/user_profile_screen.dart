@@ -3,10 +3,12 @@ import 'package:doppy/pages/components/category_sheet.dart';
 import 'package:doppy/pages/components/feed.dart';
 import 'package:doppy/pages/components/custom_refresh_indicator.dart';
 import 'package:doppy/pages/components/share_profile_bottom_sheet.dart';
+import 'package:doppy/pages/components/profile_action_bottom_sheet.dart';
 import 'package:doppy/providers/feed_provider/feed_ui_service.dart';
 import 'package:doppy/pages/screens/group_selection_screen.dart';
 import 'package:doppy/pages/screens/setting_screen.dart';
 import 'package:doppy/providers/feed_provider/other_profile_feed_provider.dart';
+import 'package:doppy/theme/app_colors.dart';
 import 'package:doppy/utils/network_utils.dart';
 import 'package:doppy/utils/error_handler.dart';
 import 'package:doppy/utils/dialog_utils.dart';
@@ -190,7 +192,6 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    print('[UserProfileScreen] didChangeDependencies');
   }
 
   Future<void> _handleRefresh() async {
@@ -200,6 +201,15 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
       try {
         _feedProvider.clearInMemory();
       } catch (_) {}
+
+      // 🎯 내 프로필일 때 UserProvider도 새로고침
+      if (!isOther) {
+        try {
+          await context.read<UserProvider>().fetchMyProfile();
+        } catch (e) {
+          print('[UserProfileScreen] 내 프로필 새로고침 실패: $e');
+        }
+      }
 
       // 🎯 남의 프로필일 때 친구 관계도 새로고침
       if (isOther) {
@@ -270,6 +280,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     final bool isOther = !_isOwnProfile; // true: 타인 프로필, false: 내 프로필
     final User? me = userProvider.currentUser;
     final User? other = widget.otherUser;
+    final User? viewedUser = isOther ? userProvider.viewedUser : null;
 
     final double topPadding = MediaQuery.of(context).padding.top;
 
@@ -278,10 +289,13 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     String _displayUsername = '';
     String? _displayAlias;
 
-    if (isOther && other != null) {
-      _displayImageUrl = other.profileImageUrl ?? '';
-      _displayUsername = other.username;
-      _displayAlias = other.alias;
+    if (isOther) {
+      final displayUser = viewedUser ?? other;
+      if (displayUser != null) {
+        _displayImageUrl = displayUser.profileImageUrl ?? '';
+        _displayUsername = displayUser.username;
+        _displayAlias = displayUser.alias;
+      }
     } else if (!isOther && me != null) {
       _displayImageUrl = me.profileImageUrl ?? '';
       _displayUsername = me.username;
@@ -429,28 +443,30 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                                             padding: const EdgeInsets.all(8),
                                             child: SvgPicture.asset(
                                               'assets/icons/link.svg',
-                                              width: 26,
-                                              height: 26,
+                                              width: 30,
+                                              height: 30,
                                               colorFilter: ColorFilter.mode(
-                                                Theme.of(
-                                                  context,
-                                                ).colorScheme.onSurface,
+                                                Theme.of(context)
+                                                    .colorScheme
+                                                    .onSurface
+                                                    .withOpacity(0.85),
                                                 BlendMode.srcIn,
                                               ),
                                             ),
                                           ),
                                         ),
                                       if (_isOwnProfile) ...[
-                                        SizedBox(width: 8),
+                                        SizedBox(width: 10),
                                         GestureDetector(
                                           child: SvgPicture.asset(
                                             'assets/icons/edit.svg',
-                                            width: 22,
-                                            height: 22,
+                                            width: 25,
+                                            height: 25,
                                             colorFilter: ColorFilter.mode(
-                                              Theme.of(
-                                                context,
-                                              ).colorScheme.onSurface,
+                                              Theme.of(context)
+                                                  .colorScheme
+                                                  .onSurface
+                                                  .withOpacity(0.85),
                                               BlendMode.srcIn,
                                             ),
                                           ),
@@ -462,17 +478,18 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                                                 : null;
                                           },
                                         ),
-                                        SizedBox(width: 16),
+                                        SizedBox(width: 18),
                                         // 설정 버튼
                                         GestureDetector(
                                           child: SvgPicture.asset(
                                             'assets/icons/menu.svg',
-                                            width: 20,
-                                            height: 20,
+                                            width: 23,
+                                            height: 23,
                                             colorFilter: ColorFilter.mode(
-                                              Theme.of(
-                                                context,
-                                              ).colorScheme.onSurface,
+                                              Theme.of(context)
+                                                  .colorScheme
+                                                  .onSurface
+                                                  .withOpacity(0.85),
                                               BlendMode.srcIn,
                                             ),
                                           ),
@@ -482,6 +499,41 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                                                 builder: (_) => SettingScreen(),
                                               ),
                                             );
+                                          },
+                                        ),
+                                        SizedBox(width: 15),
+                                      ] else ...[
+                                        // 🎯 타인 프로필일 때 메뉴 버튼 (action 바텀시트 열기)
+                                        SizedBox(width: 8),
+                                        GestureDetector(
+                                          child: SvgPicture.asset(
+                                            'assets/icons/menu.svg',
+                                            width: 23,
+                                            height: 23,
+                                            colorFilter: ColorFilter.mode(
+                                              Theme.of(
+                                                context,
+                                              ).colorScheme.onSurface,
+                                              BlendMode.srcIn,
+                                            ),
+                                          ),
+                                          onTap: () {
+                                            if (other != null) {
+                                              ProfileActionBottomSheet.show(
+                                                context,
+                                                username: other.username,
+                                                alias: other.alias,
+                                                profileImageUrl:
+                                                    other.profileImageUrl,
+                                                onBlockSuccess: () {
+                                                  // 🎯 차단 성공 시 프로필 페이지 닫기
+                                                  if (mounted) {
+                                                    Navigator.of(context).pop();
+                                                  }
+                                                },
+                                                hideViewProfile: true,
+                                              );
+                                            }
                                           },
                                         ),
                                         SizedBox(width: 15),
@@ -528,7 +580,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                                         borderColor:
                                             Theme.of(context).brightness ==
                                                     Brightness.dark
-                                                ? Colors.grey.shade300
+                                                ? Colors.grey.shade500
                                                 : Colors.grey.shade400,
                                         isUploading: isUploading,
                                         onTap:
@@ -555,7 +607,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                                                 Theme.of(
                                                   context,
                                                 ).colorScheme.onSurface,
-                                            fontSize: 24,
+                                            fontSize: 26,
                                             fontWeight: FontWeight.bold,
                                             height: 1.1,
                                           ),
@@ -564,11 +616,12 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                                         const SizedBox(height: 5),
                                         Text(
                                           isOther
-                                              ? (other
+                                              ? ((viewedUser ?? other)
                                                           ?.selfIntroduction
                                                           ?.isNotEmpty ==
                                                       true
-                                                  ? other!.selfIntroduction!
+                                                  ? (viewedUser ?? other)!
+                                                      .selfIntroduction!
                                                   : _displayUsername)
                                               : (me
                                                           ?.selfIntroduction
@@ -582,7 +635,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                                                 .onSurface
                                                 .withOpacity(0.8),
 
-                                            fontSize: 14,
+                                            fontSize: 17,
                                             height: 1.3,
                                           ),
                                           maxLines: 2,
@@ -602,14 +655,9 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                             ),
                             // Feed 모드 전환 스위처 (카드뷰 / 이미지 전용)
                             _buildFeedModeSwitcher(),
-                            // Feed 컨텐츠 (네트워크 에러 처리 포함)
-                            Consumer<BaseFeedProvider>(
-                              builder: (context, feedProvider, _) {
-                                // 정상 상태일 때 Feed 컨텐츠 표시
-                                return _feed.buildFeedContent(
-                                  scrollController: _scrollController,
-                                );
-                              },
+                            // Feed 내부에 이미 Consumer가 있으므로 중복 제거
+                            _feed.buildFeedContent(
+                              scrollController: _scrollController,
                             ),
                           ],
                         ),
@@ -647,7 +695,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
   SliverToBoxAdapter _buildFeedModeSwitcher() {
     return SliverToBoxAdapter(
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(12, 20, 12, 0),
+        padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
         child: ValueListenableBuilder<FeedDisplayMode>(
           valueListenable: FeedDisplayModeManager(),
           builder: (context, displayMode, _) {
@@ -660,10 +708,18 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                 _buildModeButton(
                   FeedDisplayMode.imageOnly,
                   Icons.grid_view_rounded,
+                  18,
+                  EdgeInsets.all(2),
                 ),
-                const SizedBox(width: 8),
+                SizedBox(width: 6),
+
                 // 리스트 아이콘 → 카드(텍스트 포함) 모드
-                _buildModeButton(FeedDisplayMode.card, Icons.view_list_rounded),
+                _buildModeButton(
+                  FeedDisplayMode.card,
+                  Icons.view_list_rounded,
+                  22,
+                  EdgeInsets.zero,
+                ),
               ],
             );
           },
@@ -685,14 +741,13 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
         key: _categoryButtonKey,
 
         child: Container(
-          margin: EdgeInsets.only(bottom: 8),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(10),
-            color: Theme.of(context).colorScheme.onSurface.withOpacity(0.05),
+            color: Theme.of(context).colorScheme.onSurface.withOpacity(0.02),
           ),
 
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6.5),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
@@ -741,7 +796,12 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     );
   }
 
-  Widget _buildModeButton(FeedDisplayMode mode, IconData icon) {
+  Widget _buildModeButton(
+    FeedDisplayMode mode,
+    IconData icon,
+    double size,
+    EdgeInsets? padding,
+  ) {
     final displayModeManager = FeedDisplayModeManager();
     final bool selected = displayModeManager.value == mode;
     final theme = Theme.of(context);
@@ -755,18 +815,21 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
       },
 
       child: Container(
-        padding: const EdgeInsets.all(8),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(10),
-          color: Theme.of(context).colorScheme.onSurface.withOpacity(0.05),
+          color: Theme.of(context).colorScheme.onSurface.withOpacity(0.02),
         ),
-        child: Icon(
-          icon,
-          size: 20,
-          color:
-              selected
-                  ? theme.colorScheme.onSurface
-                  : theme.colorScheme.onSurface.withOpacity(0.3),
+        child: Padding(
+          padding: padding ?? EdgeInsets.zero,
+          child: Icon(
+            icon,
+            size: size,
+            color:
+                selected
+                    ? theme.colorScheme.onSurface
+                    : theme.colorScheme.onSurface.withOpacity(0.3),
+          ),
         ),
       ),
     );
@@ -778,9 +841,33 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
       child: Row(
         children: [
           Expanded(
-            child: _buildGlassyButton(
-              text: context.tr('my_groups'),
-              onTap: () => _navigateToManageGroup(),
+            child: Consumer<FriendProvider>(
+              builder: (context, friendProvider, _) {
+                final hasReceivedRequests =
+                    friendProvider.receivedRequests.isNotEmpty;
+                return Stack(
+                  children: [
+                    _buildGlassyButton(
+                      text: context.tr('my_groups'),
+                      onTap: () => _navigateToManageGroup(),
+                    ),
+                    // 🎯 받은 요청이 있으면 빨간 점 표시
+                    if (hasReceivedRequests)
+                      Positioned(
+                        top: 6,
+                        right: 8,
+                        child: Container(
+                          width: 9,
+                          height: 9,
+                          decoration: BoxDecoration(
+                            color: AppColors.primary,
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                      ),
+                  ],
+                );
+              },
             ),
           ),
           SizedBox(width: 4),
@@ -908,7 +995,10 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
               if (confirm == true && mounted) {
                 try {
                   final friendService = FriendService();
-                  await friendService.unblockUser(widget.otherUser!.username);
+                  // 🎯 단일 차단 해제도 배치 엔드포인트 사용
+                  final message = await friendService.unblockUsersBatch([
+                    widget.otherUser!.username,
+                  ]);
 
                   // 상태 새로고침
                   await friendProvider.checkFriendStatus(
@@ -916,13 +1006,8 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                   );
 
                   if (mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text(l10n.t('unblock_success')),
-                        behavior: SnackBarBehavior.floating,
-                        duration: const Duration(seconds: 2),
-                      ),
-                    );
+                    // ErrorHandler.showInfo로 차단 해제 메시지 표시
+                    ErrorHandler.showInfo(context, message);
                   }
                 } catch (e) {
                   if (mounted) {
@@ -1052,9 +1137,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
           borderRadius: BorderRadius.circular(12),
           color:
               isBlocked
-                  ? Theme.of(context).colorScheme.error.withOpacity(
-                    0.1,
-                  ) // 🎯 차단된 경우 빨간색 배경
+                  ? Colors.transparent
                   : isFilled
                   ? Theme.of(context).colorScheme.primary.withOpacity(1)
                   : Theme.of(context).colorScheme.onSurface.withOpacity(0.1),
@@ -1134,7 +1217,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                           isDarkMode
                               ? Theme.of(context).colorScheme.onSurface
                               : const Color.fromARGB(255, 61, 61, 61),
-                      fontSize: 14,
+                      fontSize: 15,
                       fontWeight: FontWeight.w600,
                     ),
                   ),
@@ -1195,8 +1278,8 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                       children: [
                         SvgPicture.asset(
                           'assets/icons/link.svg',
-                          width: 20,
-                          height: 20,
+                          width: 24,
+                          height: 24,
                           colorFilter: ColorFilter.mode(
                             Theme.of(context).colorScheme.onSurface,
                             BlendMode.srcIn,
@@ -1229,9 +1312,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                         return Divider(
                           height: 1,
                           thickness: 1,
-                          color: Theme.of(
-                            context,
-                          ).colorScheme.onSurface.withOpacity(0.1),
+                          color: Colors.transparent,
                           indent: 0,
                           endIndent: 0,
                         );
@@ -1383,8 +1464,8 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
           children: [
             // 🎯 링크 썸네일
             Container(
-              width: 40,
-              height: 40,
+              width: 44,
+              height: 44,
               decoration: BoxDecoration(
                 color: theme.colorScheme.onSurface.withOpacity(0.1),
                 borderRadius: BorderRadius.circular(10),
@@ -1442,19 +1523,20 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                     displayTitle,
                     style: TextStyle(
                       color: theme.colorScheme.onSurface,
-                      fontSize: 14,
+                      fontSize: 16,
                       fontWeight: FontWeight.w600,
                     ),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
-                  const SizedBox(height: 4),
+                  const SizedBox(height: 2),
                   // URL 표시 (커스텀 타이틀이 있으면 URL, 없으면 도메인)
                   Text(
                     customTitle != null ? url : domain,
                     style: TextStyle(
-                      color: theme.colorScheme.onSurface.withOpacity(0.7),
-                      fontSize: 12,
+                      color: theme.colorScheme.onSurface.withOpacity(0.65),
+                      fontSize: 14,
+                      fontWeight: FontWeight.w300,
                     ),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,

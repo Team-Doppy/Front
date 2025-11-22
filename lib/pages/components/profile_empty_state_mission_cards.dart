@@ -47,8 +47,8 @@ class ProfileEmptyStateMissionCards extends StatelessWidget {
           const SizedBox(height: 10),
           SizedBox(
             height: 180,
-            child: Consumer2<UserProvider, FriendProvider>(
-              builder: (context, userProvider, friendProvider, _) {
+            child: Selector2<UserProvider, FriendProvider, _MissionState>(
+              selector: (context, userProvider, friendProvider) {
                 final user = userProvider.currentUser;
 
                 // 각 미션의 완료 여부 체크
@@ -61,25 +61,38 @@ class ProfileEmptyStateMissionCards extends StatelessWidget {
                 final hasLinks =
                     (user?.links != null && user!.links!.isNotEmpty);
                 final hasProfileInfo = hasAlias && (hasBio || hasLinks);
-                final hasFriends = friendProvider.acceptedFriends.isNotEmpty;
+                // 🎯 실제 친구 1명 이상이어야 완료
+                final hasFriends = friendProvider.acceptedFriends.length >= 1;
 
+                return _MissionState(
+                  hasProfileImage: hasProfileImage,
+                  hasProfileInfo: hasProfileInfo,
+                  hasFriends: hasFriends,
+                );
+              },
+              shouldRebuild:
+                  (prev, next) =>
+                      prev.hasProfileImage != next.hasProfileImage ||
+                      prev.hasProfileInfo != next.hasProfileInfo ||
+                      prev.hasFriends != next.hasFriends,
+              builder: (context, missionState, _) {
                 final missions = [
                   MissionData(
                     title: '프로필 이미지\n설정하기',
                     icon: Icons.person,
-                    isCompleted: hasProfileImage,
+                    isCompleted: missionState.hasProfileImage,
                     onTap: () => _openProfileImagePicker(context),
                   ),
                   MissionData(
                     title: '프로필 정보\n설정하기',
                     icon: Icons.edit,
-                    isCompleted: hasProfileInfo,
+                    isCompleted: missionState.hasProfileInfo,
                     onTap: () => _openProfileEdit(context),
                   ),
                   MissionData(
                     title: '그룹 만들고\n친구 초대하기',
                     icon: Icons.person_add,
-                    isCompleted: hasFriends,
+                    isCompleted: missionState.hasFriends,
                     onTap: () => _navigateToGroupSelection(context),
                   ),
                   MissionData(
@@ -99,13 +112,20 @@ class ProfileEmptyStateMissionCards extends StatelessWidget {
                 });
 
                 return ListView.builder(
+                  key: const ValueKey('mission_cards_list'),
                   scrollDirection: Axis.horizontal,
                   physics: const ClampingScrollPhysics(),
                   padding: const EdgeInsets.symmetric(horizontal: 12),
                   itemCount: missions.length,
+                  itemExtent: 174, // 🎯 아이템 너비(170) + 마진(4) 고정
                   itemBuilder: (context, index) {
                     final mission = missions[index];
-                    return _MissionCard(mission: mission);
+                    return RepaintBoundary(
+                      key: ValueKey(
+                        'mission_card_${mission.title}_${mission.isCompleted}',
+                      ),
+                      child: _MissionCard(mission: mission),
+                    );
                   },
                 );
               },
@@ -173,10 +193,16 @@ class ProfileEmptyStateMissionCards extends StatelessWidget {
                 context,
               );
               print('[ProfileEmptyStateMissionCards] ✅ 프로필 이미지 업데이트 완료');
+
+              // 🎯 UI 업데이트 안정화를 위한 짧은 지연
+              await Future.delayed(const Duration(milliseconds: 100));
             } else {
               print('[ProfileEmptyStateMissionCards] URL이 비어있음, 프로필 다시 가져오기');
               // URL이 없으면 프로필 다시 가져오기
               await context.read<UserProvider>().fetchMyProfile();
+
+              // 🎯 UI 업데이트 안정화를 위한 짧은 지연
+              await Future.delayed(const Duration(milliseconds: 100));
             }
 
             task.removeListener(uploadListener);
@@ -258,6 +284,9 @@ class ProfileEmptyStateMissionCards extends StatelessWidget {
             );
             if (success && context.mounted) {
               Navigator.of(context).pop();
+
+              // 🎯 UI 업데이트 안정화를 위한 짧은 지연
+              await Future.delayed(const Duration(milliseconds: 150));
             }
           },
         );
@@ -280,6 +309,19 @@ class ProfileEmptyStateMissionCards extends StatelessWidget {
       MaterialPageRoute(builder: (context) => const GroupSelectionScreen()),
     );
   }
+}
+
+/// 미션 상태 (Selector 최적화용)
+class _MissionState {
+  final bool hasProfileImage;
+  final bool hasProfileInfo;
+  final bool hasFriends;
+
+  _MissionState({
+    required this.hasProfileImage,
+    required this.hasProfileInfo,
+    required this.hasFriends,
+  });
 }
 
 /// 미션 데이터 모델
@@ -307,81 +349,53 @@ class _MissionCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
 
+    // 🎯 완료 안했을 때: backgroundColor 배경
+    // 완료했을 때: onBackground 배경
+    final cardBackgroundColor =
+        mission.isCompleted
+            ? theme.colorScheme.onBackground
+            : theme.scaffoldBackgroundColor;
+
     return Container(
       width: 170,
-      margin: const EdgeInsets.only(right: 6),
+      margin: const EdgeInsets.only(right: 4),
       decoration: BoxDecoration(
-        color: theme.colorScheme.surface,
+        color: cardBackgroundColor,
         borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: theme.colorScheme.onSurface.withOpacity(0.2),
+          width: 0.5,
+        ),
       ),
       child: Material(
         color: Colors.transparent,
         child: InkWell(
           onTap: mission.onTap,
           borderRadius: BorderRadius.circular(20),
+          splashColor: theme.colorScheme.onSurface.withOpacity(0.1),
+          highlightColor: theme.colorScheme.onSurface.withOpacity(0.05),
           child: Padding(
             padding: const EdgeInsets.all(20),
             child: SizedBox(
               height: 160, // 🎯 고정 높이로 일관된 레이아웃 유지
               child: Stack(
+                clipBehavior: Clip.none,
                 children: [
-                  // 완료 체크 아이콘 또는 미션 아이콘 (상단 고정)
                   Positioned(
-                    top: 0,
-                    left: 0,
-                    child: Stack(
-                      children: [
-                        Container(
-                          width: 48,
-                          height: 48,
-
-                          child: Icon(
-                            mission.icon,
-                            size: 24,
-                            color:
-                                mission.isCompleted
-                                    ? theme.colorScheme.primary
-                                    : theme.colorScheme.onSurface.withOpacity(
-                                      0.6,
-                                    ),
-                          ),
-                        ),
-                        if (mission.isCompleted)
-                          Positioned(
-                            right: 0,
-                            top: 0,
-                            child: Container(
-                              width: 20,
-                              height: 20,
-                              decoration: BoxDecoration(
-                                color: theme.colorScheme.primary,
-                                shape: BoxShape.circle,
-                                border: Border.all(
-                                  color: theme.colorScheme.surface,
-                                  width: 2,
-                                ),
-                              ),
-                              child: const Icon(
-                                Icons.check,
-                                size: 12,
-                                color: Colors.white,
-                              ),
-                            ),
-                          ),
-                      ],
-                    ),
-                  ),
-                  // 미션 제목 (중간 고정)
-                  Positioned(
-                    top: 64, // 아이콘(48) + 여백(16)
+                    top: 45, // 아이콘(48) + 여백(16)
                     left: 0,
                     right: 0,
                     child: Text(
                       mission.title,
                       style: GoogleFonts.notoSansKr(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w600,
-                        color: theme.colorScheme.onSurface,
+                        fontSize: 18,
+                        fontWeight: FontWeight.w400,
+                        // 🎯 완료 안했을 때: onBackground 텍스트
+                        // 완료했을 때: backgroundColor 텍스트
+                        color:
+                            mission.isCompleted
+                                ? theme.scaffoldBackgroundColor
+                                : theme.colorScheme.onBackground,
                         height: 1.3,
                       ),
                       maxLines: 2,
@@ -397,10 +411,14 @@ class _MissionCard extends StatelessWidget {
                       style: GoogleFonts.notoSansKr(
                         fontSize: 13,
                         fontWeight: FontWeight.w400,
+                        // 🎯 완료 안했을 때: onBackground (약간 투명)
+                        // 완료했을 때: backgroundColor
                         color:
                             mission.isCompleted
-                                ? theme.colorScheme.primary
-                                : theme.colorScheme.onSurface.withOpacity(0.5),
+                                ? theme.scaffoldBackgroundColor
+                                : theme.colorScheme.onBackground.withOpacity(
+                                  0.5,
+                                ),
                       ),
                     ),
                   ),

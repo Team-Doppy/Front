@@ -8,7 +8,7 @@ import 'package:doppy/data/services/like_service.dart';
 import 'package:doppy/pages/components/shimmer_box.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:provider/provider.dart';
-import 'package:doppy/pages/components/fullscreen_image_viewer.dart';
+import 'package:doppy/pages/components/fullscreen_media_viewer.dart';
 import 'package:video_player/video_player.dart';
 
 // ignore: must_be_immutable
@@ -65,6 +65,27 @@ class _PostCardState extends State<PostCard>
     super.initState();
     _likeService.addListener(_onLikeServiceChanged);
     _muteService.addListener(_onMuteServiceChanged);
+
+    // 🎯 서버에서 받은 초기 좋아요 상태를 LikeService에 설정
+    // (LikeService에 값이 없을 때만, post_list에서 이미 설정했을 수도 있음)
+    if (!_likeService.hasPost(widget.postId)) {
+      _likeService.setInitialLikeData(
+        widget.postId,
+        widget.isLiked,
+        widget.likeCount,
+      );
+    }
+
+    // 🎯 초기 상태 저장 (변경 감지용)
+    _previousIsLiked =
+        _likeService.hasPost(widget.postId)
+            ? _likeService.isPostLiked(widget.postId)
+            : widget.isLiked;
+    _previousLikeCount =
+        _likeService.hasPost(widget.postId)
+            ? _likeService.getPostLikeCount(widget.postId)
+            : widget.likeCount;
+
     _checkIfVideo();
   }
 
@@ -86,8 +107,21 @@ class _PostCardState extends State<PostCard>
     super.dispose();
   }
 
+  // 🎯 이전 좋아요 상태를 저장하여 실제 변경 시에만 setState 호출
+  bool? _previousIsLiked;
+  int? _previousLikeCount;
+
   void _onLikeServiceChanged() {
-    if (mounted) {
+    if (!mounted) return;
+
+    final currentIsLiked = _likeService.isPostLiked(widget.postId);
+    final currentLikeCount = _likeService.getPostLikeCount(widget.postId);
+
+    // 🎯 실제로 값이 변경되었을 때만 setState 호출 (불필요한 리빌드 방지)
+    if (_previousIsLiked != currentIsLiked ||
+        _previousLikeCount != currentLikeCount) {
+      _previousIsLiked = currentIsLiked;
+      _previousLikeCount = currentLikeCount;
       setState(() {});
     }
   }
@@ -171,6 +205,17 @@ class _PostCardState extends State<PostCard>
   @override
   void didUpdateWidget(PostCard oldWidget) {
     super.didUpdateWidget(oldWidget);
+
+    // 🎯 서버에서 받은 초기값이 변경되면 LikeService에 반영
+    // 단, LikeService에 값이 없을 때만 초기값 설정
+    // (사용자가 좋아요를 클릭한 경우 LikeService 값이 우선되어야 함)
+    if (!_likeService.hasPost(widget.postId)) {
+      _likeService.setInitialLikeData(
+        widget.postId,
+        widget.isLiked,
+        widget.likeCount,
+      );
+    }
 
     // 썸네일 URL이 변경된 경우에만 비디오 재설정
     if (oldWidget.thumbnailImageUrl != widget.thumbnailImageUrl) {
@@ -303,7 +348,7 @@ class _PostCardState extends State<PostCard>
                   pageBuilder: (context, animation, secondaryAnimation) {
                     return FadeTransition(
                       opacity: animation,
-                      child: FullscreenImageViewer(
+                      child: FullscreenMediaViewer(
                         imageUrl: widget.thumbnailImageUrl,
                         isVideo: _isVideo,
                         preloadedController: _isVideo ? _videoController : null,
@@ -392,7 +437,7 @@ class _PostCardState extends State<PostCard>
                     _videoController!.value.isInitialized)
                   Positioned(
                     right: 6,
-                    bottom: 6,
+                    top: 6,
                     child: GestureDetector(
                       onTap: _toggleMute,
                       child: Container(
@@ -406,7 +451,7 @@ class _PostCardState extends State<PostCard>
                               ? Icons.volume_off_rounded
                               : Icons.volume_up_rounded,
                           color: Colors.white,
-                          size: 16,
+                          size: 14,
                         ),
                       ),
                     ),
@@ -420,7 +465,7 @@ class _PostCardState extends State<PostCard>
       // 로컬 에셋 또는 빈 URL
       return Container(
         decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: BorderRadius.circular(13),
           border: Border.all(
             color: Theme.of(context).colorScheme.onSurface.withOpacity(0.3),
           ),
@@ -443,6 +488,20 @@ class _PostCardState extends State<PostCard>
     super.build(context); // AutomaticKeepAliveClientMixin 필수
     // 🎯 로컬 에셋 기반 포스트인지 확인 (온보딩 플레이스홀더)
     final isOnboardingPost = widget.postId.startsWith('onboarding_placeholder');
+
+    // 🎯 LikeService에서 좋아요 상태 가져오기 (항상 최신 상태 반영)
+    // initState에서 이미 setInitialLikeData를 호출했으므로 LikeService에 값이 있어야 함
+    // 사용자가 좋아요를 클릭하면 LikeService 값이 즉시 업데이트되므로 항상 LikeService 값을 우선 사용
+    // LikeService에 값이 없을 때만 fallback으로 widget.isLiked 사용
+    final hasLikeData = _likeService.hasPost(widget.postId);
+    final currentIsLiked =
+        hasLikeData ? _likeService.isPostLiked(widget.postId) : widget.isLiked;
+    final currentLikeCount =
+        hasLikeData
+            ? _likeService.getPostLikeCount(widget.postId)
+            : widget.likeCount;
+
+    // 디버그 로그 제거 (불필요한 리빌드 방지)
 
     return Stack(
       children: [
@@ -483,24 +542,14 @@ class _PostCardState extends State<PostCard>
                     imageUrl: widget.authorProfileImageUrl ?? "",
                     username: widget.author,
                     size: 28,
-                    borderWidth: 1,
-                    borderColor: Theme.of(context).colorScheme.onSurface,
+                    borderWidth: 0,
+                    borderColor: Colors.transparent,
+                    backgroundColor: Colors.transparent,
                   ),
                   const SizedBox(width: 8),
                   Text(
                     widget.author,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 15,
-                      fontWeight: FontWeight.w500,
-                      shadows: [
-                        Shadow(
-                          offset: Offset(0, 1),
-                          blurRadius: 3,
-                          color: Colors.black54,
-                        ),
-                      ],
-                    ),
+                    style: const TextStyle(fontSize: 15, color: Colors.white),
                   ),
                 ],
               ),
@@ -509,8 +558,8 @@ class _PostCardState extends State<PostCard>
         // 🎯 좋아요 정보 (오른쪽 하단) - 로컬 에셋이 아닐 때만 표시
         if (!isOnboardingPost)
           Positioned(
-            right: 10,
-            bottom: 10,
+            right: 12,
+            bottom: 12,
             child: GestureDetector(
               onTap: widget.onLikePressed,
               behavior: HitTestBehavior.opaque,
@@ -518,33 +567,10 @@ class _PostCardState extends State<PostCard>
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Icon(
-                    widget.isLiked ? Icons.favorite : Icons.favorite_border,
+                    currentIsLiked ? Icons.favorite : Icons.favorite_border,
                     color:
-                        widget.isLiked ? const Color(0xFFFF5959) : Colors.white,
-                    size: 20,
-                    shadows: const [
-                      Shadow(
-                        offset: Offset(0, 1),
-                        blurRadius: 3,
-                        color: Colors.black54,
-                      ),
-                    ],
-                  ),
-                  const SizedBox(width: 3),
-                  Text(
-                    '${widget.likeCount}',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 15,
-                      fontWeight: FontWeight.w500,
-                      shadows: [
-                        Shadow(
-                          offset: Offset(0, 1),
-                          blurRadius: 3,
-                          color: Colors.black54,
-                        ),
-                      ],
-                    ),
+                        currentIsLiked ? const Color(0xFFFF5959) : Colors.white,
+                    size: 18,
                   ),
                 ],
               ),

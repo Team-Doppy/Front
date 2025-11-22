@@ -28,10 +28,11 @@ import 'package:doppy/data/services/blog_service.dart';
 import 'package:doppy/data/services/like_service.dart';
 import 'package:doppy/pages/components/access_level_sheet.dart';
 import 'package:doppy/pages/components/comment_bottom_sheet.dart';
+import 'package:doppy/pages/screens/manage_group_screen.dart';
 import 'package:doppy/pages/components/comment_preview_section.dart';
 import 'package:doppy/pages/components/share_post_overlay.dart';
 import 'package:doppy/pages/components/doppy_loading_logo.dart';
-import 'package:doppy/pages/components/fullscreen_image_viewer.dart';
+import 'package:doppy/pages/components/fullscreen_media_viewer.dart';
 import 'package:doppy/pages/components/liked_users_bottom_sheet.dart';
 import 'package:doppy/pages/components/post_action_bottom_sheet.dart';
 import 'package:doppy/utils/dialog_utils.dart';
@@ -629,11 +630,11 @@ class _PostReaderScreenState extends State<PostReaderScreen>
 
       await _blogService.deletePost(postId);
 
-      // 🎯 포스트 삭제 후 관련 그룹의 postCount만 선택적 업데이트 (전체 재조회 생략)
+      // 🎯 포스트 삭제 후 관련 그룹의 postCount 및 포스트 캐시 동기화
       try {
         final groupProvider = context.read<GroupProvider>();
 
-        // GROUPS 공개범위인 경우에만 관련 그룹의 postCount 업데이트
+        // GROUPS 공개범위인 경우: 관련 그룹의 postCount 업데이트 및 포스트 캐시 무효화
         if (accessLevel == 'GROUPS' &&
             sharedGroupIds != null &&
             sharedGroupIds.isNotEmpty) {
@@ -642,13 +643,23 @@ class _PostReaderScreenState extends State<PostReaderScreen>
             groupIdToDelta[groupId] = -1; // 포스트 삭제로 -1
           }
           groupProvider.updateMultipleGroupsPostCount(groupIdToDelta);
+
+          // 🎯 그룹 포스트 캐시 무효화 (동기화)
+          ManageGroupScreen.invalidateMultipleGroupsPostsCache(sharedGroupIds);
+
           print(
-            '[PostReaderScreen] 관련 그룹 postCount 선택적 업데이트 완료: ${sharedGroupIds.length}개 그룹',
+            '[PostReaderScreen] 관련 그룹 postCount 및 포스트 캐시 동기화 완료: ${sharedGroupIds.length}개 그룹',
           );
         }
-        // PUBLIC/FRIENDS/PRIVATE는 그룹 postCount에 영향 없음
+        // FRIENDS 공개범위인 경우: allFriends 그룹 포스트 캐시 무효화
+        else if (accessLevel == 'FRIENDS') {
+          // 🎯 allFriends 그룹 포스트 캐시 무효화 (동기화)
+          ManageGroupScreen.invalidateGroupPostsCache(-1);
+          print('[PostReaderScreen] allFriends 그룹 포스트 캐시 무효화 완료');
+        }
+        // PUBLIC/PRIVATE는 그룹 postCount에 영향 없음
       } catch (e) {
-        print('[PostReaderScreen] 그룹 postCount 업데이트 실패: $e');
+        print('[PostReaderScreen] 그룹 postCount 및 포스트 캐시 동기화 실패: $e');
       }
 
       if (mounted) {
@@ -1261,15 +1272,18 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                           ? AppBar(
                             backgroundColor: Colors.transparent,
                             elevation: 0,
-                            leading: IconButton(
-                              icon: Icon(
-                                Icons.arrow_back_ios_new_rounded,
-                                size: 24,
-                                color: Theme.of(
-                                  context,
-                                ).colorScheme.onSurface.withOpacity(0.75),
+                            leading: Padding(
+                              padding: const EdgeInsets.only(bottom: 4.0),
+                              child: IconButton(
+                                icon: Icon(
+                                  Icons.arrow_back_ios_new_rounded,
+                                  size: 24,
+                                  color: Theme.of(
+                                    context,
+                                  ).colorScheme.onSurface.withOpacity(0.75),
+                                ),
+                                onPressed: _closeErrorScreen,
                               ),
-                              onPressed: _closeErrorScreen,
                             ),
                           )
                           : AppBar(
@@ -1757,7 +1771,7 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                   Positioned.fill(
                     child: FadeTransition(
                       opacity: _imageViewerFade,
-                      child: FullscreenImageViewer(
+                      child: FullscreenMediaViewer(
                         imageUrl: _currentImageUrl!,
                         allImageUrls: _allImageUrls,
                         mediaId: _currentMediaId,

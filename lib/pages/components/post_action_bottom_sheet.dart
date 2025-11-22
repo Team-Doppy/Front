@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:doppy/pages/components/liked_users_bottom_sheet.dart';
 import 'package:doppy/pages/components/shimmer_box.dart';
@@ -8,7 +9,10 @@ import 'package:doppy/utils/dialog_utils.dart';
 import 'package:doppy/l10n/app_localizations.dart';
 import 'package:doppy/data/services/report_service.dart';
 import 'package:doppy/data/services/friend_service.dart';
+import 'package:doppy/data/services/search_service.dart';
 import 'package:doppy/utils/error_handler.dart';
+import 'package:doppy/providers/friend_provider.dart';
+import 'package:doppy/providers/group_provider.dart';
 
 /// 🎯 글에 대한 액션 바텀시트
 class PostActionBottomSheet extends StatelessWidget {
@@ -240,8 +244,6 @@ class PostActionBottomSheet extends StatelessWidget {
   }
 
   void _handleBlockAuthor(BuildContext context) async {
-    Navigator.of(context).pop();
-
     final l10n = AppLocalizations.of(context);
     final displayName = authorAlias ?? authorUsername;
 
@@ -257,26 +259,99 @@ class PostActionBottomSheet extends StatelessWidget {
       isDestructive: true,
     );
 
-    if (confirm == true && context.mounted) {
-      try {
-        final friendService = FriendService();
-        await friendService.blockUser(authorUsername);
+    // 취소한 경우: 바텀시트만 닫고 종료
+    if (confirm != true) {
+      if (context.mounted) {
+        Navigator.of(context).pop();
+      }
+      return;
+    }
 
-        // 🎯 차단 성공 스낵바 표시
-        if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(l10n.t('block_success')),
-              behavior: SnackBarBehavior.floating,
-              duration: const Duration(seconds: 2),
-            ),
+    // 확인한 경우: 차단 진행
+    if (!context.mounted) return;
+
+    // 🎯 바텀시트 닫기 전에 상위 context와 root context 저장
+    final navigator = Navigator.of(context);
+    final rootNavigator = Navigator.of(context, rootNavigator: true);
+    BuildContext? parentContext;
+    BuildContext? rootContext;
+    try {
+      // 바텀시트를 닫기 전에 상위 context를 가져옴
+      parentContext = navigator.context;
+      rootContext = rootNavigator.context;
+    } catch (e) {
+      print('[PostActionBottomSheet] 상위 context 가져오기 실패: $e');
+    }
+
+    // 바텀시트 닫기
+    navigator.pop();
+
+    // 🎯 차단 API 호출
+    try {
+      final friendService = FriendService();
+      await friendService.blockUser(authorUsername);
+
+      // 🎯 검색 기록에서 차단된 사용자 제거
+      try {
+        final searchService = SearchService();
+        searchService.removeFromSearchHistory(authorUsername);
+        print('[PostActionBottomSheet] 검색 기록에서 제거 완료: $authorUsername');
+      } catch (e) {
+        print('[PostActionBottomSheet] 검색 기록 제거 실패: $e');
+        // 검색 기록 제거 실패해도 차단은 성공으로 간주
+      }
+
+      // 🎯 친구 캐시 클리어
+      try {
+        final finalContext = parentContext ?? rootContext;
+        if (finalContext != null && finalContext.mounted) {
+          final friendProvider = Provider.of<FriendProvider>(
+            finalContext,
+            listen: false,
           );
+          // 캐시 무효화를 위해 _lastFetchTime을 null로 설정
+          friendProvider.fetchAllFriendData(forceRefresh: true);
+          print('[PostActionBottomSheet] 친구 캐시 클리어 완료');
         }
       } catch (e) {
-        print('[PostActionBottomSheet] 차단 실패: $e');
-        if (context.mounted) {
-          ErrorHandler.showError(context, e.toString());
+        print('[PostActionBottomSheet] 친구 캐시 클리어 실패: $e');
+      }
+
+      // 🎯 그룹 캐시 클리어
+      try {
+        final finalContext = parentContext ?? rootContext;
+        if (finalContext != null && finalContext.mounted) {
+          final groupProvider = GroupProvider();
+          groupProvider.clearAllCache();
+          // 그룹 데이터 재조회
+          final friendProvider = Provider.of<FriendProvider>(
+            finalContext,
+            listen: false,
+          );
+          await groupProvider.fetchMyGroups(
+            forceRefresh: true,
+            friendProvider: friendProvider,
+          );
+          print('[PostActionBottomSheet] 그룹 캐시 클리어 완료');
         }
+      } catch (e) {
+        print('[PostActionBottomSheet] 그룹 캐시 클리어 실패: $e');
+      }
+
+      // 🎯 차단 성공 후 처리
+      // 약간의 지연을 두어 Navigator 스택이 안정화되도록 함
+      await Future.delayed(const Duration(milliseconds: 100));
+
+      // 성공 메시지 표시 (parentContext 우선 사용, 없으면 rootContext)
+      final finalContext = parentContext ?? rootContext;
+      if (finalContext != null && finalContext.mounted) {
+        ErrorHandler.showInfo(finalContext, '차단했습니다');
+      }
+    } catch (e) {
+      print('[PostActionBottomSheet] 차단 실패: $e');
+      final finalContext = parentContext ?? rootContext;
+      if (finalContext != null && finalContext.mounted) {
+        ErrorHandler.showError(finalContext, e.toString());
       }
     }
   }

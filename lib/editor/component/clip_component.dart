@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:doppy/data/services/video_cache_service.dart';
 import 'package:doppy/l10n/app_localizations.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_svg/svg.dart';
 import 'package:super_editor/super_editor.dart';
 import 'package:doppy/editor/service/drag_service.dart';
 import 'package:doppy/editor/service/node_component_service.dart';
@@ -360,27 +361,34 @@ class _ClipComponentState extends State<_ClipComponent> with DocumentComponent {
                 // 댓글 배지 (읽기 전용 - 포인터 통과)
                 if (hasCommentsFlag)
                   Positioned(
-                    top: marginTop + 8,
-                    right: 8,
+                    top: 4,
+                    right: 5,
                     child: IgnorePointer(
                       child: Container(
                         padding: const EdgeInsets.symmetric(
-                          horizontal: 4,
-                          vertical: 4,
+                          horizontal: 6,
+                          vertical: 6,
                         ),
                         decoration: BoxDecoration(
-                          color: Colors.black.withOpacity(0.6),
-                          borderRadius: BorderRadius.circular(14),
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.onSurface.withOpacity(1),
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.surface.withOpacity(0.1),
+                            width: 1,
+                          ),
                         ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(
-                              Icons.chat_bubble_rounded,
-                              color: Colors.white,
-                              size: 14,
-                            ),
-                          ],
+                        child: SvgPicture.asset(
+                          'assets/icons/comment.svg',
+                          width: 12,
+                          height: 12,
+                          colorFilter: ColorFilter.mode(
+                            Theme.of(context).colorScheme.surface,
+                            BlendMode.srcIn,
+                          ),
                         ),
                       ),
                     ),

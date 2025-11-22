@@ -3,6 +3,8 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:doppy/editor/style/font_catalog.dart';
 import 'package:doppy/editor/service/font_preload_service.dart';
+import 'package:doppy/providers/locale_provider.dart';
+import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class FontPrefsService {
@@ -85,6 +87,18 @@ class _FontOverlayState extends State<FontOverlay> {
     super.initState();
     _loadPrefs();
     _preloadVisibleFonts();
+    // 🎯 로케일에 따라 초기 카테고리 설정
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final localeProvider = Provider.of<LocaleProvider>(
+        context,
+        listen: false,
+      );
+      if (localeProvider.isEnglish && _selectedCategory == '전체') {
+        setState(() {
+          _selectedCategory = 'All';
+        });
+      }
+    });
   }
 
   /// 보이는 폰트들을 미리 프리로드 (깜빡임 방지)
@@ -174,12 +188,19 @@ class _FontOverlayState extends State<FontOverlay> {
     final theme = Theme.of(context).colorScheme;
     final onSurface = theme.onSurface;
     final surface = theme.surface;
+    final localeProvider = Provider.of<LocaleProvider>(context);
+    final isEnglish = localeProvider.isEnglish;
 
     // 전체 폰트 리스트
     List<FontItem> allFonts = FontCatalog.all;
 
+    // 🎯 영어 모드일 때 한글 지원 폰트 제외
+    if (isEnglish) {
+      allFonts = allFonts.where((f) => !f.supportsKorean).toList();
+    }
+
     // 카테고리 필터링
-    if (_selectedCategory != '전체') {
+    if (_selectedCategory != (isEnglish ? 'All' : '전체')) {
       allFonts =
           allFonts.where((f) => f.category == _selectedCategory).toList();
     }
@@ -232,7 +253,13 @@ class _FontOverlayState extends State<FontOverlay> {
                     onChanged: (v) => setState(() => _query = v),
                     style: TextStyle(color: onSurface, fontSize: 14),
                     decoration: InputDecoration(
-                      hintText: '폰트 검색',
+                      hintText:
+                          Provider.of<LocaleProvider>(
+                                context,
+                                listen: false,
+                              ).isEnglish
+                              ? 'Search fonts'
+                              : '폰트 검색',
                       hintStyle: TextStyle(
                         color: onSurface.withOpacity(0.5),
                         fontSize: 14,
@@ -285,14 +312,32 @@ class _FontOverlayState extends State<FontOverlay> {
                 // 현재 폰트 찾기
                 FontItem? currentChoice;
                 if (curIdentifier == null || curIdentifier.isEmpty) {
-                  currentChoice = filtered.firstWhere(
-                    (f) => f.identifier == '기본 산세리프',
-                    orElse:
-                        () =>
-                            filtered.isNotEmpty
-                                ? filtered.first
-                                : FontCatalog.all.first,
-                  );
+                  // 🎯 영어 모드일 때는 기본 시스템 폰트 찾기 (localFontFamily == null && supportsKorean == false)
+                  if (isEnglish) {
+                    currentChoice = filtered.firstWhere(
+                      (f) => f.localFontFamily == null && !f.supportsKorean,
+                      orElse:
+                          () =>
+                              filtered.isNotEmpty
+                                  ? filtered.firstWhere(
+                                    (f) => !f.supportsKorean,
+                                    orElse: () => filtered.first,
+                                  )
+                                  : FontCatalog.all.firstWhere(
+                                    (f) => !f.supportsKorean,
+                                    orElse: () => FontCatalog.all.first,
+                                  ),
+                    );
+                  } else {
+                    currentChoice = filtered.firstWhere(
+                      (f) => f.identifier == '기본 산세리프',
+                      orElse:
+                          () =>
+                              filtered.isNotEmpty
+                                  ? filtered.first
+                                  : FontCatalog.all.first,
+                    );
+                  }
                 } else {
                   currentChoice = filtered.firstWhere(
                     (f) => f.identifier == curIdentifier,

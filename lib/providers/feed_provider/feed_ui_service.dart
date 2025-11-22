@@ -2,6 +2,7 @@ import 'package:doppy/data/services/blog_service.dart';
 import 'dart:async';
 import 'package:doppy/data/models/post_data.dart';
 import 'package:doppy/providers/feed_provider/base_feed_provider.dart';
+import 'package:doppy/pages/screens/manage_group_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -392,6 +393,35 @@ class PostDragDropService extends ChangeNotifier {
         targetPosition: targetPosition,
       );
       print('[FeedService] 서버 저장 완료');
+
+      // 🎯 카테고리 변경 후 스마트 동기화: 포스트가 속한 그룹의 포스트 캐시 무효화
+      try {
+        // 포스트의 공개범위 및 그룹 정보 확인
+        final accessLevel = post.accessLevel;
+        final sharedGroupIds = post.sharedGroupIds;
+
+        // GROUPS 공개범위인 경우 해당 그룹들의 포스트 캐시 무효화
+        if (accessLevel == AccessLevel.groups &&
+            sharedGroupIds != null &&
+            sharedGroupIds.isNotEmpty) {
+          ManageGroupScreen.invalidateMultipleGroupsPostsCache(sharedGroupIds);
+          print(
+            '[FeedService] 카테고리 변경 후 그룹 포스트 캐시 무효화: $sharedGroupIds',
+          );
+        }
+
+        // FRIENDS 공개범위인 경우 allFriends 그룹 포스트 캐시 무효화
+        if (accessLevel == AccessLevel.friends) {
+          ManageGroupScreen.invalidateGroupPostsCache(-1);
+          print(
+            '[FeedService] 카테고리 변경 후 allFriends 그룹 포스트 캐시 무효화',
+          );
+        }
+      } catch (syncError) {
+        print(
+          '⚠️ [FeedService] 카테고리 변경 후 동기화 실패 (무시됨): $syncError',
+        );
+      }
     } catch (e) {
       print('⚠️ [FeedService] 서버 이동 실패, 롤백: $e');
 

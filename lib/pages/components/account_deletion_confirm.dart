@@ -407,7 +407,10 @@ class _AccountDeletionSheetState extends State<AccountDeletionSheet> {
 
         // 8. 탈퇴 완료 메시지 표시 (ErrorHandler 사용)
         if (context.mounted) {
-          ErrorHandler.showInfo(context, '회원 탈퇴가 완료되었습니다.');
+          ErrorHandler.showInfo(
+            context,
+            context.tr('account_deletion_complete'),
+          );
         }
       }
     } catch (e) {

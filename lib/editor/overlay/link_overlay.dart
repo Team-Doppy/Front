@@ -197,7 +197,7 @@ class _LinkOverlayState extends State<LinkOverlay> {
       backgroundColor: Colors.transparent,
       extendBodyBehindAppBar: true,
       appBar: AppBar(
-        backgroundColor: Colors.transparent,
+        backgroundColor: const Color(0xFF2D2D2D).withOpacity(0.9),
         elevation: 0,
         scrolledUnderElevation: 0,
         automaticallyImplyLeading: false,
@@ -350,7 +350,7 @@ class _LinkOverlayState extends State<LinkOverlay> {
                   _focusNode.unfocus();
                 },
                 child: Container(
-                  color: Colors.black.withOpacity(0.7),
+                  color: const Color(0xFF2D2D2D).withOpacity(0.9),
                   child: BackdropFilter(
                     filter: ui.ImageFilter.blur(sigmaX: 15, sigmaY: 15),
                     child: Container(color: Colors.transparent),

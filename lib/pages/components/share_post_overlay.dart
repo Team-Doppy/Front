@@ -267,100 +267,84 @@ class _SharePostOverlayState extends State<SharePostOverlay> {
           });
         }
       },
-      child: Opacity(
-        opacity: (1.0 - _verticalDragOffset / 300).clamp(0.0, 1.0),
-        child: Transform.translate(
-          offset: Offset(0, _verticalDragOffset),
-          child: Scaffold(
-            backgroundColor: Colors.transparent,
-            body: Stack(
-              children: [
-                // 🎯 배경 필터 PageView (좌우 스와이프로 테마 변경 - 무한 루프)
-                Positioned.fill(
-                  child: PageView.builder(
-                    controller: _pageController,
-                    onPageChanged: (index) {
-                      setState(() {
-                        _currentTheme = _themes[index % _themes.length];
-                      });
-                    },
-                    itemBuilder: (context, index) {
-                      final theme = _themes[index % _themes.length];
-                      // 🎯 드래그 중일 때는 블러 비활성화
-                      final isDragging = _verticalDragOffset > 0;
-                      return _buildBackgroundForTheme(
-                        theme,
-                        disableBlur: isDragging,
-                      );
-                    },
-                  ),
-                ),
-
-                // 🎯 캡처 영역 (현재 테마 배경 + 카드)
-                Positioned.fill(
-                  child: IgnorePointer(
-                    child: RepaintBoundary(
-                      key: _fullScreenKey,
-                      child: Stack(
-                        children: [
-                          // 🎯 캡처용 현재 테마 배경 (캡처 시에는 블러 유지)
-                          Positioned.fill(
-                            child: _buildBackgroundForTheme(
-                              _currentTheme,
-                              disableBlur: false,
-                            ),
-                          ),
-
-                          // 카드만 (헤더, 버튼 제외)
-                          SafeArea(
-                            child: Padding(
-                              padding: const EdgeInsets.only(
-                                top: 60,
-                              ), // 🎯 헤더 공간
-                              child: SingleChildScrollView(
-                                physics:
-                                    const NeverScrollableScrollPhysics(), // 🎯 세로 스크롤 비활성화
-                                child: Padding(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 20,
-                                  ),
-                                  child: _buildPostCard(context),
-                                ),
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-
-                // 🎯 헤더 (캡처에서 제외)
-                Positioned(
-                  top: 0,
-                  left: 0,
-                  right: 0,
-                  child: SafeArea(child: _buildHeader()),
-                ),
-
-                // 🎯 공유 버튼들 (캡처에서 제외)
-                Positioned(
-                  bottom: 0,
-                  left: 0,
-                  right: 0,
-                  child: SafeArea(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        _buildShareOptions(),
-                        const SizedBox(height: 20),
-                      ],
-                    ),
-                  ),
-                ),
-              ],
+      child: Scaffold(
+        backgroundColor: Colors.transparent,
+        body: Stack(
+          children: [
+            // 🎯 배경 필터 PageView (좌우 스와이프로 테마 변경 - 무한 루프)
+            Positioned.fill(
+              child: PageView.builder(
+                controller: _pageController,
+                onPageChanged: (index) {
+                  setState(() {
+                    _currentTheme = _themes[index % _themes.length];
+                  });
+                },
+                itemBuilder: (context, index) {
+                  final theme = _themes[index % _themes.length];
+                  return _buildBackgroundForTheme(theme, disableBlur: false);
+                },
+              ),
             ),
-          ),
+
+            // 🎯 캡처 영역 (현재 테마 배경 + 카드)
+            Positioned.fill(
+              child: IgnorePointer(
+                child: RepaintBoundary(
+                  key: _fullScreenKey,
+                  child: Stack(
+                    children: [
+                      // 🎯 캡처용 현재 테마 배경 (캡처 시에는 블러 유지)
+                      Positioned.fill(
+                        child: _buildBackgroundForTheme(
+                          _currentTheme,
+                          disableBlur: false,
+                        ),
+                      ),
+
+                      // 카드만 (헤더, 버튼 제외)
+                      SafeArea(
+                        child: Padding(
+                          padding: const EdgeInsets.only(top: 60), // 🎯 헤더 공간
+                          child: SingleChildScrollView(
+                            physics:
+                                const NeverScrollableScrollPhysics(), // 🎯 세로 스크롤 비활성화
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 20,
+                              ),
+                              child: _buildPostCard(context),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+
+            // 🎯 헤더 (캡처에서 제외)
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              child: SafeArea(child: _buildHeader()),
+            ),
+
+            // 🎯 공유 버튼들 (캡처에서 제외)
+            Positioned(
+              bottom: 0,
+              left: 0,
+              right: 0,
+              child: SafeArea(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [_buildShareOptions(), const SizedBox(height: 20)],
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );

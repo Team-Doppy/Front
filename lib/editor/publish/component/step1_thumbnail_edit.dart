@@ -309,9 +309,7 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
       children: [
         Expanded(
           child: TextField(
-            cursorColor: Theme.of(
-              context,
-            ).colorScheme.onSurface.withOpacity(0.9),
+            cursorColor: Theme.of(context).colorScheme.primary,
             controller: widget.titleController,
             focusNode: widget.titleFocusNode,
             textAlign: TextAlign.center,
@@ -324,9 +322,9 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
             maxLines: 1,
             scrollPhysics: const NeverScrollableScrollPhysics(),
             decoration: InputDecoration(
-              hintText:
-                  AppLocalizations.of(context)?.t('title_input_placeholder') ??
-                  '',
+              hintText: AppLocalizations.of(
+                context,
+              ).t('title_input_placeholder'),
               hintStyle: TextStyle(
                 color: Theme.of(context).colorScheme.onSurface.withOpacity(0.3),
               ),
@@ -349,13 +347,13 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
       focusNode: widget.excerptFocusNode,
       textAlign: TextAlign.center,
       style: TextStyle(
-        color: Theme.of(context).colorScheme.onSurface.withOpacity(0.9),
+        color: Theme.of(context).colorScheme.onSurface.withOpacity(0.85),
         fontSize: 15,
         fontWeight: FontWeight.w300,
         height: 1.6,
         letterSpacing: -0.1,
       ),
-      cursorColor: Theme.of(context).colorScheme.onSurface.withOpacity(0.9),
+      cursorColor: Theme.of(context).colorScheme.primary,
       maxLines: 4,
       minLines: 2,
       keyboardType: TextInputType.multiline,

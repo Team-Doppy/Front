@@ -176,6 +176,7 @@ class _Step3CategorySelectionState extends State<Step3CategorySelection> {
                   child: Text(
                     '취소',
                     style: TextStyle(
+                      fontWeight: FontWeight.w500,
                       color:
                           isDarkMode
                               ? Colors.white.withOpacity(0.7)
@@ -203,7 +204,10 @@ class _Step3CategorySelectionState extends State<Step3CategorySelection> {
                   ),
                   child: Text(
                     AppLocalizations.of(context)!.t('add'),
-                    style: const TextStyle(fontSize: 14),
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w500,
+                    ),
                   ),
                 ),
               ],
@@ -228,12 +232,6 @@ class _Step3CategorySelectionState extends State<Step3CategorySelection> {
         ),
         child: Row(
           children: [
-            Icon(
-              Icons.add_circle_outline,
-              color: Colors.white.withOpacity(0.8),
-              size: 22,
-            ),
-            const SizedBox(width: 12),
             Expanded(
               child: Text(
                 AppLocalizations.of(context)!.t('create_new_category'),
@@ -248,6 +246,11 @@ class _Step3CategorySelectionState extends State<Step3CategorySelection> {
                   fontWeight: FontWeight.w600,
                 ),
               ),
+            ),
+            Icon(
+              Icons.add_circle_outline,
+              color: Colors.white.withOpacity(0.8),
+              size: 22,
             ),
           ],
         ),
@@ -266,23 +269,25 @@ class _Step3CategorySelectionState extends State<Step3CategorySelection> {
     }
 
     try {
-      await BlogService().createCategory(
+      // 🎯 카테고리 생성 응답에서 새로 만든 카테고리 ID 추출
+      final response = await BlogService().createCategory(
         name: name,
         isPrivate: false,
         description: '',
       );
 
-      if (mounted) {
-        // 캐시 무효화하여 다음 로드 시 새로고침
-        widget.onCachedCategoriesChanged(null);
+      final newCategoryId = response['data']?['id'] as int?;
 
+      if (mounted) {
         setState(() {
           _isCreatingCategory = false;
           _newCategoryController.clear();
         });
 
-        // 카테고리 목록 즉시 새로고침
-        await _loadCategoriesOnce();
+        // 🎯 카테고리 목록 즉시 새로고침 (캐시 무효화하지 않고 직접 새로고침)
+        // 기존 캐시를 유지하면서 로딩 시작
+        widget.onIsLoadingCategoriesChanged(false); // 로딩 상태 리셋
+        await _loadCategoriesOnce(newCategoryId: newCategoryId);
       }
     } catch (e) {
       if (mounted) {
@@ -333,8 +338,9 @@ class _Step3CategorySelectionState extends State<Step3CategorySelection> {
     );
   }
 
-  Future<void> _loadCategoriesOnce() async {
-    if (widget.cachedCategories != null || widget.isLoadingCategories) return;
+  Future<void> _loadCategoriesOnce({int? newCategoryId}) async {
+    // 🎯 이미 로딩 중이면 중복 호출 방지
+    if (widget.isLoadingCategories) return;
 
     widget.onIsLoadingCategoriesChanged(true);
     widget.onShowCategoryLoadingChanged(false);
@@ -360,21 +366,35 @@ class _Step3CategorySelectionState extends State<Step3CategorySelection> {
         widget.onIsLoadingCategoriesChanged(false);
         widget.onShowCategoryLoadingChanged(false);
 
-        // 🎯 기본 카테고리 자동 선택
-        if (widget.selectedCategoryId == 0 && categories.isNotEmpty) {
-          final hasUncategorized = categories.any((cat) => cat['id'] == 0);
-          if (!hasUncategorized) {
-            widget.onSelectedCategoryIdChanged(categories.first['id'] as int?);
-            print(
-              '[Step3CategorySelection] 기본 카테고리 자동 선택: ${categories.first['id']}',
-            );
+        // 🎯 새로 만든 카테고리가 있으면 자동 선택
+        if (newCategoryId != null) {
+          final newCategory = categories.firstWhere(
+            (cat) => cat['id'] == newCategoryId,
+            orElse: () => {},
+          );
+          if (newCategory.isNotEmpty) {
+            widget.onSelectedCategoryIdChanged(newCategoryId);
+            print('[Step3CategorySelection] 새로 만든 카테고리 자동 선택: $newCategoryId');
+          }
+        } else {
+          // 🎯 기본 카테고리 자동 선택 (새로 만든 카테고리가 없는 경우)
+          if (widget.selectedCategoryId == 0 && categories.isNotEmpty) {
+            final hasUncategorized = categories.any((cat) => cat['id'] == 0);
+            if (!hasUncategorized) {
+              widget.onSelectedCategoryIdChanged(
+                categories.first['id'] as int?,
+              );
+              print(
+                '[Step3CategorySelection] 기본 카테고리 자동 선택: ${categories.first['id']}',
+              );
+            }
           }
         }
       }
     } catch (e) {
       print('[Step3CategorySelection] 카테고리 로드 실패: $e');
       if (mounted) {
-        widget.onCachedCategoriesChanged([]);
+        // 🎯 에러 발생 시 기존 캐시 유지 (빈 배열로 설정하지 않음)
         widget.onIsLoadingCategoriesChanged(false);
         widget.onShowCategoryLoadingChanged(false);
       }

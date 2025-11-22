@@ -18,6 +18,7 @@ import 'package:provider/provider.dart';
 import 'package:doppy/editor/service/sticker_service.dart';
 import 'package:doppy/editor/component/divider_component.dart';
 import 'package:doppy/utils/dialog_utils.dart';
+import 'package:doppy/providers/locale_provider.dart';
 import 'dart:ui';
 
 /// 형광펜 효과 Attribution 정의
@@ -1314,7 +1315,16 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
                   // 현재 적용 폰트를 최상단에 노출
                   initialCurrentFamily: () {
                     final current = _getCurrentFontName();
-                    if (current == '기본') return '기본 산세리프';
+                    final localeProvider = Provider.of<LocaleProvider>(
+                      ctx,
+                      listen: false,
+                    );
+                    if (current == '기본' || current == 'Default') {
+                      // 🎯 영어 모드일 때는 기본 시스템 폰트 이름 반환
+                      return localeProvider.isEnglish
+                          ? 'Default Sans Serif'
+                          : '기본 산세리프';
+                    }
                     return current;
                   }(),
                   onClose: () => Navigator.of(ctx).pop(),
@@ -1868,7 +1878,9 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
       }
     }
 
-    return '기본'; // 기본 폰트
+    // 🎯 로케일에 따라 기본 폰트 이름 반환
+    final localeProvider = Provider.of<LocaleProvider>(context, listen: false);
+    return localeProvider.isEnglish ? 'Default' : '기본'; // 기본 폰트
   }
 
   /// 폰트명 표시 버튼

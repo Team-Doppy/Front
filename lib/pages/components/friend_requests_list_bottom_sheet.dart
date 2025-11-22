@@ -76,7 +76,7 @@ class FriendRequestsListBottomSheet extends StatelessWidget {
                                 children: [],
                               ),
                             )
-                            : ListView.separated(
+                            : ListView.builder(
                               controller: scrollController,
                               padding: const EdgeInsets.symmetric(
                                 horizontal: 20,
@@ -89,8 +89,6 @@ class FriendRequestsListBottomSheet extends StatelessWidget {
                                               .isLoadingMoreReceivedRequests
                                       ? 1
                                       : 0),
-                              separatorBuilder:
-                                  (context, index) => const Divider(height: 1),
                               itemBuilder: (context, index) {
                                 // 🎯 마지막 아이템에 도달하면 더 불러오기
                                 if (index == receivedRequests.length - 3 &&

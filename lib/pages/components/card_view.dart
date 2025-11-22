@@ -319,11 +319,17 @@ class _CardViewState extends State<CardView> {
                           mainAxisAlignment: MainAxisAlignment.end,
                           children: [
                             Icon(
-                              Icons.favorite_border,
+                              // 🎯 "내가 좋아한" 화면에서는 항상 빨간색 채운 하트 표시
+                              widget.post.isLiked == true
+                                  ? Icons.favorite
+                                  : Icons.favorite_border,
                               size: 16,
-                              color: theme.colorScheme.onSurface.withOpacity(
-                                0.4,
-                              ),
+                              color:
+                                  widget.post.isLiked == true
+                                      ? const Color(0xFFFF5959) // 🎯 빨간색
+                                      : theme.colorScheme.onSurface.withOpacity(
+                                        0.4,
+                                      ),
                             ),
                             const SizedBox(width: 4),
                             Text(

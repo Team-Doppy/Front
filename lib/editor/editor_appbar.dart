@@ -725,7 +725,11 @@ class _EditModeAppBarState extends State<EditModeAppBar> {
                 value: 'group_${group.id}',
                 child: _buildGroupDropdownItem(
                   context: context,
-                  groupName: group.name,
+                  // 🎯 시스템 그룹(isSystem == true)인 경우 "모든 친구"로 표시
+                  groupName:
+                      group.isSystem == true
+                          ? context.tr('all_friends')
+                          : group.name,
                   isSelected: isSelected,
                 ),
                 onTap: () {

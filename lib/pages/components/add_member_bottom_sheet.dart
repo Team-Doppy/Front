@@ -1,4 +1,3 @@
-import 'dart:ui' as ui;
 import 'package:doppy/data/models/user_model.dart';
 import 'package:doppy/data/services/friend_service.dart';
 import 'package:doppy/l10n/app_localizations.dart';
@@ -11,27 +10,24 @@ import '../../data/models/group_model.dart';
 import '../../providers/friend_provider.dart';
 import '../../providers/group_provider.dart';
 
-// 멤버 추가 바텀시트 위젯
-class AddMemberBottomSheet extends StatefulWidget {
+// 멤버 추가 페이지 위젯
+class AddMemberScreen extends StatefulWidget {
   final Group? selectedGroup;
-  final VoidCallback onClose;
 
-  const AddMemberBottomSheet({
-    Key? key,
-    required this.selectedGroup,
-    required this.onClose,
-  }) : super(key: key);
+  const AddMemberScreen({Key? key, required this.selectedGroup})
+    : super(key: key);
 
   @override
-  State<AddMemberBottomSheet> createState() => _AddMemberBottomSheetState();
+  State<AddMemberScreen> createState() => _AddMemberScreenState();
 }
 
-class _AddMemberBottomSheetState extends State<AddMemberBottomSheet> {
+class _AddMemberScreenState extends State<AddMemberScreen> {
   final Set<String> _selectedFriends = <String>{}; // 친구인 사람들 (그룹 추가)
   final Set<String> _selectedNonFriends = <String>{}; // 🎯 친구가 아닌 사람들 (친구 요청)
   final Set<String> _selectedPendingCancels = <String>{}; // 🎯 요청 취소할 사람들
   final Set<String> _pendingRequests = <String>{}; // 🎯 친구 요청 보낸 사람들
   final TextEditingController _searchController = TextEditingController();
+  final ScrollController _scrollController = ScrollController();
   List<User> _searchedUsers = []; // 🎯 검색된 사용자 목록
   bool _isSearching = false; // 🎯 검색 중 플래그
   bool _isSendingRequests = false; // 🎯 친구 요청 전송 중
@@ -49,6 +45,7 @@ class _AddMemberBottomSheetState extends State<AddMemberBottomSheet> {
     // 🎯 키보드 닫기
     FocusManager.instance.primaryFocus?.unfocus();
     _searchController.dispose();
+    _scrollController.dispose();
     super.dispose();
   }
 
@@ -77,72 +74,53 @@ class _AddMemberBottomSheetState extends State<AddMemberBottomSheet> {
 
   @override
   Widget build(BuildContext context) {
-    return DraggableScrollableSheet(
-      initialChildSize: 0.9,
-      minChildSize: 0.3,
-      maxChildSize: 0.9,
-      builder: (context, scrollController) {
-        return BackdropFilter(
-          filter: ui.ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-          child: Container(
-            decoration: BoxDecoration(
-              color: Theme.of(context).colorScheme.background,
-              borderRadius: const BorderRadius.only(
-                topLeft: Radius.circular(20),
-                topRight: Radius.circular(20),
+    return Scaffold(
+      backgroundColor: Theme.of(context).colorScheme.background,
+      appBar: AppBar(
+        backgroundColor: Theme.of(context).colorScheme.surface,
+        elevation: 0,
+        leading: IconButton(
+          icon: Icon(
+            Icons.arrow_back_ios_new_rounded,
+            size: 24,
+            color: Theme.of(context).colorScheme.onSurface,
+          ),
+          onPressed: () => Navigator.of(context).pop(),
+        ),
+        title: Row(
+          children: [
+            Expanded(child: _buildSearchBar()),
+            GestureDetector(
+              onTap: () => Navigator.of(context).pop(),
+              child: SizedBox(
+                width: 40,
+                height: 40,
+                child: Icon(
+                  Icons.close,
+                  color: Theme.of(
+                    context,
+                  ).colorScheme.onSurface.withOpacity(0.7),
+                  size: 22,
+                ),
               ),
             ),
-            child: Column(
-              children: [
-                // 드래그 핸들
-                Container(
-                  width: 40,
-                  height: 4,
-                  margin: const EdgeInsets.symmetric(vertical: 15),
-                  decoration: BoxDecoration(
-                    color: Theme.of(
-                      context,
-                    ).colorScheme.onSurface.withOpacity(0.3),
-                    borderRadius: BorderRadius.circular(2),
-                  ),
-                ),
-
-                Row(
-                  children: [
-                    Expanded(child: _buildSearchBar()),
-
-                    GestureDetector(
-                      onTap: widget.onClose,
-                      child: SizedBox(
-                        height: 40,
-
-                        child: Icon(
-                          Icons.close,
-                          color: Theme.of(
-                            context,
-                          ).colorScheme.onSurface.withOpacity(0.7),
-                          size: 22,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 20),
-                  ],
-                ),
-                const SizedBox(height: 30),
-                // 친구 그리드
-                Expanded(child: _buildFriendsGrid(scrollController)),
-                // 🎯 하단 액션바 - SafeArea로 키보드 위에 위치
-                Padding(
-                  padding: EdgeInsets.only(
-                    bottom: MediaQuery.of(context).viewInsets.bottom + 2,
-                  ),
-                  child: _buildActionBar(),
-                ),
-              ],
+          ],
+        ),
+      ),
+      body: Column(
+        children: [
+          const SizedBox(height: 20),
+          // 친구 그리드
+          Expanded(child: _buildFriendsGrid(_scrollController)),
+          // 🎯 하단 액션바 - SafeArea로 키보드 위에 위치
+          Padding(
+            padding: EdgeInsets.only(
+              bottom: MediaQuery.of(context).viewInsets.bottom + 2,
             ),
+            child: _buildActionBar(),
           ),
-        );
-      },
+        ],
+      ),
     );
   }
 
@@ -151,8 +129,8 @@ class _AddMemberBottomSheetState extends State<AddMemberBottomSheet> {
         Theme.of(context).colorScheme.brightness == Brightness.dark;
 
     return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 0),
-      height: 46,
+      margin: const EdgeInsets.only(right: 12),
+      height: 40,
       decoration: BoxDecoration(
         color:
             isDarkMode
@@ -181,7 +159,7 @@ class _AddMemberBottomSheetState extends State<AddMemberBottomSheet> {
           enabledBorder: InputBorder.none,
           focusedBorder: InputBorder.none,
           contentPadding: const EdgeInsets.symmetric(
-            horizontal: 20,
+            horizontal: 16,
             vertical: 10,
           ),
         ),
@@ -825,21 +803,44 @@ class _AddMemberBottomSheetState extends State<AddMemberBottomSheet> {
     if (!mounted) return;
     final groupProv = context.read<GroupProvider>();
 
-    // 순차 추가(간단 구현). 필요 시 Future.wait로 병렬 처리 가능
+    // 🎯 배치 엔드포인트를 사용하여 일괄 추가
     Future<void> run() async {
-      int success = 0;
-      for (final username in _selectedFriends) {
-        if (!mounted) break;
-        final ok = await groupProv.addMember(group.id, username);
-        if (ok) success++;
-      }
+      if (_selectedFriends.isEmpty) return;
 
-      if (mounted) {
-        ErrorHandler.showInfo(
-          context,
-          context.tr('members_added').replaceAll('{count}', '$success'),
+      setState(() {
+        _isSendingRequests = true;
+      });
+
+      try {
+        final success = await groupProv.addMembersBatch(
+          group.id,
+          _selectedFriends.toList(),
         );
-        widget.onClose();
+
+        if (mounted) {
+          if (success) {
+            ErrorHandler.showInfo(
+              context,
+              context
+                  .tr('members_added')
+                  .replaceAll('{count}', '${_selectedFriends.length}'),
+            );
+            Navigator.of(context).pop();
+          } else {
+            ErrorHandler.showError(context, context.tr('add_member_failed'));
+          }
+        }
+      } catch (e) {
+        print('❌ [AddMemberScreen] 멤버 일괄 추가 에러: $e');
+        if (mounted) {
+          ErrorHandler.showError(context, context.tr('add_member_failed'));
+        }
+      } finally {
+        if (mounted) {
+          setState(() {
+            _isSendingRequests = false;
+          });
+        }
       }
     }
 

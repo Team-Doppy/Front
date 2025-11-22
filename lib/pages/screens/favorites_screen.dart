@@ -131,7 +131,10 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
       return postsJson
           .map((json) {
             try {
-              return PostData.fromServer(json);
+              // 🎯 "내가 좋아한" 화면에서는 모든 포스트가 좋아요한 포스트이므로 isLiked를 true로 설정
+              final jsonWithLiked = Map<String, dynamic>.from(json);
+              jsonWithLiked['isLiked'] = true;
+              return PostData.fromServer(jsonWithLiked);
             } catch (e) {
               print('[FavoritesScreen] 포스트 파싱 실패: $e');
               return null;

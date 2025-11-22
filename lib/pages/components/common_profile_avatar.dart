@@ -45,7 +45,8 @@ class CommonProfileAvatar extends StatelessWidget {
             height: size,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
-              color: backgroundColor ?? Theme.of(context).colorScheme.surface,
+              color:
+                  backgroundColor ?? Theme.of(context).colorScheme.background,
               border: Border.all(
                 color: borderColor ?? effectiveBorderColor,
                 width: effectiveBorderWidth,

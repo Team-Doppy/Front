@@ -420,7 +420,7 @@ class _ShareBottomSheetState extends State<ShareBottomSheet> {
                                 _isSharing
                                     ? Icons.hourglass_empty
                                     : Icons.more_horiz,
-                            label: '더보기',
+                            label: context.tr('more'),
                             color: Theme.of(context).colorScheme.surfaceVariant,
                             borderColor: Theme.of(
                               context,

@@ -1,10 +1,13 @@
+import 'dart:async';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:doppy/pages/components/card_view_shimmer.dart';
 import 'package:doppy/pages/components/group_sheet.dart';
 import 'package:doppy/pages/components/shimmer_box.dart';
 import 'package:doppy/pages/components/card_view.dart';
-import 'package:doppy/pages/components/add_member_bottom_sheet.dart';
+import 'package:doppy/pages/components/add_member_bottom_sheet.dart'
+    show AddMemberScreen;
 import 'package:doppy/pages/components/group_post_readers_bottom_sheet.dart';
+import 'package:doppy/pages/components/access_level_sheet.dart';
 import 'package:doppy/pages/components/friends_grid.dart';
 import 'package:doppy/pages/components/custom_refresh_indicator.dart';
 import 'package:doppy/pages/components/doppy_loading_logo.dart';
@@ -18,8 +21,10 @@ import '../../../providers/friend_provider.dart';
 import '../../../data/models/friend_model.dart';
 import '../../../data/models/group_model.dart';
 import '../../../data/models/post_data.dart';
+import '../../../data/models/system_category_keys.dart';
 import '../../../data/services/blog_service.dart';
 import '../../../providers/group_provider.dart';
+import '../../../providers/feed_provider/my_profile_feed_provider.dart';
 
 // 그룹 관리 화면 메인 위젯
 class ManageGroupScreen extends StatefulWidget {
@@ -36,12 +41,37 @@ class ManageGroupScreen extends StatefulWidget {
 
   @override
   State<ManageGroupScreen> createState() => _ManageGroupScreenState();
+
+  /// 🎯 그룹 포스트 캐시 무효화 (외부에서 호출 가능)
+  /// 새 포스트 발행 또는 공개범위 변경 시 호출
+  static void invalidateGroupPostsCache(int groupId) {
+    _ManageGroupScreenState.invalidateGroupPostsCacheInternal(groupId);
+  }
+
+  /// 🎯 여러 그룹의 포스트 캐시 일괄 무효화
+  static void invalidateMultipleGroupsPostsCache(List<int> groupIds) {
+    _ManageGroupScreenState.invalidateMultipleGroupsPostsCacheInternal(
+      groupIds,
+    );
+  }
+
+  /// 🎯 특정 그룹의 캐시 무효화 상태 확인
+  static bool isGroupPostsCacheInvalidated(int groupId) {
+    return _ManageGroupScreenState.isGroupPostsCacheInvalidatedInternal(
+      groupId,
+    );
+  }
+
+  /// 🎯 모든 그룹 포스트 캐시 무효화 플래그 제거
+  static void clearInvalidationFlags() {
+    _ManageGroupScreenState.clearInvalidationFlagsInternal();
+  }
 }
 
 class _ManageGroupScreenState extends State<ManageGroupScreen>
     with TickerProviderStateMixin {
   // 🎯 앱바 확장 높이 상수
-  static const double _appBarExpandedHeight = 320.0;
+  static const double _appBarExpandedHeight = 270.0;
 
   // 🎯 새로고침 관련 상수
   static const double _refreshStart = 30.0; // 스피너 표시 시작 역치
@@ -72,11 +102,19 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
   late final AnimationController _appBarHeightAnimationController;
   late final Animation<double> _appBarHeightAnimation;
 
+  // 🎯 SliverAppBar의 접힘 상태 추적
+  bool _isAppBarCollapsed = false;
+
   // 🎯 그룹 포스트 관련 상태 (static으로 유지하여 화면 전환 시에도 캐시 보존)
   static final Map<int, List<PostData>> _groupPostsCache = {};
   static final Map<int, bool> _isLoadingGroupPosts = {};
   static final Map<int, int> _groupPostsPage = {};
   static final Map<int, bool> _hasMoreGroupPosts = {};
+  // 🎯 포스트 로딩 시작 시간 (최소 shimmer 표시 시간 보장용)
+  static final Map<int, DateTime?> _postsLoadingStartTime = {};
+
+  // 🎯 그룹 포스트 캐시 무효화 플래그 (동기화용)
+  static final Set<int> _invalidatedGroupIds = {};
 
   // 🎯 앱바 드래그 새로고침 관련 상태
   double _pullOffset = 0.0; // 드래그 오프셋 (음수 = 아래로 당김)
@@ -194,6 +232,11 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
           // 🎯 초기 로딩 완료 전에 친구 데이터 로드
           await friendProv.fetchAllFriendData();
         }
+        // 🎯 전체 친구 그룹 멤버 수 동기화 (누락된 친구가 포함된 커스텀 그룹 동기화 포함)
+        groupProv.syncAllFriendsMemberCount(
+          friendProv.acceptedFriends.length,
+          friendProvider: friendProv,
+        );
       } else {
         // 일반 그룹: 캐시 확인 후 멤버 목록 로드
         if (!groupProv.isMembersCached(_selectedGroup!.id) &&
@@ -208,9 +251,17 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
         final posts = _groupPostsCache[groupId] ?? [];
         final isLoading = _isLoadingGroupPosts[groupId] ?? false;
         final hasMore = _hasMoreGroupPosts[groupId] ?? true;
-        if (posts.isEmpty && !isLoading && hasMore) {
+
+        // 🎯 캐시가 무효화되었거나 비어있으면 자동 로드
+        final isInvalidated = _invalidatedGroupIds.contains(groupId);
+        if ((isInvalidated || posts.isEmpty) && !isLoading && hasMore) {
           // 포스트 탭으로 자동 전환하지 않고 백그라운드에서 로드
-          _loadAllFriendsPosts();
+          if (isInvalidated) {
+            // 무효화된 경우 새로고침으로 처음부터 다시 로드
+            _refreshPosts();
+          } else {
+            _loadAllFriendsPosts();
+          }
         }
       }
 
@@ -269,7 +320,6 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
 
   // 🎯 NestedScrollView 기반 안정형 구조
   Widget _buildScaffold(GroupProvider groupProv, FriendProvider friendProv) {
-    final group = _selectedGroup;
     return Scaffold(
       backgroundColor: Theme.of(context).colorScheme.background,
       resizeToAvoidBottomInset: false,
@@ -279,6 +329,17 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
           if (!widget.embedded)
             NestedScrollView(
               headerSliverBuilder: (context, innerBoxIsScrolled) {
+                // 🎯 SliverAppBar의 접힘 상태 업데이트
+                if (_isAppBarCollapsed != innerBoxIsScrolled) {
+                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                    if (mounted) {
+                      setState(() {
+                        _isAppBarCollapsed = innerBoxIsScrolled;
+                      });
+                    }
+                  });
+                }
+
                 return [
                   SliverOverlapAbsorber(
                     handle: NestedScrollView.sliverOverlapAbsorberHandleFor(
@@ -287,8 +348,6 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
                     sliver: AnimatedBuilder(
                       animation: _appBarHeightAnimation,
                       builder: (context, child) {
-                        // 🎯 검색 활성화 시 expandedHeight를 0으로, 아니면 기본값으로 설정
-
                         return SliverAppBar(
                           pinned: true,
                           expandedHeight:
@@ -296,7 +355,7 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
                                   ? 0.0
                                   : _appBarExpandedHeight,
                           toolbarHeight:
-                              MediaQuery.of(context).padding.top + 110,
+                              MediaQuery.of(context).padding.top + 55,
                           backgroundColor:
                               Theme.of(context).colorScheme.surface,
                           elevation: 0,
@@ -304,13 +363,34 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
                           automaticallyImplyLeading: false,
                           flexibleSpace: FlexibleSpaceBar(
                             collapseMode: CollapseMode.pin,
-                            background: RepaintBoundary(
-                              child: Container(
-                                decoration: BoxDecoration(
-                                  color: Theme.of(context).colorScheme.surface,
-                                ),
-                                child: _buildAppBarContent(),
-                              ),
+                            background: AnimatedBuilder(
+                              animation: Listenable.merge([
+                                _appBarHeightAnimationController,
+                                _refreshAnimationController,
+                              ]),
+                              builder: (context, child) {
+                                // 두 투명도 중 더 작은 값 사용
+                                final finalOpacity =
+                                    (1.0 -
+                                        (_pullOffset / _refreshTrigger).clamp(
+                                          0.0,
+                                          1.0,
+                                        ));
+                                return RepaintBoundary(
+                                  child: Opacity(
+                                    opacity: finalOpacity,
+                                    child: Container(
+                                      decoration: BoxDecoration(
+                                        color:
+                                            Theme.of(
+                                              context,
+                                            ).colorScheme.surface,
+                                      ),
+                                      child: _buildAppBarContent(),
+                                    ),
+                                  ),
+                                );
+                              },
                             ),
                           ),
                           bottom: PreferredSize(
@@ -324,47 +404,6 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
                                     crossAxisAlignment:
                                         CrossAxisAlignment.start,
                                     children: [
-                                      // 🎯 드래그에 따른 투명도 조절 (_refreshTrigger에서 완전히 투명해지도록)
-                                      AnimatedOpacity(
-                                        opacity:
-                                            (1.0 -
-                                                (_pullOffset / _refreshTrigger)
-                                                    .clamp(0.0, 1.0)),
-                                        duration: const Duration(
-                                          milliseconds: 50, // 더 빠른 애니메이션
-                                        ),
-                                        child: Padding(
-                                          padding: const EdgeInsets.only(
-                                            left: 28,
-                                          ),
-                                          child: Column(
-                                            crossAxisAlignment:
-                                                CrossAxisAlignment.start,
-                                            children: [
-                                              Text(
-                                                _isMultiSelectMode
-                                                    ? '${_selectedMembers.length} ${context.tr('selected')}'
-                                                    : _getGroupDisplayName(
-                                                      group,
-                                                    ),
-                                                style: TextStyle(
-                                                  fontSize: 28,
-                                                  fontWeight: FontWeight.w700,
-                                                  color:
-                                                      Theme.of(
-                                                        context,
-                                                      ).colorScheme.onSurface,
-                                                  letterSpacing: -0.5,
-                                                  height: 1.2,
-                                                ),
-                                                maxLines: 2,
-                                                overflow: TextOverflow.ellipsis,
-                                              ),
-                                            ],
-                                          ),
-                                        ),
-                                      ),
-                                      SizedBox(height: 12),
                                       AnimatedOpacity(
                                         opacity:
                                             (1.0 -
@@ -398,14 +437,14 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
                                           ),
                                         ),
                                       ),
-                                      SizedBox(height: 12),
+                                      SizedBox(height: 10),
                                     ],
                                   ),
                                   // 🎯 스피너 (상단에 고정) - _refreshStart 이상일 때만 표시
                                   if (_pullOffset > _refreshStart ||
                                       _isRefreshing)
                                     Positioned(
-                                      top: 0,
+                                      bottom: 0,
                                       left: 0,
                                       right: 0,
                                       child: Container(
@@ -486,22 +525,45 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
           else
             // embedded 모드는 기존 구조 유지
             CustomScrollView(slivers: _buildBodySlivers(groupProv, friendProv)),
-          // 뒤로가기 버튼
+          // 뒤로가기 버튼과 그룹 이름 (접혔을 때만 표시)
           if (!widget.embedded)
             Positioned(
               top: MediaQuery.of(context).padding.top + 10,
               left: 9,
-              child: GestureDetector(
-                onTap: () => Navigator.pop(context),
-                child: SizedBox(
-                  width: 40,
-                  height: 40,
-                  child: Icon(
-                    Icons.arrow_back_ios_new_rounded,
-                    size: 24,
-                    color: Theme.of(context).colorScheme.onSurface,
+              child: Row(
+                children: [
+                  GestureDetector(
+                    onTap: () => Navigator.pop(context),
+                    child: SizedBox(
+                      width: 40,
+                      height: 40,
+                      child: Icon(
+                        Icons.arrow_back_ios_new_rounded,
+                        size: 24,
+                        color: Theme.of(context).colorScheme.onSurface,
+                      ),
+                    ),
                   ),
-                ),
+                  SizedBox(width: 10),
+                  AnimatedOpacity(
+                    opacity:
+                        (_isAppBarCollapsed || _isAppbarSearchExpanded)
+                            ? 1.0
+                            : 0.0,
+                    duration: const Duration(milliseconds: 200),
+                    child: Text(
+                      // 🎯 시스템 그룹(isSystem == true)인 경우 "모든 친구"로 표시
+                      (_selectedGroup?.isSystem == true)
+                          ? context.tr('all_friends')
+                          : (_selectedGroup?.name ?? ''),
+                      style: TextStyle(
+                        fontSize: 22,
+                        fontWeight: FontWeight.w500,
+                        color: Theme.of(context).colorScheme.onSurface,
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
           // 멤버 추가 버튼
@@ -578,7 +640,7 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
 
     return RepaintBoundary(
       child: Padding(
-        padding: const EdgeInsets.only(left: 20, right: 20),
+        padding: const EdgeInsets.only(left: 20, right: 20, top: 50),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.center,
@@ -594,8 +656,8 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
                     }
                   },
                   child: Container(
-                    width: 90,
-                    height: 90,
+                    width: 100,
+                    height: 100,
                     decoration: BoxDecoration(shape: BoxShape.circle),
                     child: Stack(
                       children: [
@@ -621,32 +683,30 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
                                               'https://',
                                             ))
                                     ? CachedNetworkImage(
+                                      key: ValueKey(
+                                        'group-appbar-image-${group.id}',
+                                      ),
                                       imageUrl: displayImageUrl,
                                       fit: BoxFit.cover,
                                       width: 90,
                                       height: 90,
+                                      fadeInDuration: const Duration(
+                                        milliseconds: 0,
+                                      ), // 🎯 즉시 표시 (캐시된 이미지)
+                                      fadeOutDuration: const Duration(
+                                        milliseconds: 0,
+                                      ), // 🎯 즉시 사라짐
+                                      memCacheWidth: 180, // 🎯 메모리 캐시 크기 지정
+                                      maxWidthDiskCache: 180, // 🎯 디스크 캐시 크기 지정
                                       placeholder:
                                           (context, url) => Container(
-                                            width: 90,
-                                            height: 90,
+                                            width: 100,
+                                            height: 100,
                                             color:
                                                 Theme.of(
                                                   context,
                                                 ).colorScheme.surface,
-                                            child: Center(
-                                              child: CircularProgressIndicator(
-                                                strokeWidth: 2,
-                                                valueColor:
-                                                    AlwaysStoppedAnimation<
-                                                      Color
-                                                    >(
-                                                      Theme.of(context)
-                                                          .colorScheme
-                                                          .onSurface
-                                                          .withOpacity(0.3),
-                                                    ),
-                                              ),
-                                            ),
+                                            child: Center(),
                                           ),
                                       errorWidget: (context, url, error) {
                                         return _buildGroupAvatarPlaceholder(
@@ -655,28 +715,6 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
                                       },
                                     )
                                     : _buildGroupAvatarPlaceholder(group),
-                          ),
-                        ),
-                        // 🎯 카메라 아이콘 (우측 하단)
-                        Positioned(
-                          right: 0,
-                          bottom: 0,
-                          child: Container(
-                            width: 28,
-                            height: 28,
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              color: Theme.of(context).colorScheme.onSurface,
-                              border: Border.all(
-                                color: Theme.of(context).colorScheme.surface,
-                                width: 1.5,
-                              ),
-                            ),
-                            child: Icon(
-                              Icons.camera_alt,
-                              size: 14,
-                              color: Theme.of(context).colorScheme.surface,
-                            ),
                           ),
                         ),
                       ],
@@ -691,13 +729,28 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: [
+                  Text(
+                    // 🎯 시스템 그룹(isSystem == true)인 경우 "모든 친구"로 표시
+                    (group.isSystem == true)
+                        ? context.tr('all_friends')
+                        : group.name,
+                    style: TextStyle(
+                      fontSize: 26,
+                      fontWeight: FontWeight.w300,
+                      color: Theme.of(context).colorScheme.onSurface,
+                      letterSpacing: -0.2,
+                      height: 1.3,
+                    ),
+                  ),
+
                   // 🎯 첫 번째 줄: 디스크립션 (있다면)
-                  if (displayDescription.isNotEmpty)
+                  SizedBox(height: 10),
+                  if (displayDescription.isNotEmpty) ...[
                     RepaintBoundary(
                       child: Text(
                         displayDescription,
                         style: TextStyle(
-                          fontSize: 17,
+                          fontSize: 16,
                           fontWeight: FontWeight.w400,
                           color: Theme.of(
                             context,
@@ -709,12 +762,12 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
                         overflow: TextOverflow.ellipsis,
                       ),
                     ),
+                  ],
+
                   // 🎯 두 번째 줄: 멤버 수 · 포스트 수 (프로필 화면 스타일)
                   RepaintBoundary(
                     child: Padding(
-                      padding: EdgeInsets.only(
-                        top: displayDescription.isNotEmpty ? 4.0 : 0.0,
-                      ),
+                      padding: EdgeInsets.only(top: 4.0),
                       child: Row(
                         mainAxisAlignment: MainAxisAlignment.start,
                         children: [
@@ -724,7 +777,7 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
                             count: group.memberCount ?? 0,
                             label: context.tr('members'),
                           ),
-                          const SizedBox(width: 20),
+
                           // 포스트 수
                           _buildStatItem(
                             context,
@@ -915,7 +968,6 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
 
       // 🎯 현재 그룹이 최근 업데이트된 그룹 목록에 있는지 확인
       if (groupProv.checkAndClearGroupUpdate(groupId)) {
-        print('🎯 [ManageGroupScreen] 스마트 감지: 그룹 $groupId 포스트 추가 감지 - 자동 새로고침');
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (!mounted) return;
           // 포스트 탭이 활성화되어 있고, 해당 그룹의 포스트가 있으면 새로고침
@@ -956,18 +1008,36 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
       final isAllFriendsGroup = newGroup.isSystem == true;
 
       if (!isAllFriendsGroup && newGroup.id != -1) {
-        final posts = _groupPostsCache[newGroup.id] ?? [];
-        final isLoading = _isLoadingGroupPosts[newGroup.id] ?? false;
-        final hasMore = _hasMoreGroupPosts[newGroup.id] ?? true;
-        if (posts.isEmpty && !isLoading && hasMore) {
-          _loadGroupPosts(newGroup.id);
+        final groupId = newGroup.id;
+        final posts = _groupPostsCache[groupId] ?? [];
+        final isLoading = _isLoadingGroupPosts[groupId] ?? false;
+        final hasMore = _hasMoreGroupPosts[groupId] ?? true;
+        final isInvalidated = _invalidatedGroupIds.contains(groupId);
+
+        // 🎯 캐시가 무효화되었거나 비어있으면 로드
+        if ((isInvalidated || posts.isEmpty) && !isLoading && hasMore) {
+          if (isInvalidated) {
+            // 무효화된 경우 새로고침으로 처음부터 다시 로드
+            _refreshPosts();
+          } else {
+            _loadGroupPosts(groupId);
+          }
         }
       } else if (isAllFriendsGroup) {
-        final posts = _groupPostsCache[-1] ?? [];
-        final isLoading = _isLoadingGroupPosts[-1] ?? false;
-        final hasMore = _hasMoreGroupPosts[-1] ?? true;
-        if (posts.isEmpty && !isLoading && hasMore) {
-          _loadAllFriendsPosts();
+        final groupId = -1;
+        final posts = _groupPostsCache[groupId] ?? [];
+        final isLoading = _isLoadingGroupPosts[groupId] ?? false;
+        final hasMore = _hasMoreGroupPosts[groupId] ?? true;
+        final isInvalidated = _invalidatedGroupIds.contains(groupId);
+
+        // 🎯 캐시가 무효화되었거나 비어있으면 로드
+        if ((isInvalidated || posts.isEmpty) && !isLoading && hasMore) {
+          if (isInvalidated) {
+            // 무효화된 경우 새로고침으로 처음부터 다시 로드
+            _refreshPosts();
+          } else {
+            _loadAllFriendsPosts();
+          }
         }
       }
     }
@@ -1248,13 +1318,26 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
     final friendProv = context.read<FriendProvider>();
 
     if (newIndex == 1 && _currentViewIndex == 0) {
-      if (group != null && group.id != -1) {
-        final posts = _groupPostsCache[group.id] ?? [];
-        final isLoading = _isLoadingGroupPosts[group.id] ?? false;
-        if (posts.isEmpty && !isLoading) {
+      // 포스트 탭으로 전환
+      if (group != null) {
+        final isAllFriendsGroup = group.isSystem == true;
+        final groupId = isAllFriendsGroup ? -1 : group.id;
+        final posts = _groupPostsCache[groupId] ?? [];
+        final isLoading = _isLoadingGroupPosts[groupId] ?? false;
+        final isInvalidated = _invalidatedGroupIds.contains(groupId);
+
+        // 🎯 캐시가 무효화되었거나 비어있으면 로드
+        if ((isInvalidated || posts.isEmpty) && !isLoading) {
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (mounted && _selectedGroup?.id == group.id) {
-              _loadGroupPosts(group.id);
+              if (isInvalidated) {
+                // 무효화된 경우 새로고침으로 처음부터 다시 로드
+                _refreshPosts();
+              } else if (isAllFriendsGroup) {
+                _loadAllFriendsPosts();
+              } else if (groupId != -1) {
+                _loadGroupPosts(groupId);
+              }
             }
           });
         }
@@ -1373,8 +1456,15 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
     final isLoading = _isLoadingGroupPosts[groupId] ?? false;
     final hasMore = _hasMoreGroupPosts[groupId] ?? true;
 
-    // 🎯 새로고침 중일 때만 Shimmer 표시
-    if (_isRefreshing && _currentViewIndex == 1) {
+    // 🎯 최소 shimmer 표시 시간 보장 (0.5초)
+    final loadingStartTime = _postsLoadingStartTime[groupId];
+    final shouldShowShimmer =
+        isLoading ||
+        (loadingStartTime != null &&
+            DateTime.now().difference(loadingStartTime).inMilliseconds < 500);
+
+    // 🎯 로딩 중이거나 새로고침 중일 때 Shimmer 표시
+    if ((shouldShowShimmer || _isRefreshing) && _currentViewIndex == 1) {
       return [
         SliverPadding(
           padding: const EdgeInsets.fromLTRB(12.0, 24.0, 12.0, 0),
@@ -1443,33 +1533,11 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
               });
             }
 
-            return Stack(
-              children: [
-                GestureDetector(
-                  onTap: () {
-                    if (_isMultiSelectMode) {
-                      setState(() {
-                        if (isSelected) {
-                          _selectedPosts.remove(post.id);
-                        } else {
-                          _selectedPosts.add(post.id);
-                        }
-                      });
-                    } else {
-                      _showGroupPostReadersBottomSheet(post);
-                    }
-                  },
-                  child: CardView(
-                    post: post,
-                    isLast: postIndex == posts.length - 1,
-                    isFirst: postIndex == 0,
-                  ),
-                ),
-                if (_isMultiSelectMode)
-                  Positioned(
-                    left: 8,
-                    top: 8,
-                    child: GestureDetector(
+            return _isMultiSelectMode
+                ? Row(
+                  children: [
+                    // 🎯 선택 UI (왼쪽)
+                    GestureDetector(
                       onTap: () {
                         setState(() {
                           if (isSelected) {
@@ -1480,37 +1548,65 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
                         });
                       },
                       child: Container(
-                        width: 28,
-                        height: 28,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          color:
-                              isSelected
-                                  ? Theme.of(context).colorScheme.onSurface
-                                  : Colors.white.withOpacity(0.9),
-                          border: Border.all(
+                        width: 35,
+                        alignment: Alignment.center,
+                        child: Container(
+                          width: 28,
+                          height: 28,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
                             color:
                                 isSelected
                                     ? Theme.of(context).colorScheme.onSurface
-                                    : Theme.of(
-                                      context,
-                                    ).colorScheme.onSurface.withOpacity(0.3),
-                            width: 2,
+                                    : Colors.transparent,
+                            border: Border.all(
+                              color: Theme.of(context).colorScheme.onSurface,
+                              width: 2,
+                            ),
                           ),
+                          child:
+                              isSelected
+                                  ? Icon(
+                                    Icons.check,
+                                    size: 22,
+                                    color:
+                                        Theme.of(context).colorScheme.surface,
+                                  )
+                                  : null,
                         ),
-                        child:
-                            isSelected
-                                ? Icon(
-                                  Icons.check,
-                                  size: 18,
-                                  color: Theme.of(context).colorScheme.surface,
-                                )
-                                : null,
                       ),
                     ),
+                    // 🎯 카드뷰 (선택 모드 시 길이 조정)
+                    Expanded(
+                      child: GestureDetector(
+                        onTap: () {
+                          setState(() {
+                            if (isSelected) {
+                              _selectedPosts.remove(post.id);
+                            } else {
+                              _selectedPosts.add(post.id);
+                            }
+                          });
+                        },
+                        child: CardView(
+                          post: post,
+                          isLast: postIndex == posts.length - 1,
+                          isFirst: postIndex == 0,
+                        ),
+                      ),
+                    ),
+                  ],
+                )
+                : GestureDetector(
+                  onTap: () {
+                    _showGroupPostReadersBottomSheet(post);
+                  },
+                  child: CardView(
+                    post: post,
+                    isLast: postIndex == posts.length - 1,
+                    isFirst: postIndex == 0,
                   ),
-              ],
-            );
+                );
           }, childCount: posts.isEmpty ? 0 : (posts.length * 2 - 1)),
         ),
       ),
@@ -1523,8 +1619,10 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
     if (_hasMoreGroupPosts[groupId] == false) return;
     if (!mounted) return;
 
+    final loadingStartTime = DateTime.now();
     setState(() {
       _isLoadingGroupPosts[groupId] = true;
+      _postsLoadingStartTime[groupId] = loadingStartTime;
     });
 
     try {
@@ -1551,6 +1649,15 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
 
       final hasMore = newPosts.length >= 20; // 🎯 10 -> 20으로 변경
 
+      // 🎯 최소 0.5초 shimmer 표시 보장
+      final elapsed =
+          DateTime.now().difference(loadingStartTime).inMilliseconds;
+      final remainingDelay = 500 - elapsed;
+
+      if (remainingDelay > 0) {
+        await Future.delayed(Duration(milliseconds: remainingDelay));
+      }
+
       if (!mounted) return;
       setState(() {
         final existingPosts = _groupPostsCache[groupId] ?? [];
@@ -1560,13 +1667,25 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
           _groupPostsPage[groupId] = (page + 1);
         }
         _isLoadingGroupPosts[groupId] = false;
+        _postsLoadingStartTime.remove(groupId);
       });
     } catch (e) {
       print('❌ [ManageGroupScreen] 그룹 포스트 로드 에러: $e');
+
+      // 🎯 최소 0.5초 shimmer 표시 보장 (에러 발생 시에도)
+      final elapsed =
+          DateTime.now().difference(loadingStartTime).inMilliseconds;
+      final remainingDelay = 500 - elapsed;
+
+      if (remainingDelay > 0) {
+        await Future.delayed(Duration(milliseconds: remainingDelay));
+      }
+
       if (!mounted) return;
       setState(() {
         _isLoadingGroupPosts[groupId] = false;
         _hasMoreGroupPosts[groupId] = false;
+        _postsLoadingStartTime.remove(groupId);
       });
     }
   }
@@ -1634,12 +1753,41 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
       _hasMoreGroupPosts[groupId] = true;
     });
 
+    // 🎯 무효화 플래그 제거
+    _invalidatedGroupIds.remove(groupId);
+
     // 🎯 처음부터 다시 로드
     if (isAllFriendsGroup) {
       await _loadAllFriendsPosts();
     } else if (groupId != -1) {
       await _loadGroupPosts(groupId);
     }
+  }
+
+  /// 🎯 그룹 포스트 캐시 무효화 (내부 구현)
+  static void invalidateGroupPostsCacheInternal(int groupId) {
+    print('🔄 [ManageGroupScreen] 그룹 $groupId 포스트 캐시 무효화');
+    _invalidatedGroupIds.add(groupId);
+    // 캐시는 즉시 삭제하지 않고, 화면 진입 시 확인 후 새로고침
+    // (현재 화면에서 보고 있는 경우 즉시 새로고침하도록 플래그만 설정)
+  }
+
+  /// 🎯 여러 그룹의 포스트 캐시 일괄 무효화 (내부 구현)
+  static void invalidateMultipleGroupsPostsCacheInternal(List<int> groupIds) {
+    print('🔄 [ManageGroupScreen] 여러 그룹 포스트 캐시 무효화: $groupIds');
+    for (final groupId in groupIds) {
+      _invalidatedGroupIds.add(groupId);
+    }
+  }
+
+  /// 🎯 특정 그룹의 캐시 무효화 상태 확인 (내부 구현)
+  static bool isGroupPostsCacheInvalidatedInternal(int groupId) {
+    return _invalidatedGroupIds.contains(groupId);
+  }
+
+  /// 🎯 모든 그룹 포스트 캐시 무효화 플래그 제거 (내부 구현)
+  static void clearInvalidationFlagsInternal() {
+    _invalidatedGroupIds.clear();
   }
 
   // 🎯 allFriends 그룹 포스트 로드 (내가 작성한 FRIENDS 공개 범위만)
@@ -1649,8 +1797,10 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
     if (_hasMoreGroupPosts[groupId] == false) return;
     if (!mounted) return;
 
+    final loadingStartTime = DateTime.now();
     setState(() {
       _isLoadingGroupPosts[groupId] = true;
+      _postsLoadingStartTime[groupId] = loadingStartTime;
     });
 
     try {
@@ -1670,6 +1820,15 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
 
       final hasMore = newPosts.length >= 20; // 🎯 10 -> 20으로 변경
 
+      // 🎯 최소 0.5초 shimmer 표시 보장
+      final elapsed =
+          DateTime.now().difference(loadingStartTime).inMilliseconds;
+      final remainingDelay = 500 - elapsed;
+
+      if (remainingDelay > 0) {
+        await Future.delayed(Duration(milliseconds: remainingDelay));
+      }
+
       if (!mounted) return;
       setState(() {
         final existingPosts = _groupPostsCache[groupId] ?? [];
@@ -1679,13 +1838,25 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
           _groupPostsPage[groupId] = (page + 1);
         }
         _isLoadingGroupPosts[groupId] = false;
+        _postsLoadingStartTime.remove(groupId);
       });
     } catch (e) {
       print('❌ [ManageGroupScreen] allFriends 포스트 로드 에러: $e');
+
+      // 🎯 최소 0.5초 shimmer 표시 보장 (에러 발생 시에도)
+      final elapsed =
+          DateTime.now().difference(loadingStartTime).inMilliseconds;
+      final remainingDelay = 500 - elapsed;
+
+      if (remainingDelay > 0) {
+        await Future.delayed(Duration(milliseconds: remainingDelay));
+      }
+
       if (!mounted) return;
       setState(() {
         _isLoadingGroupPosts[groupId] = false;
         _hasMoreGroupPosts[groupId] = false;
+        _postsLoadingStartTime.remove(groupId);
       });
     }
   }
@@ -1800,9 +1971,7 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
                   ? context.tr('no_matching_members_or_groups')
                   : selectedGroup.isSystem == true
                   ? context.tr('no_friends_to_display')
-                  : context
-                      .tr('no_friends_in_group')
-                      .replaceAll('{groupName}', selectedGroup.name),
+                  : context.tr('no_friends_in_group'),
               style: TextStyle(
                 fontSize: 16,
                 color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
@@ -1869,46 +2038,309 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
   // 🎯 포스트 다중 선택 모드 하단 액션바
   Widget _buildPostMultiSelectActionBar() {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
       decoration: BoxDecoration(
         color: Theme.of(context).colorScheme.background,
       ),
       child: SafeArea(
         top: false,
-        child: GestureDetector(
-          onTap: _selectedPosts.isEmpty ? null : _changeSelectedPostsToPrivate,
-          child: Text(
-            textAlign: TextAlign.center,
-            context
-                .tr('change_to_private_selected_posts')
-                .replaceAll('{count}', '${_selectedPosts.length}'),
-            style: TextStyle(
-              color:
-                  _selectedPosts.isEmpty
-                      ? Theme.of(context).colorScheme.onSurface.withOpacity(0.5)
-                      : Theme.of(context).colorScheme.onSurface,
-              fontSize: 16,
-              fontWeight:
-                  _selectedPosts.isEmpty ? FontWeight.normal : FontWeight.bold,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // 🎯 얇은 디바이더 - 화면 너비 전체
+            Divider(
+              height: 1,
+              thickness: 0.5,
+              indent: 0,
+              endIndent: 0,
+              color: Theme.of(context).colorScheme.onSurface.withOpacity(0.2),
             ),
-          ),
+            // 🎯 공개범위 일괄 변경 버튼
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+              child: GestureDetector(
+                onTap:
+                    _selectedPosts.isEmpty ? null : _showBatchAccessLevelChange,
+                child: Text(
+                  textAlign: TextAlign.center,
+                  '${context.tr('batch_change_access_level_button')}(${_selectedPosts.length})',
+                  style: TextStyle(
+                    color:
+                        _selectedPosts.isEmpty
+                            ? Theme.of(
+                              context,
+                            ).colorScheme.onSurface.withOpacity(0.5)
+                            : Theme.of(context).colorScheme.onSurface,
+                    fontSize: 16,
+                    fontWeight:
+                        _selectedPosts.isEmpty
+                            ? FontWeight.normal
+                            : FontWeight.bold,
+                  ),
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );
   }
 
-  // 🎯 선택된 포스트들을 나만보기로 일괄 변경
-  Future<void> _changeSelectedPostsToPrivate() async {
-    if (_selectedPosts.isEmpty) return;
+  // 🎯 선택된 포스트들의 공개범위 일괄 변경
+  Future<void> _showBatchAccessLevelChange() async {
+    if (_selectedPosts.isEmpty) {
+      return;
+    }
 
     final postIdsToChange = _selectedPosts.toList();
 
+    // 🎯 단일 포스트인 경우: 실제 postId를 전달하여 배치 엔드포인트로 즉시 처리
+    if (postIdsToChange.length == 1) {
+      final singlePostId = postIdsToChange.first;
+
+      // 🎯 포스트 정보 가져오기 (현재 공개범위 확인용)
+      final currentGroup = _selectedGroup;
+      final isAllFriendsGroup =
+          currentGroup != null && currentGroup.isSystem == true;
+      final groupId = isAllFriendsGroup ? -1 : currentGroup?.id;
+      final posts = _groupPostsCache[groupId] ?? [];
+      final post = posts.firstWhere(
+        (p) => p.id == singlePostId,
+        orElse: () => posts.first,
+      );
+
+      // 🎯 현재 공개범위 정보
+      String currentAccessLevel = SystemCategoryKeys.public;
+      if (post.accessLevel == AccessLevel.private) {
+        currentAccessLevel = SystemCategoryKeys.private;
+      } else if (post.accessLevel == AccessLevel.friends) {
+        currentAccessLevel = SystemCategoryKeys.friends;
+      } else if (post.accessLevel == AccessLevel.groups) {
+        currentAccessLevel = SystemCategoryKeys.groups;
+      }
+
+      // 🎯 제외할 그룹 ID: 일반 그룹일 때는 현재 그룹 ID, 전체 친구 그룹일 때는 -1
+      final excludeGroupIdForSingle =
+          isAllFriendsGroup
+              ? -1 // 🎯 전체 친구 그룹: -1로 제외
+              : (currentGroup?.id); // 🎯 일반 그룹: 현재 그룹 ID
+
+      // 🎯 단일 포스트: 실제 postId를 전달하여 배치 엔드포인트로 처리
+      AccessLevelSheet.show(
+        context,
+        postId: singlePostId, // 🎯 실제 포스트 ID 전달
+        currentAccessLevel: currentAccessLevel,
+        currentSharedGroupIds: post.sharedGroupIds,
+        currentSharedGroupNames: post.sharedGroupNames,
+        excludeGroupId: excludeGroupIdForSingle, // 🎯 현재 그룹 제외
+        onChanged: (String newAccessLevel, List<int>? newSharedGroupIds) async {
+          // 🎯 단일 포스트는 AccessLevelSheet 내부에서 배치 엔드포인트로 처리됨
+          // 여기서는 변경된 포스트를 캐시에서 제거하고 재빌드
+          if (!mounted || groupId == null) return;
+
+          // 🎯 원래 공개범위 정보 수집 (postCount 업데이트용)
+          final originalAccessLevel = post.accessLevel;
+          final originalSharedGroupIds = post.sharedGroupIds;
+
+          // 🎯 변경된 포스트를 캐시에서 제거
+          setState(() {
+            final currentPosts = _groupPostsCache[groupId] ?? [];
+            _groupPostsCache[groupId] =
+                currentPosts.where((p) => p.id != singlePostId).toList();
+            _selectedPosts.clear();
+            _isMultiSelectMode = false;
+          });
+
+          // 🎯 그룹 postCount 업데이트
+          final groupProvider = context.read<GroupProvider>();
+
+          // 🎯 1. 현재 그룹에서 포스트 제거
+          if (groupId != -1) {
+            groupProvider.updateGroupPostCount(groupId, -1);
+            ManageGroupScreen.invalidateGroupPostsCache(groupId);
+          } else {
+            groupProvider.updateGroupPostCount(-1, -1);
+            ManageGroupScreen.invalidateGroupPostsCache(-1);
+          }
+
+          // 🎯 2. 원래 공개범위에 따른 다른 그룹들의 postCount 감소
+          if (originalAccessLevel == AccessLevel.groups &&
+              originalSharedGroupIds != null &&
+              originalSharedGroupIds.isNotEmpty) {
+            final groupIdToDelta = <int, int>{};
+            for (final gId in originalSharedGroupIds) {
+              if (gId != groupId) {
+                // 🎯 현재 그룹이 아닌 다른 그룹들에서만 감소
+                groupIdToDelta[gId] = -1;
+              }
+            }
+            if (groupIdToDelta.isNotEmpty) {
+              groupProvider.updateMultipleGroupsPostCount(groupIdToDelta);
+              ManageGroupScreen.invalidateMultipleGroupsPostsCache(
+                groupIdToDelta.keys.toList(),
+              );
+            }
+          }
+
+          if (originalAccessLevel == AccessLevel.friends && groupId != -1) {
+            // 🎯 원래 FRIENDS에 있던 포스트: allFriends 그룹에서 제거
+            groupProvider.updateGroupPostCount(-1, -1);
+            ManageGroupScreen.invalidateGroupPostsCache(-1);
+          }
+
+          // 🎯 3. 변경 후 공개범위에 따른 새로운 그룹들의 postCount 증가
+          final newAccessLevelStr = newAccessLevel.toUpperCase();
+          if (newAccessLevelStr == SystemCategoryKeys.groups &&
+              newSharedGroupIds != null &&
+              newSharedGroupIds.isNotEmpty) {
+            final groupIdToDelta = <int, int>{};
+            for (final gId in newSharedGroupIds) {
+              groupIdToDelta[gId] = 1;
+            }
+            groupProvider.updateMultipleGroupsPostCount(groupIdToDelta);
+            ManageGroupScreen.invalidateMultipleGroupsPostsCache(
+              newSharedGroupIds,
+            );
+          }
+
+          if (newAccessLevelStr == SystemCategoryKeys.friends) {
+            groupProvider.updateGroupPostCount(-1, 1);
+            ManageGroupScreen.invalidateGroupPostsCache(-1);
+          }
+
+          // 🎯 프로필 피드 업데이트: 변경된 포스트의 메타데이터 업데이트
+          try {
+            final feed = MyProfileFeedProvider(); // 싱글톤 직접 접근
+            feed.updatePostMetadata(
+              singlePostId,
+              accessLevel: newAccessLevelStr,
+              sharedGroupIds: newSharedGroupIds,
+            );
+            print(
+              '[ManageGroupScreen] 프로필 피드 선택적 업데이트 완료 (단일 포스트: $singlePostId)',
+            );
+          } catch (e) {
+            print('[ManageGroupScreen] 프로필 피드 선택적 업데이트 실패: $e');
+          }
+        },
+      );
+      return;
+    }
+
+    // 🎯 여러 포스트인 경우: 배치 모드 (선택만, API는 나중에 호출)
+    // 🎯 공개범위 선택을 위한 변수
+    String? selectedAccessLevel;
+    List<int>? selectedSharedGroupIds;
+    final completer = Completer<bool>(); // 🎯 선택 여부를 나타내는 Completer
+
+    print(
+      '[ManageGroupScreen] AccessLevelSheet.show 호출 (배치 모드: isBatchMode=true)',
+    );
+    // 🎯 AccessLevelSheet를 열어서 공개범위 선택 (배치 모드: isBatchMode=true)
+    // 🎯 여러 포스트 중 첫 번째 포스트 ID와 공개범위를 가져오기
+    final firstPostId = postIdsToChange.first;
+
+    // 🎯 첫 번째 포스트의 현재 공개범위 가져오기
+    final currentGroup = _selectedGroup;
+    final isAllFriendsGroup =
+        currentGroup != null && currentGroup.isSystem == true;
+    final groupId = isAllFriendsGroup ? -1 : currentGroup?.id;
+    final posts = _groupPostsCache[groupId ?? -1] ?? [];
+    final firstPost = posts.firstWhere(
+      (p) => p.id == firstPostId,
+      orElse: () => posts.first,
+    );
+
+    // 🎯 첫 번째 포스트의 현재 공개범위
+    String firstPostAccessLevel = SystemCategoryKeys.public;
+    if (firstPost.accessLevel == AccessLevel.private) {
+      firstPostAccessLevel = SystemCategoryKeys.private;
+    } else if (firstPost.accessLevel == AccessLevel.friends) {
+      firstPostAccessLevel = SystemCategoryKeys.friends;
+    } else if (firstPost.accessLevel == AccessLevel.groups) {
+      firstPostAccessLevel = SystemCategoryKeys.groups;
+    }
+
+    // 🎯 제외할 그룹 ID: 일반 그룹일 때는 현재 그룹 ID, 전체 친구 그룹일 때는 -1 (전체 친구 그룹 제외)
+    // 🎯 배치 모드에서 일반 그룹의 경우 항상 현재 그룹을 제외해야 함
+    final excludeGroupId =
+        isAllFriendsGroup
+            ? -1
+            : (currentGroup != null ? currentGroup.id : null);
+
+    AccessLevelSheet.show(
+      context,
+      postId: firstPostId, // 🎯 필수 파라미터 (실제로는 사용 안 함, isBatchMode로 구분)
+      currentAccessLevel: firstPostAccessLevel, // 🎯 첫 번째 포스트의 현재 공개범위
+      currentSharedGroupIds: firstPost.sharedGroupIds,
+      currentSharedGroupNames: firstPost.sharedGroupNames,
+      excludeGroupId: excludeGroupId, // 🎯 배치 모드: 일반 그룹일 때 현재 그룹 제외
+      isBatchMode: true, // 🎯 배치 모드: API 호출 없이 선택만
+      onChanged: (String accessLevel, List<int>? sharedGroupIds) {
+        // 🎯 선택한 공개범위 저장
+        selectedAccessLevel = accessLevel;
+        selectedSharedGroupIds = sharedGroupIds;
+        if (!completer.isCompleted) {
+          completer.complete(true); // 🎯 선택 완료
+        }
+      },
+    );
+
+    // 🎯 공개범위 선택 완료 대기 (타임아웃: 30초)
+    final selected = await completer.future.timeout(
+      const Duration(seconds: 30),
+      onTimeout: () => false, // 🎯 타임아웃 시 false 반환
+    );
+
+    // 🎯 공개범위를 선택하지 않고 시트를 닫았으면 취소
+    if (!selected || selectedAccessLevel == null || !mounted) {
+      return;
+    }
+
+    // 🎯 다이얼로그: 선택한 공개범위로 변경 확인
+    String accessLevelLabel;
+    final accessLevel = selectedAccessLevel!;
+    switch (accessLevel) {
+      case SystemCategoryKeys.public:
+        accessLevelLabel = context.tr('visibility_public'); // '전체공개'
+        break;
+      case SystemCategoryKeys.friends:
+        accessLevelLabel = context.tr('visibility_friends'); // '모든 친구'
+        break;
+      case SystemCategoryKeys.private:
+        accessLevelLabel = context.tr('visibility_private'); // '나만보기'
+        break;
+      case SystemCategoryKeys.groups:
+        final sharedGroupIds = selectedSharedGroupIds;
+        accessLevelLabel =
+            sharedGroupIds != null && sharedGroupIds.isNotEmpty
+                ? context.tr('visibility_group') // '그룹공개'
+                : context.tr(
+                  'visibility_private',
+                ); // 🎯 sharedGroupIds가 비어있으면 PRIVATE으로
+        break;
+      default:
+        accessLevelLabel = accessLevel;
+    }
+
+    // 🎯 GROUPS인데 sharedGroupIds가 비어있으면 PRIVATE으로 자동 변경
+    String finalAccessLevel = accessLevel;
+    List<int>? finalSharedGroupIds = selectedSharedGroupIds;
+    if (accessLevel == SystemCategoryKeys.groups) {
+      final sharedGroupIds = selectedSharedGroupIds;
+      if (sharedGroupIds == null || sharedGroupIds.isEmpty) {
+        finalAccessLevel = SystemCategoryKeys.private;
+        accessLevelLabel = context.tr('visibility_private'); // '나만보기'
+        finalSharedGroupIds = null;
+      }
+    }
+
     final confirmed = await DialogUtils.showConfirmDialog(
       context,
-      title: context.tr('change_to_private'),
+      title: context.tr('batch_change_access_level_title'),
       message: context
-          .tr('change_to_private_confirm')
-          .replaceAll('{count}', '${postIdsToChange.length}'),
+          .tr('batch_change_access_level_message')
+          .replaceAll('{count}', '${postIdsToChange.length}')
+          .replaceAll('{accessLevel}', accessLevelLabel),
       confirmText: context.tr('change'),
       cancelText: context.tr('cancel'),
       isDestructive: false,
@@ -1930,23 +2362,148 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
         throw Exception('유효한 포스트 ID가 없습니다');
       }
 
-      final updatedPosts = await blogService.batchMakePostsPrivate(postIdsInt);
+      // 🎯 배치 공개범위 변경 API 호출
+      final updatedPosts = await blogService.batchUpdatePostsAccessLevel(
+        postIds: postIdsInt,
+        accessLevel: finalAccessLevel,
+        sharedGroupIds:
+            finalAccessLevel == SystemCategoryKeys.groups
+                ? finalSharedGroupIds
+                : null,
+      );
 
       if (mounted) {
         final currentGroup = _selectedGroup;
-        if (currentGroup != null && currentGroup.id != -1) {
-          final currentPosts = _groupPostsCache[currentGroup.id] ?? [];
+        final isAllFriendsGroup =
+            currentGroup != null && currentGroup.isSystem == true;
+        final groupId = isAllFriendsGroup ? -1 : currentGroup?.id;
+
+        // 🎯 변경된 포스트를 캐시에서 제거
+        if (groupId != null) {
+          final currentPosts = _groupPostsCache[groupId] ?? [];
           final updatedPostIds =
               updatedPosts.map((p) => p['id']?.toString()).toSet();
 
+          // 🎯 변경 전 포스트들의 원래 공개범위 수집 (동기화용)
+          final selectedPosts =
+              currentPosts
+                  .where((post) => updatedPostIds.contains(post.id))
+                  .toList();
+
+          // 🎯 원래 공개범위별로 그룹 정보 수집
+          final originalGroupsPostCount = <int, int>{}; // 그룹 ID -> 감소할 포스트 수
+          var originalFriendsCount = 0; // FRIENDS에 있던 포스트 수
+
+          for (final post in selectedPosts) {
+            if (post.accessLevel == AccessLevel.groups &&
+                post.sharedGroupIds != null &&
+                post.sharedGroupIds!.isNotEmpty) {
+              // 🎯 원래 GROUPS에 있던 포스트: 각 그룹에서 제거해야 함
+              for (final gId in post.sharedGroupIds!) {
+                if (gId != groupId) {
+                  // 🎯 현재 그룹이 아닌 다른 그룹들에서만 감소
+                  originalGroupsPostCount[gId] =
+                      (originalGroupsPostCount[gId] ?? 0) + 1;
+                }
+              }
+            } else if (post.accessLevel == AccessLevel.friends) {
+              // 🎯 원래 FRIENDS에 있던 포스트
+              if (groupId != -1) {
+                // 🎯 현재 그룹이 GROUPS면 allFriends 그룹에서 제거
+                originalFriendsCount++;
+              }
+            }
+          }
+
           setState(() {
-            _groupPostsCache[currentGroup.id] =
+            _groupPostsCache[groupId] =
                 currentPosts
                     .where((post) => !updatedPostIds.contains(post.id))
                     .toList();
             _selectedPosts.clear();
             _isMultiSelectMode = false;
           });
+
+          // 🎯 그룹 postCount 업데이트
+          final groupProvider = context.read<GroupProvider>();
+
+          // 🎯 1. 현재 그룹에서 포스트 제거
+          if (groupId != -1) {
+            // 일반 그룹의 경우 해당 그룹만 업데이트
+            groupProvider.updateGroupPostCount(groupId, -updatedPostIds.length);
+            // 🎯 해당 그룹 포스트 캐시 무효화
+            ManageGroupScreen.invalidateGroupPostsCache(groupId);
+          } else {
+            // allFriends 그룹의 경우
+            groupProvider.updateGroupPostCount(-1, -updatedPostIds.length);
+            // 🎯 allFriends 그룹 포스트 캐시 무효화
+            ManageGroupScreen.invalidateGroupPostsCache(-1);
+          }
+
+          // 🎯 2. 원래 공개범위에 따른 다른 그룹들의 postCount 감소
+          if (originalGroupsPostCount.isNotEmpty) {
+            // 🎯 원래 다른 GROUPS에 있던 포스트들 제거
+            final groupIdToDelta = <int, int>{};
+            originalGroupsPostCount.forEach((gId, count) {
+              groupIdToDelta[gId] = -count;
+            });
+            groupProvider.updateMultipleGroupsPostCount(groupIdToDelta);
+            // 🎯 원래 그룹들의 포스트 캐시 무효화
+            ManageGroupScreen.invalidateMultipleGroupsPostsCache(
+              originalGroupsPostCount.keys.toList(),
+            );
+          }
+
+          if (originalFriendsCount > 0 && groupId != -1) {
+            // 🎯 원래 FRIENDS에 있던 포스트들 allFriends 그룹에서 제거
+            groupProvider.updateGroupPostCount(-1, -originalFriendsCount);
+            // 🎯 allFriends 그룹 포스트 캐시 무효화
+            ManageGroupScreen.invalidateGroupPostsCache(-1);
+          }
+
+          // 🎯 3. 변경 후 공개범위에 따른 새로운 그룹들의 postCount 증가
+          // 🎯 GROUPS로 변경한 경우 선택한 그룹들의 postCount도 업데이트
+          if (finalAccessLevel == SystemCategoryKeys.groups &&
+              finalSharedGroupIds != null &&
+              finalSharedGroupIds.isNotEmpty) {
+            final groupIdToDelta = <int, int>{};
+            for (final gId in finalSharedGroupIds) {
+              groupIdToDelta[gId] = updatedPostIds.length;
+            }
+            groupProvider.updateMultipleGroupsPostCount(groupIdToDelta);
+            // 🎯 선택한 그룹들의 포스트 캐시 무효화
+            ManageGroupScreen.invalidateMultipleGroupsPostsCache(
+              finalSharedGroupIds,
+            );
+          }
+
+          // 🎯 FRIENDS로 변경한 경우 allFriends 그룹 postCount 업데이트
+          if (finalAccessLevel == SystemCategoryKeys.friends) {
+            groupProvider.updateGroupPostCount(-1, updatedPostIds.length);
+            // 🎯 allFriends 그룹 포스트 캐시 무효화
+            ManageGroupScreen.invalidateGroupPostsCache(-1);
+          }
+
+          // 🎯 프로필 피드 업데이트: 변경된 모든 포스트의 메타데이터 업데이트
+          try {
+            final feed = MyProfileFeedProvider(); // 싱글톤 직접 접근
+            for (final updatedPost in updatedPosts) {
+              final postId = updatedPost['id']?.toString();
+              if (postId != null) {
+                // 🎯 공개범위 및 그룹 정보 업데이트
+                feed.updatePostMetadata(
+                  postId,
+                  accessLevel: finalAccessLevel,
+                  sharedGroupIds: finalSharedGroupIds,
+                );
+              }
+            }
+            print(
+              '[ManageGroupScreen] 프로필 피드 선택적 업데이트 완료 (${updatedPosts.length}개 포스트)',
+            );
+          } catch (e) {
+            print('[ManageGroupScreen] 프로필 피드 선택적 업데이트 실패: $e');
+          }
         } else {
           setState(() {
             _selectedPosts.clear();
@@ -1957,25 +2514,20 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
         if (updatedPosts.isNotEmpty) {
           ErrorHandler.showInfo(
             context,
-            context
-                .tr('posts_changed_to_private')
-                .replaceAll('{count}', '${updatedPosts.length}'),
+            '${updatedPosts.length}개의 포스트가 $accessLevelLabel로 변경되었습니다',
           );
         } else {
-          ErrorHandler.showError(
-            context,
-            context.tr('change_to_private_failed'),
-          );
+          ErrorHandler.showError(context, '공개범위 변경에 실패했습니다');
         }
       }
     } catch (e) {
-      print('❌ [ManageGroupScreen] 포스트 나만보기 변경 에러: $e');
+      print('❌ [ManageGroupScreen] 포스트 공개범위 일괄 변경 에러: $e');
       if (mounted) {
         setState(() {
           _selectedPosts.clear();
           _isMultiSelectMode = false;
         });
-        ErrorHandler.showError(context, context.tr('change_to_private_failed'));
+        ErrorHandler.showError(context, '공개범위 변경에 실패했습니다');
       }
     }
   }
@@ -2039,19 +2591,39 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
     if (_selectedGroup != null && _selectedGroup!.id != -1) {
       context.read<GroupProvider>().fetchGroupMembers(_selectedGroup!.id);
     }
-    showModalBottomSheet(
-      barrierColor: Colors.black.withOpacity(0.6),
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder:
-          (context) => AddMemberBottomSheet(
-            selectedGroup: _selectedGroup,
-            onClose: () => Navigator.pop(context),
+    Navigator.of(context)
+        .push(
+          PageRouteBuilder(
+            pageBuilder:
+                (context, animation, secondaryAnimation) =>
+                    AddMemberScreen(selectedGroup: _selectedGroup),
+            transitionsBuilder: (
+              context,
+              animation,
+              secondaryAnimation,
+              child,
+            ) {
+              const begin = Offset(0.0, 1.0);
+              const end = Offset.zero;
+              const curve = Curves.easeOutCubic;
+
+              var tween = Tween(
+                begin: begin,
+                end: end,
+              ).chain(CurveTween(curve: curve));
+
+              return SlideTransition(
+                position: animation.drive(tween),
+                child: child,
+              );
+            },
+            transitionDuration: const Duration(milliseconds: 300),
+            reverseTransitionDuration: const Duration(milliseconds: 300),
           ),
-    ).then((_) {
-      FocusManager.instance.primaryFocus?.unfocus();
-    });
+        )
+        .then((_) {
+          FocusManager.instance.primaryFocus?.unfocus();
+        });
   }
 
   // 🎯 선택된 멤버들을 그룹에서 제거 또는 친구 해제
@@ -2109,6 +2681,9 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
           _selectedGroup!.id,
           usernamesToRemove,
         );
+        // 🎯 멤버 제외 후 FriendsGrid UI 즉시 업데이트
+        // GroupProvider의 fetchGroupMembers가 notifyListeners()를 호출하여
+        // Consumer<GroupProvider> 내부의 _buildFriendsSliverGrid가 자동으로 다시 빌드됨
       }
 
       if (mounted) {
@@ -2178,15 +2753,6 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
     );
   }
 
-  // 🎯 그룹 표시 이름 가져오기
-  String _getGroupDisplayName(Group? group) {
-    if (group == null) return '';
-    if (group.isSystem == true) {
-      return context.tr('all_friends');
-    }
-    return group.name;
-  }
-
   // 🎯 그룹 삭제
   Future<void> _deleteGroup() async {
     // 🎯 시스템 그룹 체크는 isSystem만 사용
@@ -2236,27 +2802,16 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
     String? description,
     String? imageUrl,
   ) async {
-    print('🟢 [ManageGroupScreen] _updateGroup 호출 시작');
-    print('🟢 [ManageGroupScreen] name: $name');
-    print('🟢 [ManageGroupScreen] description: $description');
-    print('🟢 [ManageGroupScreen] imageUrl: $imageUrl');
-    print(
-      '🟢 [ManageGroupScreen] _selectedGroup: ${_selectedGroup?.name} (id: ${_selectedGroup?.id}, isSystem: ${_selectedGroup?.isSystem})',
-    );
-
     if (_selectedGroup == null) {
-      print('🟢 [ManageGroupScreen] _selectedGroup가 null, 종료');
       return;
     }
 
     // 🎯 전체 친구 그룹은 이름 수정 불가
     final bool isAllFriendsGroup = _selectedGroup!.isSystem == true;
-    print('🟢 [ManageGroupScreen] isAllFriendsGroup: $isAllFriendsGroup');
 
     // 🎯 일반 그룹만 id 체크 (전체 친구 그룹은 id가 -1일 수도 있으므로 isSystem으로만 판단)
     if (!isAllFriendsGroup) {
       if (_selectedGroup!.id == -1) {
-        print('🟢 [ManageGroupScreen] 일반 그룹인데 id가 -1, 종료');
         return;
       }
     }
@@ -2264,9 +2819,6 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
     // 🎯 전체 친구 그룹은 이름 수정 불가
     if (isAllFriendsGroup) {
       if (name.trim().toLowerCase() != _selectedGroup!.name.toLowerCase()) {
-        print(
-          '🟢 [ManageGroupScreen] 이름 변경 시도 차단: $name != ${_selectedGroup!.name}',
-        );
         if (mounted) {
           ErrorHandler.showError(
             context,

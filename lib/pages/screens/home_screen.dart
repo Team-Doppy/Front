@@ -488,10 +488,10 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                         colors: [
                           Theme.of(
                             context,
-                          ).colorScheme.background.withValues(alpha: 0.7),
+                          ).colorScheme.background.withValues(alpha: 0.8),
                           Theme.of(
                             context,
-                          ).colorScheme.background.withValues(alpha: 0.75),
+                          ).colorScheme.background.withValues(alpha: 0.8),
                           Theme.of(
                             context,
                           ).colorScheme.background.withValues(alpha: 0.8),

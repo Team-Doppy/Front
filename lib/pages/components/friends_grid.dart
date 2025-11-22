@@ -197,12 +197,7 @@ class _FriendsGridState extends State<FriendsGrid> {
                   widget.selectedGroup != null
                       ? widget.selectedGroup!.isSystem == true
                           ? context.tr('no_friends_to_display')
-                          : context
-                              .tr('no_friends_in_group')
-                              .replaceAll(
-                                '{groupName}',
-                                widget.selectedGroup!.name,
-                              )
+                          : context.tr('no_friends_in_group')
                       : context.tr('no_friends_to_display'),
                   style: TextStyle(
                     fontSize: 16,
@@ -446,8 +441,10 @@ class FriendTile extends StatelessWidget {
             imageUrl: data.url,
             username: data.username,
             size: 110,
-
-            borderWidth: 0,
+            borderColor: Theme.of(
+              context,
+            ).colorScheme.onSurface.withOpacity(0.1),
+            borderWidth: 0.5,
           ),
           // 🎯 다중 선택 모드일 때 체크 표시
           if (isMultiSelectMode)

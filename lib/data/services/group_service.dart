@@ -300,26 +300,47 @@ class GroupService {
     }
   }
 
-  /// 23. 그룹에 여러 멤버 추가 (배치 처리)
+  /// 23. 그룹에 여러 멤버 일괄 추가 (배치)
+  /// POST /api/groups/{groupId}/members/batch
+  /// Body: ["username1", "username2", "username3"]
   Future<void> addMultipleMembersToGroup(
     int groupId,
-    List<String> userIds,
+    List<String> usernames,
   ) async {
     try {
       print(
-        '🔍 [GroupService] 그룹에 여러 멤버 추가 시작 - 그룹ID: $groupId, 사용자 수: ${userIds.length}',
+        '🔍 [GroupService] 그룹 멤버 일괄 추가 시작 - 그룹ID: $groupId, 사용자 수: ${usernames.length}',
+      );
+      print('🔍 [GroupService] 요청할 usernames: $usernames');
+
+      final response = await _dio.post(
+        '/api/groups/$groupId/members/batch',
+        data: usernames, // username 배열을 JSON 배열로 직렬화하여 body로 전달
+        options: Options(headers: {'Content-Type': 'application/json'}),
       );
 
-      // 각 사용자를 순차적으로 추가
-      for (String userId in userIds) {
-        await addMemberToGroup(groupId, userId);
-        // API 부하 방지를 위한 짧은 지연
-        await Future.delayed(const Duration(milliseconds: 100));
-      }
+      print('📡 [GroupService] API 응답 상태: ${response.statusCode}');
+      print('📡 [GroupService] API 응답 데이터: ${response.data}');
 
-      print('✅ [GroupService] 모든 멤버 추가 완료');
+      if (response.statusCode == 200) {
+        print('✅ [GroupService] 그룹 멤버 일괄 추가 성공');
+        return;
+      } else {
+        print(
+          '❌ [GroupService] API 오류: ${response.statusCode} - ${response.data}',
+        );
+        throw Exception('그룹 멤버 일괄 추가 실패: ${response.statusCode}');
+      }
     } catch (e) {
-      print('❌ [GroupService] 여러 멤버 추가 중 예외 발생: $e');
+      print('❌ [GroupService] 그룹 멤버 일괄 추가 중 예외 발생: $e');
+      if (e is DioException) {
+        print(
+          '❌ [GroupService] Dio 에러: ${e.response?.statusCode} - ${e.response?.data}',
+        );
+        print('❌ [GroupService] 요청 URL: ${e.requestOptions.path}');
+        print('❌ [GroupService] 요청 메서드: ${e.requestOptions.method}');
+        print('❌ [GroupService] 요청 데이터: ${e.requestOptions.data}');
+      }
       rethrow;
     }
   }
@@ -387,6 +408,8 @@ class GroupService {
   }
 
   /// 25. 그룹에서 여러 멤버 일괄 제거 (배치)
+  /// DELETE /api/groups/{groupId}/members/batch
+  /// Body: ["username1", "username2", "username3"]
   Future<void> removeMembersFromGroupBatch(
     int groupId,
     List<String> usernames,
@@ -395,10 +418,13 @@ class GroupService {
       print(
         '🔍 [GroupService] 그룹 멤버 일괄 제거 시작 - 그룹ID: $groupId, 사용자 수: ${usernames.length}',
       );
+      print('🔍 [GroupService] 요청할 usernames: $usernames');
 
+      // 🎯 DELETE 메서드에 body를 전달할 때는 options를 사용
       final response = await _dio.delete(
         '/api/groups/$groupId/members/batch',
-        data: usernames, // username 배열을 body로 전달
+        data: usernames, // username 배열을 JSON 배열로 직렬화하여 body로 전달
+        options: Options(headers: {'Content-Type': 'application/json'}),
       );
 
       print('📡 [GroupService] API 응답 상태: ${response.statusCode}');
@@ -419,6 +445,9 @@ class GroupService {
         print(
           '❌ [GroupService] Dio 에러: ${e.response?.statusCode} - ${e.response?.data}',
         );
+        print('❌ [GroupService] 요청 URL: ${e.requestOptions.path}');
+        print('❌ [GroupService] 요청 메서드: ${e.requestOptions.method}');
+        print('❌ [GroupService] 요청 데이터: ${e.requestOptions.data}');
       }
       rethrow;
     }

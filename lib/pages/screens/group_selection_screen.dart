@@ -84,6 +84,19 @@ class _GroupSelectionScreenState extends State<GroupSelectionScreen>
           friendProvider: friendProvider,
         );
       }
+
+      // 🎯 전체 친구 그룹의 memberCount 동기화 (FriendProvider의 최신 친구 수로)
+      // 🎯 누락된 친구가 포함된 커스텀 그룹들의 멤버 수도 함께 동기화
+      if (hasAllFriendsGroup && !mounted) return;
+      if (hasAllFriendsGroup) {
+        final actualFriendCount = friendProvider.acceptedFriends.length;
+
+        // 🎯 FriendProvider의 친구 수로 동기화 (커스텀 그룹 동기화 포함)
+        groupProvider.syncAllFriendsMemberCount(
+          actualFriendCount,
+          friendProvider: friendProvider,
+        );
+      }
     });
   }
 
@@ -222,6 +235,7 @@ class _GroupSelectionScreenState extends State<GroupSelectionScreen>
                           return updatedGroup.id != group.id ||
                               updatedGroup.name != group.name ||
                               updatedGroup.memberCount != group.memberCount ||
+                              updatedGroup.postCount != group.postCount ||
                               updatedGroup.profileImageUrl !=
                                   group.profileImageUrl ||
                               updatedGroup.description != group.description;
@@ -409,6 +423,19 @@ class _GroupSelectionScreenState extends State<GroupSelectionScreen>
         forceRefresh: true,
         friendProvider: friendProvider,
       );
+
+      // 🎯 전체 친구 그룹의 memberCount 동기화 (FriendProvider의 최신 친구 수로)
+      // 🎯 누락된 친구가 포함된 커스텀 그룹들의 멤버 수도 함께 동기화
+      if (!mounted) return;
+      final groups = groupProvider.myGroups;
+      final hasAllFriendsGroup = groups.any((g) => g.isSystem == true);
+      if (hasAllFriendsGroup) {
+        final actualFriendCount = friendProvider.acceptedFriends.length;
+        groupProvider.syncAllFriendsMemberCount(
+          actualFriendCount,
+          friendProvider: friendProvider,
+        );
+      }
     } catch (e) {
       print('❌ [GroupSelectionScreen] 리프레시 에러: $e');
     } finally {
@@ -1067,113 +1094,128 @@ class _GroupSelectionScreenState extends State<GroupSelectionScreen>
                     // 🎯 Hero 애니메이션으로 감싸기
                     Hero(
                       tag: 'group-${group.id}',
-                      child: Container(
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: Theme.of(context).colorScheme.surface,
-                          border: Border.all(
-                            color: Theme.of(
-                              context,
-                            ).colorScheme.onSurface.withOpacity(0.1),
-                            width: 1,
+                      child: RepaintBoundary(
+                        child: Container(
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: Theme.of(context).colorScheme.surface,
+                            border: Border.all(
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.onSurface.withOpacity(0.1),
+                              width: 1,
+                            ),
                           ),
-                        ),
-                        child: ClipOval(
-                          child:
-                              group.profileImageUrl != null &&
-                                      group.profileImageUrl!.isNotEmpty &&
-                                      (group.profileImageUrl!.startsWith(
-                                            'http://',
-                                          ) ||
-                                          group.profileImageUrl!.startsWith(
-                                            'https://',
-                                          ))
-                                  ? CachedNetworkImage(
-                                    imageUrl: group.profileImageUrl!,
-                                    fit: BoxFit.cover,
-                                    width: 200,
-                                    height: 200,
-                                    placeholder:
-                                        (context, url) => Container(
-                                          width: 200,
-                                          height: 200,
-                                          color:
-                                              Theme.of(
-                                                context,
-                                              ).colorScheme.surface,
-                                          child: Center(),
-                                        ),
-                                    errorWidget: (context, url, error) {
-                                      // 네트워크 이미지 로드 실패 시 플레이스홀더 표시
-                                      return Container(
-                                        decoration: BoxDecoration(
-                                          shape: BoxShape.circle,
-                                          gradient: LinearGradient(
-                                            begin: Alignment.topLeft,
-                                            end: Alignment.bottomRight,
-                                            colors: [
-                                              GroupColorPalette.getColor(
-                                                group.id,
-                                              ).withOpacity(0.55),
-                                              GroupColorPalette.getColor(
-                                                group.id,
-                                              ),
-                                              GroupColorPalette.getColor(
-                                                group.id,
-                                              ).withOpacity(0.95),
-                                            ],
-                                            stops: const [0.0, 0.5, 1.0],
+                          child: ClipOval(
+                            child:
+                                group.profileImageUrl != null &&
+                                        group.profileImageUrl!.isNotEmpty &&
+                                        (group.profileImageUrl!.startsWith(
+                                              'http://',
+                                            ) ||
+                                            group.profileImageUrl!.startsWith(
+                                              'https://',
+                                            ))
+                                    ? CachedNetworkImage(
+                                      key: ValueKey('group-image-${group.id}'),
+                                      imageUrl: group.profileImageUrl!,
+                                      fit: BoxFit.cover,
+                                      width: 200,
+                                      height: 200,
+                                      fadeInDuration: const Duration(
+                                        milliseconds: 0,
+                                      ), // 🎯 즉시 표시 (캐시된 이미지)
+                                      fadeOutDuration: const Duration(
+                                        milliseconds: 0,
+                                      ), // 🎯 즉시 사라짐
+                                      memCacheWidth: 400, // 🎯 메모리 캐시 크기 지정
+                                      maxWidthDiskCache: 400, // 🎯 디스크 캐시 크기 지정
+                                      placeholder:
+                                          (context, url) => Container(
+                                            width: 200,
+                                            height: 200,
+                                            color:
+                                                Theme.of(
+                                                  context,
+                                                ).colorScheme.surface,
+                                            child: Center(),
                                           ),
-                                        ),
-                                        child: Container(
+                                      errorWidget: (context, url, error) {
+                                        // 네트워크 이미지 로드 실패 시 플레이스홀더 표시
+                                        return Container(
                                           decoration: BoxDecoration(
                                             shape: BoxShape.circle,
-                                            gradient: RadialGradient(
-                                              center: Alignment(-0.4, -0.4),
-                                              radius: 1.0,
+                                            gradient: LinearGradient(
+                                              begin: Alignment.topLeft,
+                                              end: Alignment.bottomRight,
                                               colors: [
-                                                Colors.white.withOpacity(0.12),
-                                                Colors.transparent,
+                                                GroupColorPalette.getColor(
+                                                  group.id,
+                                                ).withOpacity(0.55),
+                                                GroupColorPalette.getColor(
+                                                  group.id,
+                                                ),
+                                                GroupColorPalette.getColor(
+                                                  group.id,
+                                                ).withOpacity(0.95),
                                               ],
+                                              stops: const [0.0, 0.5, 1.0],
                                             ),
                                           ),
-                                        ),
-                                      );
-                                    },
-                                  )
-                                  : Container(
-                                    decoration: BoxDecoration(
-                                      shape: BoxShape.circle,
-                                      gradient: LinearGradient(
-                                        begin: Alignment.topLeft,
-                                        end: Alignment.bottomRight,
-                                        colors: [
-                                          // 🎯 절제된 그라디언트
-                                          GroupColorPalette.getColor(
-                                            group.id,
-                                          ).withOpacity(0.55),
-                                          GroupColorPalette.getColor(group.id),
-                                          GroupColorPalette.getColor(
-                                            group.id,
-                                          ).withOpacity(0.95),
-                                        ],
-                                        stops: const [0.0, 0.5, 1.0],
-                                      ),
-                                    ),
-                                    child: Container(
+                                          child: Container(
+                                            decoration: BoxDecoration(
+                                              shape: BoxShape.circle,
+                                              gradient: RadialGradient(
+                                                center: Alignment(-0.4, -0.4),
+                                                radius: 1.0,
+                                                colors: [
+                                                  Colors.white.withOpacity(
+                                                    0.12,
+                                                  ),
+                                                  Colors.transparent,
+                                                ],
+                                              ),
+                                            ),
+                                          ),
+                                        );
+                                      },
+                                    )
+                                    : Container(
                                       decoration: BoxDecoration(
                                         shape: BoxShape.circle,
-                                        gradient: RadialGradient(
-                                          center: Alignment(-0.4, -0.4),
-                                          radius: 1.0,
+                                        gradient: LinearGradient(
+                                          begin: Alignment.topLeft,
+                                          end: Alignment.bottomRight,
                                           colors: [
-                                            Colors.white.withOpacity(0.12),
-                                            Colors.transparent,
+                                            // 🎯 절제된 그라디언트
+                                            GroupColorPalette.getColor(
+                                              group.id,
+                                            ).withOpacity(0.55),
+                                            GroupColorPalette.getColor(
+                                              group.id,
+                                            ),
+                                            GroupColorPalette.getColor(
+                                              group.id,
+                                            ).withOpacity(0.95),
                                           ],
+                                          stops: const [0.0, 0.5, 1.0],
+                                        ),
+                                      ),
+                                      child: Container(
+                                        decoration: BoxDecoration(
+                                          shape: BoxShape.circle,
+                                          gradient: RadialGradient(
+                                            center: Alignment(-0.4, -0.4),
+                                            radius: 1.0,
+                                            colors: [
+                                              Colors.white.withOpacity(0.12),
+                                              Colors.transparent,
+                                            ],
+                                          ),
                                         ),
                                       ),
                                     ),
-                                  ),
+                          ),
                         ),
                       ),
                     ),
@@ -1239,7 +1281,7 @@ class _GroupSelectionScreenState extends State<GroupSelectionScreen>
             Text(
               _getGroupDisplayName(context, group),
               style: TextStyle(
-                fontSize: 18,
+                fontSize: 20,
                 fontWeight: FontWeight.w700,
                 color: Theme.of(context).colorScheme.onSurface,
               ),
@@ -1247,12 +1289,12 @@ class _GroupSelectionScreenState extends State<GroupSelectionScreen>
               overflow: TextOverflow.ellipsis,
               textAlign: TextAlign.center,
             ),
-            const SizedBox(height: 6),
+            const SizedBox(height: 2),
             // 그룹 설명
             Text(
               group.description,
               style: TextStyle(
-                fontSize: 15,
+                fontSize: 16,
                 color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
               ),
               maxLines: 2,

@@ -159,7 +159,10 @@ class _GroupItemWithActionsState extends State<_GroupItemWithActions> {
                       children: [
                         Expanded(
                           child: Text(
-                            widget.group.name,
+                            // 🎯 시스템 그룹(isSystem == true)인 경우 "모든 친구"로 표시
+                            widget.group.isSystem == true
+                                ? context.tr('all_friends')
+                                : widget.group.name,
                             style: TextStyle(
                               fontWeight:
                                   widget.isSelected
@@ -642,7 +645,22 @@ class GroupDropDown {
                                 if (groupName.isNotEmpty || isAllFriendsGroup) {
                                   // 🎯 그룹 이름 검증
                                   if (!_isEditMode && !isAllFriendsGroup) {
-                                    // 기존 그룹 이름 중복 체크만 수행
+                                    // 🎯 1단계: "모든 친구" / "All Friends" 이름 사용 불가 체크
+                                    final allFriendsName = context.tr(
+                                      'all_friends',
+                                    );
+                                    if (groupName.toLowerCase() ==
+                                        allFriendsName.toLowerCase()) {
+                                      if (context.mounted) {
+                                        ErrorHandler.showError(
+                                          context,
+                                          context.tr('group_name_reserved'),
+                                        );
+                                      }
+                                      return;
+                                    }
+
+                                    // 🎯 2단계: 기존 그룹 이름 중복 체크
                                     // (서버는 isSystem 플래그로 구분하므로 시스템 그룹 이름도 일반 그룹 이름으로 사용 가능)
                                     final isDuplicate = groups.any(
                                       (group) =>
@@ -1056,59 +1074,39 @@ class GroupDropDown {
           width: 1,
         ),
       ),
-      child: ClipOval(
-        child: AnimatedSwitcher(
-          duration: const Duration(milliseconds: 300),
-          transitionBuilder: (Widget child, Animation<double> animation) {
-            return FadeTransition(opacity: animation, child: child);
-          },
-          child:
-              _selectedGroupImageUrl != null
-                  ? (_selectedGroupImageUrl!.startsWith('http://') ||
-                          _selectedGroupImageUrl!.startsWith('https://'))
-                      ? CachedNetworkImage(
-                        width: double.infinity,
-                        height: double.infinity,
-                        key: ValueKey('network-${_selectedGroupImageUrl}'),
-                        imageUrl: _selectedGroupImageUrl!,
-                        fit: BoxFit.cover,
-                        placeholder:
-                            (context, url) => Container(
-                              color: Theme.of(context).colorScheme.surface,
-                              child: Center(
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  valueColor: AlwaysStoppedAnimation<Color>(
-                                    Theme.of(
-                                      context,
-                                    ).colorScheme.onSurface.withOpacity(0.3),
+      child: Stack(
+        children: [
+          ClipOval(
+            child: AnimatedSwitcher(
+              duration: const Duration(milliseconds: 300),
+              transitionBuilder: (Widget child, Animation<double> animation) {
+                return FadeTransition(opacity: animation, child: child);
+              },
+              child:
+                  _selectedGroupImageUrl != null
+                      ? (_selectedGroupImageUrl!.startsWith('http://') ||
+                              _selectedGroupImageUrl!.startsWith('https://'))
+                          ? CachedNetworkImage(
+                            width: double.infinity,
+                            height: double.infinity,
+                            key: ValueKey('network-${_selectedGroupImageUrl}'),
+                            imageUrl: _selectedGroupImageUrl!,
+                            fit: BoxFit.cover,
+                            placeholder:
+                                (context, url) => Container(
+                                  color: Theme.of(context).colorScheme.surface,
+                                  child: Center(
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      valueColor: AlwaysStoppedAnimation<Color>(
+                                        Theme.of(context).colorScheme.onSurface
+                                            .withOpacity(0.3),
+                                      ),
+                                    ),
                                   ),
                                 ),
-                              ),
-                            ),
-                        errorWidget:
-                            (context, url, error) => Container(
-                              color: Theme.of(context).colorScheme.surface,
-                              child: Center(
-                                child: Icon(
-                                  Icons.image_not_supported,
-                                  color: Theme.of(
-                                    context,
-                                  ).colorScheme.onSurface.withOpacity(0.3),
-                                ),
-                              ),
-                            ),
-                      )
-                      : Stack(
-                        key: ValueKey('local-${_selectedGroupImageUrl}'),
-                        fit: StackFit.expand,
-                        children: [
-                          // 🎯 로컬 경로 이미지 (cover로 꽉차게)
-                          Image.file(
-                            File(_selectedGroupImageUrl!),
-                            fit: BoxFit.cover,
-                            errorBuilder:
-                                (context, error, stackTrace) => Container(
+                            errorWidget:
+                                (context, url, error) => Container(
                                   color: Theme.of(context).colorScheme.surface,
                                   child: Center(
                                     child: Icon(
@@ -1119,40 +1117,87 @@ class GroupDropDown {
                                     ),
                                   ),
                                 ),
-                          ),
-                          // 🎯 업로드 중일 때 로딩 표시
-                          if (_isImageUploading)
-                            Container(
-                              color: Colors.black.withOpacity(0.3),
-                              child: Center(
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  valueColor: AlwaysStoppedAnimation<Color>(
-                                    Colors.white,
+                          )
+                          : Stack(
+                            key: ValueKey('local-${_selectedGroupImageUrl}'),
+                            fit: StackFit.expand,
+                            children: [
+                              // 🎯 로컬 경로 이미지 (cover로 꽉차게)
+                              Image.file(
+                                File(_selectedGroupImageUrl!),
+                                fit: BoxFit.cover,
+                                errorBuilder:
+                                    (context, error, stackTrace) => Container(
+                                      color:
+                                          Theme.of(context).colorScheme.surface,
+                                      child: Center(
+                                        child: Icon(
+                                          Icons.image_not_supported,
+                                          color: Theme.of(context)
+                                              .colorScheme
+                                              .onSurface
+                                              .withOpacity(0.3),
+                                        ),
+                                      ),
+                                    ),
+                              ),
+                              // 🎯 업로드 중일 때 로딩 표시
+                              if (_isImageUploading)
+                                Container(
+                                  color: Colors.black.withOpacity(0.3),
+                                  child: Center(
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      valueColor: AlwaysStoppedAnimation<Color>(
+                                        Colors.white,
+                                      ),
+                                    ),
                                   ),
                                 ),
-                              ),
-                            ),
-                        ],
-                      )
-                  : Container(
-                    key: const ValueKey('placeholder'),
-                    color:
-                        Theme.of(
-                          context,
-                        ).colorScheme.surface, // 🎯 surface 색상 사용
-                    child: Center(
-                      child: Icon(
-                        Icons.photo, // 🎯 사진 추가 아이콘
-                        size: 30,
+                            ],
+                          )
+                      : Container(
+                        key: const ValueKey('placeholder'),
                         color:
-                            isDarkMode
-                                ? Colors.grey.shade800
-                                : Colors.grey.shade400, // 🎯 onSurface 색상
+                            Theme.of(
+                              context,
+                            ).colorScheme.surface, // 🎯 surface 색상 사용
+                        child: Center(
+                          child: Icon(
+                            Icons.photo, // 🎯 사진 추가 아이콘
+                            size: 30,
+                            color:
+                                isDarkMode
+                                    ? Colors.grey.shade800
+                                    : Colors.grey.shade400, // 🎯 onSurface 색상
+                          ),
+                        ),
                       ),
-                    ),
-                  ),
-        ),
+            ),
+          ),
+          // 🎯 카메라 아이콘 (우측 하단)
+          Positioned(
+            right: 10,
+            bottom: 0,
+            child: Container(
+              width: 32,
+              height: 32,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: Theme.of(context).colorScheme.onSurface,
+                border: Border.all(
+                  color: Theme.of(context).colorScheme.surface,
+                  width: 1,
+                ),
+              ),
+              child: Icon(
+                Icons.camera_alt,
+                size: 16,
+                color: Theme.of(context).colorScheme.surface,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

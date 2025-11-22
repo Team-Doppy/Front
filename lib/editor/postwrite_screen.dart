@@ -108,6 +108,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
   // 저장 중 상태
   bool _isSaving = false;
   bool _shouldRefreshMyFeed = false; // 수정사항 발생 시 한 번만 새로고침
+  bool _categoryChanged = false; // 카테고리 변경 여부
 
   @override
   void initState() {
@@ -832,8 +833,22 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     dragService.removeListener(_onDragging);
     scrollController.removeListener(_onScrollChanged);
     _editorFocusNode.dispose();
+
+    // 🎯 카테고리 변경 시 피드 프로바이더 캐시 초기화 + 새로고침
+    if (_categoryChanged) {
+      Future.delayed(const Duration(milliseconds: 300), () {
+        try {
+          final feed = MyProfileFeedProvider();
+          feed.invalidateCache();
+          feed.refresh().catchError((_) {});
+          print('[PostwriteScreen] 카테고리 변경 후 피드 프로바이더 캐시 초기화 + 새로고침 완료');
+        } catch (e) {
+          print('[PostwriteScreen] 카테고리 변경 후 피드 새로고침 실패: $e');
+        }
+      });
+    }
     // 🎯 수정 도중 변경이 있었다면 내 피드 선택적 업데이트 (전체 새로고침 생략)
-    if (_shouldRefreshMyFeed && widget.postId != null) {
+    else if (_shouldRefreshMyFeed && widget.postId != null) {
       // 비디오 컨트롤러 정리가 완전히 완료될 때까지 약간 지연
       Future.delayed(const Duration(milliseconds: 300), () {
         try {
@@ -1148,8 +1163,8 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                                 _shouldRefreshMyFeed = true;
                               },
                               onCategoryChanged: () {
-                                _shouldRefreshMyFeed = true;
-                                // 카테고리 변경 플래그만 설정 (dispose에서 새로고침)
+                                _categoryChanged = true;
+                                // 카테고리 변경 플래그 설정 (dispose에서 캐시 초기화 + 새로고침)
                               },
                               onThumbnailChanged: (url, id) {
                                 print(

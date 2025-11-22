@@ -16,6 +16,10 @@ import 'package:doppy/pages/components/image_view.dart';
 import 'package:doppy/pages/components/post_action_sheet.dart';
 import 'package:doppy/pages/screens/post_reader_screen.dart';
 import 'package:doppy/utils/dialog_utils.dart';
+import 'package:doppy/utils/error_handler.dart';
+import 'package:doppy/providers/group_provider.dart';
+import 'package:doppy/pages/screens/manage_group_screen.dart';
+import 'package:doppy/pages/components/access_level_sheet.dart';
 
 /// 수직 카드 뷰 카테고리 섹션
 class VerticalCategorySection extends StatefulWidget {
@@ -81,6 +85,7 @@ class _VerticalCategorySectionState extends State<VerticalCategorySection> {
       Offset.zero & overlay.size,
     );
 
+    final l10n = AppLocalizations.of(iconContext);
     final String? action = await showMenu<String>(
       context: iconContext,
       position: position,
@@ -88,12 +93,12 @@ class _VerticalCategorySectionState extends State<VerticalCategorySection> {
       items: [
         PopupMenuItem<String>(
           value: 'edit',
-          child: Row(children: const [Text('이름 수정')]),
+          child: Row(children: [Text(l10n.t('edit_category_name'))]),
         ),
 
         PopupMenuItem<String>(
           value: 'delete',
-          child: Row(children: const [Text('카테고리 삭제')]),
+          child: Row(children: [Text(l10n.t('delete_category_title'))]),
         ),
       ],
     );
@@ -101,10 +106,10 @@ class _VerticalCategorySectionState extends State<VerticalCategorySection> {
     if (action == 'edit') {
       final newName = await DialogUtils.showTextInputDialog(
         iconContext,
-        title: '카테고리 이름 수정',
-        hintText: '새 이름 입력',
+        title: l10n.t('edit_category_title'),
+        hintText: l10n.t('category_name_input'),
         initialText: widget.title,
-        confirmText: '저장',
+        confirmText: l10n.t('save'),
       );
       if (newName != null && newName.trim().isNotEmpty) {
         try {
@@ -116,19 +121,19 @@ class _VerticalCategorySectionState extends State<VerticalCategorySection> {
           await provider.refresh();
         } catch (_) {
           try {
-            ScaffoldMessenger.of(
-              iconContext,
-            ).showSnackBar(const SnackBar(content: Text('카테고리 수정 실패')));
+            ScaffoldMessenger.of(iconContext).showSnackBar(
+              SnackBar(content: Text(l10n.t('category_update_failed'))),
+            );
           } catch (_) {}
         }
       }
     } else if (action == 'delete') {
       final bool? confirmed = await DialogUtils.showConfirmDialog(
         iconContext,
-        title: '카테고리 삭제',
-        message: '정말 삭제하시겠어요? 되돌릴 수 없어요.\n이 카테고리의 포스트는 지워지지 않아요.',
-        confirmText: '삭제',
-        cancelText: '취소',
+        title: l10n.t('delete_category_title'),
+        message: l10n.t('delete_category_message'),
+        confirmText: l10n.t('delete'),
+        cancelText: l10n.t('cancel'),
         isDestructive: true,
       );
       if (confirmed == true) {
@@ -138,9 +143,9 @@ class _VerticalCategorySectionState extends State<VerticalCategorySection> {
           await provider.refresh();
         } catch (_) {
           try {
-            ScaffoldMessenger.of(
-              iconContext,
-            ).showSnackBar(const SnackBar(content: Text('카테고리 삭제 실패')));
+            ScaffoldMessenger.of(iconContext).showSnackBar(
+              SnackBar(content: Text(l10n.t('category_delete_failed'))),
+            );
           } catch (_) {}
         }
       }
@@ -406,13 +411,11 @@ class _VerticalCategorySectionState extends State<VerticalCategorySection> {
                                           widget.categoryId != '0')
                                         Builder(
                                           builder:
-                                              (iconCtx) => InkWell(
+                                              (iconCtx) => GestureDetector(
                                                 onTap:
                                                     () => _showCategoryDropdown(
                                                       iconCtx,
                                                     ),
-                                                borderRadius:
-                                                    BorderRadius.circular(8),
                                                 child: Padding(
                                                   padding: const EdgeInsets.all(
                                                     4,
@@ -1000,15 +1003,324 @@ class _VerticalCategorySectionState extends State<VerticalCategorySection> {
     }
   }
 
-  void _deletePost(BuildContext context, PostData post) {
-    // TODO: 구현
+  Future<void> _deletePost(BuildContext context, PostData post) async {
+    final l10n = AppLocalizations.of(context);
+
+    // 삭제 확인 다이얼로그
+    final bool? shouldDelete = await DialogUtils.showConfirmDialog(
+      context,
+      title: l10n.translate('delete_post_confirm_title'),
+      message: l10n.translate('delete_post_confirm_message'),
+      confirmText: l10n.translate('delete'),
+      cancelText: l10n.translate('cancel'),
+      isDestructive: true,
+    );
+
+    if (shouldDelete != true) return;
+
+    try {
+      final blogService = BlogService();
+      final provider = context.read<BaseFeedProvider>();
+
+      // 🎯 삭제 전에 공개범위 정보 저장
+      final accessLevel = post.accessLevel;
+      final sharedGroupIds = post.sharedGroupIds;
+
+      await blogService.deletePost(post.id);
+
+      // 🎯 포스트 삭제 후 관련 그룹의 postCount 및 포스트 캐시 동기화
+      try {
+        final groupProvider = context.read<GroupProvider>();
+
+        // GROUPS 공개범위인 경우
+        if (accessLevel == AccessLevel.groups &&
+            sharedGroupIds != null &&
+            sharedGroupIds.isNotEmpty) {
+          final groupIdToDelta = <int, int>{};
+          for (final groupId in sharedGroupIds) {
+            groupIdToDelta[groupId] = -1;
+          }
+          groupProvider.updateMultipleGroupsPostCount(groupIdToDelta);
+          ManageGroupScreen.invalidateMultipleGroupsPostsCache(sharedGroupIds);
+        }
+        // FRIENDS 공개범위인 경우
+        else if (accessLevel == AccessLevel.friends) {
+          ManageGroupScreen.invalidateGroupPostsCache(-1);
+        }
+      } catch (e) {
+        print('[VerticalCategorySection] 그룹 동기화 실패: $e');
+      }
+
+      // 🎯 피드에서 포스트 제거 및 새로고침
+      provider.clearInMemory();
+      provider.setNetworkError(null);
+      await provider.loadInitial(force: true);
+
+      if (context.mounted) {
+        ErrorHandler.showInfo(context, l10n.translate('post_deleted'));
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ErrorHandler.showError(context, l10n.translate('post_delete_failed'));
+      }
+    }
   }
 
-  void _movePostToCategory(BuildContext context, PostData post) {
-    // TODO: 구현
+  Future<void> _movePostToCategory(BuildContext context, PostData post) async {
+    final provider = context.read<BaseFeedProvider>();
+
+    // 🎯 시스템 카테고리가 아닌 사용자 카테고리만 표시
+    final userCategories =
+        provider.categories.where((c) => !(c['isSystem'] == true)).toList();
+
+    if (userCategories.isEmpty) {
+      ErrorHandler.showInfo(context, context.tr('no_categories_available'));
+      return;
+    }
+
+    // 🎯 현재 포스트가 속한 카테고리 ID 찾기
+    String? currentCategoryId;
+    for (final categoryId in provider.postsByCategory.keys) {
+      final posts = provider.postsByCategory[categoryId] ?? [];
+      if (posts.any((p) => '${p['id']}' == post.id)) {
+        currentCategoryId = categoryId;
+        break;
+      }
+    }
+
+    // 🎯 카테고리 선택 바텀시트 표시
+    final selectedCategory = await showModalBottomSheet<Map<String, dynamic>>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder:
+          (context) => Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 20),
+            decoration: const BoxDecoration(color: Colors.transparent),
+            child: Stack(
+              children: [
+                Positioned.fill(
+                  child: GestureDetector(
+                    onTap: () => Navigator.of(context).pop(),
+                    child: Container(color: Colors.transparent),
+                  ),
+                ),
+                Align(
+                  alignment: Alignment.bottomCenter,
+                  child: GestureDetector(
+                    onTap: () {},
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: Theme.of(context).colorScheme.surface,
+                        borderRadius: BorderRadius.circular(30),
+                      ),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 20,
+                        vertical: 24,
+                      ),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          // 제목
+                          Text(
+                            context.tr('select_category'),
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.w600,
+                              color: Theme.of(context).colorScheme.onSurface,
+                            ),
+                          ),
+                          const SizedBox(height: 24),
+                          // 🎯 "지정 안 함" 옵션 (미분류 카테고리)
+                          Builder(
+                            builder: (context) {
+                              final isUncategorized = currentCategoryId == '0';
+                              return InkWell(
+                                onTap:
+                                    isUncategorized
+                                        ? null
+                                        : () {
+                                          Navigator.of(context).pop({
+                                            'id': 0,
+                                            'name': context.tr('uncategorized'),
+                                          });
+                                        },
+                                borderRadius: BorderRadius.circular(12),
+                                child: Container(
+                                  width: double.infinity,
+                                  padding: const EdgeInsets.symmetric(
+                                    vertical: 16,
+                                  ),
+                                  child: Text(
+                                    context.tr('uncategorized'),
+                                    textAlign: TextAlign.center,
+                                    style: TextStyle(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.w500,
+                                      color:
+                                          isUncategorized
+                                              ? Theme.of(context)
+                                                  .colorScheme
+                                                  .onSurface
+                                                  .withOpacity(0.3)
+                                              : Theme.of(
+                                                context,
+                                              ).colorScheme.onSurface,
+                                    ),
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
+                          // 디바이더
+                          Divider(
+                            height: 1,
+                            thickness: 0.5,
+                            indent: 0,
+                            endIndent: 0,
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.onSurface.withOpacity(0.05),
+                          ),
+                          // 카테고리 리스트
+                          ...userCategories.map((category) {
+                            final categoryId = category['id']?.toString();
+                            final isCurrentCategory =
+                                categoryId == currentCategoryId;
+                            return InkWell(
+                              onTap:
+                                  isCurrentCategory
+                                      ? null
+                                      : () {
+                                        Navigator.of(context).pop(category);
+                                      },
+                              borderRadius: BorderRadius.circular(12),
+                              child: Container(
+                                width: double.infinity,
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 16,
+                                ),
+                                child: Text(
+                                  category['name']?.toString() ?? '',
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w500,
+                                    color:
+                                        isCurrentCategory
+                                            ? Theme.of(context)
+                                                .colorScheme
+                                                .onSurface
+                                                .withOpacity(0.3)
+                                            : Theme.of(
+                                              context,
+                                            ).colorScheme.onSurface,
+                                  ),
+                                ),
+                              ),
+                            );
+                          }).toList(),
+                          const SizedBox(height: 24),
+                          // 취소 버튼
+                          SizedBox(
+                            width: double.infinity,
+                            child: ElevatedButton(
+                              onPressed: () => Navigator.of(context).pop(),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Theme.of(
+                                  context,
+                                ).colorScheme.onSurface.withOpacity(0.03),
+                                foregroundColor:
+                                    Theme.of(context).colorScheme.onSurface,
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 16,
+                                ),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(20),
+                                ),
+                                elevation: 0,
+                              ),
+                              child: Text(
+                                context.tr('cancel'),
+                                style: const TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+    );
+
+    if (selectedCategory == null) return;
+
+    final targetCategoryId = selectedCategory['id'] as int?;
+    if (targetCategoryId == null) return;
+
+    try {
+      final blogService = BlogService();
+
+      // 🎯 서버에 카테고리 변경 요청
+      await blogService.movePostToCategory(
+        postId: int.parse(post.id),
+        targetCategoryId: targetCategoryId,
+      );
+
+      // 🎯 피드 새로고침
+      provider.clearInMemory();
+      provider.setNetworkError(null);
+      await provider.loadInitial(force: true);
+
+      if (context.mounted) {
+        ErrorHandler.showInfo(context, context.tr('category_changed'));
+      }
+    } catch (e) {
+      print('[VerticalCategorySection] 카테고리 변경 실패: $e');
+      if (context.mounted) {
+        ErrorHandler.showError(context, context.tr('category_change_failed'));
+      }
+    }
   }
 
-  void _changePostAccessLevel(BuildContext context, PostData post) {
-    // TODO: 구현
+  Future<void> _changePostAccessLevel(
+    BuildContext context,
+    PostData post,
+  ) async {
+    final provider = context.read<BaseFeedProvider>();
+
+    // 🎯 공개범위를 문자열로 변환
+    String currentAccessLevel = 'PUBLIC';
+    if (post.accessLevel == AccessLevel.private) {
+      currentAccessLevel = 'PRIVATE';
+    } else if (post.accessLevel == AccessLevel.friends) {
+      currentAccessLevel = 'FRIENDS';
+    } else if (post.accessLevel == AccessLevel.groups) {
+      currentAccessLevel = 'GROUPS';
+    }
+
+    // 🎯 AccessLevelSheet 표시
+    AccessLevelSheet.show(
+      context,
+      postId: post.id,
+      currentAccessLevel: currentAccessLevel,
+      currentSharedGroupIds: post.sharedGroupIds,
+      currentSharedGroupNames: post.sharedGroupNames,
+      isBatchMode: false,
+      onChanged: (String accessLevel, List<int>? sharedGroupIds) async {
+        // 🎯 공개범위 변경 후 피드 업데이트
+        provider.updatePostMetadata(
+          post.id,
+          accessLevel: accessLevel,
+          sharedGroupIds: sharedGroupIds,
+        );
+      },
+    );
   }
 }

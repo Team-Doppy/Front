@@ -20,7 +20,7 @@ class SystemCategoryKeys {
   static const String private = 'PRIVATE';
 
   /// 친구공유 카테고리 키 (서버 응답 키)
-  /// UI 표시: `context.tr('visibility_friends')` 또는 `context.tr('friends')`
+  /// UI 표시: `context.tr('visibility_friends')` 또는 `context.tr('friends')` → "모든 친구"
   static const String friends = 'FRIENDS';
 
   /// 그룹공유 카테고리 키 (서버 응답 키)
@@ -111,7 +111,7 @@ class SystemCategoryKeys {
       case 'PRIVATE':
         return 'visibility_private'; // '나만보기'
       case 'FRIENDS':
-        return 'visibility_friends'; // '친구공개'
+        return 'visibility_friends'; // '모든 친구'
       case 'GROUPS':
         return 'visibility_group'; // '그룹공개'
       default:
@@ -130,7 +130,8 @@ class SystemCategoryKeys {
   /// 예: `SystemCategoryKeys.getDisplayText(context, SystemCategoryKeys.public)`
   static String getDisplayText(BuildContext context, String key) {
     final locKey = getLocalizationKey(key);
-    return AppLocalizations.of(context)?.translate(locKey) ?? key;
+    final l10n = AppLocalizations.of(context);
+    return l10n?.translate(locKey) ?? key;
   }
 
   /// 모든 시스템 카테고리 키와 로컬라이제이션 키의 매핑

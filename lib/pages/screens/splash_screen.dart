@@ -2,11 +2,11 @@ import 'package:doppy/main.dart';
 import 'package:doppy/pages/components/doppy_loading_logo.dart';
 import 'package:doppy/providers/auth_provider.dart';
 import 'package:doppy/providers/user_provider.dart';
+import 'package:doppy/providers/friend_provider.dart';
 import 'package:doppy/providers/group_provider.dart';
 import 'package:doppy/data/services/home_data_service.dart';
 import 'package:doppy/data/services/search_service.dart';
 import 'package:doppy/data/services/auth_service.dart';
-import 'package:doppy/utils/network_utils.dart';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -29,7 +29,6 @@ class _SplashScreenState extends State<SplashScreen>
   HomeData? _preloadedHomeData;
   bool _isDataLoaded = false;
   bool _isTokenValidated = false;
-  String _loadingStatus = '앱을 시작하는 중...';
 
   @override
   void initState() {
@@ -62,32 +61,18 @@ class _SplashScreenState extends State<SplashScreen>
   Future<void> initializeApp() async {
     try {
       // 1. 토큰 검증 및 갱신
-      setState(() {
-        _loadingStatus = '인증을 확인하는 중...';
-      });
-
       final authProvider = context.read<AuthProvider>();
       final hasToken = await authProvider.checkLoginStatus();
 
       if (hasToken) {
         final isValid = await authProvider.validateAndRefreshToken();
-        setState(() {
-          _isTokenValidated = isValid;
-          _loadingStatus = isValid ? '데이터를 불러오는 중...' : '토큰이 만료되었습니다';
-        });
+        _isTokenValidated = isValid;
       } else {
-        setState(() {
-          _isTokenValidated = false;
-          _loadingStatus = '로그인이 필요합니다';
-        });
+        _isTokenValidated = false;
       }
 
       // 2. 토큰이 유효한 경우에만 데이터 로딩
       if (_isTokenValidated) {
-        setState(() {
-          _loadingStatus = '사용자 데이터를 불러오는 중...';
-        });
-
         // 🎯 앱 시작 시 FCM 토큰 검사 및 필요시 재발급 (비동기로 처리하여 앱 시작을 막지 않음)
         _checkAndSyncFcmToken();
 
@@ -102,6 +87,9 @@ class _SplashScreenState extends State<SplashScreen>
 
         // 🎯 트렌딩 데이터는 비동기로 백그라운드에서 로드 (앱 시작을 막지 않음)
         _loadTrendingData();
+
+        // 🎯 설정 정보 및 받은 요청은 비동기로 백그라운드에서 로드 (앱 시작을 막지 않음)
+        _loadSettingsAndFriendRequests();
       } else {
         // 토큰이 없거나 유효하지 않은 경우 빈 데이터로 설정
         setState(() {
@@ -113,12 +101,10 @@ class _SplashScreenState extends State<SplashScreen>
       // 3. 네비게이션
       await _navigateAfterReady();
     } catch (e) {
-      final networkError = NetworkUtils.parseError(e);
       setState(() {
         _isTokenValidated = false;
         _isDataLoaded = true;
         _preloadedHomeData = HomeData(friendsPosts: [], allPosts: []);
-        _loadingStatus = networkError.userMessage;
       });
       await _navigateAfterReady();
     }
@@ -126,10 +112,6 @@ class _SplashScreenState extends State<SplashScreen>
 
   Future<void> _loadHomeData() async {
     try {
-      setState(() {
-        _loadingStatus = '피드 데이터를 불러오는 중...';
-      });
-
       // 통합 피드 데이터 서비스를 사용하여 두 섹션 동시 로드
       final homeData = await _homeDataService.preloadAllSections(
         page: 0,
@@ -138,7 +120,6 @@ class _SplashScreenState extends State<SplashScreen>
 
       setState(() {
         _preloadedHomeData = homeData;
-        _loadingStatus = homeData.isEmpty ? '데이터 로드 완료' : '이미지를 미리 로드하는 중...';
       });
 
       // 이미지 미리 로드 (두 섹션 모두)
@@ -149,16 +130,13 @@ class _SplashScreenState extends State<SplashScreen>
 
       setState(() {
         _isDataLoaded = true;
-        _loadingStatus = '로딩 완료';
       });
     } catch (e) {
       print('[SplashScreen] 피드 데이터 로드 실패: $e');
-      final networkError = NetworkUtils.parseError(e);
 
       setState(() {
         _preloadedHomeData = HomeData(friendsPosts: [], allPosts: []);
         _isDataLoaded = true;
-        _loadingStatus = networkError.userMessage;
       });
     }
   }
@@ -222,6 +200,25 @@ class _SplashScreenState extends State<SplashScreen>
       });
     } catch (e) {
       print('[SplashScreen] FCM 토큰 검사 오류 (무시): $e');
+    }
+  }
+
+  /// 🎯 설정 정보 및 받은 친구 요청 비동기 로드 (앱 시작을 막지 않음)
+  Future<void> _loadSettingsAndFriendRequests() async {
+    try {
+      // 설정 정보 로드
+      final userProvider = context.read<UserProvider>();
+      userProvider.loadSettings().catchError((e) {
+        print('[SplashScreen] 설정 정보 로드 실패 (무시): $e');
+      });
+
+      // 받은 친구 요청 로드
+      final friendProvider = context.read<FriendProvider>();
+      friendProvider.fetchAllFriendData(forceRefresh: false).catchError((e) {
+        print('[SplashScreen] 친구 요청 로드 실패 (무시): $e');
+      });
+    } catch (e) {
+      print('[SplashScreen] 설정/친구 요청 로드 오류 (무시): $e');
     }
   }
 
@@ -290,35 +287,6 @@ class _SplashScreenState extends State<SplashScreen>
                       spinnerColor: Theme.of(context).colorScheme.primary,
                     ),
                   ],
-                );
-              },
-            ),
-          ),
-          // 로딩 상태 표시
-          Positioned(
-            bottom: 100,
-            left: 0,
-            right: 0,
-            child: AnimatedBuilder(
-              animation: _controller,
-              builder: (context, child) {
-                return Opacity(
-                  opacity: _opacity.value,
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        '환영합니다 ${_loadingStatus}...',
-                        style: TextStyle(
-                          color: Theme.of(
-                            context,
-                          ).colorScheme.onSurface.withOpacity(0.7),
-                          fontSize: 14,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                    ],
-                  ),
                 );
               },
             ),

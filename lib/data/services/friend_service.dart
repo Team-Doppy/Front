@@ -236,20 +236,52 @@ class FriendService {
     }
   }
 
-  /// 17. 차단 목록 조회
-  Future<List<User>> getBlockedUsers() async {
+  /// 17. 차단 목록 조회 (FriendResponseDto[] 반환)
+  Future<List<Friend>> getBlockedUsers() async {
     try {
       final response = await _dio.get('/api/friends/blocked');
 
       if (response.statusCode == 200) {
         final List<dynamic> data = response.data;
-        return data.map((item) => User.fromJson(item)).toList();
+        return data.map((item) => Friend.fromJson(item)).toList();
       }
 
       throw Exception('차단 목록 조회 실패');
     } catch (e) {
       if (e is DioException) {
         throw Exception('차단 목록 조회 실패: ${e.response?.statusCode}');
+      }
+      rethrow;
+    }
+  }
+
+  /// 18. 다중 차단 해제
+  /// - [usernames] 차단 해제할 사용자명 목록
+  Future<String> unblockUsersBatch(List<String> usernames) async {
+    try {
+      final response = await _dio.delete(
+        '/api/friends/block/batch',
+        data: usernames,
+      );
+
+      if (response.statusCode != null &&
+          response.statusCode! >= 200 &&
+          response.statusCode! < 300) {
+        final message =
+            response.data?.toString() ?? '${usernames.length}명의 차단이 해제되었습니다.';
+        print('[FriendService] 다중 차단 해제 성공: $message');
+        return message;
+      }
+
+      throw Exception('다중 차단 해제 실패: ${response.statusCode}');
+    } catch (e) {
+      if (e is DioException) {
+        final statusCode = e.response?.statusCode;
+        final errorMessage =
+            e.response?.data?['message']?.toString() ??
+            '다중 차단 해제 실패: $statusCode';
+        print('[FriendService] 다중 차단 해제 실패: $errorMessage');
+        throw Exception(errorMessage);
       }
       rethrow;
     }

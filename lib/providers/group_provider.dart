@@ -341,6 +341,35 @@ class GroupProvider with ChangeNotifier {
     }
   }
 
+  /// ➕ 여러 멤버 일괄 추가 (배치) → 선택적 업데이트 (전체 재조회 생략)
+  Future<bool> addMembersBatch(int groupId, List<String> usernames) async {
+    try {
+      print('🔄 [GroupProvider] 그룹 $groupId에 멤버 일괄 추가: ${usernames.length}명');
+
+      // 🎯 멤버 일괄 추가 API 호출 (실패 시 즉시 false 반환)
+      await _groupService.addMultipleMembersToGroup(groupId, usernames);
+
+      // 🎯 선택적 업데이트: memberCount만 로컬 업데이트 (전체 재조회 생략)
+      updateGroupMemberCount(groupId, usernames.length);
+
+      // 🎯 해당 그룹의 멤버 캐시 무효화
+      _isMembersCached[groupId] = false;
+      // 🎯 멤버 목록 조회 (실패해도 멤버 일괄 추가는 성공한 것으로 간주, 재시도 방지)
+      try {
+        await fetchGroupMembers(groupId, forceRefresh: true);
+      } catch (e) {
+        // 멤버 목록 조회 실패해도 멤버 일괄 추가 자체는 성공한 것으로 간주
+        print('⚠️ [GroupProvider] 멤버 일괄 추가 성공했으나 목록 조회 실패 (무시): $e');
+      }
+
+      print('✅ [GroupProvider] 멤버 일괄 추가 완료');
+      return true;
+    } catch (e) {
+      print('❌ [GroupProvider] 멤버 일괄 추가 에러: $e');
+      return false;
+    }
+  }
+
   /// ➖ 멤버 제거 → 선택적 업데이트 (전체 재조회 생략)
   Future<bool> removeMember(int groupId, String userId) async {
     try {
@@ -376,16 +405,31 @@ class GroupProvider with ChangeNotifier {
       // 🎯 멤버 삭제 API 호출 (실패 시 즉시 false 반환)
       await _groupService.removeMembersFromGroupBatch(groupId, usernames);
 
+      // 🎯 로컬 캐시에서 제거된 멤버들을 즉시 제거 (낙관적 업데이트)
+      if (_cachedGroupMembers.containsKey(groupId)) {
+        final currentMembers = _cachedGroupMembers[groupId] ?? [];
+        _cachedGroupMembers[groupId] =
+            currentMembers
+                .where((member) => !usernames.contains(member.userId))
+                .toList();
+        print(
+          '🔄 [GroupProvider] 로컬 캐시에서 ${usernames.length}명 제거: ${currentMembers.length} → ${_cachedGroupMembers[groupId]!.length}',
+        );
+        notifyListeners(); // 🎯 UI 즉시 업데이트
+      }
+
       // 🎯 선택적 업데이트: memberCount만 로컬 업데이트 (전체 재조회 생략)
       updateGroupMemberCount(groupId, -usernames.length);
 
       // 🎯 해당 그룹의 멤버 캐시 무효화
       _isMembersCached[groupId] = false;
-      // 🎯 멤버 목록 조회 (실패해도 멤버 일괄 제거는 성공한 것으로 간주, 재시도 방지)
+      // 🎯 서버 동기화를 위해 짧은 지연 후 멤버 목록 조회
       try {
+        await Future.delayed(const Duration(milliseconds: 300)); // 🎯 서버 반영 대기
         await fetchGroupMembers(groupId, forceRefresh: true);
       } catch (e) {
         // 멤버 목록 조회 실패해도 멤버 일괄 제거 자체는 성공한 것으로 간주
+        // (이미 로컬 캐시에서 제거했으므로 UI는 업데이트됨)
         print('⚠️ [GroupProvider] 멤버 일괄 제거 성공했으나 목록 조회 실패 (무시): $e');
       }
 
@@ -543,12 +587,161 @@ class GroupProvider with ChangeNotifier {
   /// 🎯 allFriends 그룹의 memberCount만 업데이트 (서버 재조회 없음)
   /// 친구 수락/취소 시 사용
   void updateAllFriendsMemberCount(int delta) {
-    if (_allFriendsGroupId == null) {
-      print('⚠️ [GroupProvider] allFriendsGroupId가 없어 memberCount 업데이트 불가');
+    // 🎯 캐시가 없거나 시스템 그룹을 찾을 수 없으면 무시
+    // (일반적으로 앱 시작 시 이미 로드되므로, 없으면 나중에 새로고침 시 동기화됨)
+    if (!_isGroupsCached) {
       return;
     }
 
-    updateGroupMemberCount(_allFriendsGroupId!, delta);
+    // 🎯 시스템 그룹(isSystem == true)을 직접 찾아서 업데이트
+    final allFriendsGroupIndex = _cachedGroups.indexWhere(
+      (g) => g.isSystem == true,
+    );
+
+    if (allFriendsGroupIndex == -1) {
+      return;
+    }
+
+    final allFriendsGroup = _cachedGroups[allFriendsGroupIndex];
+    final newMemberCount = (allFriendsGroup.memberCount ?? 0) + delta;
+
+    // 새로운 Group 객체 생성 (불변성 유지)
+    final updatedGroup = Group(
+      id: allFriendsGroup.id,
+      name: allFriendsGroup.name,
+      description: allFriendsGroup.description,
+      ownerId: allFriendsGroup.ownerId,
+      owner: allFriendsGroup.owner,
+      createdAt: allFriendsGroup.createdAt,
+      members: allFriendsGroup.members,
+      profileImageUrl: allFriendsGroup.profileImageUrl,
+      memberCount: newMemberCount < 0 ? 0 : newMemberCount,
+      postCount: allFriendsGroup.postCount,
+      memberThumbnails: allFriendsGroup.memberThumbnails,
+      isSystem: allFriendsGroup.isSystem,
+    );
+
+    _cachedGroups[allFriendsGroupIndex] = updatedGroup;
+    notifyListeners();
+  }
+
+  /// FriendProvider의 acceptedFriends.length와 GroupProvider의 memberCount를 동기화
+  /// 실제 친구 목록과 비교하여 누락된 친구가 포함된 커스텀 그룹들의 멤버 수도 함께 동기화
+  void syncAllFriendsMemberCount(
+    int actualCount, {
+    FriendProvider? friendProvider,
+  }) {
+    if (!_isGroupsCached) {
+      return;
+    }
+
+    // 🎯 시스템 그룹(isSystem == true)을 직접 찾아서 업데이트
+    final allFriendsGroupIndex = _cachedGroups.indexWhere(
+      (g) => g.isSystem == true,
+    );
+
+    if (allFriendsGroupIndex == -1) {
+      return;
+    }
+
+    final allFriendsGroup = _cachedGroups[allFriendsGroupIndex];
+    final currentMemberCount = allFriendsGroup.memberCount ?? 0;
+
+    // 🎯 "모든 친구" 그룹의 memberCount 동기화
+    bool hasUpdate = false;
+    if (currentMemberCount != actualCount) {
+      final updatedGroup = Group(
+        id: allFriendsGroup.id,
+        name: allFriendsGroup.name,
+        description: allFriendsGroup.description,
+        ownerId: allFriendsGroup.ownerId,
+        owner: allFriendsGroup.owner,
+        createdAt: allFriendsGroup.createdAt,
+        members: allFriendsGroup.members,
+        profileImageUrl: allFriendsGroup.profileImageUrl,
+        memberCount: actualCount < 0 ? 0 : actualCount,
+        postCount: allFriendsGroup.postCount,
+        memberThumbnails: allFriendsGroup.memberThumbnails,
+        isSystem: allFriendsGroup.isSystem,
+      );
+
+      _cachedGroups[allFriendsGroupIndex] = updatedGroup;
+      hasUpdate = true;
+      print(
+        '✅ [GroupProvider] 전체 친구 그룹 memberCount 동기화: $currentMemberCount → $actualCount',
+      );
+    }
+
+    // 🎯 실제 친구 목록과 비교하여 누락된 친구가 포함된 커스텀 그룹들의 멤버 수도 동기화
+    if (friendProvider != null) {
+      final actualFriendUsernames =
+          friendProvider.acceptedFriends.map((f) => f.username).toSet();
+
+      // 🎯 모든 커스텀 그룹(isSystem != true) 확인
+      for (int i = 0; i < _cachedGroups.length; i++) {
+        final group = _cachedGroups[i];
+        // 시스템 그룹은 제외
+        if (group.isSystem == true) continue;
+
+        // 🎯 해당 그룹의 멤버 캐시 확인
+        if (_cachedGroupMembers.containsKey(group.id)) {
+          final groupMembers = _cachedGroupMembers[group.id] ?? [];
+          final removedUsernames = <String>[];
+
+          // 🎯 친구 목록에 없는 멤버 찾기
+          for (final member in groupMembers) {
+            if (!actualFriendUsernames.contains(member.userId)) {
+              removedUsernames.add(member.userId);
+            }
+          }
+
+          // 🎯 제거된 멤버가 있으면 그룹의 memberCount 감소 및 멤버 캐시에서 제거
+          if (removedUsernames.isNotEmpty) {
+            print(
+              '🔄 [GroupProvider] 그룹 "${group.name}"에서 친구 목록에 없는 멤버 ${removedUsernames.length}명 발견: $removedUsernames',
+            );
+
+            // 🎯 멤버 캐시에서 제거
+            _cachedGroupMembers[group.id] =
+                groupMembers
+                    .where(
+                      (member) => !removedUsernames.contains(member.userId),
+                    )
+                    .toList();
+            _isMembersCached[group.id] = true; // 캐시 유지 (제거된 상태로)
+
+            // 🎯 memberCount 감소
+            final currentGroupMemberCount = group.memberCount ?? 0;
+            final newGroupMemberCount =
+                (currentGroupMemberCount - removedUsernames.length)
+                    .clamp(0, double.infinity)
+                    .toInt();
+
+            final updatedGroup = Group(
+              id: group.id,
+              name: group.name,
+              description: group.description,
+              ownerId: group.ownerId,
+              owner: group.owner,
+              createdAt: group.createdAt,
+              members: group.members,
+              profileImageUrl: group.profileImageUrl,
+              memberCount: newGroupMemberCount,
+              postCount: group.postCount,
+              memberThumbnails: group.memberThumbnails,
+              isSystem: group.isSystem,
+            );
+
+            _cachedGroups[i] = updatedGroup;
+            hasUpdate = true;
+          }
+        }
+      }
+    }
+
+    if (hasUpdate) {
+      notifyListeners();
+    }
   }
 
   /// 🔄 그룹 순서 변경 (드래그 앤 드롭)

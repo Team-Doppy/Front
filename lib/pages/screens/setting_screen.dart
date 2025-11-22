@@ -1,7 +1,9 @@
 import 'package:doppy/pages/components/doppy_loading_logo.dart';
 import 'package:doppy/pages/screens/favorites_screen.dart';
+import 'package:doppy/pages/screens/blocked_users_screen.dart';
 import 'package:doppy/pages/components/license_screen.dart';
 import 'package:doppy/providers/auth_provider.dart';
+import 'package:doppy/providers/user_provider.dart';
 import 'package:doppy/providers/theme_provider.dart';
 import 'package:doppy/providers/locale_provider.dart';
 import 'package:doppy/l10n/app_localizations.dart';
@@ -25,46 +27,27 @@ class SettingScreen extends StatefulWidget {
 }
 
 class _SettingScreenState extends State<SettingScreen> {
-  bool _notificationEnabled = true;
-  bool _marketingEnabled = false;
-
   final UserService _userService = UserService();
 
   @override
   void initState() {
     super.initState();
-    _loadSettings();
-  }
-
-  Future<void> _loadSettings() async {
-    try {
-      final settings = await _userService.getSettings();
-      if (mounted) {
-        setState(() {
-          _notificationEnabled = settings['notificationEnabled'] ?? true;
-          _marketingEnabled = settings['marketingConsent'] ?? false;
-        });
-      }
-    } catch (e) {
-      print('[SettingScreen] 설정 로드 실패: $e');
-    }
+    // 🎯 앱 시작 시 이미 로드되었으므로 별도 로드 불필요
+    // UserProvider에서 값을 읽어옴
   }
 
   Future<void> _toggleNotification() async {
-    // 낙관적 업데이트
-    final oldValue = _notificationEnabled;
-    setState(() {
-      _notificationEnabled = !_notificationEnabled;
-    });
+    final userProvider = context.read<UserProvider>();
+    final currentValue = userProvider.notificationEnabled ?? true;
+    final oldValue = currentValue;
+
+    // 낙관적 업데이트 (UserProvider 업데이트)
+    userProvider.updateNotificationEnabled(!currentValue);
 
     try {
       final newValue = await _userService.toggleNotificationEnabled();
-      // 서버 응답으로 최종 확인
-      if (mounted) {
-        setState(() {
-          _notificationEnabled = newValue;
-        });
-      }
+      // 서버 응답으로 최종 확인 (UserProvider 업데이트)
+      userProvider.updateNotificationEnabled(newValue);
 
       // 🎯 알림 설정 변경 시 FCM 토큰 검사 및 서버 동기화
       try {
@@ -82,9 +65,7 @@ class _SettingScreenState extends State<SettingScreen> {
 
           if (mounted && !serverNotificationEnabled) {
             // 서버가 다시 false로 내려왔다는 것은 여전히 권한이 없다는 의미
-            setState(() {
-              _notificationEnabled = false;
-            });
+            userProvider.updateNotificationEnabled(false);
 
             final l10n = AppLocalizations.of(context);
             final goToSettings = await DialogUtils.showConfirmDialog(
@@ -109,37 +90,30 @@ class _SettingScreenState extends State<SettingScreen> {
       }
     } catch (e) {
       print('[SettingScreen] 알림 토글 실패: $e');
-      // 롤백
+      // 롤백 (UserProvider 업데이트)
       if (mounted) {
-        setState(() {
-          _notificationEnabled = oldValue;
-        });
+        userProvider.updateNotificationEnabled(oldValue);
       }
     }
   }
 
   Future<void> _toggleMarketing() async {
-    // 낙관적 업데이트
-    final oldValue = _marketingEnabled;
-    setState(() {
-      _marketingEnabled = !_marketingEnabled;
-    });
+    final userProvider = context.read<UserProvider>();
+    final currentValue = userProvider.marketingEnabled ?? false;
+    final oldValue = currentValue;
+
+    // 낙관적 업데이트 (UserProvider 업데이트)
+    userProvider.updateMarketingEnabled(!currentValue);
 
     try {
       final newValue = await _userService.toggleMarketingConsent();
-      // 서버 응답으로 최종 확인
-      if (mounted) {
-        setState(() {
-          _marketingEnabled = newValue;
-        });
-      }
+      // 서버 응답으로 최종 확인 (UserProvider 업데이트)
+      userProvider.updateMarketingEnabled(newValue);
     } catch (e) {
       print('[SettingScreen] 마케팅 토글 실패: $e');
-      // 롤백
+      // 롤백 (UserProvider 업데이트)
       if (mounted) {
-        setState(() {
-          _marketingEnabled = oldValue;
-        });
+        userProvider.updateMarketingEnabled(oldValue);
       }
     }
   }
@@ -185,10 +159,8 @@ class _SettingScreenState extends State<SettingScreen> {
                 trailing: Text(
                   authProvider.username ?? '-',
                   style: TextStyle(
-                    fontSize: 14,
-                    color: Theme.of(
-                      context,
-                    ).colorScheme.onSurface.withOpacity(0.6),
+                    fontSize: 17,
+                    color: Theme.of(context).colorScheme.primary,
                   ),
                 ),
                 showArrow: false,
@@ -206,6 +178,18 @@ class _SettingScreenState extends State<SettingScreen> {
                   );
                 },
               ),
+              _SettingTile(
+                icon: Icons.block,
+                label: context.tr('blocked_users'),
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => const BlockedUsersScreen(),
+                    ),
+                  );
+                },
+              ),
             ],
           ),
           const SizedBox(height: 16),
@@ -216,31 +200,43 @@ class _SettingScreenState extends State<SettingScreen> {
             title: context.tr('general'),
             surfaceColor: surfaceColor,
             children: [
-              _SettingTile(
-                icon: Icons.notifications_outlined,
-                label: context.tr('notification_settings'),
-                trailing: Text(
-                  _notificationEnabled ? 'ON' : 'OFF',
-                  style: TextStyle(
-                    fontSize: 14,
-                    color: AppColors.primary,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-                onTap: _toggleNotification,
+              Consumer<UserProvider>(
+                builder: (context, userProvider, _) {
+                  final notificationEnabled =
+                      userProvider.notificationEnabled ?? true;
+                  return _SettingTile(
+                    icon: Icons.notifications_outlined,
+                    label: context.tr('notification_settings'),
+                    trailing: Text(
+                      notificationEnabled ? 'ON' : 'OFF',
+                      style: TextStyle(
+                        fontSize: 16,
+                        color: AppColors.primary,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                    onTap: _toggleNotification,
+                  );
+                },
               ),
-              _SettingTile(
-                icon: Icons.campaign_outlined,
-                label: context.tr('marketing_consent'),
-                trailing: Text(
-                  _marketingEnabled ? 'ON' : 'OFF',
-                  style: TextStyle(
-                    fontSize: 14,
-                    color: AppColors.primary,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-                onTap: _toggleMarketing,
+              Consumer<UserProvider>(
+                builder: (context, userProvider, _) {
+                  final marketingEnabled =
+                      userProvider.marketingEnabled ?? false;
+                  return _SettingTile(
+                    icon: Icons.campaign_outlined,
+                    label: context.tr('marketing_consent'),
+                    trailing: Text(
+                      marketingEnabled ? 'ON' : 'OFF',
+                      style: TextStyle(
+                        fontSize: 16,
+                        color: AppColors.primary,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                    onTap: _toggleMarketing,
+                  );
+                },
               ),
               _SettingTile(
                 icon: Icons.brightness_6_outlined,
@@ -250,7 +246,7 @@ class _SettingScreenState extends State<SettingScreen> {
                       ? context.tr('dark')
                       : context.tr('light'),
                   style: TextStyle(
-                    fontSize: 14,
+                    fontSize: 16,
                     color: AppColors.primary,
                     fontWeight: FontWeight.w500,
                   ),
@@ -265,7 +261,7 @@ class _SettingScreenState extends State<SettingScreen> {
                 trailing: Text(
                   context.watch<LocaleProvider>().isKorean ? '한국어' : 'English',
                   style: TextStyle(
-                    fontSize: 14,
+                    fontSize: 16,
                     color: AppColors.primary,
                     fontWeight: FontWeight.w500,
                   ),
@@ -302,7 +298,7 @@ class _SettingScreenState extends State<SettingScreen> {
                 trailing: Text(
                   AppConstants.appVersion,
                   style: TextStyle(
-                    fontSize: 14,
+                    fontSize: 16,
                     color: Theme.of(
                       context,
                     ).colorScheme.onSurface.withOpacity(0.6),
@@ -523,11 +519,10 @@ class _SettingTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final textColor = Theme.of(context).colorScheme.onSurface;
 
-    return InkWell(
+    return GestureDetector(
       onTap: onTap,
-      borderRadius: BorderRadius.circular(12),
       child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 20),
+        padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 14),
         child: Row(
           children: [
             Container(
@@ -535,9 +530,15 @@ class _SettingTile extends StatelessWidget {
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(10),
               ),
-              child: Icon(icon, size: 22, color: AppColors.primary),
+              child: Icon(
+                icon,
+                size: 20,
+                color: Theme.of(
+                  context,
+                ).colorScheme.onSurface.withOpacity(0.75),
+              ),
             ),
-            const SizedBox(width: 16),
+            const SizedBox(width: 8),
             Expanded(
               child: Text(
                 label,

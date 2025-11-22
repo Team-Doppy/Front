@@ -20,12 +20,18 @@ class UserProvider with ChangeNotifier {
 
   bool _isLoading = false;
 
+  // 🎯 설정 정보 (알림, 마케팅)
+  bool? _notificationEnabled;
+  bool? _marketingEnabled;
+
   User? get currentUser => _currentUser;
   int? get friendCount => _friendCount;
   String? get selfIntroduction => _selfIntroduction;
   User? get viewedUser => _viewedUser;
   String? get viewedUserSelfIntroduction => _viewedUserSelfIntroduction;
   bool get isLoading => _isLoading;
+  bool? get notificationEnabled => _notificationEnabled;
+  bool? get marketingEnabled => _marketingEnabled;
 
   /// 다른 사용자 정보 설정
   void setViewedUser(User user) {
@@ -180,6 +186,37 @@ class UserProvider with ChangeNotifier {
     }
   }
 
+  /// 🎯 설정 정보 로드 (알림, 마케팅)
+  Future<void> loadSettings() async {
+    try {
+      final settings = await _userService.getSettings();
+      _notificationEnabled = settings['notificationEnabled'] ?? true;
+      _marketingEnabled = settings['marketingConsent'] ?? false;
+      notifyListeners();
+      print(
+        '[UserProvider] 설정 정보 로드 완료: notification=$_notificationEnabled, marketing=$_marketingEnabled',
+      );
+    } catch (e) {
+      print('[UserProvider] 설정 정보 로드 실패: $e');
+      // 실패 시 기본값 사용
+      _notificationEnabled = true;
+      _marketingEnabled = false;
+      notifyListeners();
+    }
+  }
+
+  /// 🎯 알림 설정 업데이트
+  void updateNotificationEnabled(bool value) {
+    _notificationEnabled = value;
+    notifyListeners();
+  }
+
+  /// 🎯 마케팅 동의 설정 업데이트
+  void updateMarketingEnabled(bool value) {
+    _marketingEnabled = value;
+    notifyListeners();
+  }
+
   /// 로그아웃 시 모든 사용자 데이터 초기화
   void logout() {
     _currentUser = null;
@@ -188,6 +225,8 @@ class UserProvider with ChangeNotifier {
     _viewedUser = null;
     _viewedUserSelfIntroduction = null;
     _isLoading = false;
+    _notificationEnabled = null;
+    _marketingEnabled = null;
     _clearPersistedUser();
     notifyListeners();
     print('[UserProvider] 로그아웃 - 사용자 데이터 초기화 완료');

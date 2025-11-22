@@ -39,7 +39,7 @@ class CustomBottomNavigationBar extends StatelessWidget {
 
     return ClipRRect(
       child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 15, sigmaY: 15),
+        filter: ImageFilter.blur(sigmaX: 13, sigmaY: 13),
         child: Container(
           height: 72,
           decoration: BoxDecoration(

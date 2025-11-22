@@ -129,16 +129,17 @@ class _PostListState extends State<PostList> {
   }
 
   void _onLikeServiceChanged() {
-    if (mounted) {
-      setState(() {});
-    }
+    // 🎯 PostList에서 setState 제거: 각 PostCard가 이미 LikeService 변경을 감지하고 있으므로
+    // PostList 전체를 리빌드할 필요 없음 (불필요한 리빌드 방지)
+    // 각 PostCard의 _onLikeServiceChanged가 개별적으로 setState를 호출함
   }
 
   void _loadLikeStatusForAllPosts() {
     // PostData에서 직접 좋아요 상태와 수 설정
+    // 🎯 LikeService에 값이 없을 때만 설정 (다른 화면에서 좋아요를 누른 경우 덮어쓰지 않음)
     for (final post in _items) {
       final postId = post.id.toString();
-      if (postId.isNotEmpty) {
+      if (postId.isNotEmpty && !_likeService.hasPost(postId)) {
         _likeService.setInitialLikeData(postId, post.isLiked, post.likeCount);
       }
     }
@@ -180,9 +181,10 @@ class _PostListState extends State<PostList> {
 
   void _loadLikeStatusForNewPosts(List<PostData> newPosts) {
     // 새로운 게시물들의 좋아요 상태와 수 설정
+    // 🎯 LikeService에 값이 없을 때만 설정 (다른 화면에서 좋아요를 누른 경우 덮어쓰지 않음)
     for (final post in newPosts) {
       final postId = post.id.toString();
-      if (postId.isNotEmpty) {
+      if (postId.isNotEmpty && !_likeService.hasPost(postId)) {
         _likeService.setInitialLikeData(postId, post.isLiked, post.likeCount);
       }
     }
@@ -707,15 +709,16 @@ class _PostListState extends State<PostList> {
                       vertical: 10,
                     ),
                     decoration: BoxDecoration(
-                      color: Theme.of(
-                        context,
-                      ).colorScheme.background.withOpacity(0.5),
+                      color:
+                          Theme.of(context).brightness == Brightness.dark
+                              ? Colors.transparent
+                              : Colors.white,
                       borderRadius: BorderRadius.circular(24),
                       border: Border.all(
                         color: Theme.of(
                           context,
-                        ).colorScheme.onSurface.withOpacity(0.08),
-                        width: 1.3,
+                        ).colorScheme.onSurface.withOpacity(0.4),
+                        width: 0.5,
                       ),
                     ),
                     child: Text(
@@ -1096,7 +1099,7 @@ class _PostListState extends State<PostList> {
               textAlign: TextAlign.center,
               style: TextStyle(
                 color: Theme.of(context).colorScheme.onSurface,
-                fontSize: 32,
+                fontSize: 34,
                 fontWeight: FontWeight.bold,
                 letterSpacing: -0.2,
               ),
@@ -1113,9 +1116,9 @@ class _PostListState extends State<PostList> {
                   color: Theme.of(
                     context,
                   ).colorScheme.onSurface.withOpacity(0.7),
-                  fontSize: 14,
-                  fontWeight: FontWeight.w300,
-                  height: 1.8,
+                  fontSize: 15,
+                  fontWeight: FontWeight.w200,
+                  height: 1.5,
                   letterSpacing: -0.1,
                 ),
                 maxLines: 5,

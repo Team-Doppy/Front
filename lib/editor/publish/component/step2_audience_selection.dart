@@ -2,6 +2,7 @@ import 'package:doppy/data/models/system_category_keys.dart';
 import 'package:doppy/pages/screens/group_selection_screen.dart';
 import 'package:doppy/providers/group_provider.dart';
 import 'package:doppy/theme/app_colors.dart';
+import 'package:doppy/l10n/app_localizations.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -320,7 +321,12 @@ class _Step2AudienceSelectionState extends State<Step2AudienceSelection> {
                                             children: [
                                               Expanded(
                                                 child: Text(
-                                                  group.name,
+                                                  // 🎯 시스템 그룹(isSystem == true)인 경우 "모든 친구"로 표시
+                                                  group.isSystem == true
+                                                      ? context.tr(
+                                                        'all_friends',
+                                                      )
+                                                      : group.name,
                                                   style: const TextStyle(
                                                     color: Colors.white,
                                                     fontSize: 16,
@@ -362,14 +368,6 @@ class _Step2AudienceSelectionState extends State<Step2AudienceSelection> {
                                         padding: const EdgeInsets.all(16),
                                         child: Row(
                                           children: [
-                                            Icon(
-                                              Icons.add_circle_outline,
-                                              color: Colors.white.withOpacity(
-                                                0.8,
-                                              ),
-                                              size: 22,
-                                            ),
-                                            const SizedBox(width: 12),
                                             const Expanded(
                                               child: Text(
                                                 '그룹 만들기',
@@ -379,6 +377,13 @@ class _Step2AudienceSelectionState extends State<Step2AudienceSelection> {
                                                   fontWeight: FontWeight.w600,
                                                 ),
                                               ),
+                                            ),
+                                            Icon(
+                                              Icons.add_circle_outline,
+                                              color: Colors.white.withOpacity(
+                                                0.8,
+                                              ),
+                                              size: 22,
                                             ),
                                           ],
                                         ),

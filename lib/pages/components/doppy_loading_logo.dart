@@ -90,7 +90,7 @@ class DoppyLoadingLogo extends StatelessWidget {
         // 뒤로가기 버튼
         if (showBackButton)
           Positioned(
-            top: 58.5,
+            top: 57,
             left: 4,
             child: IconButton(
               icon: Icon(

@@ -228,10 +228,10 @@ class FriendProvider with ChangeNotifier {
         _acceptedFriends.add(moved);
       }
 
-      // 🎯 allFriends 그룹의 memberCount 업데이트 (선택적 업데이트)
-      if (groupProvider != null) {
-        groupProvider.updateAllFriendsMemberCount(1);
-      }
+      // 🎯 allFriends 그룹의 memberCount 업데이트
+      // 🎯 groupProvider 파라미터가 있으면 사용, 없으면 싱글톤 직접 참조
+      final groupProviderInstance = groupProvider ?? GroupProvider();
+      groupProviderInstance.updateAllFriendsMemberCount(1);
 
       notifyListeners();
       return true;
@@ -264,10 +264,10 @@ class FriendProvider with ChangeNotifier {
         _acceptedFriends.add(friend);
       }
 
-      // 🎯 allFriends 그룹의 memberCount 업데이트 (선택적 업데이트)
-      if (groupProvider != null) {
-        groupProvider.updateAllFriendsMemberCount(1);
-      }
+      // 🎯 allFriends 그룹의 memberCount 업데이트
+      // 🎯 groupProvider 파라미터가 있으면 사용, 없으면 싱글톤 직접 참조
+      final groupProviderInstance = groupProvider ?? GroupProvider();
+      groupProviderInstance.updateAllFriendsMemberCount(1);
 
       notifyListeners();
       return true;
@@ -389,17 +389,17 @@ class FriendProvider with ChangeNotifier {
     // initState에서 호출될 수 있으므로 notifyListeners() 제거
     // notifyListeners();
     try {
-      final results = await Future.wait([
+      final results = await Future.wait<List<Friend>>([
         _friendService.getSentFriendRequests(page: 0, size: 20),
         _friendService.getAcceptedFriends(page: 0, size: 20),
-        _friendService.getBlockedUsers(), // 🎯 차단 목록 조회
+        _friendService.getBlockedUsers(), // 🎯 차단 목록 조회 (Friend[] 반환)
       ]);
-      final sentRequests = results[0] as List<Friend>;
-      final acceptedFriends = results[1] as List<Friend>;
-      final blockedUsers = results[2] as List<User>;
+      final List<Friend> sentRequests = results[0];
+      final List<Friend> acceptedFriends = results[1];
+      final List<Friend> blockedUsers = results[2];
 
       // 🎯 차단된 사용자인지 먼저 확인
-      if (blockedUsers.any((u) => u.username == targetUsername)) {
+      if (blockedUsers.any((f) => f.username == targetUsername)) {
         _friendStatus = FriendRequestStatus.blocked;
       } else if (acceptedFriends.any((f) => f.username == targetUsername)) {
         _friendStatus = FriendRequestStatus.accepted;

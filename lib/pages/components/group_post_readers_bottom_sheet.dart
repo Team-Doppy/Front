@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:doppy/data/models/post_data.dart';
 import 'package:doppy/data/services/blog_service.dart';
 import 'package:doppy/l10n/app_localizations.dart';
@@ -34,6 +35,10 @@ class _GroupPostReadersBottomSheetState
   final ScrollController _scrollController = ScrollController();
   int? _totalViewerCount; // 🎯 전체 조회자 수 (서버에서 받아온 값)
 
+  // 🎯 빈 상태 표시 지연 타이머
+  bool _showEmptyState = false;
+  Timer? _emptyStateTimer;
+
   @override
   void initState() {
     super.initState();
@@ -44,6 +49,7 @@ class _GroupPostReadersBottomSheetState
   @override
   void dispose() {
     _scrollController.dispose();
+    _emptyStateTimer?.cancel();
     super.dispose();
   }
 
@@ -132,6 +138,26 @@ class _GroupPostReadersBottomSheetState
           _isLoading = false;
           _isRefreshing = false;
         });
+
+        // 🎯 데이터 로딩 완료 후, 리스트가 비어있으면 0.7초 후에 빈 상태 표시
+        if (readers.isEmpty) {
+          _emptyStateTimer?.cancel();
+          _emptyStateTimer = Timer(const Duration(milliseconds: 700), () {
+            if (mounted) {
+              setState(() {
+                _showEmptyState = true;
+              });
+            }
+          });
+        } else {
+          // 데이터가 있으면 즉시 빈 상태 플래그 해제
+          _emptyStateTimer?.cancel();
+          if (mounted) {
+            setState(() {
+              _showEmptyState = false;
+            });
+          }
+        }
       }
     } catch (e) {
       print('❌ [GroupPostReadersBottomSheet] 조회자 정보 로드 에러: $e');
@@ -420,7 +446,7 @@ class _GroupPostReadersBottomSheetState
                               ),
                             ),
                           )
-                          : readers.isEmpty
+                          : readers.isEmpty && !_isLoading && _showEmptyState
                           ? Center(
                             child: Text(
                               '아직 읽은 사람이 없습니다',
@@ -430,6 +456,50 @@ class _GroupPostReadersBottomSheetState
                                 ).colorScheme.onSurface.withOpacity(0.7),
                               ),
                             ),
+                          )
+                          : readers.isEmpty && !_isLoading && !_showEmptyState
+                          ? ListView.builder(
+                            controller: _scrollController,
+                            padding: const EdgeInsets.symmetric(horizontal: 20),
+                            itemCount: 5,
+                            itemBuilder: (context, index) {
+                              return Padding(
+                                padding: const EdgeInsets.only(bottom: 12),
+                                child: Row(
+                                  children: [
+                                    ShimmerBox(
+                                      width: 50,
+                                      height: 50,
+                                      borderRadius: BorderRadius.circular(25),
+                                    ),
+                                    const SizedBox(width: 12),
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          ShimmerBox(
+                                            width: 120,
+                                            height: 16,
+                                            borderRadius: BorderRadius.circular(
+                                              4,
+                                            ),
+                                          ),
+                                          const SizedBox(height: 8),
+                                          ShimmerBox(
+                                            width: 80,
+                                            height: 12,
+                                            borderRadius: BorderRadius.circular(
+                                              4,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              );
+                            },
                           )
                           : ListView.separated(
                             controller: _scrollController,

@@ -385,6 +385,7 @@ class _ProfileInfoEditBottomSheetState
                   controller: _nameController,
                   focusNode: _nameFocus,
                   textAlign: TextAlign.center,
+                  cursorColor: Theme.of(context).colorScheme.onSurface,
                   onChanged: (value) => setState(() {}),
                   style: TextStyle(
                     color: Theme.of(context).colorScheme.onSurface,
@@ -453,6 +454,7 @@ class _ProfileInfoEditBottomSheetState
                   focusNode: _descriptionFocus,
                   textAlign: TextAlign.center,
                   maxLines: 1,
+                  cursorColor: Theme.of(context).colorScheme.onSurface,
                   onChanged: (value) => setState(() {}),
                   style: TextStyle(
                     color: Theme.of(context).colorScheme.onSurface,
@@ -490,7 +492,7 @@ class _ProfileInfoEditBottomSheetState
                 Row(
                   children: [
                     Text(
-                      '링크',
+                      AppLocalizations.of(context).translate('link'),
                       style: TextStyle(
                         color: Theme.of(
                           context,
@@ -542,7 +544,7 @@ class _ProfileInfoEditBottomSheetState
                     ),
                     child: Center(
                       child: Text(
-                        '링크가 없습니다',
+                        AppLocalizations.of(context).translate('no_links'),
                         style: TextStyle(
                           color: Theme.of(
                             context,

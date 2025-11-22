@@ -116,16 +116,10 @@ class Feed {
         final filteredBase = feedProvider.selectedBase;
         final filteredCategoryId = feedProvider.selectedCategoryId;
 
-        // 디버그 로그 (오프라인이어도 데이터가 있으면 기존 컨텐츠 유지)
-        print('[Feed] networkError: ${feedProvider.networkError}');
-        print('[Feed] NetworkManager.isOnline: ${NetworkManager.isOnline}');
-        print('[Feed] categories.length: ${feedProvider.categories.length}');
-        print('[Feed] isLoading: ${feedProvider.isLoading}');
-        print('[Feed] posts.length: ${feedProvider.posts.length}');
+        // 디버그 로그 제거 (불필요한 빌드 시 로그 방지)
 
         // 로딩 중이면 shimmer 표시
         if (feedProvider.isLoading && feedProvider.categories.isEmpty) {
-          print('[Feed] ✅ 로딩 중 - shimmer 표시');
           return _buildLoadingShimmer(context);
         }
 
@@ -172,12 +166,6 @@ class Feed {
                   allPosts
                       .where((post) => targetPostIds.contains(post.id))
                       .toList();
-
-              print('[Feed] 시스템 카테고리 필터링: $systemKey');
-              print(
-                '[Feed] systemCategoryMappings 포스트 ID 수: ${targetPostIds.length}',
-              );
-              print('[Feed] 필터링된 포스트 수: ${filteredPosts.length}');
             }
           }
 
@@ -255,20 +243,14 @@ class Feed {
 
             final title = (cat['name'] ?? '').toString();
 
-            print('[Feed] 카테고리 체크 - key: $categoryKey, title: $title');
-
             // 특정 카테고리가 선택되었으면 해당 카테고리만 표시
             if (filteredCategoryId != null &&
                 categoryKey != filteredCategoryId) {
               continue;
             }
 
-            print('[Feed] 선택됨 - $title (key: $categoryKey)');
-
             // 원본 포스트 목록을 PostData로 변환 (전체 탭이므로 필터 없음)
             final posts = _mapRawToPosts(rawPosts, feedProvider);
-
-            print('[Feed] 포스트 개수: ${posts.length}');
 
             // 타인 프로필이면 빈 카테고리 숨김
             if (posts.isEmpty && feedProvider.isReadOnly) continue;
@@ -277,8 +259,6 @@ class Feed {
             if (filteredBase == BaseFilter.all) {
               if (!_includeCategoryInAll(cat, posts)) continue;
             }
-
-            print('[Feed] 카테고리 추가: $title');
             categoryMetaDataList.add(
               CategoryMetaData(
                 title: title,
@@ -296,7 +276,6 @@ class Feed {
                 categoryMetaDataList[0].posts.isEmpty) {
           // 오프라인일 때만 오프라인 안내 노출 (데이터가 있으면 위에서 이미 컨텐츠 렌더)
           if (feedProvider.networkError != null || !NetworkManager.isOnline) {
-            print('[Feed] 오프라인 + 컨텐츠 없음 → 피드 영역 오프라인 메시지 표시');
             return ErrorStateSliver(
               error:
                   feedProvider.networkError ??

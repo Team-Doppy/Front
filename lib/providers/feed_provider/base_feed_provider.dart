@@ -524,10 +524,17 @@ abstract class BaseFeedProvider extends ChangeNotifier {
   }) {
     try {
       bool hasUpdate = false;
+      String? previousAccessLevel; // 🎯 변경 전 공개범위 저장
+
       for (final categoryId in _postsByCategory.keys) {
         final posts = _postsByCategory[categoryId]!;
         final idx = posts.indexWhere((p) => '${p['id']}' == postId);
         if (idx != -1) {
+          // 🎯 변경 전 공개범위 저장 (systemCategoryMappings 업데이트용)
+          if (accessLevel != null) {
+            previousAccessLevel = posts[idx]['accessLevel']?.toString();
+          }
+
           // 변경된 필드만 업데이트
           if (thumbnailImageUrl != null) {
             posts[idx]['thumbnailImageUrl'] = thumbnailImageUrl;
@@ -552,6 +559,56 @@ abstract class BaseFeedProvider extends ChangeNotifier {
               posts[idx]['sharedGroupIds'] = sharedGroupIds;
             }
             hasUpdate = true;
+          }
+
+          // 🎯 systemCategoryMappings 업데이트: 공개범위가 변경된 경우
+          if (accessLevel != null &&
+              previousAccessLevel != null &&
+              previousAccessLevel != accessLevel &&
+              _systemCategoryMappings != null) {
+            final postIdInt = int.tryParse(postId);
+            if (postIdInt != null) {
+              // 🎯 모든 공개범위 키에서 해당 포스트 제거 (중복 방지)
+              final allSystemKeys = SystemCategoryKeys.allKeys;
+              for (final key in allSystemKeys) {
+                final list = _systemCategoryMappings![key] as List?;
+                if (list != null) {
+                  final filteredList =
+                      list
+                          .where((item) {
+                            if (item is Map) {
+                              return item['postId']?.toString() != postId;
+                            } else if (item is int) {
+                              return item.toString() != postId;
+                            }
+                            return item?.toString() != postId;
+                          })
+                          .toList()
+                          .cast<Map<String, dynamic>>();
+                  _systemCategoryMappings![key] = filteredList;
+                }
+              }
+
+              // 🎯 새로운 공개범위에 추가
+              final newKey = accessLevel.toUpperCase();
+              if (!_systemCategoryMappings!.containsKey(newKey)) {
+                _systemCategoryMappings![newKey] = <Map<String, dynamic>>[];
+              }
+              final newList =
+                  _systemCategoryMappings![newKey]
+                      as List<Map<String, dynamic>>;
+              // 🎯 이미 존재하는지 확인 (모든 키에서 제거했으므로 false여야 함)
+              final exists = newList.any((item) {
+                return item['postId']?.toString() == postId;
+              });
+              if (!exists) {
+                newList.add({'postId': postIdInt});
+              }
+
+              print(
+                '✅ [BaseFeedProvider] systemCategoryMappings 업데이트: $postId (모든 키에서 제거 후 $newKey에 추가)',
+              );
+            }
           }
 
           if (hasUpdate) {

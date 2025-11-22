@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:doppy/data/models/user_model.dart';
 import 'package:doppy/data/services/comment_service.dart';
 import 'package:doppy/l10n/app_localizations.dart';
+import 'package:doppy/pages/screens/user_profile_screen.dart';
 
 /// 개별 댓글 아이템 위젯
 class CommentItem extends StatefulWidget {
@@ -24,6 +25,7 @@ class CommentItem extends StatefulWidget {
     required this.targetComment,
     required this.globalKey,
     required this.onSwipeReply,
+    this.onProfileTap,
   });
 
   final Comment comment;
@@ -40,6 +42,7 @@ class CommentItem extends StatefulWidget {
   final Comment? targetComment;
   final GlobalKey? globalKey;
   final VoidCallback onSwipeReply;
+  final Function(String username)? onProfileTap; // 🎯 프로필 탭 콜백 (선택적)
 
   @override
   State<CommentItem> createState() => _CommentItemState();
@@ -199,12 +202,33 @@ class _CommentItemState extends State<CommentItem> {
   }
 
   Widget _buildProfileImage(BuildContext context) {
-    return CommonProfileAvatar(
-      backgroundColor: Colors.transparent,
-      imageUrl: widget.comment.authorProfileImageUrl,
-      username: widget.comment.author,
-      size: 34,
-      borderWidth: 1,
+    return GestureDetector(
+      onTap: () {
+        // 🎯 프로필 탭 콜백이 있으면 사용, 없으면 기본 동작 (프로필 화면으로 이동)
+        if (widget.onProfileTap != null) {
+          widget.onProfileTap!(widget.comment.author);
+        } else {
+          // 기본 동작: 프로필 화면으로 이동
+          Navigator.of(context).push(
+            MaterialPageRoute(
+              builder:
+                  (context) => UserProfileScreen(
+                    otherUser: User(
+                      username: widget.comment.author,
+                      profileImageUrl: widget.comment.authorProfileImageUrl,
+                    ),
+                  ),
+            ),
+          );
+        }
+      },
+      child: CommonProfileAvatar(
+        backgroundColor: Colors.transparent,
+        imageUrl: widget.comment.authorProfileImageUrl,
+        username: widget.comment.author,
+        size: 34,
+        borderWidth: 1,
+      ),
     );
   }
 

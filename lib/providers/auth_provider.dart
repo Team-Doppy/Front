@@ -146,6 +146,6 @@ class AuthProvider extends ChangeNotifier {
   }
 
   Future<void> updateUserRegionAndRefreshToken(String region) async {
-    await _authService.updateUserRegion(region);
+    //await _authService.updateUserRegion(region);
   }
 }

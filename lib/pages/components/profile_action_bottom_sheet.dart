@@ -1,23 +1,32 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import 'package:doppy/data/models/user_model.dart';
 import 'package:doppy/pages/components/common_profile_avatar.dart';
 import 'package:doppy/pages/screens/user_profile_screen.dart';
 import 'package:doppy/l10n/app_localizations.dart';
 import 'package:doppy/data/services/report_service.dart';
 import 'package:doppy/data/services/friend_service.dart';
+import 'package:doppy/data/services/search_service.dart';
 import 'package:doppy/utils/error_handler.dart';
+import 'package:doppy/utils/dialog_utils.dart';
+import 'package:doppy/providers/friend_provider.dart';
+import 'package:doppy/providers/group_provider.dart';
 
 /// 🎯 프로필 액션 바텀시트 (재사용 가능한 컴포넌트)
 class ProfileActionBottomSheet extends StatelessWidget {
   final String username;
   final String? alias;
   final String? profileImageUrl;
+  final VoidCallback? onBlockSuccess; // 🎯 차단 성공 콜백
+  final bool hideViewProfile; // 🎯 프로필 보기 옵션 숨김 (프로필 화면에서 열 때)
 
   const ProfileActionBottomSheet({
     super.key,
     required this.username,
     this.alias,
     this.profileImageUrl,
+    this.onBlockSuccess,
+    this.hideViewProfile = false,
   });
 
   static void show(
@@ -25,16 +34,21 @@ class ProfileActionBottomSheet extends StatelessWidget {
     required String username,
     String? alias,
     String? profileImageUrl,
+    VoidCallback? onBlockSuccess, // 🎯 차단 성공 콜백
+    bool hideViewProfile = false, // 🎯 프로필 보기 옵션 숨김
   }) {
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
       isScrollControlled: true,
+      barrierColor: Colors.black.withOpacity(0.7),
       builder:
           (context) => ProfileActionBottomSheet(
             username: username,
             alias: alias,
             profileImageUrl: profileImageUrl,
+            onBlockSuccess: onBlockSuccess,
+            hideViewProfile: hideViewProfile,
           ),
     );
   }
@@ -90,7 +104,7 @@ class ProfileActionBottomSheet extends StatelessWidget {
               onTap: () {}, // 컨텐츠 탭 시 닫히지 않도록
               child: Container(
                 decoration: BoxDecoration(
-                  color: theme.colorScheme.surface.withOpacity(0.95),
+                  color: theme.colorScheme.surface,
                   borderRadius: BorderRadius.circular(30),
                 ),
                 padding: const EdgeInsets.symmetric(
@@ -123,15 +137,7 @@ class ProfileActionBottomSheet extends StatelessWidget {
                       context,
                       label: l10n.t('report_user'),
                       textColor: theme.colorScheme.error,
-                      onTap: () {
-                        Navigator.of(context).pop(); // 바텀시트 닫기
-                        ProfileActionBottomSheet.showReportPage(
-                          context,
-                          username: username,
-                          alias: alias,
-                          profileImageUrl: profileImageUrl,
-                        );
-                      },
+                      onTap: () => _handleReport(context),
                     ),
                     // 디바이더
                     Divider(
@@ -148,21 +154,24 @@ class ProfileActionBottomSheet extends StatelessWidget {
                       textColor: theme.colorScheme.error,
                       onTap: () => _handleBlock(context),
                     ),
-                    // 디바이더
-                    Divider(
-                      height: 1,
-                      thickness: 0.5,
-                      indent: 0,
-                      endIndent: 0,
-                      color: theme.colorScheme.onSurface.withOpacity(0.05),
-                    ),
-                    // 프로필 보기 버튼
-                    _buildActionItem(
-                      context,
-                      label: l10n.t('view_profile'),
-                      textColor: theme.colorScheme.onSurface,
-                      onTap: () => _handleViewProfile(context),
-                    ),
+                    // 프로필 화면에서 열 때는 프로필 보기 옵션 숨김
+                    if (!hideViewProfile) ...[
+                      // 디바이더
+                      Divider(
+                        height: 1,
+                        thickness: 0.5,
+                        indent: 0,
+                        endIndent: 0,
+                        color: theme.colorScheme.onSurface.withOpacity(0.05),
+                      ),
+                      // 프로필 보기 버튼
+                      _buildActionItem(
+                        context,
+                        label: l10n.t('view_profile'),
+                        textColor: theme.colorScheme.onSurface,
+                        onTap: () => _handleViewProfile(context),
+                      ),
+                    ],
                     const SizedBox(height: 24),
                     // 취소 버튼
                     SizedBox(
@@ -224,29 +233,144 @@ class ProfileActionBottomSheet extends StatelessWidget {
   }
 
   void _handleBlock(BuildContext context) async {
-    Navigator.of(context).pop();
     final l10n = AppLocalizations.of(context);
+    final displayName = alias ?? username;
 
+    // 🎯 다이얼로그 표시
+    final confirm = await DialogUtils.showConfirmDialog(
+      context,
+      title: l10n.t('block_user_confirm_title'),
+      message: l10n
+          .t('block_user_confirm_message')
+          .replaceAll('{name}', displayName),
+      confirmText: l10n.t('block_user'),
+      cancelText: l10n.t('cancel'),
+      isDestructive: true,
+    );
+
+    // 취소한 경우: 바텀시트만 닫고 종료
+    if (confirm != true) {
+      if (context.mounted) {
+        Navigator.of(context).pop();
+      }
+      return;
+    }
+
+    // 확인한 경우: 차단 진행
+    if (!context.mounted) return;
+
+    // 🎯 바텀시트 닫기 전에 상위 context와 콜백 저장
+    final navigator = Navigator.of(context);
+    final callback = onBlockSuccess;
+
+    // 상위 Navigator의 context 가져오기 (바텀시트를 닫기 전에)
+    BuildContext? parentContext;
+    try {
+      // 바텀시트를 닫기 전에 상위 context를 가져옴
+      parentContext = navigator.context;
+    } catch (e) {
+      print('[ProfileActionBottomSheet] 상위 context 가져오기 실패: $e');
+    }
+
+    // 바텀시트 닫기
+    navigator.pop();
+
+    // 🎯 차단 API 호출
     try {
       final friendService = FriendService();
       await friendService.blockUser(username);
 
-      // 🎯 차단 성공 스낵바 표시
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(l10n.t('block_success')),
-            behavior: SnackBarBehavior.floating,
-            duration: const Duration(seconds: 2),
-          ),
-        );
+      // 🎯 검색 기록에서 차단된 사용자 제거
+      try {
+        final searchService = SearchService();
+        searchService.removeFromSearchHistory(username);
+      } catch (e) {
+        print('[ProfileActionBottomSheet] 검색 기록 제거 실패: $e');
+      }
+
+      // 🎯 친구 캐시 클리어
+      try {
+        if (parentContext != null && parentContext.mounted) {
+          final friendProvider = Provider.of<FriendProvider>(
+            parentContext,
+            listen: false,
+          );
+          // 캐시 무효화를 위해 _lastFetchTime을 null로 설정
+          friendProvider.fetchAllFriendData(forceRefresh: true);
+          print('[ProfileActionBottomSheet] 친구 캐시 클리어 완료');
+        }
+      } catch (e) {
+        print('[ProfileActionBottomSheet] 친구 캐시 클리어 실패: $e');
+      }
+
+      // 🎯 그룹 캐시 클리어
+      try {
+        if (parentContext != null && parentContext.mounted) {
+          final groupProvider = GroupProvider();
+          groupProvider.clearAllCache();
+          // 그룹 데이터 재조회
+          final friendProvider = Provider.of<FriendProvider>(
+            parentContext,
+            listen: false,
+          );
+          await groupProvider.fetchMyGroups(
+            forceRefresh: true,
+            friendProvider: friendProvider,
+          );
+          print('[ProfileActionBottomSheet] 그룹 캐시 클리어 완료');
+        }
+      } catch (e) {
+        print('[ProfileActionBottomSheet] 그룹 캐시 클리어 실패: $e');
+      }
+
+      // 🎯 차단 성공 후 처리
+      // 약간의 지연을 두어 Navigator 스택이 안정화되도록 함
+      await Future.delayed(const Duration(milliseconds: 100));
+
+      // 콜백 실행
+      if (callback != null) {
+        print('[ProfileActionBottomSheet] 콜백 실행');
+        callback();
+      } else {
+        // 콜백이 없으면 상위 Navigator로 프로필 페이지 닫기 시도
+        if (parentContext != null && parentContext.mounted) {
+          final parentNav = Navigator.of(parentContext);
+          if (parentNav.canPop()) {
+            parentNav.pop();
+          }
+        }
+      }
+
+      // 성공 메시지 표시
+      if (parentContext != null && parentContext.mounted) {
+        ErrorHandler.showInfo(parentContext, '차단했습니다');
       }
     } catch (e) {
       print('[ProfileActionBottomSheet] 차단 실패: $e');
-      if (context.mounted) {
-        ErrorHandler.showError(context, e.toString());
+      if (parentContext != null && parentContext.mounted) {
+        ErrorHandler.showError(parentContext, e.toString());
       }
     }
+  }
+
+  void _handleReport(BuildContext context) async {
+    print('[ProfileActionBottomSheet] 신고 시작 - username: $username');
+
+    // 바텀시트 닫기
+    Navigator.of(context).pop();
+    print('[ProfileActionBottomSheet] 바텀시트 닫기 완료');
+
+    // 🎯 약간의 지연 후 신고 페이지 열기
+    await Future.delayed(const Duration(milliseconds: 100));
+
+    // 🎯 신고 페이지 열기 (스낵바는 신고 페이지에서 직접 표시)
+    print('[ProfileActionBottomSheet] 신고 페이지 열기 시작');
+    ProfileActionBottomSheet.showReportPage(
+      context,
+      username: username,
+      alias: alias,
+      profileImageUrl: profileImageUrl,
+    );
   }
 
   void _handleViewProfile(BuildContext context) {
@@ -434,11 +558,23 @@ class _ReportPageState extends State<_ReportPage> {
         description: reason,
       );
 
-      if (!mounted) return;
-      Navigator.of(context).pop(); // 페이지 닫기
+      print('[ReportPage] 신고 API 호출 성공');
 
-      // 🎯 신고 성공 안내
-      ErrorHandler.showInfo(context, l10n.t('report_success'));
+      if (!mounted) return;
+
+      // 🎯 스낵바 먼저 표시 (페이지 닫기 전)
+      print('[ReportPage] 신고 성공 메시지 표시');
+      if (context.mounted) {
+        ErrorHandler.showInfo(context, l10n.t('report_success'));
+        print('[ReportPage] 스낵바 표시 완료');
+      }
+
+      await Future.delayed(const Duration(seconds: 1));
+
+      if (!mounted) return;
+
+      Navigator.of(context).pop();
+      print('[ReportPage] 페이지 닫기 완료');
     } catch (e) {
       // 상세 오류 로그는 콘솔에만 출력 (사용자에게는 일반화된 메시지 표시)
       print('[ReportPage] ❌ 유저 신고 실패: $e');

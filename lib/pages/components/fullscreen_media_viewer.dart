@@ -18,7 +18,7 @@ import 'package:video_player/video_player.dart';
 import 'package:image_gallery_saver/image_gallery_saver.dart';
 import 'package:doppy/pages/components/fullscreen_video_player.dart';
 
-class FullscreenImageViewer extends StatefulWidget {
+class FullscreenMediaViewer extends StatefulWidget {
   final String imageUrl;
   final VoidCallback? onClose;
   final List<String> allImageUrls;
@@ -33,7 +33,7 @@ class FullscreenImageViewer extends StatefulWidget {
   final int? commentCount;
   final ImageProvider? imageProvider; // 이미지 객체 직접 전달
 
-  const FullscreenImageViewer({
+  const FullscreenMediaViewer({
     super.key,
     required this.imageUrl,
     this.onClose,
@@ -51,10 +51,10 @@ class FullscreenImageViewer extends StatefulWidget {
   });
 
   @override
-  State<FullscreenImageViewer> createState() => _FullscreenImageViewerState();
+  State<FullscreenMediaViewer> createState() => _FullscreenMediaViewerState();
 }
 
-class _FullscreenImageViewerState extends State<FullscreenImageViewer>
+class _FullscreenMediaViewerState extends State<FullscreenMediaViewer>
     with TickerProviderStateMixin {
   late AnimationController _fadeController;
   final Map<String, List<MediaComment>> _commentsByImage = {};

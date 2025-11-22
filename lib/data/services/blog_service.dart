@@ -450,7 +450,7 @@ class BlogService {
         data['sharedGroupIds'] = sharedGroupIds;
       }
 
-      await _dio.put('/api/posts/$postId/access-level', data: data);
+      await _dio.patch('/api/posts/$postId/access-level', data: data);
 
       print('[BlogService] 공개범위 변경 성공: $postId -> $accessLevel');
     } catch (e) {
@@ -472,11 +472,107 @@ class BlogService {
     }
   }
 
+  /// 여러 포스트의 공개범위를 배치로 변경
+  ///
+  /// [postIds] - 변경할 포스트 ID 리스트
+  /// [accessLevel] - 변경할 공개범위 ('PUBLIC', 'PRIVATE', 'FRIENDS', 'GROUPS')
+  /// [sharedGroupIds] - GROUPS일 때만 필요한 그룹 ID 리스트
+  ///
+  /// 응답: 변경된 포스트 목록
+  Future<List<Map<String, dynamic>>> batchUpdatePostsAccessLevel({
+    required List<int> postIds,
+    required String accessLevel,
+    List<int>? sharedGroupIds,
+  }) async {
+    try {
+      print(
+        '[BlogService] 여러 포스트 공개범위 배치 변경 시작 - 포스트 수: ${postIds.length}, accessLevel: $accessLevel',
+      );
+
+      final data = <String, dynamic>{
+        'postIds': postIds,
+        'accessLevel': accessLevel,
+      };
+
+      // GROUPS일 때만 sharedGroupIds 추가
+      if (accessLevel == 'GROUPS' && sharedGroupIds != null) {
+        data['sharedGroupIds'] = sharedGroupIds;
+      }
+
+      final response = await _dio.patch(
+        '/api/posts/batch/access-level',
+        data: data,
+        options: Options(
+          sendTimeout: const Duration(seconds: 30),
+          receiveTimeout: const Duration(seconds: 30),
+        ),
+      );
+
+      print('[BlogService] 여러 포스트 공개범위 배치 변경 응답 상태: ${response.statusCode}');
+
+      if (response.statusCode == 200) {
+        final responseData = response.data;
+        List<Map<String, dynamic>> updatedPosts;
+
+        if (responseData is List) {
+          updatedPosts = responseData.cast<Map<String, dynamic>>();
+        } else if (responseData is Map<String, dynamic>) {
+          final postsData =
+              responseData['posts'] ??
+              responseData['data'] ??
+              responseData['content'] ??
+              [];
+          if (postsData is List) {
+            updatedPosts = postsData.cast<Map<String, dynamic>>();
+          } else {
+            updatedPosts = [];
+          }
+        } else {
+          updatedPosts = [];
+        }
+
+        print(
+          '[BlogService] 여러 포스트 공개범위 배치 변경 성공 - 변경된 포스트 수: ${updatedPosts.length}',
+        );
+        return updatedPosts;
+      } else {
+        throw Exception('여러 포스트 공개범위 배치 변경 실패: ${response.statusCode}');
+      }
+    } catch (e, stackTrace) {
+      print('[BlogService] 여러 포스트 공개범위 배치 변경 에러: $e');
+      print('[BlogService] StackTrace: $stackTrace');
+
+      if (e is DioException) {
+        print('[BlogService] DioException Type: ${e.type}');
+        print('[BlogService] Status Code: ${e.response?.statusCode}');
+        print('[BlogService] Response Data: ${e.response?.data}');
+        print('[BlogService] Request Path: ${e.requestOptions.path}');
+        print('[BlogService] Request Data: ${e.requestOptions.data}');
+        print('[BlogService] Request Headers: ${e.requestOptions.headers}');
+
+        if (e.response?.statusCode == 400) {
+          final message = e.response?.data?['message'] ?? '잘못된 요청입니다.';
+          throw Exception(message);
+        } else if (e.response?.statusCode == 401) {
+          throw Exception('인증이 필요합니다.');
+        } else if (e.response?.statusCode == 404) {
+          throw Exception('요청한 리소스를 찾을 수 없습니다.');
+        } else {
+          final statusCode = e.response?.statusCode ?? 0;
+          final errorMessage = e.response?.data?['message'] ?? '서버 오류가 발생했습니다.';
+          throw Exception('$errorMessage (상태 코드: $statusCode)');
+        }
+      }
+      rethrow;
+    }
+  }
+
   /// 여러 포스트를 배치로 PRIVATE(나만보기)로 변경
   ///
   /// [postIds] - 변경할 포스트 ID 리스트
   ///
   /// 응답: 변경된 포스트 목록
+  /// @deprecated batchUpdatePostsAccessLevel을 사용하세요
   Future<List<Map<String, dynamic>>> batchMakePostsPrivate(
     List<int> postIds,
   ) async {

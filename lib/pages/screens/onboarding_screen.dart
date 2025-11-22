@@ -56,9 +56,7 @@ class _LoginScreenState extends State<LoginScreen>
           ),
           // 배경 이미지
           Positioned.fill(
-            child: Container(
-              color: Theme.of(context).colorScheme.background.withOpacity(0.3),
-            ),
+            child: Container(color: Colors.black.withOpacity(0.25)),
           ),
           // 메인 콘텐츠
           SafeArea(

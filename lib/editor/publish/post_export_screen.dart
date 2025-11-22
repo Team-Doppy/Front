@@ -16,6 +16,7 @@ import 'package:doppy/data/services/video_cache_service.dart';
 import 'package:doppy/editor/publish/component/step1_thumbnail_edit.dart';
 import 'package:doppy/editor/publish/component/step2_audience_selection.dart';
 import 'package:doppy/editor/publish/component/step3_category_selection.dart';
+import 'package:doppy/pages/screens/manage_group_screen.dart';
 import 'dart:io';
 import 'package:video_player/video_player.dart';
 
@@ -440,21 +441,27 @@ class _PostExportScreenState extends State<PostExportScreen>
         });
         print('[PostExport] 백그라운드 재로드 시작');
 
-        // 🎯 포스트 생성 후 관련 그룹의 postCount만 선택적 업데이트 (전체 재조회 생략)
+        // 🎯 포스트 생성 후 관련 그룹의 postCount 및 포스트 캐시 동기화
         final groupProvider = context.read<GroupProvider>();
 
-        // 🎯 GROUPS 공개범위: 선택된 그룹들의 postCount 업데이트
+        // 🎯 GROUPS 공개범위: 선택된 그룹들의 postCount 업데이트 및 포스트 캐시 무효화
         if (scopeLabel == 'GROUPS' && _selectedAudienceGroupIds.isNotEmpty) {
           final groupIdToDelta = <int, int>{};
           for (final groupId in _selectedAudienceGroupIds) {
             groupIdToDelta[groupId] = 1; // 포스트 생성으로 +1
           }
           groupProvider.updateMultipleGroupsPostCount(groupIdToDelta);
+
+          // 🎯 그룹 포스트 캐시 무효화 (동기화)
+          ManageGroupScreen.invalidateMultipleGroupsPostsCache(
+            _selectedAudienceGroupIds.toList(),
+          );
+
           print(
-            '[PostExport] 관련 그룹 postCount 선택적 업데이트 완료: ${_selectedAudienceGroupIds.length}개 그룹',
+            '[PostExport] 관련 그룹 postCount 및 포스트 캐시 동기화 완료: ${_selectedAudienceGroupIds.length}개 그룹',
           );
         }
-        // 🎯 FRIENDS 공개범위: allFriends 그룹의 postCount 업데이트
+        // 🎯 FRIENDS 공개범위: allFriends 그룹의 postCount 업데이트 및 포스트 캐시 무효화
         // ManageGroupScreen에서는 -1을 allFriends 그룹 ID로 사용하므로 -1도 함께 등록
         else if (scopeLabel == 'FRIENDS') {
           final allFriendsGroupId = groupProvider.allFriendsGroupId;
@@ -466,7 +473,11 @@ class _PostExportScreenState extends State<PostExportScreen>
           // ManageGroupScreen에서 사용하는 -1도 함께 등록 (스마트 감지기용)
           groupIdToDelta[-1] = 1;
           groupProvider.updateMultipleGroupsPostCount(groupIdToDelta);
-          print('[PostExport] allFriends 그룹 postCount 선택적 업데이트 완료');
+
+          // 🎯 allFriends 그룹 포스트 캐시 무효화 (동기화)
+          ManageGroupScreen.invalidateGroupPostsCache(-1);
+
+          print('[PostExport] allFriends 그룹 postCount 및 포스트 캐시 동기화 완료');
         }
         // PUBLIC/PRIVATE는 그룹 postCount에 영향 없음
       } catch (e) {
