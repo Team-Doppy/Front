@@ -25,7 +25,7 @@ class VideoCacheService {
     if (_controllers.containsKey(key)) {
       _refCounts[key] = (_refCounts[key] ?? 0) + 1;
       _lastAccessed[key] = DateTime.now(); // LRU 업데이트
-      print('[VideoCache] 재사용: $key (참조: ${_refCounts[key]})');
+      debugPrint('[VideoCache] 재사용: $key (참조: ${_refCounts[key]})');
       return _controllers[key]!;
     }
 
@@ -42,10 +42,10 @@ class VideoCacheService {
           // 초기화만 하고, 재생/정지는 각 위젯에서 결정
           controller.setLooping(true);
           controller.setVolume(0); // 기본 음소거
-          print('[VideoCache] ✅ 초기화 성공: $key');
+          debugPrint('[VideoCache] ✅ 초기화 성공: $key');
         })
         .catchError((e) {
-          print('[VideoCache] ❌ 초기화 실패: $key');
+          debugPrint('[VideoCache] ❌ 초기화 실패: $key');
         });
 
     _controllers[key] = controller;
@@ -79,7 +79,7 @@ class VideoCacheService {
     if (oldestUrl != null) {
       // 요구사항: 캐시 컨트롤러는 dispose하지 않는다.
       // LRU에서도 실제 dispose/remove를 수행하지 않고, 로그만 남긴다.
-      print('[VideoCache] LRU 후보 발견(보존): $oldestUrl');
+      debugPrint('[VideoCache] LRU 후보 발견(보존): $oldestUrl');
     }
   }
 
@@ -89,7 +89,7 @@ class VideoCacheService {
     if (!_refCounts.containsKey(key)) return;
 
     _refCounts[key] = (_refCounts[key] ?? 1) - 1;
-    print('[VideoCache] 참조 해제: $key (참조: ${_refCounts[key]})');
+    debugPrint('[VideoCache] 참조 해제: $key (참조: ${_refCounts[key]})');
 
     // 요구사항: 컨트롤러는 dispose하거나 제거하지 않는다. refCount만 0으로 유지.
     if (_refCounts[key]! < 0) _refCounts[key] = 0;
@@ -107,9 +107,32 @@ class VideoCacheService {
     return _controllers.containsKey(key);
   }
 
+  /// 특정 namespace의 모든 컨트롤러 일시정지
+  void pauseAllInNamespace(String namespace) {
+    int pausedCount = 0;
+    for (final entry in _controllers.entries) {
+      final key = entry.key;
+      if (key.startsWith('$namespace|')) {
+        try {
+          final controller = entry.value;
+          if (controller.value.isInitialized && controller.value.isPlaying) {
+            controller.pause();
+            pausedCount++;
+            debugPrint('[VideoCache] 일시정지: $key');
+          }
+        } catch (e) {
+          debugPrint('[VideoCache] 일시정지 오류 ($key): $e');
+        }
+      }
+    }
+    debugPrint(
+      '[VideoCache] namespace "$namespace"의 모든 컨트롤러 일시정지 완료 (총 $pausedCount개)',
+    );
+  }
+
   /// 모든 컨트롤러 정리 (앱 종료 시)
   void disposeAll() {
-    print('[VideoCache] 모든 컨트롤러 dispose (총 ${_controllers.length}개)');
+    debugPrint('[VideoCache] 모든 컨트롤러 dispose (총 ${_controllers.length}개)');
     for (final controller in _controllers.values) {
       controller.dispose();
     }
@@ -119,14 +142,14 @@ class VideoCacheService {
 
   /// 캐시 상태 디버깅
   void printCacheStatus() {
-    print('[VideoCache] ===== 캐시 상태 =====');
-    print('[VideoCache] 총 컨트롤러 개수: ${_controllers.length}');
+    debugPrint('[VideoCache] ===== 캐시 상태 =====');
+    debugPrint('[VideoCache] 총 컨트롤러 개수: ${_controllers.length}');
     for (final key in _controllers.keys) {
       final isInit = _controllers[key]?.value.isInitialized ?? false;
       final refCount = _refCounts[key] ?? 0;
-      print('[VideoCache] - $key: 초기화=$isInit, 참조=$refCount');
+      debugPrint('[VideoCache] - $key: 초기화=$isInit, 참조=$refCount');
     }
-    print('[VideoCache] ====================');
+    debugPrint('[VideoCache] ====================');
   }
 }
 
@@ -145,7 +168,7 @@ class VideoMuteService extends ChangeNotifier {
   void setFeedMuted(bool muted) {
     if (_isFeedMuted != muted) {
       _isFeedMuted = muted;
-      print(
+      debugPrint(
         '[VideoMuteService] 피드 음소거 상태 변경: ${_isFeedMuted ? "음소거" : "소리 켜짐"}',
       );
       notifyListeners();
@@ -155,7 +178,7 @@ class VideoMuteService extends ChangeNotifier {
   void setReaderMuted(bool muted) {
     if (_isReaderMuted != muted) {
       _isReaderMuted = muted;
-      print(
+      debugPrint(
         '[VideoMuteService] 리더 음소거 상태 변경: ${_isReaderMuted ? "음소거" : "소리 켜짐"}',
       );
       notifyListeners();

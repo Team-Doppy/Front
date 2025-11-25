@@ -234,7 +234,7 @@ class CustomImageEditorScreen extends StatelessWidget {
       backgroundColor: bgColor, // 🎯 하단 바 밑 배경색 추가
       body: SafeArea(
         top: false, // 상단 SafeArea는 제거 (앱바가 있으므로)
-        bottom: true, // 하단 SafeArea는 유지
+        bottom: false, // 하단 SafeArea는 유지
         child: ProImageEditor.memory(
           imageBytes,
           callbacks: ProImageEditorCallbacks(

@@ -937,12 +937,12 @@ class _VerticalCategorySectionState extends State<VerticalCategorySection> {
     // 🎯 포스트 삭제 또는 공개 범위 변경 시 피드 새로고침
     if (result != null) {
       if (result['deleted'] == true) {
-        print('[VerticalCategorySection] 포스트 삭제 감지 - 피드 새로고침 시작');
+        debugPrint('[VerticalCategorySection] 포스트 삭제 감지 - 피드 새로고침 시작');
         final provider = context.read<BaseFeedProvider>();
         provider.clearInMemory();
         provider.setNetworkError(null);
         await provider.loadInitial(force: true);
-        print('[VerticalCategorySection] 피드 새로고침 완료');
+        debugPrint('[VerticalCategorySection] 피드 새로고침 완료');
       } else if (result['accessLevelChanged'] == true) {
         // 🎯 공개 범위 변경 감지 - 선택적 업데이트 (전체 새로고침 생략)
         final postId = result['postId']?.toString();
@@ -950,7 +950,7 @@ class _VerticalCategorySectionState extends State<VerticalCategorySection> {
         final sharedGroupIds = result['sharedGroupIds'] as List<int>?;
 
         if (postId != null && accessLevel != null) {
-          print(
+          debugPrint(
             '[VerticalCategorySection] 공개 범위 변경 감지 - 선택적 업데이트 시작 (postId: $postId)',
           );
           final provider = context.read<BaseFeedProvider>();
@@ -959,15 +959,15 @@ class _VerticalCategorySectionState extends State<VerticalCategorySection> {
             accessLevel: accessLevel,
             sharedGroupIds: sharedGroupIds,
           );
-          print('[VerticalCategorySection] 피드 선택적 업데이트 완료 (공개 범위 변경)');
+          debugPrint('[VerticalCategorySection] 피드 선택적 업데이트 완료 (공개 범위 변경)');
         } else {
           // fallback: 정보가 없으면 전체 새로고침
-          print('[VerticalCategorySection] 공개 범위 변경 감지 - 정보 부족으로 전체 새로고침');
+          debugPrint('[VerticalCategorySection] 공개 범위 변경 감지 - 정보 부족으로 전체 새로고침');
           final provider = context.read<BaseFeedProvider>();
           provider.clearInMemory();
           provider.setNetworkError(null);
           await provider.loadInitial(force: true);
-          print('[VerticalCategorySection] 피드 새로고침 완료 (공개 범위 변경)');
+          debugPrint('[VerticalCategorySection] 피드 새로고침 완료 (공개 범위 변경)');
         }
       }
     }
@@ -994,7 +994,7 @@ class _VerticalCategorySectionState extends State<VerticalCategorySection> {
         provider.movePostLocally(movedPostId, categoryId, targetPosition);
       }
     } catch (e) {
-      print('⚠️ 포스트 순서 서버 저장 실패: $e');
+      debugPrint('⚠️ 포스트 순서 서버 저장 실패: $e');
       try {
         ScaffoldMessenger.of(
           context,
@@ -1048,7 +1048,7 @@ class _VerticalCategorySectionState extends State<VerticalCategorySection> {
           ManageGroupScreen.invalidateGroupPostsCache(-1);
         }
       } catch (e) {
-        print('[VerticalCategorySection] 그룹 동기화 실패: $e');
+        debugPrint('[VerticalCategorySection] 그룹 동기화 실패: $e');
       }
 
       // 🎯 피드에서 포스트 제거 및 새로고침
@@ -1282,7 +1282,7 @@ class _VerticalCategorySectionState extends State<VerticalCategorySection> {
         ErrorHandler.showInfo(context, context.tr('category_changed'));
       }
     } catch (e) {
-      print('[VerticalCategorySection] 카테고리 변경 실패: $e');
+      debugPrint('[VerticalCategorySection] 카테고리 변경 실패: $e');
       if (context.mounted) {
         ErrorHandler.showError(context, context.tr('category_change_failed'));
       }

@@ -207,7 +207,7 @@ class _GroupSelectionScreenState extends State<GroupSelectionScreen>
                     WidgetsBinding.instance.addPostFrameCallback((_) async {
                       if (!mounted) return;
                       final friendProvider = context.read<FriendProvider>();
-                      print('🔄 [GroupSelectionScreen] 전체 그룹 보장 - 새로 로드');
+                      debugPrint('🔄 [GroupSelectionScreen] 전체 그룹 보장 - 새로 로드');
                       await groupProv.fetchMyGroups(
                         forceRefresh: true,
                         friendProvider: friendProvider,
@@ -437,7 +437,7 @@ class _GroupSelectionScreenState extends State<GroupSelectionScreen>
         );
       }
     } catch (e) {
-      print('❌ [GroupSelectionScreen] 리프레시 에러: $e');
+      debugPrint('❌ [GroupSelectionScreen] 리프레시 에러: $e');
     } finally {
       // 🎯 새로고침 완료 후 약간의 딜레이 후 텍스트 복원
       await Future.delayed(const Duration(milliseconds: 200));
@@ -851,7 +851,7 @@ class _GroupSelectionScreenState extends State<GroupSelectionScreen>
         });
       }
     } catch (e) {
-      print('❌ [GroupSelectionScreen] 그룹 순서 변경 에러: $e');
+      debugPrint('❌ [GroupSelectionScreen] 그룹 순서 변경 에러: $e');
       // 🎯 에러 발생 시에만 롤백
       if (mounted) {
         setState(() {
@@ -1041,7 +1041,7 @@ class _GroupSelectionScreenState extends State<GroupSelectionScreen>
         if (groupIndex < 0 || groupIndex >= _groups.length) return;
         if (_groups[groupIndex].id != group.id) {
           // 인덱스와 그룹 ID가 맞지 않으면 무시
-          print(
+          debugPrint(
             '⚠️ [GroupSelectionScreen] 인덱스 불일치: index=$groupIndex, groupId=${group.id}',
           );
           return;

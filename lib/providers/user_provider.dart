@@ -193,11 +193,11 @@ class UserProvider with ChangeNotifier {
       _notificationEnabled = settings['notificationEnabled'] ?? true;
       _marketingEnabled = settings['marketingConsent'] ?? false;
       notifyListeners();
-      print(
+      debugPrint(
         '[UserProvider] 설정 정보 로드 완료: notification=$_notificationEnabled, marketing=$_marketingEnabled',
       );
     } catch (e) {
-      print('[UserProvider] 설정 정보 로드 실패: $e');
+      debugPrint('[UserProvider] 설정 정보 로드 실패: $e');
       // 실패 시 기본값 사용
       _notificationEnabled = true;
       _marketingEnabled = false;
@@ -229,7 +229,7 @@ class UserProvider with ChangeNotifier {
     _marketingEnabled = null;
     _clearPersistedUser();
     notifyListeners();
-    print('[UserProvider] 로그아웃 - 사용자 데이터 초기화 완료');
+    debugPrint('[UserProvider] 로그아웃 - 사용자 데이터 초기화 완료');
   }
 
   // ====== 로컬 퍼시스턴스 ======
@@ -271,9 +271,9 @@ class UserProvider with ChangeNotifier {
         await prefs.remove(_kLinkThumbnails);
       }
       await prefs.setInt(_kFriendCount, u.friendCount ?? 0);
-      print('[UserProvider] 사용자 정보 로컬 저장 완료');
+      debugPrint('[UserProvider] 사용자 정보 로컬 저장 완료');
     } catch (e) {
-      print('[UserProvider] 사용자 정보 저장 실패: $e');
+      debugPrint('[UserProvider] 사용자 정보 저장 실패: $e');
     }
   }
 
@@ -308,7 +308,7 @@ class UserProvider with ChangeNotifier {
             }
           }
         } catch (e) {
-          print('[UserProvider] linkTitles 복구 실패: $e');
+          debugPrint('[UserProvider] linkTitles 복구 실패: $e');
         }
       }
 
@@ -328,7 +328,7 @@ class UserProvider with ChangeNotifier {
             }
           }
         } catch (e) {
-          print('[UserProvider] linkThumbnails 복구 실패: $e');
+          debugPrint('[UserProvider] linkThumbnails 복구 실패: $e');
         }
       }
 
@@ -345,9 +345,9 @@ class UserProvider with ChangeNotifier {
       );
       _currentUser = user;
       notifyListeners();
-      print('[UserProvider] 로컬 사용자 정보 복구 완료');
+      debugPrint('[UserProvider] 로컬 사용자 정보 복구 완료');
     } catch (e) {
-      print('[UserProvider] 사용자 정보 복구 실패: $e');
+      debugPrint('[UserProvider] 사용자 정보 복구 실패: $e');
     }
   }
 
@@ -362,9 +362,9 @@ class UserProvider with ChangeNotifier {
       await prefs.remove(_kLinkTitles); // 🎯 linkTitles 삭제
       await prefs.remove(_kLinkThumbnails); // 🎯 linkThumbnails 삭제
       await prefs.remove(_kFriendCount);
-      print('[UserProvider] 로컬 사용자 정보 삭제 완료');
+      debugPrint('[UserProvider] 로컬 사용자 정보 삭제 완료');
     } catch (e) {
-      print('[UserProvider] 사용자 정보 삭제 실패: $e');
+      debugPrint('[UserProvider] 사용자 정보 삭제 실패: $e');
     }
   }
 }

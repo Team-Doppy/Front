@@ -72,12 +72,12 @@ class LikedUsersBottomSheet extends StatefulWidget {
 
         // 🎯 캐시에 저장 (0페이지만)
         _cache[postId] = users;
-        print(
+        debugPrint(
           '[LikedUsersBottomSheet] 좋아요 사용자 목록 미리 로드 완료: $postId (${users.length}명)',
         );
       }
     } catch (e) {
-      print('[LikedUsersBottomSheet] 좋아요 사용자 목록 미리 로드 실패: $e');
+      debugPrint('[LikedUsersBottomSheet] 좋아요 사용자 목록 미리 로드 실패: $e');
     } finally {
       _isLoadingCache[postId] = false;
     }
@@ -265,7 +265,7 @@ class _LikedUsersBottomSheetState extends State<LikedUsersBottomSheet> {
         }
       }
     } catch (e) {
-      print('[LikedUsersBottomSheet] 좋아요 사용자 로드 실패: $e');
+      debugPrint('[LikedUsersBottomSheet] 좋아요 사용자 로드 실패: $e');
       if (mounted) {
         setState(() {
           _error = '좋아요 사용자 목록을 불러올 수 없습니다';
@@ -341,7 +341,7 @@ class _LikedUsersBottomSheetState extends State<LikedUsersBottomSheet> {
         }
       }
     } catch (e) {
-      print('[LikedUsersBottomSheet] 로드 모어 실패: $e');
+      debugPrint('[LikedUsersBottomSheet] 로드 모어 실패: $e');
       if (mounted) {
         setState(() {
           _isLoadingMore = false;
@@ -352,340 +352,336 @@ class _LikedUsersBottomSheetState extends State<LikedUsersBottomSheet> {
 
   @override
   Widget build(BuildContext context) {
-    return Stack(
-      children: [
-        // 🎯 스와이프로 닫기 및 배경 탭 감지
-        GestureDetector(
-          onHorizontalDragEnd: (details) {
-            // 오른쪽으로 스와이프 (velocity.dx > 0)
-            if (details.primaryVelocity != null &&
-                details.primaryVelocity! > 300) {
+    return
+    // 🎯 스와이프로 닫기 및 배경 탭 감지
+    GestureDetector(
+      onHorizontalDragEnd: (details) {
+        // 오른쪽으로 스와이프 (velocity.dx > 0)
+        if (details.primaryVelocity != null && details.primaryVelocity! > 300) {
+          Navigator.of(context).maybePop();
+        }
+      },
+      child: Scaffold(
+        backgroundColor: Theme.of(context).colorScheme.background,
+        appBar: AppBar(
+          automaticallyImplyLeading: false,
+          toolbarHeight: 45,
+          scrolledUnderElevation: 0,
+          backgroundColor: Theme.of(context).colorScheme.background,
+          elevation: 0,
+          leading: GestureDetector(
+            onTap: () {
+              // 부모 화면으로 돌아가기 (오버레이 닫기)
               Navigator.of(context).maybePop();
-            }
-          },
-          child: ClipRRect(
-            child: BackdropFilter(
-              filter: ui.ImageFilter.blur(sigmaX: 30, sigmaY: 30),
-              child: Container(
-                decoration: BoxDecoration(
-                  color: Theme.of(
-                    context,
-                  ).colorScheme.background.withOpacity(0.95),
-                ),
-                child: Scaffold(
-                  backgroundColor: Colors.transparent,
-                  appBar: AppBar(
-                    automaticallyImplyLeading: false,
-                    toolbarHeight: 45,
-                    scrolledUnderElevation: 0,
-                    backgroundColor: Colors.transparent,
-                    elevation: 0,
-                    leading: GestureDetector(
-                      onTap: () {
-                        // 부모 화면으로 돌아가기 (오버레이 닫기)
-                        Navigator.of(context).maybePop();
-                      },
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 4),
-                        child: Icon(
-                          Icons.arrow_back_ios_new,
-                          color: Colors.white.withOpacity(0.75),
-                          size: 24,
-                        ),
-                      ),
-                    ),
-                    title: Opacity(
-                      opacity:
-                          1.0 - _pullProgress.clamp(0.0, 1.0), // 🎯 당기는 만큼 투명해짐
-                      child: Row(
-                        children: [
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  AppLocalizations.of(context).t('like'),
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                                const SizedBox(height: 2),
-                                Text(
-                                  _isLoading
-                                      ? ''
-                                      : _error != null
-                                      ? _error!
-                                      : AppLocalizations.of(context)
-                                          .t('people_liked')
-                                          .replaceAll(
-                                            '{count}',
-                                            '${widget.likeCount}',
-                                          ),
-                                  style: TextStyle(
-                                    color: Colors.white.withOpacity(0.7),
-                                    fontSize: 12,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  body: CustomRefreshIndicator(
-                    onRefresh: () => _loadLikedUsers(forceRefresh: true),
-                    onPullProgress: (progress) {
-                      setState(() {
-                        _pullProgress = progress;
-                      });
-                    },
-                    top: 20,
-                    child:
-                        _isLoading
-                            ? RawScrollbar(
-                              controller: _scrollController,
-                              thumbColor: Colors.white.withOpacity(0.3),
-                              thickness: 4,
-                              radius: const Radius.circular(2),
-                              thumbVisibility: false,
-                              child: ListView.separated(
-                                controller: _scrollController,
-                                physics: const AlwaysScrollableScrollPhysics(),
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 24,
-                                  vertical: 8,
-                                ),
-                                itemCount: 8, // 🎯 shimmer 아이템 8개
-                                separatorBuilder:
-                                    (context, index) => Divider(
-                                      height: 1,
-                                      thickness: 0.5,
-                                      indent: 72,
-                                      color: Colors.white.withOpacity(0.1),
-                                    ),
-                                itemBuilder: (context, index) {
-                                  return _buildUserShimmer();
-                                },
-                              ),
-                            )
-                            : _error != null
-                            ? RawScrollbar(
-                              controller: _scrollController,
-                              thumbColor: Colors.white.withOpacity(0.3),
-                              thickness: 4,
-                              radius: const Radius.circular(2),
-                              thumbVisibility: false,
-                              child: ListView(
-                                controller: _scrollController,
-                                physics: const AlwaysScrollableScrollPhysics(),
-                                padding: EdgeInsets.only(
-                                  top: MediaQuery.of(context).size.height * 0.3,
-                                ),
-                                children: [
-                                  Column(
-                                    mainAxisAlignment: MainAxisAlignment.center,
-                                    children: [
-                                      Icon(
-                                        Icons.error_outline,
-                                        size: 48,
-                                        color: Colors.white.withOpacity(0.5),
-                                      ),
-                                      const SizedBox(height: 16),
-                                      Text(
-                                        _error!,
-                                        style: TextStyle(
-                                          fontSize: 14,
-                                          color: Colors.white.withOpacity(0.7),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ],
-                              ),
-                            )
-                            : _likedUsers.isEmpty
-                            ? RawScrollbar(
-                              controller: _scrollController,
-                              thumbColor: Colors.white.withOpacity(0.3),
-                              thickness: 4,
-                              radius: const Radius.circular(2),
-                              thumbVisibility: false,
-                              child: ListView(
-                                controller: _scrollController,
-                                physics: const AlwaysScrollableScrollPhysics(),
-                                padding: EdgeInsets.only(
-                                  top: MediaQuery.of(context).size.height * 0.3,
-                                ),
-                                children: [],
-                              ),
-                            )
-                            : RawScrollbar(
-                              controller: _scrollController,
-                              thumbColor: Colors.white.withOpacity(0.3),
-                              thickness: 4,
-                              radius: const Radius.circular(2),
-                              thumbVisibility: false,
-                              child: ListView.separated(
-                                controller: _scrollController,
-                                physics: const AlwaysScrollableScrollPhysics(),
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 8,
-                                  vertical: 8,
-                                ),
-                                itemCount:
-                                    _likedUsers.length +
-                                    (_isLoadingMore ? 1 : 0),
-                                separatorBuilder: (context, index) {
-                                  // 마지막 아이템(로드 모어 인디케이터) 전에는 디바이더 없음
-                                  if (index >= _likedUsers.length - 1) {
-                                    return const SizedBox.shrink();
-                                  }
-                                  return Divider(
-                                    height: 1,
-                                    thickness: 0.5,
-                                    indent: 72,
-                                    color: Colors.white.withOpacity(0.1),
-                                  );
-                                },
-                                itemBuilder: (context, index) {
-                                  // 🎯 로드 모어 Shimmer
-                                  if (index >= _likedUsers.length) {
-                                    return _buildUserShimmer();
-                                  }
-
-                                  final user = _likedUsers[index];
-                                  final username =
-                                      user['username']?.toString() ?? '';
-                                  final profileImageUrl =
-                                      user['profileImageUrl']?.toString();
-                                  final alias = user['alias']?.toString();
-
-                                  return Padding(
-                                    padding: const EdgeInsets.only(
-                                      top: 12,
-                                      bottom: 12,
-                                      left: 12,
-                                    ),
-                                    child: Row(
-                                      children: [
-                                        // 프로필 이미지
-                                        Stack(
-                                          children: [
-                                            CommonProfileAvatar(
-                                              imageUrl: profileImageUrl,
-                                              username: username,
-                                              size: 56,
-                                              borderWidth: 1,
-                                            ),
-                                            // 좋아요 아이콘 배지
-                                            Positioned(
-                                              bottom: -2,
-                                              right: 0,
-                                              child: Container(
-                                                decoration: BoxDecoration(),
-                                                child: const Icon(
-                                                  Icons.favorite,
-                                                  size: 20,
-                                                  color: ui.Color.fromARGB(
-                                                    255,
-                                                    255,
-                                                    89,
-                                                    89,
-                                                  ),
-                                                ),
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                        const SizedBox(width: 16),
-                                        // 사용자 정보
-                                        Expanded(
-                                          child: Column(
-                                            crossAxisAlignment:
-                                                CrossAxisAlignment.start,
-                                            children: [
-                                              Text(
-                                                alias ?? username,
-                                                style: const TextStyle(
-                                                  fontSize: 16,
-                                                  fontWeight: FontWeight.w600,
-                                                  color: Colors.white,
-                                                ),
-                                              ),
-                                              if (alias != null &&
-                                                  alias != username) ...[
-                                                const SizedBox(height: 2),
-                                                Text(
-                                                  '@$username',
-                                                  style: TextStyle(
-                                                    fontSize: 13,
-                                                    color: Colors.white
-                                                        .withOpacity(0.6),
-                                                  ),
-                                                ),
-                                              ],
-                                            ],
-                                          ),
-                                        ),
-                                        // 더보기 아이콘 (본인이 아니면만 표시)
-                                        Builder(
-                                          builder: (context) {
-                                            // 🎯 현재 사용자 확인
-                                            final currentUser =
-                                                context
-                                                    .read<UserProvider>()
-                                                    .currentUser;
-                                            final isMe =
-                                                currentUser != null &&
-                                                currentUser.username ==
-                                                    username;
-
-                                            // 본인이면 더보기 아이콘 숨김
-                                            if (isMe) {
-                                              return const SizedBox.shrink();
-                                            }
-
-                                            return GestureDetector(
-                                              onTap: () {
-                                                ProfileActionBottomSheet.show(
-                                                  context,
-                                                  username: username,
-                                                  alias: alias,
-                                                  profileImageUrl:
-                                                      profileImageUrl,
-                                                );
-                                              },
-                                              child: Padding(
-                                                padding: const EdgeInsets.all(
-                                                  8,
-                                                ),
-                                                child: Icon(
-                                                  Icons.more_vert,
-                                                  color: Colors.white
-                                                      .withOpacity(0.6),
-                                                  size: 24,
-                                                ),
-                                              ),
-                                            );
-                                          },
-                                        ),
-                                      ],
-                                    ),
-                                  );
-                                },
-                              ),
-                            ),
-                  ),
-                ),
+            },
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4),
+              child: Icon(
+                Icons.arrow_back_ios_new,
+                color: Theme.of(
+                  context,
+                ).colorScheme.onBackground.withOpacity(0.75),
+                size: 24,
               ),
             ),
           ),
+          title: Opacity(
+            opacity: 1.0 - _pullProgress.clamp(0.0, 1.0), // 🎯 당기는 만큼 투명해짐
+            child: Row(
+              children: [
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        AppLocalizations.of(context).t('like'),
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.onBackground,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        _isLoading
+                            ? ''
+                            : _error != null
+                            ? _error!
+                            : AppLocalizations.of(context)
+                                .t('people_liked')
+                                .replaceAll('{count}', '${widget.likeCount}'),
+                        style: TextStyle(
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.onBackground.withOpacity(0.7),
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
         ),
-      ],
+        body: CustomRefreshIndicator(
+          onRefresh: () => _loadLikedUsers(forceRefresh: true),
+          onPullProgress: (progress) {
+            setState(() {
+              _pullProgress = progress;
+            });
+          },
+          top: 20,
+          child:
+              _isLoading
+                  ? RawScrollbar(
+                    controller: _scrollController,
+                    thumbColor: Theme.of(
+                      context,
+                    ).colorScheme.onBackground.withOpacity(0.3),
+                    thickness: 4,
+                    radius: const Radius.circular(2),
+                    thumbVisibility: false,
+                    child: ListView.separated(
+                      controller: _scrollController,
+                      physics: const AlwaysScrollableScrollPhysics(),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 24,
+                        vertical: 8,
+                      ),
+                      itemCount: 8, // 🎯 shimmer 아이템 8개
+                      separatorBuilder:
+                          (context, index) => Divider(
+                            height: 1,
+                            thickness: 0.5,
+                            indent: 72,
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.onBackground.withOpacity(0.1),
+                          ),
+                      itemBuilder: (context, index) {
+                        return _buildUserShimmer();
+                      },
+                    ),
+                  )
+                  : _error != null
+                  ? RawScrollbar(
+                    controller: _scrollController,
+                    thumbColor: Theme.of(
+                      context,
+                    ).colorScheme.onBackground.withOpacity(0.3),
+                    thickness: 4,
+                    radius: const Radius.circular(2),
+                    thumbVisibility: false,
+                    child: ListView(
+                      controller: _scrollController,
+                      physics: const AlwaysScrollableScrollPhysics(),
+                      padding: EdgeInsets.only(
+                        top: MediaQuery.of(context).size.height * 0.3,
+                      ),
+                      children: [
+                        Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(
+                              Icons.error_outline,
+                              size: 48,
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.onBackground.withOpacity(0.5),
+                            ),
+                            const SizedBox(height: 16),
+                            Text(
+                              _error!,
+                              style: TextStyle(
+                                fontSize: 14,
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.onBackground.withOpacity(0.7),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  )
+                  : _likedUsers.isEmpty
+                  ? RawScrollbar(
+                    controller: _scrollController,
+                    thumbColor: Theme.of(
+                      context,
+                    ).colorScheme.onBackground.withOpacity(0.3),
+                    thickness: 4,
+                    radius: const Radius.circular(2),
+                    thumbVisibility: false,
+                    child: ListView(
+                      controller: _scrollController,
+                      physics: const AlwaysScrollableScrollPhysics(),
+                      padding: EdgeInsets.only(
+                        top: MediaQuery.of(context).size.height * 0.3,
+                      ),
+                      children: [],
+                    ),
+                  )
+                  : RawScrollbar(
+                    controller: _scrollController,
+                    thumbColor: Theme.of(
+                      context,
+                    ).colorScheme.onBackground.withOpacity(0.3),
+                    thickness: 4,
+                    radius: const Radius.circular(2),
+                    thumbVisibility: false,
+                    child: ListView.separated(
+                      controller: _scrollController,
+                      physics: const AlwaysScrollableScrollPhysics(),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 8,
+                      ),
+                      itemCount: _likedUsers.length + (_isLoadingMore ? 1 : 0),
+                      separatorBuilder: (context, index) {
+                        // 마지막 아이템(로드 모어 인디케이터) 전에는 디바이더 없음
+                        if (index >= _likedUsers.length - 1) {
+                          return const SizedBox.shrink();
+                        }
+                        return Divider(
+                          height: 1,
+                          thickness: 0.5,
+                          indent: 72,
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.onBackground.withOpacity(0.1),
+                        );
+                      },
+                      itemBuilder: (context, index) {
+                        // 🎯 로드 모어 Shimmer
+                        if (index >= _likedUsers.length) {
+                          return _buildUserShimmer();
+                        }
+
+                        final user = _likedUsers[index];
+                        final username = user['username']?.toString() ?? '';
+                        final profileImageUrl =
+                            user['profileImageUrl']?.toString();
+                        final alias = user['alias']?.toString();
+
+                        return Padding(
+                          padding: const EdgeInsets.only(
+                            top: 12,
+                            bottom: 12,
+                            left: 12,
+                          ),
+                          child: Row(
+                            children: [
+                              // 프로필 이미지
+                              Stack(
+                                children: [
+                                  CommonProfileAvatar(
+                                    imageUrl: profileImageUrl,
+                                    username: username,
+                                    size: 56,
+                                    borderWidth: 1,
+                                  ),
+                                  // 좋아요 아이콘 배지
+                                  Positioned(
+                                    bottom: -2,
+                                    right: 0,
+                                    child: Container(
+                                      decoration: BoxDecoration(),
+                                      child: const Icon(
+                                        Icons.favorite,
+                                        size: 20,
+                                        color: ui.Color.fromARGB(
+                                          255,
+                                          255,
+                                          89,
+                                          89,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(width: 16),
+                              // 사용자 정보
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      alias ?? username,
+                                      style: TextStyle(
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.w600,
+                                        color:
+                                            Theme.of(
+                                              context,
+                                            ).colorScheme.onBackground,
+                                      ),
+                                    ),
+                                    if (alias != null && alias != username) ...[
+                                      const SizedBox(height: 2),
+                                      Text(
+                                        '@$username',
+                                        style: TextStyle(
+                                          fontSize: 13,
+                                          color: Theme.of(context)
+                                              .colorScheme
+                                              .onBackground
+                                              .withOpacity(0.6),
+                                        ),
+                                      ),
+                                    ],
+                                  ],
+                                ),
+                              ),
+                              // 더보기 아이콘 (본인이 아니면만 표시)
+                              Builder(
+                                builder: (context) {
+                                  // 🎯 현재 사용자 확인
+                                  final currentUser =
+                                      context.read<UserProvider>().currentUser;
+                                  final isMe =
+                                      currentUser != null &&
+                                      currentUser.username == username;
+
+                                  // 본인이면 더보기 아이콘 숨김
+                                  if (isMe) {
+                                    return const SizedBox.shrink();
+                                  }
+
+                                  return GestureDetector(
+                                    onTap: () {
+                                      ProfileActionBottomSheet.show(
+                                        context,
+                                        username: username,
+                                        alias: alias,
+                                        profileImageUrl: profileImageUrl,
+                                      );
+                                    },
+                                    child: Padding(
+                                      padding: const EdgeInsets.all(8),
+                                      child: Icon(
+                                        Icons.more_vert,
+                                        color: Theme.of(context)
+                                            .colorScheme
+                                            .onBackground
+                                            .withOpacity(0.6),
+                                        size: 24,
+                                      ),
+                                    ),
+                                  );
+                                },
+                              ),
+                            ],
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+        ),
+      ),
     );
   }
 

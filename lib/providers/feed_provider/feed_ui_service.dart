@@ -57,7 +57,7 @@ class FeedDisplayModeManager extends ValueNotifier<FeedDisplayMode> {
         super.value = FeedDisplayMode.imageOnly; // 기본값
       }
       // ignore: avoid_print
-      print('[FeedDisplayModeManager] 복원 모드: ${super.value}');
+      debugPrint('[FeedDisplayModeManager] 복원 모드: ${super.value}');
       notifyListeners();
     } catch (_) {}
   }
@@ -171,9 +171,9 @@ class PostDragDropService extends ChangeNotifier {
 
     if (_draggedPost != null && _targetCategory != null) {
       // 실제 이동 처리는 DragTarget.onAccept에서 컨텍스트로 처리
-      print('포스트 "${_draggedPost!.title}" 드롭 처리 완료(별도 onAccept 처리)');
+      debugPrint('포스트 "${_draggedPost!.title}" 드롭 처리 완료(별도 onAccept 처리)');
     } else if (_draggedPost != null) {
-      print('드래그 취소됨: ${_draggedPost!.title}');
+      debugPrint('드래그 취소됨: ${_draggedPost!.title}');
     }
 
     _isDragging = false;
@@ -199,7 +199,9 @@ class PostDragDropService extends ChangeNotifier {
   // 드롭 타겟 설정
   void setDropTarget(String? category) {
     if (_targetCategory != category) {
-      print('🎯 [PostDragDropService] 드롭 타겟 변경: $_targetCategory -> $category');
+      debugPrint(
+        '🎯 [PostDragDropService] 드롭 타겟 변경: $_targetCategory -> $category',
+      );
       _targetCategory = category;
       notifyListeners();
     }
@@ -325,10 +327,10 @@ class PostDragDropService extends ChangeNotifier {
     int targetCategoryId, {
     int? targetPosition,
   }) async {
-    print('   - 포스트 ID: ${post.id}');
-    print('   - 포스트 제목: ${post.title}');
-    print('   - 타겟 카테고리 ID: $targetCategoryId');
-    print('   - 타겟 위치: $targetPosition');
+    debugPrint('   - 포스트 ID: ${post.id}');
+    debugPrint('   - 포스트 제목: ${post.title}');
+    debugPrint('   - 타겟 카테고리 ID: $targetCategoryId');
+    debugPrint('   - 타겟 위치: $targetPosition');
 
     try {
       // 새로운 API 호출
@@ -338,9 +340,9 @@ class PostDragDropService extends ChangeNotifier {
         targetPosition: targetPosition,
       );
 
-      print('✅ [PostDragDropService] 포스트 카테고리 이동 완료');
+      debugPrint('✅ [PostDragDropService] 포스트 카테고리 이동 완료');
     } catch (e) {
-      print('❌ [PostDragDropService] 포스트 카테고리 이동 실패: $e');
+      debugPrint('❌ [PostDragDropService] 포스트 카테고리 이동 실패: $e');
       rethrow;
     }
   }
@@ -378,7 +380,7 @@ class PostDragDropService extends ChangeNotifier {
       return;
     }
 
-    print(
+    debugPrint(
       '[FeedService] 포스트 이동 시작: ${post.id} ($sourceCategoryId[$sourcePosition] → $targetCategoryId[$targetPosition])',
     );
 
@@ -392,7 +394,7 @@ class PostDragDropService extends ChangeNotifier {
         targetCategoryId,
         targetPosition: targetPosition,
       );
-      print('[FeedService] 서버 저장 완료');
+      debugPrint('[FeedService] 서버 저장 완료');
 
       // 🎯 카테고리 변경 후 스마트 동기화: 포스트가 속한 그룹의 포스트 캐시 무효화
       try {
@@ -405,25 +407,19 @@ class PostDragDropService extends ChangeNotifier {
             sharedGroupIds != null &&
             sharedGroupIds.isNotEmpty) {
           ManageGroupScreen.invalidateMultipleGroupsPostsCache(sharedGroupIds);
-          print(
-            '[FeedService] 카테고리 변경 후 그룹 포스트 캐시 무효화: $sharedGroupIds',
-          );
+          debugPrint('[FeedService] 카테고리 변경 후 그룹 포스트 캐시 무효화: $sharedGroupIds');
         }
 
         // FRIENDS 공개범위인 경우 allFriends 그룹 포스트 캐시 무효화
         if (accessLevel == AccessLevel.friends) {
           ManageGroupScreen.invalidateGroupPostsCache(-1);
-          print(
-            '[FeedService] 카테고리 변경 후 allFriends 그룹 포스트 캐시 무효화',
-          );
+          debugPrint('[FeedService] 카테고리 변경 후 allFriends 그룹 포스트 캐시 무효화');
         }
       } catch (syncError) {
-        print(
-          '⚠️ [FeedService] 카테고리 변경 후 동기화 실패 (무시됨): $syncError',
-        );
+        debugPrint('⚠️ [FeedService] 카테고리 변경 후 동기화 실패 (무시됨): $syncError');
       }
     } catch (e) {
-      print('⚠️ [FeedService] 서버 이동 실패, 롤백: $e');
+      debugPrint('⚠️ [FeedService] 서버 이동 실패, 롤백: $e');
 
       // 3) 실패 시 롤백
       if (sourceCategoryId != null && backupPost != null) {

@@ -169,7 +169,9 @@ class _SharePostOverlayState extends State<SharePostOverlay> {
 
     if (!isVideo) return;
 
-    print('[SharePostOverlay] 비디오 URL 감지 - 썸네일 추출 시작: ${widget.thumbnailUrl}');
+    debugPrint(
+      '[SharePostOverlay] 비디오 URL 감지 - 썸네일 추출 시작: ${widget.thumbnailUrl}',
+    );
 
     setState(() => _isExtractingThumbnail = true);
 
@@ -187,10 +189,10 @@ class _SharePostOverlayState extends State<SharePostOverlay> {
           _extractedThumbnailPath = thumbnailPath;
           _isExtractingThumbnail = false;
         });
-        print('[SharePostOverlay] 썸네일 추출 완료: $thumbnailPath');
+        debugPrint('[SharePostOverlay] 썸네일 추출 완료: $thumbnailPath');
       }
     } catch (e) {
-      print('[SharePostOverlay] 썸네일 추출 실패: $e');
+      debugPrint('[SharePostOverlay] 썸네일 추출 실패: $e');
       if (mounted) {
         setState(() => _isExtractingThumbnail = false);
       }
@@ -376,7 +378,7 @@ class _SharePostOverlayState extends State<SharePostOverlay> {
               color: Colors.transparent,
               child: InkWell(
                 onTap: () {
-                  print('[ShareOverlay] 글보러가기 버튼 클릭');
+                  debugPrint('[ShareOverlay] 글보러가기 버튼 클릭');
                   // 🎯 SharePostOverlay의 context로 직접 이동
                   Navigator.of(context).pushReplacement(
                     MaterialPageRoute(
@@ -583,6 +585,8 @@ class _SharePostOverlayState extends State<SharePostOverlay> {
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: [
+        const SizedBox(height: 24),
+
         // 콘텐츠
         Padding(
           padding: const EdgeInsets.all(30),
@@ -612,7 +616,7 @@ class _SharePostOverlayState extends State<SharePostOverlay> {
                         (widget.authorProfileImageUrl != null &&
                                 widget.authorProfileImageUrl!.isNotEmpty)
                             ? widget.authorUsername
-                            : '@' + widget.authorUsername,
+                            : '@${widget.authorUsername}',
                         style: TextStyle(
                           fontSize: 14,
                           fontWeight: FontWeight.w600,
@@ -642,21 +646,6 @@ class _SharePostOverlayState extends State<SharePostOverlay> {
                 ),
               ),
 
-              // Summary
-              if (widget.summary.isNotEmpty)
-                Padding(
-                  padding: const EdgeInsets.only(left: 4.0, top: 6.0),
-                  child: Text(
-                    widget.summary, // 🎯 스키마에서 가져온 summary 사용
-                    style: TextStyle(
-                      fontSize: 14,
-                      color: _getSecondaryTextColor(), // 🎯 테마별 색상
-                      height: 1.5,
-                    ),
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
               const SizedBox(height: 24),
 
               Row(
@@ -996,7 +985,7 @@ class _SharePostOverlayState extends State<SharePostOverlay> {
         }
       }
     } catch (e) {
-      print('❌ $platform 공유 실패: $e');
+      debugPrint('❌ $platform 공유 실패: $e');
     }
   }
 
@@ -1029,7 +1018,7 @@ class _SharePostOverlayState extends State<SharePostOverlay> {
         }
       }
     } catch (e) {
-      print('❌ 이미지 저장 실패: $e');
+      debugPrint('❌ 이미지 저장 실패: $e');
 
       if (mounted) {
         ErrorHandler.showError(context, context.tr('image_save_failed'));
@@ -1050,7 +1039,7 @@ class _SharePostOverlayState extends State<SharePostOverlay> {
       final imageFile = await _captureCardAsImage();
 
       if (imageFile == null) {
-        print('❌ 이미지 캡처 실패');
+        debugPrint('❌ 이미지 캡처 실패');
         if (mounted) {
           setState(() => _isSharingToInstagram = false);
         }
@@ -1089,10 +1078,10 @@ class _SharePostOverlayState extends State<SharePostOverlay> {
 
       if (await canLaunchUrl(instagramUrl)) {
         await launchUrl(instagramUrl, mode: LaunchMode.externalApplication);
-        print('✅ Instagram 갤러리 선택 화면 열림');
+        debugPrint('✅ Instagram 갤러리 선택 화면 열림');
       } else {
         // Instagram 앱이 없으면 갤러리만 저장
-        print('⚠️ Instagram 앱 없음 - 갤러리에만 저장');
+        debugPrint('⚠️ Instagram 앱 없음 - 갤러리에만 저장');
         if (mounted) {
           ErrorHandler.showInfo(
             context,
@@ -1105,7 +1094,7 @@ class _SharePostOverlayState extends State<SharePostOverlay> {
         setState(() => _isSharingToInstagram = false);
       }
     } catch (e) {
-      print('❌ Instagram 공유 실패: $e');
+      debugPrint('❌ Instagram 공유 실패: $e');
       if (mounted) {
         setState(() => _isSharingToInstagram = false);
         ErrorHandler.showError(context, context.tr('share_failed'));
@@ -1125,7 +1114,7 @@ class _SharePostOverlayState extends State<SharePostOverlay> {
               as RenderRepaintBoundary?;
 
       if (boundary == null) {
-        print('❌ 캡처할 위젯을 찾을 수 없음 (_fullScreenKey)');
+        debugPrint('❌ 캡처할 위젯을 찾을 수 없음 (_fullScreenKey)');
         return null;
       }
 
@@ -1133,18 +1122,20 @@ class _SharePostOverlayState extends State<SharePostOverlay> {
       final byteData = await image.toByteData(format: ImageByteFormat.png);
 
       if (byteData == null) {
-        print('❌ 이미지 데이터 추출 실패');
+        debugPrint('❌ 이미지 데이터 추출 실패');
         return null;
       }
 
       // 🎯 이미지를 디코드 (크롭 없이 전체 이미지 사용)
       final originalImage = img.decodeImage(byteData.buffer.asUint8List());
       if (originalImage == null) {
-        print('❌ 이미지 디코딩 실패');
+        debugPrint('❌ 이미지 디코딩 실패');
         return null;
       }
 
-      print('📏 원본 이미지 크기: ${originalImage.width}x${originalImage.height}');
+      debugPrint(
+        '📏 원본 이미지 크기: ${originalImage.width}x${originalImage.height}',
+      );
 
       // 🎯 크롭 없이 전체 이미지 사용
       // PNG로 인코딩
@@ -1157,11 +1148,11 @@ class _SharePostOverlayState extends State<SharePostOverlay> {
       final file = File(filePath);
 
       await file.writeAsBytes(pngBytes);
-      print('✅ 공유 이미지 생성 완료 (전체 이미지): $filePath');
+      debugPrint('✅ 공유 이미지 생성 완료 (전체 이미지): $filePath');
 
       return file;
     } catch (e) {
-      print('❌ 이미지 캡처 에러: $e');
+      debugPrint('❌ 이미지 캡처 에러: $e');
       return null;
     }
   }

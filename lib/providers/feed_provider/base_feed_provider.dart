@@ -95,7 +95,7 @@ abstract class BaseFeedProvider extends ChangeNotifier {
   /// 이미 로드된 포스트는 재사용하고, 누락된 포스트만 API로 조회합니다.
   Future<void> loadPostsAround(String postId, {int size = 20}) async {
     if (username == null) {
-      print('[BaseFeedProvider] loadPostsAround: username이 null입니다');
+      debugPrint('[BaseFeedProvider] loadPostsAround: username이 null입니다');
       return;
     }
 
@@ -103,13 +103,13 @@ abstract class BaseFeedProvider extends ChangeNotifier {
       // 1. 스키마에서 globalIndex 확인
       final schemaResp = await blogService.getProfileSchema(username!);
       if (schemaResp['success'] != true) {
-        print('[BaseFeedProvider] loadPostsAround: 스키마 조회 실패');
+        debugPrint('[BaseFeedProvider] loadPostsAround: 스키마 조회 실패');
         return;
       }
 
       final schemaData = schemaResp['data'] as Map<String, dynamic>?;
       if (schemaData == null) {
-        print('[BaseFeedProvider] loadPostsAround: 스키마 데이터가 null입니다');
+        debugPrint('[BaseFeedProvider] loadPostsAround: 스키마 데이터가 null입니다');
         return;
       }
 
@@ -117,7 +117,9 @@ abstract class BaseFeedProvider extends ChangeNotifier {
       final postsByCategoryData =
           schemaData['postsByCategory'] as Map<String, dynamic>?;
       if (postsByCategoryData == null) {
-        print('[BaseFeedProvider] loadPostsAround: postsByCategory가 null입니다');
+        debugPrint(
+          '[BaseFeedProvider] loadPostsAround: postsByCategory가 null입니다',
+        );
         return;
       }
 
@@ -139,7 +141,7 @@ abstract class BaseFeedProvider extends ChangeNotifier {
       }
 
       if (targetPostOrder == null) {
-        print(
+        debugPrint(
           '[BaseFeedProvider] loadPostsAround: 포스트 ID $postId를 스키마에서 찾을 수 없습니다',
         );
         return;
@@ -147,7 +149,7 @@ abstract class BaseFeedProvider extends ChangeNotifier {
 
       final targetGlobalIndex = targetPostOrder['globalIndex'] as int?;
       if (targetGlobalIndex == null) {
-        print(
+        debugPrint(
           '[BaseFeedProvider] loadPostsAround: 포스트 ID $postId의 globalIndex가 null입니다',
         );
         return;
@@ -160,7 +162,7 @@ abstract class BaseFeedProvider extends ChangeNotifier {
       // 클라이언트에서 미리 계산할 필요 없음
 
       // 4. 오프셋 조회 API 호출
-      print(
+      debugPrint(
         '[BaseFeedProvider] loadPostsAround: 포스트 ID $postId (globalIndex: $targetGlobalIndex) 중심으로 오프셋 조회',
       );
       final postsResp = await blogService.getProfilePostsAround(
@@ -240,13 +242,13 @@ abstract class BaseFeedProvider extends ChangeNotifier {
           }
 
           notifyListeners();
-          print(
+          debugPrint(
             '[BaseFeedProvider] loadPostsAround: 오프셋 조회 완료 - ${newPosts.length}개 포스트 병합',
           );
         }
       }
     } catch (e) {
-      print('[BaseFeedProvider] loadPostsAround 실패: $e');
+      debugPrint('[BaseFeedProvider] loadPostsAround 실패: $e');
       rethrow;
     }
   }
@@ -256,17 +258,17 @@ abstract class BaseFeedProvider extends ChangeNotifier {
 
   /// 네트워크 에러 설정
   void setNetworkError(NetworkError? error) {
-    print('[BaseFeedProvider] setNetworkError 호출: $error');
+    debugPrint('[BaseFeedProvider] setNetworkError 호출: $error');
     _networkError = error;
     // NetworkManager에 네트워크 상태 업데이트
     if (error != null) {
-      print('[BaseFeedProvider] NetworkManager.setNetworkError(true) 호출');
+      debugPrint('[BaseFeedProvider] NetworkManager.setNetworkError(true) 호출');
       NetworkManager.setNetworkError(true);
     } else {
-      print('[BaseFeedProvider] NetworkManager.setNetworkRecovered() 호출');
+      debugPrint('[BaseFeedProvider] NetworkManager.setNetworkRecovered() 호출');
       NetworkManager.setNetworkRecovered();
     }
-    print('[BaseFeedProvider] notifyListeners() 호출');
+    debugPrint('[BaseFeedProvider] notifyListeners() 호출');
     notifyListeners();
   }
 
@@ -279,7 +281,7 @@ abstract class BaseFeedProvider extends ChangeNotifier {
     final postsData = postsResp['data'];
 
     if (schemaData == null || postsData == null) {
-      print('[BaseFeedProvider] 서버 응답의 data가 null입니다');
+      debugPrint('[BaseFeedProvider] 서버 응답의 data가 null입니다');
       clearData();
       return;
     }
@@ -294,7 +296,7 @@ abstract class BaseFeedProvider extends ChangeNotifier {
       try {
         _categories.addAll(categoriesData.cast<Map<String, dynamic>>());
       } catch (e) {
-        print('[BaseFeedProvider] 카테고리 데이터 캐스팅 실패: $e');
+        debugPrint('[BaseFeedProvider] 카테고리 데이터 캐스팅 실패: $e');
         for (final item in categoriesData) {
           if (item is Map<String, dynamic>) {
             _categories.add(item);
@@ -314,7 +316,9 @@ abstract class BaseFeedProvider extends ChangeNotifier {
             _postsByCategory[entry.key] =
                 (entry.value as List).cast<Map<String, dynamic>>();
           } catch (e) {
-            print('[BaseFeedProvider] 포스트 데이터 캐스팅 실패 (카테고리 ${entry.key}): $e');
+            debugPrint(
+              '[BaseFeedProvider] 포스트 데이터 캐스팅 실패 (카테고리 ${entry.key}): $e',
+            );
             final safePosts = <Map<String, dynamic>>[];
             for (final item in entry.value as List) {
               if (item is Map<String, dynamic>) {
@@ -375,7 +379,7 @@ abstract class BaseFeedProvider extends ChangeNotifier {
           // 🎯 디버깅: sharedGroupIds 확인
           if (full.containsKey('sharedGroupIds') &&
               full['accessLevel'] == 'GROUPS') {
-            print(
+            debugPrint(
               '[BaseFeedProvider] 포스트 ID ${pid}: sharedGroupIds = ${full['sharedGroupIds']}',
             );
           }
@@ -433,7 +437,7 @@ abstract class BaseFeedProvider extends ChangeNotifier {
     final postIds =
         _systemCategoryMappings![SystemCategoryKeys.private] as List?;
     final count = postIds?.length ?? 0;
-    print('[BaseFeedProvider] privatePostCount: $count');
+    debugPrint('[BaseFeedProvider] privatePostCount: $count');
     return count;
   }
 
@@ -442,7 +446,7 @@ abstract class BaseFeedProvider extends ChangeNotifier {
     final postIds =
         _systemCategoryMappings![SystemCategoryKeys.public] as List?;
     final count = postIds?.length ?? 0;
-    print('[BaseFeedProvider] publicPostCount: $count');
+    debugPrint('[BaseFeedProvider] publicPostCount: $count');
     return count;
   }
 
@@ -451,7 +455,7 @@ abstract class BaseFeedProvider extends ChangeNotifier {
     final postIds =
         _systemCategoryMappings![SystemCategoryKeys.groups] as List?;
     final count = postIds?.length ?? 0;
-    print('[BaseFeedProvider] groupsPostCount: $count');
+    debugPrint('[BaseFeedProvider] groupsPostCount: $count');
     return count;
   }
 
@@ -460,7 +464,7 @@ abstract class BaseFeedProvider extends ChangeNotifier {
     final postIds =
         _systemCategoryMappings![SystemCategoryKeys.friends] as List?;
     final count = postIds?.length ?? 0;
-    print('[BaseFeedProvider] friendsPostCount: $count');
+    debugPrint('[BaseFeedProvider] friendsPostCount: $count');
     return count;
   }
 
@@ -508,7 +512,7 @@ abstract class BaseFeedProvider extends ChangeNotifier {
         }
       }
     } catch (e) {
-      print('[BaseFeedProvider] accessLevel 업데이트 실패: $e');
+      debugPrint('[BaseFeedProvider] accessLevel 업데이트 실패: $e');
     }
   }
 
@@ -605,7 +609,7 @@ abstract class BaseFeedProvider extends ChangeNotifier {
                 newList.add({'postId': postIdInt});
               }
 
-              print(
+              debugPrint(
                 '✅ [BaseFeedProvider] systemCategoryMappings 업데이트: $postId (모든 키에서 제거 후 $newKey에 추가)',
               );
             }
@@ -613,14 +617,14 @@ abstract class BaseFeedProvider extends ChangeNotifier {
 
           if (hasUpdate) {
             notifyListeners();
-            print('✅ [BaseFeedProvider] 포스트 $postId 메타데이터 선택적 업데이트 완료');
+            debugPrint('✅ [BaseFeedProvider] 포스트 $postId 메타데이터 선택적 업데이트 완료');
           }
           return;
         }
       }
-      print('⚠️ [BaseFeedProvider] 포스트 $postId를 찾을 수 없어 메타데이터 업데이트 불가');
+      debugPrint('⚠️ [BaseFeedProvider] 포스트 $postId를 찾을 수 없어 메타데이터 업데이트 불가');
     } catch (e) {
-      print('[BaseFeedProvider] 포스트 메타데이터 업데이트 실패: $e');
+      debugPrint('[BaseFeedProvider] 포스트 메타데이터 업데이트 실패: $e');
     }
   }
 
@@ -648,7 +652,7 @@ abstract class BaseFeedProvider extends ChangeNotifier {
       }
 
       if (foundPost == null || sourceCategory == null || sourceIndex == null) {
-        print('[BaseFeedProvider] 이동할 포스트를 찾을 수 없음: $postId');
+        debugPrint('[BaseFeedProvider] 이동할 포스트를 찾을 수 없음: $postId');
         return;
       }
 
@@ -671,9 +675,11 @@ abstract class BaseFeedProvider extends ChangeNotifier {
       }
 
       notifyListeners();
-      print('[BaseFeedProvider] 포스트 로컬 이동 완료: $postId -> $targetCategoryId');
+      debugPrint(
+        '[BaseFeedProvider] 포스트 로컬 이동 완료: $postId -> $targetCategoryId',
+      );
     } catch (e) {
-      print('[BaseFeedProvider] 포스트 로컬 이동 실패: $e');
+      debugPrint('[BaseFeedProvider] 포스트 로컬 이동 실패: $e');
     }
   }
 
@@ -689,7 +695,7 @@ abstract class BaseFeedProvider extends ChangeNotifier {
       final categoryStr = categoryId.toString();
       final posts = _postsByCategory[categoryStr];
       if (posts == null || posts.isEmpty) {
-        print('[BaseFeedProvider] 카테고리 $categoryId에 포스트가 없음');
+        debugPrint('[BaseFeedProvider] 카테고리 $categoryId에 포스트가 없음');
         return;
       }
 
@@ -719,9 +725,9 @@ abstract class BaseFeedProvider extends ChangeNotifier {
 
       _postsByCategory[categoryStr] = reorderedPosts;
       notifyListeners();
-      print('[BaseFeedProvider] 카테고리 $categoryId 포스트 순서 로컬 변경 완료');
+      debugPrint('[BaseFeedProvider] 카테고리 $categoryId 포스트 순서 로컬 변경 완료');
     } catch (e) {
-      print('[BaseFeedProvider] 카테고리 내 포스트 순서 로컬 변경 실패: $e');
+      debugPrint('[BaseFeedProvider] 카테고리 내 포스트 순서 로컬 변경 실패: $e');
     }
   }
 

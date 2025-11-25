@@ -234,4 +234,36 @@ class FcmService {
 
   /// 현재 저장된 FCM 토큰 가져오기 (비동기 호출 없이)
   String? get cachedToken => _fcmToken;
+
+  /// 알림 권한 요청 (iOS 및 Android)
+  /// 앱 시작 시 기본으로 권한을 요청하고 on 상태로 시작
+  Future<bool> requestNotificationPermission() async {
+    try {
+      if (defaultTargetPlatform == TargetPlatform.iOS) {
+        final settings = await _firebaseMessaging.requestPermission(
+          alert: true,
+          announcement: false,
+          badge: true,
+          carPlay: false,
+          criticalAlert: false,
+          provisional: false,
+          sound: true,
+        );
+        final granted =
+            settings.authorizationStatus == AuthorizationStatus.authorized ||
+            settings.authorizationStatus == AuthorizationStatus.provisional;
+        debugPrint('[FcmService] iOS 알림 권한 요청 결과: $granted');
+        return granted;
+      } else if (defaultTargetPlatform == TargetPlatform.android) {
+        final status = await Permission.notification.request();
+        final granted = status.isGranted;
+        debugPrint('[FcmService] Android 알림 권한 요청 결과: $granted');
+        return granted;
+      }
+      return false;
+    } catch (e) {
+      debugPrint('[FcmService] 알림 권한 요청 실패: $e');
+      return false;
+    }
+  }
 }

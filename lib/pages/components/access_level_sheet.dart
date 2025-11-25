@@ -46,7 +46,7 @@ class AccessLevelSheet {
     int? excludeGroupId, // 🎯 제외할 그룹 ID (현재 그룹 제외용)
     bool isBatchMode = false, // 🎯 배치 모드: true이면 API 호출 없이 onChanged만 호출
   }) async {
-    print(
+    debugPrint(
       '[AccessLevelSheet] show 호출 - postId: $postId, currentAccessLevel: $currentAccessLevel, isBatchMode: $isBatchMode',
     );
     _hasScrolled = false; // 스크롤 플래그 초기화
@@ -544,7 +544,7 @@ class AccessLevelSheet {
 
                         // 🎯 배치 모드 체크 (가장 먼저 확인)
                         final isBatchMode = _StateHelper.isBatchMode;
-                        print(
+                        debugPrint(
                           '[AccessLevelSheet] 변경하기 버튼 클릭 - isBatchMode: $isBatchMode',
                         );
 
@@ -730,13 +730,13 @@ class AccessLevelSheet {
     VoidCallback? onError,
   }) async {
     final isBatchMode = _StateHelper.isBatchMode;
-    print(
+    debugPrint(
       '[AccessLevelSheet] _updateAccessLevel 호출 - postId: $postId, accessLevel: $accessLevel, isBatchMode: $isBatchMode',
     );
 
     // 🎯 배치 모드 체크 - API 호출 없이 onChanged만 호출
     if (isBatchMode) {
-      print('[AccessLevelSheet] 배치 모드: API 호출 건너뜀, onChanged만 호출');
+      debugPrint('[AccessLevelSheet] 배치 모드: API 호출 건너뜀, onChanged만 호출');
       onChanged(accessLevel, sharedGroupIds);
       return true;
     }
@@ -748,7 +748,7 @@ class AccessLevelSheet {
         throw Exception('유효하지 않은 포스트 ID입니다: $postId');
       }
 
-      print(
+      debugPrint(
         '[AccessLevelSheet] 단일 포스트 변경: 배치 엔드포인트 호출 - postIds: [$postIdInt]',
       );
 
@@ -777,11 +777,11 @@ class AccessLevelSheet {
 
       // 🎯 DioException인 경우 추가 정보 출력
       if (e is DioException) {
-        print('[AccessLevelSheet] DioException Type: ${e.type}');
-        print('[AccessLevelSheet] Status Code: ${e.response?.statusCode}');
-        print('[AccessLevelSheet] Response Data: ${e.response?.data}');
-        print('[AccessLevelSheet] Request Path: ${e.requestOptions.path}');
-        print('[AccessLevelSheet] Request Data: ${e.requestOptions.data}');
+        debugPrint('[AccessLevelSheet] DioException Type: ${e.type}');
+        debugPrint('[AccessLevelSheet] Status Code: ${e.response?.statusCode}');
+        debugPrint('[AccessLevelSheet] Response Data: ${e.response?.data}');
+        debugPrint('[AccessLevelSheet] Request Path: ${e.requestOptions.path}');
+        debugPrint('[AccessLevelSheet] Request Data: ${e.requestOptions.data}');
       }
 
       // 🎯 onError 콜백 호출 (바텀시트 닫기 및 스낵바 표시)

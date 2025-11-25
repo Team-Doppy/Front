@@ -1,4 +1,5 @@
 import 'package:doppy/common/widgets/image_error_placeholder.dart';
+import 'package:doppy/editor/component/clip_component.dart';
 import 'package:doppy/editor/postwrite_screen.dart';
 import 'package:doppy/editor/component/link_component.dart';
 import 'package:doppy/editor/service/node_component_service.dart';
@@ -523,7 +524,7 @@ class _ImageRowComponentState extends State<ImageRowComponent>
                                             error,
                                             stack,
                                           ) {
-                                            print('Image error: $error');
+                                            debugPrint('Image error: $error');
                                             return Builder(
                                               builder:
                                                   (context) =>
@@ -846,7 +847,8 @@ class _ImageRowComponentState extends State<ImageRowComponent>
       return node is LinkNode ||
           (node is ParagraphNode && node.metadata['mention'] == true) ||
           node is ImageNode ||
-          node is ImageRowNode;
+          node is ImageRowNode ||
+          node is ClipNode;
     }
 
     // 텍스트 노드 타입 체크
@@ -955,7 +957,9 @@ class _ImageRowComponentState extends State<ImageRowComponent>
     final neighborIndex = myIndex + direction;
     if (neighborIndex < 0 || neighborIndex >= doc.nodeCount) return false;
     final neighbor = doc.getNodeAt(neighborIndex);
-    return neighbor is ImageNode || neighbor is ImageRowNode;
+    return neighbor is ImageNode ||
+        neighbor is ImageRowNode ||
+        neighbor is ClipNode;
   }
 
   bool _isNodeCoveredBySelection(

@@ -5,6 +5,8 @@ import 'package:dio/dio.dart';
 import 'package:doppy/data/services/base_api_service.dart';
 import 'dart:ui';
 
+import 'package:flutter/material.dart';
+
 /// 네트워크 에러 타입 분류
 enum NetworkErrorType {
   noConnection, // 인터넷 연결 없음
@@ -291,20 +293,20 @@ class NetworkUtils {
           }
         }
 
-        print(
+        debugPrint(
           '[NetworkUtils] ${operationName ?? 'Operation'} 시도 $attempts/${config.maxRetries}',
         );
         final result = await operation();
 
         if (attempts > 1) {
-          print('[NetworkUtils] ${operationName ?? 'Operation'} 재시도 성공!');
+          debugPrint('[NetworkUtils] ${operationName ?? 'Operation'} 재시도 성공!');
         }
 
         return result;
       } catch (e) {
         lastError = parseError(e);
 
-        print(
+        debugPrint(
           '[NetworkUtils] ${operationName ?? 'Operation'} 실패 (시도 $attempts): ${lastError.message}',
         );
 
@@ -322,12 +324,12 @@ class NetworkUtils {
                   .round(),
         );
 
-        print('[NetworkUtils] ${delay.inMilliseconds}ms 후 재시도...');
+        debugPrint('[NetworkUtils] ${delay.inMilliseconds}ms 후 재시도...');
         await Future.delayed(delay);
       }
     }
 
-    print(
+    debugPrint(
       '[NetworkUtils] ${operationName ?? 'Operation'} 최종 실패: ${lastError?.message}',
     );
     throw lastError ??

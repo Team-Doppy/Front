@@ -713,7 +713,7 @@ class GroupDropDown {
                                           // 전체 친구 그룹은 로컬 파일 경로를 그대로 사용
                                           finalImageUrl =
                                               _selectedGroupImageUrl;
-                                          print(
+                                          debugPrint(
                                             '✅ [GroupSheet] 전체 친구 그룹: 로컬 파일 경로 사용: $finalImageUrl',
                                           );
                                         } else if (_groupImageUploadTask !=
@@ -737,7 +737,7 @@ class GroupDropDown {
                                               finalImageUrl =
                                                   _selectedGroupImageUrl;
                                             }
-                                            print(
+                                            debugPrint(
                                               '✅ [GroupSheet] 이미지 업로드 완료: $finalImageUrl',
                                             );
                                           } else if (currentState ==
@@ -745,7 +745,7 @@ class GroupDropDown {
                                               currentState ==
                                                   UploadState.cancelled) {
                                             // 업로드 실패한 경우
-                                            print(
+                                            debugPrint(
                                               '❌ [GroupSheet] 이미지 업로드 실패: $currentState',
                                             );
                                             if (context.mounted) {
@@ -762,7 +762,7 @@ class GroupDropDown {
                                             return; // 생성/수정 취소
                                           } else {
                                             // 업로드 진행 중인 경우 - 완료될 때까지 대기
-                                            print(
+                                            debugPrint(
                                               '🔄 [GroupSheet] 이미지 업로드 진행 중... (상태: $currentState)',
                                             );
 
@@ -808,12 +808,12 @@ class GroupDropDown {
                                                       _selectedGroupImageUrl;
                                                 }
 
-                                                print(
+                                                debugPrint(
                                                   '✅ [GroupSheet] 이미지 업로드 완료 (대기 후): $finalImageUrl',
                                                 );
                                               } else {
                                                 // 업로드 실패 또는 취소
-                                                print(
+                                                debugPrint(
                                                   '❌ [GroupSheet] 이미지 업로드 실패 또는 취소: $finalState',
                                                 );
                                                 if (context.mounted) {
@@ -838,11 +838,11 @@ class GroupDropDown {
                                                       .startsWith('http')) {
                                                 finalImageUrl =
                                                     _selectedGroupImageUrl;
-                                                print(
+                                                debugPrint(
                                                   '✅ [GroupSheet] 이미지 업로드 완료 (태스크 정리 후): $finalImageUrl',
                                                 );
                                               } else {
-                                                print(
+                                                debugPrint(
                                                   '⚠️ [GroupSheet] 이미지 업로드 타임아웃 또는 실패',
                                                 );
                                                 if (context.mounted) {
@@ -871,12 +871,12 @@ class GroupDropDown {
                                               // 이미 서버 URL인 경우
                                               finalImageUrl =
                                                   _selectedGroupImageUrl;
-                                              print(
+                                              debugPrint(
                                                 '✅ [GroupSheet] 이미 서버 URL 사용: $finalImageUrl',
                                               );
                                             } else {
                                               // 로컬 파일 경로인 경우 - 업로드가 아직 시작되지 않았을 수 있음
-                                              print(
+                                              debugPrint(
                                                 '⚠️ [GroupSheet] 로컬 파일 경로 감지, 업로드 태스크 없음: ${_selectedGroupImageUrl}',
                                               );
                                               // 업로드가 시작되지 않았다면 사용자에게 알림
@@ -907,7 +907,7 @@ class GroupDropDown {
                                     if (finalImageUrl != null &&
                                         !finalImageUrl.startsWith('http://') &&
                                         !finalImageUrl.startsWith('https://')) {
-                                      print(
+                                      debugPrint(
                                         '❌ [GroupSheet] 최종 검증 실패: 서버 URL이 아닌 경로 감지 - $finalImageUrl',
                                       );
                                       if (context.mounted) {
@@ -930,28 +930,28 @@ class GroupDropDown {
                                             ? selectedGroup.name
                                             : groupName;
 
-                                    print(
+                                    debugPrint(
                                       '🔵 [GroupSheet] onCreateGroup 호출 시작',
                                     );
-                                    print(
+                                    debugPrint(
                                       '🔵 [GroupSheet] isAllFriendsGroup: $isAllFriendsGroup',
                                     );
-                                    print(
+                                    debugPrint(
                                       '🔵 [GroupSheet] groupName: $groupName',
                                     );
-                                    print(
+                                    debugPrint(
                                       '🔵 [GroupSheet] finalGroupName: $finalGroupName',
                                     );
-                                    print(
+                                    debugPrint(
                                       '🔵 [GroupSheet] groupDescription: $groupDescription',
                                     );
-                                    print(
+                                    debugPrint(
                                       '🔵 [GroupSheet] finalImageUrl: $finalImageUrl',
                                     );
-                                    print(
+                                    debugPrint(
                                       '🔵 [GroupSheet] shouldClearImage: $shouldClearImage',
                                     );
-                                    print(
+                                    debugPrint(
                                       '🔵 [GroupSheet] selectedGroup: ${selectedGroup?.name} (id: ${selectedGroup?.id}, isSystem: ${selectedGroup?.isSystem})',
                                     );
 
@@ -963,13 +963,11 @@ class GroupDropDown {
 
                                     await onCreateGroup(
                                       finalGroupName,
-                                      groupDescription.isEmpty
-                                          ? null
-                                          : groupDescription, // 🎯 설명 전달
+                                      groupDescription, // 🎯 설명 전달 (빈 문자열 포함)
                                       imageUrlToSend, // 🎯 서버 URL 또는 빈 문자열 (기본 이미지)
                                     );
 
-                                    print(
+                                    debugPrint(
                                       '🔵 [GroupSheet] onCreateGroup 호출 완료',
                                     );
 
@@ -1230,7 +1228,7 @@ class GroupDropDown {
             });
 
             // 🎯 모든 그룹(전체 친구 그룹 포함)에 대해 UploadService를 사용하여 이미지 업로드
-            print('🔄 [GroupSheet] 그룹 이미지 업로드 시작: ${file.path}');
+            debugPrint('🔄 [GroupSheet] 그룹 이미지 업로드 시작: ${file.path}');
 
             // UploadService에 태스크 등록
             final uploadService = UploadService();
@@ -1246,7 +1244,7 @@ class GroupDropDown {
 
               if (task.state == UploadState.success) {
                 final imageUrl = task.url ?? '';
-                print('✅ [GroupSheet] 그룹 이미지 업로드 성공: $imageUrl');
+                debugPrint('✅ [GroupSheet] 그룹 이미지 업로드 성공: $imageUrl');
 
                 // 🎯 업로드 완료 후 태스크 정리 및 상태 업데이트
                 // 리스너 제거
@@ -1263,7 +1261,7 @@ class GroupDropDown {
                 });
               } else if (task.state == UploadState.failed ||
                   task.state == UploadState.cancelled) {
-                print('❌ [GroupSheet] 그룹 이미지 업로드 실패 또는 취소');
+                debugPrint('❌ [GroupSheet] 그룹 이미지 업로드 실패 또는 취소');
 
                 // 🎯 업로드 실패 후 태스크 정리
                 // 리스너 제거

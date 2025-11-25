@@ -8,7 +8,7 @@ import 'package:doppy/l10n/app_localizations.dart';
 import 'package:doppy/pages/screens/user_profile_screen.dart';
 
 /// 개별 댓글 아이템 위젯
-class CommentItem extends StatefulWidget {
+class CommentItem extends StatelessWidget {
   const CommentItem({
     super.key,
     required this.comment,
@@ -25,7 +25,10 @@ class CommentItem extends StatefulWidget {
     required this.targetComment,
     required this.globalKey,
     required this.onSwipeReply,
+    required this.dragOffset,
     this.onProfileTap,
+    this.onHorizontalDragUpdate,
+    this.onHorizontalDragEnd,
   });
 
   final Comment comment;
@@ -43,74 +46,47 @@ class CommentItem extends StatefulWidget {
   final GlobalKey? globalKey;
   final VoidCallback onSwipeReply;
   final Function(String username)? onProfileTap; // 🎯 프로필 탭 콜백 (선택적)
-
-  @override
-  State<CommentItem> createState() => _CommentItemState();
-}
-
-class _CommentItemState extends State<CommentItem> {
-  double _dragOffset = 0.0;
-
-  void _handleHorizontalDragUpdate(DragUpdateDetails details) {
-    setState(() {
-      final delta = details.delta.dx;
-      // 타인 댓글: 오른쪽으로만 (왼쪽에서 오른쪽), 내 댓글: 왼쪽으로만 (오른쪽에서 왼쪽)
-      if (!widget.isMe && delta > 0) {
-        _dragOffset = (_dragOffset + delta).clamp(0.0, 80.0);
-      } else if (widget.isMe && delta < 0) {
-        _dragOffset = (_dragOffset + delta).clamp(-80.0, 0.0);
-      }
-    });
-  }
-
-  void _handleHorizontalDragEnd(DragEndDetails details) {
-    if (_dragOffset.abs() > 40.0) {
-      // 임계값 초과 시 답글 실행
-      HapticFeedback.mediumImpact();
-      widget.onSwipeReply();
-    }
-
-    // 원위치로 복귀 (애니메이션)
-    setState(() => _dragOffset = 0.0);
-  }
+  final double dragOffset; // 🎯 드래그 오프셋 (부모에서 관리)
+  final Function(DragUpdateDetails)? onHorizontalDragUpdate; // 🎯 드래그 업데이트 핸들러
+  final Function(DragEndDetails)? onHorizontalDragEnd; // 🎯 드래그 종료 핸들러
 
   BorderRadius _getBorderRadius() {
     // 첫 번째 버블 (꼬리 있음)
-    if (widget.showProfile && widget.showAuthorInfo) {
+    if (showProfile && showAuthorInfo) {
       return BorderRadius.only(
-        topLeft: Radius.circular(widget.isMe ? 20 : 20),
-        topRight: Radius.circular(widget.isMe ? 20 : 20),
-        bottomLeft: Radius.circular(widget.isMe ? 20 : 4),
-        bottomRight: Radius.circular(widget.isMe ? 4 : 20),
+        topLeft: Radius.circular(isMe ? 20 : 20),
+        topRight: Radius.circular(isMe ? 20 : 20),
+        bottomLeft: Radius.circular(isMe ? 20 : 4),
+        bottomRight: Radius.circular(isMe ? 4 : 20),
       );
     }
 
     // 마지막 버블 (꼬리 있음, 꼬리 반대편을 더 둥글게)
-    if (!widget.showProfile && widget.showAuthorInfo) {
+    if (!showProfile && showAuthorInfo) {
       return BorderRadius.only(
-        topLeft: Radius.circular(widget.isMe ? 20 : 4),
-        topRight: Radius.circular(widget.isMe ? 6 : 20),
-        bottomLeft: Radius.circular(widget.isMe ? 20 : 20), // ← 더 둥글게
-        bottomRight: Radius.circular(widget.isMe ? 20 : 20), // ← 더 둥글게
+        topLeft: Radius.circular(isMe ? 20 : 4),
+        topRight: Radius.circular(isMe ? 6 : 20),
+        bottomLeft: Radius.circular(isMe ? 20 : 20), // ← 더 둥글게
+        bottomRight: Radius.circular(isMe ? 20 : 20), // ← 더 둥글게
       );
     }
 
     // 첫 번째이지만 마지막 아님 (위를 더 둥글게)
-    if (widget.showProfile && !widget.showAuthorInfo) {
+    if (showProfile && !showAuthorInfo) {
       return BorderRadius.only(
-        topLeft: Radius.circular(widget.isMe ? 24 : 24), // ← 더 둥글게
-        topRight: Radius.circular(widget.isMe ? 24 : 24), // ← 더 둥글게
-        bottomLeft: Radius.circular(widget.isMe ? 20 : 6),
-        bottomRight: Radius.circular(widget.isMe ? 6 : 20),
+        topLeft: Radius.circular(isMe ? 24 : 24), // ← 더 둥글게
+        topRight: Radius.circular(isMe ? 24 : 24), // ← 더 둥글게
+        bottomLeft: Radius.circular(isMe ? 20 : 6),
+        bottomRight: Radius.circular(isMe ? 6 : 20),
       );
     }
 
     // 가운데 버블 (양쪽 모서리만 약간 둥글게)
     return BorderRadius.only(
-      topLeft: Radius.circular(widget.isMe ? 20 : 6),
-      topRight: Radius.circular(widget.isMe ? 6 : 20),
-      bottomLeft: Radius.circular(widget.isMe ? 20 : 6),
-      bottomRight: Radius.circular(widget.isMe ? 6 : 20),
+      topLeft: Radius.circular(isMe ? 20 : 6),
+      topRight: Radius.circular(isMe ? 6 : 20),
+      bottomLeft: Radius.circular(isMe ? 20 : 6),
+      bottomRight: Radius.circular(isMe ? 6 : 20),
     );
   }
 
@@ -139,26 +115,32 @@ class _CommentItemState extends State<CommentItem> {
 
   @override
   Widget build(BuildContext context) {
-    final hasReactions = widget.comment.emotionCounts.isNotEmpty;
+    final hasReactions = comment.emotionCounts.isNotEmpty;
 
     return GestureDetector(
-      onHorizontalDragUpdate: _handleHorizontalDragUpdate,
-      onHorizontalDragEnd: _handleHorizontalDragEnd,
+      onHorizontalDragUpdate:
+          onHorizontalDragUpdate != null
+              ? (details) => onHorizontalDragUpdate!(details)
+              : null,
+      onHorizontalDragEnd:
+          onHorizontalDragEnd != null
+              ? (details) => onHorizontalDragEnd!(details)
+              : null,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
         curve: Curves.easeOut,
-        transform: Matrix4.translationValues(_dragOffset, 0, 0),
+        transform: Matrix4.translationValues(dragOffset, 0, 0),
         child: Padding(
-          key: widget.globalKey,
+          key: globalKey,
           padding: EdgeInsets.only(
-            top: widget.showProfile ? 8 : 2,
-            bottom: widget.showAuthorInfo ? 8 : 2,
+            top: showProfile ? 8 : 2,
+            bottom: showAuthorInfo ? 8 : 2,
           ),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              if (!widget.isMe) ...[
-                if (widget.showProfile)
+              if (!isMe) ...[
+                if (showProfile)
                   _buildProfileImage(context)
                 else
                   const SizedBox(width: 34),
@@ -168,12 +150,10 @@ class _CommentItemState extends State<CommentItem> {
               Expanded(
                 child: Align(
                   alignment:
-                      widget.isMe
-                          ? Alignment.centerRight
-                          : Alignment.centerLeft,
+                      isMe ? Alignment.centerRight : Alignment.centerLeft,
                   child: Column(
                     crossAxisAlignment:
-                        widget.isMe
+                        isMe
                             ? CrossAxisAlignment.end
                             : CrossAxisAlignment.start,
                     children: [
@@ -183,13 +163,13 @@ class _CommentItemState extends State<CommentItem> {
                       // 반응 표시
                       if (hasReactions) _buildReactions(context),
                       // 시간 표시
-                      if (widget.showAuthorInfo) _buildTimeStamp(context),
+                      if (showAuthorInfo) _buildTimeStamp(context),
                     ],
                   ),
                 ),
               ),
 
-              if (widget.isMe) ...[
+              if (isMe) ...[
                 const SizedBox(width: 4),
                 // 🎯 내 채팅일 때는 프로필 이미지 표시 안 함
                 const SizedBox(width: 4),
@@ -205,8 +185,8 @@ class _CommentItemState extends State<CommentItem> {
     return GestureDetector(
       onTap: () {
         // 🎯 프로필 탭 콜백이 있으면 사용, 없으면 기본 동작 (프로필 화면으로 이동)
-        if (widget.onProfileTap != null) {
-          widget.onProfileTap!(widget.comment.author);
+        if (onProfileTap != null) {
+          onProfileTap!(comment.author);
         } else {
           // 기본 동작: 프로필 화면으로 이동
           Navigator.of(context).push(
@@ -214,8 +194,8 @@ class _CommentItemState extends State<CommentItem> {
               builder:
                   (context) => UserProfileScreen(
                     otherUser: User(
-                      username: widget.comment.author,
-                      profileImageUrl: widget.comment.authorProfileImageUrl,
+                      username: comment.author,
+                      profileImageUrl: comment.authorProfileImageUrl,
                     ),
                   ),
             ),
@@ -224,10 +204,10 @@ class _CommentItemState extends State<CommentItem> {
       },
       child: CommonProfileAvatar(
         backgroundColor: Colors.transparent,
-        imageUrl: widget.comment.authorProfileImageUrl,
-        username: widget.comment.author,
+        imageUrl: comment.authorProfileImageUrl,
+        username: comment.author,
         size: 34,
-        borderWidth: 1,
+        borderWidth: 0,
       ),
     );
   }
@@ -237,29 +217,29 @@ class _CommentItemState extends State<CommentItem> {
       onDoubleTap: () {
         HapticFeedback.lightImpact();
         // 어떤 이모지든 있으면 취소, 없으면 ❤️ 추가
-        if (widget.comment.myEmotions.isNotEmpty) {
+        if (comment.myEmotions.isNotEmpty) {
           // 기존 이모지 취소
-          final currentEmoji = widget.comment.myEmotions.keys.first;
-          widget.onReactionToggle(widget.comment.id, currentEmoji);
+          final currentEmoji = comment.myEmotions.keys.first;
+          onReactionToggle(comment.id, currentEmoji);
         } else {
           // ❤️ 추가
-          widget.onReactionToggle(widget.comment.id, '❤️');
+          onReactionToggle(comment.id, '❤️');
         }
       },
       onLongPressStart: (details) {
         HapticFeedback.mediumImpact();
-        widget.onLongPress(details.globalPosition, widget.comment);
+        onLongPress(details.globalPosition, comment);
       },
       child: Transform.scale(
-        scale: widget.isAnimating ? widget.bounceAnimationValue : 1.0,
+        scale: isAnimating ? bounceAnimationValue : 1.0,
         child: Container(
           constraints: BoxConstraints(
-            maxWidth: MediaQuery.of(context).size.width * 0.4,
+            maxWidth: MediaQuery.of(context).size.width * 0.55,
           ),
           padding: const EdgeInsets.all(0),
           decoration: BoxDecoration(
             color:
-                widget.isMe
+                isMe
                     ? Theme.of(context).colorScheme.primary
                     : Theme.of(
                       context,
@@ -270,10 +250,9 @@ class _CommentItemState extends State<CommentItem> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               // 타겟 댓글이 있으면 표시
-              if (widget.targetComment != null) ...[
+              if (targetComment != null) ...[
                 GestureDetector(
-                  onTap:
-                      () => widget.onTapTargetComment(widget.targetComment!.id),
+                  onTap: () => onTapTargetComment(targetComment!.id),
                   behavior: HitTestBehavior.opaque,
                   child: Padding(
                     padding: const EdgeInsets.fromLTRB(12, 12, 12, 3),
@@ -281,10 +260,10 @@ class _CommentItemState extends State<CommentItem> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          '@${widget.targetComment!.author}',
+                          '@${targetComment!.author}',
                           style: TextStyle(
                             color:
-                                widget.isMe
+                                isMe
                                     ? Colors.white.withOpacity(0.8)
                                     : Theme.of(
                                       context,
@@ -295,10 +274,10 @@ class _CommentItemState extends State<CommentItem> {
                         ),
 
                         Text(
-                          widget.targetComment!.content,
+                          targetComment!.content,
                           style: TextStyle(
                             color:
-                                widget.isMe
+                                isMe
                                     ? Colors.white.withOpacity(0.7)
                                     : Theme.of(
                                       context,
@@ -327,7 +306,7 @@ class _CommentItemState extends State<CommentItem> {
               Padding(
                 padding: EdgeInsets.fromLTRB(
                   12,
-                  widget.targetComment != null ? 8 : 8,
+                  targetComment != null ? 8 : 8,
                   12,
                   8,
                 ),
@@ -335,10 +314,10 @@ class _CommentItemState extends State<CommentItem> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      widget.comment.content,
+                      comment.content,
                       style: TextStyle(
                         color:
-                            widget.isMe
+                            isMe
                                 ? Colors.white
                                 : Theme.of(context).colorScheme.onSurface,
                         fontSize: 15,
@@ -346,16 +325,14 @@ class _CommentItemState extends State<CommentItem> {
                       ),
                     ),
                     // 전송 실패 시 재시도/삭제 버튼
-                    if (widget.comment.isFailed) ...[
+                    if (comment.isFailed) ...[
                       const SizedBox(height: 8),
                       Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           GestureDetector(
                             onTap: () {
-                              widget.commentService.retryComment(
-                                widget.comment.id,
-                              );
+                              commentService.retryComment(comment.id);
                             },
                             child: Container(
                               padding: const EdgeInsets.symmetric(
@@ -377,9 +354,7 @@ class _CommentItemState extends State<CommentItem> {
                           const SizedBox(width: 8),
                           GestureDetector(
                             onTap: () {
-                              widget.commentService.removeFailedComment(
-                                widget.comment.id,
-                              );
+                              commentService.removeFailedComment(comment.id);
                             },
                             child: Container(
                               padding: const EdgeInsets.all(4),
@@ -409,7 +384,7 @@ class _CommentItemState extends State<CommentItem> {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          for (final entry in widget.comment.emotionCounts.entries)
+          for (final entry in comment.emotionCounts.entries)
             if (entry.value != '0')
               Container(
                 margin: const EdgeInsets.only(right: 1),
@@ -433,7 +408,7 @@ class _CommentItemState extends State<CommentItem> {
     return Padding(
       padding: const EdgeInsets.only(top: 4),
       child: Text(
-        _formatRelativeTime(widget.comment.createdAt),
+        _formatRelativeTime(comment.createdAt),
         style: TextStyle(color: Colors.white.withOpacity(0.6), fontSize: 11),
       ),
     );
@@ -480,7 +455,13 @@ Future<String?> openCommentMenu(
                     horizontal: 4,
                     vertical: 2,
                   ),
-                  child: Text(emoji, style: const TextStyle(fontSize: 24)),
+                  child: Text(
+                    emoji,
+                    style: TextStyle(
+                      fontSize: 24,
+                      color: Theme.of(context).colorScheme.onSurface,
+                    ),
+                  ),
                 ),
               ),
           ],

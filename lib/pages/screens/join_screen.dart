@@ -775,7 +775,7 @@ class _JoinScreenState extends State<JoinScreen> {
               if (_passwordController.text.isNotEmpty) ...[
                 _buildPasswordRequirement(
                   context.tr('join_password_min_length'),
-                  _passwordController.text.length >= 6,
+                  _passwordController.text.length >= 8,
                 ),
                 _buildPasswordRequirement(
                   context.tr('join_password_letter_required'),
@@ -1052,7 +1052,7 @@ class _JoinScreenState extends State<JoinScreen> {
   }
 
   bool _validatePassword(String password) {
-    return password.length >= 6 &&
+    return password.length >= 8 &&
         RegExp(r'[a-zA-Z]').hasMatch(password) &&
         RegExp(r'[0-9]').hasMatch(password);
   }
@@ -1068,7 +1068,7 @@ class _JoinScreenState extends State<JoinScreen> {
   }
 
   void _checkIdDuplicate() async {
-    print('[-] [JoinScreen] _checkIdDuplicate');
+    debugPrint('[-] [JoinScreen] _checkIdDuplicate');
     setState(() {
       _isCheckingDuplicate = true;
     });
@@ -1078,7 +1078,7 @@ class _JoinScreenState extends State<JoinScreen> {
         _idController.text,
       );
 
-      print('[-] [JoinScreen] _checkIdDuplicate: $isAvailable');
+      debugPrint('[-] [JoinScreen] _checkIdDuplicate: $isAvailable');
 
       setState(() {
         _isIdDuplicateChecked = true;

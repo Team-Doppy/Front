@@ -6,6 +6,7 @@ import 'package:doppy/data/services/base_api_service.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'auth_service.dart';
+import 'package:flutter/material.dart';
 
 /// 토큰 갱신을 자동으로 처리하는 Dio 클라이언트
 class DioClient {
@@ -48,7 +49,7 @@ class DioClient {
             options.headers['Authorization'] = 'Bearer $token';
           }
 
-          print('[DioClient] ${options.method} ${options.path}');
+          debugPrint('[DioClient] ${options.method} ${options.path}');
           handler.next(options);
         },
 
@@ -76,7 +77,7 @@ class DioClient {
           }
 
           try {
-            print(
+            debugPrint(
               '[DioClient] Token expired, attempting refresh (coordinated) ...',
             );
 
@@ -91,7 +92,9 @@ class DioClient {
               return;
             }
 
-            print('[DioClient] Token refreshed, retrying original request');
+            debugPrint(
+              '[DioClient] Token refreshed, retrying original request',
+            );
             final newToken = await _authService.getToken();
             if (newToken != null && newToken.isNotEmpty) {
               error.requestOptions.headers['Authorization'] =
@@ -104,7 +107,7 @@ class DioClient {
             handler.resolve(response);
             return;
           } catch (e) {
-            print('[DioClient] Refresh coordination failed: $e');
+            debugPrint('[DioClient] Refresh coordination failed: $e');
             handler.next(error);
             return;
           }
@@ -117,7 +120,7 @@ class DioClient {
   Future<bool> _refreshTokenWithRetry() async {
     final refreshToken = await _authService.getRefreshToken();
     if (refreshToken == null || refreshToken.isEmpty) {
-      print('❌ [DioClient] 리프레시 토큰 없음');
+      debugPrint('❌ [DioClient] 리프레시 토큰 없음');
       return false;
     }
 
@@ -143,15 +146,15 @@ class DioClient {
           await _authService.saveToken(newToken);
           await _authService.saveRefreshToken(newRefreshToken);
 
-          print('✅ [DioClient] 토큰 갱신 성공 (attempt=${attempt + 1})');
+          debugPrint('✅ [DioClient] 토큰 갱신 성공 (attempt=${attempt + 1})');
           return true;
         } else {
-          print(
+          debugPrint(
             '❌ [DioClient] 토큰 갱신 실패(status=${response.statusCode}) (attempt=${attempt + 1})',
           );
         }
       } catch (e) {
-        print('❌ [DioClient] 토큰 갱신 오류 (attempt=${attempt + 1}): $e');
+        debugPrint('❌ [DioClient] 토큰 갱신 오류 (attempt=${attempt + 1}): $e');
       }
     }
 

@@ -58,13 +58,13 @@ class MyProfileFeedProvider extends BaseFeedProvider {
 
     // 캐시 확인 (force가 아닌 경우)
     if (!force && _isCacheValid && _cachedUserInfo != null) {
-      print('[MyProfileFeedProvider] 캐시에서 로드');
+      debugPrint('[MyProfileFeedProvider] 캐시에서 로드');
       _loadFromCache();
       notifyListeners();
       return;
     }
 
-    print('[MyProfileFeedProvider] 서버에서 로드 시작: $_username');
+    debugPrint('[MyProfileFeedProvider] 서버에서 로드 시작: $_username');
 
     _loading = true;
     _hasMore = true;
@@ -94,23 +94,23 @@ class MyProfileFeedProvider extends BaseFeedProvider {
         // 캐시에 저장
         _saveToCache();
 
-        print('[MyProfileFeedProvider] 서버 로드 완료');
+        debugPrint('[MyProfileFeedProvider] 서버 로드 완료');
       } else {
-        print('[MyProfileFeedProvider] 서버 응답 실패');
+        debugPrint('[MyProfileFeedProvider] 서버 응답 실패');
         clearData();
       }
     } catch (e) {
-      print('[MyProfileFeedProvider] 서버 로드 실패: $e');
-      print('[MyProfileFeedProvider] 에러 타입: ${e.runtimeType}');
-      print('[MyProfileFeedProvider] 에러 내용: ${e.toString()}');
+      debugPrint('[MyProfileFeedProvider] 서버 로드 실패: $e');
+      debugPrint('[MyProfileFeedProvider] 에러 타입: ${e.runtimeType}');
+      debugPrint('[MyProfileFeedProvider] 에러 내용: ${e.toString()}');
 
       // 네트워크 에러 처리
       final networkError = NetworkUtils.parseError(e);
-      print(
+      debugPrint(
         '[MyProfileFeedProvider] 변환된 NetworkError: ${networkError.type} - ${networkError.userMessage}',
       );
       setNetworkError(networkError);
-      print('[MyProfileFeedProvider] networkError 설정 완료');
+      debugPrint('[MyProfileFeedProvider] networkError 설정 완료');
 
       // clearData()를 호출하지 않음 (networkError는 유지)
       // 네트워크 오류 시에는 데이터를 유지하여 에러 상태 표시 가능
@@ -172,7 +172,7 @@ class MyProfileFeedProvider extends BaseFeedProvider {
     );
     _lastCacheTime = DateTime.now();
 
-    print('[MyProfileFeedProvider] 캐시 저장 완료');
+    debugPrint('[MyProfileFeedProvider] 캐시 저장 완료');
   }
 
   /// 캐시 무효화
@@ -182,7 +182,7 @@ class MyProfileFeedProvider extends BaseFeedProvider {
     _cachedPostsByCategory = null;
     _cachedSystemCategoryMappings = null;
     _lastCacheTime = null;
-    print('[MyProfileFeedProvider] 캐시 무효화');
+    debugPrint('[MyProfileFeedProvider] 캐시 무효화');
   }
 
   /// 프로필 이미지 업로드 후 업데이트
@@ -203,7 +203,9 @@ class MyProfileFeedProvider extends BaseFeedProvider {
 
       notifyListeners();
     } catch (e) {
-      print('[MyProfileFeedProvider] updateProfileImageAfterUpload 실패: $e');
+      debugPrint(
+        '[MyProfileFeedProvider] updateProfileImageAfterUpload 실패: $e',
+      );
       rethrow;
     }
   }
@@ -229,7 +231,9 @@ class MyProfileFeedProvider extends BaseFeedProvider {
 
       return success;
     } catch (e) {
-      print('[MyProfileFeedProvider] deleteProfileImageAndUpdateCache 실패: $e');
+      debugPrint(
+        '[MyProfileFeedProvider] deleteProfileImageAndUpdateCache 실패: $e',
+      );
       return false;
     }
   }
@@ -327,7 +331,7 @@ class MyProfileFeedProvider extends BaseFeedProvider {
         _hasMore = false;
       }
     } catch (e) {
-      print('[MyProfileFeedProvider] loadMore 실패: $e');
+      debugPrint('[MyProfileFeedProvider] loadMore 실패: $e');
       _hasMore = false;
     } finally {
       _loadingMore = false;
@@ -349,7 +353,7 @@ class MyProfileFeedProvider extends BaseFeedProvider {
     selectBase(BaseFilter.all);
     selectCategory(null);
     notifyListeners();
-    print('[MyProfileFeedProvider] 로그아웃 - 모든 데이터 초기화 완료');
+    debugPrint('[MyProfileFeedProvider] 로그아웃 - 모든 데이터 초기화 완료');
   }
 
   @override
@@ -382,7 +386,7 @@ class MyProfileFeedProvider extends BaseFeedProvider {
               .toList();
 
       if (orderedIntIds.isEmpty) {
-        print('[MyProfileFeedProvider] 유효한 포스트 ID가 없음');
+        debugPrint('[MyProfileFeedProvider] 유효한 포스트 ID가 없음');
         return;
       }
 
@@ -398,12 +402,12 @@ class MyProfileFeedProvider extends BaseFeedProvider {
           categoryId: categoryId,
           orderedIds: orderedIntIds,
         );
-        print('[MyProfileFeedProvider] 카테고리 $categoryId 포스트 순서 서버 저장 성공');
+        debugPrint('[MyProfileFeedProvider] 카테고리 $categoryId 포스트 순서 서버 저장 성공');
 
         // 캐시 업데이트
         _saveToCache();
       } catch (e) {
-        print('⚠️ [MyProfileFeedProvider] 서버 포스트 순서 변경 실패, 롤백: $e');
+        debugPrint('⚠️ [MyProfileFeedProvider] 서버 포스트 순서 변경 실패, 롤백: $e');
 
         // 실패 시 롤백
         postsByCategoryProtected.clear();
@@ -412,7 +416,7 @@ class MyProfileFeedProvider extends BaseFeedProvider {
         rethrow;
       }
     } catch (e) {
-      print('[MyProfileFeedProvider] 포스트 순서 변경 실패: $e');
+      debugPrint('[MyProfileFeedProvider] 포스트 순서 변경 실패: $e');
       rethrow;
     }
   }
@@ -436,11 +440,11 @@ class MyProfileFeedProvider extends BaseFeedProvider {
 
     try {
       await blogService.reorderCategories(orderedIntIds);
-      print('[MyProfileFeedProvider] 서버 카테고리 재정렬 성공');
+      debugPrint('[MyProfileFeedProvider] 서버 카테고리 재정렬 성공');
       _saveToCache(); // Update cache on success
       _hasUserReordered = true; // 사용자가 명시적으로 순서를 바꿈
     } catch (e) {
-      print('⚠️ [MyProfileFeedProvider] 서버 재정렬 실패, 롤백: $e');
+      debugPrint('⚠️ [MyProfileFeedProvider] 서버 재정렬 실패, 롤백: $e');
       categoriesInternal
         ..clear()
         ..addAll(

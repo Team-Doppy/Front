@@ -1,8 +1,19 @@
+import 'dart:async';
+import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
+import 'package:http/http.dart' as http;
+import 'package:path_provider/path_provider.dart';
+import 'package:provider/provider.dart';
 import 'package:super_editor/super_editor.dart';
+import 'package:doppy/editor/component/app_image_node.dart';
+import 'package:doppy/editor/service/editor_service.dart';
+import 'package:doppy/data/services/upload_service.dart';
+import 'package:doppy/image/custom_image_editor_screen.dart';
+import 'package:doppy/utils/error_handler.dart';
+import 'package:doppy/l10n/app_localizations.dart';
 
 /// 에디터 내 특수 노드(이미지/이미지행/링크/멘션 등)의 선택/하이라이트 상태를 관리하는 서비스
 class NodeComponentService extends ChangeNotifier {
@@ -171,13 +182,15 @@ class NodeComponentService extends ChangeNotifier {
     final oldValue = _spoilerByNodeId[nodeId];
     if (oldValue == value) {
       if (kDebugMode) {
-        print('[NodeComponentService] setSpoiler: $nodeId = $value (변경 없음)');
+        debugPrint(
+          '[NodeComponentService] setSpoiler: $nodeId = $value (변경 없음)',
+        );
       }
       return;
     }
     _spoilerByNodeId[nodeId] = value;
     if (kDebugMode) {
-      print(
+      debugPrint(
         '[NodeComponentService] setSpoiler: $nodeId = $value (이전: $oldValue), notifyListeners 호출',
       );
     }
@@ -219,4 +232,229 @@ class NodeComponentService extends ChangeNotifier {
   /// 신규 API: 하이라이트 해제 (조용히) 별칭
   void clearHighlightedNodeSelectionSilently() =>
       clearHighlightedSelectionSilently();
+
+  // ===== 이미지 편집 =====
+  bool _isEditingImage = false;
+
+  /// 이미지 편집 프로세스
+  Future<void> editImage({
+    required BuildContext context,
+    required String imageId,
+    required ImageNode node,
+    required EditorService editorService,
+    required MutableDocument document,
+  }) async {
+    // 이미 편집 중이면 무시
+    if (_isEditingImage) return;
+    _isEditingImage = true;
+
+    // 🎯 이미지 편집 전 현재 상태를 히스토리에 저장
+    editorService.saveHistoryNow();
+    debugPrint('[NodeComponentService] 📸 이미지 편집 전 히스토리 저장');
+
+    // 🎯 로딩 다이얼로그 상태 추적 (함수 스코프)
+    BuildContext? dialogContext;
+    bool isDialogClosed = false; // 다이얼로그가 이미 닫혔는지 추적
+
+    try {
+      FocusScope.of(context).unfocus();
+
+      // 로딩 다이얼로그 표시 (dialogContext 저장하여 명시적으로 닫기)
+      showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialogCtx) {
+          dialogContext = dialogCtx;
+          return PopScope(
+            canPop: false,
+            child: Center(
+              child: SizedBox(
+                width: 80,
+                height: 80,
+                child: Center(
+                  child: CircularProgressIndicator(
+                    strokeWidth: 4,
+                    color: Theme.of(context).colorScheme.onSurface,
+                  ),
+                ),
+              ),
+            ),
+          );
+        },
+      );
+
+      // 🎯 이미지 다운로드에 타임아웃 추가 (10초)
+      http.Response response;
+      try {
+        response = await http
+            .get(Uri.parse(node.imageUrl))
+            .timeout(
+              const Duration(seconds: 10),
+              onTimeout: () {
+                debugPrint('[NodeComponentService] 이미지 다운로드 타임아웃');
+                throw TimeoutException(
+                  '이미지 다운로드 시간이 초과되었습니다.',
+                  const Duration(seconds: 10),
+                );
+              },
+            );
+      } on TimeoutException catch (e) {
+        debugPrint('[NodeComponentService] 이미지 다운로드 타임아웃: $e');
+        // 로딩 다이얼로그 닫기 (에디터는 유지)
+        if (!isDialogClosed) {
+          isDialogClosed = true;
+          _closeLoadingDialogSafely(context, dialogContext);
+        }
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).hideCurrentSnackBar();
+          ErrorHandler.showError(context, context.tr('image_download_failed'));
+        }
+        return;
+      } on Exception catch (e) {
+        debugPrint('[NodeComponentService] 이미지 다운로드 실패: $e');
+        // 로딩 다이얼로그 닫기 (에디터는 유지)
+        if (!isDialogClosed) {
+          isDialogClosed = true;
+          _closeLoadingDialogSafely(context, dialogContext);
+        }
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).hideCurrentSnackBar();
+          ErrorHandler.showError(context, context.tr('image_download_failed'));
+        }
+        return;
+      }
+
+      // 로딩 다이얼로그 닫기 (에디터는 유지) - 정상 완료 시
+      if (!isDialogClosed) {
+        isDialogClosed = true;
+        _closeLoadingDialogSafely(context, dialogContext);
+      }
+
+      if (response.statusCode != 200) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).hideCurrentSnackBar();
+          ErrorHandler.showError(context, context.tr('image_load_failed'));
+        }
+        return;
+      }
+
+      final imageBytes = response.bodyBytes;
+      // 3. 이미지 편집기 열기 (오버레이 스타일)
+      final editedBytes = await Navigator.push<Uint8List?>(
+        context,
+        PageRouteBuilder(
+          fullscreenDialog: true,
+          barrierColor: Theme.of(context).colorScheme.background,
+          opaque: false,
+          barrierDismissible: true,
+          pageBuilder:
+              (context, _, __) =>
+                  CustomImageEditorScreen(imageBytes: imageBytes),
+        ),
+      );
+
+      if (editedBytes == null || !context.mounted) return;
+
+      final upload = context.read<UploadService>();
+
+      // 임시 파일로 변환
+      final tempDir = await getTemporaryDirectory();
+      final tempFile = File(
+        '${tempDir.path}/edited_${DateTime.now().millisecondsSinceEpoch}.jpg',
+      );
+      await tempFile.writeAsBytes(editedBytes);
+
+      final tasks = await upload.uploadFilesViaServerBatches([
+        tempFile,
+      ], kind: UploadKind.editorImage);
+
+      // 임시 파일 삭제
+      try {
+        await tempFile.delete();
+      } catch (_) {}
+
+      if (tasks.isEmpty || tasks.first.state != UploadState.success) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).hideCurrentSnackBar();
+          ErrorHandler.showError(context, context.tr('image_upload_failed'));
+        }
+        return;
+      }
+
+      final newUrl = tasks.first.url;
+      if (newUrl == null || newUrl.isEmpty) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).hideCurrentSnackBar();
+          ErrorHandler.showError(context, context.tr('image_url_failed'));
+        }
+        return;
+      }
+
+      // 5. 문서에서 이미지 URL 교체
+      final nodeIndex = document.getNodeIndexById(imageId);
+      if (nodeIndex != -1) {
+        final newNode = AppImageNode(
+          id: imageId,
+          imageUrl: newUrl,
+          altText: node.altText,
+          metadata: Map<String, dynamic>.from(node.metadata),
+        );
+
+        document.deleteNode(imageId);
+        document.insertNodeAt(nodeIndex, newNode);
+
+        // 🎯 이미지 편집 후 히스토리 저장
+        editorService.saveHistoryNow();
+      }
+    } catch (e) {
+      debugPrint('[NodeComponentService] 이미지 편집 중 오류: $e');
+      // 로딩 다이얼로그가 열려있을 수 있으므로 닫기 시도 (에디터는 유지)
+      // 단, 이미 닫혔으면 다시 닫지 않음
+      if (!isDialogClosed) {
+        isDialogClosed = true;
+        _closeLoadingDialogSafely(context, dialogContext);
+      }
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+        ErrorHandler.showError(context, context.tr('image_edit_failed'));
+      }
+    } finally {
+      // 🎯 finally에서도 로딩 다이얼로그가 열려있으면 닫기 (안전장치, 에디터는 유지)
+      // 단, 이미 닫혔으면 다시 닫지 않음 (중복 pop 방지)
+      if (!isDialogClosed && dialogContext != null) {
+        isDialogClosed = true;
+        _closeLoadingDialogSafely(context, dialogContext);
+      }
+      _isEditingImage = false;
+    }
+  }
+
+  // 🎯 로딩 다이얼로그 안전하게 닫기 (에디터는 유지)
+  void _closeLoadingDialogSafely(
+    BuildContext context,
+    BuildContext? dialogContext,
+  ) {
+    if (!context.mounted || dialogContext == null) {
+      debugPrint('[NodeComponentService] 다이얼로그 닫기 스킵: context가 유효하지 않음');
+      return;
+    }
+
+    try {
+      // 다이얼로그 context가 여전히 유효한지 확인
+      if (!dialogContext.mounted) {
+        debugPrint(
+          '[NodeComponentService] 다이얼로그 닫기 스킵: dialogContext가 이미 unmounted',
+        );
+        return;
+      }
+
+      // 다이얼로그 context에서 직접 pop (에디터는 절대 닫히지 않음)
+      Navigator.pop(dialogContext);
+      debugPrint('[NodeComponentService] ✅ 로딩 다이얼로그 닫기 성공');
+    } catch (e) {
+      debugPrint('[NodeComponentService] ⚠️ 로딩 다이얼로그 닫기 실패: $e');
+      // fallback 시도하지 않음 (에디터를 닫을 위험이 있음)
+      // 다이얼로그가 이미 닫혔거나 다른 문제가 있을 수 있음
+    }
+  }
 }

@@ -34,7 +34,7 @@ class LocaleProvider extends ChangeNotifier {
         return const Locale('en', 'US');
       }
     } catch (e) {
-      print('[LocaleProvider] 시스템 언어 감지 실패: $e');
+      debugPrint('[LocaleProvider] 시스템 언어 감지 실패: $e');
       // 기본값: 영어
       return const Locale('en', 'US');
     }
@@ -56,9 +56,9 @@ class LocaleProvider extends ChangeNotifier {
       await _saveLocale();
       notifyListeners();
 
-      print('[LocaleProvider] OS 언어 기반 초기화: ${_locale.languageCode}');
+      debugPrint('[LocaleProvider] OS 언어 기반 초기화: ${_locale.languageCode}');
     } catch (e) {
-      print('[LocaleProvider] OS 언어 기반 초기화 실패: $e');
+      debugPrint('[LocaleProvider] OS 언어 기반 초기화 실패: $e');
     }
   }
 
@@ -70,7 +70,7 @@ class LocaleProvider extends ChangeNotifier {
     await _saveLocale();
     notifyListeners();
 
-    print('[LocaleProvider] 언어 변경: ${locale.languageCode}');
+    debugPrint('[LocaleProvider] 언어 변경: ${locale.languageCode}');
   }
 
   /// 언어 설정 저장
@@ -82,7 +82,7 @@ class LocaleProvider extends ChangeNotifier {
         await prefs.setString('countryCode', _locale.countryCode!);
       }
     } catch (e) {
-      print('[LocaleProvider] 언어 설정 저장 실패: $e');
+      debugPrint('[LocaleProvider] 언어 설정 저장 실패: $e');
     }
   }
 

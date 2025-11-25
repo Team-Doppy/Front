@@ -269,7 +269,7 @@ class ProfileActionBottomSheet extends StatelessWidget {
       // 바텀시트를 닫기 전에 상위 context를 가져옴
       parentContext = navigator.context;
     } catch (e) {
-      print('[ProfileActionBottomSheet] 상위 context 가져오기 실패: $e');
+      debugPrint('[ProfileActionBottomSheet] 상위 context 가져오기 실패: $e');
     }
 
     // 바텀시트 닫기
@@ -285,7 +285,7 @@ class ProfileActionBottomSheet extends StatelessWidget {
         final searchService = SearchService();
         searchService.removeFromSearchHistory(username);
       } catch (e) {
-        print('[ProfileActionBottomSheet] 검색 기록 제거 실패: $e');
+        debugPrint('[ProfileActionBottomSheet] 검색 기록 제거 실패: $e');
       }
 
       // 🎯 친구 캐시 클리어
@@ -297,10 +297,10 @@ class ProfileActionBottomSheet extends StatelessWidget {
           );
           // 캐시 무효화를 위해 _lastFetchTime을 null로 설정
           friendProvider.fetchAllFriendData(forceRefresh: true);
-          print('[ProfileActionBottomSheet] 친구 캐시 클리어 완료');
+          debugPrint('[ProfileActionBottomSheet] 친구 캐시 클리어 완료');
         }
       } catch (e) {
-        print('[ProfileActionBottomSheet] 친구 캐시 클리어 실패: $e');
+        debugPrint('[ProfileActionBottomSheet] 친구 캐시 클리어 실패: $e');
       }
 
       // 🎯 그룹 캐시 클리어
@@ -317,10 +317,10 @@ class ProfileActionBottomSheet extends StatelessWidget {
             forceRefresh: true,
             friendProvider: friendProvider,
           );
-          print('[ProfileActionBottomSheet] 그룹 캐시 클리어 완료');
+          debugPrint('[ProfileActionBottomSheet] 그룹 캐시 클리어 완료');
         }
       } catch (e) {
-        print('[ProfileActionBottomSheet] 그룹 캐시 클리어 실패: $e');
+        debugPrint('[ProfileActionBottomSheet] 그룹 캐시 클리어 실패: $e');
       }
 
       // 🎯 차단 성공 후 처리
@@ -329,7 +329,7 @@ class ProfileActionBottomSheet extends StatelessWidget {
 
       // 콜백 실행
       if (callback != null) {
-        print('[ProfileActionBottomSheet] 콜백 실행');
+        debugPrint('[ProfileActionBottomSheet] 콜백 실행');
         callback();
       } else {
         // 콜백이 없으면 상위 Navigator로 프로필 페이지 닫기 시도
@@ -346,7 +346,7 @@ class ProfileActionBottomSheet extends StatelessWidget {
         ErrorHandler.showInfo(parentContext, '차단했습니다');
       }
     } catch (e) {
-      print('[ProfileActionBottomSheet] 차단 실패: $e');
+      debugPrint('[ProfileActionBottomSheet] 차단 실패: $e');
       if (parentContext != null && parentContext.mounted) {
         ErrorHandler.showError(parentContext, e.toString());
       }
@@ -354,17 +354,17 @@ class ProfileActionBottomSheet extends StatelessWidget {
   }
 
   void _handleReport(BuildContext context) async {
-    print('[ProfileActionBottomSheet] 신고 시작 - username: $username');
+    debugPrint('[ProfileActionBottomSheet] 신고 시작 - username: $username');
 
     // 바텀시트 닫기
     Navigator.of(context).pop();
-    print('[ProfileActionBottomSheet] 바텀시트 닫기 완료');
+    debugPrint('[ProfileActionBottomSheet] 바텀시트 닫기 완료');
 
     // 🎯 약간의 지연 후 신고 페이지 열기
     await Future.delayed(const Duration(milliseconds: 100));
 
     // 🎯 신고 페이지 열기 (스낵바는 신고 페이지에서 직접 표시)
-    print('[ProfileActionBottomSheet] 신고 페이지 열기 시작');
+    debugPrint('[ProfileActionBottomSheet] 신고 페이지 열기 시작');
     ProfileActionBottomSheet.showReportPage(
       context,
       username: username,
@@ -558,15 +558,15 @@ class _ReportPageState extends State<_ReportPage> {
         description: reason,
       );
 
-      print('[ReportPage] 신고 API 호출 성공');
+      debugPrint('[ReportPage] 신고 API 호출 성공');
 
       if (!mounted) return;
 
       // 🎯 스낵바 먼저 표시 (페이지 닫기 전)
-      print('[ReportPage] 신고 성공 메시지 표시');
+      debugPrint('[ReportPage] 신고 성공 메시지 표시');
       if (context.mounted) {
         ErrorHandler.showInfo(context, l10n.t('report_success'));
-        print('[ReportPage] 스낵바 표시 완료');
+        debugPrint('[ReportPage] 스낵바 표시 완료');
       }
 
       await Future.delayed(const Duration(seconds: 1));
@@ -574,10 +574,10 @@ class _ReportPageState extends State<_ReportPage> {
       if (!mounted) return;
 
       Navigator.of(context).pop();
-      print('[ReportPage] 페이지 닫기 완료');
+      debugPrint('[ReportPage] 페이지 닫기 완료');
     } catch (e) {
       // 상세 오류 로그는 콘솔에만 출력 (사용자에게는 일반화된 메시지 표시)
-      print('[ReportPage] ❌ 유저 신고 실패: $e');
+      debugPrint('[ReportPage] ❌ 유저 신고 실패: $e');
       if (context.mounted) {
         // 일반화된 오류 메시지 표시 (로케일 적용)
         ErrorHandler.showError(context, l10n.t('report_fail'));

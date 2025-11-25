@@ -44,7 +44,12 @@ import 'package:doppy/editor/component/link_component.dart';
 import 'package:doppy/editor/component/divider_component.dart';
 import 'package:doppy/editor/component/paragraph_component.dart';
 import 'package:doppy/editor/component/clip_component.dart'
-    show ClipNode, videoPlayerControllers, ClipComponentBuilder;
+    show
+        ClipNode,
+        videoPlayerControllers,
+        ClipComponentBuilder,
+        readerVideoControllers;
+import 'package:video_player/video_player.dart';
 import 'package:doppy/editor/service/editor_service.dart';
 import 'package:doppy/editor/service/drag_service.dart';
 import 'package:doppy/editor/service/post_reader_service.dart';
@@ -58,13 +63,25 @@ class PostReaderScreen extends StatefulWidget {
     required this.exported,
     this.heroTag,
     this.fromProfile = false, // 프로필에서 들어왔는지 여부
+    this.initialAction, // 🎯 초기 액션 (댓글/좋아요 탭 자동 열기)
+    this.scrollToCommentId, // 🎯 특정 댓글로 스크롤할 댓글 ID
+    this.preloadedContent, // 🎯 딥링크로 들어올 때 이미 로드된 content (중복 로딩 방지)
   });
   final Map<String, dynamic> exported;
   final String? heroTag; // 홈 썸네일과 자연스러운 연결(Hero)
   final bool fromProfile; // 프로필에서 들어왔는지 여부
+  final PostReaderInitialAction? initialAction; // 🎯 초기 액션
+  final String? scrollToCommentId; // 🎯 특정 댓글로 스크롤할 댓글 ID
+  final Map<String, dynamic>? preloadedContent; // 🎯 이미 로드된 content (딥링크용)
 
   @override
   State<PostReaderScreen> createState() => _PostReaderScreenState();
+}
+
+/// 🎯 PostReaderScreen 초기 액션 타입
+enum PostReaderInitialAction {
+  showComments, // 댓글 탭 열기
+  showLikes, // 좋아요 탭 열기
 }
 
 class _PostReaderScreenState extends State<PostReaderScreen>
@@ -92,6 +109,7 @@ class _PostReaderScreenState extends State<PostReaderScreen>
   double _lastScrollOffset = 0.0;
   double _pullAccum = 0.0; // 상단에서 아래로 당겨 닫기 누적 거리
   double _horizontalDragDistance = 0.0; // 오른쪽으로 밀어 닫기 누적 거리
+  DateTime? _lastScrollUpdate; // 🎯 스크롤 업데이트 throttling용
 
   // 앱바 표시/숨김을 위한 변수들
   bool _showAppBar = true; // 상단 이미지 제거 → 기본 표시
@@ -118,8 +136,6 @@ class _PostReaderScreenState extends State<PostReaderScreen>
   bool _isVideoViewer = false;
   String? _currentImageUrl;
   List<String> _allImageUrls = [];
-  String? _currentMediaId;
-  List<String> _allMediaIds = [];
   late final AnimationController _imageViewerCtrl;
   late final Animation<double> _imageViewerFade;
 
@@ -141,22 +157,22 @@ class _PostReaderScreenState extends State<PostReaderScreen>
     if (_lastTapPosition == null) return;
 
     final node = _editorService.findNodeAtPosition(_lastTapPosition!);
-    print(
+    debugPrint(
       '[PostReaderScreen] 🔍 찾은 노드: ${node?.runtimeType} (ID: ${node?.id})',
     );
 
     if (node == null) {
-      print('[PostReaderScreen] ⚠️ 노드를 찾을 수 없음');
+      debugPrint('[PostReaderScreen] ⚠️ 노드를 찾을 수 없음');
       return;
     }
 
     // 노드 타입에 따른 분기 처리
-    print('[PostReaderScreen] 🎯 노드 타입 분기: ${node.runtimeType}');
+    debugPrint('[PostReaderScreen] 🎯 노드 타입 분기: ${node.runtimeType}');
 
     // 🎯 switch 대신 if-else 사용 (AppImageNode는 ImageNode 상속이지만 runtimeType이 다름)
     if (node is ClipNode) {
       final clipNode = node;
-      print('  - Clip: ${clipNode.url}');
+      debugPrint('  - Clip: ${clipNode.url}');
 
       // 1) 읽기모드: 빈 영역 탭이면 fullscreen, 특정 영역(중앙/모서리) 탭이면 액션
       final action = _dragService.handleClipNodeTap(
@@ -170,34 +186,11 @@ class _PostReaderScreenState extends State<PostReaderScreen>
 
       // 2) 액션이 없으면 전체화면으로 열기 (프리로드 보장)
       if (clipNode.url.isNotEmpty) {
-        // 프리로드 컨트롤러 확인
-        final controller = PostReaderService.getPreloadedController(
-          clipNode.url,
+        // 🎯 ClipComponent에서 생성한 컨트롤러를 가져와서 FullscreenMediaViewer에 전달
+        final controller = readerVideoControllers[clipNode.url];
+        debugPrint(
+          '[PostReaderScreen] ✅ 풀스크린 뷰어 열기: ${clipNode.url} (컨트롤러: ${controller != null ? "있음" : "없음"})',
         );
-
-        if (controller == null) {
-          try {
-            // 프리로드 안 되어 있으면 즉시 프리로드
-            await _postReaderService.preloadClips(context, [
-              clipNode.url,
-            ], maxCount: 1);
-            print('[PostReaderScreen] 즉시 프리로드 완료');
-          } catch (e) {
-            print('[PostReaderScreen] 즉시 프리로드 실패: $e');
-          }
-        } else {
-          print('[PostReaderScreen] ✅ 비디오가 이미 프리로드됨');
-        }
-
-        // 🎯 ClipNode의 metadata에서 mediaId 추출
-        String? mediaId;
-        try {
-          final meta = clipNode.metadata;
-          mediaId = meta['mediaId']?.toString();
-          print('[PostReaderScreen] 🎬 ClipNode mediaId: $mediaId');
-        } catch (e) {
-          print('[PostReaderScreen] ❌ ClipNode mediaId 추출 실패: $e');
-        }
 
         setState(() {
           _previousAppBarState = _showAppBar; // 🎯 현재 상태 저장
@@ -205,8 +198,6 @@ class _PostReaderScreenState extends State<PostReaderScreen>
           _allImageUrls = [clipNode.url];
           _isVideoViewer = true;
           _showImageViewer = true;
-          _currentMediaId = mediaId; // 🎯 mediaId 설정
-          _allMediaIds = mediaId != null ? [mediaId] : []; // 🎯 mediaIds 배열 설정
           _showAppBar = false; // 하단 바 숨김
           _bottomBarAnimationDuration = 50; // 빠르게 숨김
         });
@@ -214,7 +205,7 @@ class _PostReaderScreenState extends State<PostReaderScreen>
       }
     } else if (node is LinkNode) {
       final linkNode = node;
-      print('  - Link: ${linkNode.url}');
+      debugPrint('  - Link: ${linkNode.url}');
       final raw = linkNode.url.trim();
       if (raw.isEmpty) return;
       final String normalized =
@@ -242,7 +233,7 @@ class _PostReaderScreenState extends State<PostReaderScreen>
       }
     } else if (node is AppImageNode) {
       final imageNode = node;
-      print('  - Image: ${imageNode.imageUrl}');
+      debugPrint('  - Image: ${imageNode.imageUrl}');
 
       // 스포일러 상태 확인
       final nodeService = NodeComponentService();
@@ -269,40 +260,17 @@ class _PostReaderScreenState extends State<PostReaderScreen>
       if (hasSpoiler) {
         nodeService.setSpoiler(imageNode.id, false);
         setState(() {}); // UI 즉시 업데이트
-        print('[PostReaderScreen] 이미지 스포일러 해제: ${imageNode.id}');
+        debugPrint('[PostReaderScreen] 이미지 스포일러 해제: ${imageNode.id}');
         return; // 스포일러 해제만 하고 종료
       }
 
       // 스포일러가 없으면 full viewer 열기
-      // mediaId 메타 추출
-      String? mediaId;
-      try {
-        final meta = (imageNode as dynamic).metadata as Map<String, dynamic>?;
-        print('[PostReaderScreen] 🔍 ImageNode metadata: $meta');
-
-        // 🎯 서버 응답: data.mediaId 구조 확인
-        if (meta != null) {
-          // data 안에 mediaId가 있는 경우
-          if (meta.containsKey('mediaId')) {
-            mediaId = meta['mediaId']?.toString();
-            print('[PostReaderScreen] ✅ mediaId from meta[mediaId]: $mediaId');
-          }
-          // 또는 data 객체가 있는 경우
-          else if (meta.containsKey('data')) {
-            final data = meta['data'] as Map<String, dynamic>?;
-            mediaId = data?['mediaId']?.toString();
-          }
-        }
-      } catch (e) {}
-
       setState(() {
         _previousAppBarState = _showAppBar; // 🎯 현재 상태 저장
         _currentImageUrl = imageNode.imageUrl;
         _allImageUrls = [_currentImageUrl!];
         _isVideoViewer = false;
         _showImageViewer = true;
-        _currentMediaId = mediaId;
-        _allMediaIds = mediaId != null ? [mediaId] : [];
         _showAppBar = false; // 하단 바 숨김
         _bottomBarAnimationDuration = 50; // 빠르게 숨김
       });
@@ -334,7 +302,7 @@ class _PostReaderScreenState extends State<PostReaderScreen>
       if (hasSpoiler) {
         nodeService.setSpoiler(imageRowNode.id, false);
         setState(() {}); // UI 즉시 업데이트
-        print('[PostReaderScreen] 이미지 행 스포일러 해제: ${imageRowNode.id}');
+        debugPrint('[PostReaderScreen] 이미지 행 스포일러 해제: ${imageRowNode.id}');
         return; // 스포일러 해제만 하고 종료
       }
 
@@ -350,49 +318,19 @@ class _PostReaderScreenState extends State<PostReaderScreen>
           imageCount - 1,
         );
 
-        // 🎯 ImageRowNode의 메타데이터에서 각 이미지의 mediaId 추출
-        List<String> mediaIds = [];
-        try {
-          final meta = imageRowNode.metadata;
-          print('[PostReaderScreen] 🔍 ImageRowNode metadata: $meta');
-          print(
-            '[PostReaderScreen] 🔍 ImageRowNode metadata keys: ${meta.keys}',
-          );
-
-          final mediaIdList = meta['mediaIds'] as List?;
-          print(
-            '[PostReaderScreen] 🔍 mediaIdList from meta[mediaIds]: $mediaIdList',
-          );
-
-          if (mediaIdList != null) {
-            mediaIds = mediaIdList.map((e) => e?.toString() ?? '').toList();
-            print('[PostReaderScreen] ✅ ImageRow mediaIds 추출 성공: $mediaIds');
-          } else {
-            print('[PostReaderScreen] ⚠️ meta[mediaIds]가 null');
-          }
-        } catch (e) {
-          print('[PostReaderScreen] ❌ ImageRow mediaId 추출 실패: $e');
-        }
-
-        print(
-          '[PostReaderScreen] clickedIndex: $clickedIndex, mediaIds: $mediaIds',
-        );
-
         setState(() {
           _previousAppBarState = _showAppBar; // 🎯 현재 상태 저장
           _allImageUrls = imageRowNode.imageUrls;
           _currentImageUrl = imageRowNode.imageUrls[clickedIndex];
           _isVideoViewer = false;
           _showImageViewer = true;
-          _currentMediaId = mediaIds.isNotEmpty ? mediaIds[clickedIndex] : null;
-          _allMediaIds = mediaIds;
           _showAppBar = false; // 하단 바 숨김
           _bottomBarAnimationDuration = 50; // 빠르게 숨김
         });
         _imageViewerCtrl.forward(from: 0.0);
       }
     } else if (node is DividerNode) {
-      print('  - Divider');
+      debugPrint('  - Divider');
     } else if (node is ParagraphNode) {
       final paragraphNode = node;
 
@@ -496,12 +434,12 @@ class _PostReaderScreenState extends State<PostReaderScreen>
   }
 
   void _triggerClipNodeAction(String nodeId, String action) {
-    print('[ClipNode] Action triggered: $action for node: $nodeId');
+    debugPrint('[ClipNode] Action triggered: $action for node: $nodeId');
 
     // 문서에서 ClipNode 찾기
     final node = _document.getNodeById(nodeId);
     if (node is! ClipNode || node.url.isEmpty) {
-      print('[ClipNode] ClipNode를 찾을 수 없거나 URL이 비어있습니다');
+      debugPrint('[ClipNode] ClipNode를 찾을 수 없거나 URL이 비어있습니다');
       return;
     }
 
@@ -600,14 +538,14 @@ class _PostReaderScreenState extends State<PostReaderScreen>
       await _likeService.togglePostLike(postId);
       // setState() 제거 - LikeService 리스너가 자동으로 UI 업데이트
     } catch (e) {
-      print('[PostReaderScreen] 좋아요 처리 중 오류가 발생했습니다: $e');
+      debugPrint('[PostReaderScreen] 좋아요 처리 중 오류가 발생했습니다: $e');
     }
   }
 
   void _deletePost() async {
     final postId = widget.exported['id']?.toString();
     if (postId == null || postId.isEmpty) {
-      print('[PostReaderScreen] 유효하지 않은 포스트 ID: $postId');
+      debugPrint('[PostReaderScreen] 유효하지 않은 포스트 ID: $postId');
       return;
     }
 
@@ -647,7 +585,7 @@ class _PostReaderScreenState extends State<PostReaderScreen>
           // 🎯 그룹 포스트 캐시 무효화 (동기화)
           ManageGroupScreen.invalidateMultipleGroupsPostsCache(sharedGroupIds);
 
-          print(
+          debugPrint(
             '[PostReaderScreen] 관련 그룹 postCount 및 포스트 캐시 동기화 완료: ${sharedGroupIds.length}개 그룹',
           );
         }
@@ -655,11 +593,11 @@ class _PostReaderScreenState extends State<PostReaderScreen>
         else if (accessLevel == 'FRIENDS') {
           // 🎯 allFriends 그룹 포스트 캐시 무효화 (동기화)
           ManageGroupScreen.invalidateGroupPostsCache(-1);
-          print('[PostReaderScreen] allFriends 그룹 포스트 캐시 무효화 완료');
+          debugPrint('[PostReaderScreen] allFriends 그룹 포스트 캐시 무효화 완료');
         }
         // PUBLIC/PRIVATE는 그룹 postCount에 영향 없음
       } catch (e) {
-        print('[PostReaderScreen] 그룹 postCount 및 포스트 캐시 동기화 실패: $e');
+        debugPrint('[PostReaderScreen] 그룹 postCount 및 포스트 캐시 동기화 실패: $e');
       }
 
       if (mounted) {
@@ -796,10 +734,10 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                 accessLevel: accessLevel,
                 sharedGroupIds: sharedGroupIds,
               );
-              print('[PostReaderScreen] 프로필 피드 선택적 업데이트 완료 (공개범위 변경)');
+              debugPrint('[PostReaderScreen] 프로필 피드 선택적 업데이트 완료 (공개범위 변경)');
             }
           } catch (e) {
-            print('[PostReaderScreen] 프로필 피드 선택적 업데이트 실패: $e');
+            debugPrint('[PostReaderScreen] 프로필 피드 선택적 업데이트 실패: $e');
           }
         }
       },
@@ -843,7 +781,7 @@ class _PostReaderScreenState extends State<PostReaderScreen>
       });
       // WebSocket 연결 해제
       _commentService.disconnectWebSocket();
-      print('[PostReaderScreen] 댓글창 닫기 - WebSocket 연결 해제');
+      debugPrint('[PostReaderScreen] 댓글창 닫기 - WebSocket 연결 해제');
     });
   }
 
@@ -855,6 +793,9 @@ class _PostReaderScreenState extends State<PostReaderScreen>
       _showAppBar = false; // 하단 바 숨김
       _bottomBarAnimationDuration = 50; // 빠르게 숨김
     });
+
+    // 🎯 애니메이션 컨트롤러 리셋 후 forward
+    _likedUsersOverlayCtrl.reset();
     _likedUsersOverlayCtrl.forward(from: 0.0);
   }
 
@@ -897,7 +838,7 @@ class _PostReaderScreenState extends State<PostReaderScreen>
     _likeService.setInitialLikeData(postId, actualIsLiked, actualLikeCount);
     _commentService.setInitialCommentCount(actualCommentCount); // 🎯 초기 댓글 수 설정
 
-    print(
+    debugPrint(
       '[PostReaderScreen] 실제 데이터 - 좋아요: $actualLikeCount, 좋아요 상태: $actualIsLiked, 댓글: $actualCommentCount',
     );
 
@@ -915,18 +856,17 @@ class _PostReaderScreenState extends State<PostReaderScreen>
     final content = response['content'] as Map<String, dynamic>? ?? {};
 
     // 🎯 서버에서 받은 content 데이터 로그
-    print('[PostReaderScreen] 🔍 서버 응답 content 키: ${content.keys}');
+    debugPrint('[PostReaderScreen] 🔍 서버 응답 content 키: ${content.keys}');
     if (content.containsKey('nodes')) {
       final nodes = content['nodes'] as List?;
-      print('[PostReaderScreen] 🔍 nodes 개수: ${nodes?.length}');
+      debugPrint('[PostReaderScreen] 🔍 nodes 개수: ${nodes?.length}');
       // video 노드 찾기
       if (nodes != null) {
         for (final node in nodes) {
           if (node is Map && node['type'] == 'video') {
-            print('[PostReaderScreen] 🎬 서버 응답 video 노드: $node');
+            debugPrint('[PostReaderScreen] 🎬 서버 응답 video 노드: $node');
             final data = node['data'] as Map?;
-            print('[PostReaderScreen] 🎬 video data: $data');
-            print('[PostReaderScreen] 🎬 video mediaId: ${data?['mediaId']}');
+            debugPrint('[PostReaderScreen] 🎬 video data: $data');
           }
         }
       }
@@ -940,34 +880,9 @@ class _PostReaderScreenState extends State<PostReaderScreen>
     // 이미지와 클립 URL 추출 및 미리 로드 (비동기, 화면 그린 뒤 시작)
     if (mounted) {
       final imageUrls = _postReaderService.extractImageUrls(content);
-      print('[PostReaderScreen] 이미지 프리로드 대상: ${imageUrls.length}개');
+      debugPrint('[PostReaderScreen] 이미지 프리로드 대상: ${imageUrls.length}개');
       // 이미지는 상위 6개만 선 프리로드
       await _postReaderService.preloadImages(context, imageUrls, maxCount: 6);
-
-      final clipUrls = _postReaderService.extractClipUrls(content);
-      if (clipUrls.isNotEmpty) {
-        // 첫 번째 클립은 동기 프리로드(타임아웃 가드) → 완전 무쉬머 보장
-        try {
-          await _postReaderService
-              .preloadClips(context, [clipUrls.first], maxCount: 1)
-              .timeout(const Duration(milliseconds: 1000));
-        } catch (e) {
-          print('[PostReaderScreen] 첫 클립 동기 프리로드 타임아웃/실패: $e');
-        }
-
-        // 나머지는 화면 그린 뒤 비동기 프리로드 전체 실행
-        WidgetsBinding.instance.addPostFrameCallback((_) async {
-          try {
-            final rest = clipUrls.skip(1).toList();
-            if (rest.isEmpty) return;
-            // ignore: discarded_futures
-            _postReaderService.preloadClips(context, rest);
-            print('[PostReaderScreen] 나머지 클립 비동기 프리로드 시작: ${rest.length}개');
-          } catch (e) {
-            print('[PostReaderScreen] 클립 프리로드(비동기) 오류: $e');
-          }
-        });
-      }
     }
 
     return content;
@@ -981,7 +896,16 @@ class _PostReaderScreenState extends State<PostReaderScreen>
     try {
       NodeComponentService().clearSpoilers();
     } catch (_) {}
-    _document = _postReaderService.rebuildDocumentForRead(widget.exported);
+
+    // 🎯 딥링크로 들어온 경우: preloadedContent를 사용하여 문서 생성
+    // 일반 진입: widget.exported 사용 (피드 데이터에 mediaId 포함 가능)
+    if (widget.preloadedContent != null) {
+      final merged = Map<String, dynamic>.from(widget.exported);
+      merged['content'] = widget.preloadedContent;
+      _document = _postReaderService.rebuildDocumentForRead(merged);
+    } else {
+      _document = _postReaderService.rebuildDocumentForRead(widget.exported);
+    }
 
     // 🎯 공개범위 데이터 초기화: widget.exported에서 먼저 읽고, 필요시 서버 조회
     _initializeAccessLevelFromExported();
@@ -1032,22 +956,48 @@ class _PostReaderScreenState extends State<PostReaderScreen>
 
     final postId = widget.exported['id']?.toString();
     if (postId != null && postId.isNotEmpty) {
-      _commentService.setPostId(postId);
+      // 🎯 딥링크로 들어온 경우: 이미 로드된 데이터 사용 (중복 로딩 방지)
+      if (widget.preloadedContent != null) {
+        debugPrint('[PostReaderScreen] 딥링크로 들어옴 - 이미 로드된 데이터 사용');
 
-      // 🎯 widget.exported에서 초기 댓글 수 설정 (포스트 목록에서 가져온 값)
-      final initialCommentCount = widget.exported['commentCount'] as int? ?? 0;
-      _commentService.setInitialCommentCount(initialCommentCount);
+        // 이미 로드된 content를 Future로 감싸서 반환
+        _contentFuture = Future.value(widget.preloadedContent);
 
-      // 🎯 초기 댓글 로드 (타이밍 시어 없이 즉시 로드)
-      _commentService.loadComments(size: 20);
+        // 좋아요/댓글 데이터는 이미 딥링크 핸들러에서 초기화됨
+        // 공개범위 정보만 업데이트
+        final parsed = AccessLevelParser.parseAccessLevelFromContent({
+          'content': widget.preloadedContent,
+          'accessLevel': widget.exported['accessLevel'],
+          'sharedGroupIds': widget.exported['sharedGroupIds'],
+          'sharedGroupNames': widget.exported['sharedGroupNames'],
+        });
+        if (mounted) {
+          setState(() {
+            _accessLevel = parsed['accessLevel'] as String? ?? 'PUBLIC';
+            _sharedGroupIds = parsed['sharedGroupIds'] as List<int>?;
+            _sharedGroupNames = parsed['sharedGroupNames'] as List<String>?;
+          });
+        }
+      } else {
+        // 일반 진입: 서버에서 데이터 로드
+        _commentService.setPostId(postId);
 
-      // 🎯 좋아요 사용자 목록 미리 로드 (비동기, 백그라운드)
-      LikedUsersBottomSheet.preloadLikedUsers(postId).catchError((e) {
-        print('[PostReaderScreen] 좋아요 사용자 목록 미리 로드 실패: $e');
-      });
+        // 🎯 widget.exported에서 초기 댓글 수 설정 (포스트 목록에서 가져온 값)
+        final initialCommentCount =
+            widget.exported['commentCount'] as int? ?? 0;
+        _commentService.setInitialCommentCount(initialCommentCount);
 
-      // 본문 로드 시 실제 데이터로 좋아요/댓글 초기화 (_loadContentWithPreloadedMedia에서 처리)
-      _contentFuture = _loadContentWithPreloadedMedia(postId);
+        // 🎯 초기 댓글 로드 (타이밍 시어 없이 즉시 로드)
+        _commentService.loadComments(size: 20);
+
+        // 🎯 좋아요 사용자 목록 미리 로드 (비동기, 백그라운드)
+        LikedUsersBottomSheet.preloadLikedUsers(postId).catchError((e) {
+          debugPrint('[PostReaderScreen] 좋아요 사용자 목록 미리 로드 실패: $e');
+        });
+
+        // 본문 로드 시 실제 데이터로 좋아요/댓글 초기화 (_loadContentWithPreloadedMedia에서 처리)
+        _contentFuture = _loadContentWithPreloadedMedia(postId);
+      }
 
       // 0.5초 후 로딩 로고 표시
       Future.delayed(const Duration(milliseconds: 500), () {
@@ -1057,6 +1007,49 @@ class _PostReaderScreenState extends State<PostReaderScreen>
           });
         }
       });
+
+      // 🎯 초기 액션 처리 (댓글/좋아요 탭 자동 열기)
+      if (widget.initialAction != null) {
+        // 🎯 딥링크로 들어온 경우 (preloadedContent 있음): 바로 실행
+        // 일반 진입의 경우: _contentFuture 완료 후 실행
+        if (widget.preloadedContent != null) {
+          // 딥링크: 데이터가 이미 로드되어 있으므로 화면 빌드 완료 후 즉시 실행
+          // 애니메이션 컨트롤러가 초기화되도록 두 프레임 대기
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted) {
+                debugPrint('[PostReaderScreen] 🎯 딥링크 - initialAction 즉시 실행');
+                if (widget.initialAction ==
+                    PostReaderInitialAction.showComments) {
+                  _showCommentBottomSheet();
+                } else if (widget.initialAction ==
+                    PostReaderInitialAction.showLikes) {
+                  debugPrint('[PostReaderScreen] 🎯 좋아요 시트 즉시 열기');
+                  _openLikedUsersOverlay();
+                }
+              }
+            });
+          });
+        } else {
+          // 일반 진입: 본문 로드 완료 후 즉시 처리 (최소 딜레이)
+          _contentFuture?.then((_) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              // 화면 안정화를 위한 최소 딜레이 (100ms)
+              Future.delayed(const Duration(milliseconds: 100), () {
+                if (mounted) {
+                  if (widget.initialAction ==
+                      PostReaderInitialAction.showComments) {
+                    _showCommentBottomSheet();
+                  } else if (widget.initialAction ==
+                      PostReaderInitialAction.showLikes) {
+                    _openLikedUsersOverlay();
+                  }
+                }
+              });
+            });
+          });
+        }
+      }
     }
 
     // 서비스 변경사항 감지
@@ -1082,9 +1075,47 @@ class _PostReaderScreenState extends State<PostReaderScreen>
     _likedUsersOverlayCtrl.dispose();
     _imageViewerCtrl.dispose();
 
-    // 프리로드된 비디오 컨트롤러 정리
+    // 프리로드된 비디오 컨트롤러 정리 (구버전 호환)
     PostReaderService.disposeAllPreloaded();
-    print('[PostReaderScreen] 프리로드 컨트롤러 모두 정리');
+    debugPrint('[PostReaderScreen] 프리로드 컨트롤러 모두 정리');
+
+    // 🎯 reader 모드에서 생성한 모든 비디오 컨트롤러 강제 정지 및 정리
+    // 먼저 목록을 복사 (dispose 중에 맵이 변경될 수 있음)
+    final controllersToDispose = <VideoPlayerController>[];
+    final urlsToRemove = <String>[];
+
+    for (final entry in readerVideoControllers.entries) {
+      controllersToDispose.add(entry.value);
+      urlsToRemove.add(entry.key);
+    }
+
+    // 모든 컨트롤러 강제 정지 및 dispose
+    for (int i = 0; i < controllersToDispose.length; i++) {
+      final controller = controllersToDispose[i];
+      final url = urlsToRemove[i];
+      try {
+        if (controller.value.isInitialized) {
+          // 강제로 일시정지
+          controller.pause();
+          debugPrint('[PostReaderScreen] 컨트롤러 일시정지: $url');
+          // 리스너 제거 시도
+          try {
+            controller.removeListener(() {});
+          } catch (_) {}
+          // dispose
+          controller.dispose();
+          debugPrint('[PostReaderScreen] 컨트롤러 dispose: $url');
+        }
+      } catch (e) {
+        debugPrint('[PostReaderScreen] 컨트롤러 정리 오류 ($url): $e');
+      }
+    }
+
+    // 맵 clear
+    readerVideoControllers.clear();
+    debugPrint(
+      '[PostReaderScreen] reader 비디오 컨트롤러 모두 정리 완료 (${controllersToDispose.length}개)',
+    );
 
     // 화면 종료 시 스포일러 세션 상태 초기화 (프레임 잠금 중 알림 방지)
     try {
@@ -1097,6 +1128,15 @@ class _PostReaderScreenState extends State<PostReaderScreen>
     final double nextOffset = _scrollCtrl.offset;
     final double delta = nextOffset - _lastScrollOffset;
     const double threshold = 4.0; // 미세 스크롤 무시
+
+    // 🎯 성능 최적화: 스크롤 업데이트 throttling (16ms = 60fps)
+    final now = DateTime.now();
+    if (_lastScrollUpdate != null &&
+        now.difference(_lastScrollUpdate!).inMilliseconds < 16) {
+      _lastScrollOffset = nextOffset;
+      return; // 너무 자주 업데이트하지 않음
+    }
+    _lastScrollUpdate = now;
 
     bool nextShow = _showAppBar;
 
@@ -1113,11 +1153,16 @@ class _PostReaderScreenState extends State<PostReaderScreen>
         nextShow != _showAppBar || nextOffset != _currentScrollOffset;
 
     if (shouldUpdate) {
-      setState(() {
-        _showAppBar = nextShow;
-        _currentScrollOffset = nextOffset; // 🎯 현재 스크롤 위치 업데이트
-        _previousAppBarState = nextShow; // 🎯 스크롤로 변경된 상태도 저장
-        _bottomBarAnimationDuration = 300; // 일반 속도
+      // 🎯 성능 최적화: setState를 다음 프레임으로 지연
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          setState(() {
+            _showAppBar = nextShow;
+            _currentScrollOffset = nextOffset; // 🎯 현재 스크롤 위치 업데이트
+            _previousAppBarState = nextShow; // 🎯 스크롤로 변경된 상태도 저장
+            _bottomBarAnimationDuration = 300; // 일반 속도
+          });
+        }
       });
     }
 
@@ -1134,6 +1179,10 @@ class _PostReaderScreenState extends State<PostReaderScreen>
     final String postAuthor = (widget.exported['author'] ?? '').toString();
     final bool isMyPost =
         currentUser != null && currentUser.username == postAuthor;
+
+    // 🎯 성능 최적화: ThemeProvider를 한 번만 읽어서 변수로 저장
+    final isDarkMode =
+        context.watch<ThemeProvider>().themeMode == ThemeMode.dark;
 
     return WillPopScope(
       onWillPop: () async {
@@ -1166,12 +1215,14 @@ class _PostReaderScreenState extends State<PostReaderScreen>
               }
             });
           } else {
-            Navigator.of(context).pop({
-              'accessLevelChanged': true,
-              'postId': widget.exported['id']?.toString(),
-              'accessLevel': _accessLevel,
-              'sharedGroupIds': _sharedGroupIds,
-            });
+            if (mounted) {
+              Navigator.of(context).pop({
+                'accessLevelChanged': true,
+                'postId': widget.exported['id']?.toString(),
+                'accessLevel': _accessLevel,
+                'sharedGroupIds': _sharedGroupIds,
+              });
+            }
           }
           return false; // Navigator.pop을 호출했으므로 false 반환
         }
@@ -1330,9 +1381,9 @@ class _PostReaderScreenState extends State<PostReaderScreen>
               // 최신 데이터 저장 (수정하기에서 사용)
               _currentExportedData = merged;
 
-              // 🎯 문서가 이미 초기화되었고 내용이 동일하면 재생성하지 않음 (성능 최적화)
-              if (!_documentInitialized) {
-                // 최신 본문으로 문서 재구성 (최초 1회만)
+              // 🎯 딥링크로 들어온 경우: 이미 initState에서 preloadedContent로 문서 생성했으므로 재생성 불필요
+              // 일반 진입: 최신 본문으로 문서 재구성 (최초 1회만)
+              if (!_documentInitialized && widget.preloadedContent == null) {
                 _document = _postReaderService.rebuildDocumentForRead(merged);
                 _editor = createDefaultDocumentEditor(
                   document: _document,
@@ -1344,7 +1395,10 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                 );
                 _editorService.setDocumentLayoutKey(_layoutKey);
                 _dragService = DragService(editorService: _editorService);
-                _documentInitialized = true; // 🎯 초기화 완료 표시
+                _documentInitialized = true;
+              } else if (widget.preloadedContent != null) {
+                // 딥링크: 이미 initState에서 문서 생성했으므로 플래그만 설정
+                _documentInitialized = true;
               }
             }
 
@@ -1365,19 +1419,21 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                 // 전체 스크롤
                 NotificationListener<ScrollNotification>(
                   onNotification: (n) {
-                    // 상단에서 아래로 당길 때 누적
-                    if (n is OverscrollNotification &&
-                        n.overscroll < 0 &&
-                        _scrollCtrl.hasClients &&
-                        _scrollCtrl.offset <= 0.0) {
-                      _pullAccum += (-n.overscroll);
-                    }
-                    // 드래그 종료 시 닫기 판단
+                    // 🎯 성능 최적화: ScrollEndNotification만 처리 (스크롤 중에는 처리 안 함)
                     if (n is ScrollEndNotification) {
-                      if (_pullAccum >= 100.0) {
+                      // 상단에서 아래로 당긴 거리 확인
+                      if (_scrollCtrl.hasClients &&
+                          _scrollCtrl.offset <= 0.0 &&
+                          _pullAccum >= 100.0) {
                         Navigator.of(context).maybePop();
                       }
                       _pullAccum = 0.0;
+                    } else if (n is OverscrollNotification &&
+                        n.overscroll < 0 &&
+                        _scrollCtrl.hasClients &&
+                        _scrollCtrl.offset <= 0.0) {
+                      // 상단에서 아래로 당길 때만 누적 (스크롤 중에는 처리 안 함)
+                      _pullAccum += (-n.overscroll);
                     }
                     return false;
                   },
@@ -1386,7 +1442,7 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                         HitTestBehavior.translucent, // 🎯 자식이 터치를 소비해도 부모도 받음
                     onTapUp: (details) {
                       _lastTapPosition = details.globalPosition;
-                      print(
+                      debugPrint(
                         '[PostReaderScreen] 🖱️ 탭 감지: ${details.globalPosition}',
                       );
                       _handleTap();
@@ -1413,6 +1469,8 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                       child: CustomScrollView(
                         controller: _scrollCtrl,
                         physics: const ClampingScrollPhysics(),
+                        // 🎯 성능 최적화: cacheExtent 설정 (스크롤 성능 향상)
+                        cacheExtent: 1000,
                         slivers: [
                           SliverSafeArea(
                             top: true,
@@ -1420,7 +1478,7 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                             sliver: SliverToBoxAdapter(
                               child: GestureDetector(
                                 onTap: () {
-                                  print('postAuthor: $postAuthor');
+                                  debugPrint('postAuthor: $postAuthor');
 
                                   if (postAuthor.isEmpty ||
                                       postAuthor ==
@@ -1489,19 +1547,22 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                               SingleImageComponentBuilder(
                                 dragService: _dragService,
                                 isEditing: false, // 읽기 모드
+                                isDarkMode: isDarkMode, // 🎯 성능 최적화: 변수 사용
                               ),
                               RowImageComponentBuilder(
                                 dragService: _dragService,
                                 isEditing: false, // 읽기 모드
+                                isDarkMode: isDarkMode, // 🎯 성능 최적화: 변수 사용
                               ),
                               LinkComponentBuilder(
                                 isEditing: false,
-                                isDarkMode:
-                                    context.watch<ThemeProvider>().themeMode ==
-                                    ThemeMode.dark,
+                                isDarkMode: isDarkMode, // 🎯 성능 최적화: 변수 사용
                               ),
                               DividerComponentBuilder(),
-                              ClipComponentBuilder(dragService: _dragService),
+                              ClipComponentBuilder(
+                                dragService: _dragService,
+                                isDarkMode: isDarkMode,
+                              ),
                               CustomParagraphComponentBuilder(
                                 dragService: _dragService,
                                 editorService: _editorService,
@@ -1613,24 +1674,20 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                   ),
                 ),
 
+                // 🎯 성능 최적화: BackdropFilter 제거 (스크롤 성능 향상)
                 Positioned(
                   top: 0,
                   left: 0,
                   right: 0,
-                  child: ClipRRect(
-                    child: BackdropFilter(
-                      filter: ui.ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-                      child: Container(
-                        height: 35,
-                        decoration: BoxDecoration(
-                          color: Theme.of(
-                            context,
-                          ).colorScheme.background.withOpacity(0.9),
-                          borderRadius: BorderRadius.only(
-                            topLeft: Radius.circular(20),
-                            topRight: Radius.circular(20),
-                          ),
-                        ),
+                  child: Container(
+                    height: 35,
+                    decoration: BoxDecoration(
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.background.withOpacity(0.95),
+                      borderRadius: BorderRadius.only(
+                        topLeft: Radius.circular(20),
+                        topRight: Radius.circular(20),
                       ),
                     ),
                   ),
@@ -1683,7 +1740,7 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                             ),
                           );
                         } else {
-                          print('[PostReaderScreen] postId가 없습니다');
+                          debugPrint('[PostReaderScreen] postId가 없습니다');
                         }
                       },
                       onDelete: _deletePost,
@@ -1747,6 +1804,7 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                         return CommentBottomSheet(
                           title: widget.exported['title'] ?? '',
                           commentService: _commentService,
+                          scrollToCommentId: widget.scrollToCommentId,
                         );
                       },
                     ),
@@ -1757,10 +1815,13 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                     child: AnimatedBuilder(
                       animation: _likedUsersFade,
                       builder: (context, _) {
-                        return LikedUsersBottomSheet(
-                          postId: widget.exported['id']?.toString() ?? '',
-                          likeCount: _likeService.getPostLikeCount(
-                            widget.exported['id']?.toString() ?? '',
+                        return Opacity(
+                          opacity: _likedUsersFade.value,
+                          child: LikedUsersBottomSheet(
+                            postId: widget.exported['id']?.toString() ?? '',
+                            likeCount: _likeService.getPostLikeCount(
+                              widget.exported['id']?.toString() ?? '',
+                            ),
                           ),
                         );
                       },
@@ -1774,19 +1835,16 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                       child: FullscreenMediaViewer(
                         imageUrl: _currentImageUrl!,
                         allImageUrls: _allImageUrls,
-                        mediaId: _currentMediaId,
-                        allMediaIds: _allMediaIds,
+
                         initialIndex:
                             _currentImageUrl != null && _allImageUrls.isNotEmpty
                                 ? _allImageUrls.indexOf(_currentImageUrl!)
                                 : 0,
                         isVideo: _isVideoViewer,
                         preloadedController:
-                            _isVideoViewer
-                                ? PostReaderService.getPreloadedController(
-                                  _currentImageUrl!,
-                                )
-                                : null,
+                            _isVideoViewer && _currentImageUrl != null
+                                ? readerVideoControllers[_currentImageUrl!]
+                                : null, // 🎯 ClipComponent에서 생성한 컨트롤러 공유
                         imageProvider:
                             !_isVideoViewer
                                 ? CachedNetworkImageProvider(_currentImageUrl!)
@@ -1794,25 +1852,25 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                         onClose: _closeImageViewer,
                         postTitle: () {
                           final title = widget.exported['title'] as String?;
-                          print('[PostReader] postTitle: $title');
+                          debugPrint('[PostReader] postTitle: $title');
                           return title;
                         }(),
                         postAuthor: () {
                           final author = widget.exported['author'] as String?;
-                          print('[PostReader] postAuthor: $author');
+                          debugPrint('[PostReader] postAuthor: $author');
                           return author;
                         }(),
                         postAuthorProfileUrl: () {
                           final url =
                               widget.exported['authorProfileImageUrl']
                                   as String?;
-                          print('[PostReader] postAuthorProfileUrl: $url');
+                          debugPrint('[PostReader] postAuthorProfileUrl: $url');
                           return url;
                         }(),
                         commentCount: () {
                           final count = widget.exported['commentCount'] as int?;
-                          print('[PostReader] commentCount: $count');
-                          print(
+                          debugPrint('[PostReader] commentCount: $count');
+                          debugPrint(
                             '[PostReader] exported keys: ${widget.exported.keys.toList()}',
                           );
                           return count;

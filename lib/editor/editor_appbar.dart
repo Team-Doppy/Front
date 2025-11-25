@@ -33,6 +33,7 @@ class EditModeAppBar extends StatefulWidget {
   onThumbnailChanged; // 썸네일 변경 콜백 (URL과 ID 전달)
   final String? postId; // 서버에서 데이터 가져오기용
   final bool isSaving; // 저장 중 상태
+  final ValueNotifier<bool>? videoUploadIndicatorNotifier; // 영상 업로드 인디케이터 상태
 
   const EditModeAppBar({
     super.key,
@@ -46,6 +47,7 @@ class EditModeAppBar extends StatefulWidget {
     this.isSaving = false,
     this.onCategoryChanged,
     this.onThumbnailChanged,
+    this.videoUploadIndicatorNotifier,
   });
 
   @override
@@ -56,7 +58,6 @@ class _EditModeAppBarState extends State<EditModeAppBar> {
   String _selectedVisibility = 'public';
   List<int> _selectedGroupIds = [];
   String? _thumbnailUrl;
-  String? _thumbnailId;
   int? _selectedCategoryId = 0; // 카테고리 ID
   List<Map<String, dynamic>>? _cachedCategories;
   bool _isLoading = false;
@@ -67,7 +68,7 @@ class _EditModeAppBarState extends State<EditModeAppBar> {
     _selectedVisibility = widget.currentVisibility;
     _selectedGroupIds = List.from(widget.currentGroupIds);
 
-    print('[EditModeAppBar] 썸네일 초기화: $_thumbnailUrl (ID: $_thumbnailId)');
+    debugPrint('[EditModeAppBar] 썸네일 초기화: $_thumbnailUrl');
 
     // 수정 모드 진입 시 모든 데이터 한번에 로드
     if (widget.postId != null) {
@@ -79,11 +80,11 @@ class _EditModeAppBarState extends State<EditModeAppBar> {
       if (mounted) {
         try {
           final testTranslation = context.tr('visibility_public');
-          print(
+          debugPrint(
             '[EditModeAppBar] 번역 테스트: visibility_public = "$testTranslation"',
           );
         } catch (e) {
-          print('[EditModeAppBar] 번역 에러: $e');
+          debugPrint('[EditModeAppBar] 번역 에러: $e');
         }
       }
     });
@@ -139,13 +140,12 @@ class _EditModeAppBarState extends State<EditModeAppBar> {
           }
         }
       } catch (e) {
-        print('[EditModeAppBar] FeedProvider에서 카테고리 파싱 실패: $e');
+        debugPrint('[EditModeAppBar] FeedProvider에서 카테고리 파싱 실패: $e');
       }
 
       setState(() {
         // 썸네일 정보 업데이트
         _thumbnailUrl = metadata['thumbnailImageUrl'] as String?;
-        _thumbnailId = metadata['thumbnailImageId']?.toString();
 
         // 카테고리 정보 업데이트: FeedProvider 우선, 실패 시 메타데이터 fallback
         if (categoryIdFromFeed != null) {
@@ -184,12 +184,12 @@ class _EditModeAppBarState extends State<EditModeAppBar> {
         _isLoading = false;
       });
 
-      print('[EditModeAppBar] 데이터 로드 완료');
-      print('  - 썸네일: $_thumbnailUrl (ID: $_thumbnailId)');
-      print('  - 카테고리: $_selectedCategoryId');
-      print('  - 카테고리 개수: ${categories.length}');
+      debugPrint('[EditModeAppBar] 데이터 로드 완료');
+      debugPrint('  - 썸네일: $_thumbnailUrl');
+      debugPrint('  - 카테고리: $_selectedCategoryId');
+      debugPrint('  - 카테고리 개수: ${categories.length}');
     } catch (e) {
-      print('[EditModeAppBar] 데이터 로드 실패: $e');
+      debugPrint('[EditModeAppBar] 데이터 로드 실패: $e');
       if (mounted) {
         setState(() {
           _cachedCategories = [];
@@ -293,7 +293,7 @@ class _EditModeAppBarState extends State<EditModeAppBar> {
           onTap: () {
             Future.delayed(Duration.zero, () {
               if (widget.postId == null) {
-                print('[EditModeAppBar] postId가 없습니다');
+                debugPrint('[EditModeAppBar] postId가 없습니다');
                 return;
               }
 
@@ -309,23 +309,19 @@ class _EditModeAppBarState extends State<EditModeAppBar> {
                         sessionKey: 'default',
                         // 🎯 이미 로드한 썸네일 데이터 전달 (메타데이터 재조회 불필요)
                         initialThumbnailUrl: _thumbnailUrl,
-                        initialThumbnailId: _thumbnailId,
-                        onThumbnailChanged: (url, id) {
+                        onThumbnailChanged: (url) {
                           setState(() {
                             _thumbnailUrl = url;
-                            _thumbnailId = id;
                           });
-                          print('[EditModeAppBar] 썸네일 변경됨: $url');
-                          // 부모에 통지: 썸네일 변경됨 (URL과 ID 전달)
-                          widget.onThumbnailChanged?.call(url, id);
-                          print(
-                            '[EditModeAppBar] 부모 콜백 호출 완료: url=$url, id=$id',
-                          );
+                          debugPrint('[EditModeAppBar] 썸네일 변경됨: $url');
+                          // 부모에 통지: 썸네일 변경됨 (id는 더 이상 사용하지 않음)
+                          widget.onThumbnailChanged?.call(url, null);
+                          debugPrint('[EditModeAppBar] 부모 콜백 호출 완료: url=$url');
                         },
                         onMetadataChanged: (title, summary) {
                           // 제목/요약이 변경되었을 때 부모(PostwriteScreen)에게 알림
                           widget.onTitleSummaryChanged?.call(title, summary);
-                          print('[EditModeAppBar] 제목/요약 변경 콜백 전달');
+                          debugPrint('[EditModeAppBar] 제목/요약 변경 콜백 전달');
                         },
                       ),
                 ),
@@ -382,7 +378,7 @@ class _EditModeAppBarState extends State<EditModeAppBar> {
   void _showCategoryMenu(BuildContext context, Offset buttonPosition) {
     // 카테고리가 아직 로드되지 않았거나 비어있으면 표시하지 않음
     if (_cachedCategories == null || _cachedCategories!.isEmpty) {
-      print('[EditModeAppBar] 카테고리가 아직 로드되지 않았거나 비어있습니다');
+      debugPrint('[EditModeAppBar] 카테고리가 아직 로드되지 않았거나 비어있습니다');
       ErrorHandler.showInfo(context, '카테고리를 불러오는 중입니다');
       return;
     }
@@ -411,13 +407,13 @@ class _EditModeAppBarState extends State<EditModeAppBar> {
               onTap: () {
                 Future.delayed(Duration.zero, () async {
                   if (widget.postId == null || id == null) {
-                    print('[EditModeAppBar] postId 또는 categoryId가 없습니다');
+                    debugPrint('[EditModeAppBar] postId 또는 categoryId가 없습니다');
                     return;
                   }
 
                   // 변경 없음 가드
                   if (_selectedCategoryId == id) {
-                    print('[EditModeAppBar] 카테고리 변경 없음 - API 호출 생략');
+                    debugPrint('[EditModeAppBar] 카테고리 변경 없음 - API 호출 생략');
                     ErrorHandler.showInfo(
                       context,
                       context.tr('already_selected_category'),
@@ -440,11 +436,13 @@ class _EditModeAppBarState extends State<EditModeAppBar> {
                         context,
                         context.tr('category_changed'),
                       );
-                      print('[EditModeAppBar] 카테고리 변경 성공: $name (ID: $id)');
+                      debugPrint(
+                        '[EditModeAppBar] 카테고리 변경 성공: $name (ID: $id)',
+                      );
                       widget.onCategoryChanged?.call();
                     }
                   } catch (e) {
-                    print('[EditModeAppBar] 카테고리 변경 실패: $e');
+                    debugPrint('[EditModeAppBar] 카테고리 변경 실패: $e');
                     if (mounted) {
                       ErrorHandler.handleError(context, e);
                     }
@@ -471,13 +469,13 @@ class _EditModeAppBarState extends State<EditModeAppBar> {
         onTap: () {
           Future.delayed(Duration.zero, () async {
             if (widget.postId == null) {
-              print('[EditModeAppBar] postId가 없습니다');
+              debugPrint('[EditModeAppBar] postId가 없습니다');
               return;
             }
 
             // 변경 없음 가드
             if (_selectedVisibility == 'private') {
-              print('[EditModeAppBar] 공개범위 변경 없음(private) - API 호출 생략');
+              debugPrint('[EditModeAppBar] 공개범위 변경 없음(private) - API 호출 생략');
               ErrorHandler.showInfo(context, context.tr('already_private'));
               return;
             }
@@ -506,10 +504,10 @@ class _EditModeAppBarState extends State<EditModeAppBar> {
                   context,
                   context.tr('visibility_changed_private'),
                 );
-                print('[EditModeAppBar] 공개범위 변경 성공: PRIVATE');
+                debugPrint('[EditModeAppBar] 공개범위 변경 성공: PRIVATE');
               }
             } catch (e) {
-              print('[EditModeAppBar] 공개범위 변경 실패: $e');
+              debugPrint('[EditModeAppBar] 공개범위 변경 실패: $e');
               if (mounted) {
                 ErrorHandler.handleError(context, e);
               }
@@ -529,13 +527,13 @@ class _EditModeAppBarState extends State<EditModeAppBar> {
         onTap: () {
           Future.delayed(Duration.zero, () async {
             if (widget.postId == null) {
-              print('[EditModeAppBar] postId가 없습니다');
+              debugPrint('[EditModeAppBar] postId가 없습니다');
               return;
             }
 
             // 변경 없음 가드
             if (_selectedVisibility == 'public') {
-              print('[EditModeAppBar] 공개범위 변경 없음(public) - API 호출 생략');
+              debugPrint('[EditModeAppBar] 공개범위 변경 없음(public) - API 호출 생략');
               ErrorHandler.showInfo(context, context.tr('already_public'));
               return;
             }
@@ -564,10 +562,10 @@ class _EditModeAppBarState extends State<EditModeAppBar> {
                   context,
                   context.tr('visibility_changed_public'),
                 );
-                print('[EditModeAppBar] 공개범위 변경 성공: PUBLIC');
+                debugPrint('[EditModeAppBar] 공개범위 변경 성공: PUBLIC');
               }
             } catch (e) {
-              print('[EditModeAppBar] 공개범위 변경 실패: $e');
+              debugPrint('[EditModeAppBar] 공개범위 변경 실패: $e');
               if (mounted) {
                 ErrorHandler.handleError(context, e);
               }
@@ -587,13 +585,13 @@ class _EditModeAppBarState extends State<EditModeAppBar> {
         onTap: () {
           Future.delayed(Duration.zero, () async {
             if (widget.postId == null) {
-              print('[EditModeAppBar] postId가 없습니다');
+              debugPrint('[EditModeAppBar] postId가 없습니다');
               return;
             }
 
             // 변경 없음 가드
             if (_selectedVisibility == 'friends') {
-              print('[EditModeAppBar] 공개범위 변경 없음(friends) - API 호출 생략');
+              debugPrint('[EditModeAppBar] 공개범위 변경 없음(friends) - API 호출 생략');
               ErrorHandler.showInfo(context, context.tr('already_friends'));
               return;
             }
@@ -621,10 +619,10 @@ class _EditModeAppBarState extends State<EditModeAppBar> {
                   context,
                   context.tr('visibility_changed_friends'),
                 );
-                print('[EditModeAppBar] 공개범위 변경 성공: FRIENDS');
+                debugPrint('[EditModeAppBar] 공개범위 변경 성공: FRIENDS');
               }
             } catch (e) {
-              print('[EditModeAppBar] 공개범위 변경 실패: $e');
+              debugPrint('[EditModeAppBar] 공개범위 변경 실패: $e');
               if (mounted) {
                 ErrorHandler.handleError(context, e);
               }
@@ -761,7 +759,7 @@ class _EditModeAppBarState extends State<EditModeAppBar> {
                     }
 
                     if (widget.postId == null) {
-                      print('[EditModeAppBar] postId가 없습니다');
+                      debugPrint('[EditModeAppBar] postId가 없습니다');
                       return;
                     }
 
@@ -771,7 +769,7 @@ class _EditModeAppBarState extends State<EditModeAppBar> {
                     if (_selectedVisibility == 'partial' &&
                         beforeSet.length == afterSet.length &&
                         beforeSet.containsAll(afterSet)) {
-                      print('[EditModeAppBar] 공개 그룹 변경 없음 - API 호출 생략');
+                      debugPrint('[EditModeAppBar] 공개 그룹 변경 없음 - API 호출 생략');
                       ErrorHandler.showInfo(
                         context,
                         context.tr('already_selected_group'),
@@ -813,10 +811,10 @@ class _EditModeAppBarState extends State<EditModeAppBar> {
                           context,
                           context.tr('group_changed'),
                         );
-                        print('[EditModeAppBar] 그룹 변경 성공: $newGroupIds');
+                        debugPrint('[EditModeAppBar] 그룹 변경 성공: $newGroupIds');
                       }
                     } catch (e) {
-                      print('[EditModeAppBar] 그룹 변경 실패: $e');
+                      debugPrint('[EditModeAppBar] 그룹 변경 실패: $e');
                       if (mounted) {
                         ErrorHandler.handleError(context, e);
                       }
@@ -933,187 +931,213 @@ class _EditModeAppBarState extends State<EditModeAppBar> {
             ),
             height: 50,
             width: MediaQuery.of(context).size.width,
-            child: Stack(
+            child: Row(
               children: [
-                // 왼쪽 버튼들 (뒤로가기 + 언두/리두)
-                Positioned(
-                  left: 0,
-                  top: 10,
-                  bottom: 0,
-                  child: Row(
-                    children: [
-                      // 뒤로가기 버튼
-                      GestureDetector(
-                        onTap: () async {
-                          Navigator.of(context).maybePop();
-                        },
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 16,
-                            vertical: 8,
-                          ),
-                          child: Icon(
-                            Icons.arrow_back_ios_new_rounded,
-                            size: 24,
-                            color: Theme.of(
-                              context,
-                            ).colorScheme.onSurface.withOpacity(0.75),
-                          ),
-                        ),
-                      ),
-
-                      // 언두 버튼
-                      AnimatedBuilder(
-                        animation: widget.editorService,
-                        builder:
-                            (context, _) => GestureDetector(
-                              onTap: () {
-                                widget.editorService.undo();
-                              },
-                              child: Container(
-                                padding: const EdgeInsets.only(
-                                  top: 12,
-                                  bottom: 8,
-                                  left: 8,
-                                  right: 8,
-                                ),
-                                child: SvgPicture.asset(
-                                  'assets/icons/editor_undo.svg',
-                                  width: 26,
-                                  height: 26,
-                                  colorFilter: ColorFilter.mode(
-                                    Theme.of(
-                                      context,
-                                    ).colorScheme.onSurface.withOpacity(
-                                      widget.editorService.canUndo ? 0.6 : 0.15,
-                                    ),
-                                    BlendMode.srcIn,
-                                  ),
-                                ),
-                              ),
-                            ),
-                      ),
-
-                      // 리두 버튼
-                      AnimatedBuilder(
-                        animation: widget.editorService,
-                        builder:
-                            (context, _) => GestureDetector(
-                              onTap: () {
-                                widget.editorService.redo();
-                              },
-                              child: Container(
-                                padding: const EdgeInsets.only(
-                                  top: 12,
-                                  bottom: 8,
-                                  left: 8,
-                                  right: 8,
-                                ),
-                                child: SvgPicture.asset(
-                                  'assets/icons/editor_redo.svg',
-                                  width: 26,
-                                  height: 26,
-                                  colorFilter: ColorFilter.mode(
-                                    Theme.of(
-                                      context,
-                                    ).colorScheme.onSurface.withOpacity(
-                                      widget.editorService.canRedo ? 0.6 : 0.15,
-                                    ),
-                                    BlendMode.srcIn,
-                                  ),
-                                ),
-                              ),
-                            ),
-                      ),
-                    ],
+                // 뒤로가기 버튼
+                GestureDetector(
+                  onTap: () async {
+                    Navigator.of(context).maybePop();
+                  },
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 8,
+                    ),
+                    child: Icon(
+                      Icons.arrow_back_ios_new_rounded,
+                      size: 24,
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.onSurface.withOpacity(0.75),
+                    ),
                   ),
                 ),
 
-                // 수정 완료 버튼 (오른쪽)
-                Positioned(
-                  right: 0,
-                  top: 0,
-                  bottom: 0,
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      // 더보기 메뉴 버튼
-                      Builder(
-                        builder:
-                            (btnContext) => IconButton(
-                              icon: Icon(
-                                Icons.more_horiz_rounded,
+                // 언두 버튼
+                AnimatedBuilder(
+                  animation: widget.editorService,
+                  builder:
+                      (context, _) => GestureDetector(
+                        onTap: () {
+                          widget.editorService.undo();
+                        },
+                        child: Container(
+                          padding: const EdgeInsets.only(
+                            top: 12,
+                            bottom: 8,
+                            left: 8,
+                            right: 8,
+                          ),
+                          child: SvgPicture.asset(
+                            'assets/icons/editor_undo.svg',
+                            width: 34,
+                            height: 34,
+                            colorFilter: ColorFilter.mode(
+                              Theme.of(
+                                context,
+                              ).colorScheme.onSurface.withOpacity(
+                                widget.editorService.canUndo ? 0.6 : 0.15,
+                              ),
+                              BlendMode.srcIn,
+                            ),
+                          ),
+                        ),
+                      ),
+                ),
+
+                // 리두 버튼
+                AnimatedBuilder(
+                  animation: widget.editorService,
+                  builder:
+                      (context, _) => GestureDetector(
+                        onTap: () {
+                          widget.editorService.redo();
+                        },
+                        child: Container(
+                          padding: const EdgeInsets.only(
+                            top: 12,
+                            bottom: 8,
+                            left: 8,
+                            right: 8,
+                          ),
+                          child: SvgPicture.asset(
+                            'assets/icons/editor_redo.svg',
+                            width: 34,
+                            height: 34,
+                            colorFilter: ColorFilter.mode(
+                              Theme.of(
+                                context,
+                              ).colorScheme.onSurface.withOpacity(
+                                widget.editorService.canRedo ? 0.6 : 0.15,
+                              ),
+                              BlendMode.srcIn,
+                            ),
+                          ),
+                        ),
+                      ),
+                ),
+                Spacer(),
+
+                // 영상 업로드 중일 때는 인디케이터 표시, 아니면 기존 버튼들 표시
+                ValueListenableBuilder<bool>(
+                  valueListenable:
+                      widget.videoUploadIndicatorNotifier ??
+                      ValueNotifier<bool>(false),
+                  builder: (context, showIndicator, child) {
+                    if (showIndicator) {
+                      // 영상 업로드 중 인디케이터
+                      return Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              context.tr('clip_uploading'),
+                              style: TextStyle(
+                                fontSize: 13,
                                 color: Theme.of(
                                   context,
-                                ).colorScheme.onSurface.withOpacity(0.6),
-                                size: 24,
+                                ).colorScheme.onSurface.withOpacity(0.7),
                               ),
-                              onPressed: () {
-                                final RenderBox button =
-                                    btnContext.findRenderObject() as RenderBox;
-                                final Offset position = button.localToGlobal(
-                                  Offset.zero,
-                                );
-                                _showEditOptionsMenu(btnContext, position);
-                              },
                             ),
-                      ),
+                            const SizedBox(width: 8),
+                            SizedBox(
+                              width: 14,
+                              height: 14,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                valueColor: AlwaysStoppedAnimation<Color>(
+                                  Theme.of(context).colorScheme.primary,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    }
 
-                      // 수정 완료 버튼 / 로딩 표시
-                      GestureDetector(
-                        onTap: widget.isSaving ? null : widget.onSave,
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 6,
-                            vertical: 4,
-                          ),
-                          decoration: BoxDecoration(),
-                          child: Padding(
-                            padding: const EdgeInsets.only(top: 2),
-                            child:
-                                widget.isSaving
-                                    ? Padding(
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 12,
-                                        vertical: 2,
-                                      ),
-                                      child: SizedBox(
-                                        width: 20,
-                                        height: 20,
-                                        child: CircularProgressIndicator(
-                                          strokeWidth: 2,
-                                          color:
-                                              Theme.of(
-                                                context,
-                                              ).colorScheme.primary,
+                    // 기존 버튼들
+                    return Row(
+                      children: [
+                        // 더보기 메뉴 버튼
+                        Builder(
+                          builder:
+                              (btnContext) => IconButton(
+                                icon: Icon(
+                                  Icons.more_horiz_rounded,
+                                  color: Theme.of(
+                                    context,
+                                  ).colorScheme.onSurface.withOpacity(0.6),
+                                  size: 24,
+                                ),
+                                onPressed: () {
+                                  final RenderBox button =
+                                      btnContext.findRenderObject()
+                                          as RenderBox;
+                                  final Offset position = button.localToGlobal(
+                                    Offset.zero,
+                                  );
+                                  _showEditOptionsMenu(btnContext, position);
+                                },
+                              ),
+                        ),
+
+                        // 수정 완료 버튼 / 로딩 표시
+                        GestureDetector(
+                          onTap: widget.isSaving ? null : widget.onSave,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 6,
+                              vertical: 4,
+                            ),
+                            decoration: BoxDecoration(),
+                            child: Padding(
+                              padding: const EdgeInsets.only(top: 2),
+                              child:
+                                  widget.isSaving
+                                      ? Padding(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 12,
+                                          vertical: 2,
                                         ),
-                                      ),
-                                    )
-                                    : Row(
-                                      children: [
-                                        const SizedBox(width: 4),
-                                        Text(
-                                          context.tr('modify_complete'),
-                                          style: TextStyle(
-                                            fontSize: 15,
-                                            fontWeight: FontWeight.w600,
+                                        child: SizedBox(
+                                          width: 20,
+                                          height: 20,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2,
                                             color:
                                                 Theme.of(
                                                   context,
                                                 ).colorScheme.primary,
                                           ),
                                         ),
-                                        const SizedBox(width: 12),
-                                      ],
-                                    ),
+                                      )
+                                      : Row(
+                                        children: [
+                                          const SizedBox(width: 4),
+                                          Text(
+                                            context.tr('modify_complete'),
+                                            style: TextStyle(
+                                              fontSize: 15,
+                                              fontWeight: FontWeight.w600,
+                                              color:
+                                                  Theme.of(
+                                                    context,
+                                                  ).colorScheme.primary,
+                                            ),
+                                          ),
+                                          const SizedBox(width: 12),
+                                        ],
+                                      ),
+                            ),
                           ),
                         ),
-                      ),
-
-                      const SizedBox(width: 4),
-                    ],
-                  ),
+                      ],
+                    );
+                  },
                 ),
+
+                const SizedBox(width: 4),
               ],
             ),
           ),
@@ -1129,6 +1153,7 @@ class EditorAppBar extends StatelessWidget {
   final Future<bool> Function()? onSaveDraft;
   final VoidCallback? onLoadDraft;
   final String? currentDraftId; // 현재 임시저장 ID
+  final ValueNotifier<bool>? videoUploadIndicatorNotifier; // 영상 업로드 인디케이터 상태
 
   const EditorAppBar({
     super.key,
@@ -1137,6 +1162,7 @@ class EditorAppBar extends StatelessWidget {
     this.onSaveDraft,
     this.onLoadDraft,
     this.currentDraftId,
+    this.videoUploadIndicatorNotifier,
   });
 
   Future<void> _onNextButtonTapped(BuildContext context) async {
@@ -1302,106 +1328,146 @@ class EditorAppBar extends StatelessWidget {
                 ),
 
                 // 오른쪽 버튼들
-                Row(
-                  children: [
-                    // 더보기 메뉴 버튼
-                    PopupMenuButton<String>(
-                      icon: Icon(
-                        Icons.more_horiz_rounded,
-                        color: Theme.of(
-                          context,
-                        ).colorScheme.onSurface.withOpacity(0.6),
-                        size: 20,
-                      ),
-                      offset: const Offset(45, 45),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        side: BorderSide(
-                          color: Theme.of(
-                            context,
-                          ).colorScheme.onSurface.withOpacity(0.1),
-                        ),
-                      ),
-                      color: Theme.of(
-                        context,
-                      ).colorScheme.background.withOpacity(1),
-
-                      onSelected: (value) async {
-                        if (value == 'load') {
-                          onLoadDraft?.call();
-                        } else if (value == 'save') {
-                          final success = await onSaveDraft?.call();
-                          // 명시적 임시저장 시 성공했을 때만 사용자 알림
-                          if (success == true) {
-                            ErrorHandler.showInfo(
-                              context,
-                              context.tr('draft_saved'),
-                            );
-                          }
-                        }
-                      },
-                      itemBuilder:
-                          (context) => [
-                            PopupMenuItem(
-                              value: 'load',
-                              child: Row(
-                                children: [
-                                  Text(
-                                    context.tr('load_draft'),
-                                    style: TextStyle(
-                                      color:
-                                          Theme.of(
-                                            context,
-                                          ).colorScheme.onSurface,
-                                      fontSize: 14,
-                                    ),
-                                  ),
-                                ],
+                ValueListenableBuilder<bool>(
+                  valueListenable:
+                      videoUploadIndicatorNotifier ??
+                      ValueNotifier<bool>(false),
+                  builder: (context, showIndicator, child) {
+                    if (showIndicator) {
+                      // 영상 업로드 중 인디케이터
+                      return Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              context.tr('clip_uploading'),
+                              style: TextStyle(
+                                fontSize: 13,
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.onSurface.withOpacity(0.7),
                               ),
                             ),
-                            PopupMenuItem(
-                              value: 'save',
-                              child: Row(
-                                children: [
-                                  Text(
-                                    context.tr('save_draft'),
-                                    style: TextStyle(
-                                      color:
-                                          Theme.of(
-                                            context,
-                                          ).colorScheme.onSurface,
-                                      fontSize: 14,
-                                    ),
-                                  ),
-                                ],
+                            const SizedBox(width: 8),
+                            SizedBox(
+                              width: 14,
+                              height: 14,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                valueColor: AlwaysStoppedAnimation<Color>(
+                                  Theme.of(context).colorScheme.primary,
+                                ),
                               ),
                             ),
                           ],
-                    ),
-
-                    // 다음 버튼 (항상 표시, 클릭 시 검증)
-                    GestureDetector(
-                      onTap: () => _onNextButtonTapped(context),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 16,
-                          vertical: 8,
                         ),
-                        child: Text(
-                          context.tr('next'),
-                          style: TextStyle(
+                      );
+                    }
+
+                    // 기존 버튼들
+                    return Row(
+                      children: [
+                        // 더보기 메뉴 버튼
+                        PopupMenuButton<String>(
+                          icon: Icon(
+                            Icons.more_horiz_rounded,
                             color: Theme.of(
                               context,
-                            ).colorScheme.primary.withOpacity(1),
-                            fontWeight: FontWeight.w600,
-                            fontSize: 15,
+                            ).colorScheme.onSurface.withOpacity(0.6),
+                            size: 20,
+                          ),
+                          offset: const Offset(45, 45),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                            side: BorderSide(
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.onSurface.withOpacity(0.1),
+                            ),
+                          ),
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.background.withOpacity(1),
+
+                          onSelected: (value) async {
+                            if (value == 'load') {
+                              onLoadDraft?.call();
+                            } else if (value == 'save') {
+                              final success = await onSaveDraft?.call();
+                              // 명시적 임시저장 시 성공했을 때만 사용자 알림
+                              if (success == true) {
+                                ErrorHandler.showInfo(
+                                  context,
+                                  context.tr('draft_saved'),
+                                );
+                              }
+                            }
+                          },
+                          itemBuilder:
+                              (context) => [
+                                PopupMenuItem(
+                                  value: 'load',
+                                  child: Row(
+                                    children: [
+                                      Text(
+                                        context.tr('load_draft'),
+                                        style: TextStyle(
+                                          color:
+                                              Theme.of(
+                                                context,
+                                              ).colorScheme.onSurface,
+                                          fontSize: 14,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                PopupMenuItem(
+                                  value: 'save',
+                                  child: Row(
+                                    children: [
+                                      Text(
+                                        context.tr('save_draft'),
+                                        style: TextStyle(
+                                          color:
+                                              Theme.of(
+                                                context,
+                                              ).colorScheme.onSurface,
+                                          fontSize: 14,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                        ),
+
+                        // 다음 버튼 (항상 표시, 클릭 시 검증)
+                        GestureDetector(
+                          onTap: () => _onNextButtonTapped(context),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 16,
+                              vertical: 8,
+                            ),
+                            child: Text(
+                              context.tr('next'),
+                              style: TextStyle(
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.primary.withOpacity(1),
+                                fontWeight: FontWeight.w600,
+                                fontSize: 15,
+                              ),
+                            ),
                           ),
                         ),
-                      ),
-                    ),
 
-                    SizedBox(width: 10),
-                  ],
+                        SizedBox(width: 10),
+                      ],
+                    );
+                  },
                 ),
               ],
             ),

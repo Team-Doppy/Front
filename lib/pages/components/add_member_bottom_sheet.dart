@@ -63,12 +63,12 @@ class _AddMemberScreenState extends State<AddMemberScreen> {
             _pendingRequests.add(friend.username);
           }
         });
-        print(
+        debugPrint(
           '🎯 [AddMemberBottomSheet] 이미 보낸 요청 로드: ${_pendingRequests.toList()}',
         );
       }
     } catch (e) {
-      print('❌ [AddMemberBottomSheet] 보낸 요청 로드 실패: $e');
+      debugPrint('❌ [AddMemberBottomSheet] 보낸 요청 로드 실패: $e');
     }
   }
 
@@ -112,15 +112,10 @@ class _AddMemberScreenState extends State<AddMemberScreen> {
           const SizedBox(height: 20),
           // 친구 그리드
           Expanded(child: _buildFriendsGrid(_scrollController)),
-          // 🎯 하단 액션바 - SafeArea로 키보드 위에 위치
-          Padding(
-            padding: EdgeInsets.only(
-              bottom: MediaQuery.of(context).viewInsets.bottom + 2,
-            ),
-            child: _buildActionBar(),
-          ),
         ],
       ),
+
+      bottomNavigationBar: _buildActionBar(),
     );
   }
 
@@ -203,7 +198,7 @@ class _AddMemberScreenState extends State<AddMemberScreen> {
         });
       }
     } catch (e) {
-      print('❌ [AddMemberBottomSheet] 사용자 검색 에러: $e');
+      debugPrint('❌ [AddMemberBottomSheet] 사용자 검색 에러: $e');
       if (mounted) {
         setState(() {
           _searchedUsers = [];
@@ -593,7 +588,7 @@ class _AddMemberScreenState extends State<AddMemberScreen> {
   Future<void> _sendFriendRequests() async {
     if (_selectedNonFriends.isEmpty || !mounted) return;
 
-    print(
+    debugPrint(
       '🚀 [AddMemberBottomSheet] 친구 요청 시작: ${_selectedNonFriends.toList()}',
     );
 
@@ -610,18 +605,18 @@ class _AddMemberScreenState extends State<AddMemberScreen> {
 
     for (final username in _selectedNonFriends) {
       try {
-        print('📤 [AddMemberBottomSheet] $username 에게 요청 보내는 중...');
+        debugPrint('📤 [AddMemberBottomSheet] $username 에게 요청 보내는 중...');
         await friendService.sendFriendRequest(username);
         successCount++;
         successUsernames.add(username);
-        print('✅ [AddMemberBottomSheet] $username 요청 성공!');
+        debugPrint('✅ [AddMemberBottomSheet] $username 요청 성공!');
       } catch (e) {
         failedUsernames.add(username);
-        print('❌ [AddMemberBottomSheet] $username 요청 실패 (exception): $e');
+        debugPrint('❌ [AddMemberBottomSheet] $username 요청 실패 (exception): $e');
       }
     }
 
-    print(
+    debugPrint(
       '🎯 [AddMemberBottomSheet] 요청 완료 | 성공: ${successUsernames.length}, 실패: ${failedUsernames.length}',
     );
 
@@ -672,7 +667,7 @@ class _AddMemberScreenState extends State<AddMemberScreen> {
         _pendingRequests.remove(username);
         successCount++;
       } catch (e) {
-        print('❌ 요청 취소 실패: $username - $e');
+        debugPrint('❌ 요청 취소 실패: $username - $e');
       }
     }
 
@@ -831,7 +826,7 @@ class _AddMemberScreenState extends State<AddMemberScreen> {
           }
         }
       } catch (e) {
-        print('❌ [AddMemberScreen] 멤버 일괄 추가 에러: $e');
+        debugPrint('❌ [AddMemberScreen] 멤버 일괄 추가 에러: $e');
         if (mounted) {
           ErrorHandler.showError(context, context.tr('add_member_failed'));
         }

@@ -22,7 +22,7 @@ class WebSocketService extends ChangeNotifier {
     // 이미 연결되어 있으면 중복 연결 방지
     if (wsState == WebSocketState.connected ||
         wsState == WebSocketState.connecting) {
-      print('[WebSocketService] ⚠️ 이미 연결되어 있거나 연결 중입니다 - 중복 연결 방지');
+      debugPrint('[WebSocketService] ⚠️ 이미 연결되어 있거나 연결 중입니다 - 중복 연결 방지');
       return;
     }
 
@@ -36,53 +36,59 @@ class WebSocketService extends ChangeNotifier {
       webSocket!.listen(_onMessageReceived);
     } catch (e) {
       wsState = WebSocketState.error;
-      print('[WebSocketService] 연결 실패: $e');
+      debugPrint('[WebSocketService] 연결 실패: $e');
     }
   }
 
-  // 메시지 수신 처리
+  // 메시지 수신 처리 (비동기로 처리하여 Hang 방지)
   void _onMessageReceived(dynamic data) {
-    try {
-      final message = json.decode(data);
-      final messageType = message['type'] as String?;
+    // 🎯 비동기로 처리하여 UI 스레드 블로킹 방지
+    Future.microtask(() async {
+      try {
+        final message = json.decode(data);
+        final messageType = message['type'] as String?;
 
-      print('[WebSocketService] 📥 원본 데이터: $data');
-      print('[WebSocketService] 📥 파싱된 메시지: $message');
-      print('[WebSocketService] 📥 메시지 타입: $messageType');
-      print('[WebSocketService] 📥 전체 키들: ${message.keys.toList()}');
+        debugPrint('[WebSocketService] 📥 원본 데이터: $data');
+        debugPrint('[WebSocketService] 📥 파싱된 메시지: $message');
+        debugPrint('[WebSocketService] 📥 메시지 타입: $messageType');
+        debugPrint('[WebSocketService] 📥 전체 키들: ${message.keys.toList()}');
 
-      switch (messageType) {
-        case 'COMMENT_CREATED':
-          onCommentCreated?.call(message);
-          break;
-        case 'COMMENT_UPDATED':
-          onCommentUpdated?.call(message);
-          break;
-        case 'COMMENT_DELETED':
-          onCommentDeleted?.call(message);
-          break;
-        case 'COMMENT_LIKED':
-          onCommentLiked?.call(message);
-          break;
-        case 'COMMENT_UNLIKED':
-          onCommentUnliked?.call(message);
-          break;
-        case 'SUCCESS':
-          print('[WebSocketService] 연결 성공: ${message['message']}');
-          break;
-        case 'ERROR':
-          print('[WebSocketService] 에러: ${message['message']}');
-          break;
-        case 'SUBSCRIBED':
-          print('[WebSocketService] 구독 성공: ${message['postId']}');
-          break;
-        default:
-          print('[WebSocketService] 알 수 없는 메시지 타입: $messageType');
-          break;
+        // 🎯 성능 최적화: 콜백 호출 전에 UI 업데이트 기회 제공
+        await Future.delayed(Duration.zero);
+
+        switch (messageType) {
+          case 'COMMENT_CREATED':
+            onCommentCreated?.call(message);
+            break;
+          case 'COMMENT_UPDATED':
+            onCommentUpdated?.call(message);
+            break;
+          case 'COMMENT_DELETED':
+            onCommentDeleted?.call(message);
+            break;
+          case 'COMMENT_LIKED':
+            onCommentLiked?.call(message);
+            break;
+          case 'COMMENT_UNLIKED':
+            onCommentUnliked?.call(message);
+            break;
+          case 'SUCCESS':
+            debugPrint('[WebSocketService] 연결 성공: ${message['message']}');
+            break;
+          case 'ERROR':
+            debugPrint('[WebSocketService] 에러: ${message['message']}');
+            break;
+          case 'SUBSCRIBED':
+            debugPrint('[WebSocketService] 구독 성공: ${message['postId']}');
+            break;
+          default:
+            debugPrint('[WebSocketService] 알 수 없는 메시지 타입: $messageType');
+            break;
+        }
+      } catch (e) {
+        debugPrint('[WebSocketService] 메시지 파싱 오류: $e');
       }
-    } catch (e) {
-      print('[WebSocketService] 메시지 파싱 오류: $e');
-    }
+    });
   }
 
   // 포스트 댓글 구독
@@ -94,7 +100,7 @@ class WebSocketService extends ChangeNotifier {
   // 메시지 전송
   void _sendMessage(Map<String, dynamic> message) {
     if (webSocket != null) {
-      print('[WebSocketService] 전송할 메시지: ${json.encode(message)}');
+      debugPrint('[WebSocketService] 전송할 메시지: ${json.encode(message)}');
       webSocket!.add(json.encode(message));
     }
   }
@@ -118,7 +124,7 @@ class WebSocketService extends ChangeNotifier {
   void disconnect() {
     webSocket?.close();
     wsState = WebSocketState.disconnected;
-    print('[WebSocketService] 연결 해제 완료');
+    debugPrint('[WebSocketService] 연결 해제 완료');
   }
 
   // 연결 상태 getter

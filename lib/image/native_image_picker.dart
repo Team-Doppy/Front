@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
 /// 네이티브 이미지/영상 선택기
@@ -20,7 +21,7 @@ class NativeImagePicker {
       }
       return null;
     } catch (e) {
-      print('이미지 선택 오류: $e');
+      debugPrint('이미지 선택 오류: $e');
       return null;
     }
   }
@@ -35,7 +36,7 @@ class NativeImagePicker {
 
       return images.map((xFile) => File(xFile.path)).toList();
     } catch (e) {
-      print('다중 이미지 선택 오류: $e');
+      debugPrint('다중 이미지 선택 오류: $e');
       return [];
     }
   }
@@ -52,7 +53,7 @@ class NativeImagePicker {
       }
       return null;
     } catch (e) {
-      print('영상 선택 오류: $e');
+      debugPrint('영상 선택 오류: $e');
       return null;
     }
   }
@@ -67,7 +68,7 @@ class NativeImagePicker {
 
       return media.map((xFile) => File(xFile.path)).toList();
     } catch (e) {
-      print('미디어 선택 오류: $e');
+      debugPrint('미디어 선택 오류: $e');
       return [];
     }
   }

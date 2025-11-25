@@ -35,18 +35,34 @@ import 'package:flutter/foundation.dart' show defaultTargetPlatform;
 import 'firebase_options.dart';
 import 'theme/theme.dart';
 import 'utils/route_observer.dart';
+import 'data/services/deep_link_service.dart';
+import 'utils/deep_link_handler.dart';
 
 // Global NavigatorKey for accessing context from anywhere
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
+
+/// 🎯 FCM 딥링크 처리
+void _handleDeepLinkFromFcm(String deepLinkUrl) {
+  final context = navigatorKey.currentContext;
+  if (context == null) {
+    debugPrint('[FCM] Navigator context가 없습니다 - 딥링크 처리를 건너뜁니다');
+    return;
+  }
+
+  final result = DeepLinkService.parseDeepLink(deepLinkUrl);
+  if (result != null && result.type != DeepLinkType.unknown) {
+    DeepLinkHandler.handleDeepLink(context, result);
+  }
+}
 
 // 🎯 FCM Background 메시지 핸들러 (top-level 함수로 선언)
 @pragma('vm:entry-point')
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   // Firebase 초기화 필요 (background isolate에서는 별도로 초기화해야 함)
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
-  print('[FCM] 백그라운드 메시지 수신: ${message.messageId}');
-  print('[FCM] 데이터: ${message.data}');
-  print(
+  debugPrint('[FCM] 백그라운드 메시지 수신: ${message.messageId}');
+  debugPrint('[FCM] 데이터: ${message.data}');
+  debugPrint(
     '[FCM] 알림: ${message.notification?.title} - ${message.notification?.body}',
   );
 }
@@ -71,19 +87,18 @@ Future<void> main() async {
   // 🎯 Firebase 초기화
   try {
     final options = DefaultFirebaseOptions.currentPlatform;
-    print('[Firebase] 플랫폼: ${defaultTargetPlatform}');
+    debugPrint('[Firebase] 플랫폼: ${defaultTargetPlatform}');
 
     await Firebase.initializeApp(options: options);
 
     // 🎯 FCM 백그라운드 메시지 핸들러 등록 (Firebase 초기화 후)
     FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
-    print('[FCM] 백그라운드 메시지 핸들러 등록 완료');
 
     // 🎯 FCM 포그라운드 메시지 핸들러 등록
     FirebaseMessaging.onMessage.listen((RemoteMessage message) {
-      print('[FCM] 포그라운드 메시지 수신: ${message.messageId}');
-      print('[FCM] 데이터: ${message.data}');
-      print(
+      debugPrint('[FCM] 포그라운드 메시지 수신: ${message.messageId}');
+      debugPrint('[FCM] 데이터: ${message.data}');
+      debugPrint(
         '[FCM] 알림: ${message.notification?.title} - ${message.notification?.body}',
       );
       // 포그라운드에서는 알림을 표시하지 않음
@@ -91,21 +106,28 @@ Future<void> main() async {
 
     // 🎯 FCM 메시지 클릭 핸들러 등록
     FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
-      print('[FCM] 알림 클릭으로 앱 열림: ${message.messageId}');
-      print('[FCM] 데이터: ${message.data}');
-      // 필요한 경우 특정 화면으로 네비게이션
+      // 🎯 딥링크 처리
+      final deepLink = message.data['deepLink'] as String?;
+      if (deepLink != null && deepLink.isNotEmpty) {
+        _handleDeepLinkFromFcm(deepLink);
+      }
     });
 
     // 🎯 앱이 종료된 상태에서 알림 클릭으로 열린 경우 확인
     final initialMessage = await FirebaseMessaging.instance.getInitialMessage();
     if (initialMessage != null) {
-      print('[FCM] 종료된 앱에서 알림 클릭으로 열림: ${initialMessage.messageId}');
-      print('[FCM] 데이터: ${initialMessage.data}');
+      // 🎯 딥링크 처리
+      final deepLink = initialMessage.data['deepLink'] as String?;
+      if (deepLink != null && deepLink.isNotEmpty) {
+        debugPrint('[FCM] 초기 딥링크 발견: $deepLink');
+        // 앱 초기화 완료 후 처리
+        Future.delayed(const Duration(milliseconds: 1000), () {
+          _handleDeepLinkFromFcm(deepLink);
+        });
+      }
     }
-
-    print('[FCM] 포그라운드/백그라운드 메시지 핸들러 등록 완료');
   } catch (e) {
-    print('[Firebase] 초기화 실패: $e');
+    debugPrint('[Firebase] 초기화 실패: $e');
   }
 
   // 1. FlutterSecureStorage 인스턴스를 생성합니다.
@@ -212,6 +234,7 @@ class RootShell extends StatefulWidget {
 class _RootShellState extends State<RootShell> with WidgetsBindingObserver {
   late int _index;
   String? _searchInitialQuery; // 검색 화면 초기 검색어
+  final DeepLinkService _deepLinkService = DeepLinkService();
 
   @override
   void initState() {
@@ -219,12 +242,25 @@ class _RootShellState extends State<RootShell> with WidgetsBindingObserver {
     _index = widget.initialIndex;
     // 라이프사이클 옵저버 등록
     WidgetsBinding.instance.addObserver(this);
+
+    // 🎯 딥링크 리스너 등록 (웹 링크 직접 클릭 시 처리)
+    _deepLinkService.listenToDeepLinks((DeepLinkResult result) {
+      final context = navigatorKey.currentContext;
+      if (context != null) {
+        debugPrint('[RootShell] 웹 링크에서 딥링크 수신: type=${result.type}');
+        DeepLinkHandler.handleDeepLink(context, result);
+      } else {
+        debugPrint('[RootShell] Navigator context가 없습니다 - 딥링크 처리를 건너뜁니다');
+      }
+    });
   }
 
   @override
   void dispose() {
     // 라이프사이클 옵저버 해제
     WidgetsBinding.instance.removeObserver(this);
+    // 딥링크 리스너 해제
+    _deepLinkService.dispose();
     super.dispose();
   }
 
@@ -238,20 +274,57 @@ class _RootShellState extends State<RootShell> with WidgetsBindingObserver {
     }
   }
 
-  /// 포그라운드 전환 시 FCM 토큰 검사 및 필요시 재발급 후 서버에 전송
+  /// 포그라운드 전환 시 인증 토큰 및 FCM 토큰 검사 및 필요시 재발급
   void _checkAndSyncFcmTokenOnForeground() {
-    // 로그인 상태 확인 후 FCM 토큰 검사
+    // 로그인 상태 확인 후 토큰 검사
     final authProvider = Provider.of<AuthProvider>(context, listen: false);
     if (authProvider.isLoggedIn) {
       try {
-        final authService = AuthService();
-        // FCM 토큰 검사 및 필요시 재발급 후 서버에 전송
+        // 🎯 1. 인증 토큰 검증 및 갱신 (세션 만료 다이얼로그 표시 전에 미리 갱신)
         // 비동기로 처리하여 UI를 막지 않음
-        authService.syncFcmTokenAndSettings().catchError((e) {
-          print('[RootShell] 포그라운드 전환 시 FCM 토큰 검사 및 동기화 실패 (무시): $e');
-        });
+        authProvider
+            .validateAndRefreshToken()
+            .then((isValid) {
+              if (!isValid) {
+                debugPrint(
+                  '[RootShell] 포그라운드 전환 시 인증 토큰 갱신 실패 - 세션이 만료되었을 수 있음',
+                );
+                // 토큰 갱신 실패 시 다음 API 호출 시 세션 만료 다이얼로그가 표시됨
+                return;
+              }
+              debugPrint('[RootShell] ✅ 포그라운드 전환 시 인증 토큰 검증 완료');
+            })
+            .catchError((e) {
+              debugPrint('[RootShell] 포그라운드 전환 시 인증 토큰 검증 오류 (무시): $e');
+            });
+
+        // 🎯 2. FCM 토큰 검사 및 필요시 재발급 후 서버에 전송
+        // 비동기로 처리하여 UI를 막지 않음
+        final authService = AuthService();
+        authService
+            .syncFcmTokenAndSettings()
+            .then((permissionGranted) {
+              // 🎯 알림 권한이 허용되었으면 로컬 설정도 on으로 동기화
+              if (permissionGranted == true && mounted) {
+                try {
+                  final userProvider = Provider.of<UserProvider>(
+                    context,
+                    listen: false,
+                  );
+                  userProvider
+                      .loadSettings()
+                      .then((_) {
+                        userProvider.updateNotificationEnabled(true);
+                      })
+                      .catchError((e) {});
+                } catch (e) {}
+              }
+            })
+            .catchError((e) {
+              debugPrint('[RootShell] 포그라운드 전환 시 FCM 토큰 검사 및 동기화 실패 (무시): $e');
+            });
       } catch (e) {
-        print('[RootShell] 포그라운드 전환 시 FCM 토큰 검사 오류 (무시): $e');
+        debugPrint('[RootShell] 포그라운드 전환 시 토큰 검사 오류 (무시): $e');
       }
     }
   }

@@ -136,7 +136,7 @@ class PostExporter {
 
         // 🎯 폰트 메타데이터 디버그 로그
         if (fontFamily != null && fontFamily.isNotEmpty) {
-          print(
+          debugPrint(
             '[PostExporter] 📝 ParagraphNode ${node.id} - fontFamily 메타데이터 발견: $fontFamily',
           );
         }
@@ -157,7 +157,7 @@ class PostExporter {
         }
         if (fontFamily != null && fontFamily.isNotEmpty) {
           nodeMap['fontFamily'] = fontFamily;
-          print(
+          debugPrint(
             '[PostExporter] ✅ JSON에 fontFamily 추가: $fontFamily (노드 ID: ${node.id})',
           );
         }
@@ -169,14 +169,13 @@ class PostExporter {
 
       // ImageNode (SuperEditor 내장)
       if (node is ImageNode) {
-        // metadata에서 mediaId/spoiler 추출
+        // metadata에서 spoiler 추출
         Map<String, dynamic>? meta;
         try {
           meta = (node as dynamic).metadata as Map<String, dynamic>?;
         } catch (_) {
           meta = null;
         }
-        final mediaId = meta != null ? (meta['mediaId']?.toString()) : null;
         final paddingMode = meta != null ? (meta['padding']?.toString()) : null;
 
         // 스포일러 확인: NodeComponentService 우선, metadata는 보조
@@ -193,9 +192,6 @@ class PostExporter {
 
         final dataMap = <String, dynamic>{'url': node.imageUrl};
 
-        if (mediaId != null && mediaId.isNotEmpty) {
-          dataMap['mediaId'] = int.tryParse(mediaId) ?? mediaId;
-        }
         // true일 때만 추가 (false는 키 없음으로 표현)
         if (hasSpoiler) {
           dataMap['spoiler'] = true;
@@ -205,7 +201,7 @@ class PostExporter {
         // 패딩 모드: 기본(center)일 때는 생략, full만 저장
         if (paddingMode == 'full') {
           out['padding'] = 'full';
-          print('[PostExporter] ImageNode ${node.id} padding=full 저장');
+          debugPrint('[PostExporter] ImageNode ${node.id} padding=full 저장');
         }
         nodes.add(out);
         continue;
@@ -223,51 +219,9 @@ class PostExporter {
           hasSpoiler = nodeService.isSpoiler(node.id);
         }
 
-        print('[PostExporter] 🔍 ImageRowNode 저장 시작: ${node.id}');
-        print('[PostExporter] 🔍 URLs: ${node.imageUrls}');
-        print('[PostExporter] 🔍 metadata: ${meta.keys.toList()}');
-
-        // 각 이미지별 mediaId 추출 (댓글 정보는 제외)
-        final imageCommentInfo =
-            meta['imageCommentInfo'] as Map<String, dynamic>?;
-        print('[PostExporter] 🔍 imageCommentInfo: $imageCommentInfo');
-
-        final List<Map<String, dynamic>> images = [];
-        bool hasMediaId = false;
-
-        if (imageCommentInfo != null && imageCommentInfo.isNotEmpty) {
-          for (final imageUrl in node.imageUrls) {
-            final imgData = <String, dynamic>{'url': imageUrl};
-
-            if (imageCommentInfo[imageUrl] is Map) {
-              final imgInfo =
-                  imageCommentInfo[imageUrl] as Map<String, dynamic>;
-              final mediaId = imgInfo['mediaId']?.toString();
-
-              print('[PostExporter] 🔍 URL: $imageUrl → mediaId: $mediaId');
-
-              if (mediaId != null && mediaId.isNotEmpty) {
-                imgData['mediaId'] = int.tryParse(mediaId) ?? mediaId;
-                hasMediaId = true;
-                print('[PostExporter] ✅ mediaId 저장: $mediaId');
-              } else {
-                print('[PostExporter] ❌ mediaId 없음');
-              }
-            } else {
-              print('[PostExporter] ❌ imageCommentInfo[$imageUrl] not a Map');
-            }
-
-            images.add(imgData);
-          }
-        } else {
-          print(
-            '[PostExporter] ⚠️ imageCommentInfo가 null이거나 비어있음 - 기본 URL만 저장',
-          );
-          // mediaId 정보가 없으면 기본 URL만
-          for (final imageUrl in node.imageUrls) {
-            images.add({'url': imageUrl});
-          }
-        }
+        debugPrint('[PostExporter] 🔍 ImageRowNode 저장 시작: ${node.id}');
+        debugPrint('[PostExporter] 🔍 URLs: ${node.imageUrls}');
+        debugPrint('[PostExporter] 🔍 metadata: ${meta.keys.toList()}');
 
         final nodeMap = <String, dynamic>{
           'id': node.id,
@@ -278,25 +232,18 @@ class PostExporter {
         if (node.spacing != 4.0) {
           nodeMap['spacing'] = node.spacing;
         }
-        if (hasMediaId) {
-          nodeMap['data'] = {'images': images};
-          print('[PostExporter] ✅ ImageRow data 저장: ${nodeMap['data']}');
-        } else {
-          print('[PostExporter] ⚠️ ImageRow mediaId 없어서 data 필드 생략');
-        }
         if (hasSpoiler) {
           nodeMap['spoiler'] = true;
         }
 
-        print('[PostExporter] 🔍 최종 nodeMap: $nodeMap');
+        debugPrint('[PostExporter] 🔍 최종 nodeMap: $nodeMap');
         nodes.add(nodeMap);
         continue;
       }
 
-      // Video(ClipNode) → 서버 규격: { type: "video", data: { mediaId, url } }
+      // Video(ClipNode) → 서버 규격: { type: "video", data: { url } }
       if (node is ClipNode) {
         final meta = node.metadata;
-        final mediaId = meta['mediaId']?.toString();
 
         // 스포일러 확인: metadata 또는 NodeComponentService
         bool hasSpoiler = false;
@@ -309,14 +256,27 @@ class PostExporter {
 
         final dataMap = <String, dynamic>{'url': node.url};
 
-        if (mediaId != null && mediaId.isNotEmpty) {
-          dataMap['mediaId'] = int.tryParse(mediaId) ?? mediaId;
-        }
         if (hasSpoiler) {
           dataMap['spoiler'] = true;
         }
 
-        nodes.add({'id': node.id, 'type': 'video', 'data': dataMap});
+        // 패딩 모드 내보내기 (기본값: 'center'는 생략, 'full'만 명시)
+        final paddingMode = meta['padding'] as String?;
+        if (paddingMode == 'full') {
+          dataMap['padding'] = 'full';
+        }
+
+        // 노드 레벨에도 패딩 정보 저장 (이미지와 동일한 방식)
+        final nodeMap = <String, dynamic>{
+          'id': node.id,
+          'type': 'video',
+          'data': dataMap,
+        };
+        if (paddingMode == 'full') {
+          nodeMap['padding'] = 'full';
+        }
+
+        nodes.add(nodeMap);
         continue;
       }
 
@@ -369,7 +329,7 @@ class PostExporter {
           base['content'] = {'url': s.content};
         } else if (s.content is Uint8List) {
           // ⚠️ 업로드가 완료되지 않은 경우 (에러)
-          print('❌ [PostExporter] 스티커 ${s.id}의 이미지가 아직 업로드 중입니다!');
+          debugPrint('❌ [PostExporter] 스티커 ${s.id}의 이미지가 아직 업로드 중입니다!');
           base['content'] = {
             'bytes': s.content, // 임시로 base64로 저장
           };
@@ -514,7 +474,9 @@ class PostExporter {
       } else if (a is FontFamilyAttribution) {
         // 🎯 span 단위 폰트 패밀리 (Attribution 기반 정교한 적용)
         fontFamily = a.fontFamily;
-        print('[PostExporter] 📝 Span에 FontFamilyAttribution 발견: $fontFamily');
+        debugPrint(
+          '[PostExporter] 📝 Span에 FontFamilyAttribution 발견: $fontFamily',
+        );
       }
     }
 
@@ -532,7 +494,7 @@ class PostExporter {
     };
 
     if (fontFamily != null && fontFamily.isNotEmpty) {
-      print('[PostExporter] ✅ Span에 fontFamily 추가: $fontFamily');
+      debugPrint('[PostExporter] ✅ Span에 fontFamily 추가: $fontFamily');
     }
 
     return map;
@@ -749,20 +711,22 @@ class PostExporter {
       final List<dynamic> contentStickers = List<dynamic>.from(
         (content is Map ? content['stickers'] : null) as List? ?? const [],
       );
-      print('[PostExporter] 📌 content.stickers 개수: ${contentStickers.length}');
+      debugPrint(
+        '[PostExporter] 📌 content.stickers 개수: ${contentStickers.length}',
+      );
       for (final s in contentStickers) {
         if (s is! Map) continue;
         final String stickerType = (s['type'] ?? '').toString();
-        print('[PostExporter] 📌 스티커 타입: $stickerType');
+        debugPrint('[PostExporter] 📌 스티커 타입: $stickerType');
         if (stickerType == 'image') {
           final contentMap = s['content'] as Map<String, dynamic>?;
-          print('[PostExporter] 📌 content: $contentMap');
+          debugPrint('[PostExporter] 📌 content: $contentMap');
           if (contentMap != null) {
             final String url = (contentMap['url'] ?? '').toString();
-            print('[PostExporter] 📌 URL: $url');
+            debugPrint('[PostExporter] 📌 URL: $url');
             if (url.isNotEmpty) {
               usedUrls.add(url);
-              print('[PostExporter] ✅ 스티커 URL 추가: $url');
+              debugPrint('[PostExporter] ✅ 스티커 URL 추가: $url');
             }
           }
         }
@@ -771,19 +735,19 @@ class PostExporter {
       // 결과 키는 기존과 동일하게 유지(호환)하되 값은 URL 문자열 목록로 제공
       result['usedImageUrls'] = usedUrls.toList();
     } catch (e) {
-      print('❌ usedImageUrls 수집 실패: $e');
+      debugPrint('❌ usedImageUrls 수집 실패: $e');
     }
 
-    print('==============================================');
-    print('Final API Payload (Server Spec Compliant):');
-    print('Title: $title');
-    print('AccessLevel: $accessLevel');
+    debugPrint('==============================================');
+    debugPrint('Final API Payload (Server Spec Compliant):');
+    debugPrint('Title: $title');
+    debugPrint('AccessLevel: $accessLevel');
     if (accessLevel == 'GROUPS') {
-      print('SharedGroupIds: $sharedGroupIds');
+      debugPrint('SharedGroupIds: $sharedGroupIds');
     }
-    print('Thumbnail: ${result['thumbnailImageUrl'] ?? 'none'}');
-    print('UsedImageUrls: ${result['usedImageUrls'] ?? 'none'}');
-    print(JsonExport.encode(result, pretty: true));
+    debugPrint('Thumbnail: ${result['thumbnailImageUrl'] ?? 'none'}');
+    debugPrint('UsedImageUrls: ${result['usedImageUrls'] ?? 'none'}');
+    debugPrint(JsonExport.encode(result, pretty: true));
 
     return result;
   }

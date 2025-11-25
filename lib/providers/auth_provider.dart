@@ -44,7 +44,7 @@ class AuthProvider extends ChangeNotifier {
     // 5. UI 업데이트
     notifyListeners();
 
-    print('[AuthProvider] 로그아웃 완료 - 모든 데이터 초기화됨');
+    debugPrint('[AuthProvider] 로그아웃 완료 - 모든 데이터 초기화됨');
   }
 
   Future<bool> login(
@@ -63,7 +63,7 @@ class AuthProvider extends ChangeNotifier {
       _isLoggedIn = true;
       _token = result.token;
       _username = result.username;
-      print('로그인 성공 : token: $_token, username: $_username');
+      debugPrint('로그인 성공 : token: $_token, username: $_username');
 
       // 로그인 직후 사용자 프로필 최소 정보 저장 (오프라인 대비)
       try {
@@ -88,9 +88,9 @@ class AuthProvider extends ChangeNotifier {
         await prefs.setString('user_profileImageUrl', '');
         await prefs.setString('user_selfIntroduction', '');
         await prefs.setInt('user_friendCount', 0);
-        print('[AuthProvider] SharedPreferences에 최소 사용자 정보 저장 완료');
+        debugPrint('[AuthProvider] SharedPreferences에 최소 사용자 정보 저장 완료');
       } catch (e) {
-        print('[AuthProvider] 로그인 직후 사용자 저장 실패: $e');
+        debugPrint('[AuthProvider] 로그인 직후 사용자 저장 실패: $e');
       }
 
       // 🎯 UserCollection 업데이트는 서버에서 처리됨 (로그인 API에서 FCM 토큰을 받아 처리)
@@ -102,15 +102,15 @@ class AuthProvider extends ChangeNotifier {
     _token = await _authService.getToken();
     _username = await _authService.getUsername();
 
-    print('[AuthProvider] checkLoginStatus - token: $_token');
-    print('[AuthProvider] checkLoginStatus - username: $_username');
+    debugPrint('[AuthProvider] checkLoginStatus - token: $_token');
+    debugPrint('[AuthProvider] checkLoginStatus - username: $_username');
 
     if (_token != null && _username != null) {
       _isLoggedIn = true;
-      print('[AuthProvider] User is logged in');
+      debugPrint('[AuthProvider] User is logged in');
     } else {
       _isLoggedIn = false;
-      print('[AuthProvider] User is not logged in');
+      debugPrint('[AuthProvider] User is not logged in');
     }
     return _isLoggedIn;
   }
@@ -142,7 +142,7 @@ class AuthProvider extends ChangeNotifier {
     _token = token;
     _username = username;
     notifyListeners();
-    print('[-] [AuthProvider] 인증 상태 업데이트: $username');
+    debugPrint('[-] [AuthProvider] 인증 상태 업데이트: $username');
   }
 
   Future<void> updateUserRegionAndRefreshToken(String region) async {

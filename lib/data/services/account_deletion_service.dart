@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:doppy/data/services/auth_service.dart';
+import 'package:flutter/material.dart';
 
 /// 회원 탈퇴 이유 저장 서비스 (Firebase Firestore)
 ///
@@ -19,12 +20,12 @@ class AccountDeletionService {
     try {
       final username = await _authService.getUsername();
       if (username == null || username.isEmpty) {
-        print('[AccountDeletionService] 로그인한 사용자가 없습니다');
+        debugPrint('[AccountDeletionService] 로그인한 사용자가 없습니다');
         return null;
       }
       return username;
     } catch (e) {
-      print('[AccountDeletionService] 사용자 username 가져오기 실패: $e');
+      debugPrint('[AccountDeletionService] 사용자 username 가져오기 실패: $e');
       return null;
     }
   }
@@ -60,11 +61,11 @@ class AccountDeletionService {
 
       await _firestore.collection('account_deletions').add(deletionData);
 
-      print(
+      debugPrint(
         '[AccountDeletionService] ✅ 탈퇴 이유 Firestore 저장 성공: username=$username, reason=$reason',
       );
     } catch (e) {
-      print('[AccountDeletionService] ❌ 탈퇴 이유 저장 실패: $e');
+      debugPrint('[AccountDeletionService] ❌ 탈퇴 이유 저장 실패: $e');
       throw Exception('탈퇴 이유 저장 실패: ${e.toString()}');
     }
   }

@@ -83,10 +83,7 @@ class SearchTopBar extends StatelessWidget {
                 cursorColor: isDark ? Colors.white : Colors.black,
                 decoration: InputDecoration(
                   filled: true,
-                  fillColor:
-                      isDark
-                          ? Colors.white.withOpacity(0.1)
-                          : Colors.black.withOpacity(0.1),
+                  fillColor: Theme.of(context).colorScheme.surface,
                   hintText: context.tr('search_placeholder'),
                   hintStyle: TextStyle(
                     color:
@@ -142,18 +139,18 @@ class SearchTopBar extends StatelessWidget {
                   ),
                   isDense: true,
                   border: const OutlineInputBorder(
-                    borderRadius: BorderRadius.all(Radius.circular(16)),
+                    borderRadius: BorderRadius.all(Radius.circular(20)),
                   ),
                   enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.all(Radius.circular(16)),
+                    borderRadius: BorderRadius.all(Radius.circular(20)),
                     borderSide: BorderSide.none,
                   ),
                   focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.all(Radius.circular(16)),
+                    borderRadius: BorderRadius.all(Radius.circular(20)),
                     borderSide: BorderSide.none,
                   ),
                   disabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.all(Radius.circular(16)),
+                    borderRadius: BorderRadius.all(Radius.circular(20)),
                     borderSide: BorderSide.none,
                   ),
                 ),

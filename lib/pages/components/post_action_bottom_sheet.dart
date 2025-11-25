@@ -280,7 +280,7 @@ class PostActionBottomSheet extends StatelessWidget {
       parentContext = navigator.context;
       rootContext = rootNavigator.context;
     } catch (e) {
-      print('[PostActionBottomSheet] 상위 context 가져오기 실패: $e');
+      debugPrint('[PostActionBottomSheet] 상위 context 가져오기 실패: $e');
     }
 
     // 바텀시트 닫기
@@ -295,9 +295,9 @@ class PostActionBottomSheet extends StatelessWidget {
       try {
         final searchService = SearchService();
         searchService.removeFromSearchHistory(authorUsername);
-        print('[PostActionBottomSheet] 검색 기록에서 제거 완료: $authorUsername');
+        debugPrint('[PostActionBottomSheet] 검색 기록에서 제거 완료: $authorUsername');
       } catch (e) {
-        print('[PostActionBottomSheet] 검색 기록 제거 실패: $e');
+        debugPrint('[PostActionBottomSheet] 검색 기록 제거 실패: $e');
         // 검색 기록 제거 실패해도 차단은 성공으로 간주
       }
 
@@ -311,10 +311,10 @@ class PostActionBottomSheet extends StatelessWidget {
           );
           // 캐시 무효화를 위해 _lastFetchTime을 null로 설정
           friendProvider.fetchAllFriendData(forceRefresh: true);
-          print('[PostActionBottomSheet] 친구 캐시 클리어 완료');
+          debugPrint('[PostActionBottomSheet] 친구 캐시 클리어 완료');
         }
       } catch (e) {
-        print('[PostActionBottomSheet] 친구 캐시 클리어 실패: $e');
+        debugPrint('[PostActionBottomSheet] 친구 캐시 클리어 실패: $e');
       }
 
       // 🎯 그룹 캐시 클리어
@@ -332,10 +332,10 @@ class PostActionBottomSheet extends StatelessWidget {
             forceRefresh: true,
             friendProvider: friendProvider,
           );
-          print('[PostActionBottomSheet] 그룹 캐시 클리어 완료');
+          debugPrint('[PostActionBottomSheet] 그룹 캐시 클리어 완료');
         }
       } catch (e) {
-        print('[PostActionBottomSheet] 그룹 캐시 클리어 실패: $e');
+        debugPrint('[PostActionBottomSheet] 그룹 캐시 클리어 실패: $e');
       }
 
       // 🎯 차단 성공 후 처리
@@ -348,7 +348,7 @@ class PostActionBottomSheet extends StatelessWidget {
         ErrorHandler.showInfo(finalContext, '차단했습니다');
       }
     } catch (e) {
-      print('[PostActionBottomSheet] 차단 실패: $e');
+      debugPrint('[PostActionBottomSheet] 차단 실패: $e');
       final finalContext = parentContext ?? rootContext;
       if (finalContext != null && finalContext.mounted) {
         ErrorHandler.showError(finalContext, e.toString());
@@ -604,7 +604,7 @@ class _PostReportPageState extends State<_PostReportPage> {
       ErrorHandler.showInfo(context, l10n.t('report_success'));
     } catch (e) {
       // 상세 오류 로그는 콘솔에만 출력 (사용자에게는 일반화된 메시지 표시)
-      print('[PostReportPage] ❌ 글 신고 실패: $e');
+      debugPrint('[PostReportPage] ❌ 글 신고 실패: $e');
       if (context.mounted) {
         // 일반화된 오류 메시지 표시 (로케일 적용)
         ErrorHandler.showError(context, l10n.t('report_fail'));

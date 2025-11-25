@@ -197,19 +197,19 @@ class _PostListState extends State<PostList> {
     // 부모에서 같은 리스트 인스턴스를 mutate(addAll)해도 길이 변경을 감지하여 동기화
     final int newLen = widget.posts.length;
     if (newLen != _items.length || widget.posts != oldWidget.posts) {
-      print(' PostList 업데이트: 기존 ${_items.length}개 → 새로운 $newLen개');
+      debugPrint(' PostList 업데이트: 기존 ${_items.length}개 → 새로운 $newLen개');
 
       if (newLen > _items.length) {
         // 증가: 새로 추가된 항목들만 반영
         final newPosts = widget.posts.sublist(_items.length);
         _items.addAll(newPosts);
         _loadLikeStatusForNewPosts(newPosts);
-        print('새로운 포스트 ${newPosts.length}개 추가됨');
+        debugPrint('새로운 포스트 ${newPosts.length}개 추가됨');
       } else {
         // 감소하거나 완전 교체: 전체 재동기화
         _items = List<PostData>.from(widget.posts);
         _loadLikeStatusForAllPosts();
-        print('[PostList] 포스트 목록 재동기화(길이 감소/교체)');
+        debugPrint('[PostList] 포스트 목록 재동기화(길이 감소/교체)');
 
         // 현재 인덱스를 0으로 리셋 (즉시 반영하여 PostCard의 isVisible 업데이트)
         _currentIndex = 0;
@@ -222,9 +222,9 @@ class _PostListState extends State<PostList> {
               // 현재 페이지가 0이 아닐 때만 jumpToPage 호출
               if ((_pageController.page ?? 0).round() != 0) {
                 _pageController.jumpToPage(0);
-                print('[PostList] PageController를 0으로 이동');
+                debugPrint('[PostList] PageController를 0으로 이동');
               } else {
-                print('[PostList] PageController 이미 0번 페이지');
+                debugPrint('[PostList] PageController 이미 0번 페이지');
               }
 
               // 항상 한 번 더 setState하여 PostCard들이 완전히 재빌드되도록 보장
@@ -232,7 +232,7 @@ class _PostListState extends State<PostList> {
               Future.microtask(() {
                 if (mounted) {
                   setState(() {
-                    print('[PostList] 강제 재빌드로 볼륨 재설정 트리거');
+                    debugPrint('[PostList] 강제 재빌드로 볼륨 재설정 트리거');
                   });
                 }
               });
@@ -410,7 +410,7 @@ class _PostListState extends State<PostList> {
                   if (widget.onLoadMore != null &&
                       index >= _items.length - 5 &&
                       !widget.isLoadingMore) {
-                    print(
+                    debugPrint(
                       '🔄 로드 모어 실행! 현재 인덱스: $index, 전체 아이템: ${_items.length}',
                     );
                     widget.onLoadMore!();
@@ -468,7 +468,7 @@ class _PostListState extends State<PostList> {
                     setState(() {
                       _isHorizontalGesture = true;
                     });
-                    print('🔄 가로 제스처 감지! 세로 완전 차단');
+                    debugPrint('🔄 가로 제스처 감지! 세로 완전 차단');
                   }
                 }
               }
@@ -512,7 +512,7 @@ class _PostListState extends State<PostList> {
               // 위로 스와이프 감지 (섹션 전환용)
               if (_gestureAccumY < -_verticalSwipeThreshold &&
                   widget.onFilterTap != null) {
-                print(
+                debugPrint(
                   '⬆️ Listener로 위로 스와이프 감지! 섹션 전환 (임계값: $_verticalSwipeThreshold)',
                 );
                 widget.onFilterTap!();
@@ -542,16 +542,16 @@ class _PostListState extends State<PostList> {
                 final screenWidth = MediaQuery.of(context).size.width;
                 final tapX = details.globalPosition.dx;
 
-                if (tapX < screenWidth * 0.2) {
-                  // 왼쪽 20% - 이전 페이지
+                if (tapX < screenWidth * 0.3) {
+                  // 왼쪽 30% - 이전 페이지
                   if (_currentIndex > 0) {
                     _pageController.previousPage(
                       duration: const Duration(milliseconds: 200),
                       curve: Curves.easeOutCubic,
                     );
                   }
-                } else if (tapX > screenWidth * 0.8) {
-                  // 오른쪽 20% - 다음 페이지
+                } else if (tapX > screenWidth * 0.7) {
+                  // 오른쪽 30% - 다음 페이지
                   if (_currentIndex < postsToUse.length - 1) {
                     _pageController.nextPage(
                       duration: const Duration(milliseconds: 200),
@@ -559,7 +559,7 @@ class _PostListState extends State<PostList> {
                     );
                   }
                 } else {
-                  // 중앙 60% - 포스트 상세보기 또는 글 작성 화면으로 이동
+                  // 중앙 40% - 포스트 상세보기 또는 글 작성 화면으로 이동
                   // 🎯 친구글이 없을 때는 _noFriendPostItem 사용
                   final List<PostData> postsToUse =
                       _items.isEmpty && widget.isShowingFriendsOnly
@@ -1021,73 +1021,95 @@ class _PostListState extends State<PostList> {
     final post = postsToUse[safeIndex];
 
     return GestureDetector(
-      onTap: () {
-        // 🎯 텍스트 영역 클릭 시 포스트 상세보기로 이동
-        if (post.id == 'onboarding_placeholder') {
-          Navigator.of(context).push(
-            MaterialPageRoute(
-              builder: (context) => const GroupSelectionScreen(),
-            ),
-          );
-        } else if (post.id == 'onboarding_placeholder2') {
-          Navigator.pushNamed(context, '/post-write');
-        } else if (_items.isNotEmpty &&
-            !post.id.startsWith('onboarding_placeholder')) {
-          // 먼저 현재 프레임에서 가시성 차단을 적용
-          setState(() => _suppressVisibility = true);
-          // 다음 프레임에서 push하여 정지가 먼저 반영되도록 함
-          WidgetsBinding.instance.addPostFrameCallback((_) async {
-            if (!mounted) return;
-            await Navigator.of(context).push(
-              PageRouteBuilder(
-                transitionDuration: const Duration(milliseconds: 340),
-                reverseTransitionDuration: const Duration(milliseconds: 100),
-                opaque: false,
-                pageBuilder:
-                    (_, __, ___) => PostReaderScreen(
-                      exported: post.toExportedData(),
-                      heroTag:
-                          'post-hero-${widget.sectionLabel ?? "main"}-${post.id}-$safeIndex-${widget.key?.hashCode ?? hashCode}',
-                    ),
-                transitionsBuilder: (
-                  context,
-                  animation,
-                  secondaryAnimation,
-                  child,
-                ) {
-                  const begin = Offset(0.0, 0.1);
-                  const end = Offset.zero;
-                  const curve = Curves.easeOutCubic;
-                  var tween = Tween(
-                    begin: begin,
-                    end: end,
-                  ).chain(CurveTween(curve: curve));
-                  var offsetAnimation = animation.drive(tween);
-                  var fadeAnimation = Tween<double>(
-                    begin: 0.0,
-                    end: 1.0,
-                  ).animate(
-                    CurvedAnimation(parent: animation, curve: Curves.easeOut),
-                  );
-                  return FadeTransition(
-                    opacity: fadeAnimation,
-                    child: SlideTransition(
-                      position: offsetAnimation,
-                      child: child,
-                    ),
-                  );
-                },
+      onTapUp: (details) {
+        // 🎯 텍스트 영역에서도 탭 위치에 따라 다른 동작
+        final screenWidth = MediaQuery.of(context).size.width;
+        final tapX = details.globalPosition.dx;
+
+        if (tapX < screenWidth * 0.3) {
+          // 왼쪽 30% - 이전 페이지
+          if (_currentIndex > 0) {
+            _pageController.previousPage(
+              duration: const Duration(milliseconds: 200),
+              curve: Curves.easeOutCubic,
+            );
+          }
+        } else if (tapX > screenWidth * 0.7) {
+          // 오른쪽 30% - 다음 페이지
+          if (_currentIndex < postsToUse.length - 1) {
+            _pageController.nextPage(
+              duration: const Duration(milliseconds: 200),
+              curve: Curves.easeOutCubic,
+            );
+          }
+        } else {
+          // 중앙 40% - 포스트 상세보기로 이동
+          if (post.id == 'onboarding_placeholder') {
+            Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (context) => const GroupSelectionScreen(),
               ),
             );
+          } else if (post.id == 'onboarding_placeholder2') {
+            Navigator.pushNamed(context, '/post-write');
+          } else if (_items.isNotEmpty &&
+              !post.id.startsWith('onboarding_placeholder')) {
+            // 먼저 현재 프레임에서 가시성 차단을 적용
+            setState(() => _suppressVisibility = true);
+            // 다음 프레임에서 push하여 정지가 먼저 반영되도록 함
+            WidgetsBinding.instance.addPostFrameCallback((_) async {
+              if (!mounted) return;
+              await Navigator.of(context).push(
+                PageRouteBuilder(
+                  transitionDuration: const Duration(milliseconds: 340),
+                  reverseTransitionDuration: const Duration(milliseconds: 100),
+                  opaque: false,
+                  pageBuilder:
+                      (_, __, ___) => PostReaderScreen(
+                        exported: post.toExportedData(),
+                        heroTag:
+                            'post-hero-${widget.sectionLabel ?? "main"}-${post.id}-$safeIndex-${widget.key?.hashCode ?? hashCode}',
+                      ),
+                  transitionsBuilder: (
+                    context,
+                    animation,
+                    secondaryAnimation,
+                    child,
+                  ) {
+                    const begin = Offset(0.0, 0.1);
+                    const end = Offset.zero;
+                    const curve = Curves.easeOutCubic;
+                    var tween = Tween(
+                      begin: begin,
+                      end: end,
+                    ).chain(CurveTween(curve: curve));
+                    var offsetAnimation = animation.drive(tween);
+                    var fadeAnimation = Tween<double>(
+                      begin: 0.0,
+                      end: 1.0,
+                    ).animate(
+                      CurvedAnimation(parent: animation, curve: Curves.easeOut),
+                    );
+                    return FadeTransition(
+                      opacity: fadeAnimation,
+                      child: SlideTransition(
+                        position: offsetAnimation,
+                        child: child,
+                      ),
+                    );
+                  },
+                ),
+              );
 
-            if (mounted) {
-              setState(() => _suppressVisibility = false);
-            }
-          });
+              if (mounted) {
+                setState(() => _suppressVisibility = false);
+              }
+            });
+          }
         }
       },
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 0),
+        padding: const EdgeInsets.symmetric(horizontal: 50, vertical: 0),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.center,
           mainAxisAlignment: MainAxisAlignment.start,

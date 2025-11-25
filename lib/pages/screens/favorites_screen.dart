@@ -81,7 +81,7 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
         });
       }
     } catch (e) {
-      print('[FavoritesScreen] 초기 로딩 실패: $e');
+      debugPrint('[FavoritesScreen] 초기 로딩 실패: $e');
       if (mounted) {
         setState(() {
           _isLoading = false;
@@ -111,7 +111,7 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
         });
       }
     } catch (e) {
-      print('[FavoritesScreen] 추가 로딩 실패: $e');
+      debugPrint('[FavoritesScreen] 추가 로딩 실패: $e');
       if (mounted) {
         setState(() {
           _isLoadingMore = false;
@@ -136,14 +136,14 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
               jsonWithLiked['isLiked'] = true;
               return PostData.fromServer(jsonWithLiked);
             } catch (e) {
-              print('[FavoritesScreen] 포스트 파싱 실패: $e');
+              debugPrint('[FavoritesScreen] 포스트 파싱 실패: $e');
               return null;
             }
           })
           .whereType<PostData>()
           .toList();
     } catch (e) {
-      print('[FavoritesScreen] 좋아요 포스트 가져오기 실패: $e');
+      debugPrint('[FavoritesScreen] 좋아요 포스트 가져오기 실패: $e');
       return [];
     }
   }

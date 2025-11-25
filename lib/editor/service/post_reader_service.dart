@@ -70,7 +70,7 @@ class PostReaderService {
           if (m['fontFamily'] != null) {
             final fontFamily = m['fontFamily'].toString();
             meta['fontFamily'] = fontFamily;
-            print(
+            debugPrint(
               '[PostReaderService] 📖 JSON에서 fontFamily 읽기: $fontFamily (노드 ID: $id)',
             );
           }
@@ -86,7 +86,6 @@ class PostReaderService {
         case 'image':
           final data = (m['data'] as Map?)?.cast<String, dynamic>();
           final imageUrl = (m['url'] ?? data?['url'] ?? '').toString();
-          final mediaId = (m['mediaId'] ?? data?['mediaId'])?.toString();
           final hasComments =
               (m['hasComments'] ?? data?['hasComments']) == true;
           final commentCount =
@@ -97,7 +96,7 @@ class PostReaderService {
           // 패딩 모드 복원 (노드 레벨 우선, data 내 보조)
           final String? paddingMode =
               (m['padding'] ?? data?['padding'])?.toString();
-          print('[PostReaderService] ImageNode $id padding=$paddingMode');
+          debugPrint('[PostReaderService] ImageNode $id padding=$paddingMode');
 
           // NodeComponentService에 스포일러 상태 복원
           if (hasSpoiler) {
@@ -110,7 +109,6 @@ class PostReaderService {
               imageUrl: imageUrl,
               altText: (m['altText'] ?? '').toString(),
               metadata: <String, dynamic>{
-                if (mediaId != null) 'mediaId': mediaId,
                 'hasComments': hasComments,
                 'commentCount':
                     (commentCount is num)
@@ -129,38 +127,6 @@ class PostReaderService {
                   .map((e) => e.toString())
                   .toList();
 
-          // 각 이미지별 댓글 정보 추출
-          final imageCommentInfo = <String, Map<String, dynamic>>{};
-          final data = (m['data'] as Map?)?.cast<String, dynamic>();
-
-          // imageRow의 data에서 각 이미지별 정보가 있을 수 있음
-          // 예: data: { images: [{ url: "...", mediaId: 123, hasComments: true, commentCount: 5 }, ...] }
-          if (data != null && data['images'] is List) {
-            final images = data['images'] as List;
-            for (final img in images) {
-              if (img is Map) {
-                final imgMap = img.cast<String, dynamic>();
-                final url = imgMap['url']?.toString();
-                if (url != null && urls.contains(url)) {
-                  final mediaId = imgMap['mediaId']?.toString();
-                  final hasComments = imgMap['hasComments'] == true;
-                  final commentCount =
-                      (imgMap['commentCount'] is num)
-                          ? (imgMap['commentCount'] as num).toInt()
-                          : int.tryParse(
-                                imgMap['commentCount']?.toString() ?? '0',
-                              ) ??
-                              0;
-                  imageCommentInfo[url] = {
-                    if (mediaId != null) 'mediaId': mediaId,
-                    'hasComments': hasComments,
-                    'commentCount': commentCount,
-                  };
-                }
-              }
-            }
-          }
-
           // 스포일러 정보 확인 (노드 레벨)
           final hasSpoiler = m['spoiler'] == true;
 
@@ -169,25 +135,12 @@ class PostReaderService {
             spoilerNodes.add(id);
           }
 
-          // 🎯 mediaIds 배열 생성 (PostReaderScreen에서 사용)
-          final List<String> mediaIds = [];
-          for (final url in urls) {
-            final info = imageCommentInfo[url];
-            final mediaId = info?['mediaId']?.toString();
-            mediaIds.add(mediaId ?? '');
-          }
-          print('[PostReaderService] 🔍 생성된 mediaIds 배열: $mediaIds');
-
           rebuilt.add(
             ImageRowNode(
               id: id,
               imageUrls: urls,
               spacing: (m['spacing'] as num?)?.toDouble() ?? 4.0,
-              metadata: {
-                'imageCommentInfo': imageCommentInfo,
-                'mediaIds': mediaIds, // 🎯 PostReaderScreen용 mediaIds 배열 추가
-                if (hasSpoiler) 'spoiler': true,
-              },
+              metadata: {if (hasSpoiler) 'spoiler': true},
             ),
           );
           break;
@@ -241,7 +194,6 @@ class PostReaderService {
         case 'clip':
           final data = (m['data'] as Map?)?.cast<String, dynamic>();
           final url = (m['url'] ?? data?['url'] ?? '').toString();
-          final mediaId = (m['mediaId'] ?? data?['mediaId'])?.toString();
           final hasComments =
               (m['hasComments'] ?? data?['hasComments']) == true;
           final commentCount =
@@ -255,6 +207,10 @@ class PostReaderService {
             spoilerNodes.add(id);
           }
 
+          // 패딩 모드 복원 (노드 레벨 우선, data 내 보조, 기본값: 'center')
+          final String? paddingMode =
+              (m['padding'] ?? data?['padding'])?.toString();
+
           rebuilt.add(
             ClipNode(
               id: id,
@@ -262,13 +218,13 @@ class PostReaderService {
               colorHex: (m['color'] ?? '#FF5252').toString(),
               url: url,
               metadata: <String, dynamic>{
-                if (mediaId != null) 'mediaId': mediaId,
                 'hasComments': hasComments,
                 'commentCount':
                     (commentCount is num)
                         ? commentCount.toInt()
                         : int.tryParse(commentCount.toString()) ?? 0,
                 if (hasSpoiler) 'spoiler': true,
+                if (paddingMode == 'full') 'padding': 'full',
               },
             ),
           );
@@ -277,17 +233,10 @@ class PostReaderService {
         case 'video':
           final data = (m['data'] as Map?)?.cast<String, dynamic>();
           final url = (m['url'] ?? data?['url'] ?? '').toString();
-          final mediaId = (m['mediaId'] ?? data?['mediaId'])?.toString();
           final hasComments =
               (m['hasComments'] ?? data?['hasComments']) == true;
           final commentCount =
               (m['commentCount'] ?? data?['commentCount']) ?? 0;
-
-          print('[PostReaderService] 🎬 ClipNode rebuild 시작: $id');
-          print('[PostReaderService] 🎬 원본 노드 데이터: $m');
-          print('[PostReaderService] 🎬 data: $data');
-          print('[PostReaderService] 🎬 URL: $url');
-          print('[PostReaderService] 🎬 mediaId: $mediaId');
 
           // 스포일러 정보 확인 (노드 레벨 또는 data 내부)
           final hasSpoiler =
@@ -303,6 +252,10 @@ class PostReaderService {
             spoilerNodes.add(finalId);
           }
 
+          // 패딩 모드 복원 (노드 레벨 우선, data 내 보조, 기본값: 'center')
+          final String? paddingMode =
+              (m['padding'] ?? data?['padding'])?.toString();
+
           rebuilt.add(
             ClipNode(
               id: finalId,
@@ -310,13 +263,13 @@ class PostReaderService {
               colorHex: (m['color'] ?? '#FF5252').toString(),
               url: url,
               metadata: <String, dynamic>{
-                if (mediaId != null) 'mediaId': mediaId,
                 'hasComments': hasComments,
                 'commentCount':
                     (commentCount is num)
                         ? commentCount.toInt()
                         : int.tryParse(commentCount.toString()) ?? 0,
                 if (hasSpoiler) 'spoiler': true,
+                if (paddingMode == 'full') 'padding': 'full',
               },
             ),
           );
@@ -339,11 +292,11 @@ class PostReaderService {
           }
           nodeService.setSpoiler(nodeId, true);
           if (kDebugMode) {
-            print('[PostReaderService] 스포일러 상태 복원: $nodeId');
+            debugPrint('[PostReaderService] 스포일러 상태 복원: $nodeId');
           }
         }
         if (kDebugMode) {
-          print(
+          debugPrint(
             '[PostReaderService] 스포일러 상태 복원 완료: ${spoilerNodes.length}개 노드',
           );
         }
@@ -372,7 +325,7 @@ class PostReaderService {
 
         // 텍스트 길이 범위 체크
         if (start < 0 || end > text.length || start > end) {
-          print(
+          debugPrint(
             '[PostReaderService] Invalid span range: start=$start, end=$end, textLength=${text.length}',
           );
           continue;
@@ -399,11 +352,13 @@ class PostReaderService {
         final highlightHex = ann['highlight'] as String?;
         if (highlightHex != null && highlightHex.isNotEmpty) {
           if (kDebugMode) {
-            print('DEBUG: PostReaderService 형광펜 디코딩 - HEX: $highlightHex');
+            debugPrint('DEBUG: PostReaderService 형광펜 디코딩 - HEX: $highlightHex');
           }
           final highlightColor = _parseHexColor(highlightHex);
           if (kDebugMode) {
-            print('DEBUG: PostReaderService 형광펜 디코딩 - 색상: $highlightColor');
+            debugPrint(
+              'DEBUG: PostReaderService 형광펜 디코딩 - 색상: $highlightColor',
+            );
           }
           atts.add(HighlightAttribution(highlightColor));
         }
@@ -412,7 +367,7 @@ class PostReaderService {
         final fontFamily = ann['fontFamily'] as String?;
         if (fontFamily != null && fontFamily.isNotEmpty) {
           atts.add(FontFamilyAttribution(fontFamily));
-          print(
+          debugPrint(
             '[PostReaderService] 📖 Span에서 fontFamily 복원: $fontFamily (start=$start, end=$end)',
           );
         }
@@ -421,7 +376,7 @@ class PostReaderService {
         if (ann['spoiler'] == true) {
           atts.add(spoilerAttribution);
           if (kDebugMode) {
-            print(
+            debugPrint(
               '[PostReaderService] spans에서 스포일러 발견: start=$start, end=$end',
             );
           }
@@ -433,7 +388,7 @@ class PostReaderService {
         }
       }
     } catch (e) {
-      print('[PostReaderService] Error building attributed text: $e');
+      debugPrint('[PostReaderService] Error building attributed text: $e');
       // 오류 발생 시 기본 텍스트 반환
     }
 
@@ -485,7 +440,7 @@ class PostReaderService {
       }
     }
 
-    print('[PostReaderService] 이미지 URL 추출 완료: ${imageUrls.length}개');
+    debugPrint('[PostReaderService] 이미지 URL 추출 완료: ${imageUrls.length}개');
     return imageUrls;
   }
 
@@ -506,7 +461,7 @@ class PostReaderService {
       }
     }
 
-    print('[PostReaderService] 클립 URL 추출 완료: ${clipUrls.length}개');
+    debugPrint('[PostReaderService] 클립 URL 추출 완료: ${clipUrls.length}개');
     return clipUrls;
   }
 
@@ -522,7 +477,7 @@ class PostReaderService {
       return;
     }
 
-    print('[PostReaderService] 이미지 ${imagesToPreload.length}개 미리 로드 시작');
+    debugPrint('[PostReaderService] 이미지 ${imagesToPreload.length}개 미리 로드 시작');
 
     try {
       await Future.wait(
@@ -531,14 +486,14 @@ class PostReaderService {
             NetworkImage(url),
             context,
             onError: (e, stack) {
-              print('[PostReaderService] 이미지 프리캐싱 실패: $url - $e');
+              debugPrint('[PostReaderService] 이미지 프리캐싱 실패: $url - $e');
             },
           );
         }),
       );
-      print('[PostReaderService] 이미지 프리캐싱 완료');
+      debugPrint('[PostReaderService] 이미지 프리캐싱 완료');
     } catch (e) {
-      print('[PostReaderService] 이미지 프리캐싱 중 오류: $e');
+      debugPrint('[PostReaderService] 이미지 프리캐싱 중 오류: $e');
     }
   }
 
@@ -602,89 +557,40 @@ class PostReaderService {
       final controller = _preloadedControllers.remove(url);
       _preloadTimestamps.remove(url);
       controller?.dispose();
-      print('[PostReaderService] 오래된 프리로드 컨트롤러 정리: $url');
+      debugPrint('[PostReaderService] 오래된 프리로드 컨트롤러 정리: $url');
     }
   }
 
-  /// 클립(영상)을 미리 로드한다 - 병렬 초기화 지원
-  Future<void> preloadClips(
-    BuildContext context,
-    List<String> clipUrls, {
-    int? maxCount, // ✅ nullable로 변경 (null이면 무제한)
-  }) async {
-    if (clipUrls.isEmpty) {
+  /// 단일 비디오를 프리로드한다 (에디터에서 플레이스홀더 교체 시 사용)
+  static Future<void> preloadVideo(String url) async {
+    if (url.isEmpty) return;
+
+    // 이미 프리로드된 경우 스킵
+    if (_preloadedControllers.containsKey(url)) {
+      debugPrint('[PostReaderService] 이미 프리로드된 비디오: $url');
       return;
     }
 
-    // 이미 프리로드된 URL 제외
-    var urlsToPreload = clipUrls.where(
-      (url) => !_preloadedControllers.containsKey(url),
-    );
-
-    // maxCount가 지정되면 제한, 아니면 전체
-    if (maxCount != null) {
-      urlsToPreload = urlsToPreload.take(maxCount);
-    }
-
-    final urlsList = urlsToPreload.toList();
-
-    if (urlsList.isEmpty) {
-      print('[PostReaderService] 프리로드할 클립 없음 (이미 모두 캐시됨)');
-      return;
-    }
-
-    print('[PostReaderService] 클립 ${urlsList.length}개 병렬 프리로드 시작');
-
-    // 최대 개수 초과 시 오래된 것부터 정리 (안전장치)
-    final totalAfterPreload = _preloadedControllers.length + urlsList.length;
-    if (totalAfterPreload > _maxPreloadCount) {
-      final keepCount = _maxPreloadCount - urlsList.length;
-      if (keepCount > 0) {
-        _disposeOldestControllers(keepCount: keepCount);
-      }
+    // 최대 개수 초과 시 오래된 것부터 정리
+    if (_preloadedControllers.length >= _maxPreloadCount) {
+      _disposeOldestControllers(keepCount: _maxPreloadCount - 1);
     }
 
     try {
-      await Future.wait(
-        urlsList.map((url) async {
-          // ✅ urlsList 사용
-          final controller = VideoPlayerController.networkUrl(Uri.parse(url));
-          try {
-            // 1. 기본 초기화 (메타데이터 + 첫 프레임)
-            await controller.initialize();
+      debugPrint('[PostReaderService] 비디오 프리로드 시작: $url');
+      final controller = VideoPlayerController.networkUrl(Uri.parse(url));
+      _preloadTimestamps[url] = DateTime.now();
+      _preloadedControllers[url] = controller;
 
-            // 2. 초기 버퍼 확보 (0.1초 무음 재생 후 정지)
-            await controller.setVolume(0); // 무음
-            await controller.play();
-            await Future.delayed(const Duration(milliseconds: 120)); // 버퍼 확보
-            await controller.pause();
-            await controller.seekTo(Duration.zero); // 처음으로 되돌리기
-
-            // 캐시에 저장 및 타임스탬프 기록
-            _preloadedControllers[url] = controller;
-            _preloadTimestamps[url] = DateTime.now();
-
-            // 리스너에 프리로드 완료 알림
-            _notifyClipPreloaded(url);
-
-            final shortUrl = url.split('/').last; // 파일명만 추출
-            print('[PostReaderService] ✅ 클립 프리캐싱 완료 (버퍼 확보): $shortUrl');
-          } catch (e) {
-            print('[PostReaderService] 클립 프리캐싱 실패: $url - $e');
-            await controller.dispose();
-          }
-        }),
-      );
-      print(
-        '[PostReaderService] 🎉 클립 병렬 프리캐싱 완료 (총 ${_preloadedControllers.length}개 캐시됨)',
-      );
-      print('[PostReaderService] 캐시된 URL 목록:');
-      for (final url in _preloadedControllers.keys) {
-        final shortUrl = url.split('/').last;
-        print('  - $shortUrl');
-      }
+      await controller.initialize();
+      _notifyClipPreloaded(url);
+      debugPrint('[PostReaderService] ✅ 비디오 프리로드 완료: $url');
     } catch (e) {
-      print('[PostReaderService] 클립 프리캐싱 중 오류: $e');
+      debugPrint('[PostReaderService] ❌ 비디오 프리로드 실패: $url - $e');
+      // 실패 시 캐시에서 제거
+      _preloadedControllers.remove(url);
+      _preloadTimestamps.remove(url);
+      rethrow;
     }
   }
 
@@ -711,7 +617,7 @@ class PostReaderService {
         }
       }
     } catch (e) {
-      print('[PostReaderService] Error restoring stickers: $e');
+      debugPrint('[PostReaderService] Error restoring stickers: $e');
     }
   }
 }

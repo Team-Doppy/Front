@@ -20,7 +20,7 @@ import 'package:path_provider/path_provider.dart';
 class ThumbnailEditOverlay extends StatefulWidget {
   final String postId; // 서버에서 데이터 가져오기용
   final String sessionKey;
-  final Function(String url, String? id) onThumbnailChanged;
+  final Function(String url) onThumbnailChanged;
   final Function(String title, String summary)?
   onMetadataChanged; // 제목/요약 변경 콜백
 
@@ -28,7 +28,6 @@ class ThumbnailEditOverlay extends StatefulWidget {
   final String? initialTitle;
   final String? initialSummary;
   final String? initialThumbnailUrl;
-  final String? initialThumbnailId;
 
   const ThumbnailEditOverlay({
     super.key,
@@ -39,7 +38,6 @@ class ThumbnailEditOverlay extends StatefulWidget {
     this.initialTitle,
     this.initialSummary,
     this.initialThumbnailUrl,
-    this.initialThumbnailId,
   });
 
   @override
@@ -48,9 +46,9 @@ class ThumbnailEditOverlay extends StatefulWidget {
 
 class _ThumbnailEditOverlayState extends State<ThumbnailEditOverlay> {
   String _thumbnailUrl = '';
-  String? _thumbnailId;
   bool _isUploadingThumb = false;
   bool _isLoading = true;
+  bool _isSaving = false; // 🎯 수정완료 저장 중 상태
   bool _isVideo = false; // 썸네일이 영상인지 여부
 
   File? _localVideoFile; // 영상 선택 시 원본 비디오 파일
@@ -99,8 +97,6 @@ class _ThumbnailEditOverlayState extends State<ThumbnailEditOverlay> {
           final title = widget.initialTitle!;
           final summary = widget.initialSummary!;
           final thumbnailUrl = widget.initialThumbnailUrl!;
-          final thumbnailId = widget.initialThumbnailId;
-
           // 썸네일이 영상인지 판단
           final url = thumbnailUrl.toLowerCase();
           final isVideo =
@@ -121,7 +117,6 @@ class _ThumbnailEditOverlayState extends State<ThumbnailEditOverlay> {
 
             // 썸네일
             _thumbnailUrl = thumbnailUrl;
-            _thumbnailId = thumbnailId;
             _originalThumbnailUrl = thumbnailUrl;
             _isVideo = isVideo;
 
@@ -146,10 +141,10 @@ class _ThumbnailEditOverlayState extends State<ThumbnailEditOverlay> {
             }
           }
 
-          print('[ThumbnailEditOverlay] 기존 데이터 사용 (메타데이터 재조회 생략)');
-          print('  - 제목: ${_titleController.text}');
-          print('  - 요약: ${_excerptController.text}');
-          print('  - 썸네일: $_thumbnailUrl (영상: $isVideo)');
+          debugPrint('[ThumbnailEditOverlay] 기존 데이터 사용 (메타데이터 재조회 생략)');
+          debugPrint('  - 제목: ${_titleController.text}');
+          debugPrint('  - 요약: ${_excerptController.text}');
+          debugPrint('  - 썸네일: $_thumbnailUrl (영상: $isVideo)');
         }
         return;
       }
@@ -162,8 +157,6 @@ class _ThumbnailEditOverlayState extends State<ThumbnailEditOverlay> {
         final title = metadata['title'] ?? '';
         final summary = metadata['summary'] ?? '';
         final thumbnailUrl = metadata['thumbnailImageUrl'] ?? '';
-        final thumbnailId = metadata['thumbnailImageId']?.toString();
-
         // 썸네일이 영상인지 판단
         final url = thumbnailUrl.toLowerCase();
         final isVideo =
@@ -184,7 +177,6 @@ class _ThumbnailEditOverlayState extends State<ThumbnailEditOverlay> {
 
           // 썸네일
           _thumbnailUrl = thumbnailUrl;
-          _thumbnailId = thumbnailId;
           _originalThumbnailUrl = thumbnailUrl;
           _isVideo = isVideo;
 
@@ -209,14 +201,14 @@ class _ThumbnailEditOverlayState extends State<ThumbnailEditOverlay> {
           }
         }
 
-        print('[ThumbnailEditOverlay] 메타데이터 로드 완료');
-        print('  - 제목: ${_titleController.text}');
-        print('  - 요약: ${_excerptController.text}');
-        print('  - 썸네일: $_thumbnailUrl (영상: $isVideo)');
+        debugPrint('[ThumbnailEditOverlay] 메타데이터 로드 완료');
+        debugPrint('  - 제목: ${_titleController.text}');
+        debugPrint('  - 요약: ${_excerptController.text}');
+        debugPrint('  - 썸네일: $_thumbnailUrl (영상: $isVideo)');
       }
     } catch (e) {
       // 실패 시에도 스켈레톤 UI를 유지한다 (무한 쉬머)
-      print('[ThumbnailEditOverlay] 메타데이터 로드 실패 - 쉬머 유지: $e');
+      debugPrint('[ThumbnailEditOverlay] 메타데이터 로드 실패 - 쉬머 유지: $e');
       // 의도적으로 _isLoading 상태를 변경하지 않음
     }
   }
@@ -376,7 +368,6 @@ class _ThumbnailEditOverlayState extends State<ThumbnailEditOverlay> {
       }
 
       final newUrl = tasks.first.url;
-      final newId = tasks.first.imageId;
 
       if (newUrl == null || newUrl.isEmpty) {
         if (mounted) {
@@ -388,7 +379,6 @@ class _ThumbnailEditOverlayState extends State<ThumbnailEditOverlay> {
 
       // 새 썸네일 정보 저장 (화면이 살아있을 때만 반영)
       _thumbnailUrl = newUrl;
-      _thumbnailId = newId;
 
       if (mounted) {
         setState(() {
@@ -398,7 +388,7 @@ class _ThumbnailEditOverlayState extends State<ThumbnailEditOverlay> {
       }
 
       // 업로드 완료 시점에는 콜백 호출하지 않음 (수정 완료 버튼 클릭 시에만 호출)
-      print('[ThumbnailEditOverlay] 이미지 편집 완료: $_thumbnailUrl');
+      debugPrint('[ThumbnailEditOverlay] 이미지 편집 완료: $_thumbnailUrl');
     } catch (e) {
       if (mounted) {
         ErrorHandler.handleError(context, e);
@@ -488,11 +478,9 @@ class _ThumbnailEditOverlayState extends State<ThumbnailEditOverlay> {
         if (tasks.isNotEmpty) {
           final t = tasks.first;
           final hasUrl = (t.url ?? '').isNotEmpty;
-          final hasServerImageId = (t.imageId ?? '').toString().isNotEmpty;
 
-          if (t.state == UploadState.success && hasUrl && hasServerImageId) {
+          if (t.state == UploadState.success && hasUrl) {
             _thumbnailUrl = t.url!;
-            _thumbnailId = t.imageId;
 
             // 업로드 완료 시점에는 콜백 호출하지 않음 (수정 완료 버튼 클릭 시에만 호출)
           } else {
@@ -581,7 +569,6 @@ class _ThumbnailEditOverlayState extends State<ThumbnailEditOverlay> {
         if (task.state == UploadState.success) {
           handled = true;
           final videoUrl = task.url;
-          final videoId = task.imageId;
 
           if (videoUrl == null || videoUrl.isEmpty) {
             if (mounted) {
@@ -592,7 +579,6 @@ class _ThumbnailEditOverlayState extends State<ThumbnailEditOverlay> {
           }
 
           _thumbnailUrl = videoUrl;
-          _thumbnailId = videoId;
 
           if (mounted) {
             setState(() {
@@ -601,7 +587,7 @@ class _ThumbnailEditOverlayState extends State<ThumbnailEditOverlay> {
             });
           }
 
-          print('[ThumbnailEditOverlay] 영상 업로드 완료 콜백 호출: $_thumbnailUrl');
+          debugPrint('[ThumbnailEditOverlay] 영상 업로드 완료 콜백 호출: $_thumbnailUrl');
           // 업로드 완료 시점에는 콜백 호출하지 않음 (수정 완료 버튼 클릭 시에만 호출)
         } else if (task.state == UploadState.failed) {
           handled = true;
@@ -683,13 +669,13 @@ class _ThumbnailEditOverlayState extends State<ThumbnailEditOverlay> {
     final title = _titleController.text.trim();
     final summary = _excerptController.text.trim();
 
-    print('[ThumbnailEditOverlay] ===== 변경사항 확인 =====');
-    print('[ThumbnailEditOverlay] 원본 제목: "$_originalTitle"');
-    print('[ThumbnailEditOverlay] 현재 제목: "$title"');
-    print('[ThumbnailEditOverlay] 원본 요약: "$_originalSummary"');
-    print('[ThumbnailEditOverlay] 현재 요약: "$summary"');
-    print('[ThumbnailEditOverlay] 원본 썸네일: "$_originalThumbnailUrl"');
-    print('[ThumbnailEditOverlay] 현재 썸네일: "$_thumbnailUrl"');
+    debugPrint('[ThumbnailEditOverlay] ===== 변경사항 확인 =====');
+    debugPrint('[ThumbnailEditOverlay] 원본 제목: "$_originalTitle"');
+    debugPrint('[ThumbnailEditOverlay] 현재 제목: "$title"');
+    debugPrint('[ThumbnailEditOverlay] 원본 요약: "$_originalSummary"');
+    debugPrint('[ThumbnailEditOverlay] 현재 요약: "$summary"');
+    debugPrint('[ThumbnailEditOverlay] 원본 썸네일: "$_originalThumbnailUrl"');
+    debugPrint('[ThumbnailEditOverlay] 현재 썸네일: "$_thumbnailUrl"');
 
     // 변경사항 확인
     final titleChanged = title != _originalTitle;
@@ -697,7 +683,7 @@ class _ThumbnailEditOverlayState extends State<ThumbnailEditOverlay> {
     final thumbnailChanged = _thumbnailUrl != _originalThumbnailUrl;
 
     if (!titleChanged && !summaryChanged && !thumbnailChanged) {
-      print('[ThumbnailEditOverlay] 변경사항 없음 - 서버 요청 스킵');
+      debugPrint('[ThumbnailEditOverlay] 변경사항 없음 - 서버 요청 스킵');
 
       // 변경사항이 없어도 제목/요약을 부모에게 알림 (동기화 유지)
       if (mounted) {
@@ -707,11 +693,18 @@ class _ThumbnailEditOverlayState extends State<ThumbnailEditOverlay> {
       return;
     }
 
-    print('[ThumbnailEditOverlay] ===== 변경사항 저장 시작 =====');
-    print('[ThumbnailEditOverlay] postId: ${widget.postId}');
-    print('[ThumbnailEditOverlay] 제목 변경: $titleChanged');
-    print('[ThumbnailEditOverlay] 요약 변경: $summaryChanged');
-    print('[ThumbnailEditOverlay] 썸네일 변경: $thumbnailChanged');
+    debugPrint('[ThumbnailEditOverlay] ===== 변경사항 저장 시작 =====');
+    debugPrint('[ThumbnailEditOverlay] postId: ${widget.postId}');
+    debugPrint('[ThumbnailEditOverlay] 제목 변경: $titleChanged');
+    debugPrint('[ThumbnailEditOverlay] 요약 변경: $summaryChanged');
+    debugPrint('[ThumbnailEditOverlay] 썸네일 변경: $thumbnailChanged');
+
+    // 🎯 저장 시작 시 로딩 상태 활성화
+    if (mounted) {
+      setState(() {
+        _isSaving = true;
+      });
+    }
 
     try {
       // 변경된 항목만 전송
@@ -722,10 +715,10 @@ class _ThumbnailEditOverlayState extends State<ThumbnailEditOverlay> {
       final String? summaryParam =
           summaryChanged ? (summary.isNotEmpty ? summary : null) : null;
 
-      print('[ThumbnailEditOverlay] 전송 파라미터:');
-      print('  - thumbnailImageUrl: $thumbnailParam');
-      print('  - title: $titleParam');
-      print('  - summary: $summaryParam');
+      debugPrint('[ThumbnailEditOverlay] 전송 파라미터:');
+      debugPrint('  - thumbnailImageUrl: $thumbnailParam');
+      debugPrint('  - title: $titleParam');
+      debugPrint('  - summary: $summaryParam');
 
       await BlogService().updatePostThumbnail(
         postId: int.parse(widget.postId),
@@ -734,7 +727,7 @@ class _ThumbnailEditOverlayState extends State<ThumbnailEditOverlay> {
         summary: summaryParam,
       );
 
-      print('[ThumbnailEditOverlay] ✅ 서버 업데이트 성공');
+      debugPrint('[ThumbnailEditOverlay] ✅ 서버 업데이트 성공');
       // 서버 반영 성공 후에만 원본 스냅샷 갱신
       if (thumbnailChanged) {
         _originalThumbnailUrl = _thumbnailUrl;
@@ -750,22 +743,32 @@ class _ThumbnailEditOverlayState extends State<ThumbnailEditOverlay> {
         // 제목/요약이 변경되었을 때만 부모에게 알림 (피드 새로고침 트리거)
         if (titleChanged || summaryChanged) {
           widget.onMetadataChanged?.call(title, summary);
-          print('[ThumbnailEditOverlay] 메타데이터 변경 콜백 호출');
+          debugPrint('[ThumbnailEditOverlay] 메타데이터 변경 콜백 호출');
         }
 
         // 썸네일이 변경되었을 때만 onThumbnailChanged 호출 (피드 새로고침 트리거)
         if (thumbnailChanged) {
-          widget.onThumbnailChanged(_thumbnailUrl, _thumbnailId);
-          print('[ThumbnailEditOverlay] 썸네일 변경 콜백 호출');
+          widget.onThumbnailChanged(_thumbnailUrl);
+          debugPrint('[ThumbnailEditOverlay] 썸네일 변경 콜백 호출');
         }
 
         ErrorHandler.showInfo(context, '수정이 완료되었습니다');
         Navigator.of(context).pop();
       }
     } catch (e) {
-      print('[ThumbnailEditOverlay] ❌ 저장 실패: $e');
+      debugPrint('[ThumbnailEditOverlay] ❌ 저장 실패: $e');
       if (mounted) {
+        setState(() {
+          _isSaving = false; // 🎯 저장 실패 시 로딩 상태 해제
+        });
         ErrorHandler.handleError(context, e);
+      }
+    } finally {
+      // 🎯 저장 완료/실패 모두 로딩 상태 해제 (안전장치)
+      if (mounted) {
+        setState(() {
+          _isSaving = false;
+        });
       }
     }
   }
@@ -844,24 +847,40 @@ class _ThumbnailEditOverlayState extends State<ThumbnailEditOverlay> {
           // 편집모드: "완료" (편집모드만 종료), 비편집모드: "수정 완료" (서버 저장 후 화면 닫기)
           TextButton(
             onPressed:
-                _editMode
-                    ? _exitEditMode // 편집모드 종료
-                    : (_isUploadingThumb ? null : _saveChanges), // 업로드 중이면 비활성화
-            child: Text(
-              _editMode ? context.tr('done') : context.tr('modify_complete'),
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.w500,
-                color:
-                    (!_editMode && _isUploadingThumb)
-                        ? Theme.of(
-                          context,
-                        ).colorScheme.onSurface.withOpacity(0.3)
-                        : Theme.of(
-                          context,
-                        ).colorScheme.onSurface.withOpacity(0.9),
-              ),
-            ),
+                (_isUploadingThumb || _isSaving)
+                    ? null // 업로드 중이거나 저장 중이면 비활성화
+                    : (_editMode ? _exitEditMode : _saveChanges),
+            child:
+                (_isSaving && !_editMode)
+                    ? SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        valueColor: AlwaysStoppedAnimation<Color>(
+                          Theme.of(
+                            context,
+                          ).colorScheme.onSurface.withOpacity(0.9),
+                        ),
+                      ),
+                    )
+                    : Text(
+                      _editMode
+                          ? context.tr('done')
+                          : context.tr('modify_complete'),
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w500,
+                        color:
+                            (!_editMode && (_isUploadingThumb || _isSaving))
+                                ? Theme.of(
+                                  context,
+                                ).colorScheme.onSurface.withOpacity(0.3)
+                                : Theme.of(
+                                  context,
+                                ).colorScheme.onSurface.withOpacity(0.9),
+                      ),
+                    ),
           ),
           SizedBox(width: 10),
         ],

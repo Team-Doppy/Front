@@ -749,7 +749,7 @@ class _GridCategorySectionState extends State<GridCategorySection> {
 
     return DragTarget<PostData>(
       onWillAccept: (data) {
-        print(
+        debugPrint(
           '[GridCategorySection] onWillAccept: index=$index, data=${data?.id ?? 'null'}',
         );
         return true;
@@ -760,13 +760,13 @@ class _GridCategorySectionState extends State<GridCategorySection> {
         context.read<PostDragDropService>().setHoverSectionKey(sectionKey);
         setState(() {
           _postDropTargetIndex = index;
-          print(
+          debugPrint(
             '[GridCategorySection] onMove: index=$index, targetIndex=$_postDropTargetIndex',
           );
         });
       },
       onLeave: (_) {
-        print('[GridCategorySection] onLeave: index=$index');
+        debugPrint('[GridCategorySection] onLeave: index=$index');
         setState(() => _postDropTargetIndex = null);
       },
       onAccept: (draggedPost) async {
@@ -785,7 +785,7 @@ class _GridCategorySectionState extends State<GridCategorySection> {
             setState(() => _postDropTargetIndex = null);
             return;
           }
-          print(
+          debugPrint(
             '[GridCategorySection] 같은 카테고리 내 순서 변경: $draggedIndex -> $targetIndex',
           );
 
@@ -798,7 +798,7 @@ class _GridCategorySectionState extends State<GridCategorySection> {
           );
         } else {
           // 다른 카테고리에서 이동
-          print(
+          debugPrint(
             '[GridCategorySection] 다른 카테고리에서 이동: ${draggedPost.title} -> 카테고리 ${widget.categoryId}, 위치 $targetIndex',
           );
           await context
@@ -1034,15 +1034,15 @@ class _GridCategorySectionState extends State<GridCategorySection> {
       ),
     );
 
-    print('[GridCategorySection] PostReaderScreen 결과: $result');
+    debugPrint('[GridCategorySection] PostReaderScreen 결과: $result');
     if (result != null) {
       if (result['deleted'] == true) {
-        print('[GridCategorySection] 포스트 삭제 감지 - 피드 새로고침 시작');
+        debugPrint('[GridCategorySection] 포스트 삭제 감지 - 피드 새로고침 시작');
         final provider = context.read<BaseFeedProvider>();
         provider.clearInMemory();
         provider.setNetworkError(null);
         await provider.loadInitial(force: true);
-        print('[GridCategorySection] 피드 새로고침 완료');
+        debugPrint('[GridCategorySection] 피드 새로고침 완료');
 
         // 🎯 포스트 삭제 시 그룹 postCount 업데이트는 PostReaderScreen에서 처리됨
         // (result에 공개범위 정보가 포함되지 않아 여기서는 업데이트 불가)
@@ -1053,7 +1053,7 @@ class _GridCategorySectionState extends State<GridCategorySection> {
         final sharedGroupIds = result['sharedGroupIds'] as List<int>?;
 
         if (postId != null && accessLevel != null) {
-          print(
+          debugPrint(
             '[GridCategorySection] 공개 범위 변경 감지 - 선택적 업데이트 시작 (postId: $postId)',
           );
           final provider = context.read<BaseFeedProvider>();
@@ -1062,15 +1062,15 @@ class _GridCategorySectionState extends State<GridCategorySection> {
             accessLevel: accessLevel,
             sharedGroupIds: sharedGroupIds,
           );
-          print('[GridCategorySection] 피드 선택적 업데이트 완료 (공개 범위 변경)');
+          debugPrint('[GridCategorySection] 피드 선택적 업데이트 완료 (공개 범위 변경)');
         } else {
           // fallback: 정보가 없으면 전체 새로고침
-          print('[GridCategorySection] 공개 범위 변경 감지 - 정보 부족으로 전체 새로고침');
+          debugPrint('[GridCategorySection] 공개 범위 변경 감지 - 정보 부족으로 전체 새로고침');
           final provider = context.read<BaseFeedProvider>();
           provider.clearInMemory();
           provider.setNetworkError(null);
           await provider.loadInitial(force: true);
-          print('[GridCategorySection] 피드 새로고침 완료 (공개 범위 변경)');
+          debugPrint('[GridCategorySection] 피드 새로고침 완료 (공개 범위 변경)');
         }
       }
     }
@@ -1095,7 +1095,7 @@ class _GridCategorySectionState extends State<GridCategorySection> {
         provider.movePostLocally(movedPostId, categoryId, targetPosition);
       }
     } catch (e) {
-      print('⚠️ [GridCategorySection] 포스트 순서 서버 저장 실패: $e');
+      debugPrint('⚠️ [GridCategorySection] 포스트 순서 서버 저장 실패: $e');
       try {
         ScaffoldMessenger.of(
           context,
@@ -1149,7 +1149,7 @@ class _GridCategorySectionState extends State<GridCategorySection> {
           ManageGroupScreen.invalidateGroupPostsCache(-1);
         }
       } catch (e) {
-        print('[GridCategorySection] 그룹 동기화 실패: $e');
+        debugPrint('[GridCategorySection] 그룹 동기화 실패: $e');
       }
 
       // 🎯 피드에서 포스트 제거 및 새로고침
@@ -1383,7 +1383,7 @@ class _GridCategorySectionState extends State<GridCategorySection> {
         ErrorHandler.showInfo(context, context.tr('category_changed'));
       }
     } catch (e) {
-      print('[GridCategorySection] 카테고리 변경 실패: $e');
+      debugPrint('[GridCategorySection] 카테고리 변경 실패: $e');
       if (context.mounted) {
         ErrorHandler.showError(context, context.tr('category_change_failed'));
       }

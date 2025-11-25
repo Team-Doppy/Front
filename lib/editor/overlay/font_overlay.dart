@@ -86,7 +86,6 @@ class _FontOverlayState extends State<FontOverlay> {
   void initState() {
     super.initState();
     _loadPrefs();
-    _preloadVisibleFonts();
     // 🎯 로케일에 따라 초기 카테고리 설정
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final localeProvider = Provider.of<LocaleProvider>(
@@ -99,44 +98,6 @@ class _FontOverlayState extends State<FontOverlay> {
         });
       }
     });
-  }
-
-  /// 보이는 폰트들을 미리 프리로드 (깜빡임 방지)
-  /// 이미 PostwriteScreen에서 미리 로드된 폰트는 건너뜀
-  Future<void> _preloadVisibleFonts() async {
-    final preloadService = FontPreloadService();
-
-    // 이미 프리로드가 진행 중이거나 완료된 경우 추가 로드 불필요
-    // 우선순위 폰트들은 PostwriteScreen에서 이미 로드됨
-    // 여기서는 보이는 폰트 중 아직 로드되지 않은 것들만 로드
-    final priorityFonts = FontCatalog.all.take(50).toList(); // 상위 50개 확인
-
-    // 아직 로드되지 않은 폰트만 병렬로 로드
-    final fontsToLoad =
-        priorityFonts.where((font) {
-          return font.googleFont != null &&
-              !preloadService.isPreloaded(font.identifier);
-        }).toList();
-
-    if (fontsToLoad.isEmpty) {
-      print('[FontOverlay] 모든 우선순위 폰트가 이미 로드됨');
-      return;
-    }
-
-    // 병렬로 빠르게 로드 (최대 10개씩)
-    const batchSize = 10;
-    for (int i = 0; i < fontsToLoad.length; i += batchSize) {
-      final batch = fontsToLoad.skip(i).take(batchSize).toList();
-
-      await Future.wait(
-        batch.map((font) => preloadService.preloadFont(font)),
-        eagerError: false,
-      );
-
-      if (i + batchSize < fontsToLoad.length) {
-        await Future.delayed(const Duration(milliseconds: 20));
-      }
-    }
   }
 
   Future<void> _loadPrefs() async {
@@ -414,6 +375,18 @@ class _FontOverlayState extends State<FontOverlay> {
 
                           return _GlassTile(
                             onTap: () async {
+                              // 🎯 폰트 선택 시 해당 폰트만 빠르게 로드
+                              final preloadService = FontPreloadService();
+                              if (f.googleFont != null &&
+                                  !preloadService.isPreloaded(f.identifier)) {
+                                // 폰트 로드를 백그라운드에서 시작 (await 하지 않음)
+                                preloadService.preloadFont(f).catchError((e) {
+                                  debugPrint(
+                                    '[FontOverlay] 폰트 로드 실패: ${f.displayName} - $e',
+                                  );
+                                });
+                              }
+
                               // 에디터에 즉시 적용
                               widget.onSelect(f);
                               // 현재 폰트 저장 (다음 오픈 시 "현재 사용 중"으로 인식)

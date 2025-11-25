@@ -30,7 +30,6 @@ class Step1ThumbnailEdit extends StatefulWidget {
   final VideoPlayerController? videoController;
   final AnimationController controller;
   final ValueChanged<String> onThumbnailUrlChanged;
-  final ValueChanged<String?> onThumbnailIdChanged;
   final ValueChanged<File?> onLocalThumbnailChanged;
   final ValueChanged<File?> onLocalVideoChanged;
   final ValueChanged<VideoPlayerController?> onVideoControllerChanged;
@@ -54,7 +53,6 @@ class Step1ThumbnailEdit extends StatefulWidget {
     this.videoController,
     required this.controller,
     required this.onThumbnailUrlChanged,
-    required this.onThumbnailIdChanged,
     required this.onLocalThumbnailChanged,
     required this.onLocalVideoChanged,
     required this.onVideoControllerChanged,
@@ -347,10 +345,10 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
       focusNode: widget.excerptFocusNode,
       textAlign: TextAlign.center,
       style: TextStyle(
-        color: Theme.of(context).colorScheme.onSurface.withOpacity(0.85),
-        fontSize: 15,
+        color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
+        fontSize: 14,
         fontWeight: FontWeight.w300,
-        height: 1.6,
+        height: 1.8,
         letterSpacing: -0.1,
       ),
       cursorColor: Theme.of(context).colorScheme.primary,
@@ -359,7 +357,7 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
       keyboardType: TextInputType.multiline,
       scrollPhysics: const NeverScrollableScrollPhysics(),
       decoration: InputDecoration(
-        hintText: AppLocalizations.of(context)!.t('content_input_placeholder'),
+        hintText: AppLocalizations.of(context).t('content_input_placeholder'),
         hintStyle: TextStyle(
           color: Theme.of(context).colorScheme.onSurface.withOpacity(0.3),
         ),
@@ -386,8 +384,8 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
     final bool isVideo = widget.localVideoFile != null;
     final String buttonText =
         isVideo
-            ? AppLocalizations.of(context)!.t('change_thumbnail')
-            : AppLocalizations.of(context)!.t('edit_thumbnail');
+            ? AppLocalizations.of(context).t('change_thumbnail')
+            : AppLocalizations.of(context).t('edit_thumbnail');
 
     return ClipRRect(
       borderRadius: BorderRadius.circular(35),
@@ -458,13 +456,13 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
                     ListTile(
                       onTap: () => Navigator.of(context).pop('image'),
                       title: Text(
-                        AppLocalizations.of(context)!.t('select_image'),
+                        AppLocalizations.of(context).t('select_image'),
                       ),
                     ),
                     ListTile(
                       onTap: () => Navigator.of(context).pop('video'),
                       title: Text(
-                        AppLocalizations.of(context)!.t('select_video'),
+                        AppLocalizations.of(context).t('select_video'),
                       ),
                     ),
                   ],
@@ -506,10 +504,8 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
         if (tasks.isNotEmpty) {
           final t = tasks.first;
           final hasUrl = (t.url ?? '').isNotEmpty;
-          final hasServerImageId = (t.imageId ?? '').toString().isNotEmpty;
-          if (t.state == UploadState.success && hasUrl && hasServerImageId) {
+          if (t.state == UploadState.success && hasUrl) {
             widget.onThumbnailUrlChanged(t.url!);
-            widget.onThumbnailIdChanged(t.imageId);
 
             await precacheImage(NetworkImage(t.url!), context);
 
@@ -520,7 +516,7 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
             if (mounted) {
               ErrorHandler.showError(
                 context,
-                AppLocalizations.of(context)!.t('thumbnail_upload_failed'),
+                AppLocalizations.of(context).t('thumbnail_upload_failed'),
               );
               widget.onLocalThumbnailChanged(null);
             }
@@ -577,7 +573,7 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
             }
           })
           .catchError((error) {
-            print('[Step1] 비디오 컨트롤러 초기화 실패: $error');
+            debugPrint('[Step1] 비디오 컨트롤러 초기화 실패: $error');
             if (mounted) {
               widget.onVideoControllerChanged(null);
               setState(() {
@@ -622,13 +618,12 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
         if (task.state == UploadState.success) {
           handled = true;
           final videoUrl = task.url;
-          final videoId = task.imageId;
 
           if (videoUrl == null || videoUrl.isEmpty) {
             if (mounted) {
               ErrorHandler.showError(
                 context,
-                AppLocalizations.of(context)!.t('video_url_failed'),
+                AppLocalizations.of(context).t('video_url_failed'),
               );
               widget.onVideoControllerChanged(null);
               widget.onLocalVideoChanged(null);
@@ -638,7 +633,6 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
           }
 
           widget.onThumbnailUrlChanged(videoUrl);
-          widget.onThumbnailIdChanged(videoId);
 
           if (mounted) {
             widget.onIsUploadingThumbChanged(false);
@@ -746,13 +740,13 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
                     ListTile(
                       onTap: () => Navigator.of(context).pop('edit'),
                       title: Text(
-                        AppLocalizations.of(context)!.t('edit_thumbnail'),
+                        AppLocalizations.of(context).t('edit_thumbnail'),
                       ),
                     ),
                     ListTile(
                       onTap: () => Navigator.of(context).pop('change'),
                       title: Text(
-                        AppLocalizations.of(context)!.t('change_thumbnail'),
+                        AppLocalizations.of(context).t('change_thumbnail'),
                       ),
                     ),
                   ],
@@ -784,7 +778,7 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
         if (mounted) {
           ErrorHandler.showError(
             context,
-            AppLocalizations.of(context)!.t('image_load_failed'),
+            AppLocalizations.of(context).t('image_load_failed'),
           );
         }
         return;
@@ -822,27 +816,25 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
         if (mounted) {
           ErrorHandler.showError(
             context,
-            AppLocalizations.of(context)!.t('thumbnail_upload_failed'),
+            AppLocalizations.of(context).t('thumbnail_upload_failed'),
           );
         }
         return;
       }
 
       final newUrl = tasks.first.url;
-      final newId = tasks.first.imageId;
 
       if (newUrl == null || newUrl.isEmpty) {
         if (mounted) {
           ErrorHandler.showError(
             context,
-            AppLocalizations.of(context)!.t('upload_url_failed'),
+            AppLocalizations.of(context).t('upload_url_failed'),
           );
         }
         return;
       }
 
       widget.onThumbnailUrlChanged(newUrl);
-      widget.onThumbnailIdChanged(newId);
 
       if (mounted) {
         setState(() {});
@@ -872,7 +864,7 @@ class _EmptyImagePlaceholder extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(
-              AppLocalizations.of(context)!.t('tap_to_select_thumbnail'),
+              AppLocalizations.of(context).t('tap_to_select_thumbnail'),
               style: TextStyle(
                 color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
                 fontSize: 15,

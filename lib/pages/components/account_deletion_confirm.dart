@@ -383,9 +383,11 @@ class _AccountDeletionSheetState extends State<AccountDeletionSheet> {
           reasonText: reasonText,
           detail: detail,
         );
-        print('[AccountDeletionSheet] ✅ 탈퇴 이유 Firestore 저장 완료');
+        debugPrint('[AccountDeletionSheet] ✅ 탈퇴 이유 Firestore 저장 완료');
       } catch (e) {
-        print('[AccountDeletionSheet] ⚠️ 탈퇴 이유 Firestore 저장 실패 (계속 진행): $e');
+        debugPrint(
+          '[AccountDeletionSheet] ⚠️ 탈퇴 이유 Firestore 저장 실패 (계속 진행): $e',
+        );
         // Firestore 저장 실패해도 계속 진행 (API 호출은 수행)
       }
 
@@ -414,7 +416,7 @@ class _AccountDeletionSheetState extends State<AccountDeletionSheet> {
         }
       }
     } catch (e) {
-      print('[AccountDeletionSheet] ❌ 회원 탈퇴 실패: $e');
+      debugPrint('[AccountDeletionSheet] ❌ 회원 탈퇴 실패: $e');
       if (mounted) {
         ErrorHandler.showError(context, e.toString());
       }

@@ -152,7 +152,7 @@ class ProfileEmptyStateMissionCards extends StatelessWidget {
         _handleProfileImageSelected(context, file, myProfileProvider);
       }
     } catch (e) {
-      print('[ProfileEmptyStateMissionCards] 이미지 선택 실패: $e');
+      debugPrint('[ProfileEmptyStateMissionCards] 이미지 선택 실패: $e');
       if (context.mounted) {
         ErrorHandler.showError(context, '이미지를 선택할 수 없습니다.');
       }
@@ -165,26 +165,30 @@ class ProfileEmptyStateMissionCards extends StatelessWidget {
     File file,
     MyProfileFeedProvider myProfileProvider,
   ) async {
-    print('[ProfileEmptyStateMissionCards] 프로필 이미지 업로드 시작: ${file.path}');
+    debugPrint('[ProfileEmptyStateMissionCards] 프로필 이미지 업로드 시작: ${file.path}');
 
     try {
       final upload = context.read<UploadService>();
       final task = upload.enqueueFile(file, kind: UploadKind.profile);
-      print('[ProfileEmptyStateMissionCards] 업로드 태스크 생성됨: ${task.state}');
+      debugPrint('[ProfileEmptyStateMissionCards] 업로드 태스크 생성됨: ${task.state}');
 
       // 업로드 완료 리스너
       void uploadListener() async {
-        print('[ProfileEmptyStateMissionCards] 업로드 리스너 호출됨: ${task.state}');
+        debugPrint(
+          '[ProfileEmptyStateMissionCards] 업로드 리스너 호출됨: ${task.state}',
+        );
 
         if (!context.mounted) {
-          print('[ProfileEmptyStateMissionCards] context가 unmounted 상태');
+          debugPrint('[ProfileEmptyStateMissionCards] context가 unmounted 상태');
           return;
         }
 
         if (task.state == UploadState.success) {
           try {
             final imageUrl = task.url ?? '';
-            print('[ProfileEmptyStateMissionCards] 업로드 성공, URL: $imageUrl');
+            debugPrint(
+              '[ProfileEmptyStateMissionCards] 업로드 성공, URL: $imageUrl',
+            );
 
             if (imageUrl.isNotEmpty) {
               // 프로필 이미지 업데이트 (await로 완료 대기)
@@ -192,12 +196,14 @@ class ProfileEmptyStateMissionCards extends StatelessWidget {
                 imageUrl,
                 context,
               );
-              print('[ProfileEmptyStateMissionCards] ✅ 프로필 이미지 업데이트 완료');
+              debugPrint('[ProfileEmptyStateMissionCards] ✅ 프로필 이미지 업데이트 완료');
 
               // 🎯 UI 업데이트 안정화를 위한 짧은 지연
               await Future.delayed(const Duration(milliseconds: 100));
             } else {
-              print('[ProfileEmptyStateMissionCards] URL이 비어있음, 프로필 다시 가져오기');
+              debugPrint(
+                '[ProfileEmptyStateMissionCards] URL이 비어있음, 프로필 다시 가져오기',
+              );
               // URL이 없으면 프로필 다시 가져오기
               await context.read<UserProvider>().fetchMyProfile();
 
@@ -207,7 +213,7 @@ class ProfileEmptyStateMissionCards extends StatelessWidget {
 
             task.removeListener(uploadListener);
           } catch (e) {
-            print('[ProfileEmptyStateMissionCards] ❌ 프로필 이미지 업데이트 실패: $e');
+            debugPrint('[ProfileEmptyStateMissionCards] ❌ 프로필 이미지 업데이트 실패: $e');
             if (context.mounted) {
               ErrorHandler.showError(
                 context,
@@ -218,7 +224,9 @@ class ProfileEmptyStateMissionCards extends StatelessWidget {
           }
         } else if (task.state == UploadState.failed ||
             task.state == UploadState.cancelled) {
-          print('[ProfileEmptyStateMissionCards] 업로드 실패/취소: ${task.state}');
+          debugPrint(
+            '[ProfileEmptyStateMissionCards] 업로드 실패/취소: ${task.state}',
+          );
           if (context.mounted) {
             ErrorHandler.showError(
               context,
@@ -233,17 +241,17 @@ class ProfileEmptyStateMissionCards extends StatelessWidget {
 
       // 초기 상태 확인
       if (task.state == UploadState.success) {
-        print('[ProfileEmptyStateMissionCards] 이미 업로드 완료 상태');
+        debugPrint('[ProfileEmptyStateMissionCards] 이미 업로드 완료 상태');
         uploadListener();
       } else if (task.state == UploadState.failed ||
           task.state == UploadState.cancelled) {
-        print('[ProfileEmptyStateMissionCards] 이미 업로드 실패/취소 상태');
+        debugPrint('[ProfileEmptyStateMissionCards] 이미 업로드 실패/취소 상태');
         uploadListener();
       } else {
-        print('[ProfileEmptyStateMissionCards] 업로드 진행 중, 리스너 대기...');
+        debugPrint('[ProfileEmptyStateMissionCards] 업로드 진행 중, 리스너 대기...');
       }
     } catch (e) {
-      print('[ProfileEmptyStateMissionCards] ❌ 예외 발생: $e');
+      debugPrint('[ProfileEmptyStateMissionCards] ❌ 예외 발생: $e');
       if (context.mounted) {
         ErrorHandler.showError(
           context,

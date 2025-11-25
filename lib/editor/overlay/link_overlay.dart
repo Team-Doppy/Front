@@ -136,7 +136,7 @@ class _LinkOverlayState extends State<LinkOverlay> {
         });
       }
     } catch (e) {
-      print('[LinkOverlay] 링크 기록 불러오기 실패: $e');
+      debugPrint('[LinkOverlay] 링크 기록 불러오기 실패: $e');
       // 실패 시 기본 추천 목록 표시
       if (mounted) {
         setState(() {
@@ -161,7 +161,7 @@ class _LinkOverlayState extends State<LinkOverlay> {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setStringList(_linkHistoryKey, _linkHistory);
     } catch (e) {
-      print('[LinkOverlay] 링크 기록 저장 실패: $e');
+      debugPrint('[LinkOverlay] 링크 기록 저장 실패: $e');
     }
   }
 

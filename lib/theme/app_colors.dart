@@ -7,10 +7,10 @@ class AppColors {
   // ===== Primary Colors (연한 푸른색) =====
   static const Color primary = Color.fromARGB(
     255,
-    90,
-    110,
-    230,
-  ); // 연한 푸른색 (진하고 쨍하게)
+    120,
+    140,
+    255,
+  ); // 연한 푸른색 (밝게)
   static const Color primaryDark = Color(0xFF46529D); // 진한 푸른색
   static const Color primaryLight = Color(0xFF7F8DE9); // 더 연한 푸른색
 

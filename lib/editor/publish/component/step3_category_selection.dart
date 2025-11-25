@@ -97,12 +97,12 @@ class _Step3CategorySelectionState extends State<Step3CategorySelection> {
                           final id = category['id'] as int?;
                           var name =
                               category['name'] as String? ??
-                              AppLocalizations.of(context)!.t('no_name');
+                              AppLocalizations.of(context).t('no_name');
 
                           if (name == 'system_doppy_uncategorized') {
                             name = AppLocalizations.of(
                               context,
-                            )!.t('uncategorized');
+                            ).t('uncategorized');
                           }
 
                           return _buildCategoryOption(
@@ -146,9 +146,7 @@ class _Step3CategorySelectionState extends State<Step3CategorySelection> {
                 fontSize: 16,
               ),
               decoration: InputDecoration(
-                hintText: AppLocalizations.of(
-                  context,
-                )!.t('category_name_input'),
+                hintText: AppLocalizations.of(context).t('category_name_input'),
                 hintStyle: TextStyle(
                   color:
                       isDarkMode
@@ -203,7 +201,7 @@ class _Step3CategorySelectionState extends State<Step3CategorySelection> {
                     ),
                   ),
                   child: Text(
-                    AppLocalizations.of(context)!.t('add'),
+                    AppLocalizations.of(context).t('add'),
                     style: const TextStyle(
                       fontSize: 14,
                       fontWeight: FontWeight.w500,
@@ -234,7 +232,7 @@ class _Step3CategorySelectionState extends State<Step3CategorySelection> {
           children: [
             Expanded(
               child: Text(
-                AppLocalizations.of(context)!.t('create_new_category'),
+                AppLocalizations.of(context).t('create_new_category'),
                 style: TextStyle(
                   color:
                       isDarkMode
@@ -263,7 +261,7 @@ class _Step3CategorySelectionState extends State<Step3CategorySelection> {
     if (name.isEmpty) {
       ErrorHandler.showError(
         context,
-        AppLocalizations.of(context)!.t('category_name_required'),
+        AppLocalizations.of(context).t('category_name_required'),
       );
       return;
     }
@@ -374,7 +372,9 @@ class _Step3CategorySelectionState extends State<Step3CategorySelection> {
           );
           if (newCategory.isNotEmpty) {
             widget.onSelectedCategoryIdChanged(newCategoryId);
-            print('[Step3CategorySelection] 새로 만든 카테고리 자동 선택: $newCategoryId');
+            debugPrint(
+              '[Step3CategorySelection] 새로 만든 카테고리 자동 선택: $newCategoryId',
+            );
           }
         } else {
           // 🎯 기본 카테고리 자동 선택 (새로 만든 카테고리가 없는 경우)
@@ -384,7 +384,7 @@ class _Step3CategorySelectionState extends State<Step3CategorySelection> {
               widget.onSelectedCategoryIdChanged(
                 categories.first['id'] as int?,
               );
-              print(
+              debugPrint(
                 '[Step3CategorySelection] 기본 카테고리 자동 선택: ${categories.first['id']}',
               );
             }
@@ -392,7 +392,7 @@ class _Step3CategorySelectionState extends State<Step3CategorySelection> {
         }
       }
     } catch (e) {
-      print('[Step3CategorySelection] 카테고리 로드 실패: $e');
+      debugPrint('[Step3CategorySelection] 카테고리 로드 실패: $e');
       if (mounted) {
         // 🎯 에러 발생 시 기존 캐시 유지 (빈 배열로 설정하지 않음)
         widget.onIsLoadingCategoriesChanged(false);

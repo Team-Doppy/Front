@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:doppy/common/widgets/image_error_placeholder.dart';
 import 'package:doppy/editor/component/row_image_component.dart';
 import 'package:doppy/editor/component/link_component.dart';
+import 'package:doppy/editor/component/clip_component.dart';
 import 'package:doppy/editor/service/drag_service.dart';
 import 'package:doppy/editor/service/node_component_service.dart';
 import 'package:doppy/pages/components/shimmer_box.dart';
@@ -586,7 +587,9 @@ class _SingleImageComponentState extends State<SingleImageComponent>
       return node is LinkNode ||
           (node is ParagraphNode && node.metadata['mention'] == true) ||
           node is ImageNode ||
-          node is ImageRowNode;
+          node is ImageRowNode ||
+          node is ClipNode;
+      ;
     }
 
     // 텍스트 노드 타입 체크
@@ -847,7 +850,9 @@ class _SingleImageComponentState extends State<SingleImageComponent>
     final neighborIndex = myIndex + direction;
     if (neighborIndex < 0 || neighborIndex >= doc.nodeCount) return false;
     final neighbor = doc.getNodeAt(neighborIndex);
-    return neighbor is ImageNode || neighbor is ImageRowNode;
+    return neighbor is ImageNode ||
+        neighbor is ImageRowNode ||
+        neighbor is ClipNode;
   }
 }
 

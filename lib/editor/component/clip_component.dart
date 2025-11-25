@@ -13,13 +13,16 @@ import 'package:doppy/theme/app_colors.dart';
 import 'dart:math' as math;
 import 'package:provider/provider.dart';
 import 'package:doppy/editor/component/row_image_component.dart';
+import 'package:doppy/editor/component/link_component.dart';
 import 'package:video_player/video_player.dart';
 import 'package:video_thumbnail/video_thumbnail.dart';
 import 'package:doppy/pages/components/shimmer_box.dart';
-import 'package:doppy/editor/service/post_reader_service.dart';
 
 /// VideoPlayer 컨트롤러를 저장하는 맵
 final videoPlayerControllers = <String, VideoPlayerControllerProxy>{};
+
+/// 🎯 reader 모드에서 ClipComponent와 FullscreenVideoPlayer가 공유하는 컨트롤러 맵
+final readerVideoControllers = <String, VideoPlayerController>{};
 
 /// VideoPlayer 프록시 클래스
 class VideoPlayerControllerProxy {
@@ -31,7 +34,7 @@ class VideoPlayerControllerProxy {
 
 /// 모든 비디오 플레이어 정리
 void cleanupAllVideoPlayers() {
-  print('[ClipComponent] 모든 비디오 플레이어 정리 시작');
+  debugPrint('[ClipComponent] 모든 비디오 플레이어 정리 시작');
   for (final entry in videoPlayerControllers.entries) {
     final controller = entry.value;
     // 모든 비디오 일시정지
@@ -39,7 +42,7 @@ void cleanupAllVideoPlayers() {
   }
   // 맵 비우기
   videoPlayerControllers.clear();
-  print('[ClipComponent] 모든 비디오 플레이어 정리 완료');
+  debugPrint('[ClipComponent] 모든 비디오 플레이어 정리 완료');
 }
 
 /// 주어진 key를 제외한 모든 비디오를 일시정지한다
@@ -268,7 +271,7 @@ class _ClipComponentState extends State<_ClipComponent> with DocumentComponent {
       final bytes = await VideoThumbnail.thumbnailData(
         video: path,
         imageFormat: ImageFormat.JPEG,
-        quality: 70,
+        quality: 100, // 🎯 최고 화질로 설정
       );
       if (mounted && _localVideoThumbPath == path) {
         // 썸네일 바이트 저장 + 실제 가로세로 비율 계산
@@ -328,9 +331,24 @@ class _ClipComponentState extends State<_ClipComponent> with DocumentComponent {
       );
     }
 
+    // 스타일시트 패딩 적용: metadata에서 패딩 모드 확인 (기본값: 'center' = 패딩 있음)
+    double horizontalPadding = 20.0; // 기본 패딩
+    try {
+      final node = doc?.getNodeById(widget.nodeId);
+      if (node is ClipNode) {
+        final paddingMode = node.metadata['padding'] as String? ?? 'center';
+        horizontalPadding = paddingMode == 'full' ? 0.0 : 20.0;
+      }
+    } catch (_) {}
+
     final card = Container(
       width: double.infinity,
-      margin: EdgeInsets.only(top: marginTop, bottom: marginBottom),
+      margin: EdgeInsets.only(
+        top: marginTop,
+        bottom: marginBottom,
+        left: horizontalPadding,
+        right: horizontalPadding,
+      ),
       decoration: BoxDecoration(
         color: Theme.of(context).colorScheme.surfaceVariant.withOpacity(0.25),
       ),
@@ -362,7 +380,7 @@ class _ClipComponentState extends State<_ClipComponent> with DocumentComponent {
                 if (hasCommentsFlag)
                   Positioned(
                     top: 4,
-                    right: 5,
+                    right: horizontalPadding + 5,
                     child: IgnorePointer(
                       child: Container(
                         padding: const EdgeInsets.symmetric(
@@ -401,6 +419,8 @@ class _ClipComponentState extends State<_ClipComponent> with DocumentComponent {
                         margin: EdgeInsets.only(
                           top: marginTop,
                           bottom: marginBottom,
+                          left: horizontalPadding,
+                          right: horizontalPadding,
                         ),
                         decoration: BoxDecoration(
                           color: AppColors.primary.withOpacity(0.4),
@@ -416,6 +436,8 @@ class _ClipComponentState extends State<_ClipComponent> with DocumentComponent {
                         margin: EdgeInsets.only(
                           top: marginTop,
                           bottom: marginBottom,
+                          left: horizontalPadding,
+                          right: horizontalPadding,
                         ),
                         decoration: BoxDecoration(
                           border: Border.all(
@@ -433,7 +455,11 @@ class _ClipComponentState extends State<_ClipComponent> with DocumentComponent {
                     left: 0,
                     right: 0,
                     child: Padding(
-                      padding: const EdgeInsets.only(bottom: 2),
+                      padding: EdgeInsets.only(
+                        bottom: 2,
+                        left: horizontalPadding,
+                        right: horizontalPadding,
+                      ),
                       child: Container(height: 5, color: AppColors.primary),
                     ),
                   ),
@@ -443,7 +469,11 @@ class _ClipComponentState extends State<_ClipComponent> with DocumentComponent {
                     left: 0,
                     right: 0,
                     child: Padding(
-                      padding: const EdgeInsets.only(top: 2),
+                      padding: EdgeInsets.only(
+                        top: 2,
+                        left: horizontalPadding,
+                        right: horizontalPadding,
+                      ),
                       child: Container(height: 5, color: AppColors.primary),
                     ),
                   ),
@@ -576,19 +606,19 @@ class _ClipComponentState extends State<_ClipComponent> with DocumentComponent {
 
   /// 삽입 라인 표시 여부를 결정하는 공통 로직
   bool _shouldShowInsertionLine(int currentNodeIndex, bool isTopLine) {
-    final svc = widget.dragService;
-    if (svc == null) return false;
+    if (widget.dragService == null) return false;
 
-    final doc = svc.editorService.document;
+    final doc = widget.dragService!.editorService.document;
     final documentLength = doc.length;
 
     // 특수 노드 타입 체크
     bool isSpecialNode(DocumentNode? node) {
       if (node == null) return false;
-      return node is ClipNode ||
+      return node is LinkNode ||
           (node is ParagraphNode && node.metadata['mention'] == true) ||
           node is ImageNode ||
-          node is ImageRowNode;
+          node is ImageRowNode ||
+          node is ClipNode; // 🎯 ClipNode도 특수 노드로 취급
     }
 
     // 텍스트 노드 타입 체크
@@ -694,7 +724,21 @@ class _ClipComponentState extends State<_ClipComponent> with DocumentComponent {
     final neighborIndex = myIndex + direction;
     if (neighborIndex < 0 || neighborIndex >= doc.nodeCount) return false;
     final neighbor = doc.getNodeAt(neighborIndex);
-    return neighbor is ImageNode || neighbor is ImageRowNode;
+    return neighbor is ImageNode ||
+        neighbor is ImageRowNode ||
+        neighbor is ClipNode;
+  }
+
+  /// 업로드 로딩 표시 위젯 (로딩 스피너만)
+  Widget _buildUploadProgress(BuildContext context) {
+    return const SizedBox(
+      width: 28,
+      height: 28,
+      child: CircularProgressIndicator(
+        strokeWidth: 3,
+        valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+      ),
+    );
   }
 
   Widget _buildVideoContent(BuildContext context) {
@@ -730,16 +774,7 @@ class _ClipComponentState extends State<_ClipComponent> with DocumentComponent {
               Positioned.fill(
                 child: Container(
                   color: Colors.black.withOpacity(0.6),
-                  child: const Center(
-                    child: SizedBox(
-                      width: 28,
-                      height: 28,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 3,
-                        valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-                      ),
-                    ),
-                  ),
+                  child: Center(child: _buildUploadProgress(context)),
                 ),
               ),
             ],
@@ -770,16 +805,7 @@ class _ClipComponentState extends State<_ClipComponent> with DocumentComponent {
             Positioned.fill(
               child: Container(
                 color: Colors.black.withOpacity(0.6),
-                child: const Center(
-                  child: SizedBox(
-                    width: 28,
-                    height: 28,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 3,
-                      valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-                    ),
-                  ),
-                ),
+                child: Center(child: _buildUploadProgress(context)),
               ),
             ),
           ],
@@ -933,12 +959,14 @@ class _VideoPlayerWidget extends StatefulWidget {
 class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
   VideoPlayerController? _controller;
   bool _isInitialized = false;
+  bool _isReadyToPlay = false; // 🎯 실제 재생 준비 완료 여부 (버퍼링 포함)
   bool _hasError = false;
   bool _hasPlayedOnce = false;
   bool _isPlaying = false;
+  bool _isPausedByUser = false; // 사용자가 일시정지한 경우
   bool _isPreloaded = false; // 프리로드된 컨트롤러인지 여부
-  void Function(String url)? _onClipPreloaded;
   final VideoMuteService _muteService = VideoMuteService();
+  DateTime? _lastRetryTime; // 🎯 마지막 재생 재시도 시간 (디바운싱용)
 
   @override
   void initState() {
@@ -948,43 +976,9 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
 
     // 항상 프록시 등록(외부 제어용)
     _registerVideoPlayerController();
-    // 프리로드 컨트롤러가 있으면 동기 부착하여 첫 빌드에서 바로 표시
-    final preloaded = PostReaderService.getPreloadedController(widget.url);
-    if (!widget.isEditing && preloaded != null) {
-      _controller = preloaded;
-      _isPreloaded = true;
-      _isInitialized = preloaded.value.isInitialized;
-      try {
-        _controller!.addListener(_onVideoStatusChanged);
-        _controller!.setVolume(_muteService.isReaderMuted ? 0.0 : 1.0);
-      } catch (_) {}
-      if (widget.shouldAutoPlay) {
-        WidgetsBinding.instance.addPostFrameCallback((_) => _playVideo());
-      }
-    } else if (widget.isEditing || widget.shouldAutoPlay) {
-      _initializeVideo();
-    }
 
-    // 프리로드 완료 알림 구독 → 나중에 도착해도 즉시 부착
-    _onClipPreloaded = (url) {
-      if (!mounted) return;
-      if (url != widget.url) return;
-      if (_controller != null || _isInitialized) return;
-      final pre = PostReaderService.getPreloadedController(widget.url);
-      if (pre == null) return;
-      _controller = pre;
-      _isPreloaded = true;
-      _isInitialized = pre.value.isInitialized;
-      try {
-        _controller!.addListener(_onVideoStatusChanged);
-        _controller!.setVolume(_muteService.isReaderMuted ? 0.0 : 1.0);
-      } catch (_) {}
-      if (widget.shouldAutoPlay) {
-        _playVideo();
-      }
-      setState(() {});
-    };
-    PostReaderService.addClipPreloadedListener(_onClipPreloaded!);
+    // 🎯 에디터 모드에서만 VideoCacheService 사용, reader 모드에서는 직접 생성
+    _initializeVideo();
   }
 
   void _registerVideoPlayerController() {
@@ -998,7 +992,7 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
     final key = 'video_${widget.url.hashCode}';
     videoPlayerControllers[key] = proxy;
 
-    print('[VideoPlayer] 컨트롤러 등록됨: $key');
+    debugPrint('[VideoPlayer] 컨트롤러 등록됨: $key');
   }
 
   @override
@@ -1006,26 +1000,33 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
     // 음소거 서비스 리스너 제거
     _muteService.removeListener(_onMuteServiceChanged);
 
-    if (_onClipPreloaded != null) {
-      PostReaderService.removeClipPreloadedListener(_onClipPreloaded!);
-      _onClipPreloaded = null;
-    }
     // 컨트롤러 해제
     final key = 'video_${widget.url.hashCode}';
     videoPlayerControllers.remove(key);
 
-    // 리스너 제거 (프리로드 여부와 관계없이 항상 제거)
+    // 리스너 제거
     if (_controller != null) {
       _controller!.removeListener(_onVideoStatusChanged);
     }
 
-    // 프리로드된 컨트롤러가 아니면 dispose (메모리 해제)
-    if (_controller != null && !_isPreloaded) {
-      _controller!.dispose();
-      print('[ClipComponent] 새로 생성한 컨트롤러 dispose');
-    } else if (_isPreloaded) {
-      // 프리로드 컨트롤러는 아무것도 안 함 (계속 재생)
-      print('[ClipComponent] 프리로드 컨트롤러 유지 (재생 계속)');
+    // 🎯 에디터 모드에서만 VideoCacheService 참조 해제, reader 모드에서는 직접 dispose
+    if (widget.isEditing && _isPreloaded && _controller != null) {
+      // VideoCacheService에서 가져온 컨트롤러는 참조 해제만
+      VideoCacheService().releaseController(widget.url, namespace: 'editor');
+      debugPrint('[ClipComponent] VideoCacheService 참조 해제');
+    } else if (_controller != null && !_isPreloaded) {
+      // reader 모드: 먼저 일시정지
+      try {
+        if (_controller!.value.isInitialized) {
+          _controller!.pause();
+        }
+      } catch (e) {
+        debugPrint('[ClipComponent] pause 오류: $e');
+      }
+      // 전역 맵에서 제거 (PostReaderScreen dispose에서 dispose 처리)
+      readerVideoControllers.remove(widget.url);
+      debugPrint('[ClipComponent] reader 컨트롤러 일시정지 및 맵에서 제거: ${widget.url}');
+      // dispose는 PostReaderScreen에서 처리
     }
 
     super.dispose();
@@ -1043,7 +1044,8 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
     // shouldAutoPlay가 변경되면 재생/정지
     if (oldWidget.shouldAutoPlay != widget.shouldAutoPlay &&
         _controller != null &&
-        _isInitialized) {
+        _isInitialized &&
+        _isReadyToPlay) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
         if (widget.shouldAutoPlay && !_isPlaying && !_hasPlayedOnce) {
@@ -1058,31 +1060,43 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
 
   Future<void> _initializeVideo() async {
     try {
-      print('[VideoPlayer] 초기화 시작: ${widget.url}');
+      debugPrint('[VideoPlayer] 초기화 시작: ${widget.url}');
+
+      // 🎯 에디터 모드에서만 VideoCacheService 사용, reader 모드에서는 직접 생성
       if (widget.isEditing) {
-        // 수정 모드: 항상 새 컨트롤러 생성
-        _controller = VideoPlayerController.networkUrl(Uri.parse(widget.url));
-        _isPreloaded = false;
-        await _controller!.initialize();
-        print('[ClipComponent] (편집) 새 컨트롤러 생성 완료: ${widget.url}');
+        // VideoCacheService에서 컨트롤러 가져오기
+        _controller = VideoCacheService().getOrCreateController(
+          widget.url,
+          namespace: 'editor',
+        );
+        _isPreloaded = true;
       } else {
-        // 읽기 모드: 프리로드 컨트롤러가 있으면 재사용, 없으면 새로 생성
-        final preloaded = PostReaderService.getPreloadedController(widget.url);
-        if (preloaded != null) {
-          _controller = preloaded;
-          _isPreloaded = true;
-          print('[ClipComponent] (읽기) 프리로드 컨트롤러 재사용: ${widget.url}');
-          if (_controller!.value.isInitialized) {
-            _isInitialized = true;
-          } else {
-            await _controller!.initialize();
-          }
-        } else {
-          _controller = VideoPlayerController.networkUrl(Uri.parse(widget.url));
-          _isPreloaded = false;
-          await _controller!.initialize();
-          print('[ClipComponent] (읽기) 새 컨트롤러 생성 완료: ${widget.url}');
-        }
+        // reader 모드: 직접 컨트롤러 생성 (VideoCacheService 사용 안 함)
+        _controller = VideoPlayerController.networkUrl(
+          Uri.parse(widget.url),
+          httpHeaders: {'Accept': 'video/*', 'Connection': 'keep-alive'},
+          videoPlayerOptions: VideoPlayerOptions(
+            mixWithOthers: false,
+            allowBackgroundPlayback: false,
+          ),
+        );
+        _isPreloaded = false;
+      }
+
+      // 초기화 대기
+      if (!_controller!.value.isInitialized) {
+        await _controller!.initialize();
+      }
+
+      _isInitialized = true;
+      debugPrint(
+        '[ClipComponent] ${widget.isEditing ? "VideoCacheService" : "직접 생성"} 컨트롤러 사용: ${widget.url}',
+      );
+
+      // 🎯 reader 모드에서는 전역 맵에 컨트롤러 저장 (FullscreenVideoPlayer와 공유)
+      if (!widget.isEditing) {
+        readerVideoControllers[widget.url] = _controller!;
+        debugPrint('[ClipComponent] reader 컨트롤러 등록: ${widget.url}');
       }
 
       // 음소거 설정
@@ -1091,30 +1105,73 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
       // 재생 완료 리스너
       _controller!.addListener(_onVideoStatusChanged);
 
-      if (mounted) setState(() => _isInitialized = true);
-
-      // 초기화 후 즉시 재생
-      if (widget.shouldAutoPlay) {
-        _playVideo();
+      if (mounted) {
+        setState(() {
+          _isInitialized = true;
+        });
+        debugPrint('[ClipComponent] ✅ 초기화 완료: ${widget.url}');
       }
 
-      // 중복 프리로드 컨트롤러 정리: 위젯이 자체 생성했는데, 이후 프리로드가 완료되어
-      // 캐시에 동일 URL 컨트롤러가 들어온 경우 캐시의 것을 회수/폐기하여 중복을 방지
-      if (!widget.isEditing && !_isPreloaded) {
-        WidgetsBinding.instance.addPostFrameCallback((_) async {
-          try {
-            final duplicated = PostReaderService.takePreloadedController(
-              widget.url,
+      // 🎯 첫 프레임이 준비될 때까지 대기 (최대 2초)
+      int attempts = 0;
+      debugPrint('[ClipComponent] 🔍 첫 프레임 대기 시작: ${widget.url}');
+      while (attempts < 20 && mounted && _controller != null) {
+        final size = _controller!.value.size;
+        final hasFirstFrame = size.width > 0 && size.height > 0;
+        final buffered = _controller!.value.buffered;
+        final position = _controller!.value.position;
+
+        debugPrint(
+          '[ClipComponent] 시도 ${attempts + 1}/20: size=${size.width}x${size.height}, '
+          'buffered=${buffered.length}개, position=${position.inMilliseconds}ms',
+        );
+
+        if (hasFirstFrame) {
+          debugPrint('[ClipComponent] ✅ 첫 프레임 준비 완료: ${widget.url}');
+          if (mounted) {
+            setState(() {
+              _isReadyToPlay = true;
+            });
+          }
+          // 🎯 첫 프레임 준비 후 바로 재생 (뷰포트에 있으면)
+          if (widget.shouldAutoPlay) {
+            debugPrint(
+              '[ClipComponent] 🎬 자동 재생 시작 (shouldAutoPlay=true): ${widget.url}',
             );
-            if (duplicated != null && duplicated != _controller) {
-              await duplicated.dispose();
-              print('[ClipComponent] 중복 프리로드 컨트롤러 정리: ${widget.url}');
-            }
-          } catch (_) {}
-        });
+            _playVideo();
+          } else {
+            debugPrint(
+              '[ClipComponent] ⏸️ 자동 재생 스킵 (shouldAutoPlay=false): ${widget.url}',
+            );
+          }
+          return;
+        }
+        await Future.delayed(const Duration(milliseconds: 100));
+        attempts++;
+      }
+
+      // 타임아웃이어도 첫 프레임이 있으면 재생 준비 완료
+      if (mounted && _controller != null) {
+        final size = _controller!.value.size;
+        final hasFirstFrame = size.width > 0 && size.height > 0;
+        if (hasFirstFrame) {
+          debugPrint('[ClipComponent] ✅ 타임아웃 후 첫 프레임 확인: ${widget.url}');
+          setState(() {
+            _isReadyToPlay = true;
+          });
+          if (widget.shouldAutoPlay) {
+            _playVideo();
+          }
+        } else {
+          debugPrint('[ClipComponent] ⚠️ 첫 프레임 없음, 리스너에서 처리: ${widget.url}');
+          // 첫 프레임이 없어도 재생 준비 완료로 설정 (리스너에서 처리)
+          setState(() {
+            _isReadyToPlay = true;
+          });
+        }
       }
     } catch (e) {
-      print('[VideoPlayer] 초기화 실패: $e');
+      debugPrint('[VideoPlayer] 초기화 실패: $e');
       if (mounted) {
         setState(() {
           _hasError = true;
@@ -1126,21 +1183,160 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
   void _onVideoStatusChanged() {
     if (_controller == null || !mounted) return; // ✅ mounted 체크 추가
 
-    // 재생 상태 업데이트
+    final position = _controller!.value.position;
+    final duration = _controller!.value.duration;
+    final isAtEnd = duration > Duration.zero && position >= duration;
+
+    // 🎯 초기화 완료 후 바로 재생 준비 완료로 설정
+    if (_isInitialized && !_isReadyToPlay) {
+      debugPrint('[ClipComponent] 📝 리스너에서 재생 준비 완료 설정: ${widget.url}');
+      setState(() {
+        _isReadyToPlay = true;
+      });
+      // 🎯 뷰포트에 있으면 바로 재생
+      if (widget.shouldAutoPlay && !_isPlaying && !_hasPlayedOnce) {
+        debugPrint('[ClipComponent] 🎬 리스너에서 자동 재생 시작: ${widget.url}');
+        _playVideo();
+      }
+    }
+
+    // 재생 상태 업데이트 (먼저 실행)
     final isPlaying = _controller!.value.isPlaying;
+    final wasPlaying = _isPlaying;
+
+    // 재생 상태 변경 로그
+    if (_isPlaying != isPlaying) {
+      debugPrint(
+        '[ClipComponent] 🔄 재생 상태 변경: $wasPlaying -> $isPlaying, '
+        'position=${position.inMilliseconds}ms/${duration.inMilliseconds}ms, url=${widget.url}',
+      );
+    }
+
+    // 🎯 재생 상태 먼저 업데이트
     if (_isPlaying != isPlaying) {
       setState(() {
         _isPlaying = isPlaying;
+        // 🎯 재생 중이었다가 일시정지되면 사용자가 일시정지한 것으로 간주
+        // (단, 비디오가 끝나서 일시정지된 경우는 제외)
+        if (wasPlaying && !isPlaying) {
+          if (!isAtEnd) {
+            _isPausedByUser = true;
+          } else {
+            // 🎯 비디오가 끝났을 때는 일시정지 플래그 해제하고 다시보기 버튼 표시
+            _isPausedByUser = false;
+            _hasPlayedOnce = true;
+          }
+        } else if (isPlaying) {
+          // 재생이 시작되면 일시정지 플래그 해제
+          _isPausedByUser = false;
+          // 재생 중이면 다시보기 버튼 숨김
+          if (isAtEnd) {
+            _hasPlayedOnce = false;
+          }
+        }
       });
     }
 
-    // 한 번 재생이 끝났는지 확인
-    if (_controller!.value.position >= _controller!.value.duration &&
-        _controller!.value.duration > Duration.zero &&
-        !_hasPlayedOnce) {
+    // 🎯 재생을 시도했는데 재생이 시작되지 않으면 재시도 (데이터 로드 대기)
+    // 재생 상태 업데이트 후에 체크 (중복 재시도 방지)
+    if (_isInitialized &&
+        _isReadyToPlay &&
+        widget.shouldAutoPlay &&
+        !isPlaying && // 현재 재생 중이 아님 (업데이트된 상태)
+        !_hasPlayedOnce &&
+        duration > Duration.zero) {
+      // 🎯 duration이 0이면 비디오가 아직 로드되지 않음
+      // 🎯 재시도 디바운싱: 마지막 재시도 후 500ms 경과해야 재시도
+      final now = DateTime.now();
+      if (_lastRetryTime != null &&
+          now.difference(_lastRetryTime!).inMilliseconds < 500) {
+        return; // 너무 자주 재시도하지 않음
+      }
+
+      // 버퍼링이 조금이라도 있으면 재생 시도
+      final buffered = _controller!.value.buffered;
+      final hasFirstFrame =
+          _controller!.value.size.width > 0 &&
+          _controller!.value.size.height > 0;
+      final size = _controller!.value.size;
+
+      debugPrint(
+        '[ClipComponent] 🔄 재생 재시도 체크: hasFirstFrame=$hasFirstFrame, '
+        'size=${size.width}x${size.height}, buffered=${buffered.length}개, '
+        'position=${position.inMilliseconds}ms/${duration.inMilliseconds}ms, '
+        'isPlaying=$isPlaying, _isPlaying=$_isPlaying',
+      );
+
+      if (hasFirstFrame && (buffered.isNotEmpty || position > Duration.zero)) {
+        debugPrint('[ClipComponent] 🎬 재생 재시도: ${widget.url}');
+        _lastRetryTime = now; // 재시도 시간 기록
+        // 조금이라도 데이터가 로드되었으면 재생 시도
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted && _controller != null && !_controller!.value.isPlaying) {
+            _controller!.play();
+            debugPrint('[ClipComponent] ✅ 재생 재시도 실행: ${widget.url}');
+          }
+        });
+      } else {
+        debugPrint(
+          '[ClipComponent] ⏸️ 재생 재시도 조건 불만족: hasFirstFrame=$hasFirstFrame, '
+          'buffered=${buffered.length}, position=${position.inMilliseconds}ms, '
+          'duration=${duration.inMilliseconds}ms',
+        );
+      }
+    }
+
+    if (_isPlaying != isPlaying) {
       setState(() {
-        _hasPlayedOnce = true;
+        _isPlaying = isPlaying;
+        // 🎯 재생 중이었다가 일시정지되면 사용자가 일시정지한 것으로 간주
+        // (단, 비디오가 끝나서 일시정지된 경우는 제외)
+        if (wasPlaying && !isPlaying) {
+          if (!isAtEnd) {
+            _isPausedByUser = true;
+          } else {
+            // 🎯 비디오가 끝났을 때는 일시정지 플래그 해제하고 다시보기 버튼 표시
+            _isPausedByUser = false;
+            _hasPlayedOnce = true;
+          }
+        } else if (isPlaying) {
+          // 재생이 시작되면 일시정지 플래그 해제
+          _isPausedByUser = false;
+          // 재생 중이면 다시보기 버튼 숨김
+          if (isAtEnd) {
+            _hasPlayedOnce = false;
+          }
+        }
       });
+    }
+
+    // 🎯 비디오가 끝났을 때 자동으로 처음부터 돌아가지 않고 일시정지
+    if (isAtEnd && isPlaying) {
+      // 비디오가 끝났는데 재생 중이면 일시정지하고 다시보기 버튼 표시
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && _controller != null) {
+          _controller!.pause();
+          setState(() {
+            _isPlaying = false;
+            _hasPlayedOnce = true;
+            _isPausedByUser = false;
+          });
+        }
+      });
+      return;
+    }
+
+    // 🎯 비디오가 끝났거나 사용자가 일시정지한 경우 다시보기 버튼 표시
+    if (duration > Duration.zero) {
+      final shouldShowReplay =
+          (isAtEnd && !isPlaying) ||
+          (_isPausedByUser && !isPlaying && _hasPlayedOnce);
+
+      if (_hasPlayedOnce != shouldShowReplay) {
+        setState(() {
+          _hasPlayedOnce = shouldShowReplay;
+        });
+      }
     }
   }
 
@@ -1165,17 +1361,55 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
     _controller!.play();
     setState(() {
       _hasPlayedOnce = false;
+      _isPausedByUser = false;
     });
   }
 
   void _playVideo() {
-    if (_controller == null || _isInitialized == false) return;
+    if (_controller == null || !_isInitialized || !_isReadyToPlay) {
+      debugPrint(
+        '[ClipComponent] ❌ 재생 불가: controller=${_controller != null}, '
+        'initialized=$_isInitialized, ready=$_isReadyToPlay, url=${widget.url}',
+      );
+      return;
+    }
+
+    final size = _controller!.value.size;
+    final buffered = _controller!.value.buffered;
+    final position = _controller!.value.position;
+    final isCurrentlyPlaying = _controller!.value.isPlaying;
+
+    debugPrint(
+      '[ClipComponent] 🎬 _playVideo 호출: url=${widget.url}, '
+      'size=${size.width}x${size.height}, buffered=${buffered.length}개, '
+      'position=${position.inMilliseconds}ms, isPlaying=$isCurrentlyPlaying',
+    );
+
     // build 중 setState 방지: 프레임 이후에 정지/재생 실행
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
+      if (!mounted || _controller == null) {
+        debugPrint(
+          '[ClipComponent] ⚠️ _playVideo 취소: mounted=$mounted, controller=${_controller != null}',
+        );
+        return;
+      }
       final key = 'video_${widget.url.hashCode}';
       pauseAllVideosExcept(key);
+
+      final beforePlay = _controller!.value.isPlaying;
       _controller!.play();
+      final afterPlay = _controller!.value.isPlaying;
+
+      debugPrint(
+        '[ClipComponent] ✅ play() 호출 완료: before=$beforePlay, after=$afterPlay, url=${widget.url}',
+      );
+
+      // 재생 시작 시 일시정지 플래그 해제
+      if (mounted) {
+        setState(() {
+          _isPausedByUser = false;
+        });
+      }
     });
   }
 
@@ -1188,7 +1422,7 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
   Widget build(BuildContext context) {
     if (_hasError) {
       return AspectRatio(
-        aspectRatio: 16 / 9, // 기본 비율
+        aspectRatio: 4 / 5, // 기본 비율
         child: Container(
           color: Theme.of(context).colorScheme.surface,
           child: Center(
@@ -1215,34 +1449,95 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
       );
     }
 
-    if (!_isInitialized || _controller == null) {
-      // thumbnailPath가 있으면 썸네일 표시
-      if (widget.thumbnailPath.isNotEmpty) {
-        final screenWidth = MediaQuery.of(context).size.width;
-        final maxHeight = screenWidth * 1.5;
-        final calculatedHeight = screenWidth / 16 * 9; // 기본 비율
+    // 🎯 에디터 모드에서만 VideoCacheService에서 컨트롤러가 있으면 비율을 미리 계산하여 깜빡임 방지
+    double? preloadedAspectRatio;
+    VideoPlayerController? preloadedController;
+    if (widget.isEditing &&
+        VideoCacheService().hasController(widget.url, namespace: 'editor')) {
+      preloadedController = VideoCacheService().getOrCreateController(
+        widget.url,
+        namespace: 'editor',
+      );
+      if (preloadedController.value.isInitialized) {
+        final preloadedSize = preloadedController.value.size;
+        if (preloadedSize.height > 0) {
+          preloadedAspectRatio = preloadedSize.width / preloadedSize.height;
+        }
+      }
+    }
 
+    final screenWidth = MediaQuery.of(context).size.width;
+    final maxHeight = screenWidth * 1.5;
+
+    // 🎯 초기화 전 또는 재생 준비 전: 썸네일 또는 쉬머 표시
+    if (!_isInitialized || !_isReadyToPlay || _controller == null) {
+      // 프리로드된 비율이 있으면 사용, 없으면 기본 비율
+      final aspectRatio = preloadedAspectRatio ?? 16 / 9;
+      final calculatedHeight = screenWidth / aspectRatio;
+      final finalHeight =
+          calculatedHeight > maxHeight ? maxHeight : calculatedHeight;
+
+      // 🎯 프리로드 컨트롤러가 있으면 썸네일 건너뛰고 VideoPlayer 첫 프레임 사용 (최고 화질)
+      if (preloadedController != null &&
+          preloadedController.value.isInitialized) {
+        // 프리로드 컨트롤러가 있으면 즉시 사용 (썸네일 깜빡임 방지)
+        if (_controller == null) {
+          _controller = preloadedController;
+          _isPreloaded = true;
+          _isInitialized = true;
+          try {
+            _controller!.addListener(_onVideoStatusChanged);
+            _controller!.setVolume(_muteService.isReaderMuted ? 0.0 : 1.0);
+          } catch (_) {}
+          // 🎯 프리로드된 컨트롤러는 즉시 준비 완료로 처리
+          final hasFirstFrame =
+              _controller!.value.size.width > 0 &&
+              _controller!.value.size.height > 0;
+          if (hasFirstFrame) {
+            _isReadyToPlay = true;
+          }
+          if (widget.shouldAutoPlay && _isReadyToPlay) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted) _playVideo();
+            });
+          }
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) setState(() {});
+          });
+        }
+        // 프리로드 컨트롤러의 첫 프레임을 썸네일로 사용 (최고 화질, 깜빡임 없음)
         return SizedBox(
           width: screenWidth,
-          height: calculatedHeight > maxHeight ? maxHeight : calculatedHeight,
+          height: finalHeight,
           child: ClipRRect(
-            child: Image.file(
-              File(widget.thumbnailPath),
-              fit: BoxFit.cover,
-              width: screenWidth,
-              height: calculatedHeight,
+            child: AspectRatio(
+              aspectRatio: aspectRatio,
+              child: VideoPlayer(preloadedController),
             ),
           ),
         );
       }
 
-      final screenWidth = MediaQuery.of(context).size.width;
-      final calculatedHeight = screenWidth / (4 / 5);
+      // thumbnailPath가 있으면 썸네일 표시
+      if (widget.thumbnailPath.isNotEmpty) {
+        return SizedBox(
+          width: screenWidth,
+          height: finalHeight,
+          child: ClipRRect(
+            child: Image.file(
+              File(widget.thumbnailPath),
+              fit: BoxFit.cover,
+              width: screenWidth,
+              height: finalHeight,
+            ),
+          ),
+        );
+      }
 
       return ClipRRect(
         child: ShimmerBox(
           width: screenWidth,
-          height: calculatedHeight,
+          height: finalHeight,
           isDarkMode: widget.isDarkMode,
         ),
       );
@@ -1253,87 +1548,104 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
     final originalAspectRatio =
         videoSize.height > 0 ? videoSize.width / videoSize.height : 16 / 9;
 
-    // 화면 너비 기준으로 최대 높이 제한 (1.5배)
-    final screenWidth = MediaQuery.of(context).size.width;
-    final maxHeight = screenWidth * 1.5;
-
     // 원본 비율에서 계산한 높이
     final calculatedHeight = screenWidth / originalAspectRatio;
+    final finalHeight =
+        calculatedHeight > maxHeight ? maxHeight : calculatedHeight;
 
-    return SizedBox(
-      width: screenWidth,
-      height: calculatedHeight > maxHeight ? maxHeight : calculatedHeight,
-      child: Stack(
-        children: [
-          ClipRRect(
-            child: SizedBox(
-              width: screenWidth,
-              height: calculatedHeight,
-              child: FittedBox(
-                fit: BoxFit.cover,
-                alignment: Alignment.center,
-                child: SizedBox(
-                  width: screenWidth,
-                  height: calculatedHeight,
+    // 🎯 AnimatedSwitcher로 부드러운 전환
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 200),
+      transitionBuilder: (child, animation) {
+        return FadeTransition(opacity: animation, child: child);
+      },
+      child: SizedBox(
+        key: ValueKey(_isInitialized ? 'video' : 'thumbnail'),
+        width: screenWidth,
+        height: finalHeight,
+        child: Stack(
+          children: [
+            // 🎯 FittedBox 제거하고 AspectRatio로 원본 비율 유지 (화질 보존)
+            ClipRRect(
+              child: SizedBox(
+                width: screenWidth,
+                height: finalHeight,
+                child: AspectRatio(
+                  aspectRatio: originalAspectRatio,
                   child: VideoPlayer(_controller!),
                 ),
               ),
             ),
-          ),
-          // 다시보기 버튼 배경 (한 번 재생 후 표시)
-          if (_hasPlayedOnce)
-            Positioned.fill(
-              child: Container(
-                color: Colors.black.withOpacity(0.3),
-                child: Center(
+            // 다시보기 버튼 배경 (한 번 재생 후 표시 또는 사용자가 일시정지한 경우)
+            if (_hasPlayedOnce)
+              Positioned.fill(
+                child: GestureDetector(
+                  onTap: () {
+                    // 다시보기 버튼 탭 시 재생 시작
+                    if (_isPausedByUser) {
+                      // 사용자가 일시정지한 경우: 현재 위치에서 재생
+                      _playVideo();
+                    } else {
+                      // 비디오가 끝난 경우: 처음부터 재생
+                      restartVideo();
+                    }
+                  },
                   child: Container(
-                    padding: EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-                    decoration: BoxDecoration(
-                      color: Colors.black.withOpacity(0.6),
-                      borderRadius: BorderRadius.circular(24),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(Icons.replay, color: Colors.white, size: 24),
-                        SizedBox(width: 8),
-                        Text(
-                          '다시보기',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 16,
-                            fontWeight: FontWeight.w600,
-                          ),
+                    color: Colors.black.withOpacity(0.3),
+                    child: Center(
+                      child: Container(
+                        padding: EdgeInsets.symmetric(
+                          horizontal: 24,
+                          vertical: 12,
                         ),
-                      ],
+                        decoration: BoxDecoration(
+                          color: Colors.black.withOpacity(0.6),
+                          borderRadius: BorderRadius.circular(24),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.replay, color: Colors.white, size: 24),
+                            SizedBox(width: 8),
+                            Text(
+                              _isPausedByUser ? '재생' : '다시보기',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 16,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
                     ),
                   ),
                 ),
               ),
-            ),
-          // 음소거 버튼
-          Positioned(
-            bottom: 8,
-            right: 8,
-            child: GestureDetector(
-              onTap: toggleMute,
-              child: Container(
-                padding: EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: Colors.black.withOpacity(0.6),
-                  shape: BoxShape.circle,
-                ),
-                child: Icon(
-                  _muteService.isReaderMuted
-                      ? Icons.volume_off
-                      : Icons.volume_up,
-                  color: Colors.white,
-                  size: 16,
+            // 음소거 버튼
+            Positioned(
+              bottom: 8,
+              right: 8,
+              child: GestureDetector(
+                onTap: toggleMute,
+                child: Container(
+                  padding: EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withOpacity(0.6),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(
+                    _muteService.isReaderMuted
+                        ? Icons.volume_off
+                        : Icons.volume_up,
+                    color: Colors.white,
+                    size: 16,
+                  ),
                 ),
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

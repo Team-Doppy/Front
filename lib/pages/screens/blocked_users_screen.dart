@@ -95,7 +95,7 @@ class _BlockedUsersScreenState extends State<BlockedUsersScreen> {
     } catch (e) {
       _shimmerTimer?.cancel();
       _emptyStateTimer?.cancel();
-      print('[BlockedUsersScreen] 차단한 계정 목록 로드 실패: $e');
+      debugPrint('[BlockedUsersScreen] 차단한 계정 목록 로드 실패: $e');
       if (mounted) {
         setState(() {
           _isLoading = false;

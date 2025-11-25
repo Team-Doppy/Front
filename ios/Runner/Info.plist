@@ -50,6 +50,9 @@
 	<string>이 앱은 이미지를 저장하기 위해 사진 라이브러리 추가 권한이 필요합니다.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>이 앱은 카메라를 사용하기 위해 카메라 접근 권한이 필요합니다.</string>
+	<!-- 🎯 알림 권한 사용 설명 -->
+	<key>NSUserNotificationsUsageDescription</key>
+	<string>새 글, 댓글, 좋아요, 친구 요청 등 중요한 알림을 받기 위해 권한이 필요합니다.</string>
 	<!-- 🎯 로컬 네트워크 권한 요청 방지: Bonjour 서비스 비활성화 -->
 	<key>NSBonjourServices</key>
 	<array/>
@@ -71,6 +74,19 @@
 		<string>fb</string>
 		<string>twitter</string>
 		<string>barcelona</string>
+	</array>
+	
+	<!-- 🎯 딥링크: URL 스킴 설정 (fallback) -->
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>doppy</string>
+			</array>
+		</dict>
 	</array>
 </dict>
 </plist>

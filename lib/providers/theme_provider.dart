@@ -32,7 +32,7 @@ class ThemeProvider extends ChangeNotifier {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString(_themeKey, _themeMode.name);
     } catch (e) {
-      print('[ThemeProvider] 테마 모드 저장 실패: $e');
+      debugPrint('[ThemeProvider] 테마 모드 저장 실패: $e');
     }
   }
 
@@ -49,7 +49,7 @@ class ThemeProvider extends ChangeNotifier {
         notifyListeners();
       }
     } catch (e) {
-      print('[ThemeProvider] 테마 모드 로드 실패: $e');
+      debugPrint('[ThemeProvider] 테마 모드 로드 실패: $e');
     }
   }
 }

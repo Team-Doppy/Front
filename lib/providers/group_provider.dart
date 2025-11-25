@@ -68,13 +68,13 @@ class GroupProvider with ChangeNotifier {
   }) async {
     // 이미 캐시되어 있고 forceRefresh가 아니면 스킵
     if (_isGroupsCached && !forceRefresh) {
-      print('✅ [GroupProvider] 그룹 목록 캐시 사용');
+      debugPrint('✅ [GroupProvider] 그룹 목록 캐시 사용');
       return;
     }
 
     // 이미 로딩 중이면 중복 요청 방지
     if (_isLoadingGroups) {
-      print('⚠️ [GroupProvider] 그룹 목록 로딩 중 - 중복 요청 무시');
+      debugPrint('⚠️ [GroupProvider] 그룹 목록 로딩 중 - 중복 요청 무시');
       return;
     }
 
@@ -82,7 +82,7 @@ class GroupProvider with ChangeNotifier {
     notifyListeners();
 
     try {
-      print('🔄 [GroupProvider] 그룹 목록 서버에서 조회 시작');
+      debugPrint('🔄 [GroupProvider] 그룹 목록 서버에서 조회 시작');
 
       // 🎯 서버에서 그룹 목록 조회
       final result = await _groupService.getMyGroups();
@@ -137,11 +137,11 @@ class GroupProvider with ChangeNotifier {
       _cachedGroups = allGroups;
       _isGroupsCached = true;
 
-      print(
+      debugPrint(
         '✅ [GroupProvider] 그룹 목록 캐시 완료 - ${_cachedGroups.length}개 (allFriends 포함)',
       );
     } catch (e) {
-      print('❌ [GroupProvider] 그룹 목록 조회 에러: $e');
+      debugPrint('❌ [GroupProvider] 그룹 목록 조회 에러: $e');
       _isGroupsCached = false;
     } finally {
       _isLoadingGroups = false;
@@ -196,7 +196,7 @@ class GroupProvider with ChangeNotifier {
     String? profileImageUrl, // 🎯 프로필 이미지 URL
   }) async {
     try {
-      print('🔄 [GroupProvider] 그룹 생성 시작: $name');
+      debugPrint('🔄 [GroupProvider] 그룹 생성 시작: $name');
       await _groupService.createGroup(
         name,
         description: description,
@@ -206,10 +206,10 @@ class GroupProvider with ChangeNotifier {
       // 🎯 캐시 무효화 및 재조회
       await _invalidateAndRefreshGroups();
 
-      print('✅ [GroupProvider] 그룹 생성 완료');
+      debugPrint('✅ [GroupProvider] 그룹 생성 완료');
       return true;
     } catch (e) {
-      print('❌ [GroupProvider] 그룹 생성 에러: $e');
+      debugPrint('❌ [GroupProvider] 그룹 생성 에러: $e');
       return false;
     }
   }
@@ -221,7 +221,7 @@ class GroupProvider with ChangeNotifier {
     String? profileImageUrl, // 🎯 프로필 이미지 URL
   }) async {
     try {
-      print('🔄 [GroupProvider] 그룹 수정 시작: $groupId');
+      debugPrint('🔄 [GroupProvider] 그룹 수정 시작: $groupId');
 
       // 🎯 시스템 그룹(전체 친구)은 항상 -1을 ID로 받음 (서버가 알아서 처리)
       final bool isAllFriendsGroup = groupId == -1;
@@ -243,10 +243,10 @@ class GroupProvider with ChangeNotifier {
       // 🎯 캐시 무효화 및 재조회
       await _invalidateAndRefreshGroups();
 
-      print('✅ [GroupProvider] 그룹 수정 완료');
+      debugPrint('✅ [GroupProvider] 그룹 수정 완료');
       return true;
     } catch (e) {
-      print('❌ [GroupProvider] 그룹 수정 에러: $e');
+      debugPrint('❌ [GroupProvider] 그룹 수정 에러: $e');
       return false;
     }
   }
@@ -254,7 +254,7 @@ class GroupProvider with ChangeNotifier {
   /// 🗑️ 그룹 삭제 → 캐시 무효화 및 재조회
   Future<bool> deleteGroup(int groupId) async {
     try {
-      print('🔄 [GroupProvider] 그룹 삭제 시작: $groupId');
+      debugPrint('🔄 [GroupProvider] 그룹 삭제 시작: $groupId');
       await _groupService.deleteGroup(groupId);
 
       // 🎯 캐시 무효화 및 재조회
@@ -265,10 +265,10 @@ class GroupProvider with ChangeNotifier {
       _isMembersCached.remove(groupId);
       _isLoadingMembers.remove(groupId);
 
-      print('✅ [GroupProvider] 그룹 삭제 완료');
+      debugPrint('✅ [GroupProvider] 그룹 삭제 완료');
       return true;
     } catch (e) {
-      print('❌ [GroupProvider] 그룹 삭제 에러: $e');
+      debugPrint('❌ [GroupProvider] 그룹 삭제 에러: $e');
       return false;
     }
   }
@@ -282,13 +282,13 @@ class GroupProvider with ChangeNotifier {
   }) async {
     // 이미 캐시되어 있고 forceRefresh가 아니면 스킵
     if ((_isMembersCached[groupId] ?? false) && !forceRefresh) {
-      print('✅ [GroupProvider] 그룹 $groupId 멤버 캐시 사용');
+      debugPrint('✅ [GroupProvider] 그룹 $groupId 멤버 캐시 사용');
       return;
     }
 
     // 이미 로딩 중이면 중복 요청 방지
     if (_isLoadingMembers[groupId] ?? false) {
-      print('⚠️ [GroupProvider] 그룹 $groupId 멤버 로딩 중 - 중복 요청 무시');
+      debugPrint('⚠️ [GroupProvider] 그룹 $groupId 멤버 로딩 중 - 중복 요청 무시');
       return;
     }
 
@@ -296,15 +296,15 @@ class GroupProvider with ChangeNotifier {
     notifyListeners();
 
     try {
-      print('🔄 [GroupProvider] 그룹 $groupId 멤버 서버에서 조회 시작');
+      debugPrint('🔄 [GroupProvider] 그룹 $groupId 멤버 서버에서 조회 시작');
       final members = await _groupService.getGroupMembers(groupId);
 
       _cachedGroupMembers[groupId] = members;
       _isMembersCached[groupId] = true;
 
-      print('✅ [GroupProvider] 그룹 $groupId 멤버 캐시 완료 - ${members.length}개');
+      debugPrint('✅ [GroupProvider] 그룹 $groupId 멤버 캐시 완료 - ${members.length}개');
     } catch (e) {
-      print('❌ [GroupProvider] 그룹 $groupId 멤버 조회 에러: $e');
+      debugPrint('❌ [GroupProvider] 그룹 $groupId 멤버 조회 에러: $e');
       // 🎯 실패 시에도 빈 배열로 캐시하여 재시도 방지 (무한 재시도 방지)
       _cachedGroupMembers[groupId] = <GroupMember>[];
       _isMembersCached[groupId] = true; // 캐시된 것으로 표시하여 재시도 방지
@@ -317,7 +317,7 @@ class GroupProvider with ChangeNotifier {
   /// ➕ 멤버 추가 → 선택적 업데이트 (전체 재조회 생략)
   Future<bool> addMember(int groupId, String userId) async {
     try {
-      print('🔄 [GroupProvider] 그룹 $groupId에 멤버 추가: $userId');
+      debugPrint('🔄 [GroupProvider] 그룹 $groupId에 멤버 추가: $userId');
       await _groupService.addMemberToGroup(groupId, userId);
 
       // 🎯 선택적 업데이트: memberCount만 로컬 업데이트 (전체 재조회 생략)
@@ -330,13 +330,13 @@ class GroupProvider with ChangeNotifier {
         await fetchGroupMembers(groupId, forceRefresh: true);
       } catch (e) {
         // 멤버 목록 조회 실패해도 멤버 추가 자체는 성공한 것으로 간주
-        print('⚠️ [GroupProvider] 멤버 추가 성공했으나 목록 조회 실패 (무시): $e');
+        debugPrint('⚠️ [GroupProvider] 멤버 추가 성공했으나 목록 조회 실패 (무시): $e');
       }
 
-      print('✅ [GroupProvider] 멤버 추가 완료');
+      debugPrint('✅ [GroupProvider] 멤버 추가 완료');
       return true;
     } catch (e) {
-      print('❌ [GroupProvider] 멤버 추가 에러: $e');
+      debugPrint('❌ [GroupProvider] 멤버 추가 에러: $e');
       return false;
     }
   }
@@ -344,7 +344,9 @@ class GroupProvider with ChangeNotifier {
   /// ➕ 여러 멤버 일괄 추가 (배치) → 선택적 업데이트 (전체 재조회 생략)
   Future<bool> addMembersBatch(int groupId, List<String> usernames) async {
     try {
-      print('🔄 [GroupProvider] 그룹 $groupId에 멤버 일괄 추가: ${usernames.length}명');
+      debugPrint(
+        '🔄 [GroupProvider] 그룹 $groupId에 멤버 일괄 추가: ${usernames.length}명',
+      );
 
       // 🎯 멤버 일괄 추가 API 호출 (실패 시 즉시 false 반환)
       await _groupService.addMultipleMembersToGroup(groupId, usernames);
@@ -359,13 +361,13 @@ class GroupProvider with ChangeNotifier {
         await fetchGroupMembers(groupId, forceRefresh: true);
       } catch (e) {
         // 멤버 목록 조회 실패해도 멤버 일괄 추가 자체는 성공한 것으로 간주
-        print('⚠️ [GroupProvider] 멤버 일괄 추가 성공했으나 목록 조회 실패 (무시): $e');
+        debugPrint('⚠️ [GroupProvider] 멤버 일괄 추가 성공했으나 목록 조회 실패 (무시): $e');
       }
 
-      print('✅ [GroupProvider] 멤버 일괄 추가 완료');
+      debugPrint('✅ [GroupProvider] 멤버 일괄 추가 완료');
       return true;
     } catch (e) {
-      print('❌ [GroupProvider] 멤버 일괄 추가 에러: $e');
+      debugPrint('❌ [GroupProvider] 멤버 일괄 추가 에러: $e');
       return false;
     }
   }
@@ -373,7 +375,7 @@ class GroupProvider with ChangeNotifier {
   /// ➖ 멤버 제거 → 선택적 업데이트 (전체 재조회 생략)
   Future<bool> removeMember(int groupId, String userId) async {
     try {
-      print('🔄 [GroupProvider] 그룹 $groupId에서 멤버 제거: $userId');
+      debugPrint('🔄 [GroupProvider] 그룹 $groupId에서 멤버 제거: $userId');
       await _groupService.removeMemberFromGroup(groupId, userId);
 
       // 🎯 선택적 업데이트: memberCount만 로컬 업데이트 (전체 재조회 생략)
@@ -386,13 +388,13 @@ class GroupProvider with ChangeNotifier {
         await fetchGroupMembers(groupId, forceRefresh: true);
       } catch (e) {
         // 멤버 목록 조회 실패해도 멤버 제거 자체는 성공한 것으로 간주
-        print('⚠️ [GroupProvider] 멤버 제거 성공했으나 목록 조회 실패 (무시): $e');
+        debugPrint('⚠️ [GroupProvider] 멤버 제거 성공했으나 목록 조회 실패 (무시): $e');
       }
 
-      print('✅ [GroupProvider] 멤버 제거 완료');
+      debugPrint('✅ [GroupProvider] 멤버 제거 완료');
       return true;
     } catch (e) {
-      print('❌ [GroupProvider] 멤버 제거 에러: $e');
+      debugPrint('❌ [GroupProvider] 멤버 제거 에러: $e');
       return false;
     }
   }
@@ -400,7 +402,9 @@ class GroupProvider with ChangeNotifier {
   /// ➖ 여러 멤버 일괄 제거 (배치) → 선택적 업데이트 (전체 재조회 생략)
   Future<bool> removeMembersBatch(int groupId, List<String> usernames) async {
     try {
-      print('🔄 [GroupProvider] 그룹 $groupId에서 멤버 일괄 제거: ${usernames.length}명');
+      debugPrint(
+        '🔄 [GroupProvider] 그룹 $groupId에서 멤버 일괄 제거: ${usernames.length}명',
+      );
 
       // 🎯 멤버 삭제 API 호출 (실패 시 즉시 false 반환)
       await _groupService.removeMembersFromGroupBatch(groupId, usernames);
@@ -412,7 +416,7 @@ class GroupProvider with ChangeNotifier {
             currentMembers
                 .where((member) => !usernames.contains(member.userId))
                 .toList();
-        print(
+        debugPrint(
           '🔄 [GroupProvider] 로컬 캐시에서 ${usernames.length}명 제거: ${currentMembers.length} → ${_cachedGroupMembers[groupId]!.length}',
         );
         notifyListeners(); // 🎯 UI 즉시 업데이트
@@ -430,13 +434,13 @@ class GroupProvider with ChangeNotifier {
       } catch (e) {
         // 멤버 목록 조회 실패해도 멤버 일괄 제거 자체는 성공한 것으로 간주
         // (이미 로컬 캐시에서 제거했으므로 UI는 업데이트됨)
-        print('⚠️ [GroupProvider] 멤버 일괄 제거 성공했으나 목록 조회 실패 (무시): $e');
+        debugPrint('⚠️ [GroupProvider] 멤버 일괄 제거 성공했으나 목록 조회 실패 (무시): $e');
       }
 
-      print('✅ [GroupProvider] 멤버 일괄 제거 완료');
+      debugPrint('✅ [GroupProvider] 멤버 일괄 제거 완료');
       return true;
     } catch (e) {
-      print('❌ [GroupProvider] 멤버 일괄 제거 에러: $e');
+      debugPrint('❌ [GroupProvider] 멤버 일괄 제거 에러: $e');
       return false;
     }
   }
@@ -445,7 +449,7 @@ class GroupProvider with ChangeNotifier {
 
   /// 🎯 그룹 스키마 캐시 무효화 및 재조회
   Future<void> _invalidateAndRefreshGroups() async {
-    print('🔄 [GroupProvider] 그룹 스키마 캐시 무효화 및 재조회');
+    debugPrint('🔄 [GroupProvider] 그룹 스키마 캐시 무효화 및 재조회');
     _isGroupsCached = false;
     await fetchMyGroups(forceRefresh: true);
   }
@@ -454,13 +458,15 @@ class GroupProvider with ChangeNotifier {
   /// 멤버 추가/제거 시 전체 재조회 대신 사용
   void updateGroupMemberCount(int groupId, int delta) {
     if (!_isGroupsCached) {
-      print('⚠️ [GroupProvider] 그룹 캐시가 없어 memberCount 업데이트 불가 - 전체 재조회 권장');
+      debugPrint(
+        '⚠️ [GroupProvider] 그룹 캐시가 없어 memberCount 업데이트 불가 - 전체 재조회 권장',
+      );
       return;
     }
 
     final groupIndex = _cachedGroups.indexWhere((g) => g.id == groupId);
     if (groupIndex == -1) {
-      print('⚠️ [GroupProvider] 그룹 $groupId를 찾을 수 없어 memberCount 업데이트 불가');
+      debugPrint('⚠️ [GroupProvider] 그룹 $groupId를 찾을 수 없어 memberCount 업데이트 불가');
       return;
     }
 
@@ -485,7 +491,7 @@ class GroupProvider with ChangeNotifier {
 
     _cachedGroups[groupIndex] = updatedGroup;
     notifyListeners();
-    print(
+    debugPrint(
       '✅ [GroupProvider] 그룹 $groupId memberCount 업데이트: ${currentGroup.memberCount} → $newMemberCount (delta: $delta)',
     );
   }
@@ -494,13 +500,13 @@ class GroupProvider with ChangeNotifier {
   /// 포스트 생성/삭제 시 전체 재조회 대신 사용
   void updateGroupPostCount(int groupId, int delta) {
     if (!_isGroupsCached) {
-      print('⚠️ [GroupProvider] 그룹 캐시가 없어 postCount 업데이트 불가 - 전체 재조회 권장');
+      debugPrint('⚠️ [GroupProvider] 그룹 캐시가 없어 postCount 업데이트 불가 - 전체 재조회 권장');
       return;
     }
 
     final groupIndex = _cachedGroups.indexWhere((g) => g.id == groupId);
     if (groupIndex == -1) {
-      print('⚠️ [GroupProvider] 그룹 $groupId를 찾을 수 없어 postCount 업데이트 불가');
+      debugPrint('⚠️ [GroupProvider] 그룹 $groupId를 찾을 수 없어 postCount 업데이트 불가');
       return;
     }
 
@@ -526,7 +532,7 @@ class GroupProvider with ChangeNotifier {
 
     _cachedGroups[groupIndex] = updatedGroup;
     notifyListeners();
-    print(
+    debugPrint(
       '✅ [GroupProvider] 그룹 $groupId postCount 업데이트: $currentPostCount → $newPostCount (delta: $delta)',
     );
   }
@@ -535,7 +541,9 @@ class GroupProvider with ChangeNotifier {
   /// 공개범위 변경으로 여러 그룹에 영향을 줄 때 사용
   void updateMultipleGroupsPostCount(Map<int, int> groupIdToDelta) {
     if (!_isGroupsCached) {
-      print('⚠️ [GroupProvider] 그룹 캐시가 없어 postCount 일괄 업데이트 불가 - 전체 재조회 권장');
+      debugPrint(
+        '⚠️ [GroupProvider] 그룹 캐시가 없어 postCount 일괄 업데이트 불가 - 전체 재조회 권장',
+      );
       return;
     }
 
@@ -547,7 +555,7 @@ class GroupProvider with ChangeNotifier {
       // 🎯 포스트가 추가된 경우 (delta > 0)에만 스마트 감지기에 등록
       if (delta > 0) {
         _recentlyUpdatedGroupIds.add(groupId);
-        print('🎯 [GroupProvider] 스마트 감지기: 그룹 $groupId 포스트 추가 감지');
+        debugPrint('🎯 [GroupProvider] 스마트 감지기: 그룹 $groupId 포스트 추가 감지');
       }
 
       final groupIndex = _cachedGroups.indexWhere((g) => g.id == groupId);
@@ -574,7 +582,7 @@ class GroupProvider with ChangeNotifier {
 
       _cachedGroups[groupIndex] = updatedGroup;
       hasUpdate = true;
-      print(
+      debugPrint(
         '✅ [GroupProvider] 그룹 $groupId postCount 업데이트: $currentPostCount → $newPostCount (delta: $delta)',
       );
     }
@@ -667,7 +675,7 @@ class GroupProvider with ChangeNotifier {
 
       _cachedGroups[allFriendsGroupIndex] = updatedGroup;
       hasUpdate = true;
-      print(
+      debugPrint(
         '✅ [GroupProvider] 전체 친구 그룹 memberCount 동기화: $currentMemberCount → $actualCount',
       );
     }
@@ -697,7 +705,7 @@ class GroupProvider with ChangeNotifier {
 
           // 🎯 제거된 멤버가 있으면 그룹의 memberCount 감소 및 멤버 캐시에서 제거
           if (removedUsernames.isNotEmpty) {
-            print(
+            debugPrint(
               '🔄 [GroupProvider] 그룹 "${group.name}"에서 친구 목록에 없는 멤버 ${removedUsernames.length}명 발견: $removedUsernames',
             );
 
@@ -747,7 +755,7 @@ class GroupProvider with ChangeNotifier {
   /// 🔄 그룹 순서 변경 (드래그 앤 드롭)
   Future<bool> reorderGroups(List<Map<String, dynamic>> groups) async {
     try {
-      print('🔄 [GroupProvider] 그룹 순서 변경 시작: ${groups.length}개');
+      debugPrint('🔄 [GroupProvider] 그룹 순서 변경 시작: ${groups.length}개');
       final reorderedGroups = await _groupService.reorderGroups(groups);
 
       // 🎯 캐시 업데이트
@@ -755,17 +763,17 @@ class GroupProvider with ChangeNotifier {
       _isGroupsCached = true;
 
       notifyListeners();
-      print('✅ [GroupProvider] 그룹 순서 변경 완료');
+      debugPrint('✅ [GroupProvider] 그룹 순서 변경 완료');
       return true;
     } catch (e) {
-      print('❌ [GroupProvider] 그룹 순서 변경 에러: $e');
+      debugPrint('❌ [GroupProvider] 그룹 순서 변경 에러: $e');
       return false;
     }
   }
 
   /// 🗑️ 모든 캐시 초기화
   void clearAllCache() {
-    print('🗑️ [GroupProvider] 모든 캐시 초기화');
+    debugPrint('🗑️ [GroupProvider] 모든 캐시 초기화');
 
     _cachedGroups.clear();
     _isGroupsCached = false;
@@ -780,7 +788,7 @@ class GroupProvider with ChangeNotifier {
 
   /// 🚪 로그아웃 시 모든 데이터 초기화
   void logout() {
-    print('🚪 [GroupProvider] 로그아웃 - 모든 데이터 초기화');
+    debugPrint('🚪 [GroupProvider] 로그아웃 - 모든 데이터 초기화');
     clearAllCache();
   }
 }

@@ -32,7 +32,7 @@ class BlogService {
   /// 로그아웃 시 모든 캐시 초기화
   static void clearAllCache() {
     _invalidateMyPostsCache();
-    print('[BlogService] 로그아웃 - 모든 캐시 초기화 완료');
+    debugPrint('[BlogService] 로그아웃 - 모든 캐시 초기화 완료');
   }
 
   /// content(JSON or raw string)에서 최대 5줄 요약을 생성
@@ -66,20 +66,20 @@ class BlogService {
 
   /// 새로운 프로필 피드 API 호출
   Future<Map<String, dynamic>> getProfileFeed(String username) async {
-    print('[BlogService] 프로필 피드 요청: $username');
+    debugPrint('[BlogService] 프로필 피드 요청: $username');
 
     try {
       final response = await _dio.get('/api/profile/$username/feed');
 
-      print('[BlogService] 프로필 피드 응답 상태: ${response.statusCode}');
-      print('[BlogService] 프로필 피드 응답 전체: ${response.data}');
-      print(
+      debugPrint('[BlogService] 프로필 피드 응답 상태: ${response.statusCode}');
+      debugPrint('[BlogService] 프로필 피드 응답 전체: ${response.data}');
+      debugPrint(
         '[BlogService] 프로필 피드 로드 성공: ${response.data['data']?['categories']?.length ?? 0}개 카테고리',
       );
 
       return response.data;
     } catch (e) {
-      print('[BlogService] 프로필 피드 로드 실패: $e');
+      debugPrint('[BlogService] 프로필 피드 로드 실패: $e');
 
       if (e is DioException) {
         if (e.response?.statusCode == 404) {
@@ -101,7 +101,7 @@ class BlogService {
 
       return response.data as Map<String, dynamic>;
     } catch (e) {
-      print('[BlogService] 프로필 스키마 로드 실패: $e');
+      debugPrint('[BlogService] 프로필 스키마 로드 실패: $e');
 
       if (e is DioException) {
         // 네트워크 연결 오류는 DioException을 그대로 전달
@@ -138,7 +138,7 @@ class BlogService {
 
       return response.data as Map<String, dynamic>;
     } catch (e) {
-      print('[BlogService] 프로필 포스트 로드 실패: $e');
+      debugPrint('[BlogService] 프로필 포스트 로드 실패: $e');
 
       if (e is DioException) {
         // 네트워크 연결 오류는 DioException을 그대로 전달
@@ -168,7 +168,9 @@ class BlogService {
     String postId, {
     int size = 20,
   }) async {
-    print('[BlogService] 프로필 포스트 오프셋 조회: $username postId=$postId size=$size');
+    debugPrint(
+      '[BlogService] 프로필 포스트 오프셋 조회: $username postId=$postId size=$size',
+    );
 
     try {
       final response = await _dio.get(
@@ -179,18 +181,18 @@ class BlogService {
 
       final data = response.data as Map<String, dynamic>;
 
-      print('[BlogService] 오프셋 조회 응답 상태: ${response.statusCode}');
+      debugPrint('[BlogService] 오프셋 조회 응답 상태: ${response.statusCode}');
       if (data.containsKey('data') && data['data'] is Map) {
         final dataMap = data['data'] as Map<String, dynamic>;
         if (dataMap.containsKey('posts') && dataMap['posts'] is List) {
           final posts = dataMap['posts'] as List;
-          print('[BlogService] 오프셋 조회 포스트 개수: ${posts.length}');
+          debugPrint('[BlogService] 오프셋 조회 포스트 개수: ${posts.length}');
         }
       }
 
       return data;
     } catch (e) {
-      print('[BlogService] 프로필 포스트 오프셋 조회 실패: $e');
+      debugPrint('[BlogService] 프로필 포스트 오프셋 조회 실패: $e');
 
       if (e is DioException) {
         if (e.type == DioExceptionType.connectionError ||
@@ -213,16 +215,16 @@ class BlogService {
 
   /// 사용자의 카테고리 목록 조회
   Future<List<Map<String, dynamic>>> getUserCategories(String username) async {
-    print('[BlogService] 카테고리 목록 조회 요청: $username');
+    debugPrint('[BlogService] 카테고리 목록 조회 요청: $username');
 
     try {
       final response = await _dio.get('/api/categories/user/$username');
 
       final data = response.data;
-      print('[BlogService] 카테고리 목록 조회 성공: ${data.length}개');
+      debugPrint('[BlogService] 카테고리 목록 조회 성공: ${data.length}개');
       return List<Map<String, dynamic>>.from(data);
     } catch (e) {
-      print('[BlogService] 카테고리 목록 조회 실패: $e');
+      debugPrint('[BlogService] 카테고리 목록 조회 실패: $e');
 
       if (e is DioException) {
         if (e.response?.statusCode == 401) {
@@ -243,7 +245,7 @@ class BlogService {
     required bool isPrivate,
     required String description,
   }) async {
-    print('[BlogService] 카테고리 생성 요청: $name');
+    debugPrint('[BlogService] 카테고리 생성 요청: $name');
 
     try {
       final response = await _dio.post(
@@ -256,10 +258,10 @@ class BlogService {
       );
 
       final data = response.data;
-      print('[BlogService] 카테고리 생성 성공: ${data['data']?['name']}');
+      debugPrint('[BlogService] 카테고리 생성 성공: ${data['data']?['name']}');
       return data;
     } catch (e) {
-      print('[BlogService] 카테고리 생성 실패: $e');
+      debugPrint('[BlogService] 카테고리 생성 실패: $e');
 
       if (e is DioException) {
         if (e.response?.statusCode == 400) {
@@ -277,14 +279,14 @@ class BlogService {
 
   /// 카테고리 삭제
   Future<void> deleteCategory(int categoryId) async {
-    print('[BlogService] 카테고리 삭제 요청: $categoryId');
+    debugPrint('[BlogService] 카테고리 삭제 요청: $categoryId');
 
     try {
       await _dio.delete('/api/categories/$categoryId');
 
-      print('[BlogService] 카테고리 삭제 성공: $categoryId');
+      debugPrint('[BlogService] 카테고리 삭제 성공: $categoryId');
     } catch (e) {
-      print('[BlogService] 카테고리 삭제 실패: $e');
+      debugPrint('[BlogService] 카테고리 삭제 실패: $e');
 
       if (e is DioException) {
         if (e.response?.statusCode == 400) {
@@ -307,12 +309,12 @@ class BlogService {
     required int categoryId,
     required String name,
   }) async {
-    print('[BlogService] 카테고리 이름 수정 요청: id=$categoryId, name=$name');
+    debugPrint('[BlogService] 카테고리 이름 수정 요청: id=$categoryId, name=$name');
     try {
       await _dio.put('/api/categories/$categoryId', data: {'name': name});
-      print('[BlogService] 카테고리 이름 수정 성공: $categoryId');
+      debugPrint('[BlogService] 카테고리 이름 수정 성공: $categoryId');
     } catch (e) {
-      print('[BlogService] 카테고리 이름 수정 실패: $e');
+      debugPrint('[BlogService] 카테고리 이름 수정 실패: $e');
       if (e is DioException) {
         if (e.response?.statusCode == 400) {
           final message = e.response?.data?['message'] ?? '잘못된 요청입니다.';
@@ -331,7 +333,7 @@ class BlogService {
 
   /// 카테고리 순서 변경
   Future<void> reorderCategories(List<int> orderedIds) async {
-    print('[BlogService] 카테고리 순서 변경 요청: $orderedIds');
+    debugPrint('[BlogService] 카테고리 순서 변경 요청: $orderedIds');
 
     try {
       final response = await _dio.put(
@@ -339,12 +341,12 @@ class BlogService {
         data: json.encode({'orderedIds': orderedIds}),
       );
 
-      print('[BlogService] 카테고리 순서 변경 성공');
+      debugPrint('[BlogService] 카테고리 순서 변경 성공');
       if (response.data != null && response.data.toString().isNotEmpty) {
-        print('[BlogService] 서버 응답 본문: ${response.data}');
+        debugPrint('[BlogService] 서버 응답 본문: ${response.data}');
       }
     } catch (e) {
-      print('[BlogService] 카테고리 순서 변경 실패: $e');
+      debugPrint('[BlogService] 카테고리 순서 변경 실패: $e');
 
       if (e is DioException) {
         if (e.response?.statusCode == 400) {
@@ -354,7 +356,7 @@ class BlogService {
           throw Exception('인증이 필요합니다.');
         } else {
           if (e.response?.data != null) {
-            print('[BlogService] 실패 응답 본문: ${e.response?.data}');
+            debugPrint('[BlogService] 실패 응답 본문: ${e.response?.data}');
           }
           throw Exception('서버 오류가 발생했습니다. (${e.response?.statusCode})');
         }
@@ -369,7 +371,7 @@ class BlogService {
     required int targetCategoryId,
     int? targetPosition,
   }) async {
-    print(
+    debugPrint(
       '[BlogService] 포스트 이동 요청: $postId -> $targetCategoryId (pos=$targetPosition)',
     );
 
@@ -382,9 +384,9 @@ class BlogService {
         },
       );
 
-      print('[BlogService] 포스트 이동 성공: $postId -> $targetCategoryId');
+      debugPrint('[BlogService] 포스트 이동 성공: $postId -> $targetCategoryId');
     } catch (e) {
-      print('[BlogService] 포스트 이동 실패: $e');
+      debugPrint('[BlogService] 포스트 이동 실패: $e');
 
       if (e is DioException) {
         if (e.response?.statusCode == 400) {
@@ -407,7 +409,7 @@ class BlogService {
     required int categoryId,
     required List<int> orderedIds,
   }) async {
-    print('[BlogService] 포스트 순서 변경 요청: 카테고리 $categoryId');
+    debugPrint('[BlogService] 포스트 순서 변경 요청: 카테고리 $categoryId');
 
     try {
       await _dio.put(
@@ -415,9 +417,9 @@ class BlogService {
         data: {'orderedIds': orderedIds},
       );
 
-      print('[BlogService] 포스트 순서 변경 성공: 카테고리 $categoryId');
+      debugPrint('[BlogService] 포스트 순서 변경 성공: 카테고리 $categoryId');
     } catch (e) {
-      print('[BlogService] 포스트 순서 변경 실패: $e');
+      debugPrint('[BlogService] 포스트 순서 변경 실패: $e');
 
       if (e is DioException) {
         if (e.response?.statusCode == 400) {
@@ -441,7 +443,7 @@ class BlogService {
     required String accessLevel, // 'PRIVATE', 'PUBLIC', 'GROUPS'
     List<int>? sharedGroupIds, // GROUPS일 때만 필요
   }) async {
-    print('[BlogService] 공개범위 변경 요청: $postId -> $accessLevel');
+    debugPrint('[BlogService] 공개범위 변경 요청: $postId -> $accessLevel');
 
     try {
       final data = <String, dynamic>{'accessLevel': accessLevel};
@@ -452,9 +454,9 @@ class BlogService {
 
       await _dio.patch('/api/posts/$postId/access-level', data: data);
 
-      print('[BlogService] 공개범위 변경 성공: $postId -> $accessLevel');
+      debugPrint('[BlogService] 공개범위 변경 성공: $postId -> $accessLevel');
     } catch (e) {
-      print('[BlogService] 공개범위 변경 실패: $e');
+      debugPrint('[BlogService] 공개범위 변경 실패: $e');
 
       if (e is DioException) {
         if (e.response?.statusCode == 400) {
@@ -485,7 +487,7 @@ class BlogService {
     List<int>? sharedGroupIds,
   }) async {
     try {
-      print(
+      debugPrint(
         '[BlogService] 여러 포스트 공개범위 배치 변경 시작 - 포스트 수: ${postIds.length}, accessLevel: $accessLevel',
       );
 
@@ -508,7 +510,9 @@ class BlogService {
         ),
       );
 
-      print('[BlogService] 여러 포스트 공개범위 배치 변경 응답 상태: ${response.statusCode}');
+      debugPrint(
+        '[BlogService] 여러 포스트 공개범위 배치 변경 응답 상태: ${response.statusCode}',
+      );
 
       if (response.statusCode == 200) {
         final responseData = response.data;
@@ -531,7 +535,7 @@ class BlogService {
           updatedPosts = [];
         }
 
-        print(
+        debugPrint(
           '[BlogService] 여러 포스트 공개범위 배치 변경 성공 - 변경된 포스트 수: ${updatedPosts.length}',
         );
         return updatedPosts;
@@ -539,16 +543,18 @@ class BlogService {
         throw Exception('여러 포스트 공개범위 배치 변경 실패: ${response.statusCode}');
       }
     } catch (e, stackTrace) {
-      print('[BlogService] 여러 포스트 공개범위 배치 변경 에러: $e');
-      print('[BlogService] StackTrace: $stackTrace');
+      debugPrint('[BlogService] 여러 포스트 공개범위 배치 변경 에러: $e');
+      debugPrint('[BlogService] StackTrace: $stackTrace');
 
       if (e is DioException) {
-        print('[BlogService] DioException Type: ${e.type}');
-        print('[BlogService] Status Code: ${e.response?.statusCode}');
-        print('[BlogService] Response Data: ${e.response?.data}');
-        print('[BlogService] Request Path: ${e.requestOptions.path}');
-        print('[BlogService] Request Data: ${e.requestOptions.data}');
-        print('[BlogService] Request Headers: ${e.requestOptions.headers}');
+        debugPrint('[BlogService] DioException Type: ${e.type}');
+        debugPrint('[BlogService] Status Code: ${e.response?.statusCode}');
+        debugPrint('[BlogService] Response Data: ${e.response?.data}');
+        debugPrint('[BlogService] Request Path: ${e.requestOptions.path}');
+        debugPrint('[BlogService] Request Data: ${e.requestOptions.data}');
+        debugPrint(
+          '[BlogService] Request Headers: ${e.requestOptions.headers}',
+        );
 
         if (e.response?.statusCode == 400) {
           final message = e.response?.data?['message'] ?? '잘못된 요청입니다.';
@@ -577,7 +583,9 @@ class BlogService {
     List<int> postIds,
   ) async {
     try {
-      print('[BlogService] 여러 포스트 배치로 나만보기 변경 시작 - 포스트 수: ${postIds.length}');
+      debugPrint(
+        '[BlogService] 여러 포스트 배치로 나만보기 변경 시작 - 포스트 수: ${postIds.length}',
+      );
 
       final response = await _dio.patch(
         '/api/posts/batch/make-private',
@@ -588,7 +596,9 @@ class BlogService {
         ),
       );
 
-      print('[BlogService] 여러 포스트 배치로 나만보기 변경 응답 상태: ${response.statusCode}');
+      debugPrint(
+        '[BlogService] 여러 포스트 배치로 나만보기 변경 응답 상태: ${response.statusCode}',
+      );
 
       if (response.statusCode == 200) {
         final data = response.data;
@@ -608,7 +618,7 @@ class BlogService {
           updatedPosts = [];
         }
 
-        print(
+        debugPrint(
           '[BlogService] 여러 포스트 배치로 나만보기 변경 성공 - 변경된 포스트 수: ${updatedPosts.length}',
         );
         return updatedPosts;
@@ -616,9 +626,9 @@ class BlogService {
         throw Exception('여러 포스트 배치로 나만보기 변경 실패: ${response.statusCode}');
       }
     } catch (e) {
-      print('[BlogService] 여러 포스트 배치로 나만보기 변경 에러: $e');
+      debugPrint('[BlogService] 여러 포스트 배치로 나만보기 변경 에러: $e');
       if (e is DioException) {
-        print(
+        debugPrint(
           '[BlogService] Dio 에러: ${e.response?.statusCode} - ${e.response?.data}',
         );
         throw Exception('여러 포스트 배치로 나만보기 변경 실패: ${e.response?.statusCode}');
@@ -641,7 +651,7 @@ class BlogService {
     String? title,
     String? summary,
   }) async {
-    print('[BlogService] 썸네일/타이틀/요약 수정 요청: $postId');
+    debugPrint('[BlogService] 썸네일/타이틀/요약 수정 요청: $postId');
 
     try {
       // 쿼리 파라미터 구성
@@ -649,17 +659,17 @@ class BlogService {
 
       if (thumbnailImageUrl != null && thumbnailImageUrl.isNotEmpty) {
         queryParams['thumbnailImageUrl'] = thumbnailImageUrl;
-        print('[BlogService] - 썸네일: $thumbnailImageUrl');
+        debugPrint('[BlogService] - 썸네일: $thumbnailImageUrl');
       }
 
       if (title != null && title.isNotEmpty) {
         queryParams['title'] = title;
-        print('[BlogService] - 타이틀: $title');
+        debugPrint('[BlogService] - 타이틀: $title');
       }
 
       if (summary != null && summary.isNotEmpty) {
         queryParams['summary'] = summary;
-        print('[BlogService] - 요약: $summary');
+        debugPrint('[BlogService] - 요약: $summary');
       }
 
       // 변경할 내용이 없으면 에러
@@ -672,9 +682,9 @@ class BlogService {
         queryParameters: queryParams,
       );
 
-      print('[BlogService] 썸네일/타이틀/요약 수정 성공: $postId');
+      debugPrint('[BlogService] 썸네일/타이틀/요약 수정 성공: $postId');
     } catch (e) {
-      print('[BlogService] 썸네일/타이틀/요약 수정 실패: $e');
+      debugPrint('[BlogService] 썸네일/타이틀/요약 수정 실패: $e');
 
       if (e is DioException) {
         if (e.response?.statusCode == 400) {
@@ -706,7 +716,7 @@ class BlogService {
     String? title,
     required List<String> usedImageUrls,
   }) async {
-    print('[BlogService] 본문/타이틀 수정 요청: $postId');
+    debugPrint('[BlogService] 본문/타이틀 수정 요청: $postId');
 
     try {
       final requestBody = <String, dynamic>{
@@ -716,16 +726,16 @@ class BlogService {
 
       if (title != null && title.isNotEmpty) {
         requestBody['title'] = title;
-        print('[BlogService] - 타이틀: $title');
+        debugPrint('[BlogService] - 타이틀: $title');
       }
 
-      print('[BlogService] - 사용된 미디어: ${usedImageUrls.length}개');
+      debugPrint('[BlogService] - 사용된 미디어: ${usedImageUrls.length}개');
 
       await _dio.put('/api/posts/$postId/content', data: requestBody);
 
-      print('[BlogService] 본문/타이틀 수정 성공: $postId');
+      debugPrint('[BlogService] 본문/타이틀 수정 성공: $postId');
     } catch (e) {
-      print('[BlogService] 본문/타이틀 수정 실패: $e');
+      debugPrint('[BlogService] 본문/타이틀 수정 실패: $e');
 
       if (e is DioException) {
         if (e.response?.statusCode == 400) {
@@ -746,16 +756,11 @@ class BlogService {
   /// 블로그 포스트를 서버에 업로드합니다.
   ///
   /// [postData] - 포스트 데이터 (제목, 내용, 썸네일 URL, 태그 등)
-  /// [thumbnailImageId] - 썸네일 이미지 ID (선택사항)
-  ///
   /// 반환: 업로드된 포스트의 ID와 메타데이터
   Future<Map<String, dynamic>> uploadPost({
     required Map<String, dynamic> postData,
-    String? thumbnailImageId,
   }) async {
-    print(
-      '[UploadPost] uploading post with thumbnailImageId: $thumbnailImageId',
-    );
+    debugPrint('[UploadPost] uploading post');
 
     // 서버 DTO에 맞춰 매핑: title, author, thumbnailImageUrl, content(JsonNode), accessLevel
     // accessLevel은 PostExporter에서 직접 설정한 값만 사용 (PUBLIC | PRIVATE | FRIENDS | GROUPS)
@@ -794,7 +799,6 @@ class BlogService {
 
       if (postData['usedImageUrls'] != null)
         'usedImageUrls': List<String>.from(postData['usedImageUrls'] as List),
-      if (thumbnailImageId != null) 'thumbnailImageId': thumbnailImageId,
       // GROUPS인 경우에만 sharedGroupIds 추가
       if (accessLevel == 'GROUPS' &&
           sharedGroupIds != null &&
@@ -819,7 +823,7 @@ class BlogService {
         ),
       );
 
-      print(
+      debugPrint(
         '[UploadPost] success ${response.statusCode} body=${response.data}',
       );
 
@@ -828,11 +832,35 @@ class BlogService {
       return response.data as Map<String, dynamic>;
     } catch (e) {
       if (e is DioException) {
-        print(
+        debugPrint(
           '[UploadPost] error ${e.response?.statusCode} body=${e.response?.data}',
         );
         throw HttpException(
           'post upload failed ${e.response?.statusCode}: ${e.response?.data}',
+        );
+      }
+      rethrow;
+    }
+  }
+
+  /// 단일 포스트 전체 조회 (스키마 + 내용 + 메타데이터, isLiked, likeCount, commentCount 포함)
+  Future<Map<String, dynamic>> getPost(String postId) async {
+    try {
+      final response = await _dio.get(
+        '/api/posts/$postId',
+        options: Options(receiveTimeout: const Duration(seconds: 20)),
+      );
+
+      final decoded = response.data;
+      if (decoded is Map<String, dynamic>) {
+        // 🎯 전체 응답 반환 (title, author, thumbnailImageUrl, content, isLiked, likeCount, commentCount 모두 포함)
+        return decoded;
+      }
+      return <String, dynamic>{};
+    } catch (e) {
+      if (e is DioException) {
+        throw HttpException(
+          'get post failed ${e.response?.statusCode}: ${e.response?.data}',
         );
       }
       rethrow;
@@ -849,14 +877,14 @@ class BlogService {
 
       final decoded = response.data;
       if (decoded is Map<String, dynamic>) {
-        print('[BlogService] getPostContent 응답 키: ${decoded.keys}');
+        debugPrint('[BlogService] getPostContent 응답 키: ${decoded.keys}');
 
         // 🎯 전체 응답 반환 (isLiked, likeCount, commentCount, content 모두 포함)
         return decoded;
       }
       return <String, dynamic>{};
     } catch (e) {
-      print('[BlogService] getPostContent error: $e');
+      debugPrint('[BlogService] getPostContent error: $e');
 
       if (e is DioException) {
         throw HttpException(
@@ -869,12 +897,12 @@ class BlogService {
 
   /// 블로그 메타데이터만 조회 (content 제외)
   ///
-  /// title, thumbnailImageUrl, thumbnailImageId, summary, author,
+  /// title, thumbnailImageUrl, summary, author,
   /// accessLevel, viewCount, likeCount, isLiked, createdAt, updatedAt 등의 정보만 반환.
   /// 조회수 증가 안함.
   Future<Map<String, dynamic>> getPostMetadata(String postId) async {
     try {
-      print('[BlogService] 메타데이터 조회: postId=$postId');
+      debugPrint('[BlogService] 메타데이터 조회: postId=$postId');
 
       final response = await _dio.get(
         '/api/posts/$postId/metadata',
@@ -883,16 +911,16 @@ class BlogService {
 
       final data = response.data;
       if (data is Map<String, dynamic>) {
-        print('[BlogService] 메타데이터 로드 성공');
-        print('  - 제목: ${data['title']}');
-        print('  - 썸네일: ${data['thumbnailImageUrl']}');
-        print('  - 요약: ${data['summary']}');
+        debugPrint('[BlogService] 메타데이터 로드 성공');
+        debugPrint('  - 제목: ${data['title']}');
+        debugPrint('  - 썸네일: ${data['thumbnailImageUrl']}');
+        debugPrint('  - 요약: ${data['summary']}');
         return data;
       }
 
       return <String, dynamic>{};
     } catch (e) {
-      print('[BlogService] getPostMetadata error: $e');
+      debugPrint('[BlogService] getPostMetadata error: $e');
 
       if (e is DioException) {
         throw HttpException(
@@ -907,15 +935,11 @@ class BlogService {
   ///
   /// [postId] - 업데이트할 포스트의 ID
   /// [postData] - 업데이트할 포스트 데이터
-  /// [thumbnailImageId] - 새로운 썸네일 이미지 ID (선택사항)
   Future<Map<String, dynamic>> updatePost({
     required String postId,
     required Map<String, dynamic> postData,
-    String? thumbnailImageId,
   }) async {
-    print(
-      '[UpdatePost] updating post $postId with thumbnailImageId: $thumbnailImageId',
-    );
+    debugPrint('[UpdatePost] updating post $postId');
 
     // 서버 DTO 규격에 맞게 업데이트 바디 구성
     // accessLevel은 postData에서 직접 읽기 (visibility 객체 사용 안 함)
@@ -947,7 +971,6 @@ class BlogService {
       'content': contentJson ?? const <String, dynamic>{'nodes': []},
       'accessLevel': accessLevel,
       'summary': summary,
-      if (thumbnailImageId != null) 'thumbnailImageId': thumbnailImageId,
       // GROUPS인 경우에만 sharedGroupIds 추가
       if (accessLevel == 'GROUPS' &&
           sharedGroupIds != null &&
@@ -961,7 +984,7 @@ class BlogService {
       debugPrint('[UpdatePost] sharedGroupIds: $sharedGroupIds');
     }
 
-    print('[UpdatePost] request body: ${json.encode(requestBody)}');
+    debugPrint('[UpdatePost] request body: ${json.encode(requestBody)}');
 
     try {
       final response = await _dio.put(
@@ -973,11 +996,11 @@ class BlogService {
         ),
       );
 
-      print('[UpdatePost] success body=${response.data}');
+      debugPrint('[UpdatePost] success body=${response.data}');
       return response.data as Map<String, dynamic>;
     } catch (e) {
       if (e is DioException) {
-        print(
+        debugPrint(
           '[UpdatePost] error ${e.response?.statusCode} body=${e.response?.data}',
         );
         throw HttpException(
@@ -992,7 +1015,7 @@ class BlogService {
   ///
   /// [postId] - 삭제할 포스트의 ID
   Future<void> deletePost(String postId) async {
-    print('[DeletePost] deleting post $postId');
+    debugPrint('[DeletePost] deleting post $postId');
 
     try {
       await _dio.delete(
@@ -1003,10 +1026,10 @@ class BlogService {
         ),
       );
 
-      print('[DeletePost] success');
+      debugPrint('[DeletePost] success');
     } catch (e) {
       if (e is DioException) {
-        print(
+        debugPrint(
           '[DeletePost] error ${e.response?.statusCode} body=${e.response?.data}',
         );
         throw HttpException(
@@ -1053,7 +1076,7 @@ class BlogService {
     bool includeContent = false,
   }) async {
     try {
-      print(
+      debugPrint(
         '[BlogService] 내 FRIENDS 포스트 조회 시작 - page: $page, size: $size, includeContent: $includeContent',
       );
 
@@ -1067,22 +1090,26 @@ class BlogService {
         options: Options(receiveTimeout: const Duration(seconds: 10)),
       );
 
-      print('[BlogService] 내 FRIENDS 포스트 조회 응답 상태: ${response.statusCode}');
+      debugPrint(
+        '[BlogService] 내 FRIENDS 포스트 조회 응답 상태: ${response.statusCode}',
+      );
 
       if (response.statusCode == 200) {
         final data = response.data as Map<String, dynamic>;
         // 🎯 서버 응답 구조: { "posts": { "content": [...] } }
         final postsData = data['posts'] as Map<String, dynamic>?;
         final postsList = (postsData?['content'] as List?) ?? [];
-        print('[BlogService] 내 FRIENDS 포스트 조회 성공 - 포스트 수: ${postsList.length}');
+        debugPrint(
+          '[BlogService] 내 FRIENDS 포스트 조회 성공 - 포스트 수: ${postsList.length}',
+        );
         return postsList.cast<Map<String, dynamic>>();
       } else {
         throw Exception('내 FRIENDS 포스트 조회 실패: ${response.statusCode}');
       }
     } catch (e) {
-      print('[BlogService] 내 FRIENDS 포스트 조회 에러: $e');
+      debugPrint('[BlogService] 내 FRIENDS 포스트 조회 에러: $e');
       if (e is DioException) {
-        print(
+        debugPrint(
           '[BlogService] Dio 에러: ${e.response?.statusCode} - ${e.response?.data}',
         );
         throw Exception('내 FRIENDS 포스트 조회 실패: ${e.response?.statusCode}');
@@ -1127,11 +1154,11 @@ class BlogService {
       // 캐시 키: page|size
       final String cacheKey = '$page|$size';
       if (_isMyPostsCacheValid() && _myPostsCache.containsKey(cacheKey)) {
-        print('[BlogService] Using cached my posts: key=$cacheKey');
+        debugPrint('[BlogService] Using cached my posts: key=$cacheKey');
         return _myPostsCache[cacheKey]!;
       }
 
-      print('[BlogService] Fetching my posts: page=$page, size=$size');
+      debugPrint('[BlogService] Fetching my posts: page=$page, size=$size');
 
       final response = await _dio.get(
         '/api/posts/my',
@@ -1141,7 +1168,7 @@ class BlogService {
 
       final data = response.data;
       final posts = List<Map<String, dynamic>>.from(data['content'] ?? []);
-      print('[BlogService] Successfully fetched ${posts.length} my posts');
+      debugPrint('[BlogService] Successfully fetched ${posts.length} my posts');
 
       // 캐시 저장
       _myPostsCache[cacheKey] = posts;
@@ -1149,12 +1176,12 @@ class BlogService {
       return posts;
     } catch (e) {
       if (e is DioException) {
-        print(
+        debugPrint(
           '[BlogService] Error ${e.response?.statusCode}: ${e.response?.data}',
         );
         throw Exception('Failed to fetch my posts: ${e.response?.statusCode}');
       }
-      print('[BlogService] Exception: $e');
+      debugPrint('[BlogService] Exception: $e');
       throw Exception('Failed to fetch my posts: $e');
     }
   }
@@ -1165,7 +1192,9 @@ class BlogService {
     int size = 20,
   }) async {
     try {
-      print('[BlogService] Fetching my liked posts: page=$page, size=$size');
+      debugPrint(
+        '[BlogService] Fetching my liked posts: page=$page, size=$size',
+      );
 
       final response = await _dio.get(
         '/api/posts/my/liked',
@@ -1177,15 +1206,17 @@ class BlogService {
       final posts = List<Map<String, dynamic>>.from(
         data['content'] ?? data['posts'] ?? data as List? ?? [],
       );
-      print('[BlogService] Successfully fetched ${posts.length} liked posts');
+      debugPrint(
+        '[BlogService] Successfully fetched ${posts.length} liked posts',
+      );
       return posts;
     } catch (e) {
       if (e is DioException) {
         if (e.response?.statusCode == 404) {
-          print('[BlogService] No liked posts found (404)');
+          debugPrint('[BlogService] No liked posts found (404)');
           return []; // 빈 리스트 반환
         }
-        print(
+        debugPrint(
           '[BlogService] Error ${e.response?.statusCode}: ${e.response?.data}',
         );
         throw Exception(
@@ -1193,10 +1224,10 @@ class BlogService {
         );
       }
 
-      print('[BlogService] Exception: $e');
+      debugPrint('[BlogService] Exception: $e');
       // 404 에러인 경우 빈 리스트 반환 (서버 문제 대응)
       if (e.toString().contains('404')) {
-        print('[BlogService] Returning empty list due to 404 error');
+        debugPrint('[BlogService] Returning empty list due to 404 error');
         return [];
       }
       throw Exception('Failed to fetch liked posts: $e');
@@ -1210,7 +1241,7 @@ class BlogService {
     int size = 10,
   }) async {
     try {
-      print(
+      debugPrint(
         '[BlogService] Fetching user posts: username=$username page=$page, size=$size',
       );
 
@@ -1224,18 +1255,20 @@ class BlogService {
       final posts = List<Map<String, dynamic>>.from(
         data['content'] ?? data as List? ?? [],
       );
-      print('[BlogService] Successfully fetched ${posts.length} user posts');
+      debugPrint(
+        '[BlogService] Successfully fetched ${posts.length} user posts',
+      );
       return posts;
     } catch (e) {
       if (e is DioException) {
         if (e.response?.statusCode == 404) {
           // 사용자 포스트가 없거나 API 엔드포인트가 존재하지 않는 경우
-          print(
+          debugPrint(
             '[BlogService] User posts not found (404) for username: $username',
           );
           return []; // 빈 리스트 반환
         }
-        print(
+        debugPrint(
           '[BlogService] Error ${e.response?.statusCode}: ${e.response?.data}',
         );
         throw Exception(
@@ -1243,10 +1276,10 @@ class BlogService {
         );
       }
 
-      print('[BlogService] Exception: $e');
+      debugPrint('[BlogService] Exception: $e');
       // 404 에러인 경우 빈 리스트 반환 (서버 문제 대응)
       if (e.toString().contains('404')) {
-        print('[BlogService] Returning empty list due to 404 error');
+        debugPrint('[BlogService] Returning empty list due to 404 error');
         return [];
       }
       throw Exception('Failed to fetch user posts: $e');
@@ -1278,7 +1311,7 @@ class BlogService {
     bool includeContent = false,
   }) async {
     try {
-      print(
+      debugPrint(
         '[BlogService] 그룹별 포스트 조회 시작 - 그룹ID: $groupId, page: $page, size: $size, includeContent: $includeContent',
       );
 
@@ -1292,11 +1325,11 @@ class BlogService {
         options: Options(receiveTimeout: const Duration(seconds: 10)),
       );
 
-      print('[BlogService] 그룹별 포스트 조회 응답 상태: ${response.statusCode}');
+      debugPrint('[BlogService] 그룹별 포스트 조회 응답 상태: ${response.statusCode}');
 
       if (response.statusCode == 200) {
         final data = response.data as Map<String, dynamic>;
-        print(
+        debugPrint(
           '[BlogService] 그룹별 포스트 조회 성공 - 포스트 수: ${(data['posts']?['content'] as List?)?.length ?? 0}',
         );
         return data;
@@ -1304,9 +1337,9 @@ class BlogService {
         throw Exception('그룹별 포스트 조회 실패: ${response.statusCode}');
       }
     } catch (e) {
-      print('[BlogService] 그룹별 포스트 조회 에러: $e');
+      debugPrint('[BlogService] 그룹별 포스트 조회 에러: $e');
       if (e is DioException) {
-        print(
+        debugPrint(
           '[BlogService] Dio 에러: ${e.response?.statusCode} - ${e.response?.data}',
         );
         throw Exception('그룹별 포스트 조회 실패: ${e.response?.statusCode}');
@@ -1341,7 +1374,7 @@ class BlogService {
     int size = 20,
   }) async {
     try {
-      print(
+      debugPrint(
         '[BlogService] 포스트 조회자 정보 조회 시작 - 포스트ID: $postId, page: $page, size: $size',
       );
 
@@ -1351,20 +1384,20 @@ class BlogService {
         options: Options(receiveTimeout: const Duration(seconds: 10)),
       );
 
-      print('[BlogService] 포스트 조회자 정보 조회 응답 상태: ${response.statusCode}');
+      debugPrint('[BlogService] 포스트 조회자 정보 조회 응답 상태: ${response.statusCode}');
 
       if (response.statusCode == 200) {
         final data = response.data as Map<String, dynamic>;
         final viewerCount = (data['viewers'] as List?)?.length ?? 0;
-        print('[BlogService] 포스트 조회자 정보 조회 성공 - 조회자 수: $viewerCount');
+        debugPrint('[BlogService] 포스트 조회자 정보 조회 성공 - 조회자 수: $viewerCount');
         return data;
       } else {
         throw Exception('포스트 조회자 정보 조회 실패: ${response.statusCode}');
       }
     } catch (e) {
-      print('[BlogService] 포스트 조회자 정보 조회 에러: $e');
+      debugPrint('[BlogService] 포스트 조회자 정보 조회 에러: $e');
       if (e is DioException) {
-        print(
+        debugPrint(
           '[BlogService] Dio 에러: ${e.response?.statusCode} - ${e.response?.data}',
         );
         throw Exception('포스트 조회자 정보 조회 실패: ${e.response?.statusCode}');

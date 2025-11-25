@@ -248,25 +248,27 @@ class HomeDataService {
 
     // 🎯 이미지 프리캐싱 (병렬 처리)
     if (imagesToCache.isNotEmpty) {
-      print('[HomeDataService] 이미지 ${imagesToCache.length}개 배치 프리로드 시작');
+      debugPrint('[HomeDataService] 이미지 ${imagesToCache.length}개 배치 프리로드 시작');
       final imageFutures =
           imagesToCache.map((url) {
             return precacheImage(NetworkImage(url), context).catchError((e) {
-              print('[HomeDataService] 이미지 프리캐싱 실패: $url');
+              debugPrint('[HomeDataService] 이미지 프리캐싱 실패: $url');
             });
           }).toList();
 
       try {
         await Future.wait(imageFutures, eagerError: false);
-        print('[HomeDataService] ✅ 이미지 배치 프리로드 완료: ${imagesToCache.length}개');
+        debugPrint(
+          '[HomeDataService] ✅ 이미지 배치 프리로드 완료: ${imagesToCache.length}개',
+        );
       } catch (e) {
-        print('[HomeDataService] 이미지 배치 프리로드 중 오류: $e');
+        debugPrint('[HomeDataService] 이미지 배치 프리로드 중 오류: $e');
       }
     }
 
     // 🎯 비디오 프리로드 (VideoCacheService 사용, 비동기 처리)
     if (videosToCache.isNotEmpty) {
-      print('[HomeDataService] 비디오 ${videosToCache.length}개 배치 프리로드 시작');
+      debugPrint('[HomeDataService] 비디오 ${videosToCache.length}개 배치 프리로드 시작');
       // 비동기로 처리 (이미지 로드를 막지 않음)
       Future.microtask(() async {
         final videoCacheService = VideoCacheService();
@@ -277,12 +279,12 @@ class HomeDataService {
               videoUrl,
               namespace: 'home',
             );
-            print('[HomeDataService] 비디오 프리로드 시작: $videoUrl');
+            debugPrint('[HomeDataService] 비디오 프리로드 시작: $videoUrl');
           } catch (e) {
-            print('[HomeDataService] 비디오 프리로드 실패: $videoUrl - $e');
+            debugPrint('[HomeDataService] 비디오 프리로드 실패: $videoUrl - $e');
           }
         }
-        print(
+        debugPrint(
           '[HomeDataService] ✅ 비디오 배치 프리로드 요청 완료: ${videosToCache.length}개',
         );
       });

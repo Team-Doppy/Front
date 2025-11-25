@@ -5,7 +5,6 @@ import 'package:doppy/data/models/user_model.dart';
 /// 풀스크린 이미지 뷰어에서 미디어 댓글을 관리하는 컨트롤러
 class FullscreenMediaCommentController extends ChangeNotifier {
   final bool isVideo;
-  final String? Function() getCurrentMediaId;
   final String Function() getCurrentImageUrl;
 
   final Map<String, List<MediaComment>> _commentsByImage = {};
@@ -18,7 +17,6 @@ class FullscreenMediaCommentController extends ChangeNotifier {
 
   FullscreenMediaCommentController({
     required this.isVideo,
-    required this.getCurrentMediaId,
     required this.getCurrentImageUrl,
   });
 
@@ -52,9 +50,9 @@ class FullscreenMediaCommentController extends ChangeNotifier {
   /// 댓글 초기 로드
   Future<void> loadComments() async {
     final url = getCurrentImageUrl();
-    final mediaId = getCurrentMediaId();
 
-    if (mediaId == null) {
+    // 🎯 URL 기반으로 변경
+    if (url.isEmpty) {
       _commentsByImage[url] = [];
       _isCommentsLoaded[url] = true;
       notifyListeners();
@@ -65,12 +63,12 @@ class FullscreenMediaCommentController extends ChangeNotifier {
       final list =
           isVideo
               ? await _commentService.fetchVideoComments(
-                videoId: mediaId,
+                videoUrl: url, // 🎯 URL 사용
                 page: 0,
                 size: 20,
               )
               : await _commentService.fetchImageComments(
-                imageId: mediaId,
+                imageUrl: url, // 🎯 URL 사용
                 page: 0,
                 size: 20,
               );
@@ -83,7 +81,7 @@ class FullscreenMediaCommentController extends ChangeNotifier {
 
       notifyListeners();
     } catch (e) {
-      print('[FullscreenMediaCommentController] Load failed: $e');
+      debugPrint('[FullscreenMediaCommentController] Load failed: $e');
       _commentsByImage[url] = [];
       _commentPageByImage[url] = 0;
       _hasMoreCommentsByImage[url] = false;
@@ -101,8 +99,8 @@ class FullscreenMediaCommentController extends ChangeNotifier {
 
     if (isLoading || !hasMore) return;
 
-    final mediaId = getCurrentMediaId();
-    if (mediaId == null) return;
+    // 🎯 URL 기반으로 변경
+    if (url.isEmpty) return;
 
     _isLoadingMoreByImage[url] = true;
     notifyListeners();
@@ -114,12 +112,12 @@ class FullscreenMediaCommentController extends ChangeNotifier {
       final list =
           isVideo
               ? await _commentService.fetchVideoComments(
-                videoId: mediaId,
+                videoUrl: url, // 🎯 URL 사용
                 page: nextPage,
                 size: 20,
               )
               : await _commentService.fetchImageComments(
-                imageId: mediaId,
+                imageUrl: url, // 🎯 URL 사용
                 page: nextPage,
                 size: 20,
               );
@@ -131,7 +129,7 @@ class FullscreenMediaCommentController extends ChangeNotifier {
 
       notifyListeners();
     } catch (e) {
-      print('[FullscreenMediaCommentController] Load more failed: $e');
+      debugPrint('[FullscreenMediaCommentController] Load more failed: $e');
       _isLoadingMoreByImage[url] = false;
       notifyListeners();
     }
@@ -140,9 +138,9 @@ class FullscreenMediaCommentController extends ChangeNotifier {
   /// 댓글 추가
   Future<String?> submitComment(String text, User? currentUser) async {
     final url = getCurrentImageUrl();
-    final mediaId = getCurrentMediaId();
 
-    if (text.isEmpty || mediaId == null || mediaId.isEmpty) {
+    // 🎯 URL 기반으로 변경
+    if (text.isEmpty || url.isEmpty) {
       return null;
     }
 
@@ -167,11 +165,11 @@ class FullscreenMediaCommentController extends ChangeNotifier {
       final newId =
           isVideo
               ? await _commentService.createVideoComment(
-                videoId: mediaId,
+                videoUrl: url, // 🎯 URL 사용
                 text: text,
               )
               : await _commentService.createImageComment(
-                imageId: mediaId,
+                imageUrl: url, // 🎯 URL 사용
                 text: text,
               );
 
@@ -187,7 +185,7 @@ class FullscreenMediaCommentController extends ChangeNotifier {
 
       return newId;
     } catch (e) {
-      print('[FullscreenMediaCommentController] Submit failed: $e');
+      debugPrint('[FullscreenMediaCommentController] Submit failed: $e');
       // 롤백
       _commentsByImage[url] = currentComments;
       notifyListeners();
@@ -198,8 +196,8 @@ class FullscreenMediaCommentController extends ChangeNotifier {
   /// 댓글 좋아요 토글
   Future<void> toggleCommentLike(MediaComment comment) async {
     final url = getCurrentImageUrl();
-    final mediaId = getCurrentMediaId();
-    if (mediaId == null) return;
+    // 🎯 URL 기반으로 변경
+    if (url.isEmpty) return;
 
     // 낙관적 업데이트
     final newIsLiked = !comment.isLiked;
@@ -221,11 +219,11 @@ class FullscreenMediaCommentController extends ChangeNotifier {
       final updatedComment =
           isVideo
               ? await _commentService.toggleVideoCommentLike(
-                videoId: mediaId,
+                videoUrl: url, // 🎯 URL 사용
                 commentId: comment.id,
               )
               : await _commentService.toggleImageCommentLike(
-                imageId: mediaId,
+                imageUrl: url, // 🎯 URL 사용
                 commentId: comment.id,
               );
 
@@ -241,7 +239,7 @@ class FullscreenMediaCommentController extends ChangeNotifier {
         notifyListeners();
       }
     } catch (e) {
-      print('[FullscreenMediaCommentController] Toggle like failed: $e');
+      debugPrint('[FullscreenMediaCommentController] Toggle like failed: $e');
       // 롤백
       final rollbackComments = _commentsByImage[url] ?? [];
       final rollbackIndex = rollbackComments.indexWhere(
@@ -258,8 +256,8 @@ class FullscreenMediaCommentController extends ChangeNotifier {
   /// 댓글 삭제
   Future<void> deleteComment(MediaComment comment) async {
     final url = getCurrentImageUrl();
-    final mediaId = getCurrentMediaId();
-    if (mediaId == null) return;
+    // 🎯 URL 기반으로 변경
+    if (url.isEmpty) return;
 
     // 롤백용 백업
     final backupComments = List<MediaComment>.from(_commentsByImage[url] ?? []);
@@ -272,17 +270,17 @@ class FullscreenMediaCommentController extends ChangeNotifier {
     try {
       if (isVideo) {
         await _commentService.deleteVideoComment(
-          videoId: mediaId,
+          videoUrl: url, // 🎯 URL 사용
           commentId: comment.id,
         );
       } else {
         await _commentService.deleteImageComment(
-          imageId: mediaId,
+          imageUrl: url, // 🎯 URL 사용
           commentId: comment.id,
         );
       }
     } catch (e) {
-      print('[FullscreenMediaCommentController] Delete failed: $e');
+      debugPrint('[FullscreenMediaCommentController] Delete failed: $e');
       // 롤백
       _commentsByImage[url] = backupComments;
       notifyListeners();
@@ -293,8 +291,8 @@ class FullscreenMediaCommentController extends ChangeNotifier {
   /// 댓글 수정
   Future<void> updateComment(MediaComment comment, String newText) async {
     final url = getCurrentImageUrl();
-    final mediaId = getCurrentMediaId();
-    if (mediaId == null) return;
+    // 🎯 URL 기반으로 변경
+    if (url.isEmpty) return;
 
     // 롤백용 백업
     final backupComments = List<MediaComment>.from(_commentsByImage[url] ?? []);
@@ -315,12 +313,12 @@ class FullscreenMediaCommentController extends ChangeNotifier {
       final updatedComment =
           isVideo
               ? await _commentService.updateVideoComment(
-                videoId: mediaId,
+                videoUrl: url, // 🎯 URL 사용
                 commentId: comment.id,
                 text: newText,
               )
               : await _commentService.updateImageComment(
-                imageId: mediaId,
+                imageUrl: url, // 🎯 URL 사용
                 commentId: comment.id,
                 text: newText,
               );
@@ -334,7 +332,7 @@ class FullscreenMediaCommentController extends ChangeNotifier {
         notifyListeners();
       }
     } catch (e) {
-      print('[FullscreenMediaCommentController] Update failed: $e');
+      debugPrint('[FullscreenMediaCommentController] Update failed: $e');
       // 롤백
       _commentsByImage[url] = backupComments;
       notifyListeners();

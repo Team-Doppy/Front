@@ -204,9 +204,9 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   Future<void> _loadProfileSafely() async {
     try {
       await context.read<UserProvider>().fetchMyProfile();
-      print('[HomeScreen] 프로필 로드 성공');
+      debugPrint('[HomeScreen] 프로필 로드 성공');
     } catch (e) {
-      print('[HomeScreen] 프로필 로드 실패: $e');
+      debugPrint('[HomeScreen] 프로필 로드 실패: $e');
       // 프로필 로드 실패해도 계속 진행 (UI에 영향 없음)
     }
   }
@@ -297,12 +297,12 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         _friendsError = null; // 성공 시 에러 클리어
       });
 
-      print(
+      debugPrint(
         '[HomeScreen] 친구글 로드 성공: ${posts.length}개 (페이지 ${_friendsCurrentPage - 1})',
       );
     } catch (e) {
       final networkError = NetworkUtils.parseError(e);
-      print('[HomeScreen] 친구글 로드 실패: ${networkError.message}');
+      debugPrint('[HomeScreen] 친구글 로드 실패: ${networkError.message}');
 
       setState(() {
         _friendsError = networkError;
@@ -324,7 +324,7 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   }
 
   Future<void> _loadAllPosts({bool refresh = false}) async {
-    print(
+    debugPrint(
       '[HomeScreen] _loadAllPosts 시작 - refresh: $refresh, 현재 데이터: ${_allPosts.length}개',
     );
 
@@ -377,12 +377,12 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         _allError = null; // 성공 시 에러 클리어
       });
 
-      print(
+      debugPrint(
         '[HomeScreen] 전체글 로드 성공: ${posts.length}개 (페이지 ${_allCurrentPage - 1})',
       );
     } catch (e) {
       final networkError = NetworkUtils.parseError(e);
-      print('[HomeScreen] 전체글 로드 실패: ${networkError.message}');
+      debugPrint('[HomeScreen] 전체글 로드 실패: ${networkError.message}');
 
       setState(() {
         _allError = networkError;
@@ -479,7 +479,7 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           Theme.of(context).brightness == Brightness.dark
               ? Positioned.fill(
                 child: BackdropFilter(
-                  filter: ui.ImageFilter.blur(sigmaX: 13, sigmaY: 10),
+                  filter: ui.ImageFilter.blur(sigmaX: 8, sigmaY: 8),
                   child: Container(
                     decoration: BoxDecoration(
                       gradient: LinearGradient(
@@ -526,17 +526,17 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     final currentPage = _sectionPageController.page?.round() ?? 0;
     final nextPage = currentPage + 1;
 
-    print('[HomeScreen] 섹션 전환: 페이지 $currentPage → $nextPage');
+    debugPrint('[HomeScreen] 섹션 전환: 페이지 $currentPage → $nextPage');
 
     // 🎯 다음 섹션 데이터가 비어있으면 미리 로드 (이동할 탭만 로드)
     final nextActualIndex = nextPage % 2;
     // 🎯 친구글 비어있을 때 자동 재로드 제거
     // if (nextActualIndex == 0 && _friendsPosts.isEmpty && !_friendsIsLoading) {
-    //   print('[HomeScreen] 친구글 미리 로드 (친구 탭으로 이동)');
+    //   debugPrint('[HomeScreen] 친구글 미리 로드 (친구 탭으로 이동)');
     //   _loadFriendsPosts();
     // }
     if (nextActualIndex == 1 && _allPosts.isEmpty && !_allIsLoading) {
-      print('[HomeScreen] 전체글 미리 로드 (전체 탭으로 이동)');
+      debugPrint('[HomeScreen] 전체글 미리 로드 (전체 탭으로 이동)');
       _loadAllPosts();
     }
     // 🎯 현재 탭 데이터는 이미 로드되어 있으므로 다시 로드하지 않음
@@ -583,7 +583,9 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             setState(() {
               _currentSectionIndex = actualIndex;
             });
-            print('[HomeScreen] 섹션 변경 완료: ${actualIndex == 0 ? "친구글" : "전체글"}');
+            debugPrint(
+              '[HomeScreen] 섹션 변경 완료: ${actualIndex == 0 ? "친구글" : "전체글"}',
+            );
 
             // 🎯 섹션 전환 시 이동한 탭의 데이터가 비어있을 때만 로드
             // (이미 로드된 탭은 다시 로드하지 않음)
@@ -591,11 +593,11 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             // if (actualIndex == 0 &&
             //     _friendsPosts.isEmpty &&
             //     !_friendsIsLoading) {
-            //   print('[HomeScreen] 친구글이 비어있음 - 자동 로드 (친구 탭으로 이동)');
+            //   debugPrint('[HomeScreen] 친구글이 비어있음 - 자동 로드 (친구 탭으로 이동)');
             //   _loadFriendsPosts();
             // }
             if (actualIndex == 1 && _allPosts.isEmpty && !_allIsLoading) {
-              print('[HomeScreen] 전체글이 비어있음 - 자동 로드 (전체 탭으로 이동)');
+              debugPrint('[HomeScreen] 전체글이 비어있음 - 자동 로드 (전체 탭으로 이동)');
               _loadAllPosts();
             }
           },

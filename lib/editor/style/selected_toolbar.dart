@@ -1,3 +1,4 @@
+import 'package:doppy/editor/component/clip_component.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/svg.dart';
 import 'package:super_editor/super_editor.dart';
@@ -83,6 +84,9 @@ class _SelectedToolbarState extends State<SelectedToolbar> {
     } else if (widget.node is ImageRowNode) {
       final meta = (widget.node as ImageRowNode).metadata;
       isExpanded = meta['padding'] == 'full';
+    } else if (widget.node is ClipNode) {
+      final meta = (widget.node as ClipNode).metadata;
+      isExpanded = meta['padding'] == 'full';
     }
     return Container(
       height: 38,
@@ -127,23 +131,27 @@ class _SelectedToolbarState extends State<SelectedToolbar> {
                 size: 28,
               ),
             SizedBox(width: 8),
+          ],
 
-            if (widget.node is ImageNode) ...[
-              _buildMainSvgIcon(
-                context: context,
-                svgPath:
-                    isExpanded
-                        ? 'assets/icons/arrow-double-shrink.svg' // 확장됨 → 축소 아이콘
-                        : 'assets/icons/arrow-double-expand.svg', // 축소됨 → 확장 아이콘
-                isActive: true,
-                onTap: () {
-                  if (widget.onChangeAlignment != null &&
-                      widget.selectedId != null) {
-                    widget.onChangeAlignment!(widget.node!, widget.selectedId!);
-                  }
-                },
-              ),
-              SizedBox(width: 16),
+          // 패딩 조절 버튼 (이미지와 영상 모두, placeholder가 아닐 때)
+          if (!isPlaceholder &&
+              (widget.node is ImageNode || widget.node is ClipNode)) ...[
+            _buildMainSvgIcon(
+              context: context,
+              svgPath:
+                  isExpanded
+                      ? 'assets/icons/arrow-double-shrink.svg' // 확장됨 → 축소 아이콘
+                      : 'assets/icons/arrow-double-expand.svg', // 축소됨 → 확장 아이콘
+              isActive: true,
+              onTap: () {
+                if (widget.onChangeAlignment != null &&
+                    widget.selectedId != null) {
+                  widget.onChangeAlignment!(widget.node!, widget.selectedId!);
+                }
+              },
+            ),
+            SizedBox(width: 16),
+            if (widget.node is! ClipNode) ...[
               Padding(
                 padding: const EdgeInsets.only(top: 3),
                 child: _buildMainSvgIcon(
@@ -159,7 +167,7 @@ class _SelectedToolbarState extends State<SelectedToolbar> {
           ],
 
           _buildMainSvgIcon(
-            size: 28,
+            size: 24,
             context: context,
             svgPath: 'assets/icons/delete.svg',
             isActive: false,

@@ -144,7 +144,7 @@ class _PostCardState extends State<PostCard>
         _videoController!.value.isInitialized) {
       final newVolume = _muteService.isFeedMuted ? 0.0 : 1.0;
       _videoController!.setVolume(newVolume);
-      print(
+      debugPrint(
         '[PostCard] 음소거 상태 변경: ${_muteService.isFeedMuted ? "음소거" : "소리 켜짐"} (isVisible: ${widget.isVisible}, isPlaying: ${_videoController!.value.isPlaying})',
       );
       // 아이콘 업데이트를 위해 필요
@@ -174,10 +174,10 @@ class _PostCardState extends State<PostCard>
 
       // 이미 초기화된 경우 바로 setState, 아니면 리스너 등록
       if (_videoController!.value.isInitialized) {
-        print('[PostCard] 캐시된 비디오 즉시 표시: $_cachedVideoUrl');
+        debugPrint('[PostCard] 캐시된 비디오 즉시 표시: $_cachedVideoUrl');
         // 캐시된 컨트롤러의 볼륨 설정 (피드 음소거 상태 사용)
         final newVolume = _muteService.isFeedMuted ? 0.0 : 1.0;
-        print(
+        debugPrint(
           '[PostCard] 볼륨 설정: $newVolume (isFeedMuted: ${_muteService.isFeedMuted}, isVisible: ${widget.isVisible})',
         );
         _videoController!.setVolume(newVolume);
@@ -186,15 +186,15 @@ class _PostCardState extends State<PostCard>
           _videoController!.play();
           // 재생 직후에도 한 번 더 볼륨 적용 (라우팅 복귀 타이밍 보정)
           _applyVolumeKick();
-          print('[PostCard] 비디오 재생 시작');
+          debugPrint('[PostCard] 비디오 재생 시작');
         } else {
           _videoController!.pause();
-          print('[PostCard] 비디오 일시정지');
+          debugPrint('[PostCard] 비디오 일시정지');
         }
         // 캐시된 경우에는 setState 호출하여 즉시 UI 업데이트
         if (mounted) setState(() {});
       } else {
-        print('[PostCard] 비디오 초기화 대기 중: $_cachedVideoUrl');
+        debugPrint('[PostCard] 비디오 초기화 대기 중: $_cachedVideoUrl');
         _videoController!.addListener(_onVideoInitialized);
         // 초기화 중이어도 쉬머는 표시하지 않음 (검은 화면 + 로딩)
         if (mounted) setState(() {});
@@ -219,7 +219,7 @@ class _PostCardState extends State<PostCard>
 
     // 썸네일 URL이 변경된 경우에만 비디오 재설정
     if (oldWidget.thumbnailImageUrl != widget.thumbnailImageUrl) {
-      print(
+      debugPrint(
         '[PostCard] 썸네일 변경 감지: ${oldWidget.thumbnailImageUrl} → ${widget.thumbnailImageUrl}',
       );
 
@@ -241,12 +241,12 @@ class _PostCardState extends State<PostCard>
       if (oldIsVideo &&
           newIsVideo &&
           oldWidget.thumbnailImageUrl == widget.thumbnailImageUrl) {
-        print('[PostCard] 같은 비디오 URL - 컨트롤러 유지');
+        debugPrint('[PostCard] 같은 비디오 URL - 컨트롤러 유지');
         // 볼륨만 재설정
         if (_videoController != null && _videoController!.value.isInitialized) {
           final newVolume = _muteService.isFeedMuted ? 0.0 : 1.0;
           _videoController!.setVolume(newVolume);
-          print('[PostCard] 볼륨 재설정: $newVolume');
+          debugPrint('[PostCard] 볼륨 재설정: $newVolume');
         }
         // 이후 로직 계속 진행 (isVisible 체크)
       } else {
@@ -278,16 +278,16 @@ class _PostCardState extends State<PostCard>
       // 볼륨을 다시 설정 (뮤트 상태가 변경되었을 수 있음)
       final currentVolume = _muteService.isFeedMuted ? 0.0 : 1.0;
       _videoController!.setVolume(currentVolume);
-      print('[PostCard] isVisible 변경 - 볼륨 재설정: $currentVolume');
+      debugPrint('[PostCard] isVisible 변경 - 볼륨 재설정: $currentVolume');
 
       if (widget.isVisible) {
         _videoController!.play();
         // 가시화 직후 볼륨 재적용
         _applyVolumeKick();
-        print('[PostCard] 비디오 재생: isVisible=true');
+        debugPrint('[PostCard] 비디오 재생: isVisible=true');
       } else {
         _videoController!.pause();
-        print('[PostCard] 비디오 정지: isVisible=false');
+        debugPrint('[PostCard] 비디오 정지: isVisible=false');
       }
     }
   }
@@ -297,7 +297,7 @@ class _PostCardState extends State<PostCard>
       _videoController?.removeListener(_onVideoInitialized);
       // 초기화 완료 시 피드 음소거 상태 적용
       final newVolume = _muteService.isFeedMuted ? 0.0 : 1.0;
-      print(
+      debugPrint(
         '[PostCard] 초기화 완료 - 볼륨 설정: $newVolume (isFeedMuted: ${_muteService.isFeedMuted}, isVisible: ${widget.isVisible})',
       );
       _videoController?.setVolume(newVolume);
@@ -306,10 +306,10 @@ class _PostCardState extends State<PostCard>
         _videoController!.play();
         // 초기화 직후 볼륨 재적용
         _applyVolumeKick();
-        print('[PostCard] 초기화 후 재생 시작');
+        debugPrint('[PostCard] 초기화 후 재생 시작');
       } else {
         _videoController!.pause();
-        print('[PostCard] 초기화 후 일시정지');
+        debugPrint('[PostCard] 초기화 후 일시정지');
       }
       if (mounted) setState(() {});
     }
@@ -496,10 +496,6 @@ class _PostCardState extends State<PostCard>
     final hasLikeData = _likeService.hasPost(widget.postId);
     final currentIsLiked =
         hasLikeData ? _likeService.isPostLiked(widget.postId) : widget.isLiked;
-    final currentLikeCount =
-        hasLikeData
-            ? _likeService.getPostLikeCount(widget.postId)
-            : widget.likeCount;
 
     // 디버그 로그 제거 (불필요한 리빌드 방지)
 
@@ -549,17 +545,22 @@ class _PostCardState extends State<PostCard>
                   const SizedBox(width: 8),
                   Text(
                     widget.author,
-                    style: const TextStyle(fontSize: 15, color: Colors.white),
+                    style: const TextStyle(
+                      fontSize: 15,
+                      color: Colors.white,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                 ],
               ),
             ),
           ),
         // 🎯 좋아요 정보 (오른쪽 하단) - 로컬 에셋이 아닐 때만 표시
+        /*
         if (!isOnboardingPost)
           Positioned(
             right: 12,
-            bottom: 12,
+            bottom: 8,
             child: GestureDetector(
               onTap: widget.onLikePressed,
               behavior: HitTestBehavior.opaque,
@@ -570,12 +571,12 @@ class _PostCardState extends State<PostCard>
                     currentIsLiked ? Icons.favorite : Icons.favorite_border,
                     color:
                         currentIsLiked ? const Color(0xFFFF5959) : Colors.white,
-                    size: 18,
+                    size: 22,
                   ),
                 ],
               ),
             ),
-          ),
+          ),*/
       ],
     );
   }

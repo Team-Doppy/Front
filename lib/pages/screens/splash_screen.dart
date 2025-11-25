@@ -132,7 +132,7 @@ class _SplashScreenState extends State<SplashScreen>
         _isDataLoaded = true;
       });
     } catch (e) {
-      print('[SplashScreen] 피드 데이터 로드 실패: $e');
+      debugPrint('[SplashScreen] 피드 데이터 로드 실패: $e');
 
       setState(() {
         _preloadedHomeData = HomeData(friendsPosts: [], allPosts: []);
@@ -172,7 +172,7 @@ class _SplashScreenState extends State<SplashScreen>
       await groupProvider.fetchMyGroups(forceRefresh: false);
     } catch (e) {
       // 그룹 스키마 로드 실패는 앱 시작을 막지 않음
-      print('[SplashScreen] 그룹 스키마 로드 실패: $e');
+      debugPrint('[SplashScreen] 그룹 스키마 로드 실패: $e');
     }
   }
 
@@ -195,11 +195,26 @@ class _SplashScreenState extends State<SplashScreen>
       final authService = AuthService();
       // FCM 토큰 검사 및 필요시 재발급 후 서버에 전송
       // 비동기로 처리하여 앱 시작을 막지 않음
-      authService.syncFcmTokenAndSettings().catchError((e) {
-        print('[SplashScreen] FCM 토큰 검사 및 동기화 실패 (무시): $e');
-      });
+      final permissionGranted = await authService
+          .syncFcmTokenAndSettings()
+          .catchError((e) {
+            return false;
+          });
+
+      // 🎯 알림 권한이 허용되었으면 로컬 설정도 on으로 동기화
+      if (permissionGranted == true && mounted) {
+        try {
+          final userProvider = context.read<UserProvider>();
+          // 서버에서 최신 설정을 가져와서 로컬에 동기화
+          await userProvider.loadSettings();
+          // 🎯 로컬 설정도 명시적으로 on으로 설정
+          userProvider.updateNotificationEnabled(true);
+        } catch (e) {
+          debugPrint('[SplashScreen] 로컬 설정 동기화 실패 (무시): $e');
+        }
+      }
     } catch (e) {
-      print('[SplashScreen] FCM 토큰 검사 오류 (무시): $e');
+      debugPrint('[SplashScreen] FCM 토큰 검사 오류 (무시): $e');
     }
   }
 
@@ -209,16 +224,16 @@ class _SplashScreenState extends State<SplashScreen>
       // 설정 정보 로드
       final userProvider = context.read<UserProvider>();
       userProvider.loadSettings().catchError((e) {
-        print('[SplashScreen] 설정 정보 로드 실패 (무시): $e');
+        debugPrint('[SplashScreen] 설정 정보 로드 실패 (무시): $e');
       });
 
       // 받은 친구 요청 로드
       final friendProvider = context.read<FriendProvider>();
       friendProvider.fetchAllFriendData(forceRefresh: false).catchError((e) {
-        print('[SplashScreen] 친구 요청 로드 실패 (무시): $e');
+        debugPrint('[SplashScreen] 친구 요청 로드 실패 (무시): $e');
       });
     } catch (e) {
-      print('[SplashScreen] 설정/친구 요청 로드 오류 (무시): $e');
+      debugPrint('[SplashScreen] 설정/친구 요청 로드 오류 (무시): $e');
     }
   }
 

@@ -4,7 +4,6 @@ import 'package:doppy/data/services/upload_service.dart';
 import 'package:doppy/editor/overlay/sticker_overlay.dart';
 import 'package:doppy/editor/overlay/font_overlay.dart';
 import 'package:doppy/editor/style/font_catalog.dart';
-import 'package:doppy/editor/utils/video_upload_utils.dart';
 import 'package:doppy/l10n/app_localizations.dart';
 import 'package:flutter/material.dart';
 import 'package:super_editor/super_editor.dart';
@@ -19,6 +18,7 @@ import 'package:doppy/editor/service/sticker_service.dart';
 import 'package:doppy/editor/component/divider_component.dart';
 import 'package:doppy/utils/dialog_utils.dart';
 import 'package:doppy/providers/locale_provider.dart';
+import 'package:doppy/pages/components/custom_refresh_indicator.dart';
 import 'dart:ui';
 
 /// 형광펜 효과 Attribution 정의
@@ -659,20 +659,22 @@ class TextStylingService extends ChangeNotifier {
     if (fontItem.googleFont != null) {
       // Google Fonts: displayName을 사용 (예: "Yeon Sung", "Cute Font")
       targetFamily = fontItem.displayName;
-      print('[FontDebug] Google Font 감지: $targetFamily');
+      debugPrint('[FontDebug] Google Font 감지: $targetFamily');
     } else if (fontItem.localFontFamily != null) {
       // 로컬 폰트
       targetFamily = fontItem.localFontFamily!;
-      print('[FontDebug] 로컬 폰트 감지: $targetFamily');
+      debugPrint('[FontDebug] 로컬 폰트 감지: $targetFamily');
     } else {
       // 기본 폰트 (null)
       targetFamily = '';
-      print('[FontDebug] 기본 폰트 사용');
+      debugPrint('[FontDebug] 기본 폰트 사용');
     }
 
     if (selection != null && !selection.isCollapsed) {
       // ✅ 선택 영역이 있으면: Attribution + 메타데이터 동시 적용
-      print('[FontDebug] 선택 영역에 Attribution + 메타데이터로 폰트 적용: $targetFamily');
+      debugPrint(
+        '[FontDebug] 선택 영역에 Attribution + 메타데이터로 폰트 적용: $targetFamily',
+      );
 
       // 1. 선택 영역의 기존 FontFamilyAttribution만 제거 (선택 영역 내에서만)
       final existingAttributions = _getAttributionsInSelection(
@@ -712,12 +714,12 @@ class TextStylingService extends ChangeNotifier {
           final updatedMetadata = Map<String, dynamic>.from(node.metadata);
           if (targetFamily.isNotEmpty) {
             updatedMetadata['fontFamily'] = targetFamily;
-            print(
+            debugPrint(
               '[TextStylingService] 📝 선택된 ParagraphNode ${node.id}에 fontFamily 메타데이터 저장: $targetFamily',
             );
           } else {
             updatedMetadata.remove('fontFamily');
-            print(
+            debugPrint(
               '[TextStylingService] 📝 선택된 ParagraphNode ${node.id}에서 fontFamily 메타데이터 제거',
             );
           }
@@ -764,18 +766,18 @@ class TextStylingService extends ChangeNotifier {
           // 메타데이터만 업데이트 (기존 Attribution은 유지)
           if (targetFamily.isNotEmpty) {
             updatedMetadata['fontFamily'] = targetFamily;
-            print(
+            debugPrint(
               '[TextStylingService] 📝 ParagraphNode ${node.id}에 fontFamily 메타데이터 저장: $targetFamily (기존 Attribution 유지: $hasExistingAttribution)',
             );
           } else {
             // 🎯 기존 Attribution이 없을 때만 메타데이터 제거
             if (!hasExistingAttribution) {
               updatedMetadata.remove('fontFamily');
-              print(
+              debugPrint(
                 '[TextStylingService] 📝 ParagraphNode ${node.id}에서 fontFamily 메타데이터 제거 (기존 Attribution 없음)',
               );
             } else {
-              print(
+              debugPrint(
                 '[TextStylingService] ⚠️ ParagraphNode ${node.id}에서 메타데이터 유지 (기존 Attribution 있음)',
               );
             }
@@ -1093,7 +1095,7 @@ extension _TopExpandedRow on _DefaultToolbarState {
               icon: Icons.alternate_email,
               label: '언급',
               onTap: () {
-                print('언급 삽입');
+                debugPrint('언급 삽입');
               },
             ),
             const SizedBox(width: 6),
@@ -1101,7 +1103,7 @@ extension _TopExpandedRow on _DefaultToolbarState {
               icon: Icons.tag,
               label: '태그',
               onTap: () {
-                print('태그 삽입');
+                debugPrint('태그 삽입');
               },
             ),
           ],
@@ -1122,6 +1124,7 @@ class DefaultToolbar extends StatefulWidget {
   final VoidCallback? onRequestFocus;
   final VoidCallback? onShowDraftList;
   final bool isEditMode;
+  final ValueNotifier<bool>? videoUploadIndicatorNotifier; // 영상 업로드 인디케이터 상태
 
   const DefaultToolbar({
     super.key,
@@ -1134,6 +1137,7 @@ class DefaultToolbar extends StatefulWidget {
     this.onRequestFocus,
     this.onShowDraftList,
     this.isEditMode = false,
+    this.videoUploadIndicatorNotifier,
   });
 
   @override
@@ -1335,22 +1339,24 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
 
   @override
   Widget build(BuildContext context) {
-    print(
-      'DEBUG: DefaultToolbar build - isKeyboardVisible: ${widget.isKeyboardVisible}',
-    );
     final Color background = Theme.of(context).colorScheme.background;
 
-    return Container(
-      height: 38,
-      padding: const EdgeInsets.symmetric(horizontal: 2),
-      decoration: BoxDecoration(
-        color: background,
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child:
-          _expanded != ToolbarSection.none
-              ? _buildExpandedToolbar()
-              : _buildMainToolbar(),
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        Container(
+          height: 38,
+          padding: const EdgeInsets.symmetric(horizontal: 2),
+          decoration: BoxDecoration(
+            color: background,
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child:
+              _expanded != ToolbarSection.none
+                  ? _buildExpandedToolbar()
+                  : _buildMainToolbar(),
+        ),
+      ],
     );
   }
 
@@ -1430,216 +1436,155 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
             if (mode == 'image') {
               try {
                 final picker = NativeImagePicker();
-                final files = await picker.pickMultipleImages(maxCount: 10);
+                final files = await picker.pickMultipleImages(maxCount: 5);
 
                 if (!mounted) return;
 
                 if (files.isNotEmpty) {
-                  print('DEBUG: 선택된 파일 수: ${files.length}');
+                  debugPrint('DEBUG: 선택된 파일 수: ${files.length}');
                   final upload = context.read<UploadService>();
 
-                  // 집계용 카운터: 중복 다이얼로그 방지
-                  final int total = files.length;
-                  int completed = 0;
-                  int failedCount = 0;
-                  bool summaryShown = false;
-                  final Set<String> handled = <String>{};
-
-                  for (final f in files) {
-                    // 1) 각 파일마다 플레이스홀더 생성
-                    final placeholderId = widget.editorService
-                        .addImagePlaceholderNode(f.path);
-
-                    // 2) 리스너 기반 업로드(단건)
-                    final task = upload.enqueueFile(
-                      f,
-                      kind: UploadKind.editorImage,
-                      refId: placeholderId,
-                    );
-
-                    Future<void> _handleImageTask() async {
-                      if (!mounted) return;
-                      if (handled.contains(task.id)) return;
-                      if (task.state != UploadState.success &&
-                          task.state != UploadState.failed &&
-                          task.state != UploadState.cancelled) {
-                        return;
-                      }
-                      handled.add(task.id);
-                      if (task.state == UploadState.success &&
-                          (task.url ?? '').isNotEmpty) {
-                        await widget.editorService.replacePlaceholderWithUrl(
-                          placeholderId,
-                          task.url!,
-                          mediaId: task.imageId,
-                        );
-                      } else if (task.state == UploadState.failed) {
-                        widget.editorService.deleteImagePlaceholderNode(
-                          placeholderId,
-                        );
-                        failedCount++;
-                      } else if (task.state == UploadState.cancelled) {
-                        widget.editorService.deleteImagePlaceholderNode(
-                          placeholderId,
-                        );
-                        failedCount++;
-                      }
-                      completed++;
-                      if (completed == total &&
-                          failedCount > 0 &&
-                          !summaryShown) {
-                        summaryShown = true;
-                        await DialogUtils.showInfoDialog(
-                          context,
-                          title: '업로드 실패',
-                          message:
-                              '전체 중 ${failedCount}개의 업로드가 실패했습니다.\n네트워크 상태를 확인해주세요.',
-                        );
-                      }
-                    }
-
-                    task.addListener(() async => _handleImageTask());
-                    // 리스너 등록 직후 이미 터미널 상태면 즉시 한 번 처리
-                    Future.microtask(() => _handleImageTask());
-                  }
-
-                  // 키보드는 이미 내려가 있으므로 추가 unfocus 불필요
+                  // 🎯 UploadService의 통합 메서드 사용
+                  await upload.uploadEditorImages(
+                    files: files,
+                    onCreatePlaceholder: (localPath) {
+                      return widget.editorService.addImagePlaceholderNode(
+                        localPath,
+                      );
+                    },
+                    onReplacePlaceholder: (placeholderId, url) async {
+                      await widget.editorService.replacePlaceholderWithUrl(
+                        placeholderId,
+                        url,
+                      );
+                    },
+                    onDeletePlaceholder: (placeholderId) {
+                      widget.editorService.deleteImagePlaceholderNode(
+                        placeholderId,
+                      );
+                    },
+                    isMounted: () => mounted,
+                    context: context,
+                    showErrorDialog: (title, message) async {
+                      await DialogUtils.showInfoDialog(
+                        context,
+                        title: title,
+                        message: message,
+                      );
+                    },
+                  );
                 }
               } catch (e) {
                 debugPrint('image pick/upload error: $e');
               }
             }
             if (mode == 'short clip') {
-              try {
-                // 바텀시트가 완전히 닫힐 때까지 대기
-                await Future.delayed(const Duration(milliseconds: 300));
+              bool isCancelled = false;
 
+              try {
                 if (!mounted) return;
 
-                // 시스템 비디오 피커(1개)
+                // 🎯 에디터 포커스 해제 (리빌드 방지)
+                FocusScope.of(context).unfocus();
+                await Future.delayed(const Duration(milliseconds: 200));
+
+                // 🎯 NativeImagePicker를 사용한 비디오 선택
                 final picker = NativeImagePicker();
+
+                // 1초 후 업로드 인디케이터 표시
+                Future.delayed(const Duration(milliseconds: 1000), () {
+                  if (mounted && !isCancelled) {
+                    widget.videoUploadIndicatorNotifier?.value = true;
+                  }
+                });
+
                 final file = await picker.pickSingleVideo();
 
                 if (!mounted) return;
-                if (file == null) return;
+                if (file == null || isCancelled) {
+                  // 인디케이터 숨기기
+                  if (mounted) {
+                    widget.videoUploadIndicatorNotifier?.value = false;
+                  }
+                  return;
+                }
 
-                // 클라이언트 측 파일 검증 (확장자 + 크기)
-                final validationError = await VideoUploadUtils.validateFile(
-                  context,
-                  file.path,
-                );
-                if (validationError != null) return;
+                // 업로드 시작 시 인디케이터 유지
 
                 final upload = context.read<UploadService>();
 
-                // 원본 파일로 썸네일 생성
-                final thumbnail = await VideoUploadUtils.generateThumbnail(
-                  file.path,
-                );
-                if (thumbnail == null) {
-                  await VideoUploadUtils.showGeneralErrorDialog(context);
-                  return;
-                }
+                // 🎯 에디터 인스턴스 ID 생성 (압축 취소용)
+                final editorId = 'editor_${widget.editorService.hashCode}';
 
-                // 압축 전에 즉시 placeholder 추가
-                print('[VideoUpload] 원본 파일: ${file.path}');
-                final originalFileName = file.path.split('/').last;
-                final placeholderId = widget.editorService
-                    .addVideoClipPlaceholderNode(
-                      file.path,
-                      originalFileName,
-                      thumbnailPath: thumbnail.path,
+                // 🎯 UploadService의 통합 메서드 사용
+                await upload.uploadEditorVideo(
+                  file: file,
+                  editorId: editorId, // 🎯 에디터 ID 전달
+                  onCreatePlaceholder: (localPath, fileName, {thumbnailPath}) {
+                    final placeholderId = widget.editorService
+                        .addVideoClipPlaceholderNode(
+                          localPath,
+                          fileName,
+                          thumbnailPath: thumbnailPath,
+                        );
+                    // 🎯 플레이스홀더 생성 시 인디케이터 숨기기
+                    if (mounted) {
+                      widget.videoUploadIndicatorNotifier?.value = false;
+                    }
+                    return placeholderId;
+                  },
+                  onUpdateThumbnail: (placeholderId, thumbnailPath) {
+                    widget.editorService.updateVideoPlaceholderThumbnail(
+                      placeholderId,
+                      thumbnailPath,
                     );
-                print('[VideoUpload] Placeholder 추가 완료');
-
-                // FFmpeg + H.265로 압축
-                final mp4File = await VideoUploadUtils.compressVideo(file.path);
-                if (mp4File == null) {
-                  widget.editorService.deleteVideoPlaceholderNode(
+                  },
+                  onReplacePlaceholder: (
                     placeholderId,
-                  );
-                  if (mounted) {
-                    // 압축 실패 또는 압축 후에도 100MB 초과
-                    await DialogUtils.showInfoDialog(
-                      context,
-                      title: '업로드 불가',
-                      message: '파일 용량이 너무 큽니다.',
-                    );
-                  }
-                  return;
-                }
-
-                final mp4FileName = mp4File.path.split('/').last;
-                print('[VideoUpload] MP4 변환 완료: ${mp4File.path}');
-
-                // 압축된 MP4 파일 업로드 (리스너 선등록 후 시작)
-                final task = upload.createTaskForFile(
-                  mp4File,
-                  kind: UploadKind.video,
-                  overrideName: mp4FileName,
-                  refId: placeholderId,
-                );
-
-                // 실패 처리 헬퍼
-                Future<void> _onVideoFailed(Object? err) async {
-                  print('DEBUG: _onVideoFailed - err: $err');
-                  // 노드 삭제는 항상 실행
-                  widget.editorService.deleteVideoPlaceholderNode(
-                    placeholderId,
-                  );
-                  if (mounted) {
-                    await VideoUploadUtils.showUploadFailedDialog(context, err);
-                    FocusManager.instance.primaryFocus?.unfocus();
-                  }
-                }
-
-                // 견고한 단일 처리: 리스너 + 즉시 확인 + 2단계 지연 확인 (비동기 대기 제거)
-                bool _videoHandled = false;
-
-                late VoidCallback listener;
-
-                Future<void> handleOnce() async {
-                  if (_videoHandled) return;
-                  if (task.state == UploadState.failed) {
-                    _videoHandled = true;
-                    await _onVideoFailed(task.error);
-                    try {
-                      task.removeListener(listener);
-                    } catch (_) {}
-                  } else if (task.state == UploadState.success &&
-                      task.url != null) {
-                    _videoHandled = true;
+                    url, {
+                    fallbackLocalPath,
+                  }) async {
                     await widget.editorService.replaceVideoPlaceholderWithUrl(
                       placeholderId,
-                      task.url!,
-                      fallbackLocalPath: file.path,
-                      mediaId: task.imageId, // 🎯 mediaId 전달
+                      url,
+                      fallbackLocalPath: fallbackLocalPath,
                     );
+                    // 인디케이터 숨기기
+                    if (mounted) {
+                      widget.videoUploadIndicatorNotifier?.value = false;
+                    }
                     _forceCloseToolbar();
                     FocusManager.instance.primaryFocus?.unfocus();
-                    try {
-                      task.removeListener(listener);
-                    } catch (_) {}
-                  }
-                }
-
-                listener = () {
-                  handleOnce();
-                };
-                task.addListener(listener);
-                // 리스너 등록 후 업로드 시작 → 레이스 제거
-                upload.startTask(task);
-
-                // 즉시 1차 확인(리스너 등록 직후 이미 터미널일 수 있음)
-                await Future.microtask(handleOnce);
-                // 짧은 지연 2차 확인
-                Future.delayed(const Duration(milliseconds: 140), handleOnce);
-                // 하드 세이프티 3차 확인
-                Future.delayed(const Duration(seconds: 2), handleOnce);
-
-                // 비동기 대기 제거: 리스너가 터미널에서 스스로 정리
+                  },
+                  onDeletePlaceholder: (placeholderId) {
+                    widget.editorService.deleteVideoPlaceholderNode(
+                      placeholderId,
+                    );
+                    // 인디케이터 숨기기
+                    if (mounted) {
+                      widget.videoUploadIndicatorNotifier?.value = false;
+                    }
+                  },
+                  isMounted: () => mounted,
+                  context: context,
+                  showErrorDialog: (title, message) async {
+                    // 인디케이터 숨기기
+                    if (mounted) {
+                      widget.videoUploadIndicatorNotifier?.value = false;
+                    }
+                    await DialogUtils.showInfoDialog(
+                      context,
+                      title: title,
+                      message: message,
+                    );
+                  },
+                );
               } catch (e) {
                 debugPrint('video pick/upload error: $e');
+                // 인디케이터 숨기기
+                if (mounted) {
+                  widget.videoUploadIndicatorNotifier?.value = false;
+                }
                 // 에러 발생 시에만 키보드 내리기
                 if (context.mounted) {
                   FocusManager.instance.primaryFocus?.unfocus();
@@ -2700,6 +2645,104 @@ class _KeyboardDependentButtons extends StatelessWidget {
           height: 50,
           alignment: Alignment.center,
           child: Icon(icon, size: size ?? (isActive ? 26 : 22), color: color),
+        ),
+      ),
+    );
+  }
+}
+
+/// 비디오 업로드 중 다이얼로그 (opacity 애니메이션)
+class _VideoUploadDialog extends StatefulWidget {
+  final VoidCallback onCancel;
+
+  const _VideoUploadDialog({required this.onCancel});
+
+  @override
+  State<_VideoUploadDialog> createState() => _VideoUploadDialogState();
+}
+
+class _VideoUploadDialogState extends State<_VideoUploadDialog>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _spinnerController;
+  late Animation<double> _rotationAnimation;
+
+  @override
+  void initState() {
+    super.initState();
+
+    // 스피너 회전 애니메이션
+    _spinnerController = AnimationController(
+      duration: const Duration(milliseconds: 1000),
+      vsync: this,
+    )..repeat();
+    _rotationAnimation = Tween<double>(
+      begin: 0.0,
+      end: 1.0,
+    ).animate(_spinnerController);
+  }
+
+  @override
+  void dispose() {
+    _spinnerController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      backgroundColor: Theme.of(context).colorScheme.background,
+      insetPadding: EdgeInsets.all(0),
+      child: Container(
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.surface,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            SizedBox(
+              width: 24,
+              height: 24,
+              child: AnimatedBuilder(
+                animation: _rotationAnimation,
+                builder: (context, child) {
+                  return CustomSpinner(
+                    progress: 1.0,
+                    isAnimating: true,
+                    rotation: _rotationAnimation.value,
+                  );
+                },
+              ),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              '영상 업로드 중',
+              style: TextStyle(
+                fontSize: 14,
+                color: Theme.of(context).colorScheme.onSurface,
+              ),
+            ),
+            const SizedBox(height: 16),
+            TextButton(
+              onPressed: widget.onCancel,
+              style: TextButton.styleFrom(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 8,
+                ),
+                minimumSize: const Size(0, 32),
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+              child: Text(
+                '취소',
+                style: TextStyle(
+                  fontSize: 13,
+                  color: Theme.of(context).colorScheme.onSurface,
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );

@@ -1,5 +1,6 @@
 import 'package:doppy/data/services/blog_service.dart';
 import 'package:doppy/editor/publish/post_exporter.dart';
+import 'package:flutter/material.dart';
 
 /// 포스트 발행 관련 비즈니스 로직 서비스
 class PostPublishService {
@@ -12,18 +13,12 @@ class PostPublishService {
   /// 포스트 발행
   ///
   /// [payload] - 최종 발행할 포스트 데이터
-  /// [thumbnailImageId] - 썸네일 이미지 ID (선택사항)
   ///
   /// 반환: 업로드 결과 맵
   Future<Map<String, dynamic>> publishPost({
     required Map<String, dynamic> payload,
-    String? thumbnailImageId,
   }) async {
-    final String? resolvedThumbId = thumbnailImageId?.toString();
-    return await _blogService.uploadPost(
-      postData: payload,
-      thumbnailImageId: resolvedThumbId,
-    );
+    return await _blogService.uploadPost(postData: payload);
   }
 
   /// 최종 JSON 페이로드 빌드
@@ -121,7 +116,7 @@ class PostPublishService {
         editedBase['content'] = {...contentDyn, 'nodes': cleaned};
       }
     } catch (e) {
-      print('[PostPublishService] 로컬 미디어 정리 중 오류: $e');
+      debugPrint('[PostPublishService] 로컬 미디어 정리 중 오류: $e');
     }
   }
 

@@ -441,7 +441,7 @@ class CategoryDropDown {
     final userInfo = feedProvider.userInfo;
     final isOwnProfile = userInfo?['isOwnProfile'] == true;
 
-    print(
+    debugPrint(
       '[CategoryDropDown] _buildCategoryContent - isOwnProfile: $isOwnProfile, categories: ${categories.length}개',
     );
 
@@ -457,15 +457,15 @@ class CategoryDropDown {
     final groupPosts = feedProvider.groupsPostCount;
     final publicPosts = feedProvider.publicPostCount;
 
-    print(
+    debugPrint(
       '[CategoryDropDown] 시스템 카테고리 포스트 수 - 나만보기: $privatePosts, 그룹공개: $groupPosts, 공개: $publicPosts',
     );
-    print('[CategoryDropDown] isOwnProfile: $isOwnProfile');
-    print(
+    debugPrint('[CategoryDropDown] isOwnProfile: $isOwnProfile');
+    debugPrint(
       '[CategoryDropDown] shouldShowSystemCategories: ${isOwnProfile && (privatePosts > 0 || groupPosts > 0 || publicPosts > 0)}',
     );
     if (feedProvider.systemCategoryMappings != null) {
-      print(
+      debugPrint(
         '[CategoryDropDown] systemCategoryMappings 키들: ${feedProvider.systemCategoryMappings!.keys.toList()}',
       );
     }
@@ -507,7 +507,7 @@ class CategoryDropDown {
             // 나만보기
             Builder(
               builder: (_) {
-                print(
+                debugPrint(
                   '[CategoryDropDown] 나만보기 렌더링 - privatePosts: $privatePosts',
                 );
                 if (privatePosts > 0) {
@@ -854,7 +854,7 @@ class CategoryDropDown {
     String name,
   ) async {
     try {
-      print('[CategoryDropDown] 카테고리 생성 시작: $name');
+      debugPrint('[CategoryDropDown] 카테고리 생성 시작: $name');
 
       // 0) 입력값 검증: 공백/중복/예약어(system_doppy_uncategorized) 금지
       final trimmed = name.trim();
@@ -896,7 +896,7 @@ class CategoryDropDown {
         isPrivate: false,
         description: '$trimmed 카테고리',
       );
-      print('[CategoryDropDown] 카테고리 생성 성공');
+      debugPrint('[CategoryDropDown] 카테고리 생성 성공');
       final newId = (created['data']?['id'] as int?) ?? -1;
       await feedProvider.refresh();
       if (newId != -1) {
@@ -915,7 +915,7 @@ class CategoryDropDown {
           await BlogService().reorderCategories(ordered);
           await feedProvider.refresh();
         } catch (e) {
-          print('[CategoryDropDown] 생성 후 정렬 반영 실패: $e');
+          debugPrint('[CategoryDropDown] 생성 후 정렬 반영 실패: $e');
         }
       }
       _onCategoryChanged?.call();
@@ -927,7 +927,7 @@ class CategoryDropDown {
         ).showSnackBar(SnackBar(content: Text('카테고리 "$trimmed"이 생성되었습니다')));
       }
     } catch (e) {
-      print('[CategoryDropDown] 카테고리 생성 에러: $e');
+      debugPrint('[CategoryDropDown] 카테고리 생성 에러: $e');
       if (context.mounted) {
         ScaffoldMessenger.of(
           context,
@@ -944,13 +944,13 @@ class CategoryDropDown {
     StateSetter setModalState,
   ) async {
     try {
-      print('[CategoryDropDown] 카테고리 삭제 시작: $categoryId');
+      debugPrint('[CategoryDropDown] 카테고리 삭제 시작: $categoryId');
 
       // 서버에 카테고리 삭제 요청
       final blogService = BlogService();
       await blogService.deleteCategory(categoryId);
 
-      print('[CategoryDropDown] 카테고리 삭제 성공');
+      debugPrint('[CategoryDropDown] 카테고리 삭제 성공');
       // 전체 피드 데이터 강제 재로딩 (카테고리/포스트 등 전부)
       await myProfileFeedProvider.refresh();
 
@@ -961,7 +961,7 @@ class CategoryDropDown {
       // 성공 메시지
       _showSnackBarSafely(context, '카테고리가 삭제되었습니다');
     } catch (e) {
-      print('[CategoryDropDown] 카테고리 삭제 에러: $e');
+      debugPrint('[CategoryDropDown] 카테고리 삭제 에러: $e');
       _showSnackBarSafely(context, '카테고리 삭제 중 오류가 발생했습니다');
     }
   }
@@ -975,7 +975,7 @@ class CategoryDropDown {
       }
     } catch (e) {
       // 오류 발생 시 콘솔에만 출력
-      print('[CategoryDropDown] SnackBar 표시 오류: $e - 메시지: $message');
+      debugPrint('[CategoryDropDown] SnackBar 표시 오류: $e - 메시지: $message');
     }
   }
 }

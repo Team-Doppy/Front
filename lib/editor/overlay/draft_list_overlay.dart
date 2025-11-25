@@ -359,7 +359,7 @@ class _DraftListOverlayState extends State<DraftListOverlay>
   Widget _buildEmptyState() {
     return Center(
       child: Text(
-        '임시저장된 글이 없습니다',
+        context.tr('no_drafts'),
         style: TextStyle(
           color: AppColors.darkTextSecondary,
           fontSize: 16,

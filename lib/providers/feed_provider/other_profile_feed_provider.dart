@@ -1,3 +1,5 @@
+import 'package:flutter/material.dart';
+
 import 'base_feed_provider.dart';
 import '../../utils/network_utils.dart';
 
@@ -31,7 +33,7 @@ class OtherProfileFeedProvider extends BaseFeedProvider {
   Future<void> loadInitial({String? username, bool force = false}) async {
     // 다른 사람 피드는 반드시 username이 필요
     if (username == null) {
-      print('[OtherProfileFeedProvider] username이 null입니다');
+      debugPrint('[OtherProfileFeedProvider] username이 null입니다');
       return;
     }
 
@@ -72,13 +74,15 @@ class OtherProfileFeedProvider extends BaseFeedProvider {
         _totalPages = postsData['totalPages'] ?? 0;
         _hasMore = _currentPage < _totalPages;
 
-        print('[OtherProfileFeedProvider] 서버 로드 완료: $_username');
+        debugPrint('[OtherProfileFeedProvider] 서버 로드 완료: $_username');
       } else {
-        print('[OtherProfileFeedProvider] 서버 응답 실패: ${postsResp['message']}');
+        debugPrint(
+          '[OtherProfileFeedProvider] 서버 응답 실패: ${postsResp['message']}',
+        );
         clearData();
       }
     } catch (e) {
-      print('[OtherProfileFeedProvider] 서버 로드 실패: $e');
+      debugPrint('[OtherProfileFeedProvider] 서버 로드 실패: $e');
 
       // 네트워크 에러 처리
       final networkError = NetworkUtils.parseError(e);
@@ -132,7 +136,7 @@ class OtherProfileFeedProvider extends BaseFeedProvider {
         _hasMore = false;
       }
     } catch (e) {
-      print('[OtherProfileFeedProvider] loadMore 실패: $e');
+      debugPrint('[OtherProfileFeedProvider] loadMore 실패: $e');
       _hasMore = false;
     } finally {
       _loadingMore = false;
@@ -168,7 +172,7 @@ class OtherProfileFeedProvider extends BaseFeedProvider {
     selectBase(BaseFilter.all);
     selectCategory(null);
     notifyListeners();
-    print('[OtherProfileFeedProvider] 로그아웃 - 모든 데이터 초기화 완료');
+    debugPrint('[OtherProfileFeedProvider] 로그아웃 - 모든 데이터 초기화 완료');
   }
 
   @override

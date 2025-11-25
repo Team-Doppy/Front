@@ -53,18 +53,17 @@ Stylesheet buildCustomStylesheet(
             );
 
             // 🎯 구글 폰트 적용 (메타데이터 기반)
+            // GoogleFonts.getFont는 비동기적으로 폰트를 로드하지만,
+            // 폰트가 아직 로드되지 않았을 때는 기본 폰트를 사용하여 UI 블로킹 방지
             if (fontFamily != null && fontFamily.isNotEmpty) {
-              print(
-                '[StyleSheet] 🎨 제목 폰트 적용 시도: $fontFamily (노드 ID: ${docNode.id})',
-              );
               try {
+                // 폰트가 로드되지 않았어도 기본 폰트로 즉시 렌더링 (UI 블로킹 방지)
                 titleStyle = GoogleFonts.getFont(
                   fontFamily,
                   textStyle: titleStyle,
                 );
-                print('[StyleSheet] ✅ 제목 GoogleFonts 적용 성공: $fontFamily');
               } catch (e) {
-                print('[StyleSheet] ❌ 제목 폰트 적용 실패: $fontFamily (오류: $e)');
+                // 폰트 로드 실패 시 기본 폰트 사용
                 titleStyle = titleStyle.copyWith(fontFamily: fontFamily);
               }
             }
@@ -94,6 +93,7 @@ Stylesheet buildCustomStylesheet(
             );
 
             // 구글 폰트 적용
+            // 폰트가 이미 로드되었는지 확인하고, 로드되지 않았으면 기본 폰트 사용
             if (fontFamily != null && fontFamily.isNotEmpty) {
               try {
                 mentionStyle = GoogleFonts.getFont(
@@ -101,7 +101,7 @@ Stylesheet buildCustomStylesheet(
                   textStyle: mentionStyle,
                 );
               } catch (e) {
-                print('[FontDebug] 멘션 폰트 적용 실패: $fontFamily (오류: $e)');
+                // 폰트 로드 실패 시 기본 폰트 사용 (UI 블로킹 방지)
                 mentionStyle = mentionStyle.copyWith(fontFamily: fontFamily);
               }
             }
@@ -127,15 +127,12 @@ Stylesheet buildCustomStylesheet(
           );
 
           // 🎯 구글 폰트 적용 (메타데이터 기반)
+          // 폰트가 이미 로드되었는지 확인하고, 로드되지 않았으면 기본 폰트 사용
           if (fontFamily != null && fontFamily.isNotEmpty) {
-            print(
-              '[StyleSheet] 🎨 본문 폰트 적용 시도: $fontFamily (노드 ID: ${docNode.id})',
-            );
             try {
               bodyStyle = GoogleFonts.getFont(fontFamily, textStyle: bodyStyle);
-              print('[StyleSheet] ✅ 본문 GoogleFonts 적용 성공: $fontFamily');
             } catch (e) {
-              print('[StyleSheet] ❌ 본문 폰트 적용 실패: $fontFamily (오류: $e)');
+              // 폰트 로드 실패 시 기본 폰트 사용 (UI 블로킹 방지)
               bodyStyle = bodyStyle.copyWith(fontFamily: fontFamily);
             }
           }
@@ -177,10 +174,17 @@ Stylesheet buildCustomStylesheet(
         }
 
         if (docNode is ClipNode) {
+          // 메타데이터에서 패딩 모드 확인 (기본값: 'center' = 패딩 있음)
+          final paddingMode =
+              docNode.metadata['padding'] as String? ?? 'center';
+
+          // 'full' 모드면 좌우 패딩 없음, 'center' 모드면 기본 패딩
+          final horizontalPadding = paddingMode == 'full' ? 0.0 : 20.0;
+
           return {
             Styles.padding: CascadingPadding.symmetric(
               vertical: 0,
-              horizontal: 0,
+              horizontal: horizontalPadding,
             ),
           };
         }
@@ -200,11 +204,6 @@ Stylesheet buildCustomStylesheet(
 
       // 🎯 existingStyle에서 폰트 패밀리 추출 (StyleRule에서 metadata 기반으로 설정된 폰트)
       String? existingFontFamily = existingStyle.fontFamily;
-      if (existingFontFamily != null && existingFontFamily.isNotEmpty) {
-        print(
-          '[StyleSheet] 📝 existingStyle에서 폰트 감지: $existingFontFamily (StyleRule에서 metadata 기반 적용)',
-        );
-      }
 
       for (final attribution in attributions) {
         if (attribution == boldAttribution) {
@@ -232,9 +231,6 @@ Stylesheet buildCustomStylesheet(
         } else if (attribution is FontFamilyAttribution) {
           // 🎯 span 단위 폰트 (Attribution 기반 정교한 적용) - 최우선 적용
           fontFamily = attribution.fontFamily;
-          print(
-            '[StyleSheet] 📝 Span 단위 FontFamilyAttribution 감지: ${attribution.fontFamily} (최우선 적용)',
-          );
         }
       }
 
@@ -261,40 +257,23 @@ Stylesheet buildCustomStylesheet(
         // Attribution이 없으면 existingStyle의 폰트 사용 (StyleRule에서 metadata 기반으로 설정)
         if (existingFontFamily != null && existingFontFamily.isNotEmpty) {
           fontFamily = existingFontFamily;
-          print(
-            '[StyleSheet] 📝 existingStyle의 폰트 사용: $fontFamily (metadata 기반, StyleRule에서 설정됨)',
-          );
         } else if (!isReadOnly) {
           // 에디터 모드일 때만 전역 폰트 사용 (Attribution과 metadata가 모두 없을 때만)
           fontFamily = _globalTextStylingService?.globalFontFamily;
-          if (fontFamily != null) {
-            print('[StyleSheet] 전역 폰트 사용: $fontFamily');
-          }
         }
         // 읽기 모드에서는 전역 폰트를 사용하지 않음 (블록 metadata만 적용)
       }
 
       // 🎯 폰트 적용 (우선순위: Attribution > metadata > 전역 폰트)
+      // 폰트가 이미 로드되었는지 확인하고, 로드되지 않았으면 기본 폰트 사용
       if (fontFamily != null && fontFamily.isNotEmpty) {
-        print('[StyleSheet] 🎨 inlineTextStyler에서 최종 폰트 적용: $fontFamily');
         try {
+          // GoogleFonts.getFont는 비동기적으로 폰트를 로드하지만,
+          // 폰트가 아직 로드되지 않았을 때는 기본 폰트를 사용하여 UI 블로킹 방지
           style = GoogleFonts.getFont(fontFamily, textStyle: style);
-          print('[StyleSheet] ✅ GoogleFonts.getFont 성공: $fontFamily');
         } catch (e) {
-          print('[StyleSheet] ❌ GoogleFonts.getFont 실패: $fontFamily (오류: $e)');
-          // 폰트명이 GoogleFonts에 없을 경우 fallback으로 family만 지정
+          // 폰트 로드 실패 시 기본 폰트 사용 (UI 블로킹 방지)
           style = style.copyWith(fontFamily: fontFamily);
-        }
-      } else {
-        // 폰트가 설정되지 않았지만 existingStyle에 이미 폰트가 적용되어 있을 수 있음
-        // (StyleRule에서 GoogleFonts.getFont로 생성된 경우)
-        // 이 경우 그대로 유지하면 됨
-        if (existingFontFamily != null && existingFontFamily.isNotEmpty) {
-          print(
-            '[StyleSheet] 📝 existingStyle의 폰트 유지: $existingFontFamily (이미 GoogleFonts 적용됨)',
-          );
-        } else {
-          print('[StyleSheet] ℹ️ 폰트가 설정되지 않음 (기본 폰트 사용)');
         }
       }
       // 본문/타이틀 기본 색을 테마에 맞춰 적용 (인라인 컬러 지정이 없는 경우)

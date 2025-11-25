@@ -127,15 +127,24 @@ class AccountListItem extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 5),
           child: Row(
             children: [
-              // 🎯 CommonProfileAvatar로 통일 (원래대로 복원, 검정 부분은 Colors.black)
               CommonProfileAvatar(
                 imageUrl: null,
                 username: 'search',
                 size: 50,
                 borderColor: Theme.of(context).colorScheme.background,
                 borderWidth: 0,
-                backgroundColor: Colors.black,
-                centerWidget: Icon(Icons.search, size: 20, color: Colors.white),
+                backgroundColor:
+                    Theme.of(context).brightness == Brightness.light
+                        ? Colors.grey[200]
+                        : Colors.black,
+                centerWidget: Icon(
+                  Icons.search,
+                  size: 20,
+                  color:
+                      Theme.of(context).brightness == Brightness.light
+                          ? Colors.black
+                          : Colors.white,
+                ),
               ),
               const SizedBox(width: 16),
               Expanded(
@@ -143,9 +152,10 @@ class AccountListItem extends StatelessWidget {
                   account.title ?? '',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontWeight: FontWeight.w600,
                     fontSize: 16,
+                    color: Theme.of(context).colorScheme.onBackground,
                   ),
                 ),
               ),

@@ -207,10 +207,10 @@ class DragService extends ChangeNotifier {
     }
     // 그 외의 경우는 computeDropInfo에서 설정한 값을 그대로 사용
 
-    print('최종 dragMode: $dragMode');
-    print('최종 dropIndex: $dropIndex');
-    print('최종 targetNodeId: $targetNodeId');
-    print('=== updateDrag 끝 ===');
+    debugPrint('최종 dragMode: $dragMode');
+    debugPrint('최종 dropIndex: $dropIndex');
+    debugPrint('최종 targetNodeId: $targetNodeId');
+    debugPrint('=== updateDrag 끝 ===');
 
     // 항상 UI 업데이트 (드래그 오버레이 부드러운 이동을 위해)
     notifyListeners();
@@ -434,10 +434,10 @@ class DragService extends ChangeNotifier {
 
     final isFromLeft = dragPosition!.dx < targetCenter.dx;
 
-    print('=== 드래그 방향 계산 ===');
-    print('드래그 위치: ${dragPosition!}');
-    print('타겟 중앙: $targetCenter');
-    print('왼쪽에서 오는가: $isFromLeft');
+    debugPrint('=== 드래그 방향 계산 ===');
+    debugPrint('드래그 위치: ${dragPosition!}');
+    debugPrint('타겟 중앙: $targetCenter');
+    debugPrint('왼쪽에서 오는가: $isFromLeft');
 
     return isFromLeft;
   }
@@ -473,7 +473,7 @@ class DragService extends ChangeNotifier {
         localPosition,
       );
     } catch (e) {
-      print("DragService에서 getDocumentPositionNearestToOffset 오류: $e");
+      debugPrint("DragService에서 getDocumentPositionNearestToOffset 오류: $e");
       return null;
     }
 
@@ -608,12 +608,12 @@ class DragService extends ChangeNotifier {
 
     // 디버그 로그
     /*
-    print('=== 드롭 인덱스 계산 ===');
-    print(
+    debugPrint('=== 드롭 인덱스 계산 ===');
+    debugPrint(
       '드래그 중인 노드: $draggingNodeId (인덱스: ${draggingNodeId != null ? getNodeIndex(draggingNodeId!) : -1})',
     );
-    print('최종 드롭 인덱스: $finalCandidate');
-    print('드래그 모드: $dragMode');
+    debugPrint('최종 드롭 인덱스: $finalCandidate');
+    debugPrint('드래그 모드: $dragMode');
     */
 
     // 이미지 행 타겟에 대한 삽입 인덱스 계산 (분리/병합 판단에 활용)
@@ -650,7 +650,7 @@ class DragService extends ChangeNotifier {
   String? handleClipNodeTap(String nodeId, Offset globalTapPosition) {
     final nodeRect = getNodeGlobalRect(nodeId);
     if (nodeRect == null) {
-      print('[DragService] ClipNode: nodeRect가 null입니다');
+      debugPrint('[DragService] ClipNode: nodeRect가 null입니다');
       return null;
     }
 
@@ -669,8 +669,10 @@ class DragService extends ChangeNotifier {
     final buttonBottom = nodeRect.height;
     final buttonTop = buttonBottom - muteButtonSize;
 
-    print('[DragService] ClipNode: nodeRect=$nodeRect, localTap=$localTap');
-    print(
+    debugPrint(
+      '[DragService] ClipNode: nodeRect=$nodeRect, localTap=$localTap',
+    );
+    debugPrint(
       '[DragService] ClipNode: Button area: left=$buttonLeft, right=$buttonRight, top=$buttonTop, bottom=$buttonBottom',
     );
 
@@ -680,10 +682,10 @@ class DragService extends ChangeNotifier {
         localTap.dy > buttonTop &&
         localTap.dy < buttonBottom;
 
-    print('[DragService] ClipNode: isMuteButtonArea=$isMuteButtonArea');
+    debugPrint('[DragService] ClipNode: isMuteButtonArea=$isMuteButtonArea');
 
     if (isMuteButtonArea) {
-      print('[DragService] ClipNode: 음소거 버튼 클릭!');
+      debugPrint('[DragService] ClipNode: 음소거 버튼 클릭!');
       return 'toggleMute';
     }
 
@@ -694,7 +696,7 @@ class DragService extends ChangeNotifier {
         localTap.dy > (nodeRect.height / 2 - 25) &&
         localTap.dy < (nodeRect.height / 2 + 25);
 
-    print('[DragService] ClipNode: isCenterArea=$isCenterArea');
+    debugPrint('[DragService] ClipNode: isCenterArea=$isCenterArea');
 
     if (isCenterArea) {
       // 비디오가 끝났는지 확인
@@ -705,19 +707,19 @@ class DragService extends ChangeNotifier {
 
         // 비디오가 완전히 끝났을 때만 다시보기 버튼 반응
         if (controller?.hasPlayedOnce != null && controller!.hasPlayedOnce!()) {
-          print('[DragService] ClipNode: 다시보기 버튼 클릭!');
+          debugPrint('[DragService] ClipNode: 다시보기 버튼 클릭!');
           return 'restartVideo';
         } else {
-          print('[DragService] ClipNode: 비디오가 아직 끝나지 않음');
+          debugPrint('[DragService] ClipNode: 비디오가 아직 끝나지 않음');
           return null;
         }
       }
 
-      print('[DragService] ClipNode: 다시보기 버튼 클릭!');
+      debugPrint('[DragService] ClipNode: 다시보기 버튼 클릭!');
       return 'restartVideo';
     }
 
-    print('[DragService] ClipNode: 일반 영역 클릭');
+    debugPrint('[DragService] ClipNode: 일반 영역 클릭');
     return null;
   }
 
@@ -727,7 +729,7 @@ class DragService extends ChangeNotifier {
       final controller = entry.value;
       if (controller.pause != null) {
         controller.pause!();
-        print('[DragService] 비디오 일시정지: ${entry.key}');
+        debugPrint('[DragService] 비디오 일시정지: ${entry.key}');
       }
     }
   }

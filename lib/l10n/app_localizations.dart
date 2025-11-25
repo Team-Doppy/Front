@@ -205,7 +205,7 @@ class AppLocalizations {
       'title_required_for_draft': '제목을 입력해야 임시저장할 수 있습니다.',
       'title_required_for_edit': '제목을 입력해야 수정할 수 있습니다.',
       'wait_for_media_upload': '업로드 대기',
-      'media_still_uploading': '아직 업로드가 완료되지 않은 미디어가 있어요. 잠시만 기다려주세요.',
+      'media_still_uploading': '아직 업로드가 완료되지 않은\n미디어가 있어요. 잠시만 기다려주세요.',
       'select_category': '카테고리 선택',
       'select_visibility': '공개 범위 선택',
       'visibility_public': '전체공개',
@@ -422,7 +422,7 @@ class AppLocalizations {
       'join_id_already_used': '이미 사용 중인 아이디예요',
       'join_set_password_title': '비밀번호를 설정해주세요',
       'join_set_password_subtitle': '8자 이상, 안전한 비밀번호를 추천해요.',
-      'join_password_min_length': '6자 이상',
+      'join_password_min_length': '8자 이상',
       'join_password_letter_required': '영문 포함',
       'join_password_number_required': '숫자 포함',
       'join_confirm_password_title': '비밀번호를 한 번 더 입력해주세요',
@@ -498,6 +498,7 @@ class AppLocalizations {
       'draft_save_failed': '임시저장에 실패했습니다',
       'draft_load_failed': '임시저장을 불러올 수 없습니다',
       'draft_list_failed': '임시저장 목록을 불러올 수 없습니다',
+      'no_drafts': '임시저장된 글이 없습니다',
 
       // 프로필 관련
       'profile_image_upload_failed': '프로필 이미지 업로드에 실패했습니다',
@@ -961,7 +962,7 @@ class AppLocalizations {
       'join_set_password_title': 'Set your password',
       'join_set_password_subtitle':
           'We recommend a secure password of at least 8 characters.',
-      'join_password_min_length': 'At least 6 characters',
+      'join_password_min_length': 'At least 8 characters',
       'join_password_letter_required': 'Include letters',
       'join_password_number_required': 'Include numbers',
       'join_confirm_password_title': 'Enter your password again',
@@ -1032,6 +1033,7 @@ class AppLocalizations {
       'draft_save_failed': 'Failed to save draft',
       'draft_load_failed': 'Failed to load draft',
       'draft_list_failed': 'Failed to load draft list',
+      'no_drafts': 'No drafts saved',
 
       // Profile Related
       'profile_image_upload_failed': 'Failed to upload profile image',
@@ -1118,10 +1120,12 @@ extension LocalizationExtension on BuildContext {
       if (localizations != null) {
         return localizations.translate(key);
       } else {
-        print('[LocalizationExtension] localizations is null for key: $key');
+        debugPrint(
+          '[LocalizationExtension] localizations is null for key: $key',
+        );
       }
     } catch (e) {
-      print('[LocalizationExtension] 번역 실패: $key - $e');
+      debugPrint('[LocalizationExtension] 번역 실패: $key - $e');
     }
     // 폴백: 키 그대로 반환
     return key;

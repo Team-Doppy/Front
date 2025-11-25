@@ -1,4 +1,5 @@
 import 'package:dio/dio.dart';
+import 'package:flutter/material.dart';
 import 'base_api_service.dart';
 import '../models/user_model.dart';
 
@@ -143,7 +144,7 @@ class UserService {
   /// 설정 조회
   Future<Map<String, bool>> getSettings() async {
     try {
-      print('[UserService] GET /api/profile/settings');
+      debugPrint('[UserService] GET /api/profile/settings');
       final response = await _dio.get('/api/profile/settings');
       if (response.statusCode == 200) {
         final data = response.data;
@@ -164,11 +165,11 @@ class UserService {
   /// 마케팅 정보 수신 동의 토글
   Future<bool> toggleMarketingConsent() async {
     try {
-      print('[UserService] PUT /api/profile/marketing-consent');
+      debugPrint('[UserService] PUT /api/profile/marketing-consent');
       final response = await _dio.put('/api/profile/marketing-consent');
       if (response.statusCode == 200) {
         final newValue = response.data['marketingConsent'] as bool;
-        print('[UserService] marketingConsent toggled to: $newValue');
+        debugPrint('[UserService] marketingConsent toggled to: $newValue');
         return newValue;
       }
       throw Exception('마케팅 동의 토글 실패: ${response.statusCode}');
@@ -183,11 +184,11 @@ class UserService {
   /// 알림 허용 토글
   Future<bool> toggleNotificationEnabled() async {
     try {
-      print('[UserService] PUT /api/profile/notification-enabled');
+      debugPrint('[UserService] PUT /api/profile/notification-enabled');
       final response = await _dio.put('/api/profile/notification-enabled');
       if (response.statusCode == 200) {
         final newValue = response.data['notificationEnabled'] as bool;
-        print('[UserService] notificationEnabled toggled to: $newValue');
+        debugPrint('[UserService] notificationEnabled toggled to: $newValue');
         return newValue;
       }
       throw Exception('알림 토글 실패: ${response.statusCode}');
@@ -202,12 +203,12 @@ class UserService {
   /// 회원 탈퇴 (DELETE /api/users/account)
   Future<String> deleteAccount() async {
     try {
-      print('[UserService] DELETE /api/users/account');
+      debugPrint('[UserService] DELETE /api/users/account');
       final response = await _dio.delete('/api/users/account');
       if (response.statusCode == 200) {
         final responseData = response.data;
         final username = responseData['username']?.toString() ?? '';
-        print('[UserService] 회원 탈퇴 성공: $username');
+        debugPrint('[UserService] 회원 탈퇴 성공: $username');
         return username;
       }
       throw Exception('회원 탈퇴 실패: ${response.statusCode}');
@@ -218,7 +219,7 @@ class UserService {
             e.response?.data?['error']?.toString() ??
             e.response?.data?['message']?.toString() ??
             '회원 탈퇴 실패: $statusCode';
-        print('[UserService] 회원 탈퇴 실패: $errorMessage');
+        debugPrint('[UserService] 회원 탈퇴 실패: $errorMessage');
         throw Exception(errorMessage);
       }
       rethrow;

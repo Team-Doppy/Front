@@ -38,6 +38,7 @@ class BaseApiService {
   static const Duration _retry1Delay = Duration(milliseconds: 300);
   static const Duration _retry2Delay = Duration(milliseconds: 800);
   static bool _sessionDialogVisible = false;
+  DateTime? _lastRefreshTime; // 🎯 마지막 갱신 시간 (중복 갱신 방지)
 
   /// JWT 만료 시간 추출 유틸리티
   /// [token] - JWT 토큰 문자열
@@ -82,56 +83,68 @@ class BaseApiService {
               // JWT 만료 시간 추출
               final expirationTime = _getTokenExpiration(token);
               final now = DateTime.now().millisecondsSinceEpoch;
-              // 🎯 테스트 환경: 만료 기간이 1분이므로 10초 전에 리프레시
-              // 프로덕션에서는 5 * 60 * 1000 (5분) 사용
-              final bufferTime = 10 * 1000; // 10초 버퍼 (테스트용)
 
-              // 만료되었거나 곧 만료될 것 같으면 미리 리프레시
-              if (expirationTime != null &&
-                  (expirationTime - now) < bufferTime) {
-                final remainingSeconds = (expirationTime - now) / 1000;
-                print(
-                  '[BaseApiService] 토큰 만료 임박 (${remainingSeconds.toStringAsFixed(1)}초 남음) - 미리 리프레시',
-                );
+              // 🎯 만료 시간이 유효하고, 실제로 만료되었거나 곧 만료될 때만 갱신
+              if (expirationTime != null && expirationTime > now) {
+                // 🎯 프로덕션: 5분 전에 리프레시
+                final bufferTime = 5 * 60 * 1000; // 5분 버퍼
+                final timeUntilExpiry = expirationTime - now;
 
-                // 리프레시 중이 아니면 리프레시 시도
-                if (!_isRefreshing) {
-                  _isRefreshing = true;
-                  _refreshCompleter = Completer<bool>();
-                  final refreshed = await _refreshTokenWithRetry();
-                  _isRefreshing = false;
-                  _refreshCompleter?.complete(refreshed);
-                  _refreshCompleter = null;
+                // 🎯 마지막 갱신 후 1분 이내면 다시 갱신하지 않음 (중복 갱신 방지)
+                final shouldSkipRefresh =
+                    _lastRefreshTime != null &&
+                    DateTime.now().difference(_lastRefreshTime!).inSeconds < 60;
 
-                  if (refreshed) {
-                    // 새 토큰 가져오기
-                    final newToken = await _authService.getToken();
-                    if (newToken != null && newToken.isNotEmpty) {
-                      options.headers['Authorization'] = 'Bearer $newToken';
-                      print('[BaseApiService] ✅ 토큰 갱신 완료');
-                    }
-                  } else {
-                    print('[BaseApiService] ⚠️ 토큰 갱신 실패 (백업 방식으로 처리)');
-                    // 실패해도 기존 토큰 사용 (백업 방식에서 처리)
-                    options.headers['Authorization'] = 'Bearer $token';
-                  }
-                } else {
-                  // 이미 리프레시 중이면 완료까지 대기
-                  if (_refreshCompleter != null) {
-                    final ok = await _refreshCompleter!.future;
-                    if (ok) {
+                // 만료 임박 시에만 미리 리프레시 (중복 갱신 방지)
+                if (timeUntilExpiry < bufferTime && !shouldSkipRefresh) {
+                  final remainingSeconds = timeUntilExpiry / 1000;
+                  print(
+                    '[BaseApiService] 토큰 만료 임박 (${remainingSeconds.toStringAsFixed(1)}초 남음) - 미리 리프레시',
+                  );
+
+                  // 리프레시 중이 아니면 리프레시 시도
+                  if (!_isRefreshing) {
+                    _isRefreshing = true;
+                    _refreshCompleter = Completer<bool>();
+                    final refreshed = await _refreshTokenWithRetry();
+                    _isRefreshing = false;
+                    _refreshCompleter?.complete(refreshed);
+                    _refreshCompleter = null;
+
+                    if (refreshed) {
+                      _lastRefreshTime = DateTime.now(); // 🎯 갱신 시간 저장
                       final newToken = await _authService.getToken();
                       if (newToken != null && newToken.isNotEmpty) {
                         options.headers['Authorization'] = 'Bearer $newToken';
+                        print('[BaseApiService] ✅ 토큰 갱신 완료');
                       }
                     } else {
-                      // 리프레시 실패 시 기존 토큰 사용
+                      print('[BaseApiService] ⚠️ 토큰 갱신 실패 (기존 토큰 사용)');
+                      options.headers['Authorization'] = 'Bearer $token';
+                    }
+                  } else {
+                    // 이미 리프레시 중이면 완료까지 대기
+                    if (_refreshCompleter != null) {
+                      final ok = await _refreshCompleter!.future;
+                      if (ok) {
+                        _lastRefreshTime = DateTime.now(); // 🎯 갱신 시간 저장
+                        final newToken = await _authService.getToken();
+                        if (newToken != null && newToken.isNotEmpty) {
+                          options.headers['Authorization'] = 'Bearer $newToken';
+                        }
+                      } else {
+                        options.headers['Authorization'] = 'Bearer $token';
+                      }
+                    } else {
                       options.headers['Authorization'] = 'Bearer $token';
                     }
                   }
+                } else {
+                  // 아직 유효하면 기존 토큰 사용
+                  options.headers['Authorization'] = 'Bearer $token';
                 }
               } else {
-                // 아직 유효하면 기존 토큰 사용
+                // 만료 시간 추출 실패 또는 이미 만료된 경우 기존 토큰 사용 (401 시 갱신)
                 options.headers['Authorization'] = 'Bearer $token';
               }
             }
@@ -191,14 +204,17 @@ class BaseApiService {
               if (_isRefreshing && _refreshCompleter != null) {
                 final ok = await _refreshCompleter!.future;
                 if (ok) {
-                  final newToken = await _authService.getToken();
-                  if (newToken != null && newToken.isNotEmpty) {
-                    error.requestOptions.headers['Authorization'] =
-                        'Bearer $newToken';
+                  // 🎯 http 기반 재시도 (인터셉터 우회)
+                  final response = await _retryRequestWithHttp(
+                    error.requestOptions,
+                  );
+                  if (response != null) {
+                    handler.resolve(response);
+                    return;
+                  } else {
+                    handler.next(error);
+                    return;
                   }
-                  final response = await _dio.fetch(error.requestOptions);
-                  handler.resolve(response);
-                  return;
                 } else {
                   _handleTokenRefreshFailure();
                   return;
@@ -215,14 +231,17 @@ class BaseApiService {
 
               if (refreshed) {
                 print('[DioClient] Token refreshed, retrying request...');
-                final newToken = await _authService.getToken();
-                if (newToken != null && newToken.isNotEmpty) {
-                  error.requestOptions.headers['Authorization'] =
-                      'Bearer $newToken';
+                // 🎯 http 기반 재시도 (인터셉터 우회)
+                final response = await _retryRequestWithHttp(
+                  error.requestOptions,
+                );
+                if (response != null) {
+                  handler.resolve(response);
+                  return;
+                } else {
+                  handler.next(error);
+                  return;
                 }
-                final response = await _dio.fetch(error.requestOptions);
-                handler.resolve(response);
-                return;
               } else {
                 _handleTokenRefreshFailure();
                 return;
@@ -294,6 +313,105 @@ class BaseApiService {
     }
 
     return false;
+  }
+
+  /// http 기반 재시도 (인터셉터 우회)
+  Future<Response?> _retryRequestWithHttp(RequestOptions requestOptions) async {
+    try {
+      final newToken = await _authService.getToken();
+      if (newToken == null || newToken.isEmpty) {
+        print('[BaseApiService] 재시도 실패: 토큰 없음');
+        return null;
+      }
+
+      // URL 구성
+      final uri = Uri.parse('$baseUrl${requestOptions.path}');
+      final uriWithQuery =
+          requestOptions.queryParameters.isNotEmpty
+              ? uri.replace(queryParameters: requestOptions.queryParameters)
+              : uri;
+
+      // 헤더 구성
+      final headers = <String, String>{
+        'Content-Type': 'application/json; charset=UTF-8',
+        'Authorization': 'Bearer $newToken',
+      };
+
+      // 기존 헤더 추가 (Dio Headers는 Map<String, List<String>> 형태)
+      requestOptions.headers.forEach((key, values) {
+        if (values != null) {
+          if (values is List && values.isNotEmpty) {
+            headers[key] = values.first.toString();
+          } else if (values is String) {
+            headers[key] = values;
+          } else {
+            headers[key] = values.toString();
+          }
+        }
+      });
+
+      // http 요청
+      http.Response httpResponse;
+      if (requestOptions.method == 'GET') {
+        httpResponse = await http.get(uriWithQuery, headers: headers);
+      } else if (requestOptions.method == 'POST') {
+        final body =
+            requestOptions.data != null
+                ? jsonEncode(requestOptions.data)
+                : null;
+        httpResponse = await http.post(
+          uriWithQuery,
+          headers: headers,
+          body: body,
+        );
+      } else if (requestOptions.method == 'PUT') {
+        final body =
+            requestOptions.data != null
+                ? jsonEncode(requestOptions.data)
+                : null;
+        httpResponse = await http.put(
+          uriWithQuery,
+          headers: headers,
+          body: body,
+        );
+      } else if (requestOptions.method == 'DELETE') {
+        httpResponse = await http.delete(uriWithQuery, headers: headers);
+      } else if (requestOptions.method == 'PATCH') {
+        final body =
+            requestOptions.data != null
+                ? jsonEncode(requestOptions.data)
+                : null;
+        httpResponse = await http.patch(
+          uriWithQuery,
+          headers: headers,
+          body: body,
+        );
+      } else {
+        print('[BaseApiService] 지원하지 않는 HTTP 메서드: ${requestOptions.method}');
+        return null;
+      }
+
+      // Dio Response로 변환
+      final responseData =
+          httpResponse.bodyBytes.isNotEmpty
+              ? jsonDecode(utf8.decode(httpResponse.bodyBytes))
+              : null;
+
+      final dioResponse = Response(
+        data: responseData,
+        statusCode: httpResponse.statusCode,
+        statusMessage: httpResponse.reasonPhrase,
+        requestOptions: requestOptions,
+        headers: Headers.fromMap(
+          httpResponse.headers.map((k, v) => MapEntry(k, [v])),
+        ),
+      );
+
+      return dioResponse;
+    } catch (e) {
+      print('[BaseApiService] http 재시도 실패: $e');
+      return null;
+    }
   }
 
   /// 토큰 갱신 실패 시 다이얼로그로 재로그인 유도 (인스타그램식)

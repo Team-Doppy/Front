@@ -1,5 +1,6 @@
 import 'package:dio/dio.dart';
 import 'package:doppy/data/services/base_api_service.dart';
+import 'package:flutter/material.dart';
 
 class MediaCommentService {
   static final MediaCommentService _i = MediaCommentService._();
@@ -9,54 +10,71 @@ class MediaCommentService {
   final Dio _dio = BaseApiService().dio;
 
   Future<List<MediaComment>> fetchImageComments({
-    required String imageId,
+    required String imageUrl, // 🎯 imageId → imageUrl로 변경
     int page = 0,
     int size = 20,
   }) async {
-    print(
-      '[MediaCommentService] GET image comments id=$imageId page=$page size=$size',
+    debugPrint(
+      '[MediaCommentService] GET image comments url=$imageUrl page=$page size=$size',
     );
     final res = await _dio.get(
-      '/api/media/image/$imageId/comments',
-      queryParameters: {'page': page, 'size': size},
+      '/api/media/image/comments', // 🎯 URL 기반 엔드포인트
+      queryParameters: {
+        'url': imageUrl, // 🎯 URL 파라미터로 전달
+        'page': page,
+        'size': size,
+      },
       options: Options(receiveTimeout: const Duration(seconds: 10)),
     );
-    print('[MediaCommentService] <- status=${res.statusCode}');
+    debugPrint('[MediaCommentService] <- status=${res.statusCode}');
     final list = _parseList(res.data);
-    print('[MediaCommentService] parsed image comments count=${list.length}');
+    debugPrint(
+      '[MediaCommentService] parsed image comments count=${list.length}',
+    );
     return list;
   }
 
   Future<List<MediaComment>> fetchVideoComments({
-    required String videoId,
+    required String videoUrl, // 🎯 videoId → videoUrl로 변경
     int page = 0,
     int size = 20,
   }) async {
-    print(
-      '[MediaCommentService] GET video comments id=$videoId page=$page size=$size',
+    debugPrint(
+      '[MediaCommentService] GET video comments url=$videoUrl page=$page size=$size',
     );
     final res = await _dio.get(
-      '/api/media/video/$videoId/comments',
-      queryParameters: {'page': page, 'size': size},
+      '/api/media/video/comments', // 🎯 URL 기반 엔드포인트
+      queryParameters: {
+        'url': videoUrl, // 🎯 URL 파라미터로 전달
+        'page': page,
+        'size': size,
+      },
       options: Options(receiveTimeout: const Duration(seconds: 10)),
     );
-    print('[MediaCommentService] <- status=${res.statusCode}');
+    debugPrint('[MediaCommentService] <- status=${res.statusCode}');
     final list = _parseList(res.data);
-    print('[MediaCommentService] parsed video comments count=${list.length}');
+    debugPrint(
+      '[MediaCommentService] parsed video comments count=${list.length}',
+    );
     return list;
   }
 
   Future<String> createImageComment({
-    required String imageId,
+    required String imageUrl, // 🎯 imageId → imageUrl로 변경
     required String text,
   }) async {
-    print('[MediaCommentService] POST image comment id=$imageId');
+    debugPrint('[MediaCommentService] POST image comment url=$imageUrl');
     final res = await _dio.post(
-      '/api/media/image/$imageId/comments',
-      data: {'text': text},
+      '/api/media/image/comments', // 🎯 URL 기반 엔드포인트
+      queryParameters: {
+        'url': imageUrl, // 🎯 URL은 query parameter로
+      },
+      data: {
+        'text': text, // 🎯 body에는 text만
+      },
       options: Options(receiveTimeout: const Duration(seconds: 10)),
     );
-    print('[MediaCommentService] <- status=${res.statusCode}');
+    debugPrint('[MediaCommentService] <- status=${res.statusCode}');
     final data = res.data;
     if (data is Map<String, dynamic>) {
       final id = data['id']?.toString();
@@ -66,16 +84,21 @@ class MediaCommentService {
   }
 
   Future<String> createVideoComment({
-    required String videoId,
+    required String videoUrl, // 🎯 videoId → videoUrl로 변경
     required String text,
   }) async {
-    print('[MediaCommentService] POST video comment id=$videoId');
+    debugPrint('[MediaCommentService] POST video comment url=$videoUrl');
     final res = await _dio.post(
-      '/api/media/video/$videoId/comments',
-      data: {'text': text},
+      '/api/media/video/comments', // 🎯 URL 기반 엔드포인트
+      queryParameters: {
+        'url': videoUrl, // 🎯 URL은 query parameter로
+      },
+      data: {
+        'text': text, // 🎯 body에는 text만
+      },
       options: Options(receiveTimeout: const Duration(seconds: 10)),
     );
-    print('[MediaCommentService] <- status=${res.statusCode}');
+    debugPrint('[MediaCommentService] <- status=${res.statusCode}');
     final data = res.data;
     if (data is Map<String, dynamic>) {
       final id = data['id']?.toString();
@@ -85,87 +108,91 @@ class MediaCommentService {
   }
 
   Future<void> deleteImageComment({
-    required String imageId,
+    required String imageUrl, // 🎯 imageId → imageUrl로 변경 (사용하지 않지만 호환성을 위해 유지)
     required String commentId,
   }) async {
-    print(
-      '[MediaCommentService] DELETE image comment imageId=$imageId commentId=$commentId',
+    debugPrint(
+      '[MediaCommentService] DELETE image comment commentId=$commentId',
     );
     await _dio.delete(
-      '/api/media/image/$imageId/comments/$commentId',
+      '/api/media/image/comments/$commentId', // 🎯 commentId만 path에
       options: Options(receiveTimeout: const Duration(seconds: 10)),
     );
-    print('[MediaCommentService] DELETE success');
+    debugPrint('[MediaCommentService] DELETE success');
   }
 
   Future<void> deleteVideoComment({
-    required String videoId,
+    required String videoUrl, // 🎯 videoId → videoUrl로 변경 (사용하지 않지만 호환성을 위해 유지)
     required String commentId,
   }) async {
-    print(
-      '[MediaCommentService] DELETE video comment videoId=$videoId commentId=$commentId',
+    debugPrint(
+      '[MediaCommentService] DELETE video comment commentId=$commentId',
     );
     await _dio.delete(
-      '/api/media/video/$videoId/comments/$commentId',
+      '/api/media/video/comments/$commentId', // 🎯 commentId만 path에
       options: Options(receiveTimeout: const Duration(seconds: 10)),
     );
-    print('[MediaCommentService] DELETE success');
+    debugPrint('[MediaCommentService] DELETE success');
   }
 
   Future<MediaComment> updateImageComment({
-    required String imageId,
+    required String imageUrl, // 🎯 imageId → imageUrl로 변경 (사용하지 않지만 호환성을 위해 유지)
     required String commentId,
     required String text,
   }) async {
-    print('[MediaCommentService] PUT image comment id=$commentId');
+    debugPrint('[MediaCommentService] PUT image comment commentId=$commentId');
     final res = await _dio.put(
-      '/api/media/image/$imageId/comments/$commentId',
-      data: {'text': text},
+      '/api/media/image/comments/$commentId', // 🎯 commentId만 path에
+      data: {'text': text}, // 🎯 body에는 text만
       options: Options(receiveTimeout: const Duration(seconds: 10)),
     );
-    print('[MediaCommentService] <- status=${res.statusCode}');
+    debugPrint('[MediaCommentService] <- status=${res.statusCode}');
     return MediaComment.fromJson(res.data as Map<String, dynamic>);
   }
 
   Future<MediaComment> updateVideoComment({
-    required String videoId,
+    required String videoUrl, // 🎯 videoId → videoUrl로 변경 (사용하지 않지만 호환성을 위해 유지)
     required String commentId,
     required String text,
   }) async {
-    print('[MediaCommentService] PUT video comment id=$commentId');
+    debugPrint('[MediaCommentService] PUT video comment commentId=$commentId');
     final res = await _dio.put(
-      '/api/media/video/$videoId/comments/$commentId',
-      data: {'text': text},
+      '/api/media/video/comments/$commentId', // 🎯 commentId만 path에
+      data: {'text': text}, // 🎯 body에는 text만
       options: Options(receiveTimeout: const Duration(seconds: 10)),
     );
-    print('[MediaCommentService] <- status=${res.statusCode}');
+    debugPrint('[MediaCommentService] <- status=${res.statusCode}');
     return MediaComment.fromJson(res.data as Map<String, dynamic>);
   }
 
   // ✅ 새로운 간단한 좋아요 API
   Future<MediaComment> toggleImageCommentLike({
-    required String imageId,
+    required String imageUrl, // 🎯 imageId → imageUrl로 변경 (사용하지 않지만 호환성을 위해 유지)
     required String commentId,
   }) async {
-    print('[MediaCommentService] POST like image comment id=$commentId');
+    debugPrint(
+      '[MediaCommentService] POST like image comment commentId=$commentId',
+    );
     final res = await _dio.post(
-      '/api/media/image/$imageId/comments/$commentId/like',
+      '/api/media/image/comments/$commentId/like', // 🎯 commentId만 path에
       options: Options(receiveTimeout: const Duration(seconds: 10)),
     );
-    print('[MediaCommentService] <- status=${res.statusCode}');
+    debugPrint('[MediaCommentService] <- status=${res.statusCode}');
     return MediaComment.fromJson(res.data as Map<String, dynamic>);
   }
 
   Future<MediaComment> toggleVideoCommentLike({
-    required String videoId,
+    required String videoUrl, // 🎯 videoId → videoUrl로 변경 (사용하지 않지만 호환성을 위해 유지)
     required String commentId,
   }) async {
-    print('[MediaCommentService] POST like video comment id=$commentId');
+    debugPrint(
+      '[MediaCommentService] POST like video comment commentId=$commentId',
+    );
     final res = await _dio.post(
-      '/api/media/video/$videoId/comments/$commentId/like',
+      '/api/media/video/comments/$commentId/like', // 🎯 commentId만 path에
       options: Options(receiveTimeout: const Duration(seconds: 10)),
     );
-    print('[MediaCommentService] <- status=${res.statusCode}');
+    debugPrint('[MediaCommentService] <- status=${res.statusCode}');
     return MediaComment.fromJson(res.data as Map<String, dynamic>);
   }
 

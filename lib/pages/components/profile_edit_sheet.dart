@@ -67,7 +67,7 @@ class ProfileEditBottomSheet extends StatelessWidget {
                         ? await picker.pickSingleImage().then(
                           (f) => f != null ? [f] : <File>[],
                         )
-                        : await picker.pickMultipleImages();
+                        : await picker.pickMultipleImages(maxCount: 1);
 
                 if (files.isNotEmpty) {
                   onImagesSelected(files);
@@ -209,10 +209,10 @@ class _ProfileInfoEditBottomSheetState
       _linkThumbnails = {};
     }
 
-    print(
+    debugPrint(
       '[ProfileEdit] 초기값 저장 - 이름: "$_initialName", 소개: "$_initialDescription", 링크: ${_initialLinks.length}개, 타이틀: ${_linkTitles.length}개',
     );
-    print('[ProfileEdit] 초기 링크 타이틀: $_linkTitles');
+    debugPrint('[ProfileEdit] 초기 링크 타이틀: $_linkTitles');
 
     // 🎯 자동 포커스 제거 (사용자가 직접 필드를 탭할 때만 키보드가 올라오도록)
   }
@@ -242,16 +242,16 @@ class _ProfileInfoEditBottomSheetState
     final initialLinkTitles = widget.user?.linkTitles ?? {};
     final hasLinkTitlesChange = !_mapEquals(_linkTitles, initialLinkTitles);
 
-    print(
+    debugPrint(
       '[ProfileEdit] 변경 체크 - 이름: "$currentName" vs "$_initialName" = $hasNameChange',
     );
-    print(
+    debugPrint(
       '[ProfileEdit] 변경 체크 - 소개: "$currentDescription" vs "$_initialDescription" = $hasDescChange',
     );
-    print(
+    debugPrint(
       '[ProfileEdit] 변경 체크 - 링크: ${_links.length}개 vs ${_initialLinks.length}개 = $hasLinksChange',
     );
-    print(
+    debugPrint(
       '[ProfileEdit] 변경 체크 - 링크 타이틀: ${_linkTitles.length}개 vs ${initialLinkTitles.length}개 = $hasLinkTitlesChange',
     );
 

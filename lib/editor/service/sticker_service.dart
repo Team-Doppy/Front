@@ -199,7 +199,7 @@ class StickerService extends ChangeNotifier {
     // 이미 드래그 중이면 무시 (중복 beginDrag 방지)
     if (_draggingId == id && _isPanning) {
       // ignore: avoid_print
-      print('[StickerService] beginDrag ignored - already dragging $id');
+      debugPrint('[StickerService] beginDrag ignored - already dragging $id');
       return;
     }
 
@@ -243,7 +243,7 @@ class StickerService extends ChangeNotifier {
 
     if (_dragOverDelete) {
       // ignore: avoid_print
-      print('[StickerService] endDrag delete id=' + id);
+      debugPrint('[StickerService] endDrag delete id=' + id);
       remove(id);
     } else {
       var newPos = dragPreviewPos;
@@ -253,7 +253,7 @@ class StickerService extends ChangeNotifier {
       final newScale = dragPreviewScale.clamp(minScale, maxScale);
       final newRot = dragPreviewRotation;
       // ignore: avoid_print
-      print(
+      debugPrint(
         '[StickerService] endDrag commit id=' +
             id +
             ' pos=' +
@@ -280,7 +280,7 @@ class StickerService extends ChangeNotifier {
     dragOverDeleteNotifier.value = false;
 
     // ignore: avoid_print
-    print('[StickerService] endDrag reset');
+    debugPrint('[StickerService] endDrag reset');
     notifyListeners(); // 드래그 종료 시 한 번만 notify
   }
 
@@ -395,7 +395,7 @@ class StickerService extends ChangeNotifier {
         final y = (fallbackData['yPx'] as num?)?.toDouble() ?? 100.0;
         position = Offset(x, y);
         // debug
-        // print('DEBUG: 스티커 위치 복원 (fallback) - x: $x, y: $y');
+        // debugPrint('DEBUG: 스티커 위치 복원 (fallback) - x: $x, y: $y');
       } else if (positionData is Map) {
         // anchor는 비율값(relX/relY)만 있으므로 여기서 절대좌표로 정확히 환산할 수 없음
         // 잘못된 위로 치우침을 방지하기 위해 anchor만 있는 경우 기본값 유지
@@ -445,7 +445,7 @@ class StickerService extends ChangeNotifier {
       _stickers.add(sticker);
       notifyListeners();
     } catch (e) {
-      print('[StickerService] Error adding sticker from data: $e');
+      debugPrint('[StickerService] Error adding sticker from data: $e');
     }
   }
 

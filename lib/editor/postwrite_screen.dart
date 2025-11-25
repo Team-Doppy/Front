@@ -1,13 +1,16 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:doppy/editor/editor_appbar.dart';
 import 'package:doppy/editor/component/clip_component.dart'
-    show ClipNode, videoPlayerControllers, ClipComponentBuilder;
+    show
+        ClipNode,
+        videoPlayerControllers,
+        ClipComponentBuilder,
+        cleanupAllVideoPlayers;
 
 import 'package:doppy/editor/style/selected_toolbar.dart';
 import 'package:doppy/utils/error_handler.dart';
 import 'package:flutter/rendering.dart';
-import 'package:http/http.dart' as http;
-import 'package:path_provider/path_provider.dart';
 import 'package:doppy/editor/component/link_component.dart';
 import 'package:doppy/editor/component/app_image_node.dart';
 import 'package:doppy/editor/component/single_image_component.dart';
@@ -22,8 +25,6 @@ import 'package:doppy/editor/service/node_component_service.dart';
 import 'package:doppy/editor/service/sticker_service.dart';
 import 'package:doppy/editor/service/post_reader_service.dart';
 import 'package:doppy/editor/service/content_change_detector.dart';
-import 'package:doppy/editor/service/font_preload_service.dart';
-import 'package:doppy/editor/overlay/font_overlay.dart';
 import 'package:doppy/utils/dialog_utils.dart';
 import 'package:doppy/editor/style/style_sheet.dart';
 import 'package:doppy/editor/style/defualt_toolbar.dart';
@@ -40,7 +41,6 @@ import 'package:doppy/editor/overlay/draft_list_overlay.dart';
 import 'package:doppy/editor/publish/post_exporter.dart';
 import 'package:doppy/data/services/draft_service.dart';
 import 'package:doppy/data/services/blog_service.dart';
-import 'package:doppy/image/custom_image_editor_screen.dart';
 import 'package:doppy/providers/feed_provider/my_profile_feed_provider.dart';
 import 'package:doppy/providers/theme_provider.dart';
 
@@ -91,8 +91,13 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
   Offset? _lastTapPosition; // 마지막 탭 위치 저장
 
   //keyboard
-  bool isKeyboardVisible = false; // 키보드 표시 상태
+  // 🎯 성능 최적화: isKeyboardVisible은 build에서 MediaQuery로 직접 읽음
   String? currentDraftId; // 임시저장 관련
+
+  // 영상 업로드 인디케이터 상태
+  final ValueNotifier<bool> _videoUploadIndicatorNotifier = ValueNotifier<bool>(
+    false,
+  );
 
   // 공개범위 설정 (편집 모드용)
   String _editVisibility = 'public';
@@ -109,6 +114,9 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
   bool _isSaving = false;
   bool _shouldRefreshMyFeed = false; // 수정사항 발생 시 한 번만 새로고침
   bool _categoryChanged = false; // 카테고리 변경 여부
+
+  // 🎯 제목 변경 감지용 (수정 완료 버튼에서 체크)
+  String? _lastTitleText; // 마지막으로 서버에 저장한 제목
 
   @override
   void initState() {
@@ -144,6 +152,17 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
             _editGroupIds = [];
           }
         }
+
+        // 🎯 편집 모드: 초기 제목 설정 (수정 완료 버튼에서 변경 체크용)
+        if (document.isNotEmpty) {
+          final firstNode = document.getNodeAt(0);
+          if (firstNode is ParagraphNode &&
+              firstNode.metadata['isTitle'] == true) {
+            _lastTitleText = firstNode.text.text;
+            _serverAppliedTitle = _lastTitleText;
+            debugPrint('[PostwriteScreen] 초기 제목 설정: "$_lastTitleText"');
+          }
+        }
       } catch (e) {
         // 실패 시 빈 문서로 초기화
         document = MutableDocument(
@@ -154,13 +173,15 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted) {
             final translatedText = context.tr('load_failed');
-            print('[PostwriteScreen] 번역 테스트: load_failed = "$translatedText"');
+            debugPrint(
+              '[PostwriteScreen] 번역 테스트: load_failed = "$translatedText"',
+            );
             ErrorHandler.showError(context, translatedText);
           }
         });
       }
     } else {
-      print('🔄 새 글 작성 모드');
+      debugPrint('🔄 새 글 작성 모드');
       // 새 글 작성 모드 - 빈 문서 생성
       document = MutableDocument(
         nodes: [
@@ -182,12 +203,9 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     // FocusNode 초기화
     _editorFocusNode = FocusNode(debugLabel: 'editor_focus');
 
-    // 포커스 변화 감지 (키보드 상태 추적)
-    _editorFocusNode.addListener(() {
-      setState(() {
-        isKeyboardVisible = _editorFocusNode.hasFocus;
-      });
-    });
+    // 🎯 성능 최적화: 포커스 상태는 MediaQuery로 자동 감지되므로
+    // 별도 리스너 없이 build에서 직접 읽어서 사용
+    // (키보드 높이 변화는 AnimatedPadding이 자동 처리)
 
     editor = createDefaultDocumentEditor(
       document: document,
@@ -236,7 +254,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
             stickerService: stickerService,
           );
         } catch (e) {
-          print('[PostwriteScreen] 스티커 복원 실패: $e');
+          debugPrint('[PostwriteScreen] 스티커 복원 실패: $e');
         }
       }
 
@@ -273,22 +291,9 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
   /// 폰트 미리 로드 (에디터 초기화 시 백그라운드에서 실행)
   Future<void> _preloadFonts() async {
     try {
-      final fontPrefs = FontPrefsService();
-      final currentFont = await fontPrefs.loadCurrentFont();
-      final favorites = await fontPrefs.loadFavorites();
-
-      // 폰트 프리로드 서비스를 통해 우선순위 폰트 미리 로드
-      final preloadService = FontPreloadService();
-      preloadService
-          .preloadPriorityFonts(
-            currentFontIdentifier: currentFont.$1,
-            favoriteIdentifiers: favorites.isNotEmpty ? favorites : null,
-          )
-          .catchError((e) {
-            print('[PostwriteScreen] 폰트 프리로드 실패 (무시): $e');
-          });
+      // 폰트 프리로드는 폰트 선택 시에만 수행 (필요할 때만 로드)
     } catch (e) {
-      print('[PostwriteScreen] 폰트 프리로드 초기화 실패 (무시): $e');
+      debugPrint('[PostwriteScreen] 초기화 실패 (무시): $e');
     }
   }
 
@@ -296,74 +301,30 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
   double _lastOffset = 0.0;
   bool _isScrollingUp = false;
 
-  void _onKeyboardVisibilityChanged() {
-    if (!mounted) return;
+  // 🎯 성능 최적화: 키보드 상태 감지는 MediaQuery 변화로 자동 처리됨
+  // 이 메서드는 더 이상 사용하지 않음 (스크롤 기반 앱바 제어로 분리)
 
-    final viewInsets = MediaQuery.of(context).viewInsets;
-    final keyboardHeight = viewInsets.bottom;
-    final currentOffset =
-        scrollController.hasClients ? scrollController.offset : 0.0;
+  void _onScrollChanged() {
+    // 🎯 성능 최적화: 스크롤 시 캐시 무효화만 수행
+    try {
+      dragService.invalidateNodeRectCache();
+    } catch (_) {}
+
+    // 🎯 성능 최적화: 앱바 표시/숨김만 처리 (키보드 상태와 분리)
+    _handleAppBarVisibility();
+  }
+
+  /// 🎯 성능 최적화: 앱바 표시/숨김 전용 메서드 (스크롤 기반)
+  void _handleAppBarVisibility() {
+    if (!mounted || !scrollController.hasClients) return;
+
+    final currentOffset = scrollController.offset;
     final delta = currentOffset - _lastOffset;
 
-    // 상수 정의
     const scrollThreshold = 3.0;
     const topThreshold = 15.0;
 
-    // 키보드 상태에 따른 스크롤 가능 여부 판단
-    final isKeyboardUp = keyboardHeight > 200;
-    final isKeyboardDown = keyboardHeight <= 30;
-
-    // 키보드가 완전히 내려갔을 때도 스크롤 방향에 따라 앱바 제어
-    if (isKeyboardDown) {
-      // 스크롤 방향 감지
-      if (delta < -scrollThreshold) {
-        // 위로 스크롤 (앱바 표시)
-        if (!_isScrollingUp || !_showAppBar) {
-          setState(() {
-            _isScrollingUp = true;
-            _showAppBar = true;
-          });
-        }
-      } else if (delta > scrollThreshold) {
-        // 아래로 스크롤 (앱바 숨김)
-        if (_isScrollingUp && _showAppBar) {
-          setState(() {
-            _isScrollingUp = false;
-            _showAppBar = false;
-          });
-        }
-      }
-      // 맨 위에 있을 때는 항상 앱바 표시
-      if (currentOffset <= topThreshold) {
-        if (!_showAppBar) {
-          setState(() {
-            _showAppBar = true;
-            _isScrollingUp = true;
-          });
-        }
-      }
-
-      _lastOffset = currentOffset;
-      return;
-    }
-
-    // 키보드가 올라와 있을 때의 스크롤 가능 여부 확인
-    final canScroll =
-        scrollController.hasClients &&
-        scrollController.position.maxScrollExtent > 0;
-
-    if (!canScroll) {
-      // 스크롤이 불가능하면 앱바 항상 표시
-      if (!_showAppBar) {
-        setState(() {
-          _showAppBar = true;
-          _isScrollingUp = true;
-        });
-      }
-      return;
-    }
-
-    // 3. 맨 위에 있을 때는 항상 앱바 표시
+    // 맨 위에 있을 때는 항상 앱바 표시
     if (currentOffset <= topThreshold) {
       if (!_showAppBar) {
         setState(() {
@@ -375,19 +336,19 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
       return;
     }
 
-    // 4. 스크롤 방향에 따른 앱바 표시/숨김
+    // 스크롤 방향에 따른 앱바 표시/숨김
     if (delta.abs() > scrollThreshold) {
       if (delta < 0) {
         // 위로 스크롤 (앱바 표시)
-        if (!_isScrollingUp) {
+        if (!_isScrollingUp || !_showAppBar) {
           setState(() {
             _isScrollingUp = true;
             _showAppBar = true;
           });
         }
       } else {
-        // 아래로 스크롤 (앱바 숨김) - 키보드가 올라와 있을 때만
-        if (_isScrollingUp && isKeyboardUp) {
+        // 아래로 스크롤 (앱바 숨김)
+        if (_isScrollingUp && _showAppBar) {
           setState(() {
             _isScrollingUp = false;
             _showAppBar = false;
@@ -397,18 +358,6 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     }
 
     _lastOffset = currentOffset;
-  }
-
-  void _onScrollChanged() {
-    // 스크롤 시 서비스 캐시 무효화
-    try {
-      dragService.invalidateNodeRectCache();
-    } catch (_) {}
-    // 레이아웃 변동 시 노드 rect 캐시 무효화 (스크롤시)
-    try {
-      dragService.invalidateNodeRectCache();
-    } catch (_) {}
-    _onKeyboardVisibilityChanged();
   }
 
   void _onEditorServiceChange() {
@@ -444,12 +393,12 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
 
   // ClipNode 액션 트리거
   void _triggerClipNodeAction(String nodeId, String action) {
-    print('[ClipNode] Action triggered: $action for node: $nodeId');
+    debugPrint('[ClipNode] Action triggered: $action for node: $nodeId');
 
     // 문서에서 ClipNode 찾기
     final node = document.getNodeById(nodeId);
     if (node is! ClipNode || node.url.isEmpty) {
-      print('[ClipNode] ClipNode를 찾을 수 없거나 URL이 비어있습니다');
+      debugPrint('[ClipNode] ClipNode를 찾을 수 없거나 URL이 비어있습니다');
       return;
     }
 
@@ -458,17 +407,17 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     final controller = videoPlayerControllers[key];
 
     if (controller == null) {
-      print('[ClipNode] 컨트롤러를 찾을 수 없습니다: $key');
+      debugPrint('[ClipNode] 컨트롤러를 찾을 수 없습니다: $key');
       return;
     }
 
     // 액션 실행
     if (action == 'toggleMute') {
       controller.toggleMute?.call();
-      print('[ClipNode] toggleMute() 호출됨');
+      debugPrint('[ClipNode] toggleMute() 호출됨');
     } else if (action == 'restartVideo') {
       controller.restartVideo?.call();
-      print('[ClipNode] restartVideo() 호출됨');
+      debugPrint('[ClipNode] restartVideo() 호출됨');
     }
   }
 
@@ -479,7 +428,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
       final firstNode = document.getNodeAt(0);
       if (firstNode is! ParagraphNode ||
           firstNode.metadata['isTitle'] != true) {
-        print('[PostwriteScreen] 제목 노드를 찾을 수 없습니다');
+        debugPrint('[PostwriteScreen] 제목 노드를 찾을 수 없습니다');
         return;
       }
 
@@ -496,9 +445,9 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
       // UI 갱신
       setState(() {});
 
-      print('[PostwriteScreen] 제목 노드 업데이트 완료: "$newTitle"');
+      debugPrint('[PostwriteScreen] 제목 노드 업데이트 완료: "$newTitle"');
     } catch (e) {
-      print('[PostwriteScreen] 제목 노드 업데이트 실패: $e');
+      debugPrint('[PostwriteScreen] 제목 노드 업데이트 실패: $e');
     }
   }
 
@@ -535,10 +484,10 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
 
       updated['content'] = updatedContent;
 
-      print('[PostwriteScreen] 원본 데이터에 서버 제목 반영: $_serverAppliedTitle');
+      debugPrint('[PostwriteScreen] 원본 데이터에 서버 제목 반영: $_serverAppliedTitle');
       return updated;
     } catch (e) {
-      print('[PostwriteScreen] 원본 데이터 업데이트 실패: $e');
+      debugPrint('[PostwriteScreen] 원본 데이터 업데이트 실패: $e');
       return original;
     }
   }
@@ -579,8 +528,9 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
         Future.delayed(const Duration(milliseconds: 100), () {
           if (!mounted) return;
 
-          // 키보드가 올라가 있으면 스크롤 위치 유지
-          if (isKeyboardVisible) {
+          // 🎯 성능 최적화: 키보드 상태는 MediaQuery로 직접 확인
+          final keyboardVisible = MediaQuery.of(context).viewInsets.bottom > 0;
+          if (keyboardVisible) {
             if (scrollController.hasClients) {
               scrollController.jumpTo(currentScrollOffset);
             }
@@ -600,6 +550,35 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     if (nodeId == null) return;
 
     final node = document.getNodeById(nodeId);
+
+    // 🎯 텍스트 노드(일반 ParagraphNode)에 탭한 경우: SuperEditor에 탭 전달 (특수 노드 선택 방지)
+    if (node is ParagraphNode &&
+        node.metadata['mention'] != true &&
+        node.metadata['isTitle'] != true) {
+      // 텍스트 노드 영역 내에서 탭한 경우에만 SuperEditor에 전달
+      final nodeRect = dragService.getNodeGlobalRect(nodeId);
+      if (nodeRect != null) {
+        final localY = _lastTapPosition!.dy - nodeRect.top;
+        final localX = _lastTapPosition!.dx - nodeRect.left;
+
+        // 텍스트 노드 영역 내부인지 확인 (여유 공간 포함: 10px)
+        if (localY >= -10 &&
+            localY <= nodeRect.height + 10 &&
+            localX >= -10 &&
+            localX <= nodeRect.width + 10) {
+          // 텍스트 노드 선택 해제하고 SuperEditor에 탭 전달
+          nodeComponentService.selectNode(null);
+          // 캐시 무효화로 다음 탭이 정확하게 처리되도록 함
+          dragService.invalidateNodeRectCache();
+          return; // SuperEditor가 탭을 처리하도록 함
+        }
+      } else {
+        // rect를 가져올 수 없어도 텍스트 노드면 SuperEditor에 전달
+        // (레이아웃이 아직 준비되지 않은 경우 등)
+        nodeComponentService.selectNode(null);
+        return;
+      }
+    }
 
     // 클릭한 노드가 마지막 노드이고, 실제 노드 영역 아래를 클릭했는지 확인
     final lastIndex = document.nodeCount - 1;
@@ -660,6 +639,8 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
           editorService.insertEmptyParagraphAtIndex(rowIndex + 1);
         }
         nodeComponentService.selectNode(null);
+        // 🎯 캐시 무효화로 다음 탭이 정확하게 처리되도록 함
+        dragService.invalidateNodeRectCache();
         return;
       }
     }
@@ -670,8 +651,11 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
       if (action != null) {
         _triggerClipNodeAction(nodeId, action);
         nodeComponentService.selectNode(null);
+        // 🎯 캐시 무효화로 다음 탭이 정확하게 처리되도록 함
+        dragService.invalidateNodeRectCache();
         return;
       }
+      // action이 null이어도 ClipNode는 특수 노드이므로 아래 로직에서 처리됨
     }
 
     final bool isSpecial =
@@ -699,7 +683,30 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
       }
     }
 
-    nodeComponentService.selectNode(shouldSelect ? nodeId : null);
+    // 🎯 연속 선택 문제 해결: 선택 전에 캐시 무효화 및 상태 확인
+    if (shouldSelect) {
+      // 현재 선택된 노드와 같은 노드를 다시 탭하면 선택 해제
+      final currentSelected = nodeComponentService.selectedNodeId;
+      if (currentSelected == nodeId) {
+        // 같은 노드 재탭: 선택 해제
+        nodeComponentService.selectNode(null);
+        // 선택 해제 시에도 캐시 무효화로 다음 탭이 정확하게 처리되도록 함
+        dragService.invalidateNodeRectCache();
+      } else {
+        // 다른 노드 선택 시 즉시 선택
+        nodeComponentService.selectNode(nodeId);
+        // 선택 후 다음 프레임에서 캐시 무효화 (레이아웃 업데이트 후)
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) {
+            dragService.invalidateNodeRectCache();
+          }
+        });
+      }
+    } else {
+      // 가장자리 영역 클릭: 선택 해제만 수행
+      nodeComponentService.selectNode(null);
+      // 캐시는 유지 (가장자리 클릭은 빈번하므로 불필요한 무효화 방지)
+    }
   }
 
   // moved to EditorService (getNodeGlobalRect)
@@ -735,7 +742,9 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
   }
 
   void _handleLongPressStart(LongPressStartDetails details) {
-    if (isKeyboardVisible) {
+    // 🎯 성능 최적화: 키보드 상태는 MediaQuery로 직접 확인
+    final keyboardVisible = MediaQuery.of(context).viewInsets.bottom > 0;
+    if (keyboardVisible) {
       _editorFocusNode.unfocus();
     }
 
@@ -821,6 +830,21 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
 
   @override
   void dispose() {
+    // 🎯 에디터 종료 시 진행 중인 비디오 압축 취소
+    final uploadService = UploadService();
+    uploadService.cancelEditorCompressions('editor_${editorService.hashCode}');
+
+    // 영상 업로드 인디케이터 정리
+    _videoUploadIndicatorNotifier.dispose();
+
+    // 🎯 에디터 종료 시 모든 비디오 플레이어 정리
+    try {
+      cleanupAllVideoPlayers();
+      debugPrint('[PostwriteScreen] 모든 비디오 플레이어 정리 완료');
+    } catch (e) {
+      debugPrint('[PostwriteScreen] 비디오 정리 오류: $e');
+    }
+
     // 이미지 선택 상태 초기화
     nodeComponentService.clearHighlightedSelectionSilently();
     nodeComponentService.clearSelectionSilently();
@@ -841,9 +865,9 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
           final feed = MyProfileFeedProvider();
           feed.invalidateCache();
           feed.refresh().catchError((_) {});
-          print('[PostwriteScreen] 카테고리 변경 후 피드 프로바이더 캐시 초기화 + 새로고침 완료');
+          debugPrint('[PostwriteScreen] 카테고리 변경 후 피드 프로바이더 캐시 초기화 + 새로고침 완료');
         } catch (e) {
-          print('[PostwriteScreen] 카테고리 변경 후 피드 새로고침 실패: $e');
+          debugPrint('[PostwriteScreen] 카테고리 변경 후 피드 새로고침 실패: $e');
         }
       });
     }
@@ -862,9 +886,9 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
             title: _serverAppliedTitle,
             summary: _serverAppliedSummary,
           );
-          print('[PostwriteScreen] 프로필 피드 선택적 업데이트 완료 (썸네일/제목/요약 변경)');
+          debugPrint('[PostwriteScreen] 프로필 피드 선택적 업데이트 완료 (썸네일/제목/요약 변경)');
         } catch (e) {
-          print('[PostwriteScreen] 프로필 피드 선택적 업데이트 실패: $e');
+          debugPrint('[PostwriteScreen] 프로필 피드 선택적 업데이트 실패: $e');
           // 실패 시 fallback으로 전체 새로고침
           try {
             final feed = MyProfileFeedProvider();
@@ -891,22 +915,8 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     // 🎯 EditorService에 context 설정 (노드 선택 해제용)
     editorService.setContext(context);
 
-    // 로케일 디버깅
-    final currentLocale = Localizations.localeOf(context);
-    print('[PostwriteScreen] 현재 로케일: ${currentLocale.languageCode}');
-
-    // 번역 테스트
-    try {
-      final testTr = context.tr('visibility_public');
-      print('[PostwriteScreen] 번역 테스트 (tr): visibility_public = "$testTr"');
-    } catch (e) {
-      print('[PostwriteScreen] 번역 에러: $e');
-    }
-
-    // 키보드 상태 변화 감지
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _onKeyboardVisibilityChanged();
-    });
+    // 🎯 성능 최적화: 키보드 상태는 MediaQuery에서 직접 읽기 (변수 저장 제거)
+    final isKeyboardVisible = MediaQuery.of(context).viewInsets.bottom > 0;
 
     return WillPopScope(
       onWillPop: () async {
@@ -1091,6 +1101,8 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                           child: GestureDetector(
                             onTapDown: (details) {
                               _lastTapPosition = details.globalPosition;
+                              // 🎯 onTapDown에서는 위치만 저장하고, 실제 처리는 onTap에서 수행
+                              // (캐시 무효화는 _handleTap에서 필요할 때만 수행)
                             },
                             onTap: _handleTap,
                             onLongPressStart: _handleLongPressStart,
@@ -1141,6 +1153,8 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                               currentGroupIds: _editGroupIds,
                               postId: widget.postId,
                               isSaving: _isSaving, // 저장 중 상태 전달
+                              videoUploadIndicatorNotifier:
+                                  _videoUploadIndicatorNotifier,
                               onVisibilityChanged: (visibility, groupIds) {
                                 setState(() {
                                   _editVisibility = visibility;
@@ -1157,7 +1171,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                                   _serverAppliedTitle = title;
                                   _serverAppliedSummary = summary;
                                 });
-                                print(
+                                debugPrint(
                                   '[PostwriteScreen] 제목/요약 업데이트 및 서버 적용: title=$title, summary=$summary',
                                 );
                                 _shouldRefreshMyFeed = true;
@@ -1167,7 +1181,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                                 // 카테고리 변경 플래그 설정 (dispose에서 캐시 초기화 + 새로고침)
                               },
                               onThumbnailChanged: (url, id) {
-                                print(
+                                debugPrint(
                                   '[PostwriteScreen] onThumbnailChanged 콜백 받음: url=$url, id=$id',
                                 );
                                 // 서버에 적용된 썸네일 URL 저장 (선택적 업데이트용)
@@ -1184,6 +1198,8 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                               onSaveDraft: _saveDraft,
                               onLoadDraft: _showDraftList,
                               currentDraftId: currentDraftId,
+                              videoUploadIndicatorNotifier:
+                                  _videoUploadIndicatorNotifier,
                             ),
                   ),
 
@@ -1211,18 +1227,21 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                   return const SizedBox.shrink();
                 }
 
-                return Container(
-                  padding: EdgeInsets.only(
-                    bottom:
-                        MediaQuery.of(context).viewInsets.bottom <= 30
-                            ? 20
-                            : MediaQuery.of(context).viewInsets.bottom,
-                  ),
+                // 🎯 성능 최적화: AnimatedPadding으로 고정 duration 애니메이션
+                // MediaQuery 변화가 20번 발생해도 Flutter는 1번만 애니메이션
+                final keyboardHeight = MediaQuery.of(context).viewInsets.bottom;
+                final bottomPadding =
+                    keyboardHeight <= 30 ? 20.0 : keyboardHeight;
+
+                return AnimatedPadding(
+                  duration: const Duration(milliseconds: 20),
+                  curve: Curves.easeOut,
+                  padding: EdgeInsets.only(bottom: bottomPadding),
                   child: Consumer<NodeComponentService>(
                     builder: (context, nodeService, child) {
                       return nodeService.selectedNodeId != null
                           ? _buildSelectedToolbar()
-                          : _buildDefaultToolbar();
+                          : _buildDefaultToolbar(isKeyboardVisible);
                     },
                   ),
                 );
@@ -1285,7 +1304,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     return 'default';
   }
 
-  Widget _buildDefaultToolbar() {
+  Widget _buildDefaultToolbar(bool isKeyboardVisible) {
     return DefaultToolbar(
       stylingService: textStylingService,
       editorService: editorService,
@@ -1295,6 +1314,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
         _editorFocusNode.unfocus();
       },
       onShowDraftList: _showDraftList,
+      videoUploadIndicatorNotifier: _videoUploadIndicatorNotifier,
     );
   }
 
@@ -1306,21 +1326,26 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     return SelectedToolbar(
       node: node,
       selectedId: selectedId,
-      onEdit: () => _editImage(selectedId, node as ImageNode),
+      onEdit:
+          () => nodeComponentService.editImage(
+            context: context,
+            imageId: selectedId,
+            node: node as ImageNode,
+            editorService: editorService,
+            document: document,
+          ),
       onDelete: (node, selectedId) => _deleteNode(node, selectedId),
       onChangeAlignment:
-          (node, selectedId) => _changeImageAlignment(node, selectedId),
+          (node, selectedId) => _changeMediaAlignment(node, selectedId),
     );
   }
 
-  /// 이미지 정렬 변경
-  Future<void> _changeImageAlignment(
+  /// 미디어(이미지/영상) 정렬 변경
+  Future<void> _changeMediaAlignment(
     DocumentNode node,
     String selectedId,
   ) async {
-    if (node is! ImageNode) return;
-
-    // 메타데이터에서 현재 패딩 정보 가져오기
+    // 메타데이터에서 현재 패딩 정보 가져오기 (기본값: 'center' = 패딩 있음)
     final currentPadding = node.metadata['padding'] as String? ?? 'center';
 
     // 다음 패딩 모드로 전환
@@ -1330,12 +1355,28 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     final updatedMetadata = Map<String, dynamic>.from(node.metadata);
     updatedMetadata['padding'] = nextPadding;
 
-    final newNode = AppImageNode(
-      id: node.id,
-      imageUrl: node.imageUrl,
-      altText: node.altText,
-      metadata: updatedMetadata,
-    );
+    DocumentNode newNode;
+
+    if (node is ImageNode) {
+      newNode = AppImageNode(
+        id: node.id,
+        imageUrl: node.imageUrl,
+        altText: node.altText,
+        metadata: updatedMetadata,
+      );
+    } else if (node is ClipNode) {
+      newNode = ClipNode(
+        id: node.id,
+        label: node.label,
+        colorHex: node.colorHex,
+        url: node.url,
+        localPath: node.localPath,
+        thumbnailPath: node.thumbnailPath,
+        metadata: updatedMetadata,
+      );
+    } else {
+      return; // 지원하지 않는 노드 타입
+    }
 
     // editor.execute를 사용하여 노드 교체
     editor.execute([
@@ -1353,143 +1394,6 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
       case 'center':
       default:
         return 'full';
-    }
-  }
-
-  // 이미지 편집 중 플래그 (이중 클릭 방지)
-  bool _isEditingImage = false;
-
-  /// 이미지 편집
-  Future<void> _editImage(String imageId, ImageNode node) async {
-    // 이미 편집 중이면 무시
-    if (_isEditingImage) return;
-    _isEditingImage = true;
-
-    // 🎯 이미지 편집 전 현재 상태를 히스토리에 저장
-    editorService.saveHistoryNow();
-    print('[PostwriteScreen] 📸 이미지 편집 전 히스토리 저장');
-
-    try {
-      FocusScope.of(context).unfocus();
-
-      // 로딩 다이얼로그 표시
-      showDialog(
-        context: context,
-        barrierDismissible: false,
-        builder:
-            (context) => PopScope(
-              canPop: false,
-              child: Center(
-                child: SizedBox(
-                  width: 80,
-                  height: 80,
-
-                  child: Center(
-                    child: CircularProgressIndicator(
-                      strokeWidth: 4,
-                      color: Theme.of(context).colorScheme.onSurface,
-                    ),
-                  ),
-                ),
-              ),
-            ),
-      );
-
-      final response = await http.get(Uri.parse(node.imageUrl));
-
-      // 로딩 다이얼로그 닫기
-      if (mounted) Navigator.of(context, rootNavigator: true).pop();
-
-      if (response.statusCode != 200) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).hideCurrentSnackBar();
-          ErrorHandler.showError(context, context.tr('image_load_failed'));
-        }
-        return;
-      }
-
-      final imageBytes = response.bodyBytes;
-      // 3. 이미지 편집기 열기 (오버레이 스타일)
-      final editedBytes = await Navigator.push<Uint8List?>(
-        // ignore: use_build_context_synchronously
-        context,
-        PageRouteBuilder(
-          fullscreenDialog: true,
-          barrierColor: Theme.of(context).colorScheme.background,
-          opaque: false,
-          barrierDismissible: true,
-          pageBuilder:
-              (context, _, __) =>
-                  CustomImageEditorScreen(imageBytes: imageBytes),
-        ),
-      );
-
-      if (editedBytes == null || !mounted) return;
-
-      final upload = context.read<UploadService>();
-
-      // 임시 파일로 변환
-      final tempDir = await getTemporaryDirectory();
-      final tempFile = File(
-        '${tempDir.path}/edited_${DateTime.now().millisecondsSinceEpoch}.jpg',
-      );
-      await tempFile.writeAsBytes(editedBytes);
-
-      final tasks = await upload.uploadFilesViaServerBatches([
-        tempFile,
-      ], kind: UploadKind.editorImage);
-
-      // 임시 파일 삭제
-      try {
-        await tempFile.delete();
-      } catch (_) {}
-
-      if (tasks.isEmpty || tasks.first.state != UploadState.success) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).hideCurrentSnackBar();
-          ErrorHandler.showError(context, context.tr('image_upload_failed'));
-        }
-        return;
-      }
-
-      final newUrl = tasks.first.url;
-      if (newUrl == null || newUrl.isEmpty) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).hideCurrentSnackBar();
-          ErrorHandler.showError(context, context.tr('image_url_failed'));
-        }
-        return;
-      }
-
-      // 5. 문서에서 이미지 URL 교체
-      final nodeIndex = document.getNodeIndexById(imageId);
-      if (nodeIndex != -1) {
-        final newNode = AppImageNode(
-          id: imageId,
-          imageUrl: newUrl,
-          altText: node.altText,
-          metadata: Map<String, dynamic>.from(node.metadata),
-        );
-
-        document.deleteNode(imageId);
-        document.insertNodeAt(nodeIndex, newNode);
-
-        // 🎯 이미지 편집 후 히스토리 저장
-        editorService.saveHistoryNow();
-      }
-    } catch (e) {
-      print('이미지 편집 중 오류: $e');
-      // 로딩 다이얼로그가 열려있을 수 있으므로 닫기 시도
-      if (mounted) {
-        Navigator.of(
-          context,
-          rootNavigator: true,
-        ).popUntil((route) => route.isFirst);
-        ScaffoldMessenger.of(context).hideCurrentSnackBar();
-        ErrorHandler.showError(context, context.tr('image_edit_failed'));
-      }
-    } finally {
-      _isEditingImage = false;
     }
   }
 
@@ -1581,7 +1485,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
         }
       }
     } catch (e) {
-      print('[PostwriteScreen] 이미지 찾기 실패: $e');
+      debugPrint('[PostwriteScreen] 이미지 찾기 실패: $e');
     }
     return null;
   }
@@ -1679,7 +1583,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
 
   /// 수정된 포스트 저장 (편집 모드 전용)
   Future<void> _saveEditedPost() async {
-    print('[PostwriteScreen] ===== 수정 완료 버튼 클릭 =====');
+    debugPrint('[PostwriteScreen] ===== 수정 완료 버튼 클릭 =====');
 
     // 이미 저장 중이면 무시
     if (_isSaving) return;
@@ -1745,11 +1649,31 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
       // 7. 사용된 이미지/비디오 URL 수집
       final usedImageUrls = _collectUsedMediaUrls(exported);
 
-      print('[PostwriteScreen] Export 완료');
-      print('  - 제목: $title');
-      print('  - 사용된 미디어: ${usedImageUrls.length}개');
+      debugPrint('[PostwriteScreen] Export 완료');
+      debugPrint('  - 제목: $title');
+      debugPrint('  - 사용된 미디어: ${usedImageUrls.length}개');
 
-      // 8. 서버에 본문 업데이트 요청
+      // 8. 제목 변경 체크 및 서버 저장 (스마트 동기화)
+      if (title != _lastTitleText && _lastTitleText != null) {
+        debugPrint(
+          '[PostwriteScreen] 🎯 제목 변경 감지, 서버 저장: "$_lastTitleText" → "$title"',
+        );
+        try {
+          await BlogService().updatePostThumbnail(
+            postId: int.parse(widget.postId!),
+            title: title,
+          );
+          _lastTitleText = title;
+          _serverAppliedTitle = title;
+          _shouldRefreshMyFeed = true; // 🎯 프로필 피드 스마트 동기화 플래그 설정
+          debugPrint('[PostwriteScreen] ✅ 제목 서버 저장 완료: "$title"');
+        } catch (e) {
+          debugPrint('[PostwriteScreen] ❌ 제목 서버 저장 실패: $e');
+          // 제목 저장 실패해도 본문 저장은 계속 진행
+        }
+      }
+
+      // 9. 서버에 본문 업데이트 요청
       await BlogService().updatePostContent(
         postId: int.parse(widget.postId!),
         content: content,
@@ -1757,9 +1681,9 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
         usedImageUrls: usedImageUrls,
       );
 
-      print('[PostwriteScreen] ✅ 본문 수정 완료');
+      debugPrint('[PostwriteScreen] ✅ 본문 수정 완료');
 
-      // 9. 안정화 시간 (0.5초) 후 완료
+      // 10. 안정화 시간 (0.5초) 후 완료
       await Future.delayed(const Duration(milliseconds: 500));
 
       if (mounted) {
@@ -1776,7 +1700,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
         Navigator.of(context).pop();
       }
     } catch (e) {
-      print('[PostwriteScreen] ❌ 본문 수정 실패: $e');
+      debugPrint('[PostwriteScreen] ❌ 본문 수정 실패: $e');
 
       // 저장 중 상태 해제
       if (mounted) {
@@ -1799,14 +1723,14 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
               ? List<dynamic>.from(content['nodes'] as List? ?? const [])
               : const [];
 
-      print('[PostwriteScreen] URL 수집 시작 (노드 개수: ${nodes.length})');
+      debugPrint('[PostwriteScreen] URL 수집 시작 (노드 개수: ${nodes.length})');
 
       for (int i = 0; i < nodes.length; i++) {
         final n = nodes[i];
         if (n is! Map) continue;
 
         final String type = (n['type'] ?? '').toString();
-        print('  - 노드[$i] 타입: $type');
+        debugPrint('  - 노드[$i] 타입: $type');
 
         if (type == 'image') {
           // data.url 또는 url 필드에서 추출
@@ -1814,7 +1738,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
           final String url = (data?['url'] ?? n['url'] ?? '').toString();
           if (url.isNotEmpty) {
             usedUrls.add(url);
-            print('    → 이미지 URL 추가: $url');
+            debugPrint('    → 이미지 URL 추가: $url');
           }
         } else if (type == 'imageRow') {
           // urls 필드에서 추출
@@ -1823,7 +1747,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
             final String url = u.toString();
             if (url.isNotEmpty) {
               usedUrls.add(url);
-              print('    → 이미지행 URL 추가: $url');
+              debugPrint('    → 이미지행 URL 추가: $url');
             }
           }
         } else if (type == 'video' || type == 'clip') {
@@ -1832,7 +1756,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
           final String url = (data?['url'] ?? '').toString();
           if (url.isNotEmpty) {
             usedUrls.add(url);
-            print('    → 비디오 URL 추가: $url');
+            debugPrint('    → 비디오 URL 추가: $url');
           }
         }
       }
@@ -1840,7 +1764,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
       // 🎯 스티커에서 이미지 URL 수집 (PNG 드로잉 포함)
       final stickers = exported['stickers'] as List?;
       if (stickers != null) {
-        print('  - 스티커 개수: ${stickers.length}');
+        debugPrint('  - 스티커 개수: ${stickers.length}');
         for (final sticker in stickers) {
           if (sticker is Map && sticker['type'] == 'image') {
             final contentMap = sticker['content'] as Map<String, dynamic>?;
@@ -1848,21 +1772,21 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
               final String url = (contentMap['url'] ?? '').toString();
               if (url.isNotEmpty) {
                 usedUrls.add(url);
-                print('    → 스티커 URL 추가: $url');
+                debugPrint('    → 스티커 URL 추가: $url');
               }
             }
           }
         }
       }
 
-      print('[PostwriteScreen] ✅ 총 수집된 미디어 URL: ${usedUrls.length}개');
+      debugPrint('[PostwriteScreen] ✅ 총 수집된 미디어 URL: ${usedUrls.length}개');
       if (usedUrls.isNotEmpty) {
         for (final url in usedUrls) {
-          print('  - $url');
+          debugPrint('  - $url');
         }
       }
     } catch (e) {
-      print('[PostwriteScreen] 미디어 URL 수집 실패: $e');
+      debugPrint('[PostwriteScreen] 미디어 URL 수집 실패: $e');
     }
 
     return usedUrls.toList();

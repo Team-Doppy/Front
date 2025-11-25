@@ -417,7 +417,10 @@ class FriendTile extends StatelessWidget {
             MaterialPageRoute(
               builder:
                   (_) => UserProfileScreen(
-                    otherUser: User(username: data.username),
+                    otherUser: User(
+                      username: data.username,
+                      profileImageUrl: data.url,
+                    ),
                   ),
             ),
           );

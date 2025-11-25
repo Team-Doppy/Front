@@ -81,7 +81,7 @@ class FriendProvider with ChangeNotifier {
         now.difference(_lastFetchTime!) < _cacheValidDuration;
 
     if (!forceRefresh && isCacheValid) {
-      print(
+      debugPrint(
         '[FriendProvider] 캐시 유효 - 서버 조회 스킵 (${now.difference(_lastFetchTime!).inSeconds}초 전 조회)',
       );
       return; // 캐시가 유효하면 서버 조회 스킵
@@ -121,7 +121,7 @@ class FriendProvider with ChangeNotifier {
 
       // 🎯 조회 시간 저장
       _lastFetchTime = DateTime.now();
-      print('[FriendProvider] 서버에서 데이터 새로고침 완료');
+      debugPrint('[FriendProvider] 서버에서 데이터 새로고침 완료');
     } catch (e) {
       _errorMessage = "데이터 로딩에 실패했습니다: $e";
     } finally {
@@ -149,7 +149,7 @@ class FriendProvider with ChangeNotifier {
         _acceptedFriendsPage++;
       }
     } catch (e) {
-      print('[FriendProvider] 수락된 친구 목록 더 불러오기 실패: $e');
+      debugPrint('[FriendProvider] 수락된 친구 목록 더 불러오기 실패: $e');
       _hasMoreAcceptedFriends = false;
     } finally {
       _isLoadingMoreAcceptedFriends = false;
@@ -176,7 +176,7 @@ class FriendProvider with ChangeNotifier {
         _receivedRequestsPage++;
       }
     } catch (e) {
-      print('[FriendProvider] 받은 친구 요청 목록 더 불러오기 실패: $e');
+      debugPrint('[FriendProvider] 받은 친구 요청 목록 더 불러오기 실패: $e');
       _hasMoreReceivedRequests = false;
     } finally {
       _isLoadingMoreReceivedRequests = false;
@@ -203,7 +203,7 @@ class FriendProvider with ChangeNotifier {
         _sentRequestsPage++;
       }
     } catch (e) {
-      print('[FriendProvider] 보낸 친구 요청 목록 더 불러오기 실패: $e');
+      debugPrint('[FriendProvider] 보낸 친구 요청 목록 더 불러오기 실패: $e');
       _hasMoreSentRequests = false;
     } finally {
       _isLoadingMoreSentRequests = false;
@@ -236,7 +236,7 @@ class FriendProvider with ChangeNotifier {
       notifyListeners();
       return true;
     } catch (e) {
-      print("친구 요청 수락 실패: $e");
+      debugPrint("친구 요청 수락 실패: $e");
       // 🎯 이미 취소된 요청인 경우 null 반환 (UI에서 구분 가능)
       if (e.toString().contains('이미 취소되었거나 존재하지 않습니다') ||
           e.toString().contains('FriendRequestNotFoundException')) {
@@ -286,7 +286,7 @@ class FriendProvider with ChangeNotifier {
       notifyListeners();
       return true;
     } catch (e) {
-      print("친구 요청 거절 실패: $e");
+      debugPrint("친구 요청 거절 실패: $e");
       return false;
     }
   }
@@ -298,7 +298,7 @@ class FriendProvider with ChangeNotifier {
       notifyListeners();
       return true;
     } catch (e) {
-      print("친구 요청 취소 실패: $e");
+      debugPrint("친구 요청 취소 실패: $e");
       return false;
     }
   }
@@ -355,7 +355,7 @@ class FriendProvider with ChangeNotifier {
     GroupProvider? groupProvider,
   }) async {
     try {
-      print('🔄 [FriendProvider] 친구 일괄 해제: ${usernames.length}명');
+      debugPrint('🔄 [FriendProvider] 친구 일괄 해제: ${usernames.length}명');
       await _friendService.deleteFriendsBatch(usernames);
 
       // 목록에서 일괄 제거
@@ -375,10 +375,10 @@ class FriendProvider with ChangeNotifier {
       }
 
       notifyListeners();
-      print('✅ [FriendProvider] 친구 일괄 해제 완료');
+      debugPrint('✅ [FriendProvider] 친구 일괄 해제 완료');
       return true;
     } catch (e) {
-      print('❌ [FriendProvider] 친구 일괄 해제 실패: $e');
+      debugPrint('❌ [FriendProvider] 친구 일괄 해제 실패: $e');
       return false;
     }
   }
@@ -421,7 +421,7 @@ class FriendProvider with ChangeNotifier {
     try {
       final String username = targetUsername.trim();
       if (username.isEmpty) {
-        print("친구 신청 실패: targetUsername 비어있음");
+        debugPrint("친구 신청 실패: targetUsername 비어있음");
         _isLoadingStatus = false;
         notifyListeners();
         return false;
@@ -437,7 +437,7 @@ class FriendProvider with ChangeNotifier {
       _friendStatus = FriendRequestStatus.requested; // UI 즉시 반영
       return true;
     } catch (e) {
-      print("친구 신청 실패: $e");
+      debugPrint("친구 신청 실패: $e");
       return false;
     } finally {
       _isLoadingStatus = false;
@@ -502,6 +502,6 @@ class FriendProvider with ChangeNotifier {
     _friendStatus = FriendRequestStatus.none;
     _isLoadingStatus = false;
     notifyListeners();
-    print('[FriendProvider] 로그아웃 - 친구 데이터 초기화 완료');
+    debugPrint('[FriendProvider] 로그아웃 - 친구 데이터 초기화 완료');
   }
 }

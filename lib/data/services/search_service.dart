@@ -149,8 +149,8 @@ class SearchService extends ChangeNotifier {
 
     // 계정 검색 기록
     for (final e in _searchHistory) {
-      print('e.username: ${e.username}');
-      print('me: $me');
+      debugPrint('e.username: ${e.username}');
+      debugPrint('me: $me');
 
       if (seen.add(e.username) && e.username != me) {
         result.add(
@@ -322,10 +322,19 @@ class SearchService extends ChangeNotifier {
   /// 초기화 (검색 기록만 로드, 트렌딩은 검색 화면 진입 시 로드)
   Future<void> initialize({bool forceRefresh = false}) async {
     _allContentItems.clear();
+
+    // 🎯 UI 업데이트 기회 제공을 위해 지연 후 실행
+    await Future.delayed(const Duration(milliseconds: 50));
     await _loadSearchHistory();
+
+    // 🎯 각 작업 사이에 지연 추가
+    await Future.delayed(const Duration(milliseconds: 16));
     await _loadBlogSearchHistory(); // 🎯 글 검색 기록도 로드
 
-    notifyListeners();
+    // 🎯 notifyListeners를 지연시켜 UI 블로킹 방지
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      notifyListeners();
+    });
   }
 
   /// 🎯 배열에서 실제 검색어만 추출하는 헬퍼
@@ -536,11 +545,19 @@ class SearchService extends ChangeNotifier {
         debugPrint('[Search] 검색어가 비어있고 트렌딩 데이터가 없어서 캐시 체크 후 로드');
         ensureTrendingData();
       }
-      notifyListeners();
+
+      // 🎯 notifyListeners를 지연시켜 UI 블로킹 방지
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        notifyListeners();
+      });
     } else {
       // 포커스 여부와 관계없이 실시간 검색 (debounce 적용)
       _isSearching = true;
-      notifyListeners(); // 즉시 UI 업데이트
+
+      // 🎯 notifyListeners를 지연시켜 UI 블로킹 방지
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        notifyListeners();
+      });
 
       // 🎯 debounce를 적용하여 중복 호출 방지 (300ms)
       _debounce = Timer(const Duration(milliseconds: 300), () {
@@ -945,11 +962,18 @@ class SearchService extends ChangeNotifier {
 
   Future<void> _loadSearchHistory() async {
     try {
+      // 🎯 SharedPreferences 작업 전 지연
+      await Future.delayed(const Duration(milliseconds: 8));
       final prefs = await SharedPreferences.getInstance();
       final historyJson = prefs.getString(_searchHistoryKey);
 
       if (historyJson != null) {
+        // 🎯 jsonDecode 전 지연 (큰 데이터 파싱 시 블로킹 방지)
+        await Future.delayed(const Duration(milliseconds: 8));
         final List<dynamic> historyList = jsonDecode(historyJson);
+
+        // 🎯 데이터 처리 전 지연
+        await Future.delayed(const Duration(milliseconds: 8));
         final loaded =
             historyList
                 .whereType<Map<String, dynamic>>()
@@ -968,6 +992,10 @@ class SearchService extends ChangeNotifier {
             if (_searchHistory.length >= _maxHistorySize) {
               break;
             }
+          }
+          // 🎯 각 항목 처리 후 간헐적으로 지연 (큰 리스트 처리 시 블로킹 방지)
+          if (_searchHistory.length % 10 == 0) {
+            await Future.delayed(const Duration(milliseconds: 4));
           }
         }
         debugPrint(
@@ -1000,10 +1028,14 @@ class SearchService extends ChangeNotifier {
   /// 🎯 글 검색 기록 불러오기
   Future<void> _loadBlogSearchHistory() async {
     try {
+      // 🎯 SharedPreferences 작업 전 지연
+      await Future.delayed(const Duration(milliseconds: 8));
       final prefs = await SharedPreferences.getInstance();
       final historyJson = prefs.getString(_blogSearchHistoryKey);
 
       if (historyJson != null) {
+        // 🎯 jsonDecode 전 지연
+        await Future.delayed(const Duration(milliseconds: 8));
         final List<dynamic> historyList = jsonDecode(historyJson);
         _blogSearchHistory = historyList.whereType<String>().toList();
         debugPrint(
@@ -1152,7 +1184,11 @@ class SearchService extends ChangeNotifier {
     if (_viewLocked) return; // 잠금 중에는 포커스 변화 무시
     if (_isFocused == v) return;
     _isFocused = v;
-    notifyListeners();
+
+    // 🎯 notifyListeners를 지연시켜 UI 블로킹 방지
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      notifyListeners();
+    });
   }
 
   void lockView() {

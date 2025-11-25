@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
+import 'package:doppy/data/services/video_cache_service.dart';
 
 /// 풀스크린 이미지 뷰어에서 사용하는 비디오 플레이어 위젯
 class FullscreenVideoPlayer extends StatefulWidget {
@@ -59,38 +60,31 @@ class _FullscreenVideoPlayerState extends State<FullscreenVideoPlayer> {
 
   void _initializePlayer() async {
     try {
+      // 🎯 프리로드된 컨트롤러가 있으면 사용, 없으면 직접 생성 (VideoCacheService 사용 안 함)
       if (widget.preloadedController != null) {
         // 프리로드된 컨트롤러 사용 (이미 초기화됨)
         _controller = widget.preloadedController!;
         _isPreloaded = true;
-
-        // 이미 초기화되어 있으므로 즉시 사용 가능
-        if (_controller.value.isInitialized) {
-          _isInitialized = true;
-
-          // 볼륨만 복원 (프리로드 시 무음이었음)
-          await _controller.setVolume(1.0);
-
-          _duration = _controller.value.duration;
-          _position = _controller.value.position;
-
-          print(
-            '[FullscreenVideo] 프리로드 컨트롤러 재사용 - 현재 위치: ${_position.inSeconds}초',
-          );
-        } else {
-          // 혹시 초기화 안 되어 있으면 초기화
-          await _controller.initialize();
-          _duration = _controller.value.duration;
-          _position = _controller.value.position;
-        }
       } else {
-        // 새 컨트롤러 생성 및 초기화
+        // reader 모드: 직접 컨트롤러 생성 (VideoCacheService 사용 안 함)
         _controller = VideoPlayerController.networkUrl(Uri.parse(widget.url));
-        await _controller.initialize();
         _isPreloaded = false;
-        _duration = _controller.value.duration;
-        _position = _controller.value.position;
       }
+
+      // 초기화 대기
+      if (!_controller.value.isInitialized) {
+        await _controller.initialize();
+      }
+
+      _isInitialized = true;
+      // 풀스크린에서는 항상 소리 켜기
+      await _controller.setVolume(1.0);
+      _duration = _controller.value.duration;
+      _position = _controller.value.position;
+
+      debugPrint(
+        '[FullscreenVideo] 컨트롤러 준비 완료 - 위치: ${_position.inSeconds}초, 볼륨: 1.0',
+      );
 
       // 컨트롤러 상태 리스너로 진행도/재생 상태 갱신
       _controller.addListener(_onControllerTick);
@@ -103,11 +97,11 @@ class _FullscreenVideoPlayerState extends State<FullscreenVideoPlayer> {
         // autoPlay가 true면 재생 시작
         if (widget.autoPlay && !_controller.value.isPlaying) {
           await _controller.play();
-          print('[FullscreenVideo] 자동 재생 시작');
+          debugPrint('[FullscreenVideo] 자동 재생 시작');
         }
       }
     } catch (e) {
-      print('비디오 초기화 오류: $e');
+      debugPrint('비디오 초기화 오류: $e');
     }
   }
 
@@ -132,25 +126,34 @@ class _FullscreenVideoPlayerState extends State<FullscreenVideoPlayer> {
 
   @override
   void dispose() {
-    // 리스너만 정리 (컨트롤러는 유지)
     try {
       if (_isInitialized) {
         _controller.removeListener(_onControllerTick);
 
-        // 프리로드된 컨트롤러가 아닌 경우만 dispose
-        // (직접 생성한 컨트롤러는 정리해야 함)
-        if (!_isPreloaded) {
+        // 🎯 프리로드 컨트롤러인 경우: 일시정지 후 볼륨 복원
+        if (_isPreloaded && widget.preloadedController != null) {
+          try {
+            // 🎯 먼저 일시정지 (PostReaderScreen dispose에서 dispose 처리)
+
+            // 볼륨만 원래 상태로 복원 (리더 음소거 상태에 따라)
+            final muteService = VideoMuteService();
+            final volume = muteService.isReaderMuted ? 0.0 : 1.0;
+            _controller.setVolume(volume);
+            debugPrint('[FullscreenVideo] 프리로드 컨트롤러 일시정지 및 볼륨 복원: $volume');
+          } catch (e) {
+            debugPrint('[FullscreenVideo] 프리로드 컨트롤러 정리 중 오류: $e');
+          }
+          // prop으로 받은 프리로드 컨트롤러는 PostReaderScreen에서 dispose 처리
+          debugPrint('[FullscreenVideo] 프리로드 컨트롤러 정리 완료 (공유 컨트롤러)');
+        } else {
+          // 직접 생성한 컨트롤러는 pause 후 dispose
           _controller.pause();
           _controller.dispose();
-          print('[FullscreenVideo] 새로 생성한 컨트롤러 dispose');
-        } else {
-          // 프리로드 컨트롤러는 아무것도 하지 않음
-          // (재생 유지, PostReaderScreen에서만 dispose)
-          print('[FullscreenVideo] 프리로드 컨트롤러 유지 (재생 계속)');
+          debugPrint('[FullscreenVideo] 직접 생성한 컨트롤러 dispose');
         }
       }
     } catch (e) {
-      print('비디오 플레이어 정리 중 오류: $e');
+      debugPrint('[FullscreenVideo] dispose 중 오류: $e');
     }
     super.dispose();
   }
@@ -277,16 +280,8 @@ class _FullscreenVideoPlayerState extends State<FullscreenVideoPlayer> {
                 final newMs = (maxMs * ratio).floor();
                 final newPosition = Duration(milliseconds: newMs);
 
+                // 🎯 드래그 중에는 UI만 업데이트하고 실제 seek는 하지 않음 (버벅임 방지)
                 _targetSeekPosition = newPosition;
-                // 첫 업데이트에서는 seek 생략 → 첫 끊김 완화
-                if (_isSeeking &&
-                    _position == Duration.zero &&
-                    _controller.value.position == Duration.zero) {
-                  // UI만 먼저 갱신하고 다음 업데이트부터 seek 수행
-                } else {
-                  _controller.seekTo(newPosition);
-                }
-
                 setState(() {
                   _position = newPosition;
                 });
@@ -294,20 +289,32 @@ class _FullscreenVideoPlayerState extends State<FullscreenVideoPlayer> {
               onHorizontalDragEnd: (details) async {
                 if (_targetSeekPosition != null) {
                   try {
-                    // 최종 위치로 정확하게 seek
+                    // 🎯 드래그가 끝난 후에만 실제 seek 수행 (버벅임 방지)
+                    // 일시정지 상태로 seek하여 더 부드럽게 처리
+                    final wasPlaying = _controller.value.isPlaying;
+                    if (wasPlaying) {
+                      await _controller.pause();
+                    }
+
                     await _controller.seekTo(_targetSeekPosition!);
+
+                    // seek 완료 후 재생 상태 복원
+                    if (wasPlaying || _wasPlayingBeforeSeek) {
+                      // seek 완료를 기다린 후 재생 (약간의 지연으로 버퍼링 시간 확보)
+                      await Future.delayed(const Duration(milliseconds: 100));
+                      await _controller.play();
+                    }
+
+                    setState(() {
+                      _position = _targetSeekPosition!;
+                    });
                   } catch (e) {
-                    print('Seek 오류: $e');
+                    debugPrint('[FullscreenVideo] Seek 오류: $e');
+                    // 에러 발생 시에도 재생 상태 복원
+                    if (_wasPlayingBeforeSeek) {
+                      _controller.play();
+                    }
                   }
-
-                  setState(() {
-                    _position = _targetSeekPosition!;
-                  });
-                }
-
-                // seek 완료 후 재생 재개
-                if (_wasPlayingBeforeSeek) {
-                  _controller.play();
                 }
 
                 _isSeeking = false;

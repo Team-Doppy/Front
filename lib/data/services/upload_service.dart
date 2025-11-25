@@ -1,14 +1,14 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:collection';
-import 'dart:convert';
 import 'package:doppy/data/services/base_api_service.dart';
 import 'package:doppy/data/services/auth_service.dart';
 import 'package:doppy/data/services/r2_upload_service.dart';
+import 'package:doppy/editor/utils/video_upload_utils.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
 import 'package:dio/dio.dart';
 import 'package:http_parser/http_parser.dart';
-import 'package:http/http.dart' as http;
 import 'package:image/image.dart' as img;
 
 enum UploadState { pending, uploading, success, failed, cancelled }
@@ -62,8 +62,11 @@ class UploadService with ChangeNotifier {
   final List<UploadTask> _tasks = [];
   final Queue<UploadTask> _queue = Queue<UploadTask>();
   int _inflight = 0;
-  int maxConcurrent = 3;
+  int maxConcurrent = 5; // 🎯 동시 업로드 수를 3에서 5로 증가
   bool _disposed = false;
+
+  /// 에디터 관련 압축 취소 토큰 (에디터 종료 시 취소용)
+  final Map<String, CancellationToken> _editorCompressionTokens = {};
 
   final AuthService _authService = AuthService();
   final Dio _dio = BaseApiService().dio;
@@ -168,7 +171,7 @@ class UploadService with ChangeNotifier {
 
   // 내부
   void _register(UploadTask task) {
-    print(
+    debugPrint(
       '[Upload] register id=${task.id} name=${task.fileName} kind=${task.kind} file=${task.file?.path} bytes=${task.bytes?.length}',
     );
     _tasks.add(task);
@@ -192,7 +195,7 @@ class UploadService with ChangeNotifier {
       file: file,
       refId: refId,
     );
-    print('[Upload] createTask only id=${task.id} name=${task.fileName}');
+    debugPrint('[Upload] createTask only id=${task.id} name=${task.fileName}');
     _tasks.add(task);
     notifyListeners();
     return task;
@@ -210,10 +213,12 @@ class UploadService with ChangeNotifier {
   }
 
   void _pump() {
-    print('[Upload] pump inflight=$_inflight queue=${_queue.length}');
+    debugPrint('[Upload] pump inflight=$_inflight queue=${_queue.length}');
+
+    // 순차 처리: 큐에서 하나씩 꺼내서 처리
     while (_inflight < maxConcurrent && _queue.isNotEmpty) {
       final task = _queue.removeFirst();
-      print('[Upload] dequeue id=${task.id}');
+      debugPrint('[Upload] dequeue id=${task.id}');
       _upload(task);
     }
   }
@@ -224,30 +229,29 @@ class UploadService with ChangeNotifier {
     task._setState(UploadState.uploading);
     try {
       // 업로드 시작 전 토큰 유효성 검사 및 갱신
-      print('[Upload] Validating token before upload id=${task.id}');
+      debugPrint('[Upload] Validating token before upload id=${task.id}');
       final isValid = await _authService.validateAndRefreshToken();
       if (!isValid) {
-        print('[Upload] Token expired or invalid, attempting refresh...');
+        debugPrint('[Upload] Token expired or invalid, attempting refresh...');
         final refreshed = await _refreshToken();
         if (!refreshed) {
-          print('[Upload] Token refresh failed, upload aborted');
+          debugPrint('[Upload] Token refresh failed, upload aborted');
           task.error = Exception('Token refresh failed');
           task._setState(UploadState.failed);
           return;
         }
-        print('[Upload] Token refreshed successfully');
+        debugPrint('[Upload] Token refreshed successfully');
       } else {
-        print('[Upload] Token is valid');
+        debugPrint('[Upload] Token is valid');
       }
 
-      final started = DateTime.now();
-      print('[Upload] start id=${task.id} attempt=${task.attempt}');
+      debugPrint('[Upload] start id=${task.id} attempt=${task.attempt}');
 
       // 🎯 프로필 이미지는 서버를 거치는 기존 방식 사용
       Map<String, dynamic> result;
       if (task.kind == UploadKind.profile) {
         // 프로필 이미지는 서버를 거치는 방식만 사용
-        print('[Upload] 프로필 이미지 업로드: 서버를 거치는 기존 방식 사용');
+        debugPrint('[Upload] 프로필 이미지 업로드: 서버를 거치는 기존 방식 사용');
         result = await _uploadProfileImage(task);
       } else {
         // 다른 종류는 R2 직접 업로드 사용
@@ -255,7 +259,7 @@ class UploadService with ChangeNotifier {
           result = await _uploadViaR2(task);
         } catch (e) {
           // R2 업로드 실패 시 기존 방식으로 폴백
-          print('[Upload] R2 업로드 실패, 기존 방식으로 폴백: $e');
+          debugPrint('[Upload] R2 업로드 실패, 기존 방식으로 폴백: $e');
           result =
               task.kind == UploadKind.video
                   ? await _uploadVideo(task)
@@ -264,51 +268,26 @@ class UploadService with ChangeNotifier {
       }
 
       task.url = result['accessUrl'] as String?;
-      task.imageId = result['imageId']?.toString();
       task._setProgress(1);
       task._setState(UploadState.success);
-      // 매핑 사용 제거됨
-      print(
-        '[Upload] success id=${task.id} url=${task.url} imageId=${task.imageId} durMs=${DateTime.now().difference(started).inMilliseconds}',
-      );
     } catch (e) {
       // 사용자가 취소한 경우: 재시도/실패로 처리하지 않고 즉시 취소로 마무리
       if (e is DioException && e.type == DioExceptionType.cancel) {
-        print('[Upload] cancelled by user/ref id=${task.id}');
+        debugPrint('[Upload] cancelled by user/ref id=${task.id}');
         task._setState(UploadState.cancelled);
         return;
       }
       if (task.cancelToken.isCancelled) {
-        print('[Upload] cancelToken marked cancelled id=${task.id}');
+        debugPrint('[Upload] cancelToken marked cancelled id=${task.id}');
         task._setState(UploadState.cancelled);
         return;
       }
       task.error = e;
-      print('[Upload] error id=${task.id} error=$e');
-
-      // 400/500 에러 감지: 즉시 중단 (재시도 안 함)
-      // 재시도 금지 정책으로 분기용 플래그는 더 이상 필요 없음
-      if (e is HttpException) {
-        final msg = e.message.toLowerCase();
-        // "upload failed <code>:" 패턴에서 즉시 실패로 간주할 코드들
-        if (msg.contains('400') ||
-            msg.contains('401') ||
-            msg.contains('403') ||
-            msg.contains('404') ||
-            msg.contains('413') || // Payload Too Large → 재시도 불필요
-            msg.contains('415') || // Unsupported Media Type
-            msg.contains('422') || // Unprocessable Content
-            msg.contains('429') || // Too Many Requests (즉시 중단)
-            msg.contains('500') ||
-            msg.contains('502') ||
-            msg.contains('503')) {
-          print('[Upload] 즉시 실패 코드 감지: $e');
-        }
-      }
+      debugPrint('[Upload] error id=${task.id} error=$e');
 
       // 재시도 금지: 어떤 오류든 즉시 실패 처리
       task._setState(UploadState.failed);
-      print('[Upload] failed (no-retry) id=${task.id}');
+      debugPrint('[Upload] failed (no-retry) id=${task.id}');
     } finally {
       _inflight--;
       if (!_disposed) {
@@ -318,7 +297,7 @@ class UploadService with ChangeNotifier {
     }
   }
 
-  /// 🎯 R2 직접 업로드 (모든 종류의 업로드)
+  /// 🎯 R2 직접 업로드 (단일 파일 - 프로필 등 개별 처리용)
   Future<Map<String, dynamic>> _uploadViaR2(UploadTask task) async {
     try {
       final r2Service = R2UploadService();
@@ -330,9 +309,11 @@ class UploadService with ChangeNotifier {
 
       // 진행률 콜백 설정
       task._setProgress(0.0);
-      task._setState(UploadState.uploading);
+      // task._setState(UploadState.uploading)는 _upload()에서 이미 설정되므로 중복 호출 제거
 
-      print('[Upload] R2 직접 업로드 시작: ${task.fileName} (kind: ${task.kind})');
+      debugPrint(
+        '[Upload] R2 직접 업로드 시작: ${task.fileName} (kind: ${task.kind})',
+      );
 
       // R2 직접 업로드 실행
       final result = await r2Service.uploadMediaFiles(
@@ -353,16 +334,12 @@ class UploadService with ChangeNotifier {
               ? result.imageUrls.first
               : result.videoUrls.first;
 
-      print('[Upload] R2 업로드 성공: $url');
+      debugPrint('[Upload] R2 업로드 성공: $url');
 
       // 응답 형식 맞추기 (기존 UploadService와 호환)
-      return {
-        'accessUrl': url,
-        'url': url,
-        'imageId': null, // R2 직접 업로드에서는 imageId가 없을 수 있음
-      };
+      return {'accessUrl': url, 'url': url};
     } catch (e) {
-      print('[Upload] R2 직접 업로드 실패: $e');
+      debugPrint('[Upload] R2 직접 업로드 실패: $e');
       rethrow;
     }
   }
@@ -379,7 +356,7 @@ class UploadService with ChangeNotifier {
       ),
     });
 
-    print(
+    debugPrint(
       '[Upload] POST /api/profile/image/upload size=${bytes.length} type=${mediaType.type}/${mediaType.subtype}',
     );
 
@@ -395,7 +372,7 @@ class UploadService with ChangeNotifier {
       );
 
       if (response.statusCode == 200) {
-        print('[Upload] 200 body=${response.data}');
+        debugPrint('[Upload] 200 body=${response.data}');
         final Map<String, dynamic> decoded = response.data;
         String? imageId = (decoded['imageId'] ?? decoded['id'])?.toString();
         String? accessUrl =
@@ -417,14 +394,16 @@ class UploadService with ChangeNotifier {
           try {
             accessUrl = await _getAccessUrlByImageId(imageId);
           } catch (e) {
-            print(
+            debugPrint(
               '[Upload] failed to fetch access url by imageId=$imageId: $e',
             );
           }
         }
         return {...decoded, 'imageId': imageId, 'accessUrl': accessUrl};
       } else {
-        print('[Upload] http ${response.statusCode} body=${response.data}');
+        debugPrint(
+          '[Upload] http ${response.statusCode} body=${response.data}',
+        );
         throw HttpException(
           'upload failed ${response.statusCode}: ${response.data}',
         );
@@ -432,7 +411,7 @@ class UploadService with ChangeNotifier {
     } catch (e) {
       if (e is DioException) {
         if (e.type == DioExceptionType.cancel) rethrow;
-        print(
+        debugPrint(
           '[Upload] DioException ${e.response?.statusCode} body=${e.response?.data}',
         );
         throw HttpException(
@@ -461,7 +440,7 @@ class UploadService with ChangeNotifier {
       ),
     });
 
-    print(
+    debugPrint(
       '[Upload] POST /api/images/upload size=${bytes.length} type=${mediaType.type}/${mediaType.subtype}',
     );
 
@@ -477,10 +456,12 @@ class UploadService with ChangeNotifier {
       );
 
       if (response.statusCode == 200) {
-        print('[Upload] 200 body=${response.data}');
+        debugPrint('[Upload] 200 body=${response.data}');
         return response.data as Map<String, dynamic>;
       } else {
-        print('[Upload] http ${response.statusCode} body=${response.data}');
+        debugPrint(
+          '[Upload] http ${response.statusCode} body=${response.data}',
+        );
         throw HttpException(
           'upload failed ${response.statusCode}: ${response.data}',
         );
@@ -488,7 +469,7 @@ class UploadService with ChangeNotifier {
     } catch (e) {
       if (e is DioException) {
         if (e.type == DioExceptionType.cancel) rethrow;
-        print(
+        debugPrint(
           '[Upload] DioException ${e.response?.statusCode} body=${e.response?.data}',
         );
         throw HttpException(
@@ -517,7 +498,7 @@ class UploadService with ChangeNotifier {
       ),
     });
 
-    print(
+    debugPrint(
       '[UploadVideo] POST /api/videos/upload size=${bytes.length} type=${mediaType.type}/${mediaType.subtype}',
     );
 
@@ -533,17 +514,19 @@ class UploadService with ChangeNotifier {
       );
 
       if (response.statusCode == 200) {
-        print('[UploadVideo] 200 body=${response.data}');
+        debugPrint('[UploadVideo] 200 body=${response.data}');
         final Map<String, dynamic> decoded = response.data;
         // 표준 필드 정규화
         final String? videoId =
             (decoded['videoId'] ?? decoded['id'])?.toString();
         final String? accessUrl =
             decoded['accessUrl']?.toString() ?? decoded['url']?.toString();
-        print('[UploadVideo] 정규화된 필드: videoId=$videoId, accessUrl=$accessUrl');
+        debugPrint(
+          '[UploadVideo] 정규화된 필드: videoId=$videoId, accessUrl=$accessUrl',
+        );
         return {...decoded, 'imageId': videoId, 'accessUrl': accessUrl};
       } else {
-        print(
+        debugPrint(
           '[UploadVideo] http ${response.statusCode} body=${response.data}',
         );
         throw HttpException(
@@ -556,7 +539,7 @@ class UploadService with ChangeNotifier {
       }
       if (e is DioException) {
         if (e.type == DioExceptionType.cancel) rethrow;
-        print(
+        debugPrint(
           '[UploadVideo] DioException ${e.response?.statusCode} body=${e.response?.data}',
         );
         throw HttpException(
@@ -639,7 +622,7 @@ class UploadService with ChangeNotifier {
 
       // 🎯 PNG 드로잉은 그대로 업로드 (투명도 유지)
       if (isPng && w <= maxSide && h <= maxSide) {
-        print('[Upload] PNG 드로잉 원본 유지: ${w}x$h');
+        debugPrint('[Upload] PNG 드로잉 원본 유지: ${w}x$h');
         return bytes; // 원본 그대로
       }
 
@@ -667,11 +650,6 @@ class UploadService with ChangeNotifier {
     }
   }
 
-  // 이미지 리사이즈/압축: 긴 변 1440px, JPEG 82 (사진 품질용)
-  // (중복 정의 제거됨)
-
-  // enqueueFilesInBatches: 현재 사용처 없음(단순화 차원에서 제거)
-
   /// 서버 다중 업로드 API를 활용해 파일을 배치 단위로 한 요청으로 업로드합니다.
   /// - 서버 응답이 입력 순서를 보존한다는 가정 하에 index 기반으로 매핑합니다.
   /// - 각 Task의 state/url을 한 번에 갱신합니다.
@@ -682,7 +660,7 @@ class UploadService with ChangeNotifier {
     int batchSize = 10,
     Duration interBatchDelay = const Duration(milliseconds: 500),
   }) async {
-    print('[UploadBatch] files=${files.length} batchSize=$batchSize');
+    debugPrint('[UploadBatch] files=${files.length} batchSize=$batchSize');
     final List<UploadTask> all =
         files
             .map(
@@ -700,7 +678,9 @@ class UploadService with ChangeNotifier {
     for (int i = 0; i < all.length; i += batchSize) {
       final end = (i + batchSize < all.length) ? i + batchSize : all.length;
       final chunk = all.sublist(i, end);
-      print('[UploadBatch] chunk ${i ~/ batchSize + 1} size=${chunk.length}');
+      debugPrint(
+        '[UploadBatch] chunk ${i ~/ batchSize + 1} size=${chunk.length}',
+      );
       for (final t in chunk) {
         t._setState(UploadState.uploading);
         t._setProgress(0.1);
@@ -711,43 +691,29 @@ class UploadService with ChangeNotifier {
           final t = chunk[k];
           if (k < results.length) {
             final r = results[k];
-            // 응답 정규화: imageId/accessUrl/url/data.* 대응 + 보조 조회
-            String? imageId = (r['imageId'] ?? r['id'])?.toString();
+            // 응답 정규화: accessUrl/url/data.* 대응
             String? accessUrl =
                 r['accessUrl']?.toString() ?? r['url']?.toString();
             if ((accessUrl == null || accessUrl.isEmpty) &&
                 r['data'] is Map<String, dynamic>) {
               final data = r['data'] as Map<String, dynamic>;
-              imageId ??= (data['imageId'] ?? data['id'])?.toString();
               accessUrl =
                   data['accessUrl']?.toString() ??
                   data['url']?.toString() ??
                   data['profileImageUrl']?.toString();
             }
-            if ((accessUrl == null || accessUrl.isEmpty) &&
-                imageId != null &&
-                imageId.isNotEmpty) {
-              try {
-                accessUrl = await _getAccessUrlByImageId(imageId);
-              } catch (e) {
-                print('[UploadBatch] accessUrl lookup failed: $e');
-              }
-            }
             t.url = accessUrl;
-            t.imageId = imageId;
             t._setProgress(1);
             t._setState(UploadState.success);
-            print(
-              '[UploadBatch] success id=${t.id} url=${t.url} imageId=${t.imageId}',
-            );
+            debugPrint('[UploadBatch] success id=${t.id} url=${t.url}');
           } else {
             t.error = StateError('응답 매핑 누락');
             t._setState(UploadState.failed);
-            print('[UploadBatch] map-miss id=${t.id}');
+            debugPrint('[UploadBatch] map-miss id=${t.id}');
           }
         }
       } catch (e) {
-        print('[UploadBatch] error $e');
+        debugPrint('[UploadBatch] error $e');
         final bool isCancelled =
             e is DioException && e.type == DioExceptionType.cancel;
         for (final t in chunk) {
@@ -789,7 +755,7 @@ class UploadService with ChangeNotifier {
       );
     }
 
-    print(
+    debugPrint(
       '[UploadBatch] POST /api/images/upload-multiple files=${tasks.length}',
     );
 
@@ -804,16 +770,18 @@ class UploadService with ChangeNotifier {
       );
 
       if (response.statusCode == 200) {
-        print('[UploadBatch] 200 body=${response.data}');
+        debugPrint('[UploadBatch] 200 body=${response.data}');
         return List<Map<String, dynamic>>.from(response.data as List);
       }
-      print('[UploadBatch] http ${response.statusCode} body=${response.data}');
+      debugPrint(
+        '[UploadBatch] http ${response.statusCode} body=${response.data}',
+      );
       throw HttpException(
         'batch upload failed ${response.statusCode}: ${response.data}',
       );
     } catch (e) {
       if (e is DioException) {
-        print(
+        debugPrint(
           '[UploadBatch] DioException ${e.response?.statusCode} body=${e.response?.data}',
         );
         throw HttpException(
@@ -851,24 +819,25 @@ class UploadService with ChangeNotifier {
     }
   }
 
-  /// 토큰 갱신
+  /// 토큰 갱신 (BaseApiService 사용 - 하지만 토큰 갱신 엔드포인트는 인증 불필요)
+  /// 🎯 참고: validateAndRefreshToken()이 이미 토큰 갱신을 시도하므로,
+  /// 이 메서드는 validateAndRefreshToken()이 실패했을 때만 호출됩니다.
   Future<bool> _refreshToken() async {
     final refreshToken = await _authService.getRefreshToken();
     if (refreshToken == null) {
-      print('❌ [UploadService] 리프레시 토큰이 없습니다');
+      debugPrint('❌ [UploadService] 리프레시 토큰이 없습니다');
       return false;
     }
 
     try {
-      final url = Uri.parse('https://api.doppy.app/api/auth/refresh');
-      final response = await http.post(
-        url,
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'refreshToken': refreshToken}),
+      // 🎯 BaseApiService의 dio를 사용 (토큰 갱신 엔드포인트는 인증 불필요하므로 인터셉터가 건너뜀)
+      final response = await _dio.post(
+        '/api/auth/refresh',
+        data: {'refreshToken': refreshToken},
       );
 
       if (response.statusCode == 200) {
-        final responseData = jsonDecode(utf8.decode(response.bodyBytes));
+        final responseData = response.data as Map<String, dynamic>;
         final newToken = responseData['token'];
         final newRefreshToken = responseData['refreshToken'];
 
@@ -876,16 +845,342 @@ class UploadService with ChangeNotifier {
         await _authService.saveToken(newToken);
         await _authService.saveRefreshToken(newRefreshToken);
 
-        print('✅ [UploadService] 토큰 갱신 성공');
+        debugPrint('✅ [UploadService] 토큰 갱신 성공');
         return true;
       } else {
-        print('❌ [UploadService] 토큰 갱신 실패: ${response.statusCode}');
-        print('❌ [UploadService] 응답 내용: ${response.body}');
+        debugPrint('❌ [UploadService] 토큰 갱신 실패: ${response.statusCode}');
+        debugPrint('❌ [UploadService] 응답 내용: ${response.data}');
         return false;
       }
     } catch (e) {
-      print('❌ [UploadService] 토큰 갱신 오류: $e');
+      debugPrint('❌ [UploadService] 토큰 갱신 오류: $e');
       return false;
     }
+  }
+
+  /// 🎯 에디터 이미지 업로드 (전체 플로우)
+  /// - 파일 선택부터 placeholder 생성, 업로드, 노드 교체까지 처리
+  Future<void> uploadEditorImages({
+    required List<File> files,
+    required String Function(String localPath) onCreatePlaceholder,
+    required Future<void> Function(String placeholderId, String url)
+    onReplacePlaceholder,
+    required void Function(String placeholderId) onDeletePlaceholder,
+    required bool Function() isMounted,
+    required BuildContext? context,
+    required Future<void> Function(String title, String message)
+    showErrorDialog,
+  }) async {
+    if (files.isEmpty) return;
+
+    debugPrint('[UploadService] 📸 에디터 이미지 업로드 시작: ${files.length}개');
+
+    int completed = 0;
+    int failedCount = 0;
+    bool summaryShown = false;
+    final Set<String> handled = <String>{};
+
+    for (final file in files) {
+      // 1. Placeholder 생성
+      final placeholderId = onCreatePlaceholder(file.path);
+
+      // 2. 업로드 태스크 생성
+      final task = enqueueFile(
+        file,
+        kind: UploadKind.editorImage,
+        refId: placeholderId,
+      );
+
+      // 3. 업로드 완료 처리
+      Future<void> handleTask() async {
+        if (handled.contains(task.id)) return;
+        if (task.state != UploadState.success &&
+            task.state != UploadState.failed &&
+            task.state != UploadState.cancelled) {
+          return;
+        }
+
+        handled.add(task.id);
+
+        if (task.state == UploadState.success && (task.url ?? '').isNotEmpty) {
+          debugPrint(
+            '[UploadService] ✅ 이미지 업로드 완료: placeholderId=$placeholderId, url=${task.url}',
+          );
+          await onReplacePlaceholder(placeholderId, task.url!);
+          completed++;
+        } else if (task.state == UploadState.failed ||
+            task.state == UploadState.cancelled) {
+          debugPrint(
+            '[UploadService] ❌ 이미지 업로드 실패: placeholderId=$placeholderId',
+          );
+          onDeletePlaceholder(placeholderId);
+          failedCount++;
+          completed++;
+        }
+
+        // 실패 요약 다이얼로그
+        if (completed == files.length &&
+            failedCount > 0 &&
+            !summaryShown &&
+            isMounted()) {
+          summaryShown = true;
+          await showErrorDialog(
+            '업로드 실패',
+            '전체 중 ${failedCount}개의 업로드가 실패했습니다.\n네트워크 상태를 확인해주세요.',
+          );
+        }
+      }
+
+      task.addListener(handleTask);
+      Future.microtask(handleTask);
+    }
+  }
+
+  /// 🎯 에디터 영상 업로드 (전체 플로우)
+  /// - 파일 선택부터 placeholder 생성, 썸네일 생성, 압축, 업로드, 노드 교체까지 처리
+  /// - Placeholder는 즉시 생성하고, 압축은 비동기로 처리하여 UI 블로킹 방지
+  Future<void> uploadEditorVideo({
+    required File file,
+    required String Function(
+      String localPath,
+      String fileName, {
+      String? thumbnailPath,
+    })
+    onCreatePlaceholder,
+    required void Function(String placeholderId, String thumbnailPath)
+    onUpdateThumbnail,
+    required Future<void> Function(
+      String placeholderId,
+      String url, {
+      String? fallbackLocalPath,
+    })
+    onReplacePlaceholder,
+    required void Function(String placeholderId) onDeletePlaceholder,
+    required bool Function() isMounted,
+    required BuildContext? context,
+    required Future<void> Function(String title, String message)
+    showErrorDialog,
+    String? existingPlaceholderId, // 🎯 이미 생성된 플레이스홀더 ID (선택적)
+    String? editorId, // 🎯 에디터 ID (압축 취소용)
+  }) async {
+    // 🎯 즉시 로그 출력 (메서드 진입 시점 확인)
+    debugPrint('[UploadService] 🎬 에디터 영상 업로드 시작: ${file.path}');
+
+    try {
+      // 1. 확장자 검증
+      if (!_validateVideoExtension(file.path)) {
+        if (isMounted() && context != null) {
+          await showErrorDialog(
+            '지원하지 않는 형식',
+            '영상 형식이 지원되지 않습니다. mp4/mov/m4v만 업로드 가능합니다.',
+          );
+        }
+        return;
+      }
+
+      // 2. Placeholder 생성 (이미 생성된 경우 재사용)
+      final originalFileName = file.path.split('/').last;
+      final placeholderId =
+          existingPlaceholderId ??
+          onCreatePlaceholder(
+            file.path,
+            originalFileName,
+            thumbnailPath: '', // 썸네일 없이 먼저 생성
+          );
+      debugPrint(
+        '[UploadService] ✅ Placeholder ${existingPlaceholderId != null ? "재사용" : "생성"}: placeholderId=$placeholderId',
+      );
+
+      // 🎯 UI 업데이트를 위해 즉시 반환 (placeholder가 화면에 표시되도록)
+      // 썸네일 생성, 압축, 업로드는 모두 백그라운드에서 비동기로 처리
+      // 즉시 실행 시작 (await하지 않음)
+      () async {
+        // 3. 썸네일 생성 (비동기, 완료되면 플레이스홀더 업데이트)
+        _generateThumbnailAsync(
+          file.path,
+          placeholderId,
+          onUpdateThumbnail,
+          isMounted,
+        );
+
+        // 4. 비디오 압축 및 업로드 (비동기로 처리하여 UI 블로킹 방지)
+        await _compressAndUploadVideo(
+          file: file,
+          placeholderId: placeholderId,
+          onDeletePlaceholder: onDeletePlaceholder,
+          onReplacePlaceholder: onReplacePlaceholder,
+          isMounted: isMounted,
+          context: context,
+          showErrorDialog: showErrorDialog,
+          editorId: editorId,
+        );
+      }();
+
+      // 메서드 즉시 반환 (placeholder가 UI에 즉시 표시되도록)
+      return;
+    } catch (e) {
+      debugPrint('[UploadService] ❌ 영상 업로드 오류: $e');
+    }
+  }
+
+  /// 비디오 압축 및 업로드 (비동기 처리)
+  Future<void> _compressAndUploadVideo({
+    required File file,
+    required String placeholderId,
+    required void Function(String placeholderId) onDeletePlaceholder,
+    required Future<void> Function(
+      String placeholderId,
+      String url, {
+      String? fallbackLocalPath,
+    })
+    onReplacePlaceholder,
+    required bool Function() isMounted,
+    required BuildContext? context,
+    required Future<void> Function(String title, String message)
+    showErrorDialog,
+    String? editorId, // 🎯 에디터 ID (압축 취소용)
+  }) async {
+    try {
+      // 비디오 압축 (시간이 오래 걸릴 수 있음)
+      final mp4File = await _compressVideo(file.path, editorId: editorId);
+
+      // 취소된 경우
+      if (mp4File == null && editorId != null) {
+        final token = _editorCompressionTokens[editorId];
+        if (token != null && token.isCancelled) {
+          debugPrint('[UploadService] 압축이 취소되어 업로드 중단');
+          onDeletePlaceholder(placeholderId);
+          return;
+        }
+      }
+      if (mp4File == null) {
+        onDeletePlaceholder(placeholderId);
+        if (isMounted() && context != null) {
+          await showErrorDialog('업로드 불가', '파일 용량이 너무 큽니다.');
+        }
+        return;
+      }
+
+      final mp4FileName = mp4File.path.split('/').last;
+      debugPrint('[UploadService] MP4 변환 완료: ${mp4File.path}');
+
+      // 업로드 태스크 생성 및 시작
+      final task = createTaskForFile(
+        mp4File,
+        kind: UploadKind.video,
+        overrideName: mp4FileName,
+        refId: placeholderId,
+      );
+
+      // 업로드 완료 처리
+      bool videoHandled = false;
+      late VoidCallback listener;
+
+      Future<void> handleOnce() async {
+        if (videoHandled) return;
+
+        if (task.state == UploadState.failed) {
+          videoHandled = true;
+          onDeletePlaceholder(placeholderId);
+          if (isMounted() && context != null) {
+            await _showVideoUploadFailedDialog(context, task.error);
+          }
+          try {
+            task.removeListener(listener);
+          } catch (_) {}
+        } else if (task.state == UploadState.success && task.url != null) {
+          videoHandled = true;
+          await onReplacePlaceholder(
+            placeholderId,
+            task.url!,
+            fallbackLocalPath: file.path,
+          );
+          try {
+            task.removeListener(listener);
+          } catch (_) {}
+        }
+      }
+
+      listener = handleOnce;
+      task.addListener(listener);
+      startTask(task);
+
+      // 즉시 확인 + 지연 확인
+      await Future.microtask(handleOnce);
+      Future.delayed(const Duration(milliseconds: 140), handleOnce);
+      Future.delayed(const Duration(seconds: 2), handleOnce);
+    } catch (e) {
+      debugPrint('[UploadService] ❌ 비디오 압축/업로드 오류: $e');
+      // 🎯 에러 발생 시 즉시 플레이스홀더 삭제 및 에러 다이얼로그 표시
+      onDeletePlaceholder(placeholderId);
+      if (isMounted() && context != null) {
+        await _showVideoUploadFailedDialog(context, e);
+      }
+    }
+  }
+
+  // === Private Helper Methods ===
+
+  bool _validateVideoExtension(String filePath) {
+    final String ext = filePath.split('.').last.toLowerCase();
+    return const {'mp4', 'mov', 'm4v'}.contains(ext);
+  }
+
+  void _generateThumbnailAsync(
+    String videoPath,
+    String placeholderId,
+    void Function(String placeholderId, String thumbnailPath) onUpdateThumbnail,
+    bool Function() isMounted,
+  ) {
+    VideoUploadUtils.generateThumbnail(videoPath)
+        .then((thumbnail) {
+          if (thumbnail != null && isMounted()) {
+            onUpdateThumbnail(placeholderId, thumbnail.path);
+            debugPrint(
+              '[UploadService] 썸네일 생성 완료: placeholderId=$placeholderId',
+            );
+          }
+        })
+        .catchError((e) {
+          debugPrint('[UploadService] 썸네일 생성 실패 (계속 진행): $e');
+        });
+  }
+
+  Future<File?> _compressVideo(String videoPath, {String? editorId}) async {
+    // 에디터 ID가 있으면 취소 토큰 생성 및 추적
+    CancellationToken? token;
+    if (editorId != null) {
+      token = CancellationToken();
+      _editorCompressionTokens[editorId] = token;
+    }
+
+    try {
+      return await VideoUploadUtils.compressVideo(
+        videoPath,
+        cancellationToken: token,
+      );
+    } finally {
+      // 완료 후 토큰 제거
+      if (editorId != null) {
+        _editorCompressionTokens.remove(editorId);
+      }
+    }
+  }
+
+  /// 에디터 종료 시 해당 에디터의 압축 취소
+  void cancelEditorCompressions(String editorId) {
+    final token = _editorCompressionTokens[editorId];
+    if (token != null) {
+      debugPrint('[UploadService] 에디터 압축 취소: editorId=$editorId');
+      token.cancel();
+      _editorCompressionTokens.remove(editorId);
+    }
+  }
+
+  Future<void> _showVideoUploadFailedDialog(
+    BuildContext context,
+    Object? error,
+  ) async {
+    await VideoUploadUtils.showUploadFailedDialog(context, error);
   }
 }

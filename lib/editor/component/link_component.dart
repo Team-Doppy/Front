@@ -1,5 +1,6 @@
 import 'dart:ui';
 
+import 'package:doppy/editor/component/clip_component.dart';
 import 'package:flutter/material.dart';
 import 'package:super_editor/super_editor.dart';
 import 'package:doppy/editor/service/drag_service.dart';
@@ -690,7 +691,8 @@ class _LinkComponentState extends State<_LinkComponent>
       return node is LinkNode ||
           (node is ParagraphNode && node.metadata['mention'] == true) ||
           node is ImageNode ||
-          node is ImageRowNode;
+          node is ImageRowNode ||
+          node is ClipNode;
     }
 
     // 텍스트 노드 타입 체크

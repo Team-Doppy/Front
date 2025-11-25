@@ -74,7 +74,6 @@ class _PostExportScreenState extends State<PostExportScreen>
 
   bool _isUploading = false;
   bool _isUploadingThumb = false;
-  String? _thumbnailImageId;
   File? _localThumbnailFile; // 업로드 중 로컬 파일 미리보기용
   File? _localVideoFile; // 영상 선택 시 원본 비디오 파일
   VideoPlayerController? _videoController; // 영상 재생 컨트롤러
@@ -92,9 +91,9 @@ class _PostExportScreenState extends State<PostExportScreen>
   @override
   void initState() {
     super.initState();
-    print('[PostExport] ═══════════════════════════════════════');
-    print('[PostExport] initState 호출됨 - sessionKey: $_nsKey');
-    print('[PostExport] ═══════════════════════════════════════');
+    debugPrint('[PostExport] ═══════════════════════════════════════');
+    debugPrint('[PostExport] initState 호출됨 - sessionKey: $_nsKey');
+    debugPrint('[PostExport] ═══════════════════════════════════════');
     _hydrateFromExported(jsonDecode(widget.exported));
     _intro.forward();
     _titleFocusNode.addListener(_onEditFocusChange);
@@ -127,7 +126,7 @@ class _PostExportScreenState extends State<PostExportScreen>
         );
       }
     } catch (e) {
-      print('[PostExport] dispose 에러: $e');
+      debugPrint('[PostExport] dispose 에러: $e');
     }
     super.dispose();
   }
@@ -163,13 +162,9 @@ class _PostExportScreenState extends State<PostExportScreen>
 
     // 🎯 썸네일: exported에서 가져오기 (임시저장 사용 안 함)
     final exportedThumbnailUrl = exported['thumbnailImageUrl'] as String? ?? '';
-    final exportedThumbnailId = exported['thumbnailImageId']?.toString();
 
     _exportedThumbnailImageUrl = exportedThumbnailUrl;
-    _thumbnailImageId = exportedThumbnailId;
-    print(
-      '[PostExport] 썸네일 초기화: $_exportedThumbnailImageUrl (ID: $_thumbnailImageId)',
-    );
+    debugPrint('[PostExport] 썸네일 초기화: $_exportedThumbnailImageUrl');
 
     // 영상 파일만 복원 (persist 사용)
     final svc = NodeComponentService();
@@ -193,14 +188,14 @@ class _PostExportScreenState extends State<PostExportScreen>
               }
             })
             .catchError((error) {
-              print('[PostExport] 비디오 컨트롤러 초기화 실패: $error');
+              debugPrint('[PostExport] 비디오 컨트롤러 초기화 실패: $error');
               if (mounted) {
                 _videoController?.dispose();
                 _videoController = null;
                 setState(() {});
               }
             });
-        print('[PostExport] 영상 파일 복원: $persistedVideoPath');
+        debugPrint('[PostExport] 영상 파일 복원: $persistedVideoPath');
 
         // 영상 로컬 썸네일도 복원
         if (persistedVideoThumbnailPath != null &&
@@ -208,11 +203,11 @@ class _PostExportScreenState extends State<PostExportScreen>
           final thumbnailFile = File(persistedVideoThumbnailPath);
           if (thumbnailFile.existsSync()) {
             _localThumbnailFile = thumbnailFile;
-            print('[PostExport] 영상 썸네일 복원: $persistedVideoThumbnailPath');
+            debugPrint('[PostExport] 영상 썸네일 복원: $persistedVideoThumbnailPath');
           }
         }
       } else {
-        print('[PostExport] 영상 파일이 존재하지 않음: $persistedVideoPath');
+        debugPrint('[PostExport] 영상 파일이 존재하지 않음: $persistedVideoPath');
         svc.clearTempVideoFile(_nsKey);
       }
     }
@@ -225,7 +220,7 @@ class _PostExportScreenState extends State<PostExportScreen>
       maxLength: 100,
     );
     _excerptController.text = _excerpt;
-    print('[PostExport] ℹ️ 자동 추출 summary 사용: $_excerpt');
+    debugPrint('[PostExport] ℹ️ 자동 추출 summary 사용: $_excerpt');
 
     // 공개 범위 초기값 동기화: accessLevel/sharedGroupIds 반영
     try {
@@ -275,7 +270,6 @@ class _PostExportScreenState extends State<PostExportScreen>
 
     Navigator.of(context).pop({
       'thumbnailImageUrl': _exportedThumbnailImageUrl,
-      'thumbnailImageId': _thumbnailImageId,
       'summary': _excerptController.text.trim(),
     });
   }
@@ -417,10 +411,7 @@ class _PostExportScreenState extends State<PostExportScreen>
       if (!mounted) return;
 
       // 🎯 포스트 발행 서비스를 통한 서버 업로드
-      final uploadResult = await publishService.publishPost(
-        payload: payload,
-        thumbnailImageId: _thumbnailImageId?.toString(),
-      );
+      final uploadResult = await publishService.publishPost(payload: payload);
 
       debugPrint('===== UPLOAD RESULT =====');
       debugPrint('Upload successful: ${uploadResult}');
@@ -437,9 +428,9 @@ class _PostExportScreenState extends State<PostExportScreen>
       try {
         final feedProvider = context.read<MyProfileFeedProvider>();
         feedProvider.refresh().catchError((e) {
-          print('[PostExport] 백그라운드 재로드 실패: $e');
+          debugPrint('[PostExport] 백그라운드 재로드 실패: $e');
         });
-        print('[PostExport] 백그라운드 재로드 시작');
+        debugPrint('[PostExport] 백그라운드 재로드 시작');
 
         // 🎯 포스트 생성 후 관련 그룹의 postCount 및 포스트 캐시 동기화
         final groupProvider = context.read<GroupProvider>();
@@ -457,7 +448,7 @@ class _PostExportScreenState extends State<PostExportScreen>
             _selectedAudienceGroupIds.toList(),
           );
 
-          print(
+          debugPrint(
             '[PostExport] 관련 그룹 postCount 및 포스트 캐시 동기화 완료: ${_selectedAudienceGroupIds.length}개 그룹',
           );
         }
@@ -477,11 +468,11 @@ class _PostExportScreenState extends State<PostExportScreen>
           // 🎯 allFriends 그룹 포스트 캐시 무효화 (동기화)
           ManageGroupScreen.invalidateGroupPostsCache(-1);
 
-          print('[PostExport] allFriends 그룹 postCount 및 포스트 캐시 동기화 완료');
+          debugPrint('[PostExport] allFriends 그룹 postCount 및 포스트 캐시 동기화 완료');
         }
         // PUBLIC/PRIVATE는 그룹 postCount에 영향 없음
       } catch (e) {
-        print('[PostExport] 백그라운드 재로드 실패: $e');
+        debugPrint('[PostExport] 백그라운드 재로드 실패: $e');
       }
 
       // 🎯 등록 완료 애니메이션과 함께 현재 화면 닫기
@@ -680,11 +671,6 @@ class _PostExportScreenState extends State<PostExportScreen>
                       onThumbnailUrlChanged: (url) {
                         setState(() {
                           _exportedThumbnailImageUrl = url;
-                        });
-                      },
-                      onThumbnailIdChanged: (id) {
-                        setState(() {
-                          _thumbnailImageId = id;
                         });
                       },
                       onLocalThumbnailChanged: (file) {

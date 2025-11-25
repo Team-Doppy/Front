@@ -202,10 +202,10 @@ class _LoginScreenState extends State<LoginScreen>
           ),
           // "o" - 회전하는 스피너 (Painter 사용)
           Padding(
-            padding: const EdgeInsets.only(top: 8),
+            padding: const EdgeInsets.only(top: 10),
             child: SizedBox(
-              width: 48,
-              height: 48,
+              width: 42,
+              height: 42,
               child: CustomPaint(
                 painter: _DoppyOSpinnerPainter(
                   progress: _typingController.value,

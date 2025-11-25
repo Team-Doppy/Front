@@ -40,7 +40,7 @@ class LikeService extends ChangeNotifier {
   /// 포스트 좋아요 토글 (낙관적 업데이트)
   Future<void> togglePostLike(String postId) async {
     if (postId.isEmpty) {
-      print('[LikeService] 잘못된 postId: $postId');
+      debugPrint('[LikeService] 잘못된 postId: $postId');
       throw ArgumentError('postId가 비어있습니다');
     }
 
@@ -48,7 +48,7 @@ class LikeService extends ChangeNotifier {
     final isCurrentlyLiked = _postLikeStatus[postId] ?? false;
     final currentCount = _postLikeCounts[postId] ?? 0;
 
-    print('[LikeService] 좋아요 ${isCurrentlyLiked ? '취소' : '추가'}: $postId');
+    debugPrint('[LikeService] 좋아요 ${isCurrentlyLiked ? '취소' : '추가'}: $postId');
 
     // 2️⃣ 낙관적 업데이트: 즉시 로컬 상태 토글 (아주 빠르게)
     _postLikeStatus[postId] = !isCurrentlyLiked;
@@ -58,7 +58,9 @@ class LikeService extends ChangeNotifier {
             : currentCount + 1;
 
     notifyListeners(); // UI 즉시 업데이트
-    print('[LikeService] 낙관적 업데이트 완료: $postId = ${_postLikeStatus[postId]}');
+    debugPrint(
+      '[LikeService] 낙관적 업데이트 완료: $postId = ${_postLikeStatus[postId]}',
+    );
 
     // 3️⃣ 서버에 요청 전송 (백그라운드)
     try {
@@ -73,14 +75,16 @@ class LikeService extends ChangeNotifier {
                 options: Options(receiveTimeout: const Duration(seconds: 5)),
               );
 
-      print('[LikeService] 서버 응답: ${response.statusCode} - ${response.data}');
+      debugPrint(
+        '[LikeService] 서버 응답: ${response.statusCode} - ${response.data}',
+      );
 
       // 성공하면 그대로 유지
       if (response.statusCode == 200 || response.statusCode == 204) {
-        print('[LikeService] 서버 동기화 성공: $postId');
+        debugPrint('[LikeService] 서버 동기화 성공: $postId');
       }
     } catch (e) {
-      print('[LikeService] 서버 동기화 실패 - 롤백: $e');
+      debugPrint('[LikeService] 서버 동기화 실패 - 롤백: $e');
 
       // 4️⃣ 실패 시 롤백: 원래 상태로 복원
       _postLikeStatus[postId] = isCurrentlyLiked;
@@ -92,18 +96,18 @@ class LikeService extends ChangeNotifier {
         final responseData = e.response?.data;
 
         if (statusCode == 400) {
-          print('[LikeService] 잘못된 요청: $statusCode - $responseData');
+          debugPrint('[LikeService] 잘못된 요청: $statusCode - $responseData');
           // 400 에러 시 서버 상태로 강제 동기화
           await _forceSyncWithServer(postId);
           throw HttpException('좋아요 상태가 서버와 다릅니다. 다시 시도해주세요.');
         } else if (statusCode == 401) {
-          print('[LikeService] 인증 실패: $statusCode');
+          debugPrint('[LikeService] 인증 실패: $statusCode');
           throw HttpException('인증이 필요합니다. 다시 로그인해주세요.');
         } else if (statusCode == 404) {
-          print('[LikeService] 포스트를 찾을 수 없음: $statusCode');
+          debugPrint('[LikeService] 포스트를 찾을 수 없음: $statusCode');
           throw HttpException('포스트를 찾을 수 없습니다.');
         } else {
-          print('[LikeService] 좋아요 토글 실패: $statusCode - $responseData');
+          debugPrint('[LikeService] 좋아요 토글 실패: $statusCode - $responseData');
           throw HttpException('좋아요 처리 중 오류가 발생했습니다: $statusCode');
         }
       }
@@ -137,10 +141,10 @@ class LikeService extends ChangeNotifier {
         }
 
         notifyListeners();
-        print('[LikeService] 서버 상태로 강제 동기화 완료: $postId = $serverIsLiked');
+        debugPrint('[LikeService] 서버 상태로 강제 동기화 완료: $postId = $serverIsLiked');
       }
     } catch (e) {
-      print('[LikeService] 강제 동기화 실패: $e');
+      debugPrint('[LikeService] 강제 동기화 실패: $e');
     }
   }
 

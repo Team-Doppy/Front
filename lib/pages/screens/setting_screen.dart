@@ -55,7 +55,13 @@ class _SettingScreenState extends State<SettingScreen> {
 
         if (newValue) {
           // 🎯 알림을 켠 경우: FCM 토큰 검사 후 필요시 재발급하고 서버에 전송
-          await authService.syncFcmTokenAndSettings();
+          final permissionGranted = await authService.syncFcmTokenAndSettings();
+
+          // 🎯 알림 권한이 허용되었으면 로컬 설정도 on으로 동기화
+          if (permissionGranted == true && mounted) {
+            userProvider.updateNotificationEnabled(true);
+            debugPrint('[SettingScreen] 알림 권한 허용으로 로컬 설정 on으로 동기화 완료');
+          }
 
           // syncFcmTokenAndSettings 안에서 권한 거부 상태면
           // 서버 플래그가 다시 OFF로 동기화되므로, UI도 맞춰줌
@@ -83,13 +89,13 @@ class _SettingScreenState extends State<SettingScreen> {
         } else {
           // 🎯 알림을 끈 경우: 서버 설정만 OFF로 변경됨 (이미 toggleNotificationEnabled()에서 처리됨)
           // 추가로 할 일 없음 (토큰은 서버에 남아있어도 괜찮음, 서버 설정이 OFF이므로 푸시 발송 안 됨)
-          print('[SettingScreen] 알림 설정 OFF로 변경 완료');
+          debugPrint('[SettingScreen] 알림 설정 OFF로 변경 완료');
         }
       } catch (e) {
-        print('[SettingScreen] FCM 동기화 실패 (알림 설정 변경): $e');
+        debugPrint('[SettingScreen] FCM 동기화 실패 (알림 설정 변경): $e');
       }
     } catch (e) {
-      print('[SettingScreen] 알림 토글 실패: $e');
+      debugPrint('[SettingScreen] 알림 토글 실패: $e');
       // 롤백 (UserProvider 업데이트)
       if (mounted) {
         userProvider.updateNotificationEnabled(oldValue);
@@ -110,7 +116,7 @@ class _SettingScreenState extends State<SettingScreen> {
       // 서버 응답으로 최종 확인 (UserProvider 업데이트)
       userProvider.updateMarketingEnabled(newValue);
     } catch (e) {
-      print('[SettingScreen] 마케팅 토글 실패: $e');
+      debugPrint('[SettingScreen] 마케팅 토글 실패: $e');
       // 롤백 (UserProvider 업데이트)
       if (mounted) {
         userProvider.updateMarketingEnabled(oldValue);
@@ -210,7 +216,7 @@ class _SettingScreenState extends State<SettingScreen> {
                     trailing: Text(
                       notificationEnabled ? 'ON' : 'OFF',
                       style: TextStyle(
-                        fontSize: 16,
+                        fontSize: 15,
                         color: AppColors.primary,
                         fontWeight: FontWeight.w500,
                       ),
@@ -229,7 +235,7 @@ class _SettingScreenState extends State<SettingScreen> {
                     trailing: Text(
                       marketingEnabled ? 'ON' : 'OFF',
                       style: TextStyle(
-                        fontSize: 16,
+                        fontSize: 15,
                         color: AppColors.primary,
                         fontWeight: FontWeight.w500,
                       ),
@@ -246,7 +252,7 @@ class _SettingScreenState extends State<SettingScreen> {
                       ? context.tr('dark')
                       : context.tr('light'),
                   style: TextStyle(
-                    fontSize: 16,
+                    fontSize: 15,
                     color: AppColors.primary,
                     fontWeight: FontWeight.w500,
                   ),
@@ -261,7 +267,7 @@ class _SettingScreenState extends State<SettingScreen> {
                 trailing: Text(
                   context.watch<LocaleProvider>().isKorean ? '한국어' : 'English',
                   style: TextStyle(
-                    fontSize: 16,
+                    fontSize: 15,
                     color: AppColors.primary,
                     fontWeight: FontWeight.w500,
                   ),
@@ -277,7 +283,7 @@ class _SettingScreenState extends State<SettingScreen> {
                         newRegion,
                       );
                     } catch (e) {
-                      print('[SettingScreen] Region 업데이트 에러 무시: $e');
+                      debugPrint('[SettingScreen] Region 업데이트 에러 무시: $e');
                     }
                   }
                 },

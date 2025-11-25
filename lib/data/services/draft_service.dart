@@ -6,6 +6,7 @@ import 'package:doppy/editor/service/post_reader_service.dart';
 import 'package:doppy/editor/publish/post_exporter.dart';
 import 'package:doppy/utils/time_utils.dart';
 import 'package:super_editor/super_editor.dart';
+import 'package:flutter/material.dart';
 
 /// 임시저장 데이터 모델
 class DraftData {
@@ -151,10 +152,10 @@ class DraftService {
       // 현재 임시저장으로 설정
       await prefs.setString(_currentDraftKey, draftId);
 
-      print('[DraftService] Draft saved: $draftId');
+      debugPrint('[DraftService] Draft saved: $draftId');
       return draftId;
     } catch (e) {
-      print('[DraftService] Error saving draft: $e');
+      debugPrint('[DraftService] Error saving draft: $e');
       throw Exception('임시저장에 실패했습니다');
     }
   }
@@ -170,7 +171,7 @@ class DraftService {
       final List<dynamic> draftsList = json.decode(draftsJson);
       return draftsList.map((json) => DraftData.fromJson(json)).toList();
     } catch (e) {
-      print('[DraftService] Error getting drafts: $e');
+      debugPrint('[DraftService] Error getting drafts: $e');
       return [];
     }
   }
@@ -181,7 +182,7 @@ class DraftService {
       final drafts = await getAllDrafts();
       return drafts.firstWhere((draft) => draft.id == draftId);
     } catch (e) {
-      print('[DraftService] Error getting draft: $e');
+      debugPrint('[DraftService] Error getting draft: $e');
       return null;
     }
   }
@@ -216,7 +217,7 @@ class DraftService {
 
       return true;
     } catch (e) {
-      print('[DraftService] Error loading draft: $e');
+      debugPrint('[DraftService] Error loading draft: $e');
       return false;
     }
   }
@@ -253,7 +254,7 @@ class DraftService {
       // 선택 설정 제거 (포커스 요청 방지)
       // 사용자가 필요시 직접 탭하여 선택을 설정할 수 있음
     } catch (e) {
-      print('[DraftService] Error replacing document: $e');
+      debugPrint('[DraftService] Error replacing document: $e');
       // 실패 시 기본 문서로 복구
       _createDefaultDocument(editorService);
     }
@@ -291,7 +292,7 @@ class DraftService {
         ),
       );
     } catch (e) {
-      print('[DraftService] Error creating default document: $e');
+      debugPrint('[DraftService] Error creating default document: $e');
     }
   }
 
@@ -314,10 +315,10 @@ class DraftService {
         await prefs.remove(_currentDraftKey);
       }
 
-      print('[DraftService] Draft deleted: $draftId');
+      debugPrint('[DraftService] Draft deleted: $draftId');
       return true;
     } catch (e) {
-      print('[DraftService] Error deleting draft: $e');
+      debugPrint('[DraftService] Error deleting draft: $e');
       return false;
     }
   }
@@ -329,10 +330,10 @@ class DraftService {
       await prefs.remove(_draftsKey);
       await prefs.remove(_currentDraftKey);
 
-      print('[DraftService] All drafts deleted');
+      debugPrint('[DraftService] All drafts deleted');
       return true;
     } catch (e) {
-      print('[DraftService] Error deleting all drafts: $e');
+      debugPrint('[DraftService] Error deleting all drafts: $e');
       return false;
     }
   }
@@ -343,7 +344,7 @@ class DraftService {
       final prefs = await SharedPreferences.getInstance();
       return prefs.getString(_currentDraftKey);
     } catch (e) {
-      print('[DraftService] Error getting current draft ID: $e');
+      debugPrint('[DraftService] Error getting current draft ID: $e');
       return null;
     }
   }
@@ -387,7 +388,7 @@ class DraftService {
 
       return groupedDrafts;
     } catch (e) {
-      print('[DraftService] Error grouping drafts by title: $e');
+      debugPrint('[DraftService] Error grouping drafts by title: $e');
       return {};
     }
   }

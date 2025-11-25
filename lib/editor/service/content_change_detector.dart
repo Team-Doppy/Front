@@ -1,6 +1,7 @@
 import 'package:doppy/editor/service/editor_service.dart';
 import 'package:doppy/editor/service/sticker_service.dart';
 import 'package:doppy/editor/publish/post_exporter.dart';
+import 'package:flutter/material.dart';
 
 /// 포스트 내용 변경 감지 서비스
 ///
@@ -30,7 +31,7 @@ class ContentChangeDetector {
     required StickerService stickerService,
   }) {
     try {
-      print('[ContentChangeDetector] 변경사항 검사 시작');
+      debugPrint('[ContentChangeDetector] 변경사항 검사 시작');
 
       // 1. 현재 에디터 상태를 export
       final currentExported = PostExporter.exportToMap(
@@ -40,20 +41,20 @@ class ContentChangeDetector {
 
       // 2. 문서 구조 비교 (공개범위, groupIds는 무시)
       if (_hasDocumentStructureChanged(originalExported, currentExported)) {
-        print('[ContentChangeDetector] ✓ 문서 구조 변경 감지');
+        debugPrint('[ContentChangeDetector] ✓ 문서 구조 변경 감지');
         return true;
       }
 
       // 3. 스티커 비교
       if (_hasStickersChanged(originalExported, currentExported)) {
-        print('[ContentChangeDetector] ✓ 스티커 변경 감지');
+        debugPrint('[ContentChangeDetector] ✓ 스티커 변경 감지');
         return true;
       }
 
-      print('[ContentChangeDetector] ✗ 변경사항 없음');
+      debugPrint('[ContentChangeDetector] ✗ 변경사항 없음');
       return false;
     } catch (e) {
-      print('[ContentChangeDetector] 에러 발생: $e');
+      debugPrint('[ContentChangeDetector] 에러 발생: $e');
       // 에러 발생 시 안전하게 변경된 것으로 간주
       return true;
     }
@@ -82,7 +83,7 @@ class ContentChangeDetector {
 
     // 노드 개수가 다르면 변경됨
     if (originalNodes.length != currentNodes.length) {
-      print(
+      debugPrint(
         '[ContentChangeDetector] 노드 개수 변경: ${originalNodes.length} → ${currentNodes.length}',
       );
       return true;
@@ -90,14 +91,14 @@ class ContentChangeDetector {
 
     // 블록 단위 1:1 비교: deepEquals로 전체 비교
     if (!_deepEquals(originalNodes, currentNodes)) {
-      print('[ContentChangeDetector] 노드 내용 변경 감지 (1:1 비교)');
+      debugPrint('[ContentChangeDetector] 노드 내용 변경 감지 (1:1 비교)');
 
       // 디버깅용: 어느 노드가 바뀌었는지 출력
       for (int i = 0; i < originalNodes.length; i++) {
         if (!_deepEquals(originalNodes[i], currentNodes[i])) {
-          print('[ContentChangeDetector] 노드[$i] 변경됨');
-          print('  원본: ${originalNodes[i]}');
-          print('  현재: ${currentNodes[i]}');
+          debugPrint('[ContentChangeDetector] 노드[$i] 변경됨');
+          debugPrint('  원본: ${originalNodes[i]}');
+          debugPrint('  현재: ${currentNodes[i]}');
           break; // 첫 번째 변경만 출력
         }
       }
@@ -121,14 +122,14 @@ class ContentChangeDetector {
     final originalStickers = originalContent?['stickers'] as List?;
     final currentStickers = currentContent?['stickers'] as List?;
 
-    print('[ContentChangeDetector] 🔍 스티커 비교 (content.stickers)');
-    print('  원본 스티커: ${originalStickers?.length ?? 0}개');
-    print('  현재 스티커: ${currentStickers?.length ?? 0}개');
+    debugPrint('[ContentChangeDetector] 🔍 스티커 비교 (content.stickers)');
+    debugPrint('  원본 스티커: ${originalStickers?.length ?? 0}개');
+    debugPrint('  현재 스티커: ${currentStickers?.length ?? 0}개');
 
     // 둘 다 null이거나 빈 리스트면 변경 없음
     if ((originalStickers == null || originalStickers.isEmpty) &&
         (currentStickers == null || currentStickers.isEmpty)) {
-      print('[ContentChangeDetector] ✗ 스티커 변경 없음 (둘 다 비어있음)');
+      debugPrint('[ContentChangeDetector] ✗ 스티커 변경 없음 (둘 다 비어있음)');
       return false;
     }
 
@@ -137,13 +138,13 @@ class ContentChangeDetector {
         originalStickers.isEmpty ||
         currentStickers == null ||
         currentStickers.isEmpty) {
-      print('[ContentChangeDetector] ✓ 스티커 변경 감지 (개수 차이)');
+      debugPrint('[ContentChangeDetector] ✓ 스티커 변경 감지 (개수 차이)');
       return true;
     }
 
     // 개수가 다르면 변경됨
     if (originalStickers.length != currentStickers.length) {
-      print(
+      debugPrint(
         '[ContentChangeDetector] ✓ 스티커 변경 감지 (개수: ${originalStickers.length} → ${currentStickers.length})',
       );
       return true;
@@ -155,15 +156,15 @@ class ContentChangeDetector {
       final normalizedCurrent = _normalizeStickers(currentStickers);
 
       if (!_deepEquals(normalizedOriginal, normalizedCurrent)) {
-        print('[ContentChangeDetector] ✓ 스티커 변경 감지 (내용 차이)');
+        debugPrint('[ContentChangeDetector] ✓ 스티커 변경 감지 (내용 차이)');
         return true;
       }
 
-      print('[ContentChangeDetector] ✗ 스티커 변경 없음');
+      debugPrint('[ContentChangeDetector] ✗ 스티커 변경 없음');
       return false;
     } catch (e, stackTrace) {
-      print('[ContentChangeDetector] ❌ 스티커 비교 에러: $e');
-      print('  스택 트레이스: $stackTrace');
+      debugPrint('[ContentChangeDetector] ❌ 스티커 비교 에러: $e');
+      debugPrint('  스택 트레이스: $stackTrace');
       // 에러 발생 시 안전하게 변경된 것으로 간주
       return true;
     }

@@ -656,8 +656,8 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
                     }
                   },
                   child: Container(
-                    width: 100,
-                    height: 100,
+                    width: 90,
+                    height: 90,
                     decoration: BoxDecoration(shape: BoxShape.circle),
                     child: Stack(
                       children: [
@@ -668,8 +668,8 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
                             border: Border.all(
                               color: Theme.of(
                                 context,
-                              ).colorScheme.onSurface.withOpacity(0.1),
-                              width: 1,
+                              ).colorScheme.onSurface.withOpacity(0.02),
+                              width: 2,
                             ),
                           ),
                           child: ClipOval(
@@ -736,7 +736,7 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
                         : group.name,
                     style: TextStyle(
                       fontSize: 26,
-                      fontWeight: FontWeight.w300,
+                      fontWeight: FontWeight.w400,
                       color: Theme.of(context).colorScheme.onSurface,
                       letterSpacing: -0.2,
                       height: 1.3,
@@ -744,14 +744,14 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
                   ),
 
                   // 🎯 첫 번째 줄: 디스크립션 (있다면)
-                  SizedBox(height: 10),
+                  SizedBox(height: 8),
                   if (displayDescription.isNotEmpty) ...[
                     RepaintBoundary(
                       child: Text(
                         displayDescription,
                         style: TextStyle(
                           fontSize: 16,
-                          fontWeight: FontWeight.w400,
+                          fontWeight: FontWeight.w300,
                           color: Theme.of(
                             context,
                           ).colorScheme.onSurface.withOpacity(0.7),
@@ -767,7 +767,7 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
                   // 🎯 두 번째 줄: 멤버 수 · 포스트 수 (프로필 화면 스타일)
                   RepaintBoundary(
                     child: Padding(
-                      padding: EdgeInsets.only(top: 4.0),
+                      padding: EdgeInsets.only(top: 2.0),
                       child: Row(
                         mainAxisAlignment: MainAxisAlignment.start,
                         children: [
@@ -1061,8 +1061,8 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
               count.toString(),
               style: TextStyle(
                 fontSize: 16,
-                fontWeight: FontWeight.w600,
-                color: Theme.of(context).colorScheme.onSurface,
+                fontWeight: FontWeight.w500,
+                color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
                 letterSpacing: -0.2,
                 height: 1.2,
               ),
@@ -1076,8 +1076,8 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
               label,
               style: TextStyle(
                 fontSize: 16,
-                fontWeight: FontWeight.w400,
-                color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
+                fontWeight: FontWeight.w500,
+                color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
                 letterSpacing: -0.2,
                 height: 1.2,
               ),
@@ -1670,7 +1670,7 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
         _postsLoadingStartTime.remove(groupId);
       });
     } catch (e) {
-      print('❌ [ManageGroupScreen] 그룹 포스트 로드 에러: $e');
+      debugPrint('❌ [ManageGroupScreen] 그룹 포스트 로드 에러: $e');
 
       // 🎯 최소 0.5초 shimmer 표시 보장 (에러 발생 시에도)
       final elapsed =
@@ -1766,7 +1766,7 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
 
   /// 🎯 그룹 포스트 캐시 무효화 (내부 구현)
   static void invalidateGroupPostsCacheInternal(int groupId) {
-    print('🔄 [ManageGroupScreen] 그룹 $groupId 포스트 캐시 무효화');
+    debugPrint('🔄 [ManageGroupScreen] 그룹 $groupId 포스트 캐시 무효화');
     _invalidatedGroupIds.add(groupId);
     // 캐시는 즉시 삭제하지 않고, 화면 진입 시 확인 후 새로고침
     // (현재 화면에서 보고 있는 경우 즉시 새로고침하도록 플래그만 설정)
@@ -1774,7 +1774,7 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
 
   /// 🎯 여러 그룹의 포스트 캐시 일괄 무효화 (내부 구현)
   static void invalidateMultipleGroupsPostsCacheInternal(List<int> groupIds) {
-    print('🔄 [ManageGroupScreen] 여러 그룹 포스트 캐시 무효화: $groupIds');
+    debugPrint('🔄 [ManageGroupScreen] 여러 그룹 포스트 캐시 무효화: $groupIds');
     for (final groupId in groupIds) {
       _invalidatedGroupIds.add(groupId);
     }
@@ -1841,7 +1841,7 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
         _postsLoadingStartTime.remove(groupId);
       });
     } catch (e) {
-      print('❌ [ManageGroupScreen] allFriends 포스트 로드 에러: $e');
+      debugPrint('❌ [ManageGroupScreen] allFriends 포스트 로드 에러: $e');
 
       // 🎯 최소 0.5초 shimmer 표시 보장 (에러 발생 시에도)
       final elapsed =
@@ -2215,11 +2215,11 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
               accessLevel: newAccessLevelStr,
               sharedGroupIds: newSharedGroupIds,
             );
-            print(
+            debugPrint(
               '[ManageGroupScreen] 프로필 피드 선택적 업데이트 완료 (단일 포스트: $singlePostId)',
             );
           } catch (e) {
-            print('[ManageGroupScreen] 프로필 피드 선택적 업데이트 실패: $e');
+            debugPrint('[ManageGroupScreen] 프로필 피드 선택적 업데이트 실패: $e');
           }
         },
       );
@@ -2232,7 +2232,7 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
     List<int>? selectedSharedGroupIds;
     final completer = Completer<bool>(); // 🎯 선택 여부를 나타내는 Completer
 
-    print(
+    debugPrint(
       '[ManageGroupScreen] AccessLevelSheet.show 호출 (배치 모드: isBatchMode=true)',
     );
     // 🎯 AccessLevelSheet를 열어서 공개범위 선택 (배치 모드: isBatchMode=true)
@@ -2498,11 +2498,11 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
                 );
               }
             }
-            print(
+            debugPrint(
               '[ManageGroupScreen] 프로필 피드 선택적 업데이트 완료 (${updatedPosts.length}개 포스트)',
             );
           } catch (e) {
-            print('[ManageGroupScreen] 프로필 피드 선택적 업데이트 실패: $e');
+            debugPrint('[ManageGroupScreen] 프로필 피드 선택적 업데이트 실패: $e');
           }
         } else {
           setState(() {
@@ -2521,7 +2521,7 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
         }
       }
     } catch (e) {
-      print('❌ [ManageGroupScreen] 포스트 공개범위 일괄 변경 에러: $e');
+      debugPrint('❌ [ManageGroupScreen] 포스트 공개범위 일괄 변경 에러: $e');
       if (mounted) {
         setState(() {
           _selectedPosts.clear();
@@ -2664,7 +2664,7 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
 
       if (isAllFriendsTab) {
         if (!mounted) return;
-        print(
+        debugPrint(
           '🔄 [ManageGroupScreen] 친구 일괄 해제 시작: ${usernamesToRemove.length}명',
         );
         final friendProv = context.read<FriendProvider>();
@@ -2713,7 +2713,7 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
         }
       }
     } catch (e) {
-      print('❌ [ManageGroupScreen] 일괄 작업 에러: $e');
+      debugPrint('❌ [ManageGroupScreen] 일괄 작업 에러: $e');
 
       if (mounted) {
         setState(() {

@@ -1,11 +1,13 @@
 import 'dart:async';
 import 'package:doppy/data/models/post_data.dart';
+import 'package:doppy/data/models/user_model.dart';
 import 'package:doppy/data/services/blog_service.dart';
 import 'package:doppy/l10n/app_localizations.dart';
 import 'package:doppy/pages/components/common_profile_avatar.dart';
 import 'package:doppy/pages/components/custom_refresh_indicator.dart';
 import 'package:doppy/pages/components/shimmer_box.dart';
 import 'package:doppy/pages/screens/post_reader_screen.dart';
+import 'package:doppy/pages/screens/user_profile_screen.dart';
 import 'package:doppy/utils/time_utils.dart';
 import 'package:flutter/material.dart';
 
@@ -160,7 +162,7 @@ class _GroupPostReadersBottomSheetState
         }
       }
     } catch (e) {
-      print('❌ [GroupPostReadersBottomSheet] 조회자 정보 로드 에러: $e');
+      debugPrint('❌ [GroupPostReadersBottomSheet] 조회자 정보 로드 에러: $e');
       if (mounted) {
         setState(() {
           _error = '조회자 정보를 불러올 수 없습니다';
@@ -217,7 +219,7 @@ class _GroupPostReadersBottomSheetState
         });
       }
     } catch (e) {
-      print('❌ [GroupPostReadersBottomSheet] 조회자 더보기 로드 에러: $e');
+      debugPrint('❌ [GroupPostReadersBottomSheet] 조회자 더보기 로드 에러: $e');
       if (mounted) {
         setState(() {
           _isLoadingMore = false;
@@ -596,6 +598,26 @@ class _GroupPostReadersBottomSheetState
                                           ),
                                         )
                                         : null,
+                                onTap: () {
+                                  // 🎯 프로필 화면으로 이동
+                                  final username =
+                                      reader['username'] as String?;
+                                  if (username != null && username.isNotEmpty) {
+                                    Navigator.of(context).push(
+                                      MaterialPageRoute(
+                                        builder:
+                                            (context) => UserProfileScreen(
+                                              otherUser: User(
+                                                username: username,
+                                                profileImageUrl:
+                                                    reader['profileImageUrl']
+                                                        as String?,
+                                              ),
+                                            ),
+                                      ),
+                                    );
+                                  }
+                                },
                               );
                             },
                           ),

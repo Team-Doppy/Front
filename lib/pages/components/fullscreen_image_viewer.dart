@@ -25,8 +25,6 @@ class FullscreenImageViewer extends StatefulWidget {
   final int initialIndex;
   final bool isVideo;
   final VideoPlayerController? preloadedController;
-  final String? mediaId;
-  final List<String> allMediaIds;
   final String? postTitle;
   final String? postAuthor;
   final String? postAuthorProfileUrl;
@@ -41,8 +39,6 @@ class FullscreenImageViewer extends StatefulWidget {
     this.initialIndex = 0,
     this.isVideo = false,
     this.preloadedController,
-    this.mediaId,
-    this.allMediaIds = const [],
     this.postTitle,
     this.postAuthor,
     this.postAuthorProfileUrl,
@@ -162,24 +158,24 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer>
     _isLoadingMoreByImage[url] = true;
 
     try {
-      final mediaId = _extractCurrentMediaId();
-      if (mediaId == null) return;
+      // 🎯 URL 기반으로 변경
+      if (url.isEmpty) return;
 
       final currentPage = _commentPageByImage[url] ?? 0;
       final nextPage = currentPage + 1;
 
-      print('[FIV] Loading more comments page=$nextPage');
+      debugPrint('[FIV] Loading more comments page=$nextPage url=$url');
 
       final svc = MediaCommentService();
       final list =
           widget.isVideo
               ? await svc.fetchVideoComments(
-                videoId: mediaId,
+                videoUrl: url, // 🎯 URL 사용
                 page: nextPage,
                 size: 20,
               )
               : await svc.fetchImageComments(
-                imageId: mediaId,
+                imageUrl: url, // 🎯 URL 사용
                 page: nextPage,
                 size: 20,
               );
@@ -196,7 +192,7 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer>
         });
       }
     } catch (e) {
-      print('[FIV] Load more failed: $e');
+      debugPrint('[FIV] Load more failed: $e');
       if (mounted) {
         setState(() {
           _isLoadingMoreByImage[url] = false;
@@ -294,7 +290,7 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer>
   void _initCommentPreviewAnimations() {
     // 🎯 이미 미리보기를 본 이미지면 표시하지 않음
     if (_previewShownForImages.contains(_currentImageUrl)) {
-      print('[FIV] 이미 미리보기를 본 이미지: $_currentImageUrl');
+      debugPrint('[FIV] 이미 미리보기를 본 이미지: $_currentImageUrl');
       return;
     }
 
@@ -305,7 +301,7 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer>
 
     // 🎯 미리보기 표시 기록
     _previewShownForImages.add(_currentImageUrl);
-    print('[FIV] 미리보기 표시: $_currentImageUrl');
+    debugPrint('[FIV] 미리보기 표시: $_currentImageUrl');
 
     // 댓글 수만큼 애니메이션 컨트롤러 생성 (최대 2개)
     final commentCount = _imageComments.length > 2 ? 2 : _imageComments.length;
@@ -342,15 +338,13 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer>
   }
 
   Future<void> _loadImageComments() async {
-    print(
+    debugPrint(
       '[FIV] _loadImageComments() start: idx=$_currentImageIndex url=$_currentImageUrl isVideo=${widget.isVideo}',
     );
     try {
-      // mediaId 추출: exported에서 metadata로 주입되어 있어야 함
-      final mediaId = _extractCurrentMediaId();
-      print('[FIV] extracted mediaId=$mediaId');
-      if (mediaId == null) {
-        print('[FIV] skip fetch: mediaId is null');
+      // 🎯 URL 기반으로 변경 - mediaId 없이 URL로 직접 요청
+      if (_currentImageUrl.isEmpty) {
+        debugPrint('[FIV] skip fetch: url is null or empty');
         setState(() => _commentsByImage[_currentImageUrl] = []);
         return;
       }
@@ -359,16 +353,16 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer>
       final list =
           widget.isVideo
               ? await svc.fetchVideoComments(
-                videoId: mediaId,
+                videoUrl: _currentImageUrl, // 🎯 URL 사용
                 page: 0,
                 size: 20,
               )
               : await svc.fetchImageComments(
-                imageId: mediaId,
+                imageUrl: _currentImageUrl, // 🎯 URL 사용
                 page: 0,
                 size: 20,
               );
-      print('[FIV] fetched list size=${list.length}');
+      debugPrint('[FIV] fetched list size=${list.length}');
 
       // 🎯 서버에서 이미 정렬되어 오므로 클라이언트 정렬 불필요
       // (API: sort=createdAt,desc)
@@ -386,7 +380,7 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer>
       _commentPreviewControllers.clear();
       _initCommentPreviewAnimations();
     } catch (e) {
-      print('[FIV] fetch failed: $e');
+      debugPrint('[FIV] fetch failed: $e');
       setState(() {
         _commentsByImage[_currentImageUrl] = [];
         _commentPageByImage[_currentImageUrl] = 0;
@@ -397,31 +391,10 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer>
     }
   }
 
-  String? _extractCurrentMediaId() {
-    // 🎯 allMediaIds가 있으면 현재 인덱스에서 추출
-    if (widget.allMediaIds.isNotEmpty) {
-      final idx =
-          (_currentImageIndex >= 0 &&
-                  _currentImageIndex < widget.allMediaIds.length)
-              ? _currentImageIndex
-              : 0;
-      final id = widget.allMediaIds[idx];
-      final result = id.isEmpty ? null : id;
-      print(
-        '[FIV] mediaId from list idx=$idx (${widget.allMediaIds.length}개 중) -> $result',
-      );
-      return result;
-    }
-
-    // 🎯 allMediaIds가 없으면 단일 mediaId 사용
-    print('[FIV] mediaId from single -> ${widget.mediaId}');
-    return widget.mediaId;
-  }
-
   Future<void> _toggleCommentLike(MediaComment comment) async {
     try {
-      final mediaId = _extractCurrentMediaId();
-      if (mediaId == null) return;
+      // 🎯 URL 기반으로 변경
+      if (_currentImageUrl.isEmpty) return;
 
       final svc = MediaCommentService();
 
@@ -445,11 +418,11 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer>
       final updatedComment =
           widget.isVideo
               ? await svc.toggleVideoCommentLike(
-                videoId: mediaId,
+                videoUrl: _currentImageUrl, // 🎯 URL 사용
                 commentId: comment.id,
               )
               : await svc.toggleImageCommentLike(
-                imageId: mediaId,
+                imageUrl: _currentImageUrl, // 🎯 URL 사용
                 commentId: comment.id,
               );
 
@@ -467,7 +440,7 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer>
         });
       }
     } catch (e) {
-      print('[FIV] toggle like failed: $e');
+      debugPrint('[FIV] toggle like failed: $e');
       // 롤백
       if (mounted) {
         setState(() {
@@ -499,8 +472,8 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer>
     final backupComments = List<MediaComment>.from(_imageComments);
 
     try {
-      final mediaId = _extractCurrentMediaId();
-      if (mediaId == null) return;
+      // 🎯 URL 기반으로 변경
+      if (_currentImageUrl.isEmpty) return;
 
       // 낙관적 삭제
       setState(() {
@@ -508,23 +481,23 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer>
             _imageComments.where((c) => c.id != comment.id).toList();
       });
 
-      print('[FIV] 댓글 낙관적 삭제 - 새 개수: ${_imageComments.length}');
+      debugPrint('[FIV] 댓글 낙관적 삭제 - 새 개수: ${_imageComments.length}');
 
       // 서버 요청
       final svc = MediaCommentService();
       widget.isVideo
           ? await svc.deleteVideoComment(
-            videoId: mediaId,
+            videoUrl: _currentImageUrl, // 🎯 URL 사용
             commentId: comment.id,
           )
           : await svc.deleteImageComment(
-            imageId: mediaId,
+            imageUrl: _currentImageUrl, // 🎯 URL 사용
             commentId: comment.id,
           );
 
-      print('[FIV] delete comment success id=${comment.id}');
+      debugPrint('[FIV] delete comment success id=${comment.id}');
     } catch (e) {
-      print('[FIV] delete comment failed: $e');
+      debugPrint('[FIV] delete comment failed: $e');
       // 롤백
       if (mounted) {
         setState(() {
@@ -569,8 +542,8 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer>
     });
 
     try {
-      final mediaId = _extractCurrentMediaId();
-      if (mediaId == null) return;
+      // 🎯 URL 기반으로 변경
+      if (_currentImageUrl.isEmpty) return;
 
       // 낙관적 업데이트
       setState(() {
@@ -589,12 +562,12 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer>
       final updatedComment =
           widget.isVideo
               ? await svc.updateVideoComment(
-                videoId: mediaId,
+                videoUrl: _currentImageUrl, // 🎯 URL 사용
                 commentId: comment.id,
                 text: newText,
               )
               : await svc.updateImageComment(
-                imageId: mediaId,
+                imageUrl: _currentImageUrl, // 🎯 URL 사용
                 commentId: comment.id,
                 text: newText,
               );
@@ -609,9 +582,9 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer>
           }
         });
       }
-      print('[FIV] update comment success id=${comment.id}');
+      debugPrint('[FIV] update comment success id=${comment.id}');
     } catch (e) {
-      print('[FIV] update comment failed: $e');
+      debugPrint('[FIV] update comment failed: $e');
       // 롤백
       if (mounted) {
         setState(() {
@@ -641,7 +614,7 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer>
       _hasMoreCommentsByImage.clear();
       _isLoadingMoreByImage.clear();
     } catch (e) {
-      print('FullscreenImageViewer dispose 중 오류: $e');
+      debugPrint('FullscreenImageViewer dispose 중 오류: $e');
     }
     super.dispose();
   }
@@ -649,8 +622,8 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer>
   Future<void> _submitComment() async {
     final text = _commentController.text.trim();
     if (text.isEmpty) return;
-    final mediaId = _extractCurrentMediaId();
-    if (mediaId == null || mediaId.isEmpty) {
+    // 🎯 URL 기반으로 변경
+    if (_currentImageUrl.isEmpty) {
       ErrorHandler.showError(context, context.tr('message_send_error'));
       return;
     }
@@ -678,15 +651,21 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer>
     });
 
     try {
-      print(
-        '[FIV] POST message mediaId=$mediaId text="$text" isVideo=${widget.isVideo}',
+      debugPrint(
+        '[FIV] POST message url=$_currentImageUrl text="$text" isVideo=${widget.isVideo}',
       );
       final svc = MediaCommentService();
       final newId =
           widget.isVideo
-              ? await svc.createVideoComment(videoId: mediaId, text: text)
-              : await svc.createImageComment(imageId: mediaId, text: text);
-      print('[FIV] POST result id=$newId');
+              ? await svc.createVideoComment(
+                videoUrl: _currentImageUrl,
+                text: text,
+              ) // 🎯 URL 사용
+              : await svc.createImageComment(
+                imageUrl: _currentImageUrl,
+                text: text,
+              ); // 🎯 URL 사용
+      debugPrint('[FIV] POST result id=$newId');
 
       if (!mounted) return;
 
@@ -701,7 +680,7 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer>
 
       // 🎯 댓글 제출 후에는 미리보기 재초기화 안 함 (한 번만 표시)
     } catch (e) {
-      print('[FIV] POST failed: $e');
+      debugPrint('[FIV] POST failed: $e');
       if (!mounted) return;
 
       setState(() {
@@ -754,7 +733,7 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer>
         }
       }
     } catch (e) {
-      print('[FIV] download failed: $e');
+      debugPrint('[FIV] download failed: $e');
       if (mounted) {
         setState(() => _isDownloading = false);
         ErrorHandler.showError(context, context.tr('image_save_failed'));

@@ -1,6 +1,7 @@
 import 'package:doppy/data/services/base_api_service.dart';
 import 'package:doppy/data/services/fcm_service.dart';
 import 'package:doppy/data/services/user_service.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:http/http.dart' as http;
@@ -13,6 +14,8 @@ class AuthService {
   factory AuthService() => _instance;
   AuthService._internal();
 
+  BaseApiService? _baseApiService;
+  BaseApiService get baseApiService => _baseApiService ??= BaseApiService();
   final _storage = const FlutterSecureStorage();
   final String _tokenKey = 'auth_token';
   final String _refreshTokenKey = 'refresh_token';
@@ -48,9 +51,9 @@ class AuthService {
     try {
       final fcmService = FcmService();
       fcmToken = await fcmService.getToken();
-      print('[AuthService] FCM 토큰 발급: ${fcmToken != null ? '성공' : '실패'}');
+      debugPrint('[AuthService] FCM 토큰 발급: ${fcmToken != null ? '성공' : '실패'}');
     } catch (e) {
-      print('[AuthService] FCM 토큰 발급 중 오류 (무시): $e');
+      debugPrint('[AuthService] FCM 토큰 발급 중 오류 (무시): $e');
     }
 
     final body = {'username': username, 'password': password};
@@ -75,7 +78,7 @@ class AuthService {
       }
       return false;
     } catch (e) {
-      print('❌ [AuthService] 회원가입 오류: $e');
+      debugPrint('❌ [AuthService] 회원가입 오류: $e');
       return false;
     }
   }
@@ -109,20 +112,22 @@ class AuthService {
         await initAfterLogin();
 
         // 🎯 FCM 토큰과 deviceId를 서버에 전송 (비동기로 처리하여 로그인 속도 저하 방지)
-        print('[AuthService] 로그인 성공, FCM 토큰 서버 전송 시작');
-        _sendFcmTokenToServer(loginResponse.token)
+        debugPrint('[AuthService] 로그인 성공, FCM 토큰 서버 전송 시작');
+        _sendFcmTokenToServer()
             .catchError((e) {
-              print('[AuthService] ❌ FCM 토큰 전송 실패 (무시): $e');
+              debugPrint('[AuthService] ❌ FCM 토큰 전송 실패 (무시): $e');
             })
             .then((_) {
-              print('[AuthService] ✅ FCM 토큰 서버 전송 완료');
+              debugPrint('[AuthService] ✅ FCM 토큰 서버 전송 완료');
             });
 
-        print('[-] [AuthService] login success: ${loginResponse.username}');
+        debugPrint(
+          '[-] [AuthService] login success: ${loginResponse.username}',
+        );
         return loginResponse;
       }
     } catch (e) {
-      print('❌ [AuthService] 로그인 오류: $e');
+      debugPrint('❌ [AuthService] 로그인 오류: $e');
     }
     return null;
   }
@@ -143,7 +148,7 @@ class AuthService {
 
       return false;
     } catch (e) {
-      print('❌ [AuthService] 사용자명 중복확인 오류: $e');
+      debugPrint('❌ [AuthService] 사용자명 중복확인 오류: $e');
       return false;
     }
   }
@@ -177,7 +182,7 @@ class AuthService {
     if (deviceId == null || deviceId.isEmpty) {
       deviceId = _uuid.v4();
       await prefs.setString(_deviceIdKey, deviceId);
-      print('[AuthService] 새 deviceId 생성: $deviceId');
+      debugPrint('[AuthService] 새 deviceId 생성: $deviceId');
     }
 
     return deviceId;
@@ -185,14 +190,14 @@ class AuthService {
 
   /// FCM 토큰과 deviceId를 서버에 전송
   /// FCM 유효성 검사 후 문제 있으면 재발급하고 서버에 전송
-  Future<void> _sendFcmTokenToServer(String authToken) async {
+  Future<void> _sendFcmTokenToServer() async {
     try {
       final fcmService = FcmService();
 
       // 1. 알림 권한 확인
       final hasPermission = await fcmService.isNotificationPermissionGranted();
       if (!hasPermission) {
-        print('[AuthService] 알림 권한이 없어 서버 전송을 건너뜁니다');
+        debugPrint('[AuthService] 알림 권한이 없어 서버 전송을 건너뜁니다');
         // 🎯 알림 권한이 없다는 것은 서버의 notificationEnabled / marketingConsent 플래그도 OFF로 동기화
         await _syncNotificationSettingsOnDenied();
         return;
@@ -206,7 +211,9 @@ class AuthService {
       if (fcmToken == null || fcmToken.isEmpty) {
         fcmToken = await fcmService.getToken();
         if (fcmToken == null || fcmToken.isEmpty) {
-          print('[AuthService] FCM 토큰을 가져올 수 없어 서버 전송을 건너뜁니다 (권한 거부 또는 오류)');
+          debugPrint(
+            '[AuthService] FCM 토큰을 가져올 수 없어 서버 전송을 건너뜁니다 (권한 거부 또는 오류)',
+          );
           // 🎯 FCM 토큰이 없다는 것은 대부분 알림 권한이 거부된 경우이므로
           // 서버의 notificationEnabled / marketingConsent 플래그도 OFF로 동기화
           await _syncNotificationSettingsOnDenied();
@@ -220,45 +227,43 @@ class AuthService {
 
       // 🎯 토큰이 변경되지 않았으면 서버에 전송하지 않음
       if (lastSentToken == fcmToken) {
-        print('[AuthService] ⏭️ FCM 토큰이 변경되지 않아 서버 전송을 건너뜁니다 (마지막 전송 토큰과 동일)');
+        debugPrint(
+          '[AuthService] ⏭️ FCM 토큰이 변경되지 않아 서버 전송을 건너뜁니다 (마지막 전송 토큰과 동일)',
+        );
         return;
       }
 
       // 5. deviceId 가져오기 (없으면 생성, 기존 deviceId는 유지)
       final deviceId = await getDeviceId();
-      print('[AuthService] DeviceId: $deviceId');
+      debugPrint('[AuthService] DeviceId: $deviceId');
 
       // 6. 서버에 전송 (FCM 토큰과 deviceId)
-      print('[AuthService] FCM 토큰 서버 전송 시작...');
-      print('[AuthService] DeviceId: $deviceId');
-      print(
+      debugPrint('[AuthService] FCM 토큰 서버 전송 시작...');
+      debugPrint('[AuthService] DeviceId: $deviceId');
+      debugPrint(
         '[AuthService] FCM 토큰: ${fcmToken.substring(0, 20)}... (전체 길이: ${fcmToken.length})',
       );
-      final url = Uri.parse('$baseUrl/api/fcm/tokens');
-      final response = await http.post(
-        url,
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer $authToken', // 인증용 accessToken
-        },
-        body: jsonEncode({
+      // 🎯 BaseApiService의 dio를 사용하여 자동 토큰 갱신 지원
+      final response = await baseApiService.dio.post(
+        '/api/fcm/tokens',
+        data: {
           'deviceId': deviceId,
           'token': fcmToken, // FCM 토큰
-        }),
+        },
       );
 
       if (response.statusCode == 200 || response.statusCode == 201) {
         // 🎯 서버 전송 성공 시 마지막 전송 토큰 저장
         await prefs.setString(_lastSentFcmTokenKey, fcmToken);
-        print(
+        debugPrint(
           '[AuthService] ✅ FCM 토큰 서버 전송 성공 (deviceId: $deviceId, fcmToken: ${fcmToken.substring(0, 20)}...)',
         );
       } else {
-        print('[AuthService] ❌ FCM 토큰 서버 전송 실패: ${response.statusCode}');
-        print('[AuthService] 응답 본문: ${response.body}');
+        debugPrint('[AuthService] ❌ FCM 토큰 서버 전송 실패: ${response.statusCode}');
+        debugPrint('[AuthService] 응답 본문: ${response.data}');
       }
     } catch (e) {
-      print('[AuthService] ❌ FCM 토큰 서버 전송 오류: $e');
+      debugPrint('[AuthService] ❌ FCM 토큰 서버 전송 오류: $e');
       rethrow;
     }
   }
@@ -276,49 +281,79 @@ class AuthService {
       if (currentMarketing) {
         try {
           await userService.toggleMarketingConsent();
-          print('[AuthService] 알림 권한 거부로 marketingConsent=false 로 동기화');
+          debugPrint('[AuthService] 알림 권한 거부로 marketingConsent=false 로 동기화');
         } catch (e) {
-          print('[AuthService] marketingConsent 동기화 실패: $e');
+          debugPrint('[AuthService] marketingConsent 동기화 실패: $e');
         }
       }
 
       if (currentNotification) {
         try {
           await userService.toggleNotificationEnabled();
-          print('[AuthService] 알림 권한 거부로 notificationEnabled=false 로 동기화');
+          debugPrint('[AuthService] 알림 권한 거부로 notificationEnabled=false 로 동기화');
         } catch (e) {
-          print('[AuthService] notificationEnabled 동기화 실패: $e');
+          debugPrint('[AuthService] notificationEnabled 동기화 실패: $e');
         }
       }
     } catch (e) {
       // 설정 조회 실패 등은 앱 흐름을 막지 않고 로그만 남김
-      print('[AuthService] 알림 설정 동기화 실패 (권한 거부): $e');
+      debugPrint('[AuthService] 알림 설정 동기화 실패 (권한 거부): $e');
     }
   }
 
   /// 외부에서 호출할 수 있는 FCM 토큰/디바이스 정보 동기화 헬퍼
   /// - 알림 설정을 켰을 때, 알림 설정 해제 시 등, 로그인 이후에도 재사용 가능
   /// - FCM 유효성 검사 후 문제 있으면 재발급하고 서버에 전송
-  Future<void> syncFcmTokenAndSettings() async {
+  /// - 🎯 알림 권한이 없으면 자동으로 요청하고 기본값을 on으로 설정
+  /// - 🎯 알림 권한이 허용되면 서버 및 로컬 설정을 자동으로 on으로 동기화
+  Future<bool> syncFcmTokenAndSettings() async {
     final authToken = await getToken();
     if (authToken == null || authToken.isEmpty) {
-      print('[AuthService] syncFcmTokenAndSettings: 토큰 없음, 건너뜀');
-      return;
+      return false;
     }
 
     final fcmService = FcmService();
 
-    // 알림 권한 확인
-    final hasPermission = await fcmService.isNotificationPermissionGranted();
+    // 🎯 알림 권한 확인 및 자동 요청 (앱 시작 시 기본값을 on으로 설정)
+    bool hasPermission = await fcmService.isNotificationPermissionGranted();
+
     if (!hasPermission) {
-      print('[AuthService] syncFcmTokenAndSettings: 알림 권한 없음, 서버 설정 동기화');
-      // 알림 권한이 없으면 서버 설정도 OFF로 동기화
-      await _syncNotificationSettingsOnDenied();
-      return;
+      // 알림 권한이 없으면 자동으로 요청
+      hasPermission = await fcmService.requestNotificationPermission();
+
+      if (hasPermission) {
+      } else {
+        // 알림 권한 요청 실패 시 서버 설정도 OFF로 동기화
+        await _syncNotificationSettingsOnDenied();
+        return false;
+      }
+    }
+
+    // 🎯 알림 권한이 있으면 (새로 요청한 경우든, 이미 있는 경우든) 서버 설정을 on으로 동기화
+    if (hasPermission) {
+      try {
+        final userService = UserService();
+        final settings = await userService.getSettings();
+        final bool currentNotification =
+            settings['notificationEnabled'] ?? false;
+
+        // 서버 값이 false일 때만 토글 호출 → 최종적으로 true가 되도록 보장
+        if (!currentNotification) {
+          await userService.toggleNotificationEnabled();
+          debugPrint(
+            '[AuthService] 알림 권한 허용으로 서버 notificationEnabled=true 로 동기화',
+          );
+        }
+      } catch (e) {
+        debugPrint('[AuthService] notificationEnabled 동기화 실패: $e');
+      }
     }
 
     // FCM 토큰 검사 및 필요시 재발급 후 서버에 전송
-    await _sendFcmTokenToServer(authToken);
+    await _sendFcmTokenToServer();
+
+    // 🎯 권한이 허용되었는지 반환 (로컬 설정 동기화에 사용)
+    return hasPermission;
   }
 
   Future<void> logout() async {
@@ -334,24 +369,24 @@ class AuthService {
     await _storage.delete(key: _refreshTokenKey);
     await _storage.delete(key: _usernameKey);
     _cachedUsername = null; // 메모리 캐시 초기화
-    print('[-] [AuthService] logout success');
+    debugPrint('[-] [AuthService] logout success');
   }
 
   /// 4. 토큰 검증 및 갱신 (클라이언트 사이드)
   Future<bool> validateAndRefreshToken() async {
     final token = await getToken();
     if (token == null) {
-      print('[AuthService] No token found');
+      debugPrint('[AuthService] No token found');
       return false;
     }
 
-    print('[AuthService] Validating token: ${token.substring(0, 20)}...');
+    debugPrint('[AuthService] Validating token: ${token.substring(0, 20)}...');
 
     try {
       // JWT 토큰을 디코딩하여 만료 시간 확인
       final parts = token.split('.');
       if (parts.length != 3) {
-        print('[AuthService] Invalid token format');
+        debugPrint('[AuthService] Invalid token format');
         return false;
       }
 
@@ -365,7 +400,7 @@ class AuthService {
       // 만료 시간 확인
       final exp = payloadMap['exp'] as int?;
       if (exp == null) {
-        print('[AuthService] No expiration time in token');
+        debugPrint('[AuthService] No expiration time in token');
         return false;
       }
 
@@ -379,35 +414,35 @@ class AuthService {
       final bufferTime = 10 * 1000; // 10초 버퍼 (테스트용)
       final shouldRefresh = isExpired || (expirationTime - nowMs) < bufferTime;
 
-      print(
+      debugPrint(
         '[AuthService] Token expires at: ${DateTime.fromMillisecondsSinceEpoch(exp * 1000)}',
       );
-      print(
+      debugPrint(
         '[AuthService] Current time: ${DateTime.fromMillisecondsSinceEpoch(now * 1000)}',
       );
-      print('[AuthService] Token is expired: $isExpired');
-      print('[AuthService] Should refresh: $shouldRefresh');
+      debugPrint('[AuthService] Token is expired: $isExpired');
+      debugPrint('[AuthService] Should refresh: $shouldRefresh');
 
       // 🎯 토큰이 만료되었거나 곧 만료될 경우 리프레시 시도
       if (shouldRefresh) {
-        print(
+        debugPrint(
           '[AuthService] Token expired or expiring soon - attempting refresh...',
         );
 
         final refreshed = await _refreshToken();
         if (refreshed) {
-          print('[AuthService] ✅ Token refreshed successfully');
+          debugPrint('[AuthService] ✅ Token refreshed successfully');
           return true;
         } else {
-          print('[AuthService] ❌ Token refresh failed');
+          debugPrint('[AuthService] ❌ Token refresh failed');
           return false;
         }
       } else {
-        print('[AuthService] Token is valid');
+        debugPrint('[AuthService] Token is valid');
         return true;
       }
     } catch (e) {
-      print('[AuthService] Token validation error: $e');
+      debugPrint('[AuthService] Token validation error: $e');
       return false;
     }
   }
@@ -416,7 +451,7 @@ class AuthService {
   Future<bool> _refreshToken() async {
     final refreshToken = await getRefreshToken();
     if (refreshToken == null || refreshToken.isEmpty) {
-      print('[AuthService] ❌ 리프레시 토큰이 없습니다');
+      debugPrint('[AuthService] ❌ 리프레시 토큰이 없습니다');
       return false;
     }
 
@@ -449,25 +484,25 @@ class AuthService {
           if (newToken != null && newRefreshToken != null) {
             await saveToken(newToken);
             await saveRefreshToken(newRefreshToken);
-            print('✅ [AuthService] 토큰 갱신 성공 (attempt=${attempt + 1})');
+            debugPrint('✅ [AuthService] 토큰 갱신 성공 (attempt=${attempt + 1})');
             return true;
           } else {
-            print(
+            debugPrint(
               '❌ [AuthService] 토큰 갱신 실패: 응답에 토큰이 없습니다 (attempt=${attempt + 1})',
             );
           }
         } else {
-          print(
+          debugPrint(
             '❌ [AuthService] 토큰 갱신 실패: ${response.statusCode} (attempt=${attempt + 1})',
           );
         }
       } catch (e) {
-        print('❌ [AuthService] 토큰 갱신 오류 (attempt=${attempt + 1}): $e');
+        debugPrint('❌ [AuthService] 토큰 갱신 오류 (attempt=${attempt + 1}): $e');
       }
     }
 
     // 모든 재시도 실패
-    print('[AuthService] ❌ 토큰 갱신 실패: 모든 재시도 소진');
+    debugPrint('[AuthService] ❌ 토큰 갱신 실패: 모든 재시도 소진');
     return false;
   }
 
@@ -476,34 +511,27 @@ class AuthService {
     try {
       final token = await getToken();
       if (token == null) {
-        print('[AuthService] 토큰이 없습니다');
+        debugPrint('[AuthService] 토큰이 없습니다');
         return false;
       }
 
-      print('[AuthService] Region 업데이트 시작: $region');
-      print('[AuthService] Base URL: $baseUrl');
+      debugPrint('[AuthService] Region 업데이트 시작: $region');
+      debugPrint('[AuthService] Base URL: $baseUrl');
 
-      final url = Uri.parse('$baseUrl/api/auth/update-region');
-      print('[AuthService] 요청 URL: $url');
+      debugPrint('[AuthService] 요청 본문: {"region": "$region"}');
 
-      final requestBody = jsonEncode({'region': region});
-      print('[AuthService] 요청 본문: $requestBody');
-
-      final response = await http.patch(
-        url,
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer $token',
-        },
-        body: requestBody,
+      // 🎯 BaseApiService의 dio를 사용하여 자동 토큰 갱신 지원
+      final response = await baseApiService.dio.patch(
+        '/api/users/region',
+        data: {'region': region},
       );
 
-      print('[AuthService] Region 업데이트 응답 상태: ${response.statusCode}');
-      print('[AuthService] Region 업데이트 응답 본문: ${response.body}');
+      debugPrint('[AuthService] Region 업데이트 응답 상태: ${response.statusCode}');
+      debugPrint('[AuthService] Region 업데이트 응답 본문: ${response.data}');
 
       if (response.statusCode == 200) {
         // 🎯 새 토큰 저장
-        final responseData = jsonDecode(response.body);
+        final responseData = response.data as Map<String, dynamic>;
 
         if (responseData['success'] == true && responseData['data'] != null) {
           final data = responseData['data'];
@@ -511,38 +539,38 @@ class AuthService {
           // token (accessToken)
           if (data['token'] != null) {
             await saveToken(data['token']);
-            print('[AuthService] 새 access token 저장 완료');
-            print('[AuthService] 새 토큰: ${data['token']}');
+            debugPrint('[AuthService] 새 access token 저장 완료');
+            debugPrint('[AuthService] 새 토큰: ${data['token']}');
           }
 
           // refreshToken
           if (data['refreshToken'] != null) {
             await saveRefreshToken(data['refreshToken']);
-            print('[AuthService] 새 refresh token 저장 완료');
+            debugPrint('[AuthService] 새 refresh token 저장 완료');
           }
 
           // 사용자 정보도 업데이트
           if (data['username'] != null) {
-            print(
+            debugPrint(
               '[AuthService] 사용자: ${data['username']}, Region: ${data['region']}',
             );
           }
 
-          print('[AuthService] Region 업데이트 성공: $region');
+          debugPrint('[AuthService] Region 업데이트 성공: $region');
           return true;
         } else {
-          print('[AuthService] Region 업데이트 실패: 응답 구조 오류');
-          print('[AuthService] 응답 데이터: $responseData');
+          debugPrint('[AuthService] Region 업데이트 실패: 응답 구조 오류');
+          debugPrint('[AuthService] 응답 데이터: $responseData');
           return false;
         }
       } else {
-        print('[AuthService] Region 업데이트 실패: ${response.statusCode}');
-        print('[AuthService] 에러 메시지: ${response.body}');
+        debugPrint('[AuthService] Region 업데이트 실패: ${response.statusCode}');
+        debugPrint('[AuthService] 에러 메시지: ${response.data}');
         return false;
       }
     } catch (e, stackTrace) {
-      print('[AuthService] Region 업데이트 오류: $e');
-      print('[AuthService] Stack trace: $stackTrace');
+      debugPrint('[AuthService] Region 업데이트 오류: $e');
+      debugPrint('[AuthService] Stack trace: $stackTrace');
       return false;
     }
   }

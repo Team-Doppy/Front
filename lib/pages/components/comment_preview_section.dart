@@ -103,6 +103,7 @@ class CommentPreviewSection extends StatelessWidget {
               onSwipeReply: () {
                 // 미리보기에서는 스와이프 답글 없음
               },
+              dragOffset: 0,
             );
           }),
 

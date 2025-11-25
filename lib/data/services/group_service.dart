@@ -1,4 +1,5 @@
 import 'package:dio/dio.dart';
+import 'package:flutter/material.dart';
 import 'base_api_service.dart';
 
 import '../models/group_model.dart';
@@ -28,7 +29,7 @@ class GroupService {
     String? profileImageUrl, // 🎯 프로필 이미지 URL
   }) async {
     try {
-      print(
+      debugPrint(
         '🔍 [GroupService] 그룹 생성 요청: name=$name, description=$description, profileImageUrl=$profileImageUrl',
       );
 
@@ -41,11 +42,11 @@ class GroupService {
       };
 
       final response = await _dio.post('/api/groups', data: data);
-      print('📡 [GroupService] 그룹 생성 응답: ${response.statusCode}');
+      debugPrint('📡 [GroupService] 그룹 생성 응답: ${response.statusCode}');
 
       if (response.statusCode != 200) throw Exception('그룹 생성 실패');
     } catch (e) {
-      print('❌ [GroupService] 그룹 생성 에러: $e');
+      debugPrint('❌ [GroupService] 그룹 생성 에러: $e');
       if (e is DioException) {
         throw Exception('그룹 생성 실패: ${e.response?.statusCode}');
       }
@@ -60,12 +61,12 @@ class GroupService {
   Future<(List<Group>, int, String?, int?, int?, String?, int?)>
   getMyGroups() async {
     try {
-      print('🔍 [GroupService] 내가 소유한 그룹 목록 조회 시작');
+      debugPrint('🔍 [GroupService] 내가 소유한 그룹 목록 조회 시작');
 
       final response = await _dio.get('/api/groups/owned');
-      print('📡 [GroupService] API 응답 상태: ${response.statusCode}');
-      print('📡 [GroupService] API 응답 헤더: ${response.headers}');
-      print('📡 [GroupService] API 응답 데이터: ${response.data}');
+      debugPrint('📡 [GroupService] API 응답 상태: ${response.statusCode}');
+      debugPrint('📡 [GroupService] API 응답 헤더: ${response.headers}');
+      debugPrint('📡 [GroupService] API 응답 데이터: ${response.data}');
 
       if (response.statusCode == 200) {
         final decoded = response.data;
@@ -109,7 +110,9 @@ class GroupService {
                   return Group.fromJson(item as Map<String, dynamic>);
                 }).toList();
           } else {
-            print('⚠️ [GroupService] 예상치 못한 응답 구조입니다. groups 배열을 찾지 못했습니다.');
+            debugPrint(
+              '⚠️ [GroupService] 예상치 못한 응답 구조입니다. groups 배열을 찾지 못했습니다.',
+            );
             groups = <Group>[];
           }
 
@@ -133,11 +136,11 @@ class GroupService {
           allFriendsPostCount =
               (decoded['allFriendsPostCount'] as num?)?.toInt();
         } else {
-          print('⚠️ [GroupService] 알 수 없는 응답 형태입니다.');
+          debugPrint('⚠️ [GroupService] 알 수 없는 응답 형태입니다.');
           groups = <Group>[];
         }
 
-        print('✅ [GroupService] 변환된 그룹 수: ${groups.length}');
+        debugPrint('✅ [GroupService] 변환된 그룹 수: ${groups.length}');
         return (
           groups,
           allFriendsDisplayOrder,
@@ -148,19 +151,19 @@ class GroupService {
           allFriendsPostCount,
         );
       } else {
-        print(
+        debugPrint(
           '❌ [GroupService] API 오류: ${response.statusCode} - ${response.data}',
         );
         throw Exception('내가 소유한 그룹 목록 조회 실패: ${response.statusCode}');
       }
     } catch (e) {
-      print('❌ [GroupService] 내가 소유한 그룹 목록 조회 중 예외 발생: $e');
+      debugPrint('❌ [GroupService] 내가 소유한 그룹 목록 조회 중 예외 발생: $e');
       if (e is DioException) {
-        print(
+        debugPrint(
           '❌ [GroupService] Dio 에러: ${e.response?.statusCode} - ${e.response?.data}',
         );
       } else if (e is FormatException) {
-        print('❌ [GroupService] JSON 파싱 오류: $e');
+        debugPrint('❌ [GroupService] JSON 파싱 오류: $e');
       }
       rethrow;
     }
@@ -200,16 +203,16 @@ class GroupService {
   /// 21. 그룹 멤버 목록 조회
   Future<List<GroupMember>> getGroupMembers(int groupId) async {
     try {
-      print('🔍 [GroupService] 그룹 멤버 목록 조회 시작 - 그룹ID: $groupId');
+      debugPrint('🔍 [GroupService] 그룹 멤버 목록 조회 시작 - 그룹ID: $groupId');
 
       final response = await _dio.get('/api/groups/$groupId/members');
-      print('📡 [GroupService] API 응답 상태: ${response.statusCode}');
-      print('📡 [GroupService] API 응답 헤더: ${response.headers}');
-      print('📡 [GroupService] API 응답 데이터: ${response.data}');
+      debugPrint('📡 [GroupService] API 응답 상태: ${response.statusCode}');
+      debugPrint('📡 [GroupService] API 응답 헤더: ${response.headers}');
+      debugPrint('📡 [GroupService] API 응답 데이터: ${response.data}');
 
       if (response.statusCode == 200) {
         final decoded = response.data;
-        print('✅ [GroupService] 파싱된 데이터 타입: ${decoded.runtimeType}');
+        debugPrint('✅ [GroupService] 파싱된 데이터 타입: ${decoded.runtimeType}');
 
         List<GroupMember> members;
         if (decoded is List) {
@@ -232,36 +235,38 @@ class GroupService {
                     .map<GroupMember>((item) => GroupMember.fromJson(item))
                     .toList();
           } else {
-            print('⚠️ [GroupService] 예상치 못한 응답 구조입니다. members 배열을 찾지 못했습니다.');
+            debugPrint(
+              '⚠️ [GroupService] 예상치 못한 응답 구조입니다. members 배열을 찾지 못했습니다.',
+            );
             members = <GroupMember>[];
           }
         } else {
-          print('⚠️ [GroupService] 알 수 없는 응답 형태입니다.');
+          debugPrint('⚠️ [GroupService] 알 수 없는 응답 형태입니다.');
           members = <GroupMember>[];
         }
 
-        print('✅ [GroupService] 변환된 멤버 수: ${members.length}');
+        debugPrint('✅ [GroupService] 변환된 멤버 수: ${members.length}');
         return members;
       } else if (response.statusCode == 403) {
-        print('❌ [GroupService] 권한 없음: 소유자가 아닙니다');
+        debugPrint('❌ [GroupService] 권한 없음: 소유자가 아닙니다');
         throw Exception('그룹 멤버 목록 조회 권한이 없습니다: 소유자가 아닙니다');
       } else if (response.statusCode == 404) {
-        print('❌ [GroupService] 그룹을 찾을 수 없음');
+        debugPrint('❌ [GroupService] 그룹을 찾을 수 없음');
         throw Exception('그룹을 찾을 수 없습니다');
       } else {
-        print(
+        debugPrint(
           '❌ [GroupService] API 오류: ${response.statusCode} - ${response.data}',
         );
         throw Exception('그룹 멤버 목록 조회 실패: ${response.statusCode}');
       }
     } catch (e) {
-      print('❌ [GroupService] 그룹 멤버 목록 조회 중 예외 발생: $e');
+      debugPrint('❌ [GroupService] 그룹 멤버 목록 조회 중 예외 발생: $e');
       if (e is DioException) {
-        print(
+        debugPrint(
           '❌ [GroupService] Dio 에러: ${e.response?.statusCode} - ${e.response?.data}',
         );
       } else if (e is FormatException) {
-        print('❌ [GroupService] JSON 파싱 오류: $e');
+        debugPrint('❌ [GroupService] JSON 파싱 오류: $e');
       }
       rethrow;
     }
@@ -270,29 +275,31 @@ class GroupService {
   /// 22. 그룹에 멤버 추가
   Future<void> addMemberToGroup(int groupId, String userId) async {
     try {
-      print('🔍 [GroupService] 그룹 멤버 추가 시작 - 그룹ID: $groupId, 사용자ID: $userId');
+      debugPrint(
+        '🔍 [GroupService] 그룹 멤버 추가 시작 - 그룹ID: $groupId, 사용자ID: $userId',
+      );
 
       final response = await _dio.post(
         '/api/groups/$groupId/members',
         data: {'userId': userId},
       );
 
-      print('📡 [GroupService] API 응답 상태: ${response.statusCode}');
-      print('📡 [GroupService] API 응답 데이터: ${response.data}');
+      debugPrint('📡 [GroupService] API 응답 상태: ${response.statusCode}');
+      debugPrint('📡 [GroupService] API 응답 데이터: ${response.data}');
 
       if (response.statusCode == 200) {
-        print('✅ [GroupService] 그룹 멤버 추가 성공');
+        debugPrint('✅ [GroupService] 그룹 멤버 추가 성공');
         return;
       } else {
-        print(
+        debugPrint(
           '❌ [GroupService] API 오류: ${response.statusCode} - ${response.data}',
         );
         throw Exception('그룹 멤버 추가 실패: ${response.statusCode}');
       }
     } catch (e) {
-      print('❌ [GroupService] 그룹 멤버 추가 중 예외 발생: $e');
+      debugPrint('❌ [GroupService] 그룹 멤버 추가 중 예외 발생: $e');
       if (e is DioException) {
-        print(
+        debugPrint(
           '❌ [GroupService] Dio 에러: ${e.response?.statusCode} - ${e.response?.data}',
         );
       }
@@ -308,10 +315,10 @@ class GroupService {
     List<String> usernames,
   ) async {
     try {
-      print(
+      debugPrint(
         '🔍 [GroupService] 그룹 멤버 일괄 추가 시작 - 그룹ID: $groupId, 사용자 수: ${usernames.length}',
       );
-      print('🔍 [GroupService] 요청할 usernames: $usernames');
+      debugPrint('🔍 [GroupService] 요청할 usernames: $usernames');
 
       final response = await _dio.post(
         '/api/groups/$groupId/members/batch',
@@ -319,27 +326,27 @@ class GroupService {
         options: Options(headers: {'Content-Type': 'application/json'}),
       );
 
-      print('📡 [GroupService] API 응답 상태: ${response.statusCode}');
-      print('📡 [GroupService] API 응답 데이터: ${response.data}');
+      debugPrint('📡 [GroupService] API 응답 상태: ${response.statusCode}');
+      debugPrint('📡 [GroupService] API 응답 데이터: ${response.data}');
 
       if (response.statusCode == 200) {
-        print('✅ [GroupService] 그룹 멤버 일괄 추가 성공');
+        debugPrint('✅ [GroupService] 그룹 멤버 일괄 추가 성공');
         return;
       } else {
-        print(
+        debugPrint(
           '❌ [GroupService] API 오류: ${response.statusCode} - ${response.data}',
         );
         throw Exception('그룹 멤버 일괄 추가 실패: ${response.statusCode}');
       }
     } catch (e) {
-      print('❌ [GroupService] 그룹 멤버 일괄 추가 중 예외 발생: $e');
+      debugPrint('❌ [GroupService] 그룹 멤버 일괄 추가 중 예외 발생: $e');
       if (e is DioException) {
-        print(
+        debugPrint(
           '❌ [GroupService] Dio 에러: ${e.response?.statusCode} - ${e.response?.data}',
         );
-        print('❌ [GroupService] 요청 URL: ${e.requestOptions.path}');
-        print('❌ [GroupService] 요청 메서드: ${e.requestOptions.method}');
-        print('❌ [GroupService] 요청 데이터: ${e.requestOptions.data}');
+        debugPrint('❌ [GroupService] 요청 URL: ${e.requestOptions.path}');
+        debugPrint('❌ [GroupService] 요청 메서드: ${e.requestOptions.method}');
+        debugPrint('❌ [GroupService] 요청 데이터: ${e.requestOptions.data}');
       }
       rethrow;
     }
@@ -348,26 +355,26 @@ class GroupService {
   /// 22. 그룹 삭제
   Future<void> deleteGroup(int groupId) async {
     try {
-      print('🔍 [GroupService] 그룹 삭제 시작 - 그룹ID: $groupId');
+      debugPrint('🔍 [GroupService] 그룹 삭제 시작 - 그룹ID: $groupId');
 
       final response = await _dio.delete('/api/groups/$groupId');
 
-      print('📡 [GroupService] API 응답 상태: ${response.statusCode}');
-      print('📡 [GroupService] API 응답 데이터: ${response.data}');
+      debugPrint('📡 [GroupService] API 응답 상태: ${response.statusCode}');
+      debugPrint('📡 [GroupService] API 응답 데이터: ${response.data}');
 
       if (response.statusCode == 200) {
-        print('✅ [GroupService] 그룹 삭제 성공');
+        debugPrint('✅ [GroupService] 그룹 삭제 성공');
         return;
       } else {
-        print(
+        debugPrint(
           '❌ [GroupService] API 오류: ${response.statusCode} - ${response.data}',
         );
         throw Exception('그룹 삭제 실패: ${response.statusCode}');
       }
     } catch (e) {
-      print('❌ [GroupService] 그룹 삭제 중 예외 발생: $e');
+      debugPrint('❌ [GroupService] 그룹 삭제 중 예외 발생: $e');
       if (e is DioException) {
-        print(
+        debugPrint(
           '❌ [GroupService] Dio 에러: ${e.response?.statusCode} - ${e.response?.data}',
         );
       }
@@ -378,28 +385,30 @@ class GroupService {
   /// 24. 그룹에서 멤버 제거
   Future<void> removeMemberFromGroup(int groupId, String userId) async {
     try {
-      print('🔍 [GroupService] 그룹 멤버 제거 시작 - 그룹ID: $groupId, 사용자ID: $userId');
+      debugPrint(
+        '🔍 [GroupService] 그룹 멤버 제거 시작 - 그룹ID: $groupId, 사용자ID: $userId',
+      );
 
       final response = await _dio.delete(
         '/api/groups/$groupId/members/$userId',
       );
 
-      print('📡 [GroupService] API 응답 상태: ${response.statusCode}');
-      print('📡 [GroupService] API 응답 데이터: ${response.data}');
+      debugPrint('📡 [GroupService] API 응답 상태: ${response.statusCode}');
+      debugPrint('📡 [GroupService] API 응답 데이터: ${response.data}');
 
       if (response.statusCode == 200) {
-        print('✅ [GroupService] 그룹 멤버 제거 성공');
+        debugPrint('✅ [GroupService] 그룹 멤버 제거 성공');
         return;
       } else {
-        print(
+        debugPrint(
           '❌ [GroupService] API 오류: ${response.statusCode} - ${response.data}',
         );
         throw Exception('그룹 멤버 제거 실패: ${response.statusCode}');
       }
     } catch (e) {
-      print('❌ [GroupService] 그룹 멤버 제거 중 예외 발생: $e');
+      debugPrint('❌ [GroupService] 그룹 멤버 제거 중 예외 발생: $e');
       if (e is DioException) {
-        print(
+        debugPrint(
           '❌ [GroupService] Dio 에러: ${e.response?.statusCode} - ${e.response?.data}',
         );
       }
@@ -415,10 +424,10 @@ class GroupService {
     List<String> usernames,
   ) async {
     try {
-      print(
+      debugPrint(
         '🔍 [GroupService] 그룹 멤버 일괄 제거 시작 - 그룹ID: $groupId, 사용자 수: ${usernames.length}',
       );
-      print('🔍 [GroupService] 요청할 usernames: $usernames');
+      debugPrint('🔍 [GroupService] 요청할 usernames: $usernames');
 
       // 🎯 DELETE 메서드에 body를 전달할 때는 options를 사용
       final response = await _dio.delete(
@@ -427,27 +436,27 @@ class GroupService {
         options: Options(headers: {'Content-Type': 'application/json'}),
       );
 
-      print('📡 [GroupService] API 응답 상태: ${response.statusCode}');
-      print('📡 [GroupService] API 응답 데이터: ${response.data}');
+      debugPrint('📡 [GroupService] API 응답 상태: ${response.statusCode}');
+      debugPrint('📡 [GroupService] API 응답 데이터: ${response.data}');
 
       if (response.statusCode == 200) {
-        print('✅ [GroupService] 그룹 멤버 일괄 제거 성공');
+        debugPrint('✅ [GroupService] 그룹 멤버 일괄 제거 성공');
         return;
       } else {
-        print(
+        debugPrint(
           '❌ [GroupService] API 오류: ${response.statusCode} - ${response.data}',
         );
         throw Exception('그룹 멤버 일괄 제거 실패: ${response.statusCode}');
       }
     } catch (e) {
-      print('❌ [GroupService] 그룹 멤버 일괄 제거 중 예외 발생: $e');
+      debugPrint('❌ [GroupService] 그룹 멤버 일괄 제거 중 예외 발생: $e');
       if (e is DioException) {
-        print(
+        debugPrint(
           '❌ [GroupService] Dio 에러: ${e.response?.statusCode} - ${e.response?.data}',
         );
-        print('❌ [GroupService] 요청 URL: ${e.requestOptions.path}');
-        print('❌ [GroupService] 요청 메서드: ${e.requestOptions.method}');
-        print('❌ [GroupService] 요청 데이터: ${e.requestOptions.data}');
+        debugPrint('❌ [GroupService] 요청 URL: ${e.requestOptions.path}');
+        debugPrint('❌ [GroupService] 요청 메서드: ${e.requestOptions.method}');
+        debugPrint('❌ [GroupService] 요청 데이터: ${e.requestOptions.data}');
       }
       rethrow;
     }
@@ -459,13 +468,15 @@ class GroupService {
     String? groupImage,
   }) async {
     try {
-      print('🔍 [GroupService] 전체 친구 그룹 수정 시작');
-      print('🔍 [GroupService] 새 설명: $description, 이미지: $groupImage');
+      debugPrint('🔍 [GroupService] 전체 친구 그룹 수정 시작');
+      debugPrint('🔍 [GroupService] 새 설명: $description, 이미지: $groupImage');
 
       final Map<String, dynamic> body = {};
-      if (description != null && description.isNotEmpty) {
-        body['description'] = description;
+      // 🎯 description 처리: null이 아니면 빈 문자열 포함하여 그대로 전송
+      if (description != null) {
+        body['description'] = description; // 빈 문자열 포함하여 그대로 전송
       }
+      // description이 null이면 필드 생략 (변경하지 않음)
 
       // 🎯 이미지 처리: 빈 문자열이면 빈 문자열로 전송 (기본 이미지), 값이 있으면 포함
       if (groupImage != null) {
@@ -475,23 +486,23 @@ class GroupService {
 
       final response = await _dio.put('/api/groups/all-friends', data: body);
 
-      print('📡 [GroupService] API 응답 상태: ${response.statusCode}');
-      print('📡 [GroupService] API 응답 데이터: ${response.data}');
+      debugPrint('📡 [GroupService] API 응답 상태: ${response.statusCode}');
+      debugPrint('📡 [GroupService] API 응답 데이터: ${response.data}');
 
       if (response.statusCode == 200) {
         final responseData = response.data;
-        print('✅ [GroupService] 전체 친구 그룹 수정 성공');
+        debugPrint('✅ [GroupService] 전체 친구 그룹 수정 성공');
         return responseData;
       } else {
-        print(
+        debugPrint(
           '❌ [GroupService] API 오류: ${response.statusCode} - ${response.data}',
         );
         throw Exception('전체 친구 그룹 수정 실패: ${response.statusCode}');
       }
     } catch (e) {
-      print('❌ [GroupService] 전체 친구 그룹 수정 중 예외 발생: $e');
+      debugPrint('❌ [GroupService] 전체 친구 그룹 수정 중 예외 발생: $e');
       if (e is DioException) {
-        print(
+        debugPrint(
           '❌ [GroupService] Dio 에러: ${e.response?.statusCode} - ${e.response?.data}',
         );
       }
@@ -507,8 +518,8 @@ class GroupService {
     String? profileImageUrl, // 🎯 프로필 이미지 URL
   }) async {
     try {
-      print('🔍 [GroupService] 그룹 수정 시작 - 그룹ID: $groupId');
-      print(
+      debugPrint('🔍 [GroupService] 그룹 수정 시작 - 그룹ID: $groupId');
+      debugPrint(
         '🔍 [GroupService] 새 이름: $name, 새 설명: $description, 이미지: $profileImageUrl',
       );
 
@@ -525,23 +536,23 @@ class GroupService {
 
       final response = await _dio.put('/api/groups/$groupId', data: body);
 
-      print('📡 [GroupService] API 응답 상태: ${response.statusCode}');
-      print('📡 [GroupService] API 응답 데이터: ${response.data}');
+      debugPrint('📡 [GroupService] API 응답 상태: ${response.statusCode}');
+      debugPrint('📡 [GroupService] API 응답 데이터: ${response.data}');
 
       if (response.statusCode == 200) {
         final responseData = response.data;
-        print('✅ [GroupService] 그룹 수정 성공');
+        debugPrint('✅ [GroupService] 그룹 수정 성공');
         return responseData;
       } else {
-        print(
+        debugPrint(
           '❌ [GroupService] API 오류: ${response.statusCode} - ${response.data}',
         );
         throw Exception('그룹 수정 실패: ${response.statusCode}');
       }
     } catch (e) {
-      print('❌ [GroupService] 그룹 수정 중 예외 발생: $e');
+      debugPrint('❌ [GroupService] 그룹 수정 중 예외 발생: $e');
       if (e is DioException) {
-        print(
+        debugPrint(
           '❌ [GroupService] Dio 에러: ${e.response?.statusCode} - ${e.response?.data}',
         );
       }
@@ -552,29 +563,29 @@ class GroupService {
   /// 25. 그룹 정보 조회
   Future<Group> getGroup(int groupId) async {
     try {
-      print('🔍 [GroupService] 그룹 정보 조회 시작 - 그룹ID: $groupId');
+      debugPrint('🔍 [GroupService] 그룹 정보 조회 시작 - 그룹ID: $groupId');
 
       final response = await _dio.get('/api/groups/$groupId');
-      print('📡 [GroupService] API 응답 상태: ${response.statusCode}');
-      print('📡 [GroupService] API 응답 데이터: ${response.data}');
+      debugPrint('📡 [GroupService] API 응답 상태: ${response.statusCode}');
+      debugPrint('📡 [GroupService] API 응답 데이터: ${response.data}');
 
       if (response.statusCode == 200) {
         final Map<String, dynamic> data = response.data;
-        print('✅ [GroupService] 파싱된 데이터: $data');
+        debugPrint('✅ [GroupService] 파싱된 데이터: $data');
 
         final group = Group.fromJson(data['group'] ?? data);
-        print('✅ [GroupService] 그룹 정보 조회 성공');
+        debugPrint('✅ [GroupService] 그룹 정보 조회 성공');
         return group;
       } else {
-        print(
+        debugPrint(
           '❌ [GroupService] API 오류: ${response.statusCode} - ${response.data}',
         );
         throw Exception('그룹 정보 조회 실패: ${response.statusCode}');
       }
     } catch (e) {
-      print('❌ [GroupService] 그룹 정보 조회 중 예외 발생: $e');
+      debugPrint('❌ [GroupService] 그룹 정보 조회 중 예외 발생: $e');
       if (e is DioException) {
-        print(
+        debugPrint(
           '❌ [GroupService] Dio 에러: ${e.response?.statusCode} - ${e.response?.data}',
         );
       }
@@ -590,15 +601,15 @@ class GroupService {
   /// 응답: 변경된 그룹 목록 (displayOrder 반영)
   Future<List<Group>> reorderGroups(List<Map<String, dynamic>> groups) async {
     try {
-      print('🔍 [GroupService] 그룹 순서 변경 시작 - 그룹 수: ${groups.length}');
+      debugPrint('🔍 [GroupService] 그룹 순서 변경 시작 - 그룹 수: ${groups.length}');
 
       final response = await _dio.patch(
         '/api/groups/reorder',
         data: {'groups': groups},
       );
 
-      print('📡 [GroupService] API 응답 상태: ${response.statusCode}');
-      print('📡 [GroupService] API 응답 데이터: ${response.data}');
+      debugPrint('📡 [GroupService] API 응답 상태: ${response.statusCode}');
+      debugPrint('📡 [GroupService] API 응답 데이터: ${response.data}');
 
       if (response.statusCode == 200) {
         final decoded = response.data;
@@ -631,26 +642,30 @@ class GroupService {
                   return Group.fromJson(item as Map<String, dynamic>);
                 }).toList();
           } else {
-            print('⚠️ [GroupService] 예상치 못한 응답 구조입니다. groups 배열을 찾지 못했습니다.');
+            debugPrint(
+              '⚠️ [GroupService] 예상치 못한 응답 구조입니다. groups 배열을 찾지 못했습니다.',
+            );
             reorderedGroups = <Group>[];
           }
         } else {
-          print('⚠️ [GroupService] 알 수 없는 응답 형태입니다.');
+          debugPrint('⚠️ [GroupService] 알 수 없는 응답 형태입니다.');
           reorderedGroups = <Group>[];
         }
 
-        print('✅ [GroupService] 그룹 순서 변경 성공 - ${reorderedGroups.length}개 그룹');
+        debugPrint(
+          '✅ [GroupService] 그룹 순서 변경 성공 - ${reorderedGroups.length}개 그룹',
+        );
         return reorderedGroups;
       } else {
-        print(
+        debugPrint(
           '❌ [GroupService] API 오류: ${response.statusCode} - ${response.data}',
         );
         throw Exception('그룹 순서 변경 실패: ${response.statusCode}');
       }
     } catch (e) {
-      print('❌ [GroupService] 그룹 순서 변경 중 예외 발생: $e');
+      debugPrint('❌ [GroupService] 그룹 순서 변경 중 예외 발생: $e');
       if (e is DioException) {
-        print(
+        debugPrint(
           '❌ [GroupService] Dio 에러: ${e.response?.statusCode} - ${e.response?.data}',
         );
       }

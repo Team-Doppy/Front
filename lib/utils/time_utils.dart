@@ -1,3 +1,5 @@
+import 'package:flutter/material.dart';
+
 /// 시간 관련 유틸리티 함수
 /// UTC 시간을 로컬 시간으로 변환하는 기능 제공
 class TimeUtils {
@@ -39,7 +41,7 @@ class TimeUtils {
       return assumedUtc.toLocal();
     } catch (e) {
       // 파싱 실패 시 현재 시간 반환
-      print('[TimeUtils] 시간 파싱 실패: $utcString, 에러: $e');
+      debugPrint('[TimeUtils] 시간 파싱 실패: $utcString, 에러: $e');
       return DateTime.now();
     }
   }
@@ -108,7 +110,7 @@ class TimeUtils {
       final time2 = toLocalTime(utcString2);
       return time2.difference(time1);
     } catch (e) {
-      print('[TimeUtils] 시간 차이 계산 실패: $e');
+      debugPrint('[TimeUtils] 시간 차이 계산 실패: $e');
       return Duration.zero;
     }
   }
@@ -120,7 +122,7 @@ class TimeUtils {
       final now = DateTime.now();
       return now.difference(utcTime);
     } catch (e) {
-      print('[TimeUtils] 현재 시간과의 차이 계산 실패: $e');
+      debugPrint('[TimeUtils] 현재 시간과의 차이 계산 실패: $e');
       return Duration.zero;
     }
   }

@@ -26,7 +26,7 @@ class FontPreloadService {
     List<String>? favoriteIdentifiers,
   }) async {
     if (_isPreloading) {
-      print('[FontPreloadService] 이미 프리로드 중입니다');
+      debugPrint('[FontPreloadService] 이미 프리로드 중입니다');
       return;
     }
 
@@ -68,6 +68,9 @@ class FontPreloadService {
       final batchSize = 10;
 
       for (int i = 0; i < fontsToLoad.length; i += batchSize) {
+        // UI 스레드가 블로킹되지 않도록 다음 프레임으로 미루기
+        await Future.delayed(Duration.zero);
+
         final batch = fontsToLoad.skip(i).take(batchSize).toList();
 
         // 배치 내 폰트들을 병렬로 로드
@@ -86,10 +89,12 @@ class FontPreloadService {
                 } catch (_) {}
 
                 _preloadedFonts.add(font.identifier);
-                print('[FontPreloadService] ✅ 폰트 로드 완료: ${font.displayName}');
+                debugPrint(
+                  '[FontPreloadService] ✅ 폰트 로드 완료: ${font.displayName}',
+                );
               }
             } catch (e) {
-              print(
+              debugPrint(
                 '[FontPreloadService] ⚠️ 폰트 로드 실패: ${font.displayName} - $e',
               );
             }
@@ -97,17 +102,17 @@ class FontPreloadService {
           eagerError: false, // 하나 실패해도 계속 진행
         );
 
-        // 배치 간 짧은 딜레이 (메모리 부하 방지)
+        // 배치 간 짧은 딜레이 (UI 업데이트 기회 제공)
         if (i + batchSize < fontsToLoad.length) {
           await Future.delayed(const Duration(milliseconds: 50));
         }
       }
 
-      print(
+      debugPrint(
         '[FontPreloadService] ✅ 우선순위 폰트 프리로드 완료: ${_preloadedFonts.length}개',
       );
     } catch (e) {
-      print('[FontPreloadService] ❌ 폰트 프리로드 오류: $e');
+      debugPrint('[FontPreloadService] ❌ 폰트 프리로드 오류: $e');
     } finally {
       _isPreloading = false;
     }
@@ -130,9 +135,9 @@ class FontPreloadService {
         await GoogleFonts.pendingFonts([font.displayName]);
       } catch (_) {}
       _preloadedFonts.add(font.identifier);
-      print('[FontPreloadService] ✅ 폰트 로드 완료: ${font.displayName}');
+      debugPrint('[FontPreloadService] ✅ 폰트 로드 완료: ${font.displayName}');
     } catch (e) {
-      print('[FontPreloadService] ⚠️ 폰트 로드 실패: ${font.displayName} - $e');
+      debugPrint('[FontPreloadService] ⚠️ 폰트 로드 실패: ${font.displayName} - $e');
     }
   }
 
@@ -173,9 +178,11 @@ class FontPreloadService {
         }
       }
 
-      print('[FontPreloadService] ✅ 전체 폰트 프리로드 완료: ${_preloadedFonts.length}개');
+      debugPrint(
+        '[FontPreloadService] ✅ 전체 폰트 프리로드 완료: ${_preloadedFonts.length}개',
+      );
     } catch (e) {
-      print('[FontPreloadService] ❌ 전체 폰트 프리로드 오류: $e');
+      debugPrint('[FontPreloadService] ❌ 전체 폰트 프리로드 오류: $e');
     } finally {
       _isPreloading = false;
     }

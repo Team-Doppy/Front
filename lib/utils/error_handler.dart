@@ -185,8 +185,8 @@ class ErrorHandler {
     showError(context, message, action: action);
 
     // 에러 로깅
-    print('❌ [ErrorHandler] $message');
-    print('❌ [ErrorHandler] Original error: $error');
+    debugPrint('❌ [ErrorHandler] $message');
+    debugPrint('❌ [ErrorHandler] Original error: $error');
   }
 
   /// 토큰 갱신 실패 시 재로그인 유도

@@ -79,10 +79,19 @@ class _TrendingKeywordsWithPreloadState
     // recommendedPosts가 5개 미만이면 모두, 5개 이상이면 5개만 프리로드
     final postsToPreload = widget.recommendedPosts.take(5).toList();
 
-    // 이미지 URL 추출
+    // 이미지 URL 추출 (비디오 URL 제외)
     final imageUrls =
         postsToPreload
             .where((post) => post.imageUrl != null && post.imageUrl!.isNotEmpty)
+            .where((post) {
+              // 🎯 비디오 파일(.mp4, .mov 등) 제외 - 이미지만 프리로드
+              final url = post.imageUrl!.toLowerCase();
+              return !url.endsWith('.mp4') &&
+                  !url.endsWith('.mov') &&
+                  !url.endsWith('.avi') &&
+                  !url.endsWith('.webm') &&
+                  !url.contains('/videos/');
+            })
             .map((post) => post.imageUrl!)
             .toList();
 
@@ -95,18 +104,29 @@ class _TrendingKeywordsWithPreloadState
     debugPrint('[TrendingKeywords] 이미지 프리로드 시작: ${imageUrls.length}개');
 
     try {
-      // 동기적으로 모든 이미지 프리로드
-      await Future.wait(
-        imageUrls.map((url) {
-          return precacheImage(
-            NetworkImage(url),
+      // 🎯 배치 처리로 UI 블로킹 방지 (한 번에 하나씩, 각 프레임 사이에 yield)
+      for (int i = 0; i < imageUrls.length; i++) {
+        if (!mounted) break;
+
+        try {
+          await precacheImage(
+            NetworkImage(imageUrls[i]),
             context,
             onError: (e, stack) {
-              debugPrint('[TrendingKeywords] 이미지 프리로드 실패: $url - $e');
+              debugPrint(
+                '[TrendingKeywords] 이미지 프리로드 실패: ${imageUrls[i]} - $e',
+              );
             },
           );
-        }),
-      );
+
+          // 🎯 각 이미지 프리로드 후 UI 업데이트 기회 제공 (Hang 방지)
+          if (i < imageUrls.length - 1) {
+            await Future.delayed(const Duration(milliseconds: 16));
+          }
+        } catch (e) {
+          debugPrint('[TrendingKeywords] 이미지 프리로드 중 오류: ${imageUrls[i]} - $e');
+        }
+      }
 
       debugPrint('[TrendingKeywords] 이미지 프리로드 완료');
       if (mounted) {

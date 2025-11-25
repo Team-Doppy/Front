@@ -502,7 +502,7 @@ class _ShareBottomSheetState extends State<ShareBottomSheet> {
 
       setState(() => _isSharing = false);
     } catch (e) {
-      print('⚠️ 시스템 공유 실패: $e');
+      debugPrint('⚠️ 시스템 공유 실패: $e');
       setState(() => _isSharing = false);
 
       // 폴백: 클립보드에 복사
@@ -532,10 +532,10 @@ class _ShareBottomSheetState extends State<ShareBottomSheet> {
 
       if (await canLaunchUrl(instagramDmUrl)) {
         await launchUrl(instagramDmUrl, mode: LaunchMode.externalApplication);
-        print('✅ Instagram DM 화면 열림');
+        debugPrint('✅ Instagram DM 화면 열림');
       } else {
         // Instagram 앱이 없으면 클립보드 복사만
-        print('⚠️ Instagram 앱 없음 - 클립보드에만 복사');
+        debugPrint('⚠️ Instagram 앱 없음 - 클립보드에만 복사');
         if (mounted) {
           ErrorHandler.showInfo(
             context,
@@ -548,7 +548,7 @@ class _ShareBottomSheetState extends State<ShareBottomSheet> {
         setState(() => _isSharingToInstagram = false);
       }
     } catch (e) {
-      print('❌ Instagram 공유 실패: $e');
+      debugPrint('❌ Instagram 공유 실패: $e');
       if (mounted) {
         setState(() => _isSharingToInstagram = false);
         // 실패해도 클립보드는 복사되어 있음

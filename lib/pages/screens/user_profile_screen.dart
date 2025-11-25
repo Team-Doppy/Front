@@ -207,7 +207,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
         try {
           await context.read<UserProvider>().fetchMyProfile();
         } catch (e) {
-          print('[UserProfileScreen] 내 프로필 새로고침 실패: $e');
+          debugPrint('[UserProfileScreen] 내 프로필 새로고침 실패: $e');
         }
       }
 
@@ -217,7 +217,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
           final friendProvider = context.read<FriendProvider>();
           await friendProvider.checkFriendStatus(widget.otherUser!.username);
         } catch (e) {
-          print('[UserProfileScreen] 친구 상태 새로고침 실패: $e');
+          debugPrint('[UserProfileScreen] 친구 상태 새로고침 실패: $e');
         }
       }
 
@@ -226,7 +226,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
         force: true, // 강제로 새로 로드
       );
     } catch (e) {
-      print('[UserProfileScreen] Refresh error: $e');
+      debugPrint('[UserProfileScreen] Refresh error: $e');
     }
   }
 
@@ -242,7 +242,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     if (currentScroll >= threshold) {
       // 더 로드할 데이터가 있고, 현재 로딩 중이 아닐 때만 호출
       if (_feedProvider.hasMore && !_feedProvider.isLoadingMore) {
-        print(
+        debugPrint(
           '[UserProfileScreen] 스크롤 끝 감지 - 자동 로드 시작 (${(currentScroll / maxScroll * 100).toStringAsFixed(1)}%)',
         );
         _feedProvider.loadMore();
@@ -1573,7 +1573,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     _nameController.text = me.alias ?? '';
     _descriptionController.text = me.selfIntroduction ?? '';
 
-    print(
+    debugPrint(
       '[UserProfile] Bottom sheet 열기 - 이름: "${_nameController.text}", 소개: "${_descriptionController.text}"',
     );
 
@@ -1703,13 +1703,13 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
               throw Exception('다른 사람의 프로필 이미지는 업데이트할 수 없습니다');
             }
           } else {
-            print(
+            debugPrint(
               '[UserProfileScreen] imageUrl is empty, calling fetchMyProfile',
             );
             await context.read<UserProvider>().fetchMyProfile();
           }
         } catch (e) {
-          print('[UserProfileScreen] Error in upload success handler: $e');
+          debugPrint('[UserProfileScreen] Error in upload success handler: $e');
         }
         if (_profileTaskListener != null) {
           task.removeListener(_profileTaskListener!);

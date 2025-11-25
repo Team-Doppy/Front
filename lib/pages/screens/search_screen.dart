@@ -1,5 +1,3 @@
-import 'dart:ui';
-
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:doppy/data/models/user_model.dart';
 import 'package:doppy/l10n/app_localizations.dart';
@@ -14,7 +12,6 @@ import 'package:doppy/pages/components/search_top_bar.dart';
 import 'package:doppy/pages/components/search_results.dart';
 import 'package:doppy/pages/components/search_video_widgets.dart';
 import 'package:doppy/pages/components/search_trending_section.dart';
-import 'dart:ui' as ui;
 import 'package:google_fonts/google_fonts.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -81,20 +78,25 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
     });
 
     // 🎯 초기화 및 초기 검색어 처리
-    WidgetsBinding.instance.addPostFrameCallback((_) async {
-      final searchService = context.read<SearchService>();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      // 🎯 UI 렌더링 완료 후 지연 실행하여 블로킹 방지
+      Future.delayed(const Duration(milliseconds: 300), () async {
+        if (!mounted) return;
 
-      // 🎯 초기 검색어가 있으면 포커스 설정
-      if (hasInitialQuery) {
-        searchService.onSearchChanged(widget.initialQuery!);
-        searchService.setFocused(true);
-        debugPrint('[SearchScreen] 초기 검색어로 포커스 설정: ${widget.initialQuery}');
-      }
+        final searchService = context.read<SearchService>();
 
-      // initialize는 백그라운드에서 실행 (캐시 사용)
-      await searchService.initialize(forceRefresh: false);
+        // 🎯 초기 검색어가 있으면 포커스 설정
+        if (hasInitialQuery) {
+          searchService.onSearchChanged(widget.initialQuery!);
+          searchService.setFocused(true);
+          debugPrint('[SearchScreen] 초기 검색어로 포커스 설정: ${widget.initialQuery}');
+        }
 
-      debugPrint('[SearchScreen] 초기화 완료');
+        // initialize는 백그라운드에서 실행 (캐시 사용)
+        await searchService.initialize(forceRefresh: false);
+
+        debugPrint('[SearchScreen] 초기화 완료');
+      });
     });
   }
 
@@ -278,37 +280,11 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
                           : const SizedBox.shrink(),
                 ),
               ),
-              Theme.of(context).brightness == Brightness.dark
-                  ? Positioned.fill(
-                    child: BackdropFilter(
-                      filter: ImageFilter.blur(sigmaX: 13, sigmaY: 13),
-                      child: Container(
-                        decoration: BoxDecoration(
-                          gradient: LinearGradient(
-                            begin: Alignment.topCenter,
-                            end: Alignment.bottomCenter,
-                            colors: [
-                              Theme.of(
-                                context,
-                              ).colorScheme.background.withOpacity(0.8),
-                              Theme.of(
-                                context,
-                              ).colorScheme.background.withOpacity(0.8),
-                              Theme.of(
-                                context,
-                              ).colorScheme.background.withOpacity(0.8),
-                            ],
-                            stops: const [0.0, 0.7, 1.0],
-                          ),
-                        ),
-                      ),
-                    ),
-                  )
-                  : Positioned.fill(
-                    child: Container(
-                      color: Theme.of(context).colorScheme.background,
-                    ),
-                  ),
+              Positioned.fill(
+                child: Container(
+                  color: Theme.of(context).colorScheme.background,
+                ),
+              ),
               SafeArea(
                 child: Column(
                   children: [
@@ -348,12 +324,12 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
   Future<void> _runSearch() async {
     // 🎯 중복 검색 방지
     if (_isSearching) {
-      print('[SearchOverlay] 이미 검색 중입니다. 무시.');
+      debugPrint('[SearchOverlay] 이미 검색 중입니다. 무시.');
       return;
     }
 
     final searchService = context.read<SearchService>();
-    print('[SearchOverlay] runSearch: ${searchService.query}');
+    debugPrint('[SearchOverlay] runSearch: ${searchService.query}');
 
     try {
       // 빈 검색어면 수행하지 않음
@@ -411,10 +387,10 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
           _searchRefreshCount++;
           _currentSearchPostIndex = 0; // 🎯 검색 결과 변경 시 인덱스 리셋
         });
-        print('[SearchOverlay] 검색 완료: ${posts.length}개 결과 (검색 탭에 표시)');
+        debugPrint('[SearchOverlay] 검색 완료: ${posts.length}개 결과 (검색 탭에 표시)');
       }
     } catch (e) {
-      print('[SearchOverlay] 검색 실패: $e');
+      debugPrint('[SearchOverlay] 검색 실패: $e');
       if (mounted) {
         setState(() {
           _hasNetworkError = true;
@@ -750,7 +726,7 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
         });
       }
     } catch (e) {
-      print('[SearchOverlay] 검색 새로고침 실패: $e');
+      debugPrint('[SearchOverlay] 검색 새로고침 실패: $e');
     } finally {
       if (mounted) {
         setState(() => _isSearching = false);
@@ -806,7 +782,7 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
         });
       }
     } catch (e) {
-      print('[SearchOverlay] 검색 결과 더 불러오기 실패: $e');
+      debugPrint('[SearchOverlay] 검색 결과 더 불러오기 실패: $e');
       if (mounted) {
         setState(() => _isLoadingMore = false);
       }
@@ -1010,60 +986,50 @@ class _SearchResultsViewState extends State<_SearchResultsView> {
                           onTap: widget.onSearchChipTap,
                           child: Container(
                             margin: const EdgeInsets.only(right: 8),
-                            child: ClipRRect(
-                              borderRadius: BorderRadius.circular(16),
-                              child: BackdropFilter(
-                                filter: ui.ImageFilter.blur(
-                                  sigmaX: 10,
-                                  sigmaY: 10,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 6,
+                              ),
+                              decoration: BoxDecoration(
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.surface.withOpacity(0.6),
+                                borderRadius: BorderRadius.circular(16),
+                                border: Border.all(
+                                  color: Theme.of(
+                                    context,
+                                  ).colorScheme.primary.withOpacity(0.8),
+                                  width: 1,
                                 ),
-                                child: Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 12,
-                                    vertical: 6,
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const SizedBox(width: 8),
+                                  Text(
+                                    widget.searchQuery,
+                                    style: TextStyle(
+                                      color:
+                                          Theme.of(
+                                            context,
+                                          ).colorScheme.onSurface,
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w600,
+                                    ),
                                   ),
-                                  decoration: BoxDecoration(
-                                    color: Theme.of(
-                                      context,
-                                    ).colorScheme.surface.withOpacity(0.6),
-                                    borderRadius: BorderRadius.circular(16),
-                                    border: Border.all(
+                                  const SizedBox(width: 10),
+                                  GestureDetector(
+                                    onTap: widget.onClearSearch,
+                                    child: Icon(
+                                      Icons.close,
+                                      size: 20,
                                       color: Theme.of(
                                         context,
                                       ).colorScheme.primary.withOpacity(0.8),
-                                      width: 0.5,
                                     ),
                                   ),
-                                  child: Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      const SizedBox(width: 8),
-                                      Text(
-                                        widget.searchQuery,
-                                        style: TextStyle(
-                                          color:
-                                              Theme.of(
-                                                context,
-                                              ).colorScheme.onSurface,
-                                          fontSize: 14,
-                                          fontWeight: FontWeight.w600,
-                                        ),
-                                      ),
-                                      const SizedBox(width: 10),
-                                      GestureDetector(
-                                        onTap: widget.onClearSearch,
-                                        child: Icon(
-                                          Icons.close,
-                                          size: 20,
-                                          color: Theme.of(context)
-                                              .colorScheme
-                                              .primary
-                                              .withOpacity(0.9),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
+                                ],
                               ),
                             ),
                           ),
@@ -1183,14 +1149,14 @@ class _SearchResultsViewState extends State<_SearchResultsView> {
                 final screenWidth = MediaQuery.of(context).size.width;
                 final tapX = details.globalPosition.dx;
 
-                if (tapX < screenWidth * 0.2) {
+                if (tapX < screenWidth * 0.3) {
                   if (_currentIndex > 0) {
                     _pageController.previousPage(
                       duration: const Duration(milliseconds: 200),
                       curve: Curves.easeOutCubic,
                     );
                   }
-                } else if (tapX > screenWidth * 0.8) {
+                } else if (tapX > screenWidth * 0.7) {
                   if (_currentIndex < widget.posts.length - 1) {
                     _pageController.nextPage(
                       duration: const Duration(milliseconds: 200),
