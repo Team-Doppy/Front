@@ -966,7 +966,6 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
   bool _isPausedByUser = false; // 사용자가 일시정지한 경우
   bool _isPreloaded = false; // 프리로드된 컨트롤러인지 여부
   final VideoMuteService _muteService = VideoMuteService();
-  DateTime? _lastRetryTime; // 🎯 마지막 재생 재시도 시간 (디바운싱용)
 
   @override
   void initState() {
@@ -1010,23 +1009,29 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
     }
 
     // 🎯 에디터 모드에서만 VideoCacheService 참조 해제, reader 모드에서는 직접 dispose
-    if (widget.isEditing && _isPreloaded && _controller != null) {
-      // VideoCacheService에서 가져온 컨트롤러는 참조 해제만
-      VideoCacheService().releaseController(widget.url, namespace: 'editor');
-      debugPrint('[ClipComponent] VideoCacheService 참조 해제');
-    } else if (_controller != null && !_isPreloaded) {
-      // reader 모드: 먼저 일시정지
-      try {
-        if (_controller!.value.isInitialized) {
-          _controller!.pause();
-        }
-      } catch (e) {
-        debugPrint('[ClipComponent] pause 오류: $e');
+    if (widget.isEditing) {
+      // 에디터 모드: VideoCacheService 사용
+      if (_isPreloaded && _controller != null) {
+        // VideoCacheService에서 가져온 컨트롤러는 참조 해제만
+        VideoCacheService().releaseController(widget.url, namespace: 'editor');
+        debugPrint('[ClipComponent] VideoCacheService 참조 해제');
       }
-      // 전역 맵에서 제거 (PostReaderScreen dispose에서 dispose 처리)
-      readerVideoControllers.remove(widget.url);
-      debugPrint('[ClipComponent] reader 컨트롤러 일시정지 및 맵에서 제거: ${widget.url}');
-      // dispose는 PostReaderScreen에서 처리
+    } else {
+      // reader 모드: 직접 생성한 컨트롤러만 처리
+      if (_controller != null && !_isPreloaded) {
+        // reader 모드: 먼저 일시정지
+        try {
+          if (_controller!.value.isInitialized) {
+            _controller!.pause();
+          }
+        } catch (e) {
+          debugPrint('[ClipComponent] pause 오류: $e');
+        }
+        // 전역 맵에서 제거 (PostReaderScreen dispose에서 dispose 처리)
+        readerVideoControllers.remove(widget.url);
+        debugPrint('[ClipComponent] reader 컨트롤러 일시정지 및 맵에서 제거: ${widget.url}');
+        // dispose는 PostReaderScreen에서 처리
+      }
     }
 
     super.dispose();
@@ -1213,79 +1218,6 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
     }
 
     // 🎯 재생 상태 먼저 업데이트
-    if (_isPlaying != isPlaying) {
-      setState(() {
-        _isPlaying = isPlaying;
-        // 🎯 재생 중이었다가 일시정지되면 사용자가 일시정지한 것으로 간주
-        // (단, 비디오가 끝나서 일시정지된 경우는 제외)
-        if (wasPlaying && !isPlaying) {
-          if (!isAtEnd) {
-            _isPausedByUser = true;
-          } else {
-            // 🎯 비디오가 끝났을 때는 일시정지 플래그 해제하고 다시보기 버튼 표시
-            _isPausedByUser = false;
-            _hasPlayedOnce = true;
-          }
-        } else if (isPlaying) {
-          // 재생이 시작되면 일시정지 플래그 해제
-          _isPausedByUser = false;
-          // 재생 중이면 다시보기 버튼 숨김
-          if (isAtEnd) {
-            _hasPlayedOnce = false;
-          }
-        }
-      });
-    }
-
-    // 🎯 재생을 시도했는데 재생이 시작되지 않으면 재시도 (데이터 로드 대기)
-    // 재생 상태 업데이트 후에 체크 (중복 재시도 방지)
-    if (_isInitialized &&
-        _isReadyToPlay &&
-        widget.shouldAutoPlay &&
-        !isPlaying && // 현재 재생 중이 아님 (업데이트된 상태)
-        !_hasPlayedOnce &&
-        duration > Duration.zero) {
-      // 🎯 duration이 0이면 비디오가 아직 로드되지 않음
-      // 🎯 재시도 디바운싱: 마지막 재시도 후 500ms 경과해야 재시도
-      final now = DateTime.now();
-      if (_lastRetryTime != null &&
-          now.difference(_lastRetryTime!).inMilliseconds < 500) {
-        return; // 너무 자주 재시도하지 않음
-      }
-
-      // 버퍼링이 조금이라도 있으면 재생 시도
-      final buffered = _controller!.value.buffered;
-      final hasFirstFrame =
-          _controller!.value.size.width > 0 &&
-          _controller!.value.size.height > 0;
-      final size = _controller!.value.size;
-
-      debugPrint(
-        '[ClipComponent] 🔄 재생 재시도 체크: hasFirstFrame=$hasFirstFrame, '
-        'size=${size.width}x${size.height}, buffered=${buffered.length}개, '
-        'position=${position.inMilliseconds}ms/${duration.inMilliseconds}ms, '
-        'isPlaying=$isPlaying, _isPlaying=$_isPlaying',
-      );
-
-      if (hasFirstFrame && (buffered.isNotEmpty || position > Duration.zero)) {
-        debugPrint('[ClipComponent] 🎬 재생 재시도: ${widget.url}');
-        _lastRetryTime = now; // 재시도 시간 기록
-        // 조금이라도 데이터가 로드되었으면 재생 시도
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted && _controller != null && !_controller!.value.isPlaying) {
-            _controller!.play();
-            debugPrint('[ClipComponent] ✅ 재생 재시도 실행: ${widget.url}');
-          }
-        });
-      } else {
-        debugPrint(
-          '[ClipComponent] ⏸️ 재생 재시도 조건 불만족: hasFirstFrame=$hasFirstFrame, '
-          'buffered=${buffered.length}, position=${position.inMilliseconds}ms, '
-          'duration=${duration.inMilliseconds}ms',
-        );
-      }
-    }
-
     if (_isPlaying != isPlaying) {
       setState(() {
         _isPlaying = isPlaying;
