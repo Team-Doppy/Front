@@ -193,7 +193,88 @@ class _LinkComponentState extends State<_LinkComponent>
 
   static const double marginTop = 4;
   static const double marginBottom = 2;
-  static const double paddingWithText = 15;
+  static const double paddingWithText = 12;
+
+  // 🎯 특수 노드 사이/마지막 노드 아래 빈 문단 추가 처리
+  void _handleSpecialNodeTap(Offset globalPosition) {
+    if (widget.dragService == null) return;
+    final editorService = widget.dragService!.editorService;
+    final doc = editorService.document;
+    final dragService = widget.dragService!;
+
+    // 자신의 인덱스와 Rect 확인
+    final currentNodeIndex = doc.getNodeIndexById(widget.nodeId);
+    if (currentNodeIndex == -1) return;
+
+    final nodeRect = dragService.getNodeGlobalRect(widget.nodeId);
+    if (nodeRect == null) return;
+
+    // 🎯 마지막 노드이고 패딩 부분(아래 20px)을 클릭한 경우
+    final isLastNode = currentNodeIndex == doc.nodeCount - 1;
+    if (isLastNode && globalPosition.dy > nodeRect.bottom + 20) {
+      // 마지막 노드 아래 빈 문단 추가
+      editorService.insertEmptyParagraphAtIndex(currentNodeIndex + 1);
+      dragService.invalidateNodeRectCache();
+      context.read<NodeComponentService>().selectNode(null);
+      return;
+    }
+
+    // 🎯 위쪽 이웃 노드 확인
+    if (currentNodeIndex > 0) {
+      final prevNode = doc.getNodeAt(currentNodeIndex - 1);
+      if (prevNode != null) {
+        final isSpecialPrev =
+            prevNode is ImageNode ||
+            prevNode is ImageRowNode ||
+            prevNode is ClipNode ||
+            prevNode is LinkNode;
+
+        if (isSpecialPrev) {
+          final prevRect = dragService.getNodeGlobalRect(prevNode.id);
+          if (prevRect != null) {
+            // 위쪽 노드와 자신 사이의 간격 확인 (위쪽 노드 아래 20px ~ 자신 위쪽 20px)
+            final gapTop = prevRect.bottom - 20;
+            final gapBottom = nodeRect.top + 20;
+            if (globalPosition.dy >= gapTop && globalPosition.dy <= gapBottom) {
+              // 특수 노드 사이 빈 문단 추가
+              editorService.insertEmptyParagraphAtIndex(currentNodeIndex);
+              dragService.invalidateNodeRectCache();
+              context.read<NodeComponentService>().selectNode(null);
+              return;
+            }
+          }
+        }
+      }
+    }
+
+    // 🎯 아래쪽 이웃 노드 확인
+    if (currentNodeIndex < doc.nodeCount - 1) {
+      final nextNode = doc.getNodeAt(currentNodeIndex + 1);
+      if (nextNode != null) {
+        final isSpecialNext =
+            nextNode is ImageNode ||
+            nextNode is ImageRowNode ||
+            nextNode is ClipNode ||
+            nextNode is LinkNode;
+
+        if (isSpecialNext) {
+          final nextRect = dragService.getNodeGlobalRect(nextNode.id);
+          if (nextRect != null) {
+            // 자신과 아래쪽 노드 사이의 간격 확인 (자신 아래 20px ~ 아래쪽 노드 위쪽 20px)
+            final gapTop = nodeRect.bottom - 20;
+            final gapBottom = nextRect.top + 20;
+            if (globalPosition.dy >= gapTop && globalPosition.dy <= gapBottom) {
+              // 특수 노드 사이 빈 문단 추가
+              editorService.insertEmptyParagraphAtIndex(currentNodeIndex + 1);
+              dragService.invalidateNodeRectCache();
+              context.read<NodeComponentService>().selectNode(null);
+              return;
+            }
+          }
+        }
+      }
+    }
+  }
 
   OverlayEntry? _previewEntry;
   late final AnimationController _previewCtrl;
@@ -353,12 +434,7 @@ class _LinkComponentState extends State<_LinkComponent>
     // ignore: invalid_use_of_visible_for_testing_member
     final doc = seState?.editContext.editor.document;
 
-    final bool hasLinkAbove =
-        doc == null ? false : _hasNeighborLink(doc, widget.nodeId, -1);
-    final bool hasLinkBelow =
-        doc == null ? false : _hasNeighborLink(doc, widget.nodeId, 1);
-
-    // 이웃하는 다른 타입의 노드들도 체크 (이미지, 멘션)
+    // 이웃하는 특수 노드 체크 (이미지, 클립, 링크)
     final bool hasImageAbove =
         doc == null ? false : _hasNeighborImage(doc, widget.nodeId, -1);
     final bool hasImageBelow =
@@ -385,6 +461,13 @@ class _LinkComponentState extends State<_LinkComponent>
       padding: const EdgeInsets.symmetric(horizontal: 20),
       child: GestureDetector(
         behavior: HitTestBehavior.opaque, // 🎯 불투명 영역만 탭 감지
+        onTapDown:
+            widget.isEditing && widget.dragService != null
+                ? (details) {
+                  // 특수 노드 사이/마지막 노드 아래 빈 문단 추가 처리
+                  _handleSpecialNodeTap(details.globalPosition);
+                }
+                : null,
         onTap:
             widget.isEditing
                 ? () {
@@ -392,12 +475,46 @@ class _LinkComponentState extends State<_LinkComponent>
                 }
                 : null,
         onLongPressStart:
-            widget.isEditing ? null : (d) => _showPreview(d.globalPosition),
+            widget.isEditing
+                ? (details) {
+                  // 편집 모드: 드래그 시작
+                  if (widget.dragService != null) {
+                    // 키보드 내리기
+                    final keyboardVisible =
+                        MediaQuery.of(context).viewInsets.bottom > 0;
+                    if (keyboardVisible) {
+                      FocusScope.of(context).unfocus();
+                    }
+                    // 드래그 시작
+                    widget.dragService!.startDrag(
+                      widget.nodeId,
+                      context,
+                      details.globalPosition,
+                    );
+                  }
+                }
+                : (d) => _showPreview(d.globalPosition),
         onLongPressMoveUpdate:
             widget.isEditing
-                ? null
+                ? (details) {
+                  // 편집 모드: 드래그 업데이트
+                  if (widget.dragService != null) {
+                    widget.dragService!.updateDrag(
+                      details.globalPosition,
+                      context,
+                    );
+                  }
+                }
                 : (d) => _updatePreviewPosition(d.globalPosition),
-        onLongPressEnd: widget.isEditing ? null : (_) => _hidePreview(),
+        onLongPressEnd:
+            widget.isEditing
+                ? (_) {
+                  // 편집 모드: 드래그 종료
+                  if (widget.dragService != null) {
+                    widget.dragService!.endDrag();
+                  }
+                }
+                : (_) => _hidePreview(),
         child: Container(
           margin: EdgeInsets.only(top: marginTop, bottom: marginBottom),
           decoration: BoxDecoration(
@@ -483,8 +600,7 @@ class _LinkComponentState extends State<_LinkComponent>
 
     return Column(
       children: [
-        // 위쪽 패딩: 링크나 이미지, 멘션이 위에 있으면 패딩 제거
-        if (!hasLinkAbove && !hasImageAbove) SizedBox(height: paddingWithText),
+        if (!hasImageAbove) SizedBox(height: paddingWithText),
         Stack(
           children: [
             card,
@@ -518,7 +634,7 @@ class _LinkComponentState extends State<_LinkComponent>
                     ),
                     decoration: BoxDecoration(
                       borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: AppColors.primary, width: 4),
+                      border: Border.all(color: AppColors.primary, width: 3),
                     ),
                   ),
                 ),
@@ -547,7 +663,7 @@ class _LinkComponentState extends State<_LinkComponent>
           ],
         ),
         // 아래쪽 패딩: 링크나 이미지, 멘션이 아래에 있으면 패딩 제거
-        if (!hasLinkBelow && !hasImageBelow) SizedBox(height: paddingWithText),
+        if (!hasImageBelow) SizedBox(height: paddingWithText),
       ],
     );
   }
@@ -774,22 +890,16 @@ class _LinkComponentState extends State<_LinkComponent>
     return true;
   }
 
-  bool _hasNeighborLink(Document doc, String nodeId, int direction) {
-    final myIndex = doc.getNodeIndexById(nodeId);
-    if (myIndex == -1) return false;
-    final neighborIndex = myIndex + direction;
-    if (neighborIndex < 0 || neighborIndex >= doc.nodeCount) return false;
-    final neighbor = doc.getNodeAt(neighborIndex);
-    return neighbor is LinkNode;
-  }
-
   bool _hasNeighborImage(Document doc, String nodeId, int direction) {
     final myIndex = doc.getNodeIndexById(nodeId);
     if (myIndex == -1) return false;
     final neighborIndex = myIndex + direction;
     if (neighborIndex < 0 || neighborIndex >= doc.nodeCount) return false;
     final neighbor = doc.getNodeAt(neighborIndex);
-    return neighbor is ImageNode || neighbor is ImageRowNode;
+    return neighbor is ImageNode ||
+        neighbor is ImageRowNode ||
+        neighbor is ClipNode ||
+        neighbor is LinkNode;
   }
 
   /// 썸네일 없을 때 아이콘 플레이스홀더

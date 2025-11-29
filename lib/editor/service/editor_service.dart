@@ -1163,6 +1163,31 @@ class EditorService extends ChangeNotifier {
     final sel = editor.composer.selectionNotifier.value;
     if (sel != null) {
       _lastSelection = sel;
+
+      // 🎯 텍스트 노드가 선택되면 특수 노드 선택 해제
+      try {
+        final nodeId = sel.extent.nodeId;
+        final node = document.getNodeById(nodeId);
+        if (node is ParagraphNode &&
+            node.metadata['mention'] != true &&
+            node.metadata['isTitle'] != true) {
+          // 텍스트 노드가 선택되었으므로 특수 노드 선택 해제
+          if (_context != null) {
+            try {
+              final nodeService = _context!.read<NodeComponentService>();
+              if (nodeService.selectedNodeId != null) {
+                nodeService.clearSelectionSilently();
+                nodeService.clearHighlightedSelectionSilently();
+                debugPrint('[EditorService] 텍스트 노드 선택 감지 -> 특수 노드 선택 해제');
+              }
+            } catch (e) {
+              // NodeComponentService가 없을 수 있음 (무시)
+            }
+          }
+        }
+      } catch (e) {
+        // 에러 무시
+      }
     }
   }
 
