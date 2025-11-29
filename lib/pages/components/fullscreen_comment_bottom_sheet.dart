@@ -310,13 +310,12 @@ class _FullscreenCommentBottomSheetState
                                 vertical: 0,
                               ),
                             ),
-                            maxLines: 1,
-                            textInputAction: TextInputAction.send,
-                            onSubmitted:
-                                (_) =>
-                                    widget.editingComment != null
-                                        ? _handleSaveEdit()
-                                        : _handleSubmit(),
+                            // ✅ 여러 줄 입력 설정
+                            keyboardType: TextInputType.multiline,
+                            textInputAction:
+                                TextInputAction.newline, // 엔터 시 줄바꿈
+                            maxLines: null, // 무제한 줄
+                            // ❌ onSubmitted 제거 (엔터를 줄바꿈으로 쓰기 위해)
                           ),
                         ),
                         GestureDetector(

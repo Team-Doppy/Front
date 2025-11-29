@@ -336,8 +336,8 @@ class _ImageRowComponentState extends State<ImageRowComponent>
   @override
   MouseCursor? getDesiredCursorAtOffset(Offset localOffset) => null;
 
-  static const double marginTop = 4;
-  static const double marginBottom = 0;
+  static const double marginTop = 2;
+  static const double marginBottom = 2;
 
   @override
   void initState() {
@@ -435,161 +435,169 @@ class _ImageRowComponentState extends State<ImageRowComponent>
                             .read<NodeComponentService>()
                             .shouldShowImageSpoiler(widget.nodeId, meta);
                       } catch (_) {}
-                      return Row(
-                        children: [
-                          // 이미지들
-                          ...widget.imageUrls.asMap().entries.map((entry) {
-                            final imageUrl = entry.value;
 
-                            // 메타데이터에서 댓글 정보 가져오기
-                            bool hasComments = false;
-                            int commentCount = 0;
-                            try {
-                              final node = doc?.getNodeById(widget.nodeId);
-                              if (node is ImageRowNode) {
-                                final meta = node.metadata;
-                                final commentInfo =
-                                    meta['imageCommentInfo']
-                                        as Map<String, dynamic>?;
-                                if (commentInfo != null &&
-                                    commentInfo[imageUrl] is Map) {
-                                  final imgInfo =
-                                      commentInfo[imageUrl]
-                                          as Map<String, dynamic>;
-                                  hasComments = imgInfo['hasComments'] == true;
-                                  final cc = imgInfo['commentCount'];
-                                  if (cc is num) commentCount = cc.toInt();
-                                  if (cc is String) {
-                                    commentCount = int.tryParse(cc) ?? 0;
-                                  }
+                      // 🎯 노드 레벨 댓글 정보 확인 (이미지 로우 전체)
+                      bool hasComments = false;
+                      try {
+                        final node = doc?.getNodeById(widget.nodeId);
+                        if (node is ImageRowNode) {
+                          final meta = node.metadata;
+                          // 노드 레벨 hasComments 확인
+                          hasComments = meta['hasComments'] == true;
+
+                          // 노드 레벨 정보가 없으면 각 이미지별 정보 확인
+                          if (!hasComments) {
+                            final commentInfo =
+                                meta['imageCommentInfo']
+                                    as Map<String, dynamic>?;
+                            if (commentInfo != null) {
+                              // 하나라도 댓글이 있으면 표시
+                              hasComments = commentInfo.values.any((imgInfo) {
+                                if (imgInfo is Map) {
+                                  return imgInfo['hasComments'] == true;
                                 }
-                              }
-                            } catch (_) {}
+                                return false;
+                              });
+                            }
+                          }
+                        }
+                      } catch (_) {}
 
-                            return Expanded(
-                              child: Container(
-                                margin:
-                                    imageUrl == widget.imageUrls.last
-                                        ? EdgeInsets.zero
-                                        : const EdgeInsets.only(right: 2),
-                                child: Stack(
-                                  children: [
-                                    ConstrainedBox(
-                                      constraints: BoxConstraints.expand(
-                                        height: _unifiedHeight ?? 150,
-                                      ),
-                                      child: ImageFiltered(
-                                        imageFilter:
-                                            isRowSpoiler
-                                                ? ui.ImageFilter.blur(
-                                                  sigmaX: 12,
-                                                  sigmaY: 12,
-                                                )
-                                                : ui.ImageFilter.blur(
-                                                  sigmaX: 0,
-                                                  sigmaY: 0,
+                      return Stack(
+                        children: [
+                          Row(
+                            children: [
+                              // 이미지들
+                              ...widget.imageUrls.asMap().entries.map((entry) {
+                                final imageUrl = entry.value;
+
+                                return Expanded(
+                                  child: Container(
+                                    margin:
+                                        imageUrl == widget.imageUrls.last
+                                            ? EdgeInsets.zero
+                                            : const EdgeInsets.only(right: 2),
+                                    child: Stack(
+                                      children: [
+                                        ConstrainedBox(
+                                          constraints: BoxConstraints.expand(
+                                            height: _unifiedHeight ?? 150,
+                                          ),
+                                          child: ImageFiltered(
+                                            imageFilter:
+                                                isRowSpoiler
+                                                    ? ui.ImageFilter.blur(
+                                                      sigmaX: 12,
+                                                      sigmaY: 12,
+                                                    )
+                                                    : ui.ImageFilter.blur(
+                                                      sigmaX: 0,
+                                                      sigmaY: 0,
+                                                    ),
+                                            child: Image.network(
+                                              imageUrl,
+                                              key: ValueKey(
+                                                '$imageUrl-${Theme.of(context).brightness}',
+                                              ),
+                                              fit: BoxFit.cover,
+                                              frameBuilder: (
+                                                context,
+                                                child,
+                                                frame,
+                                                wasSyncLoaded,
+                                              ) {
+                                                if (wasSyncLoaded ||
+                                                    frame != null) {
+                                                  // 로드 완료 → 높이 측정 트리거
+                                                  WidgetsBinding.instance
+                                                      .addPostFrameCallback((
+                                                        _,
+                                                      ) {
+                                                        _measureAndUnifyHeight(
+                                                          imageUrl,
+                                                          constraints.maxWidth,
+                                                        );
+                                                      });
+                                                  return child;
+                                                }
+                                                return ShimmerBox(
+                                                  width: double.infinity,
+                                                  height: _unifiedHeight ?? 150,
+                                                  isDarkMode: widget.isDarkMode,
+                                                );
+                                              },
+                                              errorBuilder: (
+                                                context,
+                                                error,
+                                                stack,
+                                              ) {
+                                                debugPrint(
+                                                  'Image error: $error',
+                                                );
+                                                return Builder(
+                                                  builder:
+                                                      (context) =>
+                                                          ImageErrorPlaceholder(
+                                                            width: 200,
+                                                          ),
+                                                );
+                                              },
+                                            ),
+                                          ),
+                                        ),
+                                        // ✅ 블러 위 어둡게(0.2) 오버레이
+                                        if (isRowSpoiler)
+                                          Positioned.fill(
+                                            child: IgnorePointer(
+                                              child: Container(
+                                                color: Colors.black.withOpacity(
+                                                  0.15,
                                                 ),
-                                        child: Image.network(
-                                          imageUrl,
-                                          key: ValueKey(
-                                            '$imageUrl-${Theme.of(context).brightness}',
+                                              ),
+                                            ),
                                           ),
-                                          fit: BoxFit.cover,
-                                          frameBuilder: (
-                                            context,
-                                            child,
-                                            frame,
-                                            wasSyncLoaded,
-                                          ) {
-                                            if (wasSyncLoaded ||
-                                                frame != null) {
-                                              // 로드 완료 → 높이 측정 트리거
-                                              WidgetsBinding.instance
-                                                  .addPostFrameCallback((_) {
-                                                    _measureAndUnifyHeight(
-                                                      imageUrl,
-                                                      constraints.maxWidth,
-                                                    );
-                                                  });
-                                              return child;
-                                            }
-                                            return ShimmerBox(
-                                              width: double.infinity,
-                                              height: _unifiedHeight ?? 150,
-                                              isDarkMode: widget.isDarkMode,
-                                            );
-                                          },
-                                          errorBuilder: (
-                                            context,
-                                            error,
-                                            stack,
-                                          ) {
-                                            debugPrint('Image error: $error');
-                                            return Builder(
-                                              builder:
-                                                  (context) =>
-                                                      ImageErrorPlaceholder(
-                                                        width: 200,
-                                                      ),
-                                            );
-                                          },
-                                        ),
-                                      ),
+                                      ],
                                     ),
-                                    // ✅ 블러 위 어둡게(0.2) 오버레이
-                                    if (isRowSpoiler)
-                                      Positioned.fill(
-                                        child: IgnorePointer(
-                                          child: Container(
-                                            color: Colors.black.withOpacity(
-                                              0.15,
-                                            ),
-                                          ),
-                                        ),
-                                      ),
-                                    // 댓글 배지
-                                    if (hasComments)
-                                      Positioned(
-                                        top: 2,
-                                        right: 4,
-                                        child: IgnorePointer(
-                                          child: Container(
-                                            padding: const EdgeInsets.symmetric(
-                                              horizontal: 6,
-                                              vertical: 6,
-                                            ),
-                                            decoration: BoxDecoration(
-                                              color: Theme.of(context)
-                                                  .colorScheme
-                                                  .onSurface
-                                                  .withOpacity(1),
-                                              borderRadius:
-                                                  BorderRadius.circular(10),
-                                              border: Border.all(
-                                                color: Theme.of(context)
-                                                    .colorScheme
-                                                    .surface
-                                                    .withOpacity(0.1),
-                                                width: 1,
-                                              ),
-                                            ),
-                                            child: SvgPicture.asset(
-                                              'assets/icons/comment.svg',
-                                              width: 12,
-                                              height: 12,
-                                              colorFilter: ColorFilter.mode(
-                                                Colors.white,
-                                                BlendMode.srcIn,
-                                              ),
-                                            ),
-                                          ),
-                                        ),
-                                      ),
-                                  ],
+                                  ),
+                                );
+                              }),
+                            ],
+                          ),
+                          // 🎯 이미지 로우 전체 상단 끝에 댓글 배지 하나만 표시
+                          if (hasComments)
+                            Positioned(
+                              top: 4,
+                              right: 5,
+                              child: IgnorePointer(
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 6,
+                                    vertical: 6,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: Theme.of(
+                                      context,
+                                    ).colorScheme.onSurface.withOpacity(1),
+                                    borderRadius: BorderRadius.circular(20),
+                                    border: Border.all(
+                                      color: Theme.of(
+                                        context,
+                                      ).colorScheme.surface.withOpacity(0.1),
+                                      width: 1,
+                                    ),
+                                  ),
+                                  child: SvgPicture.asset(
+                                    'assets/icons/comment.svg',
+                                    width: 12,
+                                    height: 12,
+                                    colorFilter: ColorFilter.mode(
+                                      Theme.of(context).colorScheme.surface,
+                                      BlendMode.srcIn,
+                                    ),
+                                  ),
                                 ),
                               ),
-                            );
-                          }),
+                            ),
                         ],
                       );
                     },

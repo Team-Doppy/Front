@@ -312,7 +312,7 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
             focusNode: widget.titleFocusNode,
             textAlign: TextAlign.center,
             style: TextStyle(
-              color: Theme.of(context).colorScheme.onSurface.withOpacity(0.9),
+              color: Colors.white.withOpacity(0.85),
               fontSize: 28,
               fontWeight: FontWeight.bold,
               letterSpacing: -0.2,
@@ -323,9 +323,7 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
               hintText: AppLocalizations.of(
                 context,
               ).t('title_input_placeholder'),
-              hintStyle: TextStyle(
-                color: Theme.of(context).colorScheme.onSurface.withOpacity(0.3),
-              ),
+              hintStyle: TextStyle(color: Colors.white.withOpacity(0.3)),
               border: InputBorder.none,
               isCollapsed: true,
               contentPadding: EdgeInsets.zero,
@@ -345,7 +343,7 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
       focusNode: widget.excerptFocusNode,
       textAlign: TextAlign.center,
       style: TextStyle(
-        color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
+        color: Colors.white.withOpacity(0.85),
         fontSize: 14,
         fontWeight: FontWeight.w300,
         height: 1.8,
@@ -358,9 +356,7 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
       scrollPhysics: const NeverScrollableScrollPhysics(),
       decoration: InputDecoration(
         hintText: AppLocalizations.of(context).t('content_input_placeholder'),
-        hintStyle: TextStyle(
-          color: Theme.of(context).colorScheme.onSurface.withOpacity(0.3),
-        ),
+        hintStyle: TextStyle(color: Colors.white.withOpacity(0.3)),
         border: InputBorder.none,
         isCollapsed: true,
         contentPadding: EdgeInsets.zero,

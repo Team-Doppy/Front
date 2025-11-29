@@ -1108,6 +1108,7 @@ class _PostListState extends State<PostList> {
           }
         }
       },
+      behavior: HitTestBehavior.opaque, // 🎯 빈 공간도 클릭 가능하도록 설정
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 50, vertical: 0),
         child: Column(
@@ -1129,7 +1130,7 @@ class _PostListState extends State<PostList> {
               overflow: TextOverflow.ellipsis,
             ),
 
-            // 내용 (남은 공간 모두 사용)
+            // 내용 (남은 공간 모두 사용, 최소 높이 보장)
             Expanded(
               child: Text(
                 post.parsedContent,
@@ -1139,7 +1140,7 @@ class _PostListState extends State<PostList> {
                     context,
                   ).colorScheme.onSurface.withOpacity(0.7),
                   fontSize: 15,
-                  fontWeight: FontWeight.w200,
+                  fontWeight: FontWeight.w400,
                   height: 1.5,
                   letterSpacing: -0.1,
                 ),

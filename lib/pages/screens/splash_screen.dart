@@ -44,7 +44,13 @@ class _SplashScreenState extends State<SplashScreen>
       curve: const Interval(0.0, 0.1, curve: Curves.easeOut),
     );
 
-    startSequence();
+    // 🎯 먼저 로딩 로고 애니메이션 시작
+    _controller.forward();
+
+    // 🎯 애니메이션이 시작된 후 데이터 로드 시작
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      startSequence();
+    });
   }
 
   void startSequence() {
@@ -238,10 +244,12 @@ class _SplashScreenState extends State<SplashScreen>
   }
 
   Future<void> _navigateAfterReady() async {
-    try {
-      // 애니메이션 완료까지 대기
-      await _controller.forward().orCancel;
-    } catch (_) {}
+    // 🎯 애니메이션은 이미 initState에서 시작했으므로 완료만 대기
+    if (!_controller.isCompleted) {
+      try {
+        await _controller.forward().orCancel;
+      } catch (_) {}
+    }
 
     if (!mounted) return;
 

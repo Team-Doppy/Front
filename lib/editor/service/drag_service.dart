@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'package:doppy/editor/component/link_component.dart';
+import 'package:doppy/editor/component/row_image_component.dart';
 import 'package:doppy/editor/postwrite_screen.dart';
 import 'package:doppy/editor/component/clip_component.dart';
 import 'package:doppy/editor/service/editor_service.dart';
@@ -28,6 +30,10 @@ class DragService extends ChangeNotifier {
   Offset? dragPosition;
   int? dropIndex;
   Offset? lastMovedPosition;
+
+  // 🎯 드래그 오버레이에 표시할 이미지 URL (로드 없이 바로 표시)
+  String? previewImageUrl;
+  String? previewImageLocalPath; // 로컬 파일 경로 (ClipNode용)
 
   // 이미지 분리 정보
   String? _splitImageRowId;
@@ -167,6 +173,10 @@ class DragService extends ChangeNotifier {
     draggingNodeType = editorService.getNodeType(nodeId);
     dragPosition = globalPosition;
     lastMovedPosition = globalPosition;
+
+    // 🎯 노드에서 이미지 URL 추출
+    _extractImageUrl(nodeId);
+
     _stopAutoScroll();
     _autoScrollDirection = 0.0;
 
@@ -182,6 +192,47 @@ class DragService extends ChangeNotifier {
     }
 
     notifyListeners();
+  }
+
+  // 🎯 노드에서 이미지 URL 추출
+  void _extractImageUrl(String nodeId) {
+    try {
+      final node = editorService.document.getNodeById(nodeId);
+      if (node == null) {
+        previewImageUrl = null;
+        previewImageLocalPath = null;
+        return;
+      }
+
+      previewImageUrl = null;
+      previewImageLocalPath = null;
+
+      if (node is ImageNode) {
+        previewImageUrl = node.imageUrl;
+      } else if (node is ClipNode) {
+        // ClipNode: thumbnailPath 우선, 없으면 metadata의 thumbnailUrl
+        if (node.thumbnailPath.isNotEmpty) {
+          previewImageLocalPath = node.thumbnailPath;
+        } else if (node.localPath.isNotEmpty) {
+          previewImageLocalPath = node.localPath;
+        } else {
+          final meta = node.metadata;
+          if (meta['thumbnailUrl'] != null) {
+            previewImageUrl = meta['thumbnailUrl'].toString();
+          }
+        }
+      } else if (node is ImageRowNode) {
+        // ImageRowNode: 첫 번째 이미지 URL 사용
+        if (node.imageUrls.isNotEmpty) {
+          previewImageUrl = node.imageUrls.first;
+        }
+      } else if (node is LinkNode) {
+        previewImageUrl = node.thumbnailUrl;
+      }
+    } catch (_) {
+      previewImageUrl = null;
+      previewImageLocalPath = null;
+    }
   }
 
   void updateDrag(Offset globalPosition, BuildContext context) {
@@ -221,6 +272,8 @@ class DragService extends ChangeNotifier {
 
   void endDrag() {
     draggingNodeIdNotifier.value = null;
+    previewImageUrl = null; // 🎯 이미지 URL 정리
+    previewImageLocalPath = null;
     if (draggingNodeId == null) {
       _cleanup();
       return;
@@ -232,7 +285,7 @@ class DragService extends ChangeNotifier {
           (targetNodeId != null && targetNodeId == _splitImageRowId) ||
           (_targetRowId != null && _targetRowId == _splitImageRowId);
       if (backToOriginal && dragMode != DragType.imageRowMerge) {
-        imageService?.clearSelection();
+        _ensureSelectionCleared();
         _cleanup();
         return;
       }
@@ -256,6 +309,17 @@ class DragService extends ChangeNotifier {
           draggingNodeType = editorService.getNodeType(splitImageId);
           handledBySplitInsertion =
               (dragMode == DragType.reorder && dropIndex != null);
+          // 🎯 splitImageFromRow() 후 레이아웃이 완전히 업데이트된 후 캐시 무효화
+          // 이미지 분리는 레이아웃 변경이 크므로 세 프레임을 기다려서 이미지 로딩 및 레이아웃 완전 안정화
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                invalidateNodeRectCache();
+                // 🎯 레이아웃 안정화 후 선택 해제 확인
+                _ensureSelectionCleared();
+              });
+            });
+          });
         }
       }
     }
@@ -263,7 +327,16 @@ class DragService extends ChangeNotifier {
     // 실제 노드 이동 실행
     // 분리하면서 이미 원하는 위치로 삽입한 경우 추가 이동 불필요
     if (handledBySplitInsertion) {
-      imageService?.clearSelection();
+      // 🎯 이미지 분리 후 추가로 한 번 더 셀렉션 클리어 (레이아웃 안정화 후)
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            invalidateNodeRectCache();
+            _ensureSelectionCleared();
+          });
+        });
+      });
+      _ensureSelectionCleared();
       _cleanup();
       return;
     }
@@ -272,6 +345,35 @@ class DragService extends ChangeNotifier {
       case DragType.reorder:
         if (dropIndex != null) {
           editorService.reorderNode(draggingNodeId!, dropIndex!);
+          // 🎯 reorderNode() 후 레이아웃이 완전히 업데이트된 후 캐시 무효화
+          // 즉시 무효화하면 레이아웃이 아직 업데이트되지 않아 잘못된 위치를 계산할 수 있음
+          // addPostFrameCallback을 사용하여 레이아웃 업데이트 완료 후 캐시 무효화
+          // 이미지 노드나 이미지로우 노드는 레이아웃 변경이 크므로 더 많은 프레임을 기다림
+          final isImageNode =
+              draggingNodeType == NodeType.image ||
+              draggingNodeType == NodeType.imageRow;
+
+          if (isImageNode) {
+            // 이미지 노드: 세 프레임을 기다려서 이미지 로딩 및 레이아웃 완전 안정화
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  invalidateNodeRectCache();
+                  // 🎯 레이아웃 안정화 후 선택 해제 확인
+                  _ensureSelectionCleared();
+                });
+              });
+            });
+          } else {
+            // 텍스트 노드 등: 두 프레임을 기다려서 레이아웃 안정화
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                invalidateNodeRectCache();
+                // 🎯 레이아웃 안정화 후 선택 해제 확인
+                _ensureSelectionCleared();
+              });
+            });
+          }
         }
         break;
       case DragType.imageRowMerge:
@@ -283,14 +385,39 @@ class DragService extends ChangeNotifier {
               mergeTargetId,
               isFromLeft: isDraggingFromLeft,
             );
+            // 🎯 mergeImagesIntoRow() 후 레이아웃이 완전히 업데이트된 후 캐시 무효화
+            // 이미지 병합은 레이아웃 변경이 크므로 두 프레임을 기다려서 안정화
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                invalidateNodeRectCache();
+                // 🎯 레이아웃 안정화 후 선택 해제 확인
+                _ensureSelectionCleared();
+              });
+            });
           }
         }
         break;
       case DragType.none:
         break;
     }
-    imageService?.clearSelection();
+
+    // 🎯 드래그 종료 후 명시적으로 모든 선택 해제
+    _ensureSelectionCleared();
+
     _cleanup();
+  }
+
+  /// 🎯 선택 해제를 확실하게 보장하는 헬퍼 메서드
+  void _ensureSelectionCleared() {
+    imageService?.clearSelection();
+    imageService?.clearHighlightedSelection();
+
+    // 🎯 텍스트 선택도 해제
+    try {
+      editorService.editor.composer.clearSelection();
+    } catch (e) {
+      debugPrint('[DragService] 텍스트 선택 해제 실패: $e');
+    }
   }
 
   void _cleanup() {
@@ -308,6 +435,9 @@ class DragService extends ChangeNotifier {
     _splitImageRowId = null;
     _splitImageIndex = null;
     _targetRowId = null;
+
+    // 🎯 cleanup 후에도 선택 해제 확인 (다른 로직에서 선택이 다시 설정되는 경우 대비)
+    _ensureSelectionCleared();
 
     notifyListeners();
   }

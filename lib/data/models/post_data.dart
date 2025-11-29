@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:doppy/utils/access_level_parser.dart';
+import 'package:flutter/material.dart';
 
 enum AccessLevel { public, private, friends, groups }
 
@@ -185,11 +186,11 @@ class PostData {
       }
 
       final result = textParts.join(' ').trim();
-      //print('[PostData] Parsed content: "$result"');
+      //debugPrint('[PostData] Parsed content: "$result"');
       return result;
     } catch (e) {
-      print('[PostData] Error parsing content: $e');
-      print('[PostData] Raw content: $content');
+      debugPrint('[PostData] Error parsing content: $e');
+      debugPrint('[PostData] Raw content: $content');
       // 파싱 실패 시 원본 content 반환
       return content;
     }
@@ -209,7 +210,7 @@ class PostData {
             contentData = {'nodes': parsed};
           }
         } catch (e) {
-          print('[PostData] Error parsing content for export: $e');
+          debugPrint('[PostData] Error parsing content for export: $e');
           // 파싱 실패 시 빈 문서로 생성
           contentData = {'nodes': []};
         }
@@ -227,13 +228,14 @@ class PostData {
         'accessLevel': accessLevel.name.toUpperCase(), // 🎯 accessLevel 추가
         'sharedGroupIds': sharedGroupIds, // 🎯 sharedGroupIds 추가
         'sharedGroupNames': sharedGroupNames, // 🎯 sharedGroupNames 추가
+        'viewCount': viewCount, // 🎯 viewCount 추가
         'likeCount': likeCount,
         'commentCount': commentCount,
         'isLiked': isLiked,
         'stickers': [], // 서버에서 가져온 데이터에는 스티커가 없음
       };
     } catch (e) {
-      print('[PostData] Error creating exported data: $e');
+      debugPrint('[PostData] Error creating exported data: $e');
       // 에러 시 기본 데이터 반환
       return {
         'id': id,
@@ -247,6 +249,7 @@ class PostData {
         'accessLevel': accessLevel.name.toUpperCase(), // 🎯 accessLevel 추가
         'sharedGroupIds': sharedGroupIds, // 🎯 sharedGroupIds 추가
         'sharedGroupNames': sharedGroupNames, // 🎯 sharedGroupNames 추가
+        'viewCount': viewCount, // 🎯 viewCount 추가
         'likeCount': likeCount,
         'commentCount': commentCount,
         'isLiked': isLiked,

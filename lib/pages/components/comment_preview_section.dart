@@ -40,10 +40,6 @@ class CommentPreviewSection extends StatelessWidget {
     recentComments.sort((a, b) => a.createdAt.compareTo(b.createdAt));
     final previewComments = recentComments.take(5).toList();
 
-    if (previewComments.isEmpty) {
-      return const SizedBox.shrink();
-    }
-
     final currentUser = context.read<UserProvider>().currentUser;
 
     return Padding(
@@ -107,7 +103,7 @@ class CommentPreviewSection extends StatelessWidget {
             );
           }),
 
-          // "모든 댓글 보기" 버튼
+          // "모든 댓글 보기" 또는 "채팅하기" 버튼
           const SizedBox(height: 12),
           Center(
             child: GestureDetector(
@@ -128,7 +124,9 @@ class CommentPreviewSection extends StatelessWidget {
                   ),
                 ),
                 child: Text(
-                  context.tr('all_comments'),
+                  previewComments.isEmpty
+                      ? context.tr('write_comment')
+                      : context.tr('all_comments'),
                   style: TextStyle(
                     color: Theme.of(context).colorScheme.onSurface,
                     fontSize: 14,

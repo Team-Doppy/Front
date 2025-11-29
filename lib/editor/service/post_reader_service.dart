@@ -135,12 +135,61 @@ class PostReaderService {
             spoilerNodes.add(id);
           }
 
+          // 🎯 노드 레벨 댓글 정보 파싱 (이미지 로우 전체)
+          final hasComments = (m['hasComments'] ?? false) == true;
+          final commentCount =
+              (m['commentCount'] is num)
+                  ? (m['commentCount'] as num).toInt()
+                  : int.tryParse(m['commentCount']?.toString() ?? '0') ?? 0;
+
+          // 🎯 imageCommentInfo 파싱 (각 이미지별 댓글 정보)
+          final Map<String, Map<String, dynamic>> imageCommentInfo = {};
+          try {
+            // 서버에서 imageCommentInfo가 오는 경우 (data 내부 또는 노드 레벨)
+            final data = m['data'] as Map<String, dynamic>?;
+            final rawCommentInfo =
+                (m['imageCommentInfo'] ?? data?['imageCommentInfo'])
+                    as Map<String, dynamic>?;
+
+            if (rawCommentInfo != null) {
+              // 각 이미지 URL별로 댓글 정보 파싱
+              for (final url in urls) {
+                if (rawCommentInfo[url] is Map) {
+                  final imgInfo =
+                      (rawCommentInfo[url] as Map).cast<String, dynamic>();
+                  imageCommentInfo[url] = {
+                    'mediaId': imgInfo['mediaId']?.toString(),
+                    'hasComments': imgInfo['hasComments'] == true,
+                    'commentCount':
+                        (imgInfo['commentCount'] is num)
+                            ? (imgInfo['commentCount'] as num).toInt()
+                            : int.tryParse(
+                                  imgInfo['commentCount']?.toString() ?? '0',
+                                ) ??
+                                0,
+                  };
+                }
+              }
+            }
+          } catch (e) {
+            debugPrint('[PostReaderService] imageCommentInfo 파싱 실패: $e');
+          }
+
+          // 메타데이터 구성
+          final metadata = <String, dynamic>{
+            if (hasSpoiler) 'spoiler': true,
+            if (hasComments) 'hasComments': hasComments,
+            if (commentCount > 0) 'commentCount': commentCount,
+            if (imageCommentInfo.isNotEmpty)
+              'imageCommentInfo': imageCommentInfo,
+          };
+
           rebuilt.add(
             ImageRowNode(
               id: id,
               imageUrls: urls,
               spacing: (m['spacing'] as num?)?.toDouble() ?? 4.0,
-              metadata: {if (hasSpoiler) 'spoiler': true},
+              metadata: metadata.isNotEmpty ? metadata : null,
             ),
           );
           break;

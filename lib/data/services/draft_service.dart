@@ -3,6 +3,10 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:doppy/editor/service/editor_service.dart';
 import 'package:doppy/editor/service/sticker_service.dart';
 import 'package:doppy/editor/service/post_reader_service.dart';
+import 'package:doppy/editor/service/node_component_service.dart';
+import 'package:doppy/editor/component/row_image_component.dart';
+import 'package:doppy/editor/component/clip_component.dart';
+import 'package:doppy/editor/component/link_component.dart';
 import 'package:doppy/editor/publish/post_exporter.dart';
 import 'package:doppy/utils/time_utils.dart';
 import 'package:super_editor/super_editor.dart';
@@ -192,10 +196,31 @@ class DraftService {
     required String draftId,
     required EditorService editorService,
     required StickerService stickerService,
+    NodeComponentService? nodeComponentService,
+    dynamic dragService, // DragService 타입 (순환 참조 방지)
   }) async {
     try {
       final draft = await getDraft(draftId);
       if (draft == null) return false;
+
+      // 🎯 1. 모든 셀렉션 명시적 클리어
+      try {
+        editorService.editor.composer.clearSelection();
+        nodeComponentService?.clearSelection();
+        nodeComponentService?.clearHighlightedSelection();
+      } catch (e) {
+        debugPrint('[DraftService] 셀렉션 클리어 실패: $e');
+      }
+
+      // 🎯 2. 캐시 무효화 (레이아웃 정보 초기화)
+      try {
+        if (dragService != null) {
+          // dynamic 타입이므로 직접 메서드 호출 시도
+          (dragService as dynamic).invalidateNodeRectCache();
+        }
+      } catch (e) {
+        debugPrint('[DraftService] 캐시 무효화 실패: $e');
+      }
 
       // PostReaderService를 사용하여 문서 복원
       final exportedData = json.decode(draft.content) as Map<String, dynamic>;
@@ -206,14 +231,18 @@ class DraftService {
         includeTitleNode: true,
       );
 
-      // 안전한 문서 교체 방식
+      // 🎯 3. 안전한 문서 교체 방식 (에디터 구조 완전히 클리어 후 재구성)
       await _replaceDocumentSafely(editorService, document);
 
-      // 스티커 복원
+      // 🎯 4. 스티커 복원
       postReaderService.restoreStickers(
         exported: exportedData,
         stickerService: stickerService,
       );
+
+      // 🎯 5. 레이아웃 재동기화를 위한 notifyListeners 호출
+      // EditorService는 ChangeNotifier를 상속하므로 notifyListeners 사용 가능
+      (editorService as ChangeNotifier).notifyListeners();
 
       return true;
     } catch (e) {
@@ -228,36 +257,87 @@ class DraftService {
     MutableDocument newDocument,
   ) async {
     try {
-      // 1. 현재 문서의 모든 노드를 삭제 (뒤에서부터)
+      // 🎯 1. 선택 상태 먼저 초기화 (노드 삭제 전에)
+      editorService.editor.composer.clearSelection();
+
+      // 🎯 2. 현재 문서의 모든 노드를 삭제 (뒤에서부터)
       final currentDoc = editorService.document;
-      for (int i = currentDoc.length - 1; i >= 0; i--) {
-        final node = currentDoc.getNodeAt(i);
+      while (currentDoc.length > 0) {
+        final node = currentDoc.getNodeAt(0);
         if (node != null) {
           currentDoc.deleteNode(node.id);
+        } else {
+          break; // 안전장치: 노드가 없으면 루프 종료
         }
       }
 
-      // 2. 새 문서의 노드들을 추가
+      // 🎯 3. 새 문서의 노드들을 추가 (복사본으로 추가)
       for (int i = 0; i < newDocument.length; i++) {
         final node = newDocument.getNodeAt(i);
         if (node != null) {
-          currentDoc.insertNodeAt(i, node);
+          // 노드 복사본 생성하여 추가 (원본과 분리)
+          final copiedNode = _copyNode(node);
+          currentDoc.insertNodeAt(i, copiedNode);
         }
       }
 
-      // 3. 선택 상태 초기화만 수행 (선택 설정하지 않음)
-      // 🎯 임시저장 불러올 때는 선택을 설정하지 않음
+      // 🎯 4. 문서 변경 알림 (레이아웃 재계산 트리거)
+      // EditorService는 ChangeNotifier를 상속하므로 notifyListeners 사용 가능
+      (editorService as ChangeNotifier).notifyListeners();
+
+      // 🎯 5. 선택 상태 재확인 (선택 설정하지 않음)
       // - setSelectionWithReason은 포커스를 요청할 수 있음
       // - 선택이 없어도 사용자가 나중에 탭하면 자동으로 선택이 설정됨
       editorService.editor.composer.clearSelection();
-
-      // 선택 설정 제거 (포커스 요청 방지)
-      // 사용자가 필요시 직접 탭하여 선택을 설정할 수 있음
     } catch (e) {
       debugPrint('[DraftService] Error replacing document: $e');
       // 실패 시 기본 문서로 복구
       _createDefaultDocument(editorService);
     }
+  }
+
+  /// 노드 복사본 생성 (안전한 문서 교체를 위해)
+  dynamic _copyNode(dynamic node) {
+    // SuperEditor의 노드 타입에 따라 복사
+    if (node is ParagraphNode) {
+      return ParagraphNode(
+        id: node.id,
+        text: AttributedText(node.text.text),
+        metadata: Map<String, dynamic>.from(node.metadata),
+      );
+    } else if (node is ImageNode) {
+      return ImageNode(
+        id: node.id,
+        imageUrl: node.imageUrl,
+        metadata: Map<String, dynamic>.from(node.metadata),
+      );
+    } else if (node is ImageRowNode) {
+      return ImageRowNode(
+        id: node.id,
+        imageUrls: List<String>.from(node.imageUrls),
+        spacing: node.spacing,
+        metadata: Map<String, dynamic>.from(node.metadata),
+      );
+    } else if (node is ClipNode) {
+      return ClipNode(
+        id: node.id,
+        url: node.url,
+        localPath: node.localPath,
+        thumbnailPath: node.thumbnailPath,
+        label: node.label,
+        colorHex: node.colorHex,
+        metadata: Map<String, dynamic>.from(node.metadata),
+      );
+    } else if (node is LinkNode) {
+      return LinkNode(
+        id: node.id,
+        url: node.url,
+        title: node.title,
+        thumbnailUrl: node.thumbnailUrl,
+      );
+    }
+    // 알 수 없는 노드 타입은 그대로 반환 (fallback)
+    return node;
   }
 
   /// 기본 문서 생성 (복구용)

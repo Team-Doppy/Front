@@ -17,7 +17,10 @@ import 'package:provider/provider.dart';
 
 /// 그룹 선택 화면 (디스크 형태 가로 스크롤)
 class GroupSelectionScreen extends StatefulWidget {
-  const GroupSelectionScreen({Key? key}) : super(key: key);
+  final bool showReceivedRequests; // 🎯 딥링크로 진입 시 받은 요청 바텀시트 표시
+
+  const GroupSelectionScreen({Key? key, this.showReceivedRequests = false})
+    : super(key: key);
 
   @override
   State<GroupSelectionScreen> createState() => _GroupSelectionScreenState();
@@ -96,6 +99,15 @@ class _GroupSelectionScreenState extends State<GroupSelectionScreen>
           actualFriendCount,
           friendProvider: friendProvider,
         );
+      }
+
+      // 🎯 딥링크로 진입 시 받은 요청 바텀시트 표시
+      if (widget.showReceivedRequests && mounted) {
+        Future.delayed(const Duration(milliseconds: 500), () {
+          if (mounted && friendProvider.receivedRequests.isNotEmpty) {
+            FriendRequestsListBottomSheet.show(context);
+          }
+        });
       }
     });
   }

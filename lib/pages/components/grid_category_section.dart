@@ -8,7 +8,6 @@ import 'package:doppy/pages/components/post_action_sheet.dart';
 import 'package:doppy/pages/screens/post_reader_screen.dart';
 import 'package:doppy/providers/feed_provider/base_feed_provider.dart';
 import 'package:doppy/providers/feed_provider/my_profile_feed_provider.dart';
-import 'package:doppy/providers/user_provider.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -152,8 +151,10 @@ class _GridCategorySectionState extends State<GridCategorySection> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final username = context.read<UserProvider>().currentUser?.username;
-    final isReadOnly = context.read<BaseFeedProvider>().isReadOnly;
+    // 🎯 FeedProvider의 username 사용 (타인 프로필일 때 올바른 username 표시)
+    final feedProvider = context.read<BaseFeedProvider>();
+    final username = feedProvider.username;
+    final isReadOnly = feedProvider.isReadOnly;
     final height = 200.0;
 
     final isSystemCategoryEmpty =
@@ -976,7 +977,9 @@ class _GridCategorySectionState extends State<GridCategorySection> {
     CategoryMetaData categoryMetaData,
     FeedDisplayMode displayMode,
   ) {
-    final username = context.read<UserProvider>().currentUser?.username;
+    // 🎯 FeedProvider의 username 사용 (타인 프로필일 때 올바른 username 표시)
+    final feedProvider = context.read<BaseFeedProvider>();
+    final username = feedProvider.username;
     return LayoutBuilder(
       builder: (context, constraints) {
         final text = categoryMetaData.title;

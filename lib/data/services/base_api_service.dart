@@ -59,7 +59,7 @@ class BaseApiService {
       // 초를 밀리초로 변환
       return exp != null ? exp * 1000 : null;
     } catch (e) {
-      print('[BaseApiService] 토큰 만료 시간 추출 실패: $e');
+      debugPrint('[BaseApiService] 토큰 만료 시간 추출 실패: $e');
       return null;
     }
   }
@@ -90,36 +90,66 @@ class BaseApiService {
                 final bufferTime = 5 * 60 * 1000; // 5분 버퍼
                 final timeUntilExpiry = expirationTime - now;
 
-                // 🎯 마지막 갱신 후 1분 이내면 다시 갱신하지 않음 (중복 갱신 방지)
+                // 🎯 마지막 갱신 후 10분 이내면 다시 갱신하지 않음 (중복 갱신 방지)
+                // 토큰 갱신 후 새로운 토큰의 만료 시간이 충분히 남아있어도
+                // 매 요청마다 갱신하는 것을 방지하기 위해 더 긴 시간 설정
                 final shouldSkipRefresh =
                     _lastRefreshTime != null &&
-                    DateTime.now().difference(_lastRefreshTime!).inSeconds < 60;
+                    DateTime.now().difference(_lastRefreshTime!).inSeconds <
+                        600; // 10분
 
                 // 만료 임박 시에만 미리 리프레시 (중복 갱신 방지)
                 if (timeUntilExpiry < bufferTime && !shouldSkipRefresh) {
                   final remainingSeconds = timeUntilExpiry / 1000;
-                  print(
-                    '[BaseApiService] 토큰 만료 임박 (${remainingSeconds.toStringAsFixed(1)}초 남음) - 미리 리프레시',
+                  final lastRefreshAgo =
+                      _lastRefreshTime != null
+                          ? DateTime.now()
+                              .difference(_lastRefreshTime!)
+                              .inSeconds
+                          : null;
+                  debugPrint(
+                    '[BaseApiService] 토큰 만료 임박 (${remainingSeconds.toStringAsFixed(1)}초 남음) - 미리 리프레시 (마지막 갱신: ${lastRefreshAgo != null ? "${lastRefreshAgo}초 전" : "없음"})',
                   );
 
                   // 리프레시 중이 아니면 리프레시 시도
                   if (!_isRefreshing) {
                     _isRefreshing = true;
                     _refreshCompleter = Completer<bool>();
-                    final refreshed = await _refreshTokenWithRetry();
-                    _isRefreshing = false;
-                    _refreshCompleter?.complete(refreshed);
-                    _refreshCompleter = null;
+                    bool refreshed = false;
+                    try {
+                      refreshed = await _refreshTokenWithRetry();
+                      if (refreshed) {
+                        _lastRefreshTime = DateTime.now(); // 🎯 갱신 시간 저장
+                      }
+                      _refreshCompleter!.complete(refreshed);
+                    } catch (e) {
+                      _refreshCompleter!.complete(false);
+                    } finally {
+                      _isRefreshing = false;
+                      _refreshCompleter = null;
+                    }
 
                     if (refreshed) {
-                      _lastRefreshTime = DateTime.now(); // 🎯 갱신 시간 저장
                       final newToken = await _authService.getToken();
                       if (newToken != null && newToken.isNotEmpty) {
                         options.headers['Authorization'] = 'Bearer $newToken';
-                        print('[BaseApiService] ✅ 토큰 갱신 완료');
+                        // 🎯 새로운 토큰의 만료 시간 확인
+                        final newExpirationTime = _getTokenExpiration(newToken);
+                        if (newExpirationTime != null) {
+                          final newTimeUntilExpiry =
+                              newExpirationTime -
+                              DateTime.now().millisecondsSinceEpoch;
+                          final newRemainingMinutes =
+                              newTimeUntilExpiry / (60 * 1000);
+                          debugPrint(
+                            '[BaseApiService] ✅ 토큰 갱신 완료 (새 토큰 만료까지 ${newRemainingMinutes.toStringAsFixed(1)}분)',
+                          );
+                        } else {
+                          debugPrint('[BaseApiService] ✅ 토큰 갱신 완료');
+                        }
                       }
                     } else {
-                      print('[BaseApiService] ⚠️ 토큰 갱신 실패 (기존 토큰 사용)');
+                      debugPrint('[BaseApiService] ⚠️ 토큰 갱신 실패 (기존 토큰 사용)');
                       options.headers['Authorization'] = 'Bearer $token';
                     }
                   } else {
@@ -150,7 +180,7 @@ class BaseApiService {
             }
           }
 
-          print('[BaseApiService] ${options.method} ${options.path}');
+          debugPrint('[BaseApiService] ${options.method} ${options.path}');
           handler.next(options);
         },
 
@@ -176,7 +206,7 @@ class BaseApiService {
               newRefreshToken.isNotEmpty) {
             await _authService.saveToken(newAccessToken);
             await _authService.saveRefreshToken(newRefreshToken);
-            print('[BaseApiService] ✅ 서버 자동 토큰 갱신 감지');
+            debugPrint('[BaseApiService] ✅ 서버 자동 토큰 갱신 감지');
           }
 
           handler.next(response);
@@ -192,18 +222,76 @@ class BaseApiService {
           // 401 또는 만료 표시가 있는 500만 리프레시 시도
           final status = error.response?.statusCode;
           final bodyStr = error.response?.data?.toString() ?? '';
+          final isExpiredJwtException =
+              status == 500 && bodyStr.contains('ExpiredJwtException');
+
+          // 🎯 401 에러 발생 시 실제로 토큰이 만료되었는지 JWT 디코딩으로 확인
+          bool isTokenActuallyExpired = false;
+
+          if (!isAuthEndpoint && status == 401) {
+            final token = await _authService.getToken();
+
+            if (token != null && token.isNotEmpty) {
+              final expirationTime = _getTokenExpiration(token);
+              final now = DateTime.now().millisecondsSinceEpoch;
+
+              if (expirationTime != null) {
+                // 실제로 만료되었는지 확인 (1분 버퍼)
+                final bufferTime = 60 * 1000; // 1분 버퍼
+                isTokenActuallyExpired = expirationTime <= (now + bufferTime);
+
+                final remainingSeconds = (expirationTime - now) / 1000;
+                debugPrint(
+                  '[DioClient] 401 에러 - 토큰 만료 시간 확인: ${remainingSeconds.toStringAsFixed(1)}초 남음, 실제 만료: $isTokenActuallyExpired',
+                );
+              } else {
+                // 만료 시간 추출 실패 시 만료된 것으로 간주
+                isTokenActuallyExpired = true;
+                debugPrint('[DioClient] 401 에러 - 토큰 만료 시간 추출 실패, 만료된 것으로 간주');
+              }
+            } else {
+              // 토큰이 없으면 만료된 것으로 간주
+              isTokenActuallyExpired = true;
+              debugPrint('[DioClient] 401 에러 - 토큰 없음, 만료된 것으로 간주');
+            }
+
+            // 실제로 만료되지 않았으면 토큰 갱신하지 않음
+            if (!isTokenActuallyExpired) {
+              debugPrint('[DioClient] 401 에러지만 토큰이 아직 유효함 - 갱신하지 않음');
+              handler.next(error);
+              return;
+            }
+          }
+
           final shouldRefresh =
-              (status == 401) ||
-              (status == 500 && bodyStr.contains('ExpiredJwtException'));
+              (status == 401 && isTokenActuallyExpired) ||
+              isExpiredJwtException;
 
           if (!isAuthEndpoint && shouldRefresh) {
-            print('[DioClient] Token expired, attempting refresh...');
+            // 🎯 마지막 갱신 후 10분 이내면 다시 갱신하지 않음 (중복 갱신 방지)
+            final shouldSkipRefresh =
+                _lastRefreshTime != null &&
+                DateTime.now().difference(_lastRefreshTime!).inSeconds <
+                    600; // 10분
+
+            if (shouldSkipRefresh) {
+              final lastRefreshAgo =
+                  DateTime.now().difference(_lastRefreshTime!).inSeconds;
+              debugPrint(
+                '[DioClient] 토큰 갱신 스킵 (마지막 갱신: ${lastRefreshAgo}초 전, 10분 이내)',
+              );
+              handler.next(error);
+              return;
+            }
+
+            debugPrint('[DioClient] Token expired, attempting refresh...');
 
             try {
               // 이미 리프레시 중이면 완료까지 대기
               if (_isRefreshing && _refreshCompleter != null) {
                 final ok = await _refreshCompleter!.future;
                 if (ok) {
+                  _lastRefreshTime = DateTime.now(); // 🎯 갱신 시간 저장
                   // 🎯 http 기반 재시도 (인터셉터 우회)
                   final response = await _retryRequestWithHttp(
                     error.requestOptions,
@@ -225,12 +313,15 @@ class BaseApiService {
               _isRefreshing = true;
               _refreshCompleter = Completer<bool>();
               final refreshed = await _refreshTokenWithRetry();
+              if (refreshed) {
+                _lastRefreshTime = DateTime.now(); // 🎯 갱신 시간 저장
+              }
               _isRefreshing = false;
               _refreshCompleter?.complete(refreshed);
               _refreshCompleter = null;
 
               if (refreshed) {
-                print('[DioClient] Token refreshed, retrying request...');
+                debugPrint('[DioClient] Token refreshed, retrying request...');
                 // 🎯 http 기반 재시도 (인터셉터 우회)
                 final response = await _retryRequestWithHttp(
                   error.requestOptions,
@@ -247,7 +338,7 @@ class BaseApiService {
                 return;
               }
             } catch (e) {
-              print('[DioClient] Token refresh failed: $e');
+              debugPrint('[DioClient] Token refresh failed: $e');
               _isRefreshing = false;
               _refreshCompleter?.complete(false);
               _refreshCompleter = null;
@@ -266,7 +357,7 @@ class BaseApiService {
   Future<bool> _refreshTokenWithRetry() async {
     final refreshToken = await _authService.getRefreshToken();
     if (refreshToken == null) {
-      print('❌ [DioClient] 리프레시 토큰이 없습니다');
+      debugPrint('❌ [DioClient] 리프레시 토큰이 없습니다');
       return false;
     }
 
@@ -295,20 +386,20 @@ class BaseApiService {
           if (newToken != null && newRefreshToken != null) {
             await _authService.saveToken(newToken);
             await _authService.saveRefreshToken(newRefreshToken);
-            print('✅ [BaseApiService] 토큰 갱신 성공 (attempt=${attempt + 1})');
+            debugPrint('✅ [BaseApiService] 토큰 갱신 성공 (attempt=${attempt + 1})');
             return true;
           } else {
-            print(
+            debugPrint(
               '❌ [BaseApiService] 토큰 갱신 실패: 응답에 토큰이 없습니다 (attempt=${attempt + 1})',
             );
           }
         } else {
-          print(
+          debugPrint(
             '❌ [DioClient] 토큰 갱신 실패: ${response.statusCode} (attempt=${attempt + 1})',
           );
         }
       } catch (e) {
-        print('❌ [DioClient] 토큰 갱신 오류 (attempt=${attempt + 1}): $e');
+        debugPrint('❌ [DioClient] 토큰 갱신 오류 (attempt=${attempt + 1}): $e');
       }
     }
 
@@ -320,7 +411,7 @@ class BaseApiService {
     try {
       final newToken = await _authService.getToken();
       if (newToken == null || newToken.isEmpty) {
-        print('[BaseApiService] 재시도 실패: 토큰 없음');
+        debugPrint('[BaseApiService] 재시도 실패: 토큰 없음');
         return null;
       }
 
@@ -337,15 +428,38 @@ class BaseApiService {
         'Authorization': 'Bearer $newToken',
       };
 
-      // 기존 헤더 추가 (Dio Headers는 Map<String, List<String>> 형태)
+      // 기존 헤더 추가 (Dio Headers는 Map<String, dynamic> 형태)
+      // Authorization 헤더는 이미 새 토큰으로 설정했으므로 제외
       requestOptions.headers.forEach((key, values) {
+        // Authorization 헤더는 새 토큰으로 이미 설정했으므로 스킵
+        if (key.toLowerCase() == 'authorization') {
+          return;
+        }
+
         if (values != null) {
-          if (values is List && values.isNotEmpty) {
-            headers[key] = values.first.toString();
-          } else if (values is String) {
-            headers[key] = values;
-          } else {
-            headers[key] = values.toString();
+          try {
+            if (values is String) {
+              // String인 경우 직접 사용
+              headers[key] = values;
+            } else if (values is List) {
+              // List인 경우 첫 번째 값 사용
+              if (values.isNotEmpty) {
+                final firstValue = values.first;
+                if (firstValue is String) {
+                  headers[key] = firstValue;
+                } else {
+                  headers[key] = firstValue.toString();
+                }
+              }
+            } else {
+              // 그 외의 경우 (int, num 등) 문자열로 변환
+              headers[key] = values.toString();
+            }
+          } catch (e) {
+            // 변환 실패하면 스킵 (로깅만)
+            print(
+              '[BaseApiService] 헤더 값 변환 실패: $key = $values (${values.runtimeType}) - $e',
+            );
           }
         }
       });
@@ -359,11 +473,15 @@ class BaseApiService {
             requestOptions.data != null
                 ? jsonEncode(requestOptions.data)
                 : null;
+        print(
+          '[BaseApiService] http 재시도 POST: ${requestOptions.path}, body=$body',
+        );
         httpResponse = await http.post(
           uriWithQuery,
           headers: headers,
           body: body,
         );
+        print('[BaseApiService] http 재시도 POST 응답: ${httpResponse.statusCode}');
       } else if (requestOptions.method == 'PUT') {
         final body =
             requestOptions.data != null
@@ -387,7 +505,9 @@ class BaseApiService {
           body: body,
         );
       } else {
-        print('[BaseApiService] 지원하지 않는 HTTP 메서드: ${requestOptions.method}');
+        debugPrint(
+          '[BaseApiService] 지원하지 않는 HTTP 메서드: ${requestOptions.method}',
+        );
         return null;
       }
 
@@ -397,26 +517,31 @@ class BaseApiService {
               ? jsonDecode(utf8.decode(httpResponse.bodyBytes))
               : null;
 
+      // http.Response의 headers는 Map<String, String>이므로 List로 변환
+      final headersMap = <String, List<String>>{};
+      httpResponse.headers.forEach((key, value) {
+        // http.Response.headers는 항상 String이지만 안전성을 위해 toString() 사용
+        headersMap[key] = [value.toString()];
+      });
+
       final dioResponse = Response(
         data: responseData,
         statusCode: httpResponse.statusCode,
         statusMessage: httpResponse.reasonPhrase,
         requestOptions: requestOptions,
-        headers: Headers.fromMap(
-          httpResponse.headers.map((k, v) => MapEntry(k, [v])),
-        ),
+        headers: Headers.fromMap(headersMap),
       );
 
       return dioResponse;
     } catch (e) {
-      print('[BaseApiService] http 재시도 실패: $e');
+      debugPrint('[BaseApiService] http 재시도 실패: $e');
       return null;
     }
   }
 
   /// 토큰 갱신 실패 시 다이얼로그로 재로그인 유도 (인스타그램식)
   void _handleTokenRefreshFailure() {
-    print('❌ [DioClient] 토큰 갱신 실패 - 세션 만료 다이얼로그');
+    debugPrint('❌ [DioClient] 토큰 갱신 실패 - 세션 만료 다이얼로그');
     final context = navigatorKey.currentContext;
     if (context != null) {
       if (_sessionDialogVisible) return;

@@ -6,6 +6,7 @@ import 'package:doppy/editor/component/row_image_component.dart';
 import 'package:doppy/editor/component/clip_component.dart';
 import 'package:doppy/editor/component/divider_component.dart';
 import 'package:doppy/editor/postwrite_screen.dart';
+import 'package:doppy/editor/service/drag_service.dart';
 import 'package:doppy/editor/service/sticker_service.dart';
 import 'package:doppy/editor/service/node_component_service.dart';
 import 'package:doppy/editor/service/post_reader_service.dart';
@@ -1951,6 +1952,73 @@ class EditorService extends ChangeNotifier {
       return node;
     } catch (e) {
       debugPrint("Error finding node at position: $e");
+      return null;
+    }
+  }
+
+  /// 🎯 직접 hit test 방식: 모든 노드의 실제 렌더링 영역을 확인하여 탭 위치가 어느 노드에 있는지 정확히 판단
+  /// findNodeAtPosition과 달리 실제 렌더링된 컴포넌트의 글로벌 좌표를 사용하므로 더 정확함
+  ///
+  /// 반환값: (탭된 노드, 노드의 실제 렌더링 영역)
+  /// 텍스트 노드가 최우선순위를 가지며, 텍스트 노드가 없을 때만 특수 노드를 확인
+  MapEntry<DocumentNode?, Rect?>? findNodeByHitTest(
+    Offset globalPosition,
+    DragService dragService,
+  ) {
+    try {
+      // 🎯 텍스트 노드를 먼저 확인하여 최우선순위 보장
+      // 텍스트 노드가 감지되면 즉시 반환하여 특수 노드 선택 방지
+      for (int i = 0; i < document.nodeCount; i++) {
+        final node = document.getNodeAt(i);
+        if (node == null) continue;
+
+        // 🎯 텍스트 노드를 먼저 확인
+        if (node is ParagraphNode &&
+            node.metadata['mention'] != true &&
+            node.metadata['isTitle'] != true) {
+          final rect = dragService.getNodeGlobalRect(node.id);
+          if (rect != null && rect.contains(globalPosition)) {
+            // 텍스트 노드가 감지되면 즉시 반환 (특수 노드보다 우선)
+            return MapEntry(node, rect);
+          }
+        }
+      }
+
+      // 텍스트 노드가 없을 때만 특수 노드 확인
+      final specialNodes = <MapEntry<DocumentNode, Rect>>[];
+      for (int i = 0; i < document.nodeCount; i++) {
+        final node = document.getNodeAt(i);
+        if (node == null) continue;
+
+        final bool isSpecial =
+            node is ImageNode ||
+            node is ImageRowNode ||
+            node is LinkNode ||
+            node is ClipNode ||
+            (node is ParagraphNode && node.metadata['mention'] == true);
+
+        if (isSpecial) {
+          final rect = dragService.getNodeGlobalRect(node.id);
+          if (rect != null && rect.contains(globalPosition)) {
+            specialNodes.add(MapEntry(node, rect));
+          }
+        }
+      }
+
+      // 특수 노드가 있으면 위에서부터 반환
+      if (specialNodes.isNotEmpty) {
+        // 위에서부터 확인 (인덱스 순서대로)
+        specialNodes.sort((a, b) {
+          final indexA = document.getNodeIndexById(a.key.id);
+          final indexB = document.getNodeIndexById(b.key.id);
+          return indexA.compareTo(indexB);
+        });
+        return MapEntry(specialNodes.first.key, specialNodes.first.value);
+      }
+
+      return null;
+    } catch (e) {
+      debugPrint("Error in findNodeByHitTest: $e");
       return null;
     }
   }

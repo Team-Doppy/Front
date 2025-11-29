@@ -10,7 +10,6 @@ import 'package:doppy/editor/component/clip_component.dart'
 
 import 'package:doppy/editor/style/selected_toolbar.dart';
 import 'package:doppy/utils/error_handler.dart';
-import 'package:flutter/rendering.dart';
 import 'package:doppy/editor/component/link_component.dart';
 import 'package:doppy/editor/component/app_image_node.dart';
 import 'package:doppy/editor/component/single_image_component.dart';
@@ -244,6 +243,9 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     // 스티커(그리기 포함) 변경 감지
     stickerService.addListener(_onEditorServiceChange);
 
+    // 🎯 노드 선택 변경 감지: 노드가 선택되면 키보드 내리기
+    nodeComponentService.addListener(_onNodeSelectionChanged);
+
     WidgetsBinding.instance.addPostFrameCallback((_) {
       // 편집 모드일 때 스티커 복원
       if (widget.isEditingMode && widget.exportedDataForEdit != null) {
@@ -362,6 +364,32 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
 
   void _onEditorServiceChange() {
     if (mounted) {
+      // 🎯 노드 추가/변경 시 레이아웃이 변경되므로 캐시 무효화
+      // 이미지 분리/병합 등 레이아웃 변경이 큰 경우를 위해 여러 프레임 대기
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) {
+              dragService.invalidateNodeRectCache();
+              // 🎯 드래그 중이 아닐 때 선택 해제 확인 (드래그 종료 후 다른 로직에서 선택이 다시 설정되는 경우 방지)
+              // 🎯 텍스트 입력 중이 아닐 때만 선택 해제 (텍스트 입력 중에는 키보드 유지)
+              if (dragService.draggingNodeId == null) {
+                final keyboardVisible =
+                    MediaQuery.of(context).viewInsets.bottom > 0;
+                final hasFocus = _editorFocusNode.hasFocus;
+                // 텍스트 입력 중이 아니면 선택 해제
+                if (!keyboardVisible || !hasFocus) {
+                  final nodeService = context.read<NodeComponentService>();
+                  // 🎯 이미지 분리/병합 후에는 명시적으로 모든 셀렉션 클리어
+                  nodeService.clearSelection();
+                  nodeService.clearHighlightedSelection();
+                  composer.clearSelection();
+                }
+              }
+            }
+          });
+        });
+      });
       setState(() {});
     }
   }
@@ -369,6 +397,15 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
   // 드래그 프리뷰 렌더링을 위한 리스너
   void _onDragging() {
     if (mounted) setState(() {});
+  }
+
+  // 🎯 노드 선택 변경 리스너: 노드가 선택되면 키보드 내리기
+  void _onNodeSelectionChanged() {
+    if (mounted && nodeComponentService.selectedNodeId != null) {
+      // 노드가 선택되면 키보드 내리기
+      _editorFocusNode.unfocus();
+      FocusManager.instance.primaryFocus?.unfocus();
+    }
   }
 
   void _cleanupAndExit() {
@@ -494,6 +531,24 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
 
   void _handleTap() {
     if (_lastTapPosition == null) return;
+
+    // 🎯 드래그 직후 레이아웃 변경을 대비하여 캐시 무효화
+    // (드래그 종료 후 다음 프레임에서도 무효화하지만, 탭이 빠르게 발생할 수 있으므로 여기서도 처리)
+    // 탭은 즉시 처리되어야 하므로 캐시를 즉시 무효화하고, getNodeGlobalRect에서 실시간 레이아웃을 사용
+    dragService.invalidateNodeRectCache();
+
+    // 🎯 findNodeAtPosition이 레이아웃이 완전히 업데이트된 후 호출되도록 한 프레임 대기
+    // 노드 리오더 후 레이아웃이 아직 업데이트되지 않은 상태에서 findNodeAtPosition을 호출하면
+    // 오래된 레이아웃 정보를 기반으로 잘못된 노드를 반환할 수 있음
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _lastTapPosition == null) return;
+      _handleTapAfterLayout();
+    });
+  }
+
+  void _handleTapAfterLayout() {
+    if (_lastTapPosition == null) return;
+
     // 1) 세로 노드 사이 클릭 감지 → 특수 노드(텍스트가 아닌) 사이에서 빈 문단 삽입
     final verticalGapIndex = _detectVerticalGapAt(_lastTapPosition!);
     if (verticalGapIndex != null) {
@@ -523,6 +578,8 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
             scrollController.hasClients ? scrollController.offset : 0.0;
 
         editorService.insertEmptyParagraphAtIndex(verticalGapIndex);
+        // 🎯 노드 추가 후 레이아웃 변경으로 캐시 무효화
+        dragService.invalidateNodeRectCache();
 
         // 🎯 100ms 대기 후 안정적으로 포커스/스크롤 처리
         Future.delayed(const Duration(milliseconds: 100), () {
@@ -546,49 +603,50 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
       return;
     }
 
-    final nodeId = editorService.findNodeAtPosition(_lastTapPosition!)?.id;
-    if (nodeId == null) return;
+    // 🎯 직접 hit test 방식: 모든 노드의 실제 렌더링 영역을 확인하여 탭 위치가 어느 노드에 있는지 정확히 판단
+    // findNodeAtPosition과 달리 실제 렌더링된 컴포넌트의 글로벌 좌표를 사용하므로 더 정확함
+    final hitTestResult = editorService.findNodeByHitTest(
+      _lastTapPosition!,
+      dragService,
+    );
 
-    final node = document.getNodeById(nodeId);
+    if (hitTestResult == null) {
+      // 탭 위치에 노드가 없으면 선택 해제
+      nodeComponentService.selectNode(null);
+      nodeComponentService.clearHighlightedSelection();
+      return;
+    }
 
-    // 🎯 텍스트 노드(일반 ParagraphNode)에 탭한 경우: SuperEditor에 탭 전달 (특수 노드 선택 방지)
+    final node = hitTestResult.key;
+    final nodeRect = hitTestResult.value;
+    if (node == null) {
+      nodeComponentService.selectNode(null);
+      nodeComponentService.clearHighlightedSelection();
+      return;
+    }
+
+    final nodeId = node.id;
+
+    // 🎯 텍스트 노드 처리: 텍스트 노드가 감지되면 가장 먼저 모든 셀렉션 해제
     if (node is ParagraphNode &&
         node.metadata['mention'] != true &&
         node.metadata['isTitle'] != true) {
-      // 텍스트 노드 영역 내에서 탭한 경우에만 SuperEditor에 전달
-      final nodeRect = dragService.getNodeGlobalRect(nodeId);
-      if (nodeRect != null) {
-        final localY = _lastTapPosition!.dy - nodeRect.top;
-        final localX = _lastTapPosition!.dx - nodeRect.left;
-
-        // 텍스트 노드 영역 내부인지 확인 (여유 공간 포함: 10px)
-        if (localY >= -10 &&
-            localY <= nodeRect.height + 10 &&
-            localX >= -10 &&
-            localX <= nodeRect.width + 10) {
-          // 텍스트 노드 선택 해제하고 SuperEditor에 탭 전달
-          nodeComponentService.selectNode(null);
-          // 캐시 무효화로 다음 탭이 정확하게 처리되도록 함
-          dragService.invalidateNodeRectCache();
-          return; // SuperEditor가 탭을 처리하도록 함
-        }
-      } else {
-        // rect를 가져올 수 없어도 텍스트 노드면 SuperEditor에 전달
-        // (레이아웃이 아직 준비되지 않은 경우 등)
-        nodeComponentService.selectNode(null);
-        return;
-      }
+      // 🎯 특수 노드가 선택된 상태에서 텍스트 노드로 전환할 때 가장 먼저 모든 셀렉션 해제
+      nodeComponentService.selectNode(null);
+      nodeComponentService.clearHighlightedSelection();
+      composer.clearSelection();
+      dragService.invalidateNodeRectCache();
+      // SuperEditor가 탭을 처리하도록 함
+      return;
     }
 
-    // 클릭한 노드가 마지막 노드이고, 실제 노드 영역 아래를 클릭했는지 확인
+    // 🎯 마지막 노드 아래 클릭 감지: 특수 노드 아래를 클릭하면 새 빈 문단 추가
     final lastIndex = document.nodeCount - 1;
     final isLastNode =
         lastIndex >= 0 && document.getNodeAt(lastIndex)?.id == nodeId;
 
-    if (isLastNode && node != null) {
-      // 실제 노드 영역 확인
-      final nodeRect = dragService.getNodeGlobalRect(nodeId);
-      if (nodeRect != null && _lastTapPosition!.dy > nodeRect.bottom + 20) {
+    if (isLastNode && nodeRect != null) {
+      if (_lastTapPosition!.dy > nodeRect.bottom + 20) {
         // 노드 영역 아래(+20px 여유)를 클릭한 경우
         final isSpecial =
             node is ImageNode ||
@@ -599,6 +657,8 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
         // 마지막 노드가 특수 노드라면 새 빈 문단 추가
         if (isSpecial) {
           editorService.insertEmptyParagraphAtIndex(lastIndex + 1);
+          // 🎯 노드 추가 후 레이아웃 변경으로 캐시 무효화
+          dragService.invalidateNodeRectCache();
           nodeComponentService.selectNode(null);
 
           // 🎯 새로 추가된 노드에 안정적으로 포커스 (100ms 대기)
@@ -658,6 +718,8 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
       // action이 null이어도 ClipNode는 특수 노드이므로 아래 로직에서 처리됨
     }
 
+    // 🎯 특수 노드 선택 처리
+    // findNodeByHitTest가 이미 실제 렌더링 영역을 확인했으므로, 여기서는 바로 선택 가능
     final bool isSpecial =
         node is ImageNode ||
         node is ImageRowNode ||
@@ -665,21 +727,53 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
         (node is ParagraphNode && node.metadata['mention'] == true) ||
         node is ClipNode;
 
-    // 🎯 노드 선택을 둔감하게: 가장자리 영역 클릭 시 선택 안 함
     bool shouldSelect = false;
-    if (isSpecial) {
-      final nodeRect = dragService.getNodeGlobalRect(nodeId);
-      if (nodeRect != null) {
-        const edgeThreshold = 10.0; // 🎯 가장자리 10px 영역은 선택 제외
+    if (isSpecial && nodeRect != null) {
+      // findNodeByHitTest가 이미 탭 위치가 노드 영역 내부인지 확인했으므로 선택 가능
+      // 다만, 인접한 텍스트 노드와의 경계를 한 번 더 확인
+      final currentNodeIndex = document.getNodeIndexById(nodeId);
+      if (currentNodeIndex != -1) {
+        // 위쪽과 아래쪽 텍스트 노드 확인
+        bool nearTextNode = false;
 
-        final localY = _lastTapPosition!.dy - nodeRect.top;
-        final isInEdge =
-            localY < edgeThreshold ||
-            localY > (nodeRect.height - edgeThreshold);
+        // 위쪽 노드 확인
+        if (currentNodeIndex > 0) {
+          final prevNode = document.getNodeAt(currentNodeIndex - 1);
+          if (prevNode is ParagraphNode &&
+              prevNode.metadata['mention'] != true &&
+              prevNode.metadata['isTitle'] != true) {
+            final prevRect = dragService.getNodeGlobalRect(prevNode.id);
+            if (prevRect != null) {
+              // 위쪽 텍스트 노드 영역과 겹치는지 확인 (20px 여유)
+              final tapY = _lastTapPosition!.dy;
+              if (tapY >= prevRect.top - 20 && tapY <= prevRect.bottom + 20) {
+                nearTextNode = true;
+              }
+            }
+          }
+        }
 
-        shouldSelect = !isInEdge; // 가장자리가 아닐 때만 선택
+        // 아래쪽 노드 확인
+        if (!nearTextNode && currentNodeIndex < document.nodeCount - 1) {
+          final nextNode = document.getNodeAt(currentNodeIndex + 1);
+          if (nextNode is ParagraphNode &&
+              nextNode.metadata['mention'] != true &&
+              nextNode.metadata['isTitle'] != true) {
+            final nextRect = dragService.getNodeGlobalRect(nextNode.id);
+            if (nextRect != null) {
+              // 아래쪽 텍스트 노드 영역과 겹치는지 확인 (20px 여유)
+              final tapY = _lastTapPosition!.dy;
+              if (tapY >= nextRect.top - 20 && tapY <= nextRect.bottom + 20) {
+                nearTextNode = true;
+              }
+            }
+          }
+        }
+
+        // 텍스트 노드 근처가 아니면 선택 가능
+        shouldSelect = !nearTextNode;
       } else {
-        shouldSelect = true; // rect를 못 가져오면 기본 동작
+        shouldSelect = true;
       }
     }
 
@@ -694,6 +788,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
         dragService.invalidateNodeRectCache();
       } else {
         // 다른 노드 선택 시 즉시 선택
+        // 🎯 키보드는 _onNodeSelectionChanged 리스너에서 자동으로 내려짐
         nodeComponentService.selectNode(nodeId);
         // 선택 후 다음 프레임에서 캐시 무효화 (레이아웃 업데이트 후)
         WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -854,6 +949,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     editorService.removeListener(_onEditorServiceChange);
     editorService.dispose();
     stickerService.removeListener(_onEditorServiceChange);
+    nodeComponentService.removeListener(_onNodeSelectionChanged);
     dragService.removeListener(_onDragging);
     scrollController.removeListener(_onScrollChanged);
     _editorFocusNode.dispose();
@@ -1493,6 +1589,11 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
   /// 수동 임시저장 (새 버전 생성)
   Future<bool> _saveDraft() async {
     try {
+      // 🎯 임시저장 후 포커스 해제 (키보드가 올라오지 않도록)
+      if (mounted) {
+        _editorFocusNode.unfocus();
+        FocusManager.instance.primaryFocus?.unfocus();
+      }
       // 제목만 검증
       final hasTitle = editorService.hasNonEmptyTitle();
 
@@ -1510,13 +1611,6 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
       // 🎯 PNG 드로잉 업로드 중이면 차단
       final uploadService = UploadService();
       if (uploadService.hasActiveUploads(kinds: {UploadKind.editorImage})) {
-        if (mounted) {
-          await DialogUtils.showInfoDialog(
-            context,
-            title: '드로잉 업로드 중',
-            message: '드로잉 이미지가 아직 업로드 중입니다. 잠시만 기다려주세요.',
-          );
-        }
         return false;
       }
 
@@ -1561,15 +1655,8 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
       editorService.markSavedSnapshot();
       stickerService.saveInitialState();
 
-      // 임시저장 후에는 매핑 맵을 유지 (계속 작업할 수 있도록)
-
-      // 🎯 키보드 내리고 드롭다운 열기
       if (mounted) {
-        FocusManager.instance.primaryFocus?.unfocus();
-        // 키보드가 완전히 내려갈 때까지 잠시 대기
-        await Future.delayed(const Duration(milliseconds: 100));
-        // 드롭다운 열기
-        await _showDraftList();
+        ErrorHandler.showInfo(context, context.tr('draft_saved'));
       }
 
       return true; // ✅ 성공 반환
@@ -1832,12 +1919,14 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                     draftId: draftId,
                     editorService: editorService,
                     stickerService: stickerService,
+                    nodeComponentService: nodeComponentService,
+                    dragService: dragService,
                   );
 
                   if (success && mounted) {
                     currentDraftId = draftId;
 
-                    // 불러온 상태를 저장 스냅샷으로 간주
+                    // 🎯 불러온 상태를 저장 스냅샷으로 간주
                     editorService.markSavedSnapshot();
                     stickerService.saveInitialState();
 
@@ -1845,15 +1934,24 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                     _editorFocusNode.unfocus();
                     FocusManager.instance.primaryFocus?.unfocus();
 
-                    // 다음 프레임에서도 포커스 해제 및 플래그 해제
+                    // 🎯 레이아웃 재동기화를 위해 여러 프레임 대기 후 캐시 무효화
                     WidgetsBinding.instance.addPostFrameCallback((_) {
-                      if (mounted) {
-                        _editorFocusNode.unfocus();
-                        FocusManager.instance.primaryFocus?.unfocus();
-                        setState(() {
-                          _isLoadingDraft = false;
-                        });
-                      }
+                      WidgetsBinding.instance.addPostFrameCallback((_) {
+                        if (mounted) {
+                          // 🎯 캐시 무효화 및 셀렉션 재확인
+                          dragService.invalidateNodeRectCache();
+                          nodeComponentService.clearSelection();
+                          nodeComponentService.clearHighlightedSelection();
+                          composer.clearSelection();
+
+                          // 🎯 포커스 재확인 및 플래그 해제
+                          _editorFocusNode.unfocus();
+                          FocusManager.instance.primaryFocus?.unfocus();
+                          setState(() {
+                            _isLoadingDraft = false;
+                          });
+                        }
+                      });
                     });
                   } else {
                     if (mounted) {

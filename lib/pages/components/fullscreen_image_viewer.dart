@@ -907,23 +907,44 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer>
                             (context, url, error) => const Icon(Icons.error),
                       ),
             ),
+            // 🎯 키보드 상태에 따라 BackdropFilter 최적화
             AnimatedBuilder(
               animation: _commentsController,
               builder: (context, child) {
                 final baseColor = Colors.black.withOpacity(0.75);
+                final keyboardVisible =
+                    MediaQuery.of(context).viewInsets.bottom > 0;
+
+                // 🎯 키보드가 올라와 있을 때는 blur를 줄여서 성능 개선
+                final blurSigma = keyboardVisible ? 5.0 : 10.0;
+
+                // 🎯 RepaintBoundary로 감싸서 불필요한 repaint 방지
                 return Positioned.fill(
-                  child: ClipRRect(
-                    child: BackdropFilter(
-                      filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-                      child: AnimatedContainer(
-                        duration: const Duration(milliseconds: 100),
-                        curve: Curves.easeInOut,
-                        color: baseColor,
+                  child: RepaintBoundary(
+                    child: ClipRRect(
+                      child: BackdropFilter(
+                        filter: ImageFilter.blur(
+                          sigmaX: blurSigma,
+                          sigmaY: blurSigma,
+                        ),
+                        child: Container(
+                          // 🎯 AnimatedContainer 대신 일반 Container 사용 (애니메이션이 필요 없음)
+                          color: baseColor,
+                        ),
                       ),
                     ),
                   ),
                 );
               },
+              // 🎯 child를 사용하여 불필요한 rebuild 방지
+              child: RepaintBoundary(
+                child: ClipRRect(
+                  child: BackdropFilter(
+                    filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+                    child: Container(color: Colors.black.withOpacity(0.75)),
+                  ),
+                ),
+              ),
             ),
 
             // 이미지 (전면과 축소를 하나로 통합)
@@ -1518,15 +1539,14 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer>
                                                             vertical: 0,
                                                           ),
                                                     ),
-                                                    maxLines: 1,
+                                                    // ✅ 여러 줄 입력 설정
+                                                    keyboardType:
+                                                        TextInputType.multiline,
                                                     textInputAction:
-                                                        TextInputAction.send,
-                                                    onSubmitted:
-                                                        (_) =>
-                                                            _editingComment !=
-                                                                    null
-                                                                ? _saveEdit()
-                                                                : _submitComment(),
+                                                        TextInputAction
+                                                            .newline, // 엔터 시 줄바꿈
+                                                    maxLines: null, // 무제한 줄
+                                                    // ❌ onSubmitted 제거 (엔터를 줄바꿈으로 쓰기 위해)
                                                   ),
                                                 ),
                                                 GestureDetector(

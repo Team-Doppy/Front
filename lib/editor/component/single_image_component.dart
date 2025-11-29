@@ -143,7 +143,7 @@ class _SingleImageComponentState extends State<SingleImageComponent>
                 .watch<NodeComponentService>()
                 .getEditedBytes(widget.nodeId);
             final image = Padding(
-              padding: EdgeInsets.only(bottom: 2),
+              padding: EdgeInsets.zero,
               child: _buildImage(editedBytes),
             );
 

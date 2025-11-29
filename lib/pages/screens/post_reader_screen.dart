@@ -1,6 +1,5 @@
 import 'dart:ui' as ui;
 import 'dart:async';
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:doppy/data/services/auth_service.dart';
 import 'package:doppy/editor/component/app_image_node.dart';
 import 'package:doppy/editor/component/single_image_component.dart';
@@ -34,6 +33,7 @@ import 'package:doppy/pages/components/share_post_overlay.dart';
 import 'package:doppy/pages/components/doppy_loading_logo.dart';
 import 'package:doppy/pages/components/fullscreen_media_viewer.dart';
 import 'package:doppy/pages/components/liked_users_bottom_sheet.dart';
+import 'package:doppy/pages/components/viewers_bottom_sheet.dart';
 import 'package:doppy/pages/components/post_action_bottom_sheet.dart';
 import 'package:doppy/utils/dialog_utils.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -130,6 +130,11 @@ class _PostReaderScreenState extends State<PostReaderScreen>
   bool _showLikedUsersOverlay = false;
   late final AnimationController _likedUsersOverlayCtrl;
   late final Animation<double> _likedUsersFade;
+
+  // 본 사람 목록 오버레이 상태/애니메이션
+  bool _showViewersOverlay = false;
+  late final AnimationController _viewersOverlayCtrl;
+  late final Animation<double> _viewersFade;
 
   // 전체화면 이미지 뷰어 상태/애니메이션
   bool _showImageViewer = false;
@@ -747,7 +752,13 @@ class _PostReaderScreenState extends State<PostReaderScreen>
   void _showCommentBottomSheet() {
     // 오버레이 즉시 표시
     final id = widget.exported['id']?.toString() ?? '';
+    final postAuthorUsername = widget.exported['author']?.toString();
+
     _commentService.setPostId(id);
+    // 🎯 포스트 작성자 정보를 먼저 설정 (loadComments 전에)
+    if (postAuthorUsername != null) {
+      _commentService.setPostAuthorUsername(postAuthorUsername);
+    }
 
     setState(() {
       _previousAppBarState = _showAppBar; // 🎯 현재 상태 저장
@@ -757,7 +768,7 @@ class _PostReaderScreenState extends State<PostReaderScreen>
     });
     _commentOverlayCtrl.forward(from: 0.0);
 
-    // WebSocket 연결 (백그라운드, 비동기)
+    // 🎯 첫 댓글은 비동기로 로드
     _initCommentsAsync();
   }
 
@@ -766,8 +777,14 @@ class _PostReaderScreenState extends State<PostReaderScreen>
     // WebSocket 연결 (백그라운드, 실패해도 무시)
     _commentService.connectWebSocketForCurrentPost().catchError((e) {});
 
-    // 🎯 댓글이 이미 로드되어 있으면 로딩 스킵 (initState에서 이미 로드됨)
-    // 댓글창은 이미 로드된 데이터를 즉시 표시
+    // 🎯 댓글이 아직 로드되지 않았으면 비동기로 로드
+    final comments = _commentService.getAllComments();
+    if (comments.isEmpty && !_commentService.isLoading) {
+      await _commentService.loadComments(); // 🎯 기본 크기(100개)로 로드
+    } else if (comments.isNotEmpty) {
+      // 🎯 기존 캐시가 있으면 새 댓글만 확인 (기존 캐시 유지)
+      await _commentService.checkForNewComments();
+    }
   }
 
   void _closeCommentsOverlay() {
@@ -812,6 +829,33 @@ class _PostReaderScreenState extends State<PostReaderScreen>
     });
   }
 
+  // 🎯 본 사람 목록 오버레이 표시
+  void _openViewersOverlay() {
+    setState(() {
+      _previousAppBarState = _showAppBar; // 🎯 현재 상태 저장
+      _showViewersOverlay = true;
+      _showAppBar = false; // 하단 바 숨김
+      _bottomBarAnimationDuration = 50; // 빠르게 숨김
+    });
+
+    // 🎯 애니메이션 컨트롤러 리셋 후 forward
+    _viewersOverlayCtrl.reset();
+    _viewersOverlayCtrl.forward(from: 0.0);
+  }
+
+  // 🎯 본 사람 목록 오버레이 닫기
+  void _closeViewersOverlay() {
+    _viewersOverlayCtrl.reverse().whenComplete(() {
+      if (!mounted) return;
+      setState(() {
+        _showViewersOverlay = false;
+        _showAppBar = _previousAppBarState; // 🎯 이전 상태로 복원
+        _bottomBarAnimationDuration =
+            _previousAppBarState ? 0 : 300; // 🎯 열려있었으면 즉시(0), 닫혀있었으면 일반 속도
+      });
+    });
+  }
+
   void _onCommentServiceChanged() {
     if (mounted) {
       setState(() {});
@@ -828,64 +872,116 @@ class _PostReaderScreenState extends State<PostReaderScreen>
   Future<Map<String, dynamic>> _loadContentWithPreloadedMedia(
     String postId,
   ) async {
-    final response = await _blogService.getPostContent(postId);
+    try {
+      final response = await _blogService.getPostContent(postId);
 
-    // 🎯 서버 응답 구조: { isLiked, likeCount, commentCount, postId, content: {...}, accessLevel, sharedGroupIds, sharedGroupNames }
-    final actualLikeCount = response['likeCount'] as int? ?? 0;
-    final actualIsLiked = response['isLiked'] == true;
-    final actualCommentCount = response['commentCount'] as int? ?? 0;
+      // 🎯 서버 응답 구조: { isLiked, likeCount, commentCount, viewCount, postId, content: {...}, accessLevel, sharedGroupIds, sharedGroupNames }
+      final actualLikeCount = response['likeCount'] as int? ?? 0;
+      final actualIsLiked = response['isLiked'] == true;
+      final actualCommentCount = response['commentCount'] as int? ?? 0;
+      final actualViewCount =
+          response['viewCount'] != null
+              ? (response['viewCount'] is int
+                  ? response['viewCount'] as int
+                  : int.tryParse(response['viewCount'].toString()) ?? 0)
+              : null;
 
-    _likeService.setInitialLikeData(postId, actualIsLiked, actualLikeCount);
-    _commentService.setInitialCommentCount(actualCommentCount); // 🎯 초기 댓글 수 설정
-
-    debugPrint(
-      '[PostReaderScreen] 실제 데이터 - 좋아요: $actualLikeCount, 좋아요 상태: $actualIsLiked, 댓글: $actualCommentCount',
-    );
-
-    // 🎯 공개범위 정보 업데이트 (content.accessLevelInfo에서 추출)
-    final parsed = AccessLevelParser.parseAccessLevelFromContent(response);
-    if (mounted) {
-      setState(() {
-        _accessLevel = parsed['accessLevel'] as String? ?? 'PUBLIC';
-        _sharedGroupIds = parsed['sharedGroupIds'] as List<int>?;
-        _sharedGroupNames = parsed['sharedGroupNames'] as List<String>?;
+      // 🎯 성능 최적화: 좋아요/댓글 데이터는 비동기로 백그라운드 처리
+      Future.microtask(() {
+        _likeService.setInitialLikeData(postId, actualIsLiked, actualLikeCount);
+        _commentService.setInitialCommentCount(actualCommentCount);
       });
-    }
 
-    // content 객체 추출
-    final content = response['content'] as Map<String, dynamic>? ?? {};
+      debugPrint(
+        '[PostReaderScreen] 실제 데이터 - 좋아요: $actualLikeCount, 좋아요 상태: $actualIsLiked, 댓글: $actualCommentCount',
+      );
 
-    // 🎯 서버에서 받은 content 데이터 로그
-    debugPrint('[PostReaderScreen] 🔍 서버 응답 content 키: ${content.keys}');
-    if (content.containsKey('nodes')) {
-      final nodes = content['nodes'] as List?;
-      debugPrint('[PostReaderScreen] 🔍 nodes 개수: ${nodes?.length}');
-      // video 노드 찾기
-      if (nodes != null) {
-        for (final node in nodes) {
-          if (node is Map && node['type'] == 'video') {
-            debugPrint('[PostReaderScreen] 🎬 서버 응답 video 노드: $node');
-            final data = node['data'] as Map?;
-            debugPrint('[PostReaderScreen] 🎬 video data: $data');
+      // 🎯 공개범위 정보 업데이트 (content.accessLevelInfo에서 추출)
+      final parsed = AccessLevelParser.parseAccessLevelFromContent(response);
+      if (mounted) {
+        setState(() {
+          _accessLevel = parsed['accessLevel'] as String? ?? 'PUBLIC';
+          _sharedGroupIds = parsed['sharedGroupIds'] as List<int>?;
+          _sharedGroupNames = parsed['sharedGroupNames'] as List<String>?;
+        });
+      }
+
+      // content 객체 추출
+      final content = response['content'] as Map<String, dynamic>? ?? {};
+
+      // 🎯 첫 10개 이미지 빠르게 병렬 프리로드
+      if (content.isNotEmpty && mounted) {
+        final imageUrls = _postReaderService.extractImageUrls(content);
+        if (imageUrls.isNotEmpty) {
+          // 첫 10개 이미지를 빠르게 병렬 프리로드
+          final first10Images = imageUrls.take(10).toList();
+          Future.microtask(() async {
+            if (mounted) {
+              await _postReaderService.preloadImages(
+                context,
+                first10Images,
+                maxCount: 10,
+              );
+              debugPrint('[PostReaderScreen] ✅ 첫 10개 이미지 프리로드 완료');
+            }
+          });
+
+          // 나머지 이미지도 백그라운드에서 계속 로드
+          if (imageUrls.length > 10) {
+            final remainingImages = imageUrls.skip(10).toList();
+            Future.microtask(() async {
+              if (mounted) {
+                await _postReaderService.preloadImages(
+                  context,
+                  remainingImages,
+                  maxCount: remainingImages.length,
+                );
+                debugPrint('[PostReaderScreen] ✅ 나머지 이미지 프리로드 완료');
+              }
+            });
           }
         }
       }
+
+      // 🎯 서버에서 받은 content 데이터 로그
+      debugPrint('[PostReaderScreen] 🔍 서버 응답 content 키: ${content.keys}');
+      if (content.containsKey('nodes')) {
+        final nodes = content['nodes'] as List?;
+        debugPrint('[PostReaderScreen] 🔍 nodes 개수: ${nodes?.length}');
+        // video 노드 찾기
+        if (nodes != null) {
+          for (final node in nodes) {
+            if (node is Map && node['type'] == 'video') {
+              debugPrint('[PostReaderScreen] 🎬 서버 응답 video 노드: $node');
+              final data = node['data'] as Map?;
+              debugPrint('[PostReaderScreen] 🎬 video data: $data');
+            }
+          }
+        }
+      }
+
+      // 메타데이터를 content에 병합 (UI에서 사용)
+      content['likeCount'] = actualLikeCount;
+      content['isLiked'] = actualIsLiked;
+      content['commentCount'] = actualCommentCount;
+      // 🎯 viewCount도 content에 추가 (서버 응답에서 최신 조회수 제공)
+      if (actualViewCount != null) {
+        content['viewCount'] = actualViewCount;
+      }
+
+      // 🎯 성능 최적화: 이미지 프리로드 제거 (즉시 반환)
+
+      return content;
+    } catch (e) {
+      // 🎯 본문 로드 실패 시에도 빈 content 반환 (댓글은 비동기로 로드되므로 화면 표시 가능)
+      debugPrint('[PostReaderScreen] 본문 로드 실패: $e');
+      // 빈 content 반환하여 에러 화면 대신 기본 화면 표시
+      return <String, dynamic>{
+        'likeCount': widget.exported['likeCount'] as int? ?? 0,
+        'isLiked': widget.exported['isLiked'] as bool? ?? false,
+        'commentCount': widget.exported['commentCount'] as int? ?? 0,
+      };
     }
-
-    // 메타데이터를 content에 병합 (UI에서 사용)
-    content['likeCount'] = actualLikeCount;
-    content['isLiked'] = actualIsLiked;
-    content['commentCount'] = actualCommentCount;
-
-    // 이미지와 클립 URL 추출 및 미리 로드 (비동기, 화면 그린 뒤 시작)
-    if (mounted) {
-      final imageUrls = _postReaderService.extractImageUrls(content);
-      debugPrint('[PostReaderScreen] 이미지 프리로드 대상: ${imageUrls.length}개');
-      // 이미지는 상위 6개만 선 프리로드
-      await _postReaderService.preloadImages(context, imageUrls, maxCount: 6);
-    }
-
-    return content;
   }
 
   @override
@@ -942,6 +1038,16 @@ class _PostReaderScreenState extends State<PostReaderScreen>
       curve: Curves.easeOutCubic,
     );
 
+    // 🎯 조회자 목록 오버레이 애니메이션 초기화
+    _viewersOverlayCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 240),
+    );
+    _viewersFade = CurvedAnimation(
+      parent: _viewersOverlayCtrl,
+      curve: Curves.easeOutCubic,
+    );
+
     // 🎯 이미지 뷰어 애니메이션 초기화
     _imageViewerCtrl = AnimationController(
       vsync: this,
@@ -978,6 +1084,42 @@ class _PostReaderScreenState extends State<PostReaderScreen>
             _sharedGroupNames = parsed['sharedGroupNames'] as List<String>?;
           });
         }
+
+        // 🎯 첫 10개 이미지 빠르게 병렬 프리로드 (딥링크 진입 시)
+        if (mounted && widget.preloadedContent != null) {
+          final imageUrls = _postReaderService.extractImageUrls(
+            widget.preloadedContent!,
+          );
+          if (imageUrls.isNotEmpty) {
+            // 첫 10개 이미지를 빠르게 병렬 프리로드
+            final first10Images = imageUrls.take(10).toList();
+            Future.microtask(() async {
+              if (mounted) {
+                await _postReaderService.preloadImages(
+                  context,
+                  first10Images,
+                  maxCount: 10,
+                );
+                debugPrint('[PostReaderScreen] ✅ 첫 10개 이미지 프리로드 완료 (딥링크)');
+              }
+            });
+
+            // 나머지 이미지도 백그라운드에서 계속 로드
+            if (imageUrls.length > 10) {
+              final remainingImages = imageUrls.skip(10).toList();
+              Future.microtask(() async {
+                if (mounted) {
+                  await _postReaderService.preloadImages(
+                    context,
+                    remainingImages,
+                    maxCount: remainingImages.length,
+                  );
+                  debugPrint('[PostReaderScreen] ✅ 나머지 이미지 프리로드 완료 (딥링크)');
+                }
+              });
+            }
+          }
+        }
       } else {
         // 일반 진입: 서버에서 데이터 로드
         _commentService.setPostId(postId);
@@ -987,15 +1129,18 @@ class _PostReaderScreenState extends State<PostReaderScreen>
             widget.exported['commentCount'] as int? ?? 0;
         _commentService.setInitialCommentCount(initialCommentCount);
 
-        // 🎯 초기 댓글 로드 (타이밍 시어 없이 즉시 로드)
-        _commentService.loadComments(size: 20);
+        // 🎯 성능 최적화: 댓글/좋아요 로드는 비동기로 백그라운드 처리
+        Future.microtask(() {
+          // 초기 댓글 로드 (비동기, 테스트: 20개)
+          _commentService.loadComments(); // 🎯 기본 크기(100개)로 로드
 
-        // 🎯 좋아요 사용자 목록 미리 로드 (비동기, 백그라운드)
-        LikedUsersBottomSheet.preloadLikedUsers(postId).catchError((e) {
-          debugPrint('[PostReaderScreen] 좋아요 사용자 목록 미리 로드 실패: $e');
+          // 좋아요 사용자 목록 미리 로드 (비동기)
+          LikedUsersBottomSheet.preloadLikedUsers(postId).catchError((e) {
+            debugPrint('[PostReaderScreen] 좋아요 사용자 목록 미리 로드 실패: $e');
+          });
         });
 
-        // 본문 로드 시 실제 데이터로 좋아요/댓글 초기화 (_loadContentWithPreloadedMedia에서 처리)
+        // 본문 로드만 즉시 처리 (이미지 프리로드 제거)
         _contentFuture = _loadContentWithPreloadedMedia(postId);
       }
 
@@ -1079,7 +1224,7 @@ class _PostReaderScreenState extends State<PostReaderScreen>
     PostReaderService.disposeAllPreloaded();
     debugPrint('[PostReaderScreen] 프리로드 컨트롤러 모두 정리');
 
-    // 🎯 reader 모드에서 생성한 모든 비디오 컨트롤러 강제 정지 및 정리
+    // 🎯 reader 모드에서 생성한 모든 비디오 컨트롤러 정지 및 dispose
     // 먼저 목록을 복사 (dispose 중에 맵이 변경될 수 있음)
     final controllersToDispose = <VideoPlayerController>[];
     final urlsToRemove = <String>[];
@@ -1089,15 +1234,17 @@ class _PostReaderScreenState extends State<PostReaderScreen>
       urlsToRemove.add(entry.key);
     }
 
-    // 모든 컨트롤러 강제 정지 및 dispose
+    // 모든 컨트롤러 정지 및 dispose
     for (int i = 0; i < controllersToDispose.length; i++) {
       final controller = controllersToDispose[i];
       final url = urlsToRemove[i];
       try {
         if (controller.value.isInitialized) {
-          // 강제로 일시정지
-          controller.pause();
-          debugPrint('[PostReaderScreen] 컨트롤러 일시정지: $url');
+          // 일시정지
+          if (controller.value.isPlaying) {
+            controller.pause();
+            debugPrint('[PostReaderScreen] 컨트롤러 일시정지: $url');
+          }
           // 리스너 제거 시도
           try {
             controller.removeListener(() {});
@@ -1363,7 +1510,8 @@ class _PostReaderScreenState extends State<PostReaderScreen>
               );
             }
 
-            if (snap.hasData && (snap.data?.isNotEmpty ?? false)) {
+            // 🎯 본문 로드 실패 시에도 화면 표시 (댓글은 비동기로 로드되므로)
+            if (snap.hasData) {
               final merged = Map<String, dynamic>.from(widget.exported);
               merged['content'] = snap.data!;
 
@@ -1376,6 +1524,15 @@ class _PostReaderScreenState extends State<PostReaderScreen>
               }
               if (_sharedGroupNames != null) {
                 merged['sharedGroupNames'] = _sharedGroupNames;
+              }
+
+              // 🎯 서버 응답에서 viewCount 업데이트 (서버에서 최신 조회수 제공)
+              // snap.data는 content 객체이므로, viewCount가 포함되어 있을 수 있음
+              if (snap.data is Map<String, dynamic>) {
+                final contentData = snap.data as Map<String, dynamic>;
+                if (contentData.containsKey('viewCount')) {
+                  merged['viewCount'] = contentData['viewCount'];
+                }
               }
 
               // 최신 데이터 저장 (수정하기에서 사용)
@@ -1758,6 +1915,23 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                       animationDuration:
                           _bottomBarAnimationDuration, // 🎯 바텀바와 동일한 속도
                       scrollOffset: _currentScrollOffset, // 🎯 현재 스크롤 위치 전달
+                      viewCount:
+                          int.tryParse(
+                            (_currentExportedData?['viewCount'] ??
+                                    widget.exported['viewCount'])
+                                .toString(),
+                          ) ??
+                          0,
+                      onViewCountTap: () {
+                        // 🎯 나만보기 포스트는 제외
+                        final accessLevelStr = _accessLevel ?? 'PUBLIC';
+                        if (accessLevelStr != 'PRIVATE') {
+                          _openViewersOverlay();
+                        }
+                      },
+                      isPrivate:
+                          (_accessLevel ?? 'PUBLIC') ==
+                          'PRIVATE', // 🎯 나만보기 포스트 여부
                       onMoreTap:
                           !isMyPost
                               ? () {
@@ -1805,6 +1979,9 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                           title: widget.exported['title'] ?? '',
                           commentService: _commentService,
                           scrollToCommentId: widget.scrollToCommentId,
+                          postAuthorUsername:
+                              widget.exported['author']
+                                  ?.toString(), // 🎯 블로그 작성자 username
                         );
                       },
                     ),
@@ -1822,6 +1999,27 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                             likeCount: _likeService.getPostLikeCount(
                               widget.exported['id']?.toString() ?? '',
                             ),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                // 조회자 목록 오버레이
+                if (_showViewersOverlay)
+                  Positioned.fill(
+                    child: AnimatedBuilder(
+                      animation: _viewersFade,
+                      builder: (context, _) {
+                        return Opacity(
+                          opacity: _viewersFade.value,
+                          child: ViewersBottomSheet(
+                            postId: widget.exported['id']?.toString() ?? '',
+                            viewerCount: int.parse(
+                              (_currentExportedData?['viewCount'] ??
+                                      widget.exported['viewCount'])
+                                  .toString(),
+                            ),
+                            onClose: _closeViewersOverlay,
                           ),
                         );
                       },
@@ -1846,9 +2044,9 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                                 ? readerVideoControllers[_currentImageUrl!]
                                 : null, // 🎯 ClipComponent에서 생성한 컨트롤러 공유
                         imageProvider:
-                            !_isVideoViewer
-                                ? CachedNetworkImageProvider(_currentImageUrl!)
-                                : null,
+                            !_isVideoViewer && _currentImageUrl != null
+                                ? NetworkImage(_currentImageUrl!)
+                                : null, // 🎯 NetworkImage 인스턴스 직접 생성
                         onClose: _closeImageViewer,
                         postTitle: () {
                           final title = widget.exported['title'] as String?;
@@ -2065,8 +2263,8 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                                     children: [
                                       SvgPicture.asset(
                                         'assets/icons/heart.svg',
-                                        width: 26,
-                                        height: 26,
+                                        width: 22,
+                                        height: 22,
                                         color:
                                             isLiked
                                                 ? const ui.Color.fromARGB(

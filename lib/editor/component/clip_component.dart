@@ -24,6 +24,9 @@ final videoPlayerControllers = <String, VideoPlayerControllerProxy>{};
 /// 🎯 reader 모드에서 ClipComponent와 FullscreenVideoPlayer가 공유하는 컨트롤러 맵
 final readerVideoControllers = <String, VideoPlayerController>{};
 
+/// 🎯 에디터 모드에서 비디오 컨트롤러 캐시 (드래그앤드롭 시 재사용)
+final editorVideoControllers = <String, VideoPlayerController>{};
+
 /// VideoPlayer 프록시 클래스
 class VideoPlayerControllerProxy {
   void Function()? toggleMute;
@@ -42,6 +45,21 @@ void cleanupAllVideoPlayers() {
   }
   // 맵 비우기
   videoPlayerControllers.clear();
+
+  // 🎯 에디터 모드 비디오 컨트롤러 캐시 정리
+  for (final entry in editorVideoControllers.entries) {
+    try {
+      final controller = entry.value;
+      if (controller.value.isInitialized) {
+        controller.pause();
+        controller.dispose();
+      }
+    } catch (e) {
+      debugPrint('[ClipComponent] 에디터 컨트롤러 정리 오류: $e');
+    }
+  }
+  editorVideoControllers.clear();
+
   debugPrint('[ClipComponent] 모든 비디오 플레이어 정리 완료');
 }
 
@@ -976,7 +994,37 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
     // 항상 프록시 등록(외부 제어용)
     _registerVideoPlayerController();
 
-    // 🎯 에디터 모드에서만 VideoCacheService 사용, reader 모드에서는 직접 생성
+    // 🎯 캐시된 컨트롤러가 있으면 재사용, 없으면 초기화
+    if (widget.isEditing && editorVideoControllers.containsKey(widget.url)) {
+      // 에디터 모드: 캐시된 컨트롤러 재사용
+      _controller = editorVideoControllers[widget.url];
+      if (_controller != null && _controller!.value.isInitialized) {
+        _isInitialized = true;
+        _isReadyToPlay = true;
+        _controller!.addListener(_onVideoStatusChanged);
+        debugPrint('[ClipComponent] 캐시된 컨트롤러 재사용: ${widget.url}');
+        if (mounted) {
+          setState(() {});
+        }
+        return;
+      }
+    } else if (!widget.isEditing &&
+        readerVideoControllers.containsKey(widget.url)) {
+      // reader 모드: 캐시된 컨트롤러 재사용
+      _controller = readerVideoControllers[widget.url];
+      if (_controller != null && _controller!.value.isInitialized) {
+        _isInitialized = true;
+        _isReadyToPlay = true;
+        _controller!.addListener(_onVideoStatusChanged);
+        debugPrint('[ClipComponent] reader 캐시된 컨트롤러 재사용: ${widget.url}');
+        if (mounted) {
+          setState(() {});
+        }
+        return;
+      }
+    }
+
+    // 캐시된 컨트롤러가 없으면 초기화
     _initializeVideo();
   }
 
@@ -1008,29 +1056,26 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
       _controller!.removeListener(_onVideoStatusChanged);
     }
 
-    // 🎯 에디터 모드에서만 VideoCacheService 참조 해제, reader 모드에서는 직접 dispose
-    if (widget.isEditing) {
-      // 에디터 모드: VideoCacheService 사용
-      if (_isPreloaded && _controller != null) {
-        // VideoCacheService에서 가져온 컨트롤러는 참조 해제만
-        VideoCacheService().releaseController(widget.url, namespace: 'editor');
-        debugPrint('[ClipComponent] VideoCacheService 참조 해제');
-      }
-    } else {
-      // reader 모드: 직접 생성한 컨트롤러만 처리
-      if (_controller != null && !_isPreloaded) {
-        // reader 모드: 먼저 일시정지
-        try {
-          if (_controller!.value.isInitialized) {
-            _controller!.pause();
-          }
-        } catch (e) {
-          debugPrint('[ClipComponent] pause 오류: $e');
+    // 🎯 모든 모드에서 직접 생성한 컨트롤러 처리
+    if (_controller != null && !_isPreloaded) {
+      // 먼저 일시정지
+      try {
+        if (_controller!.value.isInitialized) {
+          _controller!.pause();
         }
-        // 전역 맵에서 제거 (PostReaderScreen dispose에서 dispose 처리)
+      } catch (e) {
+        debugPrint('[ClipComponent] pause 오류: $e');
+      }
+
+      // reader 모드: 전역 맵에서 제거 (PostReaderScreen dispose에서 dispose 처리)
+      if (!widget.isEditing) {
         readerVideoControllers.remove(widget.url);
         debugPrint('[ClipComponent] reader 컨트롤러 일시정지 및 맵에서 제거: ${widget.url}');
         // dispose는 PostReaderScreen에서 처리
+      } else {
+        // 🎯 에디터 모드: 컨트롤러는 캐시에 남겨두고 dispose하지 않음 (드래그앤드롭 시 재사용)
+        // editorVideoControllers에 남겨두어 다음에 재사용 가능
+        debugPrint('[ClipComponent] 에디터 컨트롤러 일시정지 (캐시에 유지): ${widget.url}');
       }
     }
 
@@ -1040,6 +1085,56 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
   @override
   void didUpdateWidget(_VideoPlayerWidget oldWidget) {
     super.didUpdateWidget(oldWidget);
+
+    // 🎯 URL이 변경된 경우에만 컨트롤러 재초기화
+    if (oldWidget.url != widget.url) {
+      debugPrint('[ClipComponent] URL 변경 감지: ${oldWidget.url} → ${widget.url}');
+      // 기존 컨트롤러 정리
+      if (_controller != null) {
+        _controller!.removeListener(_onVideoStatusChanged);
+        // 컨트롤러는 캐시에 남겨두고, 새 URL로 초기화
+        _controller = null;
+        _isInitialized = false;
+        _isReadyToPlay = false;
+      }
+      // 새 URL로 초기화
+      _initializeVideo();
+      return;
+    }
+
+    // URL이 동일하면 컨트롤러 재사용 (드래그앤드롭 시 깜빡임 방지)
+    if (oldWidget.url == widget.url && _controller == null && !_isInitialized) {
+      // 캐시에서 컨트롤러 찾기
+      if (widget.isEditing && editorVideoControllers.containsKey(widget.url)) {
+        _controller = editorVideoControllers[widget.url];
+        if (_controller != null && _controller!.value.isInitialized) {
+          _isInitialized = true;
+          _isReadyToPlay = true;
+          _controller!.addListener(_onVideoStatusChanged);
+          debugPrint(
+            '[ClipComponent] didUpdateWidget에서 캐시된 컨트롤러 재사용: ${widget.url}',
+          );
+          if (mounted) {
+            setState(() {});
+          }
+        }
+      } else if (!widget.isEditing &&
+          readerVideoControllers.containsKey(widget.url)) {
+        _controller = readerVideoControllers[widget.url];
+        if (_controller != null && _controller!.value.isInitialized) {
+          _isInitialized = true;
+          _isReadyToPlay = true;
+          _controller!.addListener(_onVideoStatusChanged);
+          debugPrint(
+            '[ClipComponent] didUpdateWidget에서 reader 캐시된 컨트롤러 재사용: ${widget.url}',
+          );
+          if (mounted) {
+            setState(() {});
+          }
+        }
+      }
+    }
+
     // 지연 초기화: 가시성 변화로 재생이 필요해졌는데 컨트롤러가 없으면 초기화
     if (!oldWidget.shouldAutoPlay && widget.shouldAutoPlay) {
       if (_controller == null && !_isInitialized && !widget.isEditing) {
@@ -1067,39 +1162,28 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
     try {
       debugPrint('[VideoPlayer] 초기화 시작: ${widget.url}');
 
-      // 🎯 에디터 모드에서만 VideoCacheService 사용, reader 모드에서는 직접 생성
-      if (widget.isEditing) {
-        // VideoCacheService에서 컨트롤러 가져오기
-        _controller = VideoCacheService().getOrCreateController(
-          widget.url,
-          namespace: 'editor',
-        );
-        _isPreloaded = true;
-      } else {
-        // reader 모드: 직접 컨트롤러 생성 (VideoCacheService 사용 안 함)
-        _controller = VideoPlayerController.networkUrl(
-          Uri.parse(widget.url),
-          httpHeaders: {'Accept': 'video/*', 'Connection': 'keep-alive'},
-          videoPlayerOptions: VideoPlayerOptions(
-            mixWithOthers: false,
-            allowBackgroundPlayback: false,
-          ),
-        );
-        _isPreloaded = false;
-      }
+      // 🎯 모든 모드에서 직접 컨트롤러 생성 (VideoCacheService 사용 안 함)
+      _controller = VideoPlayerController.networkUrl(
+        Uri.parse(widget.url),
+        httpHeaders: {'Accept': 'video/*', 'Connection': 'keep-alive'},
+        videoPlayerOptions: VideoPlayerOptions(
+          mixWithOthers: false,
+          allowBackgroundPlayback: false,
+        ),
+      );
+      _isPreloaded = false;
 
-      // 초기화 대기
-      if (!_controller!.value.isInitialized) {
-        await _controller!.initialize();
-      }
+      // 직접 초기화
+      await _controller!.initialize();
 
       _isInitialized = true;
-      debugPrint(
-        '[ClipComponent] ${widget.isEditing ? "VideoCacheService" : "직접 생성"} 컨트롤러 사용: ${widget.url}',
-      );
+      debugPrint('[ClipComponent] 직접 생성 컨트롤러 사용: ${widget.url}');
 
-      // 🎯 reader 모드에서는 전역 맵에 컨트롤러 저장 (FullscreenVideoPlayer와 공유)
-      if (!widget.isEditing) {
+      // 🎯 전역 맵에 컨트롤러 저장 (드래그앤드롭 시 재사용)
+      if (widget.isEditing) {
+        editorVideoControllers[widget.url] = _controller!;
+        debugPrint('[ClipComponent] 에디터 컨트롤러 등록: ${widget.url}');
+      } else {
         readerVideoControllers[widget.url] = _controller!;
         debugPrint('[ClipComponent] reader 컨트롤러 등록: ${widget.url}');
       }
@@ -1381,74 +1465,16 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
       );
     }
 
-    // 🎯 에디터 모드에서만 VideoCacheService에서 컨트롤러가 있으면 비율을 미리 계산하여 깜빡임 방지
-    double? preloadedAspectRatio;
-    VideoPlayerController? preloadedController;
-    if (widget.isEditing &&
-        VideoCacheService().hasController(widget.url, namespace: 'editor')) {
-      preloadedController = VideoCacheService().getOrCreateController(
-        widget.url,
-        namespace: 'editor',
-      );
-      if (preloadedController.value.isInitialized) {
-        final preloadedSize = preloadedController.value.size;
-        if (preloadedSize.height > 0) {
-          preloadedAspectRatio = preloadedSize.width / preloadedSize.height;
-        }
-      }
-    }
-
     final screenWidth = MediaQuery.of(context).size.width;
     final maxHeight = screenWidth * 1.5;
 
     // 🎯 초기화 전 또는 재생 준비 전: 썸네일 또는 쉬머 표시
     if (!_isInitialized || !_isReadyToPlay || _controller == null) {
-      // 프리로드된 비율이 있으면 사용, 없으면 기본 비율
-      final aspectRatio = preloadedAspectRatio ?? 16 / 9;
+      // 기본 비율 사용
+      final aspectRatio = 16 / 9;
       final calculatedHeight = screenWidth / aspectRatio;
       final finalHeight =
           calculatedHeight > maxHeight ? maxHeight : calculatedHeight;
-
-      // 🎯 프리로드 컨트롤러가 있으면 썸네일 건너뛰고 VideoPlayer 첫 프레임 사용 (최고 화질)
-      if (preloadedController != null &&
-          preloadedController.value.isInitialized) {
-        // 프리로드 컨트롤러가 있으면 즉시 사용 (썸네일 깜빡임 방지)
-        if (_controller == null) {
-          _controller = preloadedController;
-          _isPreloaded = true;
-          _isInitialized = true;
-          try {
-            _controller!.addListener(_onVideoStatusChanged);
-            _controller!.setVolume(_muteService.isReaderMuted ? 0.0 : 1.0);
-          } catch (_) {}
-          // 🎯 프리로드된 컨트롤러는 즉시 준비 완료로 처리
-          final hasFirstFrame =
-              _controller!.value.size.width > 0 &&
-              _controller!.value.size.height > 0;
-          if (hasFirstFrame) {
-            _isReadyToPlay = true;
-          }
-          if (widget.shouldAutoPlay && _isReadyToPlay) {
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              if (mounted) _playVideo();
-            });
-          }
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted) setState(() {});
-          });
-        }
-        // 프리로드 컨트롤러의 첫 프레임을 썸네일로 사용 (최고 화질, 깜빡임 없음)
-        return SizedBox(
-          width: screenWidth,
-          height: finalHeight,
-          child: ClipRRect(
-            child: AspectRatio(
-              aspectRatio: aspectRatio,
-              child: VideoPlayer(preloadedController),
-            ),
-          ),
-        );
-      }
 
       // thumbnailPath가 있으면 썸네일 표시
       if (widget.thumbnailPath.isNotEmpty) {
@@ -1540,7 +1566,7 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
                             Icon(Icons.replay, color: Colors.white, size: 24),
                             SizedBox(width: 8),
                             Text(
-                              _isPausedByUser ? '재생' : '다시보기',
+                              context.tr('replay'),
                               style: TextStyle(
                                 color: Colors.white,
                                 fontSize: 16,

@@ -315,12 +315,24 @@ class UploadService with ChangeNotifier {
         '[Upload] R2 직접 업로드 시작: ${task.fileName} (kind: ${task.kind})',
       );
 
+      // 🎯 댓글 이미지인 경우 chat/username 경로 사용
+      String? pathPrefix;
+      if (task.kind == UploadKind.editorImage &&
+          task.fileName.startsWith('chat/')) {
+        // 파일명에서 경로 추출 (chat/username/timestamp_filename.jpg)
+        final pathParts = task.fileName.split('/');
+        if (pathParts.length >= 2) {
+          pathPrefix = '${pathParts[0]}/${pathParts[1]}'; // chat/username
+        }
+      }
+
       // R2 직접 업로드 실행
       final result = await r2Service.uploadMediaFiles(
         [file],
         onProgress: (message, progress) {
           task._setProgress(progress);
         },
+        pathPrefix: pathPrefix, // 🎯 경로 prefix 전달
       );
 
       if (!result.success ||

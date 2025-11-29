@@ -22,11 +22,31 @@ class VideoCacheService {
     String namespace = 'global',
   }) {
     final key = _key(namespace, url);
+
+    // 🎯 기존 컨트롤러가 있는 경우
     if (_controllers.containsKey(key)) {
-      _refCounts[key] = (_refCounts[key] ?? 0) + 1;
-      _lastAccessed[key] = DateTime.now(); // LRU 업데이트
-      debugPrint('[VideoCache] 재사용: $key (참조: ${_refCounts[key]})');
-      return _controllers[key]!;
+      final existingController = _controllers[key]!;
+
+      // 🎯 컨트롤러가 dispose되었거나 초기화에 실패한 경우, 새로 생성
+      if (existingController.value.hasError) {
+        debugPrint(
+          '[VideoCache] ⚠️ 기존 컨트롤러에 에러가 있어 새로 생성: $key (에러: ${existingController.value.errorDescription})',
+        );
+        // 기존 컨트롤러 정리
+        try {
+          existingController.dispose();
+        } catch (_) {}
+        _controllers.remove(key);
+        _refCounts.remove(key);
+        _lastAccessed.remove(key);
+        // 아래에서 새로 생성
+      } else {
+        // 정상적인 경우 재사용
+        _refCounts[key] = (_refCounts[key] ?? 0) + 1;
+        _lastAccessed[key] = DateTime.now(); // LRU 업데이트
+        debugPrint('[VideoCache] 재사용: $key (참조: ${_refCounts[key]})');
+        return existingController;
+      }
     }
 
     // 캐시 크기 제한 확인 - 참조 카운트가 0인 것만 정리 대상
@@ -44,8 +64,17 @@ class VideoCacheService {
           controller.setVolume(0); // 기본 음소거
           debugPrint('[VideoCache] ✅ 초기화 성공: $key');
         })
-        .catchError((e) {
+        .catchError((e, stackTrace) {
           debugPrint('[VideoCache] ❌ 초기화 실패: $key');
+          debugPrint('[VideoCache] 에러 상세: $e');
+          debugPrint('[VideoCache] 스택 트레이스: $stackTrace');
+          // 🎯 초기화 실패 시 컨트롤러를 캐시에서 제거
+          if (_controllers[key] == controller) {
+            _controllers.remove(key);
+            _refCounts.remove(key);
+            _lastAccessed.remove(key);
+            debugPrint('[VideoCache] 실패한 컨트롤러 캐시에서 제거: $key');
+          }
         });
 
     _controllers[key] = controller;
@@ -105,29 +134,6 @@ class VideoCacheService {
   bool hasController(String url, {String namespace = 'global'}) {
     final key = _key(namespace, url);
     return _controllers.containsKey(key);
-  }
-
-  /// 특정 namespace의 모든 컨트롤러 일시정지
-  void pauseAllInNamespace(String namespace) {
-    int pausedCount = 0;
-    for (final entry in _controllers.entries) {
-      final key = entry.key;
-      if (key.startsWith('$namespace|')) {
-        try {
-          final controller = entry.value;
-          if (controller.value.isInitialized && controller.value.isPlaying) {
-            controller.pause();
-            pausedCount++;
-            debugPrint('[VideoCache] 일시정지: $key');
-          }
-        } catch (e) {
-          debugPrint('[VideoCache] 일시정지 오류 ($key): $e');
-        }
-      }
-    }
-    debugPrint(
-      '[VideoCache] namespace "$namespace"의 모든 컨트롤러 일시정지 완료 (총 $pausedCount개)',
-    );
   }
 
   /// 모든 컨트롤러 정리 (앱 종료 시)

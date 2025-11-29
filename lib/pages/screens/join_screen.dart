@@ -863,6 +863,20 @@ class _JoinScreenState extends State<JoinScreen> {
   }
 
   Widget _buildConfirmPasswordStep() {
+    // 🎯 비밀번호 재확인 페이지에 들어올 때마다 가장 먼저 현재 입력값 확인
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        final currentMatch =
+            _confirmPasswordController.text.isNotEmpty &&
+            _confirmPasswordController.text == _passwordController.text;
+        if (_isPasswordMatch != currentMatch) {
+          setState(() {
+            _isPasswordMatch = currentMatch;
+          });
+        }
+      }
+    });
+
     return Column(
       children: [
         // 스크롤 가능한 컨텐츠 영역
@@ -1111,6 +1125,12 @@ class _JoinScreenState extends State<JoinScreen> {
     if (_currentStep < _stepTitles.length - 1) {
       setState(() {
         _currentStep++;
+        // 🎯 비밀번호 재확인 페이지(step 3)에 들어갈 때마다 현재 입력값 확인
+        if (_currentStep == 3) {
+          _isPasswordMatch =
+              _confirmPasswordController.text.isNotEmpty &&
+              _confirmPasswordController.text == _passwordController.text;
+        }
       });
     }
   }
@@ -1130,6 +1150,12 @@ class _JoinScreenState extends State<JoinScreen> {
           _isPasswordValid = false;
           _isPasswordMatch = false;
           _isIdLengthChecked = false;
+        }
+        // 🎯 비밀번호 재확인 페이지(step 3)로 돌아올 때도 현재 입력값 확인
+        else if (_currentStep == 3) {
+          _isPasswordMatch =
+              _confirmPasswordController.text.isNotEmpty &&
+              _confirmPasswordController.text == _passwordController.text;
         }
       });
     }

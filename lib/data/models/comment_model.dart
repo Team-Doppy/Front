@@ -1,6 +1,6 @@
 import 'package:doppy/utils/time_utils.dart';
 
-// Comment 모델 (기존과 동일)
+// Comment 모델 (채팅 기능 확장)
 class Comment {
   final int id;
   final String content;
@@ -15,6 +15,12 @@ class Comment {
   final DateTime createdAt;
   final DateTime updatedAt;
 
+  // 🎯 채팅 기능 필드
+  final List<String>? mentionedUsernames; // 언급된 사용자 목록
+  final bool isSecret; // 비밀 메시지 여부
+  final bool isRestricted; // 제한된 메시지 여부
+  final String? visibleToUsername; // 비밀 메시지를 볼 수 있는 사용자 (1:1)
+
   Comment({
     required this.id,
     required this.content,
@@ -28,6 +34,10 @@ class Comment {
     required this.replies,
     required this.createdAt,
     required this.updatedAt,
+    this.mentionedUsernames,
+    this.isSecret = false,
+    this.isRestricted = false,
+    this.visibleToUsername,
   });
 
   factory Comment.fromJson(Map<String, dynamic> json) {
@@ -48,6 +58,54 @@ class Comment {
           [],
       createdAt: TimeUtils.toLocalTime(json['createdAt'] as String),
       updatedAt: TimeUtils.toLocalTime(json['updatedAt'] as String),
+      mentionedUsernames:
+          json['mentionedUsernames'] != null
+              ? (json['mentionedUsernames'] as List<dynamic>)
+                  .map((e) => e as String)
+                  .toList()
+              : null,
+      isSecret: json['isSecret'] as bool? ?? false,
+      isRestricted: json['isRestricted'] as bool? ?? false,
+      visibleToUsername: json['visibleToUsername'] as String?,
+    );
+  }
+
+  Comment copyWith({
+    int? id,
+    String? content,
+    String? author,
+    String? authorProfileImageUrl,
+    int? postId,
+    int? parentId,
+    String? visibility,
+    Map<String, int>? emotionCounts,
+    Map<String, int>? myEmotions,
+    List<Comment>? replies,
+    DateTime? createdAt,
+    DateTime? updatedAt,
+    List<String>? mentionedUsernames,
+    bool? isSecret,
+    bool? isRestricted,
+    String? visibleToUsername,
+  }) {
+    return Comment(
+      id: id ?? this.id,
+      content: content ?? this.content,
+      author: author ?? this.author,
+      authorProfileImageUrl:
+          authorProfileImageUrl ?? this.authorProfileImageUrl,
+      postId: postId ?? this.postId,
+      parentId: parentId ?? this.parentId,
+      visibility: visibility ?? this.visibility,
+      emotionCounts: emotionCounts ?? this.emotionCounts,
+      myEmotions: myEmotions ?? this.myEmotions,
+      replies: replies ?? this.replies,
+      createdAt: createdAt ?? this.createdAt,
+      updatedAt: updatedAt ?? this.updatedAt,
+      mentionedUsernames: mentionedUsernames ?? this.mentionedUsernames,
+      isSecret: isSecret ?? this.isSecret,
+      isRestricted: isRestricted ?? this.isRestricted,
+      visibleToUsername: visibleToUsername ?? this.visibleToUsername,
     );
   }
 }

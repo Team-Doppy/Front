@@ -1405,4 +1405,55 @@ class BlogService {
       rethrow;
     }
   }
+
+  /// 블로그 조르기
+  ///
+  /// [targetUsername] - 조르기를 받을 사용자의 username
+  ///
+  /// 응답 구조:
+  /// {
+  ///   "success": true,
+  ///   "message": "블로그 조르기가 전송되었습니다."
+  /// }
+  Future<Map<String, dynamic>> nudge(String targetUsername) async {
+    try {
+      debugPrint('[BlogService] 블로그 조르기 요청: $targetUsername');
+
+      final response = await _dio.post(
+        '/api/blog/nudge',
+        data: {'targetUsername': targetUsername},
+        options: Options(receiveTimeout: const Duration(seconds: 10)),
+      );
+
+      debugPrint('[BlogService] 블로그 조르기 응답 상태: ${response.statusCode}');
+
+      if (response.statusCode == 200) {
+        final data = response.data as Map<String, dynamic>;
+        debugPrint('[BlogService] 블로그 조르기 성공: ${data['message']}');
+        return data;
+      } else {
+        throw Exception('블로그 조르기 실패: ${response.statusCode}');
+      }
+    } catch (e) {
+      debugPrint('[BlogService] 블로그 조르기 에러: $e');
+      if (e is DioException) {
+        final statusCode = e.response?.statusCode;
+        final responseData = e.response?.data as Map<String, dynamic>?;
+        final errorMessage = responseData?['message'] ?? '블로그 조르기 실패';
+
+        debugPrint('[BlogService] Dio 에러: $statusCode - $errorMessage');
+
+        if (statusCode == 400) {
+          throw Exception(errorMessage);
+        } else if (statusCode == 404) {
+          throw Exception(errorMessage);
+        } else if (statusCode == 401) {
+          throw Exception('인증이 필요합니다.');
+        } else {
+          throw Exception('$errorMessage (상태 코드: $statusCode)');
+        }
+      }
+      rethrow;
+    }
+  }
 }

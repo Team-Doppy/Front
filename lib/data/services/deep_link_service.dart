@@ -7,7 +7,9 @@ enum DeepLinkType {
   post, // 포스트
   postWithComment, // 포스트 + 댓글
   postWithLikes, // 포스트 + 좋아요
+  postWithChat, // 포스트 + 채팅
   profile, // 프로필
+  friendRequest, // 친구 요청
   unknown, // 알 수 없음
 }
 
@@ -60,7 +62,7 @@ class DeepLinkService {
             final postId = pathSegments.first;
             final commentId = uri.queryParameters['commentId'];
             final action =
-                uri.queryParameters['action']; // 'likes' 또는 'comments'
+                uri.queryParameters['action']; // 'likes', 'comments', 'chat'
 
             if (commentId != null && commentId.isNotEmpty) {
               return DeepLinkResult(
@@ -71,6 +73,11 @@ class DeepLinkService {
             } else if (action == 'likes') {
               return DeepLinkResult(
                 type: DeepLinkType.postWithLikes,
+                postId: postId,
+              );
+            } else if (action == 'chat') {
+              return DeepLinkResult(
+                type: DeepLinkType.postWithChat,
                 postId: postId,
               );
             } else {
@@ -88,6 +95,13 @@ class DeepLinkService {
               type: DeepLinkType.profile,
               username: username,
             );
+          }
+        }
+
+        // doppy://friends/requests
+        if (uri.host == 'friends' && uri.pathSegments.isNotEmpty) {
+          if (uri.pathSegments.first == 'requests') {
+            return DeepLinkResult(type: DeepLinkType.friendRequest);
           }
         }
       }
@@ -123,6 +137,11 @@ class DeepLinkService {
           } else if (action == 'likes') {
             return DeepLinkResult(
               type: DeepLinkType.postWithLikes,
+              postId: postId,
+            );
+          } else if (action == 'chat') {
+            return DeepLinkResult(
+              type: DeepLinkType.postWithChat,
               postId: postId,
             );
           } else {

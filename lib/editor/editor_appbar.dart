@@ -1028,30 +1028,15 @@ class _EditModeAppBarState extends State<EditModeAppBar> {
                       // 영상 업로드 중 인디케이터
                       return Padding(
                         padding: const EdgeInsets.symmetric(horizontal: 16),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text(
-                              context.tr('clip_uploading'),
-                              style: TextStyle(
-                                fontSize: 13,
-                                color: Theme.of(
-                                  context,
-                                ).colorScheme.onSurface.withOpacity(0.7),
-                              ),
+                        child: SizedBox(
+                          width: 14,
+                          height: 14,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            valueColor: AlwaysStoppedAnimation<Color>(
+                              Theme.of(context).colorScheme.primary,
                             ),
-                            const SizedBox(width: 8),
-                            SizedBox(
-                              width: 14,
-                              height: 14,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                valueColor: AlwaysStoppedAnimation<Color>(
-                                  Theme.of(context).colorScheme.primary,
-                                ),
-                              ),
-                            ),
-                          ],
+                          ),
                         ),
                       );
                     }
@@ -1328,146 +1313,99 @@ class EditorAppBar extends StatelessWidget {
                 ),
 
                 // 오른쪽 버튼들
-                ValueListenableBuilder<bool>(
-                  valueListenable:
-                      videoUploadIndicatorNotifier ??
-                      ValueNotifier<bool>(false),
-                  builder: (context, showIndicator, child) {
-                    if (showIndicator) {
-                      // 영상 업로드 중 인디케이터
-                      return Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 16),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text(
-                              context.tr('clip_uploading'),
-                              style: TextStyle(
-                                fontSize: 13,
-                                color: Theme.of(
-                                  context,
-                                ).colorScheme.onSurface.withOpacity(0.7),
+                Row(
+                  children: [
+                    // 더보기 메뉴 버튼
+                    PopupMenuButton<String>(
+                      icon: Icon(
+                        Icons.more_horiz_rounded,
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.onSurface.withOpacity(0.6),
+                        size: 20,
+                      ),
+                      offset: const Offset(45, 45),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        side: BorderSide(
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.onSurface.withOpacity(0.1),
+                        ),
+                      ),
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.background.withOpacity(1),
+
+                      onSelected: (value) async {
+                        if (value == 'load') {
+                          onLoadDraft?.call();
+                        } else if (value == 'save') {
+                          onSaveDraft?.call();
+                        }
+                      },
+                      itemBuilder:
+                          (context) => [
+                            PopupMenuItem(
+                              value: 'load',
+                              child: Row(
+                                children: [
+                                  Text(
+                                    context.tr('load_draft'),
+                                    style: TextStyle(
+                                      color:
+                                          Theme.of(
+                                            context,
+                                          ).colorScheme.onSurface,
+                                      fontSize: 14,
+                                    ),
+                                  ),
+                                ],
                               ),
                             ),
-                            const SizedBox(width: 8),
-                            SizedBox(
-                              width: 14,
-                              height: 14,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                valueColor: AlwaysStoppedAnimation<Color>(
-                                  Theme.of(context).colorScheme.primary,
-                                ),
+                            PopupMenuItem(
+                              value: 'save',
+                              child: Row(
+                                children: [
+                                  Text(
+                                    context.tr('save_draft'),
+                                    style: TextStyle(
+                                      color:
+                                          Theme.of(
+                                            context,
+                                          ).colorScheme.onSurface,
+                                      fontSize: 14,
+                                    ),
+                                  ),
+                                ],
                               ),
                             ),
                           ],
-                        ),
-                      );
-                    }
+                    ),
 
-                    // 기존 버튼들
-                    return Row(
-                      children: [
-                        // 더보기 메뉴 버튼
-                        PopupMenuButton<String>(
-                          icon: Icon(
-                            Icons.more_horiz_rounded,
+                    // 다음 버튼 (항상 표시, 클릭 시 검증)
+                    GestureDetector(
+                      onTap: () => _onNextButtonTapped(context),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 8,
+                        ),
+                        child: Text(
+                          context.tr('next'),
+                          style: TextStyle(
                             color: Theme.of(
                               context,
-                            ).colorScheme.onSurface.withOpacity(0.6),
-                            size: 20,
-                          ),
-                          offset: const Offset(45, 45),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                            side: BorderSide(
-                              color: Theme.of(
-                                context,
-                              ).colorScheme.onSurface.withOpacity(0.1),
-                            ),
-                          ),
-                          color: Theme.of(
-                            context,
-                          ).colorScheme.background.withOpacity(1),
-
-                          onSelected: (value) async {
-                            if (value == 'load') {
-                              onLoadDraft?.call();
-                            } else if (value == 'save') {
-                              final success = await onSaveDraft?.call();
-                              // 명시적 임시저장 시 성공했을 때만 사용자 알림
-                              if (success == true) {
-                                ErrorHandler.showInfo(
-                                  context,
-                                  context.tr('draft_saved'),
-                                );
-                              }
-                            }
-                          },
-                          itemBuilder:
-                              (context) => [
-                                PopupMenuItem(
-                                  value: 'load',
-                                  child: Row(
-                                    children: [
-                                      Text(
-                                        context.tr('load_draft'),
-                                        style: TextStyle(
-                                          color:
-                                              Theme.of(
-                                                context,
-                                              ).colorScheme.onSurface,
-                                          fontSize: 14,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                                PopupMenuItem(
-                                  value: 'save',
-                                  child: Row(
-                                    children: [
-                                      Text(
-                                        context.tr('save_draft'),
-                                        style: TextStyle(
-                                          color:
-                                              Theme.of(
-                                                context,
-                                              ).colorScheme.onSurface,
-                                          fontSize: 14,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ],
-                        ),
-
-                        // 다음 버튼 (항상 표시, 클릭 시 검증)
-                        GestureDetector(
-                          onTap: () => _onNextButtonTapped(context),
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 16,
-                              vertical: 8,
-                            ),
-                            child: Text(
-                              context.tr('next'),
-                              style: TextStyle(
-                                color: Theme.of(
-                                  context,
-                                ).colorScheme.primary.withOpacity(1),
-                                fontWeight: FontWeight.w600,
-                                fontSize: 15,
-                              ),
-                            ),
+                            ).colorScheme.primary.withOpacity(1),
+                            fontWeight: FontWeight.w600,
+                            fontSize: 15,
                           ),
                         ),
+                      ),
+                    ),
 
-                        SizedBox(width: 10),
-                      ],
-                    );
-                  },
+                    SizedBox(width: 10),
+                  ],
                 ),
               ],
             ),

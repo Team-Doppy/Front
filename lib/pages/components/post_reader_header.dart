@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_svg/svg.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:doppy/pages/components/common_profile_avatar.dart';
+import 'package:doppy/utils/format_utils.dart';
 
 class PostReaderHeader extends StatelessWidget {
   const PostReaderHeader({
@@ -373,6 +374,9 @@ class PostReaderAppBar extends StatelessWidget {
     required this.animationDuration, // 🎯 바텀바와 동일한 속도
     this.onMoreTap, // 🎯 글 액션 바텀시트 열기
     this.scrollOffset = 0.0, // 🎯 현재 스크롤 위치 (타이틀 표시용)
+    this.viewCount, // 🎯 조회수
+    this.onViewCountTap, // 🎯 조회수 탭 콜백
+    this.isPrivate = false, // 🎯 나만보기 포스트 여부
   });
 
   final bool showAppBar;
@@ -391,6 +395,9 @@ class PostReaderAppBar extends StatelessWidget {
   final int animationDuration; // 🎯 바텀바와 동일한 속도
   final VoidCallback? onMoreTap; // 🎯 글 액션 바텀시트 열기
   final double scrollOffset; // 🎯 현재 스크롤 위치 (타이틀 표시용)
+  final int? viewCount; // 🎯 조회수
+  final VoidCallback? onViewCountTap; // 🎯 조회수 탭 콜백
+  final bool isPrivate; // 🎯 나만보기 포스트 여부
 
   @override
   Widget build(BuildContext context) {
@@ -428,7 +435,7 @@ class PostReaderAppBar extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(width: 15),
-                    // 🎯 다른 사람 포스트일 때 타이틀 표시 (헤더가 보이지 않을 때만, 즉 300px 이상일 때만)
+                    //  타이틀 표시 (헤더가 보이지 않을 때만, 즉 300px 이상일 때만)
                     if (showAppBar)
                       Expanded(
                         child: AnimatedOpacity(
@@ -450,6 +457,27 @@ class PostReaderAppBar extends StatelessWidget {
                     else
                       const Spacer(),
                     if (isMyPost) ...[
+                      // 🎯 뷰 카운트 (나만보기 포스트 제외)
+                      if (!isPrivate &&
+                          viewCount != null &&
+                          onViewCountTap != null)
+                        GestureDetector(
+                          onTap: onViewCountTap,
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8.0,
+                              vertical: 2.0,
+                            ),
+                            child: Icon(
+                              Icons.people_outline,
+                              size: 28,
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.onSurface.withOpacity(0.7),
+                            ),
+                          ),
+                        ),
+                      const SizedBox(width: 4),
                       // 수정
                       GestureDetector(
                         onTap: onEdit,
@@ -466,6 +494,7 @@ class PostReaderAppBar extends StatelessWidget {
                         ),
                       ),
                       const SizedBox(width: 4),
+
                       // 삭제
                       GestureDetector(
                         onTap: onDelete,

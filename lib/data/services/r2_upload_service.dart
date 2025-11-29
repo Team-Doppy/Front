@@ -79,7 +79,10 @@ class R2UploadService {
   }
 
   /// 업로드 키 생성
-  Future<List<UploadKeyResponse>> generateUploadKeys(List<File> files) async {
+  Future<List<UploadKeyResponse>> generateUploadKeys(
+    List<File> files, {
+    String? pathPrefix, // 🎯 경로 prefix (예: 'chat/username')
+  }) async {
     try {
       // 파일 정보 준비
       final fileInfos = await Future.wait(
@@ -93,10 +96,13 @@ class R2UploadService {
       );
 
       debugPrint(
-        '[R2UploadService] POST /api/r2/upload-keys files=${fileInfos.length}',
+        '[R2UploadService] POST /api/r2/upload-keys files=${fileInfos.length} pathPrefix=$pathPrefix',
       );
 
-      final requestBody = {'files': fileInfos.map((f) => f.toJson()).toList()};
+      final requestBody = {
+        'files': fileInfos.map((f) => f.toJson()).toList(),
+        if (pathPrefix != null) 'pathPrefix': pathPrefix, // 🎯 경로 prefix 전달
+      };
 
       debugPrint('[R2UploadService] Request body: ${jsonEncode(requestBody)}');
 
@@ -266,6 +272,104 @@ class R2UploadService {
     );
 
     return results;
+  }
+
+  /// 🎯 R2에서 파일 삭제 (이미지 URL 기반)
+  Future<bool> deleteFileFromR2ByUrl(String imageUrl) async {
+    try {
+      final config = await getR2Config();
+
+      // 🎯 이미지 URL에서 r2Key 추출
+      // R2 public URL 형식: https://{publicUrl}/{r2Key}
+      // 또는 storage URL 형식: https://{endpoint}/{bucket}/{r2Key}
+
+      final uri = Uri.parse(imageUrl);
+      final pathSegments = uri.pathSegments;
+
+      if (pathSegments.isEmpty) {
+        debugPrint('[R2UploadService] ⚠️ 이미지 URL에서 r2Key를 추출할 수 없음: $imageUrl');
+        return false;
+      }
+
+      // publicUrl을 사용하는 경우: publicUrl 이후가 r2Key
+      String r2Key;
+      if (imageUrl.startsWith(config.publicUrl)) {
+        // publicUrl 이후의 경로가 r2Key
+        final publicUri = Uri.parse(config.publicUrl);
+        final imagePath = uri.path;
+        final publicPath = publicUri.path;
+        if (imagePath.startsWith(publicPath)) {
+          r2Key = imagePath.substring(publicPath.length);
+          if (r2Key.startsWith('/')) {
+            r2Key = r2Key.substring(1);
+          }
+        } else {
+          // 전체 경로를 r2Key로 사용
+          r2Key = pathSegments.join('/');
+        }
+      } else {
+        // endpoint를 사용하는 경우: bucket 이후가 r2Key
+        // 첫 번째가 bucket, 나머지가 r2Key
+        if (pathSegments.length < 2) {
+          debugPrint(
+            '[R2UploadService] ⚠️ 이미지 URL에서 r2Key를 추출할 수 없음: $imageUrl',
+          );
+          return false;
+        }
+        r2Key = pathSegments.sublist(1).join('/');
+      }
+
+      debugPrint('[R2UploadService] R2 파일 삭제 시작: r2Key=$r2Key');
+
+      // AWS Signature V4 생성 (DELETE 메서드)
+      final headers = AwsSignatureV4.signRequest(
+        method: 'DELETE',
+        endpoint: config.endpoint,
+        bucket: config.bucket,
+        key: r2Key,
+        accessKeyId: config.accessKeyId,
+        secretAccessKey: config.secretAccessKey,
+        region: config.region,
+        contentType: '',
+        contentLength: 0,
+        bodyBytes: null,
+      );
+
+      // 삭제 URL 생성
+      final endpointUri = Uri.parse(config.endpoint);
+      final r2KeyPath = r2Key.startsWith('/') ? r2Key : '/$r2Key';
+      final deleteUrl = Uri(
+        scheme: endpointUri.scheme,
+        host: endpointUri.host,
+        path: '/${config.bucket}$r2KeyPath',
+      );
+
+      debugPrint('[R2UploadService] 삭제 URL: $deleteUrl');
+
+      // DELETE 요청 전송
+      final request = http.Request('DELETE', deleteUrl)
+        ..headers.addAll(headers);
+
+      final streamedResponse = await request.send();
+      final response = await http.Response.fromStream(streamedResponse);
+
+      debugPrint(
+        '[R2UploadService] R2 삭제 응답: ${response.statusCode} ${response.body}',
+      );
+
+      if (response.statusCode == 200 || response.statusCode == 204) {
+        debugPrint('[R2UploadService] ✅ R2 파일 삭제 완료: $r2Key');
+        return true;
+      } else {
+        debugPrint(
+          '[R2UploadService] ❌ R2 파일 삭제 실패: ${response.statusCode} - ${response.body}',
+        );
+        return false;
+      }
+    } catch (e) {
+      debugPrint('[R2UploadService] ❌ R2 파일 삭제 예외: $imageUrl - $e');
+      return false;
+    }
   }
 
   /// R2에서 파일 삭제 (메타데이터 등록 실패 시 정리용)
@@ -521,6 +625,7 @@ class R2UploadService {
     List<File> files, {
     Function(String message, double progress)? onProgress,
     int maxRetries = 3,
+    String? pathPrefix, // 🎯 경로 prefix (예: 'chat/username')
   }) async {
     try {
       if (files.isEmpty) {
@@ -539,7 +644,7 @@ class R2UploadService {
 
       List<UploadKeyResponse> uploadKeys;
       try {
-        uploadKeys = await generateUploadKeys(files);
+        uploadKeys = await generateUploadKeys(files, pathPrefix: pathPrefix);
       } catch (e) {
         return UploadCompleteResult(
           success: false,

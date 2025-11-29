@@ -13,6 +13,9 @@ class LinkOverlay extends StatefulWidget {
     super.key,
     required this.onSubmit,
     this.autoSubmit = false, // 🎯 링크 추가 시 즉시 제출 (프로필 편집용)
+    this.initialUrl, // 🎯 수정 모드: 기존 URL
+    this.initialTitle, // 🎯 수정 모드: 기존 타이틀
+    this.initialThumbnailUrl, // 🎯 수정 모드: 기존 썸네일 URL
   });
 
   final void Function({
@@ -24,6 +27,9 @@ class LinkOverlay extends StatefulWidget {
   onSubmit;
 
   final bool autoSubmit; // 🎯 true이면 _enqueueUrl에서 즉시 onSubmit 호출
+  final String? initialUrl; // 🎯 수정 모드: 기존 URL
+  final String? initialTitle; // 🎯 수정 모드: 기존 타이틀
+  final String? initialThumbnailUrl; // 🎯 수정 모드: 기존 썸네일 URL
 
   @override
   State<LinkOverlay> createState() => _LinkOverlayState();
@@ -101,6 +107,23 @@ class _LinkOverlayState extends State<LinkOverlay> {
   @override
   void initState() {
     super.initState();
+    // 🎯 수정 모드: 기존 링크 정보로 초기화
+    if (widget.initialUrl != null && widget.initialUrl!.isNotEmpty) {
+      _url.text = widget.initialUrl!;
+      if (widget.initialTitle != null && widget.initialTitle!.isNotEmpty) {
+        _customTitleController.text = widget.initialTitle!;
+      }
+      if (widget.initialThumbnailUrl != null &&
+          widget.initialThumbnailUrl!.isNotEmpty) {
+        _pThumb = widget.initialThumbnailUrl;
+      }
+      // 기존 URL의 메타데이터 가져오기
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && widget.initialUrl != null) {
+          _fetchMeta(widget.initialUrl!);
+        }
+      });
+    }
     _loadLinkHistory();
     _focusNode.addListener(() {
       // 포커스 변화 시 UI 갱신 (추천/리스트 토글)
@@ -228,7 +251,11 @@ class _LinkOverlayState extends State<LinkOverlay> {
                           _enqueueUrl(_url.text.trim());
                         },
                         child: Text(
-                          '추가',
+                          // 🎯 수정 모드일 때 "수정 완료", 추가 모드일 때 "추가"
+                          (widget.initialUrl != null &&
+                                  widget.initialUrl!.isNotEmpty)
+                              ? '수정 완료'
+                              : '추가',
                           style: TextStyle(
                             color: Colors.white.withOpacity(0.8),
                             fontSize: 16,
@@ -436,9 +463,12 @@ class _LinkOverlayState extends State<LinkOverlay> {
                       Navigator.of(context).pop();
                     }
                   },
-                  child: const Text(
-                    '추가',
-                    style: TextStyle(fontWeight: FontWeight.w700),
+                  child: Text(
+                    // 🎯 수정 모드일 때 "수정 완료", 추가 모드일 때 "추가"
+                    (widget.initialUrl != null && widget.initialUrl!.isNotEmpty)
+                        ? '수정 완료'
+                        : '추가',
+                    style: const TextStyle(fontWeight: FontWeight.w700),
                   ),
                 ),
               ),

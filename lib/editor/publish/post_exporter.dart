@@ -3,6 +3,7 @@ import 'dart:ui' as ui;
 import 'package:doppy/editor/component/row_image_component.dart';
 import 'package:doppy/editor/component/divider_component.dart';
 import 'package:doppy/providers/auth_provider.dart';
+import 'package:doppy/data/services/auth_service.dart';
 import 'package:flutter/material.dart';
 
 import 'package:doppy/editor/service/editor_service.dart';
@@ -367,8 +368,18 @@ class PostExporter {
       stickers.add(base);
     }
 
-    final String author = AuthProvider().username ?? '';
+    // 🎯 백그라운드에서 돌아왔을 때를 대비해 여러 소스에서 author 가져오기
+    // 1. AuthService의 동기 캐시에서 먼저 시도 (가장 안정적)
+    String author = AuthService().currentUsernameSync ?? '';
+    
+    // 2. 없으면 AuthProvider에서 가져오기
     if (author.isEmpty) {
+      author = AuthProvider().username ?? '';
+    }
+    
+    // 3. 여전히 없으면 에러 (백그라운드에서 돌아왔을 때는 AuthService.currentUsernameSync가 있어야 함)
+    if (author.isEmpty) {
+      debugPrint('[PostExporter] ⚠️ author를 가져올 수 없습니다. AuthService.currentUsernameSync와 AuthProvider().username 모두 비어있습니다.');
       throw StateError('author is required');
     }
 

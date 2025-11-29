@@ -5,6 +5,9 @@ import 'package:flutter/widgets.dart';
 import 'package:dio/dio.dart';
 import 'package:doppy/data/services/base_api_service.dart';
 import 'package:doppy/data/services/websocket_service.dart';
+import 'package:doppy/data/services/auth_service.dart';
+import 'package:doppy/data/services/r2_upload_service.dart';
+import 'package:doppy/utils/mention_parser.dart';
 
 class Comment {
   final String id;
@@ -14,9 +17,12 @@ class Comment {
   final String postId;
   final String? parentId; // 대댓글인 경우 부모 댓글 ID
   final String? imageUrl; // 이미지별 댓글인 경우 이미지 URL
+  final String? localImagePath; // 🎯 로컬 이미지 파일 경로 (업로드 전 임시 표시용)
   final String visibility; // PUBLIC, FRIENDS, PRIVATE
   final Map<String, String> emotionCounts; // emoji -> count
   final Map<String, String> myEmotions; // 내가 누른 이모지
+  final Map<String, List<Map<String, dynamic>>>
+  emotionUsers; // 🎯 emoji -> 사용자 목록
   final List<Comment> replies; // 대댓글들
   final String createdAt;
   final String updatedAt;
@@ -24,6 +30,12 @@ class Comment {
   // 낙관적 업데이트 상태
   final bool isPending; // 서버 전송 대기 중
   final bool isFailed; // 서버 전송 실패
+
+  // 🎯 채팅 기능 필드
+  final List<String>? mentionedUsernames; // 언급된 사용자 목록
+  final bool isSecret; // 비밀 메시지 여부
+  final bool isRestricted; // 제한된 메시지 여부
+  final String? visibleToUsername; // 비밀 메시지를 볼 수 있는 사용자 (1:1)
 
   Comment({
     required this.id,
@@ -33,14 +45,20 @@ class Comment {
     required this.postId,
     this.parentId,
     this.imageUrl,
+    this.localImagePath, // 🎯 로컬 이미지 파일 경로
     this.visibility = 'PUBLIC',
     this.emotionCounts = const {},
     this.myEmotions = const {},
+    this.emotionUsers = const {},
     this.replies = const [],
     required this.createdAt,
     required this.updatedAt,
     this.isPending = false,
     this.isFailed = false,
+    this.mentionedUsernames,
+    this.isSecret = false,
+    this.isRestricted = false,
+    this.visibleToUsername,
   });
 
   Comment copyWith({
@@ -51,14 +69,20 @@ class Comment {
     String? postId,
     String? parentId,
     String? imageUrl,
+    String? localImagePath, // 🎯 로컬 이미지 파일 경로
     String? visibility,
     Map<String, String>? emotionCounts,
     Map<String, String>? myEmotions,
+    Map<String, List<Map<String, dynamic>>>? emotionUsers,
     List<Comment>? replies,
     String? createdAt,
     String? updatedAt,
     bool? isPending,
     bool? isFailed,
+    List<String>? mentionedUsernames,
+    bool? isSecret,
+    bool? isRestricted,
+    String? visibleToUsername,
   }) {
     return Comment(
       id: id ?? this.id,
@@ -69,14 +93,20 @@ class Comment {
       postId: postId ?? this.postId,
       parentId: parentId ?? this.parentId,
       imageUrl: imageUrl ?? this.imageUrl,
+      localImagePath: localImagePath ?? this.localImagePath, // 🎯 로컬 이미지 파일 경로
       visibility: visibility ?? this.visibility,
       emotionCounts: emotionCounts ?? this.emotionCounts,
       myEmotions: myEmotions ?? this.myEmotions,
+      emotionUsers: emotionUsers ?? this.emotionUsers,
       replies: replies ?? this.replies,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
       isPending: isPending ?? this.isPending,
       isFailed: isFailed ?? this.isFailed,
+      mentionedUsernames: mentionedUsernames ?? this.mentionedUsernames,
+      isSecret: isSecret ?? this.isSecret,
+      isRestricted: isRestricted ?? this.isRestricted,
+      visibleToUsername: visibleToUsername ?? this.visibleToUsername,
     );
   }
 
@@ -100,34 +130,68 @@ class Comment {
 
   factory Comment.fromJson(Map<String, dynamic> json) {
     // 명세서에 따른 필드 매핑
-    // ✅ emotionCounts와 myEmotions는 서버에서 빈 배열 []로 올 수 있으므로 방어 처리
+    // ✅ emotionCounts와 myEmotions는 서버에서 빈 배열 [] 또는 Map으로 올 수 있으므로 방어 처리
     final emotionCountsRaw = json['emotionCounts'];
     final emotionCounts =
         emotionCountsRaw is Map<String, dynamic>
             ? emotionCountsRaw
-            : <String, dynamic>{};
+            : <String, dynamic>{}; // 배열이거나 null이면 빈 Map
 
+    // 🎯 myEmotions는 배열([])로 옴: [❤️] → {❤️: '1'}
     final myEmotionsRaw = json['myEmotions'];
-    final myEmotions =
-        myEmotionsRaw is Map<String, dynamic>
-            ? myEmotionsRaw
-            : <String, dynamic>{};
+    final myEmotionsMap = <String, String>{};
+    if (myEmotionsRaw is List) {
+      // 배열인 경우: 각 이모지를 키로, '1'을 값으로 설정
+      for (final emoji in myEmotionsRaw) {
+        if (emoji != null) {
+          myEmotionsMap[emoji.toString()] = '1';
+        }
+      }
+    } else if (myEmotionsRaw is Map<String, dynamic>) {
+      // Map인 경우 (호환성)
+      myEmotionsRaw.forEach((key, value) {
+        myEmotionsMap[key] = value.toString();
+      });
+    }
 
     final emotionCountsMap = <String, String>{};
     emotionCounts.forEach((key, value) {
       emotionCountsMap[key] = value.toString();
     });
 
-    final myEmotionsMap = <String, String>{};
-    myEmotions.forEach((key, value) {
-      myEmotionsMap[key] = value.toString();
-    });
+    // 🎯 emotionUsers 파싱
+    final emotionUsersRaw = json['emotionUsers'];
+    final emotionUsers = <String, List<Map<String, dynamic>>>{};
+    if (emotionUsersRaw is Map<String, dynamic>) {
+      emotionUsersRaw.forEach((emoji, users) {
+        if (users is List) {
+          emotionUsers[emoji] =
+              users.map((u) => Map<String, dynamic>.from(u)).toList();
+        }
+      });
+    }
 
     // 대댓글 처리
+    final repliesRaw = json['replies'] as List<dynamic>? ?? [];
     final replies =
-        (json['replies'] as List<dynamic>? ?? [])
-            .map((r) => Comment.fromJson(r))
+        repliesRaw
+            .where((r) => r is Map<String, dynamic>) // 🎯 타입 안전성 체크
+            .map((r) => Comment.fromJson(r as Map<String, dynamic>))
             .toList();
+
+    // 🎯 언급 및 비밀 채팅 필드 파싱
+    final mentionedUsernames =
+        json['mentionedUsernames'] != null
+            ? (json['mentionedUsernames'] as List<dynamic>)
+                .map((e) => e.toString())
+                .toList()
+            : null;
+    // 명세서: visibility 필드로 비밀댓글 확인
+    final visibility = json['visibility']?.toString() ?? 'PUBLIC';
+    final isSecret = visibility == 'PRIVATE';
+    final isRestricted = visibility == 'PRIVATE';
+    final visibleToUsername =
+        json['visibleToUsername']?.toString(); // 명세서에는 없지만 UI 호환성 유지
 
     return Comment(
       id: json['id']?.toString() ?? '',
@@ -137,12 +201,18 @@ class Comment {
       postId: json['postId']?.toString() ?? '',
       parentId: json['parentId']?.toString(),
       imageUrl: json['imageUrl']?.toString(),
+      localImagePath: null, // 🎯 서버 응답에는 로컬 경로 없음
       visibility: json['visibility']?.toString() ?? 'PUBLIC',
       emotionCounts: emotionCountsMap,
       myEmotions: myEmotionsMap,
+      emotionUsers: emotionUsers,
       replies: replies,
       createdAt: json['createdAt']?.toString() ?? '',
       updatedAt: json['updatedAt']?.toString() ?? '',
+      mentionedUsernames: mentionedUsernames,
+      isSecret: isSecret,
+      isRestricted: isRestricted,
+      visibleToUsername: visibleToUsername,
     );
   }
 
@@ -162,14 +232,67 @@ class CommentService extends ChangeNotifier {
   CommentService._internal();
 
   final Dio _dio = BaseApiService().dio;
+  final AuthService _authService = AuthService();
   WebSocketService? _webSocketService;
 
   final List<Comment> _comments = [];
   String? _currentPostId;
+  String? _currentPostAuthorUsername; // 🎯 현재 포스트 작성자 username
+  String? _cachedCurrentUsername; // 🎯 현재 사용자명 캐시 (성능 최적화)
+
+  /// 현재 사용자명 가져오기 (캐싱 적용)
+  Future<String?> _getCurrentUsername() async {
+    // 🎯 1순위: 인스턴스 캐시 확인
+    if (_cachedCurrentUsername != null && _cachedCurrentUsername!.isNotEmpty) {
+      return _cachedCurrentUsername;
+    }
+
+    // 🎯 2순위: AuthService의 동기 캐시 확인
+    final cached = _authService.currentUsernameSync;
+    if (cached != null && cached.isNotEmpty) {
+      _cachedCurrentUsername = cached; // 인스턴스 캐시에 저장
+      return cached;
+    }
+
+    // 🎯 3순위: 스토리지에서 직접 읽기 (최초 1회만)
+    try {
+      final username = await _authService.getUsername();
+      _cachedCurrentUsername = username; // 인스턴스 캐시에 저장
+      debugPrint('[CommentService] ✅ 스토리지에서 사용자명 읽기 (캐시 저장): $username');
+      return username;
+    } catch (e) {
+      debugPrint('[CommentService] ❌ 사용자명 가져오기 실패: $e');
+      return null;
+    }
+  }
+
+  /// 🎯 사용자명 캐시 초기화 (로그아웃 등 시 호출)
+  void clearUsernameCache() {
+    _cachedCurrentUsername = null;
+  }
+
+  /// 포스트 작성자 username 설정
+  void setPostAuthorUsername(String? postAuthorUsername) {
+    _currentPostAuthorUsername = postAuthorUsername;
+    debugPrint('[CommentService] 포스트 작성자 설정: $_currentPostAuthorUsername');
+  }
+
+  /// 🎯 비밀댓글 권한 체크 및 content 처리
+  /// 서버가 이미 권한 체크를 하고 있으므로, originalContent가 있으면 그걸 사용
+  Future<String> _checkPrivateCommentAccess(
+    Map<String, dynamic> commentData,
+    String originalContent,
+  ) async {
+    return originalContent;
+  }
+
   bool _isLoading = false;
   bool _hasMoreComments = true;
   int _currentPage = 0;
   int _serverCommentCount = 0; // 🎯 서버에서 받아온 실제 댓글 총 개수
+
+  // 🎯 댓글 페이지네이션 크기 (기본값)
+  static const int defaultPageSize = 100;
 
   // 타이밍 시어 관련
   bool _isTimingSheerActive = false;
@@ -349,39 +472,35 @@ class CommentService extends ChangeNotifier {
 
   /// WebSocket 이벤트 핸들러들 (비동기로 처리하여 Hang 방지)
   void _handleCommentCreated(Map<String, dynamic> data) async {
-    debugPrint('[CommentService] 🔥 댓글 생성 이벤트 수신');
-    debugPrint('[CommentService] 🔥 받은 데이터: $data');
-    debugPrint('[CommentService] 🔥 현재 댓글 수: ${_comments.length}');
+    // 🎯 서버가 권한이 있는 사용자에게는 originalContent를 보내고, 없으면 content에 "비밀댓글입니다"를 보냄
+    final serverContent = data['content']?.toString() ?? '';
+    final originalContent =
+        data['originalContent']?.toString() ?? serverContent;
+    final finalContent =
+        originalContent.isNotEmpty ? originalContent : serverContent;
+    final author = data['author']?.toString() ?? '';
 
-    // 새 댓글을 목록에 추가
-    final comment = Comment.fromServer(data);
-    debugPrint(
-      '[CommentService] 🔥 생성된 댓글: ${comment.id} - ${comment.content}',
-    );
+    final dataWithCheckedContent = Map<String, dynamic>.from(data);
+    dataWithCheckedContent['content'] = finalContent;
 
-    // 중복 댓글 방지 - 같은 ID가 이미 있으면 무시 (temp_ 포함 모든 ID)
+    final comment = Comment.fromServer(dataWithCheckedContent);
+
+    // 중복 댓글 방지
     final existingIndex = _comments.indexWhere((c) => c.id == comment.id);
     if (existingIndex != -1) {
-      debugPrint('[CommentService] ⚠️ 중복 댓글 감지! 이미 ID ${comment.id}가 존재함 - 무시');
-      debugPrint(
-        '[CommentService] 기존 댓글: ${_comments[existingIndex].id} (${_comments[existingIndex].content})',
-      );
       return;
     }
 
-    // temp_로 시작하는 임시 댓글이 있으면 교체 (같은 content+author)
+    // temp_로 시작하는 임시 댓글이 있으면 교체
     final tempIndex = _comments.indexWhere(
       (c) =>
           c.id.startsWith('temp_') &&
-          c.content == comment.content &&
-          c.author == comment.author,
+          (c.content == finalContent || c.content == serverContent) &&
+          c.author == author,
     );
 
     if (tempIndex != -1) {
-      debugPrint(
-        '[CommentService] 🔄 임시 댓글을 서버 댓글로 교체: ${_comments[tempIndex].id} → ${comment.id}',
-      );
-      _comments[tempIndex] = comment;
+      _comments[tempIndex] = comment.copyWith(content: finalContent);
 
       // 교체는 새 댓글이 아니므로 스크롤 안 함
       notifyListeners();
@@ -395,7 +514,7 @@ class CommentService extends ChangeNotifier {
     notifyListeners();
   }
 
-  void _handleCommentUpdated(Map<String, dynamic> data) {
+  void _handleCommentUpdated(Map<String, dynamic> data) async {
     debugPrint('[CommentService] 댓글 수정 이벤트 수신 (검증용)');
     debugPrint('[CommentService] 🔍 WebSocket 데이터: $data');
 
@@ -404,7 +523,17 @@ class CommentService extends ChangeNotifier {
 
     if (index != -1) {
       final localComment = _comments[index];
-      final serverComment = Comment.fromServer(data);
+
+      // 🎯 비밀댓글 권한 체크
+      final originalContent = data['content']?.toString() ?? '';
+      final checkedContent = await _checkPrivateCommentAccess(
+        data,
+        originalContent,
+      );
+      final dataWithCheckedContent = Map<String, dynamic>.from(data);
+      dataWithCheckedContent['content'] = checkedContent;
+
+      final serverComment = Comment.fromServer(dataWithCheckedContent);
 
       // 🎯 로컬 내용과 서버 내용 비교 (검증)
       if (localComment.content != serverComment.content) {
@@ -421,17 +550,39 @@ class CommentService extends ChangeNotifier {
       } else {
         debugPrint('[CommentService] ✅ 검증 성공 - 로컬과 서버 일치');
         // emotionCounts 등 다른 필드만 업데이트
+        // 🎯 비밀댓글인 경우 이모지 반응도 권한 체크 필요
+        final isPrivate =
+            localComment.isSecret || localComment.visibility == 'PRIVATE';
+        final currentUsername = await _getCurrentUsername();
+        final canViewPrivate =
+            localComment.author == currentUsername ||
+            (_currentPostAuthorUsername != null &&
+                _currentPostAuthorUsername == currentUsername);
+
         _comments[index] = localComment.copyWith(
-          emotionCounts: serverComment.emotionCounts,
+          emotionCounts:
+              (isPrivate && !canViewPrivate)
+                  ? <String, String>{}
+                  : serverComment.emotionCounts,
+          emotionUsers:
+              (isPrivate && !canViewPrivate)
+                  ? <String, List<Map<String, dynamic>>>{}
+                  : serverComment.emotionUsers,
           updatedAt: serverComment.updatedAt,
         );
 
         notifyListeners();
       }
     } else {
-      debugPrint('[CommentService] ⚠️ 댓글을 찾을 수 없음: $commentId - 새로 추가');
       // 로컬에 없으면 추가 (다른 사용자가 작성한 댓글)
-      _comments.add(Comment.fromServer(data));
+      final serverContent = data['content']?.toString() ?? '';
+      final originalContent =
+          data['originalContent']?.toString() ?? serverContent;
+      final finalContent =
+          originalContent.isNotEmpty ? originalContent : serverContent;
+      final dataWithCheckedContent = Map<String, dynamic>.from(data);
+      dataWithCheckedContent['content'] = finalContent;
+      _comments.add(Comment.fromServer(dataWithCheckedContent));
       notifyListeners();
     }
   }
@@ -467,17 +618,44 @@ class CommentService extends ChangeNotifier {
 
       // 서버가 전체 emotionCounts를 보내주면 전체 교체
       if (data.containsKey('emotionCounts')) {
+        // 🎯 비밀댓글인 경우 이모지 반응도 권한 체크
+        final isPrivate = comment.isSecret || comment.visibility == 'PRIVATE';
+        final currentUsername = await _getCurrentUsername();
+        final canViewPrivate =
+            comment.author == currentUsername ||
+            (_currentPostAuthorUsername != null &&
+                _currentPostAuthorUsername == currentUsername);
+
         final emotionCountsRaw = data['emotionCounts'];
         final emotionCounts =
             emotionCountsRaw is Map<String, dynamic>
                 ? emotionCountsRaw
                 : <String, dynamic>{};
         final emotionCountsMap = <String, String>{};
-        emotionCounts.forEach((key, value) {
-          emotionCountsMap[key] = value.toString();
-        });
+        if (!isPrivate || canViewPrivate) {
+          emotionCounts.forEach((key, value) {
+            emotionCountsMap[key] = value.toString();
+          });
+        }
 
-        _comments[index] = comment.copyWith(emotionCounts: emotionCountsMap);
+        // 🎯 emotionUsers도 함께 업데이트
+        final emotionUsersRaw = data['emotionUsers'];
+        final emotionUsers = <String, List<Map<String, dynamic>>>{};
+        if ((!isPrivate || canViewPrivate) &&
+            emotionUsersRaw is Map<String, dynamic>) {
+          emotionUsersRaw.forEach((emoji, users) {
+            if (users is List) {
+              emotionUsers[emoji] =
+                  users.map((u) => Map<String, dynamic>.from(u)).toList();
+            }
+          });
+        }
+
+        _comments[index] = comment.copyWith(
+          emotionCounts: emotionCountsMap,
+          emotionUsers:
+              emotionUsers.isNotEmpty ? emotionUsers : comment.emotionUsers,
+        );
 
         // 🎯 notifyListeners를 다음 프레임에 실행하여 UI 블로킹 방지
         WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -493,11 +671,19 @@ class CommentService extends ChangeNotifier {
 
       if (count > 0) {
         newEmotionCounts[emoji] = count.toString();
+        _comments[index] = comment.copyWith(emotionCounts: newEmotionCounts);
       } else {
         newEmotionCounts.remove(emoji);
+        // 🎯 이모지 제거 시 emotionUsers에서도 제거
+        final newEmotionUsers = Map<String, List<Map<String, dynamic>>>.from(
+          comment.emotionUsers,
+        );
+        newEmotionUsers.remove(emoji);
+        _comments[index] = comment.copyWith(
+          emotionCounts: newEmotionCounts,
+          emotionUsers: newEmotionUsers,
+        );
       }
-
-      _comments[index] = comment.copyWith(emotionCounts: newEmotionCounts);
 
       // 🎯 notifyListeners를 다음 프레임에 실행하여 UI 블로킹 방지
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -527,7 +713,23 @@ class CommentService extends ChangeNotifier {
           emotionCountsMap[key] = value.toString();
         });
 
-        _comments[index] = comment.copyWith(emotionCounts: emotionCountsMap);
+        // 🎯 emotionUsers도 함께 업데이트
+        final emotionUsersRaw = data['emotionUsers'];
+        final emotionUsers = <String, List<Map<String, dynamic>>>{};
+        if (emotionUsersRaw is Map<String, dynamic>) {
+          emotionUsersRaw.forEach((emoji, users) {
+            if (users is List) {
+              emotionUsers[emoji] =
+                  users.map((u) => Map<String, dynamic>.from(u)).toList();
+            }
+          });
+        }
+
+        _comments[index] = comment.copyWith(
+          emotionCounts: emotionCountsMap,
+          emotionUsers:
+              emotionUsers.isNotEmpty ? emotionUsers : comment.emotionUsers,
+        );
 
         // 🎯 notifyListeners를 다음 프레임에 실행하여 UI 블로킹 방지
         WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -543,17 +745,211 @@ class CommentService extends ChangeNotifier {
 
       if (count > 0) {
         newEmotionCounts[emoji] = count.toString();
+        _comments[index] = comment.copyWith(emotionCounts: newEmotionCounts);
       } else {
         newEmotionCounts.remove(emoji);
+        // 🎯 이모지 제거 시 emotionUsers에서도 제거
+        final newEmotionUsers = Map<String, List<Map<String, dynamic>>>.from(
+          comment.emotionUsers,
+        );
+        newEmotionUsers.remove(emoji);
+        _comments[index] = comment.copyWith(
+          emotionCounts: newEmotionCounts,
+          emotionUsers: newEmotionUsers,
+        );
       }
-
-      _comments[index] = comment.copyWith(emotionCounts: newEmotionCounts);
 
       // 🎯 notifyListeners를 다음 프레임에 실행하여 UI 블로킹 방지
       WidgetsBinding.instance.addPostFrameCallback((_) {
         notifyListeners();
       });
     });
+  }
+
+  /// 🎯 새 댓글 확인 (기존 캐시 유지하면서 기존 캐시된 댓글을 만날 때까지 확인)
+  Future<void> checkForNewComments() async {
+    if (_currentPostId == null || _currentPostId!.isEmpty || _isLoading) {
+      debugPrint(
+        '[CommentService] 새 댓글 확인 건너뜀: postId=$_currentPostId, loading=$_isLoading',
+      );
+      return;
+    }
+
+    // 기존 댓글이 없으면 일반 로드 호출
+    if (_comments.isEmpty) {
+      await loadComments();
+      return;
+    }
+
+    _isLoading = true;
+    notifyListeners();
+
+    try {
+      debugPrint('[CommentService] 새 댓글 확인 시작 (기존 캐시된 댓글을 만날 때까지)');
+
+      // 기존 댓글 ID 집합
+      final existingIds = _comments.map((c) => c.id).toSet();
+      final newComments = <Comment>[];
+      int currentPage = 0;
+      const pageSize = defaultPageSize; // 🎯 새 댓글 확인은 기본 크기 사용
+      bool foundExistingComment = false; // 기존 캐시된 댓글을 만났는지 여부
+
+      // 🎯 기존 캐시된 댓글을 만날 때까지 페이지 순회
+      while (!foundExistingComment) {
+        final response = await _dio.get(
+          '/api/comments/post/$_currentPostId',
+          queryParameters: {'page': currentPage, 'size': pageSize},
+          options: Options(receiveTimeout: const Duration(seconds: 5)),
+        );
+
+        if (response.statusCode != 200) {
+          debugPrint('[CommentService] 새 댓글 확인 실패: ${response.statusCode}');
+          break;
+        }
+
+        final responseData = response.data;
+        List<dynamic> commentsData = [];
+
+        if (responseData is Map<String, dynamic>) {
+          if (responseData.containsKey('content')) {
+            commentsData = responseData['content'] as List<dynamic>? ?? [];
+          } else if (responseData.containsKey('data')) {
+            commentsData = responseData['data'] as List<dynamic>? ?? [];
+          }
+          // 마지막 페이지 확인
+          final isLast = responseData['last'] as bool? ?? false;
+          if (isLast && commentsData.isEmpty) {
+            break; // 마지막 페이지이고 댓글이 없으면 종료
+          }
+        } else if (responseData is List) {
+          commentsData = responseData;
+          if (commentsData.isEmpty) {
+            break; // 빈 리스트면 종료
+          }
+        }
+
+        // 현재 페이지의 댓글 처리
+        for (final commentJson in commentsData) {
+          if (commentJson is! Map<String, dynamic>) continue;
+
+          try {
+            final commentId = commentJson['id']?.toString() ?? '';
+
+            // 🎯 기존 캐시에 있는 댓글을 만나면 중단
+            if (existingIds.contains(commentId)) {
+              foundExistingComment = true;
+              debugPrint(
+                '[CommentService] 기존 캐시된 댓글 발견 (ID: $commentId), 새 댓글 확인 중단',
+              );
+              break;
+            }
+
+            // 새 댓글 파싱
+            final originalContent = commentJson['content']?.toString() ?? '';
+            final commentContent = await _checkPrivateCommentAccess(
+              commentJson,
+              originalContent,
+            );
+            final visibility =
+                commentJson['visibility']?.toString() ?? 'PUBLIC';
+            final isPrivate = visibility == 'PRIVATE';
+
+            final currentUsername = await _getCurrentUsername();
+            final author =
+                commentJson['author']?.toString() ??
+                commentJson['authorUsername']?.toString() ??
+                '';
+            final canViewPrivate =
+                author == currentUsername ||
+                (_currentPostAuthorUsername != null &&
+                    _currentPostAuthorUsername == currentUsername);
+
+            final emotionCountsRaw = commentJson['emotionCounts'];
+            Map<String, dynamic> emotionCounts =
+                emotionCountsRaw is Map<String, dynamic>
+                    ? emotionCountsRaw
+                    : <String, dynamic>{};
+
+            // 🎯 myEmotions는 배열([])로 옴: [❤️] → {❤️: '1'}
+            final myEmotionsRaw = commentJson['myEmotions'];
+            final myEmotionsMap = <String, String>{};
+            if (myEmotionsRaw is List) {
+              for (final emoji in myEmotionsRaw) {
+                if (emoji != null) {
+                  myEmotionsMap[emoji.toString()] = '1';
+                }
+              }
+            } else if (myEmotionsRaw is Map<String, dynamic>) {
+              myEmotionsRaw.forEach((key, value) {
+                myEmotionsMap[key] = value.toString();
+              });
+            }
+            Map<String, dynamic> myEmotions = myEmotionsMap;
+
+            final emotionUsersRaw = commentJson['emotionUsers'];
+            Map<String, dynamic> emotionUsers =
+                emotionUsersRaw is Map<String, dynamic>
+                    ? emotionUsersRaw
+                    : <String, dynamic>{};
+
+            if (isPrivate && !canViewPrivate) {
+              emotionCounts = <String, dynamic>{};
+              myEmotions = <String, dynamic>{};
+              emotionUsers = <String, dynamic>{};
+            }
+
+            final mappedComment = {
+              'id': commentId,
+              'author': author,
+              'content': commentContent,
+              'authorProfileImageUrl':
+                  commentJson['authorProfileImageUrl']?.toString() ?? '',
+              'postId':
+                  commentJson['postId']?.toString() ?? _currentPostId ?? '',
+              'parentId': commentJson['parentId']?.toString(),
+              'imageUrl': commentJson['imageUrl']?.toString(),
+              'visibility': visibility,
+              'emotionCounts': emotionCounts,
+              'myEmotions': myEmotions,
+              'emotionUsers': emotionUsers,
+              'replies': commentJson['replies'] ?? <dynamic>[],
+              'createdAt': commentJson['createdAt']?.toString() ?? '',
+              'updatedAt': commentJson['updatedAt']?.toString() ?? '',
+              'mentionedUsernames':
+                  commentJson['mentionedUsernames'] as List<dynamic>?,
+              'isSecret': isPrivate,
+              'isRestricted': isPrivate,
+              'visibleToUsername': null,
+            };
+            newComments.add(Comment.fromJson(mappedComment));
+          } catch (e) {
+            debugPrint('[CommentService] 새 댓글 파싱 오류: $e');
+          }
+        }
+
+        // 기존 캐시된 댓글을 만났거나, 마지막 페이지이거나, 빈 페이지면 종료
+        if (foundExistingComment || commentsData.isEmpty) {
+          break;
+        }
+
+        currentPage++;
+      }
+
+      if (newComments.isNotEmpty) {
+        debugPrint(
+          '[CommentService] 새 댓글 ${newComments.length}개 발견 (${currentPage + 1}페이지 확인), 기존 캐시에 추가',
+        );
+        _comments.addAll(newComments);
+        notifyListeners();
+      } else {
+        debugPrint('[CommentService] 새 댓글 없음 (${currentPage + 1}페이지 확인)');
+      }
+    } catch (e) {
+      debugPrint('[CommentService] 새 댓글 확인 오류: $e');
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
   }
 
   /// 댓글 로드 (API 호출)
@@ -583,37 +979,149 @@ class CommentService extends ChangeNotifier {
       debugPrint('[CommentService] PostId: $_currentPostId');
       debugPrint('[CommentService] 현재 페이지: $_currentPage (로드 전)');
 
-      final pageSize = size ?? 20;
-      final pageToLoad = targetPage ?? (refresh ? 0 : _currentPage);
+      final pageSize = size ?? defaultPageSize;
 
+      // 🎯 댓글 API 사용: /api/comments/post/{postId}?page=0&size=100
       final response = await _dio.get(
-        '/api/comments/post/$_currentPostId?page=$pageToLoad&size=$pageSize',
+        '/api/comments/post/$_currentPostId',
+        queryParameters: {'page': targetPage ?? _currentPage, 'size': pageSize},
         options: Options(receiveTimeout: const Duration(seconds: 10)),
       );
 
-      debugPrint('[CommentService] 응답 상태: ${response.statusCode}');
-      debugPrint('[CommentService] 응답 데이터: ${response.data}');
+      debugPrint('[CommentService] 댓글 조회 응답 상태: ${response.statusCode}');
+      debugPrint('[CommentService] 댓글 조회 응답 데이터: ${response.data}');
 
       if (response.statusCode == 200) {
-        final data = response.data as Map<String, dynamic>;
-        debugPrint('[CommentService] 파싱된 데이터: $data');
+        final responseData = response.data;
+        debugPrint('[CommentService] 파싱된 데이터: $responseData');
 
-        // 명세서에 따른 페이지네이션 응답 구조
-        final commentsData = data['content'] as List<dynamic>? ?? [];
-        debugPrint('[CommentService] 댓글 데이터: $commentsData');
+        // 🎯 댓글 API 응답 구조 확인
+        List<dynamic> commentsData = [];
+        Map<String, dynamic>? responseMap;
+
+        if (responseData is Map<String, dynamic>) {
+          responseMap = responseData;
+          // 응답이 Map인 경우: { "content": [...], "totalElements": 10 } 또는 { "data": [...] }
+          if (responseData.containsKey('content')) {
+            commentsData = responseData['content'] as List<dynamic>? ?? [];
+          } else if (responseData.containsKey('data')) {
+            commentsData = responseData['data'] as List<dynamic>? ?? [];
+          }
+        } else if (responseData is List) {
+          commentsData = responseData;
+        }
+
+        debugPrint('[CommentService] 댓글 데이터: ${commentsData.length}개');
+
+        // 🎯 사용자명을 한 번만 읽어서 재사용 (성능 최적화 - 100개 댓글마다 100번 호출 방지)
+        final currentUsername = await _getCurrentUsername();
 
         final newComments = <Comment>[];
 
-        // 댓글과 대댓글을 평면화하여 처리
-        for (final commentJson in commentsData) {
-          final comment = Comment.fromJson(commentJson as Map<String, dynamic>);
-          newComments.add(comment);
+        // 댓글 데이터를 Comment 형식으로 변환
+        for (int i = 0; i < commentsData.length; i++) {
+          final commentJson = commentsData[i];
+          // 🎯 타입 안전성 체크
+          if (commentJson is! Map<String, dynamic>) {
+            debugPrint(
+              '[CommentService] ⚠️ 댓글 데이터[$i] 타입 오류: ${commentJson.runtimeType}, 값: $commentJson',
+            );
+            continue; // 잘못된 형식의 데이터는 건너뛰기
+          }
+          final commentData = commentJson;
 
-          // 대댓글도 추가
-          final replies = commentJson['replies'] as List<dynamic>? ?? [];
-          for (final replyJson in replies) {
-            final reply = Comment.fromJson(replyJson as Map<String, dynamic>);
-            newComments.add(reply);
+          try {
+            // 🎯 비밀댓글 권한 체크 (명세서: visibility: "PRIVATE"인 댓글은 작성자와 포스트 작성자만 볼 수 있음)
+            final originalContent = commentData['content']?.toString() ?? '';
+            final commentContent = await _checkPrivateCommentAccess(
+              commentData,
+              originalContent,
+            );
+            final visibility =
+                commentData['visibility']?.toString() ?? 'PUBLIC';
+            final isPrivate = visibility == 'PRIVATE';
+
+            // 🎯 비밀댓글에 권한이 없으면 이모지 반응도 제거 (명세서: 비밀댓글의 경우 emotionCounts, myEmotions, emotionUsers는 빈 값)
+            // currentUsername은 루프 밖에서 한 번만 읽음
+            final author =
+                commentData['author']?.toString() ??
+                commentData['authorUsername']?.toString() ??
+                '';
+            final canViewPrivate =
+                author == currentUsername ||
+                (_currentPostAuthorUsername != null &&
+                    _currentPostAuthorUsername == currentUsername);
+
+            // 🎯 emotionCounts, myEmotions, emotionUsers는 배열([]) 또는 Map으로 올 수 있으므로 타입 체크
+            final emotionCountsRaw = commentData['emotionCounts'];
+            Map<String, dynamic> emotionCounts =
+                emotionCountsRaw is Map<String, dynamic>
+                    ? emotionCountsRaw
+                    : <String, dynamic>{}; // 배열이거나 null이면 빈 Map
+
+            // 🎯 myEmotions는 배열([])로 옴: [❤️] → {❤️: '1'}
+            final myEmotionsRaw = commentData['myEmotions'];
+            final myEmotionsMap = <String, String>{};
+            if (myEmotionsRaw is List) {
+              for (final emoji in myEmotionsRaw) {
+                if (emoji != null) {
+                  myEmotionsMap[emoji.toString()] = '1';
+                }
+              }
+            } else if (myEmotionsRaw is Map<String, dynamic>) {
+              myEmotionsRaw.forEach((key, value) {
+                myEmotionsMap[key] = value.toString();
+              });
+            }
+            Map<String, dynamic> myEmotions = myEmotionsMap;
+
+            final emotionUsersRaw = commentData['emotionUsers'];
+            Map<String, dynamic> emotionUsers =
+                emotionUsersRaw is Map<String, dynamic>
+                    ? emotionUsersRaw
+                    : <String, dynamic>{}; // 배열이거나 null이면 빈 Map
+
+            if (isPrivate && !canViewPrivate) {
+              emotionCounts = <String, dynamic>{};
+              myEmotions = <String, dynamic>{};
+              emotionUsers = <String, dynamic>{};
+            }
+
+            // 댓글 데이터를 Comment 형식으로 변환
+            final mappedComment = {
+              'id': commentData['id']?.toString() ?? '',
+              'author':
+                  commentData['author']?.toString() ??
+                  commentData['authorUsername']?.toString() ??
+                  '',
+              'content': commentContent,
+              'authorProfileImageUrl':
+                  commentData['authorProfileImageUrl']?.toString() ?? '',
+              'postId':
+                  commentData['postId']?.toString() ?? _currentPostId ?? '',
+              'parentId': commentData['parentId']?.toString(),
+              'imageUrl': commentData['imageUrl']?.toString(),
+              'visibility': commentData['visibility']?.toString() ?? 'PUBLIC',
+              'emotionCounts': emotionCounts,
+              'myEmotions': myEmotions,
+              'emotionUsers': emotionUsers,
+              'replies': commentData['replies'] ?? <dynamic>[],
+              'createdAt': commentData['createdAt']?.toString() ?? '',
+              'updatedAt': commentData['updatedAt']?.toString() ?? '',
+              'mentionedUsernames':
+                  commentData['mentionedUsernames'] as List<dynamic>?,
+              'isSecret': isPrivate, // visibility가 PRIVATE이면 isSecret
+              'isRestricted': isPrivate, // visibility가 PRIVATE이면 isRestricted
+              'visibleToUsername': null, // 명세서에는 없음
+            };
+
+            final comment = Comment.fromJson(mappedComment);
+            newComments.add(comment);
+          } catch (e, stackTrace) {
+            debugPrint('[CommentService] ⚠️ 댓글[$i] 파싱 오류: $e');
+            debugPrint('[CommentService] 스택 트레이스: $stackTrace');
+            debugPrint('[CommentService] 댓글 데이터: $commentData');
+            continue; // 파싱 실패한 댓글은 건너뛰기
           }
         }
 
@@ -632,7 +1140,42 @@ class CommentService extends ChangeNotifier {
         );
 
         _comments.addAll(uniqueNewComments);
-        _hasMoreComments = !(data['last'] ?? true);
+
+        // 🎯 페이지네이션 정보 확인 (댓글 API 응답 구조에 따라)
+        if (responseMap != null) {
+          final totalElements = responseMap['totalElements'] as int?;
+          final totalPages = responseMap['totalPages'] as int?;
+          final isLast = responseMap['last'] as bool?;
+          final currentPageNum = responseMap['number'] as int?;
+
+          if (isLast != null) {
+            // 🎯 서버가 isLast를 제공하면 그것을 우선 사용
+            _hasMoreComments = !isLast;
+            debugPrint(
+              '[CommentService] isLast 기반: isLast=$isLast, hasMore=$_hasMoreComments',
+            );
+          } else if (totalElements != null && totalPages != null) {
+            // 🎯 totalPages 기반 계산: 현재 페이지가 마지막 페이지보다 작으면 더 있음
+            final currentPage = currentPageNum ?? _currentPage;
+            _hasMoreComments = currentPage < (totalPages - 1);
+            debugPrint(
+              '[CommentService] totalPages 기반: currentPage=$currentPage, totalPages=$totalPages, hasMore=$_hasMoreComments',
+            );
+          } else {
+            // 🎯 기본값: 로드된 댓글이 size와 같거나 크면 더 있을 수 있음
+            // 단, 정확하지 않으므로 서버 응답을 우선해야 함
+            _hasMoreComments = uniqueNewComments.length >= pageSize;
+            debugPrint(
+              '[CommentService] 기본값 기반: loaded=${uniqueNewComments.length}, pageSize=$pageSize, hasMore=$_hasMoreComments',
+            );
+          }
+        } else {
+          // 기본값: 로드된 댓글이 size보다 적으면 더 이상 없음
+          _hasMoreComments = uniqueNewComments.length >= pageSize;
+          debugPrint(
+            '[CommentService] responseMap 없음: loaded=${uniqueNewComments.length}, pageSize=$pageSize, hasMore=$_hasMoreComments',
+          );
+        }
 
         // 다음 페이지를 위해 증가 (로드 성공 후)
         // 🎯 특정 페이지를 로드한 경우 해당 페이지로 설정
@@ -690,6 +1233,219 @@ class CommentService extends ChangeNotifier {
     }
   }
 
+  /// 🎯 로컬 이미지로만 댓글 추가 (서버 요청 없음, 낙관적 업데이트만)
+  void addCommentLocalOnly({
+    required String username,
+    required String content,
+    String? authorProfileImageUrl,
+    String? parentId,
+    required String localImagePath,
+    String? visibleToUsername,
+    required String tempId,
+  }) {
+    if (_currentPostId == null) return;
+
+    // 🎯 UTC 시간 사용
+    final utcNow = DateTime.now().toUtc().toIso8601String();
+
+    // 🎯 비밀댓글에 답장하는 경우 자동으로 PRIVATE로 설정
+    bool isSecret = visibleToUsername != null && visibleToUsername.isNotEmpty;
+    if (!isSecret && parentId != null) {
+      final parentComment = _comments.firstWhere(
+        (c) => c.id == parentId,
+        orElse:
+            () => Comment(
+              id: '',
+              author: '',
+              content: '',
+              authorProfileImageUrl: '',
+              postId: _currentPostId!,
+              createdAt: '',
+              updatedAt: '',
+            ),
+      );
+      if (parentComment.id.isNotEmpty &&
+          (parentComment.isSecret || parentComment.visibility == 'PRIVATE')) {
+        isSecret = true;
+      }
+    }
+
+    // 🎯 이미지만 보낼 때 content에 [IMAGE] 마커 추가
+    final trimmedContent = content.trim();
+    final optimisticContent =
+        trimmedContent.isEmpty ? '[IMAGE]' : trimmedContent;
+
+    final optimisticComment = Comment(
+      id: tempId,
+      author: username,
+      content: optimisticContent,
+      authorProfileImageUrl: authorProfileImageUrl ?? '',
+      postId: _currentPostId!,
+      parentId: parentId,
+      imageUrl: null, // 🎯 아직 업로드 전이므로 null
+      localImagePath: localImagePath, // 🎯 로컬 파일 경로
+      visibility: isSecret ? 'PRIVATE' : 'PUBLIC',
+      createdAt: utcNow,
+      updatedAt: utcNow,
+      isPending: true, // 🎯 업로드 대기 중
+      isFailed: false,
+      isSecret: isSecret,
+      isRestricted: isSecret,
+      visibleToUsername: visibleToUsername,
+    );
+
+    _comments.add(optimisticComment);
+    _serverCommentCount++;
+    notifyListeners();
+    debugPrint('[CommentService] 로컬 이미지 댓글 추가 (낙관적 업데이트): $tempId');
+  }
+
+  /// 🎯 이미지 URL 업로드 완료 후 서버에 댓글 전송
+  Future<void> addCommentWithImageUrl({
+    required String tempCommentId,
+    required String imageUrl,
+  }) async {
+    if (_currentPostId == null) return;
+
+    // 🎯 임시 댓글 찾기
+    final commentIndex = _comments.indexWhere((c) => c.id == tempCommentId);
+    if (commentIndex == -1) {
+      debugPrint('[CommentService] ⚠️ 임시 댓글을 찾을 수 없음: $tempCommentId');
+      return;
+    }
+
+    final tempComment = _comments[commentIndex];
+    final originalContent = tempComment.content;
+
+    // 🎯 content를 "[IMAGE] https://image-url" 형식으로 업데이트
+    final finalContent =
+        originalContent == '[IMAGE]'
+            ? '[IMAGE] $imageUrl'
+            : '$originalContent\n[IMAGE] $imageUrl';
+
+    // 🎯 낙관적 업데이트: content와 imageUrl 업데이트
+    _comments[commentIndex] = tempComment.copyWith(
+      content: finalContent,
+      imageUrl: imageUrl,
+    );
+    notifyListeners();
+
+    debugPrint('[CommentService] 이미지 URL 업데이트: $tempCommentId -> $imageUrl');
+
+    // 🎯 서버에 댓글 전송
+    try {
+      // 🎯 언급 파싱
+      var mentionedUsernames = MentionParser.extractMentions(finalContent);
+      final currentUsername = await _getCurrentUsername();
+      if (currentUsername != null) {
+        mentionedUsernames =
+            mentionedUsernames.where((u) => u != currentUsername).toList();
+      }
+
+      // 🎯 postId를 정수로 변환
+      final postIdInt = int.tryParse(_currentPostId!);
+      if (postIdInt == null) {
+        throw Exception('postId를 정수로 변환할 수 없습니다: $_currentPostId');
+      }
+
+      // 🎯 parentId를 정수로 변환
+      int? parentIdInt;
+      if (tempComment.parentId != null) {
+        parentIdInt = int.tryParse(tempComment.parentId!);
+        if (parentIdInt == null) {
+          throw Exception('parentId를 정수로 변환할 수 없습니다: ${tempComment.parentId}');
+        }
+      }
+
+      final requestBody = <String, dynamic>{
+        'content': finalContent, // 🎯 "[IMAGE] https://image-url" 형식
+        'postId': postIdInt,
+        if (parentIdInt != null) 'parentId': parentIdInt,
+        'visibility': tempComment.visibility,
+        if (mentionedUsernames.isNotEmpty)
+          'mentionedUsernames': mentionedUsernames,
+      };
+
+      debugPrint('[CommentService] 이미지 댓글 전송 요청: $requestBody');
+
+      final response = await _dio.post(
+        '/api/comments',
+        data: requestBody,
+        options: Options(receiveTimeout: const Duration(seconds: 10)),
+      );
+
+      debugPrint(
+        '[CommentService] 이미지 댓글 전송 응답: ${response.statusCode} - ${response.data}',
+      );
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        final responseData =
+            response.data is Map<String, dynamic>
+                ? Map<String, dynamic>.from(response.data)
+                : <String, dynamic>{};
+
+        final serverComment = Comment.fromJson(responseData);
+
+        // 같은 ID가 이미 있는지 확인 (WebSocket이 먼저 추가했을 수 있음)
+        final existingServerCommentIndex = _comments.indexWhere(
+          (c) => c.id == serverComment.id,
+        );
+        if (existingServerCommentIndex != -1) {
+          debugPrint(
+            '[CommentService] ⚠️ 서버 응답 댓글이 이미 존재함 (WebSocket 먼저 도착) - ID: ${serverComment.id}',
+          );
+          _comments.removeWhere((c) => c.id == tempCommentId);
+          notifyListeners();
+          return;
+        }
+
+        // 임시 댓글 찾아서 교체
+        final tempIndex = _comments.indexWhere((c) => c.id == tempCommentId);
+        if (tempIndex != -1) {
+          debugPrint(
+            '[CommentService] 🔄 임시 댓글 교체: $tempCommentId → ${serverComment.id}',
+          );
+          _comments[tempIndex] = serverComment;
+        } else {
+          debugPrint('[CommentService] ⚠️ 임시 댓글이 없음 (이미 제거됨?)');
+          return;
+        }
+        notifyListeners();
+        debugPrint('[CommentService] 이미지 댓글 전송 성공: ${serverComment.id}');
+      } else {
+        // 실패: pending → failed로 변경
+        final index = _comments.indexWhere((c) => c.id == tempCommentId);
+        if (index != -1) {
+          _comments[index] = _comments[index].copyWith(
+            isPending: false,
+            isFailed: true,
+          );
+          notifyListeners();
+        }
+        debugPrint('[CommentService] 이미지 댓글 전송 실패: ${response.statusCode}');
+        throw HttpException('이미지 댓글 전송 실패: ${response.statusCode}');
+      }
+    } catch (e) {
+      debugPrint('[CommentService] 이미지 댓글 전송 오류 - failed 상태로 변경: $e');
+
+      // 실패 시: pending → failed로 변경
+      final index = _comments.indexWhere((c) => c.id == tempCommentId);
+      if (index != -1) {
+        _comments[index] = _comments[index].copyWith(
+          isPending: false,
+          isFailed: true,
+        );
+        notifyListeners();
+      }
+
+      if (e is DioException) {
+        debugPrint(
+          '[CommentService] Dio 에러: ${e.response?.statusCode} - ${e.response?.data}',
+        );
+      }
+    }
+  }
+
   /// 댓글 추가 (낙관적 업데이트)
   Future<void> addComment({
     required String username,
@@ -697,8 +1453,20 @@ class CommentService extends ChangeNotifier {
     String? authorProfileImageUrl, // 🎯 프로필 이미지 URL 추가
     String? parentId,
     String? imageUrl,
+    String? localImagePath, // 🎯 로컬 이미지 파일 경로
+    String? visibleToUsername, // 🎯 비밀 메시지 대상 사용자 (1:1)
   }) async {
     if (_currentPostId == null) return;
+
+    // 🎯 언급 파싱 (엣지 케이스 모두 고려)
+    var mentionedUsernames = MentionParser.extractMentions(content);
+
+    // 🎯 본인 언급 제외 (명세서: 본인을 언급해도 알림이 가지 않음)
+    final currentUsername = await _getCurrentUsername();
+    if (currentUsername != null) {
+      mentionedUsernames =
+          mentionedUsernames.where((u) => u != currentUsername).toList();
+    }
 
     // 1️⃣ 임시 ID 생성 (pending 댓글 식별용)
     final tempId = 'temp_${DateTime.now().millisecondsSinceEpoch}';
@@ -707,37 +1475,114 @@ class CommentService extends ChangeNotifier {
     // 🎯 UTC 시간 사용 (서버 시간과 일치하도록)
     final utcNow = DateTime.now().toUtc().toIso8601String();
 
+    // 🎯 비밀댓글에 답장하는 경우 자동으로 PRIVATE로 설정
+    bool isSecret = visibleToUsername != null && visibleToUsername.isNotEmpty;
+    if (!isSecret && parentId != null) {
+      // 부모 댓글이 비밀댓글이면 자동으로 PRIVATE로 설정
+      final parentComment = _comments.firstWhere(
+        (c) => c.id == parentId,
+        orElse:
+            () => Comment(
+              id: '',
+              author: '',
+              content: '',
+              authorProfileImageUrl: '',
+              postId: _currentPostId!,
+              createdAt: '',
+              updatedAt: '',
+            ),
+      );
+      if (parentComment.id.isNotEmpty &&
+          (parentComment.isSecret || parentComment.visibility == 'PRIVATE')) {
+        isSecret = true;
+        // visibleToUsername은 null로 유지 (서버에서 자동 처리)
+      }
+    }
+
+    // 🎯 이미지만 보낼 때 content에 [IMAGE] 마커 추가 (렌더링 시 참고용)
+    final trimmedContent = content.trim();
+    final optimisticContent =
+        trimmedContent.isEmpty && localImagePath != null
+            ? '[IMAGE]'
+            : trimmedContent;
+
     final optimisticComment = Comment(
       id: tempId,
       author: username,
-      content: content,
+      content: optimisticContent, // 🎯 [IMAGE] 마커 포함
       authorProfileImageUrl: authorProfileImageUrl ?? '', // 🎯 프로필 이미지 즉시 설정
       postId: _currentPostId!,
       parentId: parentId,
-      imageUrl: imageUrl,
-      visibility: 'PUBLIC',
+      imageUrl: imageUrl, // 🎯 서버에서 받은 이미지 URL (초기에는 null)
+      localImagePath: localImagePath, // 🎯 로컬 파일 경로 (업로드 전 표시용)
+      visibility: isSecret ? 'PRIVATE' : 'PUBLIC', // 🎯 비밀댓글이면 PRIVATE
       createdAt: utcNow, // 🎯 UTC 시간 사용
       updatedAt: utcNow, // 🎯 UTC 시간 사용
       isPending: true, // 서버 전송 대기 중
       isFailed: false,
+      mentionedUsernames:
+          mentionedUsernames.isNotEmpty ? mentionedUsernames : null,
+      isSecret: isSecret,
+      isRestricted: isSecret,
+      visibleToUsername: visibleToUsername,
     );
 
     _comments.add(optimisticComment);
     _serverCommentCount++; // 🎯 전체 댓글 수 증가
     notifyListeners(); // ⚡ UI 즉시 업데이트
-    debugPrint('[CommentService] 낙관적 댓글 추가: $tempId');
+    debugPrint(
+      '[CommentService] 낙관적 댓글 추가: $tempId (언급: $mentionedUsernames, 비밀: $isSecret)',
+    );
 
-    // 3️⃣ 서버에 요청 전송 (백그라운드)
+    // 3️⃣ 서버에 요청 전송 (댓글 API 사용)
     try {
-      final requestBody = {
-        'content': content,
-        'postId': int.parse(_currentPostId!),
-        'parentId': parentId != null ? int.parse(parentId) : null,
-        'imageUrl': imageUrl,
-        'visibility': 'PUBLIC',
+      // 🎯 댓글 API 명세서에 따른 요청 Body
+      // 🎯 이미지만 보낼 때 content에 [IMAGE] 마커 추가 (렌더링 시 참고용)
+      final trimmedContent = content.trim();
+      final finalContent =
+          trimmedContent.isEmpty && localImagePath != null
+              ? '[IMAGE]'
+              : trimmedContent;
+      debugPrint(
+        '[CommentService] content 처리: original="$content", trimmed="$trimmedContent", final="$finalContent", localImagePath=$localImagePath',
+      );
+
+      // 🎯 postId를 정수로 변환 (서버가 long 타입을 요구)
+      final postIdInt = int.tryParse(_currentPostId!);
+      if (postIdInt == null) {
+        throw Exception('postId를 정수로 변환할 수 없습니다: $_currentPostId');
+      }
+
+      // 🎯 parentId를 정수로 변환 (대댓글인 경우)
+      int? parentIdInt;
+      if (parentId != null) {
+        parentIdInt = int.tryParse(parentId);
+        if (parentIdInt == null) {
+          throw Exception('parentId를 정수로 변환할 수 없습니다: $parentId');
+        }
+      }
+
+      final requestBody = <String, dynamic>{
+        'content': finalContent, // 명세서: content 필드 사용 (이미지만 보낼 때는 [IMAGE] 마커)
+        'postId': postIdInt, // 포스트 ID (정수)
+        if (parentIdInt != null) 'parentId': parentIdInt, // 대댓글인 경우
+        'visibility': isSecret ? 'PRIVATE' : 'PUBLIC', // 명세서: visibility 필드 사용
+        if (imageUrl != null && imageUrl.isNotEmpty)
+          'imageUrl': imageUrl, // 🎯 이미지 URL
+        // 🎯 언급 기능: 명세서에 따라 mentionedUsernames 배열 포함
+        if (mentionedUsernames.isNotEmpty)
+          'mentionedUsernames': mentionedUsernames, // 언급된 사용자 목록
       };
 
-      debugPrint('[CommentService] 댓글 추가 요청: $requestBody');
+      debugPrint('[CommentService] 채팅 메시지 전송 요청: $requestBody');
+      debugPrint(
+        '[CommentService] postId 타입: ${postIdInt.runtimeType}, 값: $postIdInt',
+      );
+      if (parentIdInt != null) {
+        debugPrint(
+          '[CommentService] parentId 타입: ${parentIdInt.runtimeType}, 값: $parentIdInt',
+        );
+      }
 
       final response = await _dio.post(
         '/api/comments',
@@ -751,7 +1596,39 @@ class CommentService extends ChangeNotifier {
 
       if (response.statusCode == 200 || response.statusCode == 201) {
         // 성공: 서버 응답 데이터로 임시 댓글 교체
-        final serverComment = Comment.fromJson(response.data);
+        // 🎯 비밀댓글 권한 체크
+        final responseData =
+            response.data is Map<String, dynamic>
+                ? Map<String, dynamic>.from(response.data)
+                : <String, dynamic>{};
+        final originalContent = responseData['content']?.toString() ?? '';
+        final checkedContent = await _checkPrivateCommentAccess(
+          responseData,
+          originalContent,
+        );
+        responseData['content'] = checkedContent;
+
+        // 🎯 비밀댓글인 경우 이모지 반응도 권한 체크
+        final visibility = responseData['visibility']?.toString() ?? 'PUBLIC';
+        final isPrivate = visibility == 'PRIVATE';
+        if (isPrivate) {
+          final currentUsername = await _getCurrentUsername();
+          final author =
+              responseData['author']?.toString() ??
+              responseData['authorUsername']?.toString() ??
+              '';
+          final canViewPrivate =
+              author == currentUsername ||
+              (_currentPostAuthorUsername != null &&
+                  _currentPostAuthorUsername == currentUsername);
+          if (!canViewPrivate) {
+            responseData['emotionCounts'] = <String, dynamic>{};
+            responseData['myEmotions'] = <String, dynamic>{};
+            responseData['emotionUsers'] = <String, dynamic>{};
+          }
+        }
+
+        final serverComment = Comment.fromJson(responseData);
 
         // 같은 ID가 이미 있는지 확인 (WebSocket이 먼저 추가했을 수 있음)
         final existingServerCommentIndex = _comments.indexWhere(
@@ -773,7 +1650,11 @@ class CommentService extends ChangeNotifier {
           debugPrint(
             '[CommentService] 🔄 임시 댓글 교체: $tempId → ${serverComment.id}',
           );
-          _comments[tempIndex] = serverComment;
+          // 🎯 로컬 이미지 경로 유지 (아직 업로드 중일 수 있음)
+          final tempComment = _comments[tempIndex];
+          _comments[tempIndex] = serverComment.copyWith(
+            localImagePath: tempComment.localImagePath, // 🎯 로컬 경로 유지
+          );
         } else {
           debugPrint('[CommentService] ⚠️ 임시 댓글이 없음 (이미 제거됨?) - 서버 댓글 추가 안 함');
           // WebSocket이 이미 추가했으므로 여기선 추가하지 않음
@@ -805,6 +1686,85 @@ class CommentService extends ChangeNotifier {
           isFailed: true,
         );
         notifyListeners(); // UI에 실패 상태 표시
+      }
+
+      if (e is DioException) {
+        debugPrint(
+          '[CommentService] Dio 에러: ${e.response?.statusCode} - ${e.response?.data}',
+        );
+      }
+    }
+  }
+
+  /// 🎯 댓글의 이미지 URL 업데이트 (확정 처리)
+  Future<void> updateCommentImageUrl(
+    String commentId,
+    String newImageUrl,
+  ) async {
+    // 1️⃣ 낙관적 업데이트 (즉시 UI 반영)
+    final commentIndex = _comments.indexWhere((c) => c.id == commentId);
+    if (commentIndex == -1) {
+      debugPrint('[CommentService] ⚠️ 이미지 URL을 업데이트할 댓글을 찾을 수 없음: $commentId');
+      return;
+    }
+
+    final originalComment = _comments[commentIndex];
+    _comments[commentIndex] = originalComment.copyWith(
+      imageUrl: newImageUrl,
+      updatedAt: DateTime.now().toIso8601String(),
+    );
+
+    notifyListeners(); // ⚡ UI 즉시 업데이트
+
+    debugPrint(
+      '[CommentService] 낙관적 댓글 이미지 URL 업데이트: $commentId -> $newImageUrl',
+    );
+
+    // 2️⃣ 서버에 요청 전송 (백그라운드)
+    try {
+      // 🎯 댓글 수정 API 명세서에 따른 요청 Body
+      final requestData = {
+        'content': originalComment.content,
+        'postId': int.tryParse(originalComment.postId) ?? 0,
+        'imageUrl': newImageUrl, // 🎯 이미지 URL 업데이트
+      };
+      debugPrint('[CommentService] 댓글 이미지 URL 업데이트 요청 데이터: $requestData');
+
+      final response = await _dio.put(
+        '/api/comments/$commentId',
+        data: requestData,
+        options: Options(receiveTimeout: const Duration(seconds: 10)),
+      );
+
+      debugPrint(
+        '[CommentService] 댓글 이미지 URL 업데이트 응답: ${response.statusCode} - ${response.data}',
+      );
+
+      if (response.statusCode == 200) {
+        debugPrint(
+          '[CommentService] ✅ 댓글 이미지 URL 업데이트 성공 (WebSocket으로 최종 검증 대기)',
+        );
+        // 3️⃣ WebSocket이 최종 검증 데이터를 보내줄 것임
+      } else {
+        debugPrint(
+          '[CommentService] ⚠️ 댓글 이미지 URL 업데이트 실패: ${response.statusCode}',
+        );
+        // 실패 시 원래 이미지 URL로 롤백
+        final currentIndex = _comments.indexWhere((c) => c.id == commentId);
+        if (currentIndex != -1) {
+          _comments[currentIndex] = originalComment;
+          notifyListeners();
+        }
+        throw HttpException('댓글 이미지 URL 업데이트 실패: ${response.statusCode}');
+      }
+    } catch (e) {
+      debugPrint('[CommentService] 댓글 이미지 URL 업데이트 오류 - 롤백: $e');
+
+      // 4️⃣ 실패 시 원래 이미지 URL로 롤백
+      final currentIndex = _comments.indexWhere((c) => c.id == commentId);
+      if (currentIndex != -1) {
+        _comments[currentIndex] = originalComment;
+        notifyListeners();
       }
 
       if (e is DioException) {
@@ -869,33 +1829,89 @@ class CommentService extends ChangeNotifier {
             comment.emotionCounts,
           );
 
-          if (previousEmoji != null && previousEmoji != emoji) {
-            final oldCount =
-                int.tryParse(newEmotionCounts[previousEmoji] ?? '0') ?? 0;
-            if (oldCount > 1) {
-              newEmotionCounts[previousEmoji] = (oldCount - 1).toString();
-            } else {
-              newEmotionCounts.remove(previousEmoji);
-            }
-          }
+          // 🎯 emotionUsers도 낙관적으로 업데이트
+          final newEmotionUsers = Map<String, List<Map<String, dynamic>>>.from(
+            comment.emotionUsers,
+          );
+          final currentUsername = await _getCurrentUsername();
 
+          // 🎯 같은 이모지 제거인지 다른 이모지로 변경인지 먼저 확인
           if (hasThisReaction) {
+            // 같은 이모지 제거: 카운트 감소 (낙관적 업데이트에서 바로 -1)
             final currentCount =
                 int.tryParse(newEmotionCounts[emoji] ?? '0') ?? 0;
-            if (currentCount > 1) {
+            // 🎯 이미 내가 단 경우 바로 감소 (3→1이 아니라 바로 1로)
+            if (currentCount > 0) {
               newEmotionCounts[emoji] = (currentCount - 1).toString();
+              if (newEmotionCounts[emoji] == '0') {
+                newEmotionCounts.remove(emoji);
+              }
             } else {
               newEmotionCounts.remove(emoji);
             }
+            // 🎯 emotionUsers에서도 제거
+            if (newEmotionUsers.containsKey(emoji) && currentUsername != null) {
+              newEmotionUsers[emoji] =
+                  newEmotionUsers[emoji]!
+                      .where((user) => user['username'] != currentUsername)
+                      .toList();
+              if (newEmotionUsers[emoji]!.isEmpty) {
+                newEmotionUsers.remove(emoji);
+              }
+            }
           } else {
+            // 다른 이모지로 변경: 기존 이모지 제거 + 새 이모지 추가
+            if (previousEmoji != null && previousEmoji != emoji) {
+              // 기존 이모지 제거
+              final oldCount =
+                  int.tryParse(newEmotionCounts[previousEmoji] ?? '0') ?? 0;
+              if (oldCount > 0) {
+                newEmotionCounts[previousEmoji] = (oldCount - 1).toString();
+                if (newEmotionCounts[previousEmoji] == '0') {
+                  newEmotionCounts.remove(previousEmoji);
+                }
+              } else {
+                newEmotionCounts.remove(previousEmoji);
+              }
+              // 🎯 emotionUsers에서도 제거
+              if (newEmotionUsers.containsKey(previousEmoji) &&
+                  currentUsername != null) {
+                newEmotionUsers[previousEmoji] =
+                    newEmotionUsers[previousEmoji]!
+                        .where((user) => user['username'] != currentUsername)
+                        .toList();
+                if (newEmotionUsers[previousEmoji]!.isEmpty) {
+                  newEmotionUsers.remove(previousEmoji);
+                }
+              }
+            }
+            // 새 이모지 추가: 카운트 증가
             final currentCount =
                 int.tryParse(newEmotionCounts[emoji] ?? '0') ?? 0;
             newEmotionCounts[emoji] = (currentCount + 1).toString();
+            // 🎯 emotionUsers에 현재 사용자 추가
+            if (currentUsername != null) {
+              if (!newEmotionUsers.containsKey(emoji)) {
+                newEmotionUsers[emoji] = [];
+              }
+              // 이미 있는지 확인 후 추가
+              final existingUser =
+                  newEmotionUsers[emoji]!
+                      .where((user) => user['username'] == currentUsername)
+                      .firstOrNull;
+              if (existingUser == null) {
+                newEmotionUsers[emoji]!.add({
+                  'username': currentUsername,
+                  'profileImageUrl': '', // 프로필 이미지는 서버 응답에서 업데이트
+                });
+              }
+            }
           }
 
           _comments[commentIndex] = comment.copyWith(
             myEmotions: newMyEmotions,
             emotionCounts: newEmotionCounts,
+            emotionUsers: newEmotionUsers,
           );
           notifyListeners();
         }
@@ -921,36 +1937,89 @@ class CommentService extends ChangeNotifier {
           comment.emotionCounts,
         );
 
-        // 기존 이모지가 있고, 새 이모지와 다르면 기존 이모지 카운트 감소
-        if (previousEmoji != null && previousEmoji != emoji) {
-          final oldCount =
-              int.tryParse(newEmotionCounts[previousEmoji] ?? '0') ?? 0;
-          if (oldCount > 1) {
-            newEmotionCounts[previousEmoji] = (oldCount - 1).toString();
-          } else {
-            newEmotionCounts.remove(previousEmoji);
-          }
-        }
+        // 🎯 emotionUsers도 낙관적으로 업데이트
+        final newEmotionUsers = Map<String, List<Map<String, dynamic>>>.from(
+          comment.emotionUsers,
+        );
+        final currentUsername = await _getCurrentUsername();
 
+        // 🎯 같은 이모지 제거인지 다른 이모지로 변경인지 먼저 확인
         if (hasThisReaction) {
-          // 같은 이모지 제거: 카운트 감소
+          // 같은 이모지 제거: 카운트 감소 (낙관적 업데이트에서 바로 -1)
           final currentCount =
               int.tryParse(newEmotionCounts[emoji] ?? '0') ?? 0;
-          if (currentCount > 1) {
+          // 🎯 이미 내가 단 경우 바로 감소 (3→1이 아니라 바로 1로)
+          if (currentCount > 0) {
             newEmotionCounts[emoji] = (currentCount - 1).toString();
+            if (newEmotionCounts[emoji] == '0') {
+              newEmotionCounts.remove(emoji);
+            }
           } else {
             newEmotionCounts.remove(emoji);
           }
+          // 🎯 emotionUsers에서도 제거
+          if (newEmotionUsers.containsKey(emoji) && currentUsername != null) {
+            newEmotionUsers[emoji] =
+                newEmotionUsers[emoji]!
+                    .where((user) => user['username'] != currentUsername)
+                    .toList();
+            if (newEmotionUsers[emoji]!.isEmpty) {
+              newEmotionUsers.remove(emoji);
+            }
+          }
         } else {
+          // 다른 이모지로 변경: 기존 이모지 제거 + 새 이모지 추가
+          if (previousEmoji != null && previousEmoji != emoji) {
+            // 기존 이모지 제거
+            final oldCount =
+                int.tryParse(newEmotionCounts[previousEmoji] ?? '0') ?? 0;
+            if (oldCount > 0) {
+              newEmotionCounts[previousEmoji] = (oldCount - 1).toString();
+              if (newEmotionCounts[previousEmoji] == '0') {
+                newEmotionCounts.remove(previousEmoji);
+              }
+            } else {
+              newEmotionCounts.remove(previousEmoji);
+            }
+            // 🎯 emotionUsers에서도 제거
+            if (newEmotionUsers.containsKey(previousEmoji) &&
+                currentUsername != null) {
+              newEmotionUsers[previousEmoji] =
+                  newEmotionUsers[previousEmoji]!
+                      .where((user) => user['username'] != currentUsername)
+                      .toList();
+              if (newEmotionUsers[previousEmoji]!.isEmpty) {
+                newEmotionUsers.remove(previousEmoji);
+              }
+            }
+          }
           // 새 이모지 추가: 카운트 증가
           final currentCount =
               int.tryParse(newEmotionCounts[emoji] ?? '0') ?? 0;
           newEmotionCounts[emoji] = (currentCount + 1).toString();
+          // 🎯 emotionUsers에 현재 사용자 추가
+          if (currentUsername != null) {
+            if (!newEmotionUsers.containsKey(emoji)) {
+              newEmotionUsers[emoji] = [];
+            }
+            // 이미 있는지 확인 후 추가
+            final existingUser =
+                newEmotionUsers[emoji]!
+                    .where((user) => user['username'] == currentUsername)
+                    .firstOrNull;
+            if (existingUser == null) {
+              newEmotionUsers[emoji]!.add({
+                'username': currentUsername,
+                'profileImageUrl': '', // 프로필 이미지는 서버 응답에서 업데이트
+              });
+            }
+          }
         }
 
         _comments[commentIndex] = comment.copyWith(
           myEmotions: newMyEmotions,
           emotionCounts: newEmotionCounts,
+          emotionUsers: newEmotionUsers,
         );
 
         // 🎯 즉시 UI 업데이트 (낙관적 업데이트)
@@ -979,6 +2048,32 @@ class CommentService extends ChangeNotifier {
     debugPrint(
       '[CommentService] 반응 토글 응답: ${response.statusCode} - ${response.data}',
     );
+
+    // 🎯 서버 응답으로 댓글 업데이트 (emotionUsers 포함)
+    if (response.statusCode == 200 && response.data != null) {
+      try {
+        // 🎯 비밀댓글 권한 체크
+        final responseData =
+            response.data is Map<String, dynamic>
+                ? Map<String, dynamic>.from(response.data)
+                : <String, dynamic>{};
+        final originalContent = responseData['content']?.toString() ?? '';
+        final checkedContent = await _checkPrivateCommentAccess(
+          responseData,
+          originalContent,
+        );
+        responseData['content'] = checkedContent;
+        final updatedComment = Comment.fromJson(responseData);
+        final commentIndex = _comments.indexWhere((c) => c.id == commentId);
+        if (commentIndex != -1) {
+          _comments[commentIndex] = updatedComment;
+          notifyListeners();
+          debugPrint('[CommentService] ✅ 댓글 반응 업데이트 완료 (emotionUsers 포함)');
+        }
+      } catch (e) {
+        debugPrint('[CommentService] ⚠️ 서버 응답 파싱 오류: $e');
+      }
+    }
   }
 
   /// 댓글 삭제 (낙관적 업데이트)
@@ -991,6 +2086,8 @@ class CommentService extends ChangeNotifier {
     }
 
     final deletedComment = _comments[commentIndex]; // 롤백용 백업
+    final deletedImageUrl = deletedComment.imageUrl; // 🎯 삭제할 이미지 URL
+
     _comments.removeAt(commentIndex);
     _serverCommentCount--; // 🎯 전체 댓글 수 감소
 
@@ -999,6 +2096,13 @@ class CommentService extends ChangeNotifier {
     notifyListeners(); // ⚡ UI 즉시 업데이트
 
     debugPrint('[CommentService] 낙관적 댓글 삭제: $commentId');
+
+    // 🎯 이미지가 있으면 R2에서 비동기로 삭제 (낙관적 UI 삭제 후)
+    if (deletedImageUrl != null &&
+        deletedImageUrl.isNotEmpty &&
+        !deletedImageUrl.startsWith('pending://')) {
+      _deleteImageFromR2(deletedImageUrl);
+    }
 
     // 2️⃣ 서버에 요청 전송 (백그라운드)
     try {
@@ -1063,15 +2167,11 @@ class CommentService extends ChangeNotifier {
 
     // 2️⃣ 서버에 요청 전송 (백그라운드)
     try {
+      // 🎯 댓글 수정 API 명세서에 따른 요청 Body
       final requestData = {
         'content': newContent,
         'postId': int.tryParse(originalComment.postId) ?? 0,
-        'parentId':
-            originalComment.parentId != null
-                ? int.tryParse(originalComment.parentId!)
-                : null,
-        'imageUrl': originalComment.imageUrl,
-        'visibility': originalComment.visibility,
+        // 명세서: content, postId만 필요 (parentId, imageUrl, visibility는 선택사항)
       };
       debugPrint('[CommentService] 댓글 수정 요청 데이터: $requestData');
 
@@ -1116,6 +2216,18 @@ class CommentService extends ChangeNotifier {
         );
       }
       rethrow;
+    }
+  }
+
+  /// 🎯 R2에서 이미지 비동기 삭제 (댓글 삭제 시)
+  Future<void> _deleteImageFromR2(String imageUrl) async {
+    try {
+      // 🎯 R2UploadService를 통해 URL 기반 삭제
+      final r2Service = R2UploadService();
+      await r2Service.deleteFileFromR2ByUrl(imageUrl);
+      debugPrint('[CommentService] ✅ R2 이미지 삭제 완료: $imageUrl');
+    } catch (e) {
+      debugPrint('[CommentService] R2 이미지 삭제 오류: $e');
     }
   }
 

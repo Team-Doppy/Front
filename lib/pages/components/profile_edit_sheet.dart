@@ -741,131 +741,190 @@ class _ProfileInfoEditBottomSheetState
       domain = link;
     }
 
-    return Container(
-      height: 56,
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surfaceVariant,
-        borderRadius: BorderRadius.circular(16),
-      ),
-      child: Row(
-        children: [
-          // 🎯 링크 썸네일 또는 아이콘 (저장된 썸네일 우선, 없으면 Google Favicon API)
-          Container(
-            width: 40,
-            height: 40,
-            decoration: BoxDecoration(
-              color: Theme.of(context).colorScheme.onSurface.withOpacity(0.1),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            clipBehavior: Clip.antiAlias,
-            child: Builder(
-              builder: (context) {
-                // 🎯 저장된 썸네일 URL 우선 사용 (등록 시 메타데이터에서 가져온 썸네일)
-                String? thumbnailUrl = _linkThumbnails[link];
+    return GestureDetector(
+      onTap: () => _showLinkEditOverlay(context, link, index),
+      child: Container(
+        height: 56,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.surfaceVariant,
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Row(
+          children: [
+            // 🎯 링크 썸네일 또는 아이콘 (저장된 썸네일 우선, 없으면 Google Favicon API)
+            Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.onSurface.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              clipBehavior: Clip.antiAlias,
+              child: Builder(
+                builder: (context) {
+                  // 🎯 저장된 썸네일 URL 우선 사용 (등록 시 메타데이터에서 가져온 썸네일)
+                  String? thumbnailUrl = _linkThumbnails[link];
 
-                // 저장된 썸네일이 없으면 Google Favicon API 사용
-                if (thumbnailUrl == null || thumbnailUrl.isEmpty) {
-                  try {
-                    final uri = Uri.parse(displayUrl);
-                    final domain = uri.host.replaceFirst('www.', '');
-                    thumbnailUrl =
-                        'https://www.google.com/s2/favicons?domain=$domain&sz=64';
-                  } catch (_) {
-                    thumbnailUrl = null;
+                  // 저장된 썸네일이 없으면 Google Favicon API 사용
+                  if (thumbnailUrl == null || thumbnailUrl.isEmpty) {
+                    try {
+                      final uri = Uri.parse(displayUrl);
+                      final domain = uri.host.replaceFirst('www.', '');
+                      thumbnailUrl =
+                          'https://www.google.com/s2/favicons?domain=$domain&sz=64';
+                    } catch (_) {
+                      thumbnailUrl = null;
+                    }
                   }
-                }
 
-                return thumbnailUrl != null
-                    ? Image.network(
-                      thumbnailUrl,
-                      fit: BoxFit.cover,
-                      errorBuilder: (context, error, stackTrace) {
-                        return Icon(
-                          Icons.link,
-                          color: Theme.of(
-                            context,
-                          ).colorScheme.onSurface.withOpacity(0.7),
-                          size: 20,
-                        );
-                      },
-                      loadingBuilder: (context, child, loadingProgress) {
-                        if (loadingProgress == null) {
-                          return child;
-                        }
-                        return Icon(
-                          Icons.link,
-                          color: Theme.of(
-                            context,
-                          ).colorScheme.onSurface.withOpacity(0.7),
-                          size: 20,
-                        );
-                      },
-                    )
-                    : Icon(
-                      Icons.link,
-                      color: Theme.of(
-                        context,
-                      ).colorScheme.onSurface.withOpacity(0.7),
-                      size: 20,
-                    );
-              },
-            ),
-          ),
-          const SizedBox(width: 12),
-          // 링크 정보
-          Expanded(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  // 🎯 직접 작성한 타이틀이 있으면 표시, 없으면 도메인 표시
-                  _linkTitles.containsKey(link) && _linkTitles[link]!.isNotEmpty
-                      ? _linkTitles[link]!
-                      : domain,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: Theme.of(context).colorScheme.onSurface,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  link,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: Theme.of(
-                      context,
-                    ).colorScheme.onSurface.withOpacity(0.6),
-                    fontSize: 12,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          // 삭제 버튼
-          GestureDetector(
-            onTap: () {
-              setState(() {
-                final removedUrl = _links.removeAt(index);
-                // 🎯 타이틀도 함께 삭제
-                _linkTitles.remove(removedUrl);
-              });
-            },
-            child: Container(
-              padding: const EdgeInsets.all(8),
-              child: Icon(
-                Icons.close,
-                color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
-                size: 20,
+                  return thumbnailUrl != null
+                      ? Image.network(
+                        thumbnailUrl,
+                        fit: BoxFit.cover,
+                        errorBuilder: (context, error, stackTrace) {
+                          return Icon(
+                            Icons.link,
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.onSurface.withOpacity(0.7),
+                            size: 20,
+                          );
+                        },
+                        loadingBuilder: (context, child, loadingProgress) {
+                          if (loadingProgress == null) {
+                            return child;
+                          }
+                          return Icon(
+                            Icons.link,
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.onSurface.withOpacity(0.7),
+                            size: 20,
+                          );
+                        },
+                      )
+                      : Icon(
+                        Icons.link,
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.onSurface.withOpacity(0.7),
+                        size: 20,
+                      );
+                },
               ),
             ),
-          ),
-        ],
+            const SizedBox(width: 12),
+            // 링크 정보
+            Expanded(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    // 🎯 직접 작성한 타이틀이 있으면 표시, 없으면 도메인 표시
+                    _linkTitles.containsKey(link) &&
+                            _linkTitles[link]!.isNotEmpty
+                        ? _linkTitles[link]!
+                        : domain,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.onSurface,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    link,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.onSurface.withOpacity(0.6),
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            // 삭제 버튼
+            GestureDetector(
+              onTap: () {
+                // 🎯 삭제 버튼 탭 시 이벤트 전파 방지
+                setState(() {
+                  final removedUrl = _links.removeAt(index);
+                  // 🎯 타이틀도 함께 삭제
+                  _linkTitles.remove(removedUrl);
+                  _linkThumbnails.remove(removedUrl);
+                });
+              },
+              behavior: HitTestBehavior.opaque, // 🎯 이벤트 전파 방지
+              child: Container(
+                padding: const EdgeInsets.all(8),
+                child: Icon(
+                  Icons.close,
+                  color: Theme.of(
+                    context,
+                  ).colorScheme.onSurface.withOpacity(0.6),
+                  size: 20,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // 🎯 링크 수정 오버레이 표시
+  void _showLinkEditOverlay(
+    BuildContext context,
+    String link,
+    int index,
+  ) async {
+    await Navigator.of(context).push(
+      PageRouteBuilder(
+        opaque: false,
+        barrierDismissible: true,
+        transitionDuration: Duration.zero,
+        reverseTransitionDuration: Duration.zero,
+        pageBuilder:
+            (_, __, ___) => LinkOverlay(
+              autoSubmit: true,
+              initialUrl: link,
+              initialTitle: _linkTitles[link],
+              initialThumbnailUrl: _linkThumbnails[link],
+              onSubmit: ({
+                required String url,
+                String? title,
+                String? description,
+                String? thumbnailUrl,
+              }) {
+                // 🎯 링크 수정 (기존 링크를 새 링크로 교체)
+                if (mounted) {
+                  // 기존 링크 정보 삭제
+                  final oldUrl = _links[index];
+                  _linkTitles.remove(oldUrl);
+                  _linkThumbnails.remove(oldUrl);
+
+                  // 새 링크로 교체
+                  setState(() {
+                    _links[index] = url;
+                    // 🎯 타이틀 저장
+                    if (title != null && title.isNotEmpty) {
+                      _linkTitles[url] = title;
+                    }
+                    // 🎯 썸네일 URL 저장
+                    if (thumbnailUrl != null && thumbnailUrl.isNotEmpty) {
+                      _linkThumbnails[url] = thumbnailUrl;
+                    }
+                  });
+                }
+              },
+            ),
       ),
     );
   }

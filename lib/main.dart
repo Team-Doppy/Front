@@ -1,4 +1,5 @@
 import 'package:doppy/data/services/upload_service.dart';
+import 'package:doppy/data/models/friend_model.dart';
 import 'package:doppy/editor/postwrite_screen.dart';
 import 'package:doppy/editor/service/node_component_service.dart';
 import 'package:doppy/editor/service/sticker_service.dart';
@@ -7,6 +8,7 @@ import 'package:doppy/providers/feed_provider/feed_ui_service.dart';
 import 'package:doppy/pages/screens/home_screen.dart';
 import 'package:doppy/data/services/home_data_service.dart';
 import 'package:doppy/pages/components/custom_bottom_navigation_bar.dart';
+import 'package:doppy/pages/components/received_request_bottom_sheet.dart';
 import 'package:doppy/pages/screens/splash_screen.dart';
 import 'package:doppy/pages/screens/user_profile_screen.dart';
 
@@ -32,6 +34,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart' show defaultTargetPlatform;
+import 'package:overlay_support/overlay_support.dart';
 import 'firebase_options.dart';
 import 'theme/theme.dart';
 import 'utils/route_observer.dart';
@@ -101,7 +104,83 @@ Future<void> main() async {
       debugPrint(
         '[FCM] 알림: ${message.notification?.title} - ${message.notification?.body}',
       );
-      // 포그라운드에서는 알림을 표시하지 않음
+
+      // 🎯 포그라운드에서도 앱 내부 알림 표시
+      final notification = message.notification;
+      if (notification != null) {
+        final context = navigatorKey.currentContext;
+        if (context != null) {
+          showOverlayNotification((context) {
+            return GestureDetector(
+              onTap: () {
+                // 🎯 알림 탭 시 딥링크 처리
+                final deepLink = message.data['deepLink'] as String?;
+                if (deepLink != null && deepLink.isNotEmpty) {
+                  _handleDeepLinkFromFcm(deepLink);
+                } else {
+                  // 🎯 type 필드로 처리 (딥링크가 없는 경우)
+                  final type = message.data['type'] as String?;
+                  if (type == 'FRIEND_REQUEST') {
+                    _handleDeepLinkFromFcm('doppy://friends/requests');
+                  }
+                }
+                // 알림 닫기
+                OverlaySupportEntry.of(context)?.dismiss();
+              },
+              child: Material(
+                color: Theme.of(context).colorScheme.surface,
+                child: SafeArea(
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).colorScheme.surface,
+                    ),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 14,
+                    ),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                notification.title ?? '알림',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w600,
+                                  fontSize: 15,
+                                  color:
+                                      Theme.of(context).colorScheme.onSurface,
+                                  letterSpacing: -0.2,
+                                ),
+                              ),
+                              if (notification.body != null) ...[
+                                const SizedBox(height: 6),
+                                Text(
+                                  notification.body!,
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    color: Theme.of(
+                                      context,
+                                    ).colorScheme.onSurface.withOpacity(0.7),
+                                    height: 1.4,
+                                    letterSpacing: -0.1,
+                                  ),
+                                ),
+                              ],
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            );
+          }, duration: const Duration(seconds: 3));
+        }
+      }
     });
 
     // 🎯 FCM 메시지 클릭 핸들러 등록
@@ -110,6 +189,12 @@ Future<void> main() async {
       final deepLink = message.data['deepLink'] as String?;
       if (deepLink != null && deepLink.isNotEmpty) {
         _handleDeepLinkFromFcm(deepLink);
+      } else {
+        // 🎯 type 필드로 처리 (딥링크가 없는 경우)
+        final type = message.data['type'] as String?;
+        if (type == 'FRIEND_REQUEST') {
+          _handleDeepLinkFromFcm('doppy://friends/requests');
+        }
       }
     });
 
@@ -124,6 +209,16 @@ Future<void> main() async {
         Future.delayed(const Duration(milliseconds: 1000), () {
           _handleDeepLinkFromFcm(deepLink);
         });
+      } else {
+        // 🎯 type 필드로 처리 (딥링크가 없는 경우)
+        final type = initialMessage.data['type'] as String?;
+        if (type == 'FRIEND_REQUEST') {
+          debugPrint('[FCM] 초기 친구 요청 알림 발견');
+          // 앱 초기화 완료 후 처리
+          Future.delayed(const Duration(milliseconds: 1000), () {
+            _handleDeepLinkFromFcm('doppy://friends/requests');
+          });
+        }
       }
     }
   } catch (e) {
@@ -186,7 +281,8 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return Consumer<LocaleProvider>(
       builder: (context, localeProvider, child) {
-        return MaterialApp(
+        return OverlaySupport(
+          child: MaterialApp(
           navigatorKey: navigatorKey,
           title: 'Doppy',
           debugShowCheckedModeBanner: false,
@@ -216,6 +312,7 @@ class MyApp extends StatelessWidget {
 
           onUnknownRoute:
               (_) => MaterialPageRoute(builder: (_) => const HomeScreen()),
+          ),
         );
       },
     );
@@ -235,6 +332,7 @@ class _RootShellState extends State<RootShell> with WidgetsBindingObserver {
   late int _index;
   String? _searchInitialQuery; // 검색 화면 초기 검색어
   final DeepLinkService _deepLinkService = DeepLinkService();
+  bool _isCheckingRequests = false; // 🎯 요청 확인 중인지 추적
 
   @override
   void initState() {
@@ -253,6 +351,88 @@ class _RootShellState extends State<RootShell> with WidgetsBindingObserver {
         debugPrint('[RootShell] Navigator context가 없습니다 - 딥링크 처리를 건너뜁니다');
       }
     });
+
+    // 🎯 앱 진입 시 받은 요청 확인 및 바텀시트 표시
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _checkAndShowReceivedRequests();
+    });
+  }
+
+  /// 🎯 받은 요청 확인 및 바텀시트 표시
+  Future<void> _checkAndShowReceivedRequests() async {
+    if (!mounted || _isCheckingRequests) return;
+
+    final friendProvider = context.read<FriendProvider>();
+
+    // 🎯 받은 요청 데이터가 아직 로드되지 않았을 수 있으므로, 먼저 로드 시도
+    // 캐시가 있으면 즉시 반환되고, 없으면 서버에서 로드
+    try {
+      await friendProvider.fetchAllFriendData(forceRefresh: false);
+    } catch (e) {
+      debugPrint('[RootShell] 받은 요청 로드 실패: $e');
+    }
+
+    if (!mounted) return;
+
+    final receivedRequests = friendProvider.receivedRequests;
+    debugPrint('[RootShell] 받은 요청 개수: ${receivedRequests.length}');
+
+    // 받은 요청이 있으면 리스트로 한 번에 표시
+    if (receivedRequests.isNotEmpty) {
+      _isCheckingRequests = true;
+      Future.delayed(const Duration(milliseconds: 500), () {
+        if (!mounted) return;
+        showModalBottomSheet(
+          context: context,
+          isScrollControlled: true,
+          backgroundColor: Colors.transparent,
+          builder:
+              (context) => ReceivedRequestBottomSheet(
+                requests: List<Friend>.from(receivedRequests),
+              ),
+        ).then((_) {
+          if (mounted) {
+            _isCheckingRequests = false;
+          }
+        });
+      });
+    } else {
+      // 받은 요청이 없으면 FriendProvider를 listen하여 나중에 업데이트 확인
+      friendProvider.addListener(_onFriendProviderChanged);
+    }
+  }
+
+  /// 🎯 FriendProvider 변경 시 받은 요청 확인
+  void _onFriendProviderChanged() {
+    if (!mounted || _isCheckingRequests) return;
+
+    final friendProvider = context.read<FriendProvider>();
+    final receivedRequests = friendProvider.receivedRequests;
+
+    debugPrint(
+      '[RootShell] FriendProvider 변경 - 받은 요청 개수: ${receivedRequests.length}',
+    );
+
+    if (receivedRequests.isNotEmpty) {
+      friendProvider.removeListener(_onFriendProviderChanged);
+      _isCheckingRequests = true;
+      Future.delayed(const Duration(milliseconds: 500), () {
+        if (!mounted) return;
+        showModalBottomSheet(
+          context: context,
+          isScrollControlled: true,
+          backgroundColor: Colors.transparent,
+          builder:
+              (context) => ReceivedRequestBottomSheet(
+                requests: List<Friend>.from(receivedRequests),
+              ),
+        ).then((_) {
+          if (mounted) {
+            _isCheckingRequests = false;
+          }
+        });
+      });
+    }
   }
 
   @override
@@ -261,6 +441,10 @@ class _RootShellState extends State<RootShell> with WidgetsBindingObserver {
     WidgetsBinding.instance.removeObserver(this);
     // 딥링크 리스너 해제
     _deepLinkService.dispose();
+    // FriendProvider 리스너 해제
+    try {
+      context.read<FriendProvider>().removeListener(_onFriendProviderChanged);
+    } catch (_) {}
     super.dispose();
   }
 

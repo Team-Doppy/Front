@@ -4,13 +4,11 @@ import 'package:doppy/pages/components/card_view.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-
 import 'package:doppy/data/models/post_data.dart';
 import 'package:doppy/data/services/blog_service.dart';
 import 'package:doppy/providers/feed_provider/feed_ui_service.dart';
 import 'package:doppy/providers/feed_provider/base_feed_provider.dart';
 import 'package:doppy/providers/feed_provider/my_profile_feed_provider.dart';
-import 'package:doppy/providers/user_provider.dart';
 import 'package:doppy/data/models/category_model.dart';
 import 'package:doppy/pages/components/image_view.dart';
 import 'package:doppy/pages/components/post_action_sheet.dart';
@@ -155,8 +153,10 @@ class _VerticalCategorySectionState extends State<VerticalCategorySection> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final username = context.read<UserProvider>().currentUser?.username;
-    final isReadOnly = context.read<BaseFeedProvider>().isReadOnly;
+    // 🎯 FeedProvider의 username 사용 (타인 프로필일 때 올바른 username 표시)
+    final feedProvider = context.read<BaseFeedProvider>();
+    final username = feedProvider.username;
+    final isReadOnly = feedProvider.isReadOnly;
     final isImageOnly = widget.displayMode == FeedDisplayMode.imageOnly;
 
     // 미분류 카테고리가 비어있으면 숨김
@@ -819,6 +819,9 @@ class _VerticalCategorySectionState extends State<VerticalCategorySection> {
     CategoryMetaData categoryMetaData,
     String? username,
   ) {
+    // 🎯 FeedProvider의 username 사용 (타인 프로필일 때 올바른 username 표시)
+    final feedProvider = context.read<BaseFeedProvider>();
+    final displayUsername = username ?? feedProvider.username;
     return LayoutBuilder(
       builder: (context, constraints) {
         // 텍스트의 예상 너비 계산
@@ -847,7 +850,7 @@ class _VerticalCategorySectionState extends State<VerticalCategorySection> {
                 context,
                 categoryMetaData.title,
                 categoryMetaData.categoryId,
-                username,
+                displayUsername,
               ),
               style: theme.textTheme.titleLarge?.copyWith(
                 fontWeight: FontWeight.w700,

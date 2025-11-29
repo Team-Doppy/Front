@@ -14,6 +14,7 @@ import 'package:doppy/utils/error_handler.dart';
 import 'package:doppy/utils/dialog_utils.dart';
 import 'package:doppy/l10n/app_localizations.dart';
 import 'package:doppy/data/services/friend_service.dart';
+import 'package:doppy/data/services/blog_service.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:doppy/data/services/upload_service.dart';
@@ -29,6 +30,8 @@ import 'package:flutter_svg/flutter_svg.dart';
 import 'dart:io';
 import 'dart:ui';
 import 'dart:async';
+import 'dart:typed_data';
+import 'package:doppy/image/custom_image_editor_screen.dart';
 
 class UserProfileScreen extends StatefulWidget {
   final User? otherUser; // 다른 사용자 프로필을 볼 때 username 전달
@@ -56,6 +59,9 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
 
   // 프로필 사진 변경 상태
   bool _isUploadingProfileImage = false;
+
+  // 블로그 조르기 로딩 상태
+  bool _isNudging = false;
 
   static final CategoryDropDown _categoryDropDown = CategoryDropDown();
   static final Feed _feed = Feed();
@@ -144,17 +150,41 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
         await context.read<UserProvider>().loadCurrentUserFromPrefs();
       } catch (_) {}
 
-      // 프로필 피드 초기 로드 (캐시가 있을 때는 요청 생략)
+      // 🎯 Feed Provider의 username을 항상 현재 프로필과 동기화
       try {
         final bool isOther = !_isOwnProfile;
-        final bool hasCachedData =
-            _feedProvider.categories.isNotEmpty ||
-            _feedProvider.posts.isNotEmpty;
-        if (!hasCachedData) {
-          await _feedProvider.loadInitial(
-            username: isOther ? widget.otherUser!.username : null,
-            force: false, // 스마트 캐시 전략 사용 (3분 TTL)
-          );
+        final String? targetUsername =
+            isOther ? widget.otherUser?.username : null;
+
+        // 타인 프로필일 때 Feed Provider의 username이 다르면 동기화
+        if (isOther && targetUsername != null) {
+          final otherProvider = _feedProvider as OtherProfileFeedProvider;
+          if (otherProvider.username != targetUsername) {
+            // username이 다르면 강제로 새로 로드
+            await otherProvider.loadInitial(
+              username: targetUsername,
+              force: true,
+            );
+          } else {
+            // username이 같으면 캐시 확인 후 로드
+            final bool hasCachedData =
+                _feedProvider.categories.isNotEmpty ||
+                _feedProvider.posts.isNotEmpty;
+            if (!hasCachedData) {
+              await _feedProvider.loadInitial(
+                username: targetUsername,
+                force: false,
+              );
+            }
+          }
+        } else if (!isOther) {
+          // 내 프로필일 때는 캐시 확인 후 로드
+          final bool hasCachedData =
+              _feedProvider.categories.isNotEmpty ||
+              _feedProvider.posts.isNotEmpty;
+          if (!hasCachedData) {
+            await _feedProvider.loadInitial(username: null, force: false);
+          }
         }
       } catch (_) {}
     });
@@ -282,6 +312,30 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     final User? other = widget.otherUser;
     final User? viewedUser = isOther ? userProvider.viewedUser : null;
 
+    // 🎯 build 메서드에서도 username 동기화 확인 (더 확실하게)
+    // didUpdateWidget이 호출되지 않는 경우를 대비
+    if (isOther && other != null) {
+      final otherProvider = _feedProvider as OtherProfileFeedProvider;
+      final targetUsername = other.username;
+
+      // username이 다르면 즉시 동기화
+      if (otherProvider.username != targetUsername &&
+          !otherProvider.isLoading) {
+        // 기존 데이터 클리어 (clearData 내부에서 notifyListeners 호출됨)
+        otherProvider.clearData();
+
+        // 즉시 새로 로드
+        WidgetsBinding.instance.addPostFrameCallback((_) async {
+          if (mounted) {
+            await otherProvider.loadInitial(
+              username: targetUsername,
+              force: true,
+            );
+          }
+        });
+      }
+    }
+
     final double topPadding = MediaQuery.of(context).padding.top;
 
     // 표시할 이미지 URL과 사용자명 결정
@@ -305,9 +359,9 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     // 이 화면 하위 트리에 BaseFeedProvider 타입으로 현재 피드 프로바이더를 주입
     return ChangeNotifierProvider<BaseFeedProvider>.value(
       value: _feedProvider,
-      child: Material(
-        color: Theme.of(context).colorScheme.background,
-        child: Stack(
+      child: Scaffold(
+        backgroundColor: Theme.of(context).colorScheme.background,
+        body: Stack(
           clipBehavior: Clip.none,
           children: [
             // 스크롤 가능한 컨텐츠 (Sliver)
@@ -1091,6 +1145,10 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
               duration: const Duration(milliseconds: 300),
               curve: Curves.easeOut,
               builder: (context, opacity, child) {
+                // 🎯 친구인 경우 두 개의 버튼을 나란히 표시
+                final isFriend =
+                    friendProvider.friendStatus == FriendRequestStatus.accepted;
+
                 return Padding(
                   padding: const EdgeInsets.only(
                     bottom: 4,
@@ -1100,17 +1158,91 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                   ),
                   child: Opacity(
                     opacity: opacity,
-                    child: _buildFilledButton(
-                      text: buttonText,
-                      onTap: buttonAction,
-                      isLoading: friendProvider.isLoadingStatus,
-                      isFilled:
-                          friendProvider.friendStatus ==
-                          FriendRequestStatus.none,
-                      isBlocked:
-                          friendProvider.friendStatus ==
-                          FriendRequestStatus.blocked, // 🎯 차단된 경우 스타일 변경
-                    ),
+                    child:
+                        isFriend
+                            ? Row(
+                              children: [
+                                Expanded(
+                                  child: _buildFilledButton(
+                                    text: buttonText,
+                                    onTap: buttonAction,
+                                    isLoading: friendProvider.isLoadingStatus,
+                                    isFilled: false,
+                                    isBlocked: false,
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: _buildFilledButton(
+                                    text: l10n.t('request_blog'),
+                                    onTap: () async {
+                                      // 🎯 블로그 조르기 API 호출
+                                      if (widget.otherUser == null ||
+                                          _isNudging)
+                                        return;
+
+                                      setState(() {
+                                        _isNudging = true;
+                                      });
+
+                                      try {
+                                        final blogService = BlogService();
+                                        await blogService.nudge(
+                                          widget.otherUser!.username,
+                                        );
+
+                                        if (mounted) {
+                                          // 스낵바로 성공 메시지 표시
+                                          ErrorHandler.showInfo(
+                                            context,
+                                            l10n.t('nudge_sent'),
+                                            fgColor: Colors.white,
+                                            bgColor:
+                                                Theme.of(
+                                                  context,
+                                                ).colorScheme.primary,
+                                            duration: const Duration(
+                                              seconds: 2,
+                                            ),
+                                          );
+                                        }
+                                      } catch (e) {
+                                        if (mounted) {
+                                          ErrorHandler.showError(
+                                            context,
+                                            e.toString().replaceAll(
+                                              'Exception: ',
+                                              '',
+                                            ),
+                                          );
+                                        }
+                                      } finally {
+                                        if (mounted) {
+                                          setState(() {
+                                            _isNudging = false;
+                                          });
+                                        }
+                                      }
+                                    },
+                                    isLoading: _isNudging,
+                                    isFilled: true,
+                                    isBlocked: false,
+                                  ),
+                                ),
+                              ],
+                            )
+                            : _buildFilledButton(
+                              text: buttonText,
+                              onTap: buttonAction,
+                              isLoading: friendProvider.isLoadingStatus,
+                              isFilled:
+                                  friendProvider.friendStatus ==
+                                  FriendRequestStatus.none,
+                              isBlocked:
+                                  friendProvider.friendStatus ==
+                                  FriendRequestStatus
+                                      .blocked, // 🎯 차단된 경우 스타일 변경
+                            ),
                   ),
                 );
               },
@@ -1680,73 +1812,131 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
 
   /// 선택된 이미지 처리
   Future<void> _handleImageSelected(File file) async {
-    setState(() {
-      _isUploadingProfileImage = true;
-    });
+    // 🎯 이미지 편집기 열기
+    File? tempFile;
+    try {
+      final imageBytes = await file.readAsBytes();
 
-    final upload = context.read<UploadService>();
-    final task = upload.enqueueFile(file, kind: UploadKind.profile);
-    _profileUploadTask = task;
-    _profileTaskListener = () async {
-      if (!mounted) return;
-      if (task.state == UploadState.success) {
-        try {
-          final imageUrl = task.url ?? '';
+      final editedBytes = await Navigator.push<Uint8List?>(
+        context,
+        MaterialPageRoute(
+          builder: (context) => CustomImageEditorScreen(imageBytes: imageBytes),
+          fullscreenDialog: true,
+        ),
+      );
 
-          if (imageUrl.isNotEmpty) {
-            if (_isOwnProfile) {
-              await context
-                  .read<MyProfileFeedProvider>()
-                  .updateProfileImageAfterUpload(imageUrl, context);
+      // 편집 취소 시 종료
+      if (editedBytes == null || !mounted) return;
+
+      // 편집된 이미지를 임시 파일로 저장
+      final tempDir = await Directory.systemTemp.createTemp('profile_edit_');
+      tempFile = File(
+        '${tempDir.path}/edited_profile_${DateTime.now().millisecondsSinceEpoch}.jpg',
+      );
+      await tempFile.writeAsBytes(editedBytes);
+
+      // 임시 디렉토리 정리 (파일은 유지)
+      try {
+        await tempDir.delete(recursive: false);
+      } catch (_) {}
+
+      setState(() {
+        _isUploadingProfileImage = true;
+      });
+
+      final upload = context.read<UploadService>();
+      final task = upload.enqueueFile(tempFile, kind: UploadKind.profile);
+      _profileUploadTask = task;
+      final finalTempFile = tempFile; // 클로저에서 사용하기 위해
+      _profileTaskListener = () async {
+        if (!mounted) return;
+        if (task.state == UploadState.success) {
+          try {
+            final imageUrl = task.url ?? '';
+
+            if (imageUrl.isNotEmpty) {
+              if (_isOwnProfile) {
+                await context
+                    .read<MyProfileFeedProvider>()
+                    .updateProfileImageAfterUpload(imageUrl, context);
+              } else {
+                // 다른 사람 프로필에서는 이 기능을 사용할 수 없음
+                throw Exception('다른 사람의 프로필 이미지는 업데이트할 수 없습니다');
+              }
             } else {
-              // 다른 사람 프로필에서는 이 기능을 사용할 수 없음
-              throw Exception('다른 사람의 프로필 이미지는 업데이트할 수 없습니다');
+              debugPrint(
+                '[UserProfileScreen] imageUrl is empty, calling fetchMyProfile',
+              );
+              await context.read<UserProvider>().fetchMyProfile();
             }
-          } else {
+          } catch (e) {
             debugPrint(
-              '[UserProfileScreen] imageUrl is empty, calling fetchMyProfile',
+              '[UserProfileScreen] Error in upload success handler: $e',
             );
-            await context.read<UserProvider>().fetchMyProfile();
           }
-        } catch (e) {
-          debugPrint('[UserProfileScreen] Error in upload success handler: $e');
+          if (_profileTaskListener != null) {
+            task.removeListener(_profileTaskListener!);
+            _profileTaskListener = null;
+          }
+          _profileUploadTask = null;
+          if (mounted) {
+            // 1초 딜레이 후 로딩 인디케이터 숨김
+            await Future.delayed(const Duration(seconds: 1));
+            if (mounted) {
+              setState(() {
+                _isUploadingProfileImage = false;
+              });
+            }
+          }
+
+          // 임시 파일 삭제
+          try {
+            if (await finalTempFile.exists()) {
+              await finalTempFile.delete();
+            }
+          } catch (_) {}
         }
-        if (_profileTaskListener != null) {
-          task.removeListener(_profileTaskListener!);
-          _profileTaskListener = null;
-        }
-        _profileUploadTask = null;
-        if (mounted) {
-          // 1초 딜레이 후 로딩 인디케이터 숨김
-          await Future.delayed(const Duration(seconds: 1));
+        if (task.state == UploadState.failed ||
+            task.state == UploadState.cancelled) {
+          if (mounted) {
+            ErrorHandler.showError(
+              context,
+              context.tr('profile_image_upload_failed'),
+            );
+          }
+          if (_profileTaskListener != null) {
+            task.removeListener(_profileTaskListener!);
+            _profileTaskListener = null;
+          }
+          _profileUploadTask = null;
           if (mounted) {
             setState(() {
               _isUploadingProfileImage = false;
             });
           }
+
+          // 임시 파일 삭제
+          try {
+            if (await finalTempFile.exists()) {
+              await finalTempFile.delete();
+            }
+          } catch (_) {}
         }
+      };
+      task.addListener(_profileTaskListener!);
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isUploadingProfileImage = false;
+        });
+        ErrorHandler.showError(context, '이미지 처리 중 오류가 발생했습니다: $e');
       }
-      if (task.state == UploadState.failed ||
-          task.state == UploadState.cancelled) {
-        if (mounted) {
-          ErrorHandler.showError(
-            context,
-            context.tr('profile_image_upload_failed'),
-          );
+      // 에러 발생 시 임시 파일 삭제
+      try {
+        if (tempFile != null && await tempFile.exists()) {
+          await tempFile.delete();
         }
-        if (_profileTaskListener != null) {
-          task.removeListener(_profileTaskListener!);
-          _profileTaskListener = null;
-        }
-        _profileUploadTask = null;
-        if (mounted) {
-          setState(() {
-            _isUploadingProfileImage = false;
-          });
-        }
-        return; // 흐름 즉시 중단
-      }
-    };
-    task.addListener(_profileTaskListener!);
+      } catch (_) {}
+    }
   }
 }
