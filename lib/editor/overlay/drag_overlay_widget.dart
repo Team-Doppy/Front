@@ -1,28 +1,31 @@
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:doppy/common/widgets/image_error_placeholder.dart';
+import 'package:doppy/editor/component/divider_component.dart' show DividerNode;
 import 'package:doppy/editor/component/link_component.dart';
 import 'package:doppy/editor/component/row_image_component.dart';
+import 'package:doppy/editor/component/pageview_image_component.dart';
 import 'package:doppy/editor/component/clip_component.dart';
+import 'package:doppy/editor/component/divider_component.dart';
 import 'package:flutter/material.dart';
 import 'package:super_editor/super_editor.dart';
 
 /// 드래그 중인 컴포넌트의 미리보기를 보여주는 오버레이 위젯
 class DragOverlayWidget extends StatefulWidget {
   const DragOverlayWidget({
-    required this.nodeId,
-    required this.nodeType,
     required this.position,
     required this.document,
+    this.node,
     this.splitImageUrl,
+    this.previewImageLocalPath, // 🎯 클립 노드 썸네일 깜빡임 방지
     super.key,
   });
 
-  final String nodeId;
-  final String nodeType;
+  final DocumentNode? node;
   final Offset position;
   final Document document;
   final String? splitImageUrl;
+  final String? previewImageLocalPath;
 
   @override
   State<DragOverlayWidget> createState() => _DragOverlayWidgetState();
@@ -48,7 +51,7 @@ class _DragOverlayWidgetState extends State<DragOverlayWidget> {
     WidgetsBinding.instance.addPostFrameCallback((_) => _measureChild());
 
     // 🎯 클립 노드는 고정 크기 사용 (이미지 로드 중 깜빡임 방지)
-    final bool isClipNode = widget.nodeType == 'clip';
+    final bool isClipNode = widget.node is ClipNode;
     final double width;
     final double height;
 
@@ -85,52 +88,41 @@ class _DragOverlayWidgetState extends State<DragOverlayWidget> {
   }
 
   Widget _buildNodePreview(BuildContext context) {
-    // 커스텀 이미지 URL이 있으면 해당 이미지 표시
-    if (widget.splitImageUrl != null && widget.nodeType == 'image') {
+    // 🎯 분리 이미지 URL이 있으면 해당 이미지 표시
+    if (widget.splitImageUrl != null) {
       return _buildSplitImagePreview(widget.splitImageUrl!);
     }
 
-    final node = widget.document.getNodeById(widget.nodeId);
+    final node = widget.node;
     if (node == null) {
-      debugPrint('[DragOverlay] 노드를 찾을 수 없음: nodeId=${widget.nodeId}');
+      debugPrint('[DragOverlay] 노드가 없음');
       return const SizedBox.shrink();
     }
-    debugPrint(
-      '[DragOverlay] 노드 찾음: ${node.runtimeType}, nodeId=${widget.nodeId}',
-    );
 
-    Widget preview;
-    debugPrint(
-      '[DragOverlay] widget.nodeType: ${widget.nodeType}, nodeId: ${widget.nodeId}',
-    );
+    debugPrint('[DragOverlay] 노드 타입: ${node.runtimeType}');
 
-    switch (widget.nodeType) {
-      case 'image':
-        preview = _buildImagePreview(node);
-        break;
-      case 'imageRow':
-        preview = _buildImageRowPreview(node as ImageRowNode);
-        break;
-      case 'divider':
-        preview = _buildDividerPreview();
-        break;
-      case 'clip':
-        debugPrint('[DragOverlay] ClipNode 처리 시작');
-        preview = _ClipPreviewWidget(node: node as ClipNode);
-        debugPrint('[DragOverlay] ClipNode 처리 완료');
-        break;
-      case 'mention':
-      case 'paragraph':
-        preview = _buildParagraphPreview(node as dynamic, context);
-        break;
-      case 'link':
-        preview = _buildLinkPreview(node as LinkNode);
-        break;
-      default:
-        preview = _buildDefaultPreview(node);
+    // 🎯 노드 타입에 따라 직접 분기
+    if (node is ImageNode) {
+      return _buildImagePreview(node);
+    } else if (node is ImageRowNode) {
+      return _buildImageRowPreview(node);
+    } else if (node is PageViewImageNode) {
+      return _buildPageViewImagePreview(node);
+    } else if (node is ClipNode) {
+      debugPrint('[DragOverlay] ClipNode 처리 시작');
+      return _ClipPreviewWidget(
+        node: node,
+        previewImageLocalPath: widget.previewImageLocalPath, // 🎯 미리 추출된 경로 전달
+      );
+    } else if (node is LinkNode) {
+      return _buildLinkPreview(node);
+    } else if (node is DividerNode) {
+      return _buildDividerPreview();
+    } else if (node is ParagraphNode) {
+      return _buildParagraphPreview(node, context);
+    } else {
+      return _buildDefaultPreview(node);
     }
-
-    return preview;
   }
 
   Widget _buildLinkPreview(LinkNode node) {
@@ -267,6 +259,101 @@ class _DragOverlayWidgetState extends State<DragOverlayWidget> {
         ),
       ),
     );
+  }
+
+  Widget _buildPageViewImagePreview(PageViewImageNode node) {
+    // 페이지뷰 느낌: 여러 이미지가 겹쳐있는 효과
+    if (node.imageUrls.isEmpty) {
+      return _buildDefaultPreview(node);
+    }
+
+    // 최대 3개의 이미지만 표시 (겹침 효과)
+    final displayCount = node.imageUrls.length > 3 ? 3 : node.imageUrls.length;
+    final imageUrls = node.imageUrls.take(displayCount).toList();
+
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 150, maxHeight: 220),
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          // 뒤에서부터 앞으로 쌓기 (역순으로)
+          for (int i = imageUrls.length - 1; i >= 0; i--)
+            Positioned(
+              left: i * 8.0, // 8px씩 오른쪽으로 이동
+              top: i * 8.0, // 8px씩 아래로 이동
+              child: Container(
+                width: 150,
+                height: 220,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(4),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.3),
+                      blurRadius: 8,
+                      offset: Offset(2, 2),
+                    ),
+                  ],
+                ),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(4),
+                  child: _buildPageViewImageTile(imageUrls[i]),
+                ),
+              ),
+            ),
+          // 이미지 개수 표시 (맨 앞 이미지 위에)
+          Positioned(
+            left: (displayCount - 1) * 8.0 + 6,
+            bottom: (displayCount - 1) * 8.0 + 6,
+            child: Container(
+              decoration: BoxDecoration(
+                color: Colors.black.withOpacity(0.6),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.layers, color: Colors.white, size: 14),
+                  const SizedBox(width: 4),
+                  Text(
+                    '${node.imageUrls.length}',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPageViewImageTile(String imageUrl) {
+    final bool isNetwork =
+        imageUrl.startsWith('http://') || imageUrl.startsWith('https://');
+    final bool isFileUrl = imageUrl.startsWith('file://');
+    final bool isLocalPath = !isNetwork && !isFileUrl && imageUrl.isNotEmpty;
+
+    Widget imageWidget;
+    if (isNetwork) {
+      imageWidget = Image.network(
+        imageUrl,
+        fit: BoxFit.cover,
+        errorBuilder: (context, error, stackTrace) => ImageErrorPlaceholder(),
+      );
+    } else if (isFileUrl || isLocalPath) {
+      final String path =
+          isFileUrl ? Uri.parse(imageUrl).toFilePath() : imageUrl;
+      imageWidget = Image.file(File(path), fit: BoxFit.cover);
+    } else {
+      imageWidget = ImageErrorPlaceholder();
+    }
+
+    return imageWidget;
   }
 
   Widget _buildParagraphPreview(dynamic node, BuildContext context) {
@@ -461,9 +548,13 @@ class _ImageRowPreviewContentState extends State<_ImageRowPreviewContent> {
 
 /// ClipNode 썸네일 미리보기 위젯 (썸네일이 없으면 동적으로 생성)
 class _ClipPreviewWidget extends StatefulWidget {
-  const _ClipPreviewWidget({required this.node});
+  const _ClipPreviewWidget({
+    required this.node,
+    this.previewImageLocalPath, // 🎯 미리 추출된 로컬 경로 (깜빡임 방지)
+  });
 
   final ClipNode node;
+  final String? previewImageLocalPath;
 
   @override
   State<_ClipPreviewWidget> createState() => _ClipPreviewWidgetState();
@@ -475,7 +566,11 @@ class _ClipPreviewWidgetState extends State<_ClipPreviewWidget> {
   @override
   void initState() {
     super.initState();
-    _loadThumbnail();
+    // 🎯 미리 추출된 경로가 없을 때만 로드 (깜빡임 방지)
+    if (widget.previewImageLocalPath == null ||
+        widget.previewImageLocalPath!.isEmpty) {
+      _loadThumbnail();
+    }
   }
 
   void _loadThumbnail() {
@@ -548,30 +643,34 @@ class _ClipPreviewWidgetState extends State<_ClipPreviewWidget> {
 
   @override
   Widget build(BuildContext context) {
-    // 🎯 썸네일 이미지 사용 (thumbnailPath 우선, 없으면 localPath, 없으면 metadata의 thumbnailUrl)
-    String? thumb;
-    if (widget.node.thumbnailPath.isNotEmpty) {
-      thumb = widget.node.thumbnailPath;
-    } else {
-      // 🎯 전역 썸네일 캐시에서 확인
-      if (videoThumbnailCache.containsKey(widget.node.url)) {
-        final cachedBytes = videoThumbnailCache[widget.node.url];
-        if (cachedBytes != null && _thumbnailBytes == null) {
-          if (mounted) {
-            setState(() {
-              _thumbnailBytes = cachedBytes;
-            });
-          }
-        }
+    // 🎯 미리 추출된 로컬 경로 우선 사용 (깜빡임 방지)
+    String? thumb = widget.previewImageLocalPath;
+
+    // 미리 추출된 값이 없으면 노드에서 가져오기
+    if (thumb == null || thumb.isEmpty) {
+      if (widget.node.thumbnailPath.isNotEmpty) {
+        thumb = widget.node.thumbnailPath;
       } else {
-        // metadata에서 썸네일 URL 확인
-        try {
-          final meta = widget.node.metadata;
-          if (meta['thumbnailUrl'] != null) {
-            thumb = meta['thumbnailUrl'].toString();
-            debugPrint('[DragOverlay] 썸네일 URL (metadata): $thumb');
+        // 🎯 전역 썸네일 캐시에서 확인
+        if (videoThumbnailCache.containsKey(widget.node.url)) {
+          final cachedBytes = videoThumbnailCache[widget.node.url];
+          if (cachedBytes != null && _thumbnailBytes == null) {
+            if (mounted) {
+              setState(() {
+                _thumbnailBytes = cachedBytes;
+              });
+            }
           }
-        } catch (_) {}
+        } else {
+          // metadata에서 썸네일 URL 확인
+          try {
+            final meta = widget.node.metadata;
+            if (meta['thumbnailUrl'] != null) {
+              thumb = meta['thumbnailUrl'].toString();
+              debugPrint('[DragOverlay] 썸네일 URL (metadata): $thumb');
+            }
+          } catch (_) {}
+        }
       }
     }
 

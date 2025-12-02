@@ -1016,8 +1016,6 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
           imageIndex != null &&
           imageIndex < rowNode.imageUrls.length) {
         return DragOverlayWidget(
-          nodeId: 'temp_split_image',
-          nodeType: 'image',
           position: pos,
           document: document,
           splitImageUrl: rowNode.imageUrls[imageIndex],
@@ -1029,26 +1027,13 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     final node = document.getNodeById(nodeId);
     if (node == null) return const SizedBox.shrink();
 
-    final nodeType = _getNodeType(node);
     return DragOverlayWidget(
-      nodeId: nodeId,
-      nodeType: nodeType,
+      node: node,
       position: pos,
       document: document,
+      previewImageLocalPath:
+          dragService.previewImageLocalPath, // 🎯 클립 썸네일 깜빡임 방지
     );
-  }
-
-  String _getNodeType(dynamic node) {
-    if (node is ImageNode) return 'image';
-    if (node is ImageRowNode) return 'imageRow';
-    if (node is ParagraphNode) {
-      if (node.metadata['mention'] == true) return 'mention';
-      return 'paragraph';
-    }
-    if (node is LinkNode) return 'link';
-    if (node is DividerNode) return 'divider';
-    if (node is ClipNode) return 'clip';
-    return 'default';
   }
 
   Widget _buildDefaultToolbar(bool isKeyboardVisible) {

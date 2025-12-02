@@ -236,6 +236,11 @@ class DragService extends ChangeNotifier {
         if (node.imageUrls.isNotEmpty) {
           previewImageUrl = node.imageUrls.first;
         }
+      } else if (node is PageViewImageNode) {
+        // PageViewImageNode: 첫 번째 이미지 URL 사용
+        if (node.imageUrls.isNotEmpty) {
+          previewImageUrl = node.imageUrls.first;
+        }
       } else if (node is LinkNode) {
         previewImageUrl = node.thumbnailUrl;
       }

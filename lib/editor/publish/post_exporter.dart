@@ -267,6 +267,15 @@ class PostExporter {
           dataMap['padding'] = 'full';
         }
 
+        // 🎯 임시저장용 썸네일 경로 저장 (복원 시 드래그 오버레이에 필요)
+        if (node.thumbnailPath.isNotEmpty) {
+          dataMap['thumbnailPath'] = node.thumbnailPath;
+        }
+        // metadata의 thumbnailUrl도 저장 (네트워크 썸네일)
+        else if (meta['thumbnailUrl'] != null) {
+          dataMap['thumbnailUrl'] = meta['thumbnailUrl'];
+        }
+
         // 노드 레벨에도 패딩 정보 저장 (이미지와 동일한 방식)
         final nodeMap = <String, dynamic>{
           'id': node.id,

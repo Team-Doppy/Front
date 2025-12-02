@@ -260,12 +260,17 @@ class PostReaderService {
           final String? paddingMode =
               (m['padding'] ?? data?['padding'])?.toString();
 
+          // 🎯 임시저장 복원: thumbnailPath 복원
+          final thumbnailPath = (data?['thumbnailPath'] ?? '').toString();
+          final thumbnailUrl = data?['thumbnailUrl']?.toString();
+
           rebuilt.add(
             ClipNode(
               id: id,
               label: (m['label'] ?? '').toString(),
               colorHex: (m['color'] ?? '#FF5252').toString(),
               url: url,
+              thumbnailPath: thumbnailPath,
               metadata: <String, dynamic>{
                 'hasComments': hasComments,
                 'commentCount':
@@ -274,6 +279,7 @@ class PostReaderService {
                         : int.tryParse(commentCount.toString()) ?? 0,
                 if (hasSpoiler) 'spoiler': true,
                 if (paddingMode == 'full') 'padding': 'full',
+                if (thumbnailUrl != null) 'thumbnailUrl': thumbnailUrl,
               },
             ),
           );
@@ -305,12 +311,17 @@ class PostReaderService {
           final String? paddingMode =
               (m['padding'] ?? data?['padding'])?.toString();
 
+          // 🎯 임시저장 복원: thumbnailPath 복원
+          final thumbnailPath = (data?['thumbnailPath'] ?? '').toString();
+          final thumbnailUrl = data?['thumbnailUrl']?.toString();
+
           rebuilt.add(
             ClipNode(
               id: finalId,
               label: (m['label'] ?? '').toString(),
               colorHex: (m['color'] ?? '#FF5252').toString(),
               url: url,
+              thumbnailPath: thumbnailPath,
               metadata: <String, dynamic>{
                 'hasComments': hasComments,
                 'commentCount':
@@ -319,6 +330,7 @@ class PostReaderService {
                         : int.tryParse(commentCount.toString()) ?? 0,
                 if (hasSpoiler) 'spoiler': true,
                 if (paddingMode == 'full') 'padding': 'full',
+                if (thumbnailUrl != null) 'thumbnailUrl': thumbnailUrl,
               },
             ),
           );
