@@ -830,8 +830,7 @@ class _EditModeAppBarState extends State<EditModeAppBar> {
                   });
                 },
               );
-            })
-            .toList(),
+            }),
       ],
     );
   }
@@ -929,7 +928,7 @@ class _EditModeAppBarState extends State<EditModeAppBar> {
             decoration: BoxDecoration(
               color: Theme.of(context).colorScheme.background.withOpacity(1),
             ),
-            height: 50,
+            height: 52.0, // 🎯 PostReaderScreen과 동일한 높이
             width: MediaQuery.of(context).size.width,
             child: Row(
               children: [
@@ -957,60 +956,71 @@ class _EditModeAppBarState extends State<EditModeAppBar> {
                 AnimatedBuilder(
                   animation: widget.editorService,
                   builder:
-                      (context, _) => GestureDetector(
-                        onTap: () {
-                          widget.editorService.undo();
-                        },
-                        child: Container(
-                          padding: const EdgeInsets.only(
-                            top: 12,
-                            bottom: 8,
-                            left: 8,
-                            right: 8,
-                          ),
-                          child: SvgPicture.asset(
-                            'assets/icons/editor_undo.svg',
-                            width: 34,
-                            height: 34,
-                            colorFilter: ColorFilter.mode(
-                              Theme.of(
-                                context,
-                              ).colorScheme.onSurface.withOpacity(
-                                widget.editorService.canUndo ? 0.6 : 0.15,
+                      (context, _) => Material(
+                        color: Colors.transparent,
+                        child: Padding(
+                          padding: const EdgeInsets.only(top: 2),
+                          child: InkWell(
+                            onTap:
+                                widget.editorService.canUndo
+                                    ? () {
+                                      widget.editorService.undo();
+                                    }
+                                    : null,
+                            borderRadius: BorderRadius.circular(24),
+                            child: Container(
+                              padding: const EdgeInsets.all(1),
+                              child: SvgPicture.asset(
+                                'assets/icons/editor_undo.svg',
+                                width: 30,
+                                height: 30,
+                                colorFilter: ColorFilter.mode(
+                                  Theme.of(
+                                    context,
+                                  ).colorScheme.onSurface.withOpacity(
+                                    widget.editorService.canUndo ? 0.6 : 0.15,
+                                  ),
+                                  BlendMode.srcIn,
+                                ),
                               ),
-                              BlendMode.srcIn,
                             ),
                           ),
                         ),
                       ),
                 ),
+                const SizedBox(width: 8),
 
                 // 리두 버튼
                 AnimatedBuilder(
                   animation: widget.editorService,
                   builder:
-                      (context, _) => GestureDetector(
-                        onTap: () {
-                          widget.editorService.redo();
-                        },
-                        child: Container(
-                          padding: const EdgeInsets.only(
-                            top: 12,
-                            bottom: 8,
-                            left: 8,
-                            right: 8,
-                          ),
-                          child: SvgPicture.asset(
-                            'assets/icons/editor_redo.svg',
-                            width: 34,
-                            height: 34,
-                            colorFilter: ColorFilter.mode(
-                              Theme.of(
-                                context,
-                              ).colorScheme.onSurface.withOpacity(
-                                widget.editorService.canRedo ? 0.6 : 0.15,
+                      (context, _) => Material(
+                        color: Colors.transparent,
+                        child: Padding(
+                          padding: const EdgeInsets.only(top: 2),
+                          child: InkWell(
+                            onTap:
+                                widget.editorService.canRedo
+                                    ? () {
+                                      widget.editorService.redo();
+                                    }
+                                    : null,
+                            borderRadius: BorderRadius.circular(24),
+                            child: Container(
+                              padding: const EdgeInsets.all(1),
+                              child: SvgPicture.asset(
+                                'assets/icons/editor_redo.svg',
+                                width: 30,
+                                height: 30,
+                                colorFilter: ColorFilter.mode(
+                                  Theme.of(
+                                    context,
+                                  ).colorScheme.onSurface.withOpacity(
+                                    widget.editorService.canRedo ? 0.6 : 0.15,
+                                  ),
+                                  BlendMode.srcIn,
+                                ),
                               ),
-                              BlendMode.srcIn,
                             ),
                           ),
                         ),
@@ -1218,7 +1228,7 @@ class EditorAppBar extends StatelessWidget {
             decoration: BoxDecoration(
               color: Theme.of(context).colorScheme.background.withOpacity(1),
             ),
-            height: 50,
+            height: 52.0, // 🎯 PostReaderScreen과 동일한 높이
             width: MediaQuery.of(context).size.width,
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -1250,60 +1260,71 @@ class EditorAppBar extends StatelessWidget {
                     AnimatedBuilder(
                       animation: editorService,
                       builder:
-                          (context, _) => GestureDetector(
-                            onTap: () {
-                              editorService.undo();
-                            },
-                            child: Container(
-                              padding: const EdgeInsets.only(
-                                top: 12,
-                                bottom: 8,
-                                left: 8,
-                                right: 8,
-                              ),
-                              child: SvgPicture.asset(
-                                'assets/icons/editor_undo.svg',
-                                width: 26,
-                                height: 26,
-                                colorFilter: ColorFilter.mode(
-                                  Theme.of(
-                                    context,
-                                  ).colorScheme.onSurface.withOpacity(
-                                    editorService.canUndo ? 0.6 : 0.15,
+                          (context, _) => Material(
+                            color: Colors.transparent,
+                            child: Padding(
+                              padding: const EdgeInsets.only(top: 2),
+                              child: InkWell(
+                                onTap:
+                                    editorService.canUndo
+                                        ? () {
+                                          editorService.undo();
+                                        }
+                                        : null,
+                                borderRadius: BorderRadius.circular(24),
+                                child: Container(
+                                  padding: const EdgeInsets.all(1),
+                                  child: SvgPicture.asset(
+                                    'assets/icons/editor_undo.svg',
+                                    width: 30,
+                                    height: 30,
+                                    colorFilter: ColorFilter.mode(
+                                      Theme.of(
+                                        context,
+                                      ).colorScheme.onSurface.withOpacity(
+                                        editorService.canUndo ? 0.6 : 0.15,
+                                      ),
+                                      BlendMode.srcIn,
+                                    ),
                                   ),
-                                  BlendMode.srcIn,
                                 ),
                               ),
                             ),
                           ),
                     ),
+                    const SizedBox(width: 8),
 
                     // 리두 버튼
                     AnimatedBuilder(
                       animation: editorService,
                       builder:
-                          (context, _) => GestureDetector(
-                            onTap: () {
-                              editorService.redo();
-                            },
-                            child: Container(
-                              padding: const EdgeInsets.only(
-                                top: 12,
-                                bottom: 8,
-                                left: 8,
-                                right: 8,
-                              ),
-                              child: SvgPicture.asset(
-                                'assets/icons/editor_redo.svg',
-                                width: 26,
-                                height: 26,
-                                colorFilter: ColorFilter.mode(
-                                  Theme.of(
-                                    context,
-                                  ).colorScheme.onSurface.withOpacity(
-                                    editorService.canRedo ? 0.6 : 0.15,
+                          (context, _) => Padding(
+                            padding: const EdgeInsets.only(top: 2),
+                            child: Material(
+                              color: Colors.transparent,
+                              child: InkWell(
+                                onTap:
+                                    editorService.canRedo
+                                        ? () {
+                                          editorService.redo();
+                                        }
+                                        : null,
+                                borderRadius: BorderRadius.circular(24),
+                                child: Container(
+                                  padding: const EdgeInsets.all(1),
+                                  child: SvgPicture.asset(
+                                    'assets/icons/editor_redo.svg',
+                                    width: 30,
+                                    height: 30,
+                                    colorFilter: ColorFilter.mode(
+                                      Theme.of(
+                                        context,
+                                      ).colorScheme.onSurface.withOpacity(
+                                        editorService.canRedo ? 0.6 : 0.15,
+                                      ),
+                                      BlendMode.srcIn,
+                                    ),
                                   ),
-                                  BlendMode.srcIn,
                                 ),
                               ),
                             ),

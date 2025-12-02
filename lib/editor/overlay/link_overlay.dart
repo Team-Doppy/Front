@@ -217,10 +217,10 @@ class _LinkOverlayState extends State<LinkOverlay> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.transparent,
+      backgroundColor: const Color(0xFF2D2D2D).withOpacity(0.5),
       extendBodyBehindAppBar: true,
       appBar: AppBar(
-        backgroundColor: const Color(0xFF2D2D2D).withOpacity(0.9),
+        backgroundColor: Colors.transparent,
         elevation: 0,
         scrolledUnderElevation: 0,
         automaticallyImplyLeading: false,
@@ -379,7 +379,7 @@ class _LinkOverlayState extends State<LinkOverlay> {
                 child: Container(
                   color: const Color(0xFF2D2D2D).withOpacity(0.9),
                   child: BackdropFilter(
-                    filter: ui.ImageFilter.blur(sigmaX: 15, sigmaY: 15),
+                    filter: ui.ImageFilter.blur(sigmaX: 8, sigmaY: 8),
                     child: Container(color: Colors.transparent),
                   ),
                 ),

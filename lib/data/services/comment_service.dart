@@ -500,7 +500,12 @@ class CommentService extends ChangeNotifier {
     );
 
     if (tempIndex != -1) {
-      _comments[tempIndex] = comment.copyWith(content: finalContent);
+      // 🎯 로컬 이미지 경로 유지 (깜빡임 방지)
+      final tempComment = _comments[tempIndex];
+      _comments[tempIndex] = comment.copyWith(
+        content: finalContent,
+        localImagePath: tempComment.localImagePath, // 🎯 로컬 경로 유지
+      );
 
       // 교체는 새 댓글이 아니므로 스크롤 안 함
       notifyListeners();
@@ -1233,13 +1238,13 @@ class CommentService extends ChangeNotifier {
     }
   }
 
-  /// 🎯 로컬 이미지로만 댓글 추가 (서버 요청 없음, 낙관적 업데이트만)
+  /// 🎯 로컬 이미지로만 댓글 추가 (서버 요청 없음, 낙관적 업데이트만) - 단일 이미지
   void addCommentLocalOnly({
     required String username,
     required String content,
     String? authorProfileImageUrl,
     String? parentId,
-    required String localImagePath,
+    required String localImagePath, // 🎯 단일 이미지 경로
     String? visibleToUsername,
     required String tempId,
   }) {
@@ -1300,12 +1305,21 @@ class CommentService extends ChangeNotifier {
     debugPrint('[CommentService] 로컬 이미지 댓글 추가 (낙관적 업데이트): $tempId');
   }
 
-  /// 🎯 이미지 URL 업로드 완료 후 서버에 댓글 전송
+  /// 🎯 이미지 URL 업로드 완료 후 서버에 댓글 전송 (단일 이미지)
   Future<void> addCommentWithImageUrl({
     required String tempCommentId,
     required String imageUrl,
   }) async {
-    if (_currentPostId == null) return;
+    if (_currentPostId == null || imageUrl.isEmpty) return;
+
+    // 🎯 R2 URL인지 확인 (pending://, 로컬 경로 제외)
+    if (imageUrl.startsWith('pending://') ||
+        imageUrl.startsWith('file://') ||
+        imageUrl.startsWith('/') ||
+        (!imageUrl.startsWith('http://') && !imageUrl.startsWith('https://'))) {
+      debugPrint('[CommentService] ⚠️ 유효하지 않은 URL (R2 URL 아님): $imageUrl');
+      return;
+    }
 
     // 🎯 임시 댓글 찾기
     final commentIndex = _comments.indexWhere((c) => c.id == tempCommentId);
@@ -1324,13 +1338,17 @@ class CommentService extends ChangeNotifier {
             : '$originalContent\n[IMAGE] $imageUrl';
 
     // 🎯 낙관적 업데이트: content와 imageUrl 업데이트
+    // localImagePath는 명시적으로 유지 (로컬 이미지 계속 표시)
     _comments[commentIndex] = tempComment.copyWith(
       content: finalContent,
       imageUrl: imageUrl,
+      localImagePath: tempComment.localImagePath, // 🎯 명시적으로 유지
     );
     notifyListeners();
 
-    debugPrint('[CommentService] 이미지 URL 업데이트: $tempCommentId -> $imageUrl');
+    debugPrint(
+      '[CommentService] 이미지 URL 업데이트 (로컬 이미지 유지): $tempCommentId -> $imageUrl',
+    );
 
     // 🎯 서버에 댓글 전송
     try {
@@ -1362,6 +1380,7 @@ class CommentService extends ChangeNotifier {
         'postId': postIdInt,
         if (parentIdInt != null) 'parentId': parentIdInt,
         'visibility': tempComment.visibility,
+        'usedUrls': [imageUrl], // 🎯 R2 URL만 포함 (단일 이미지)
         if (mentionedUsernames.isNotEmpty)
           'mentionedUsernames': mentionedUsernames,
       };
@@ -1405,7 +1424,11 @@ class CommentService extends ChangeNotifier {
           debugPrint(
             '[CommentService] 🔄 임시 댓글 교체: $tempCommentId → ${serverComment.id}',
           );
-          _comments[tempIndex] = serverComment;
+          // 🎯 로컬 이미지 경로 유지 (깜빡임 방지)
+          final tempComment = _comments[tempIndex];
+          _comments[tempIndex] = serverComment.copyWith(
+            localImagePath: tempComment.localImagePath,
+          );
         } else {
           debugPrint('[CommentService] ⚠️ 임시 댓글이 없음 (이미 제거됨?)');
           return;
@@ -1446,15 +1469,191 @@ class CommentService extends ChangeNotifier {
     }
   }
 
-  /// 댓글 추가 (낙관적 업데이트)
+  /// 🎯 여러 이미지 URL 업로드 완료 후 서버에 댓글 전송 (다중 이미지 - 다른 곳에서 사용 가능)
+  Future<void> addCommentWithImageUrls({
+    required String tempCommentId,
+    required List<String> imageUrls,
+  }) async {
+    if (_currentPostId == null || imageUrls.isEmpty) return;
+
+    // 🎯 R2 URL만 필터링 (pending://, 로컬 경로 제외)
+    final validImageUrls =
+        imageUrls.where((url) {
+          final isValid =
+              !url.startsWith('pending://') &&
+              !url.startsWith('file://') &&
+              !url.startsWith('/') &&
+              (url.startsWith('http://') || url.startsWith('https://'));
+          if (!isValid) {
+            debugPrint('[CommentService] ⚠️ 유효하지 않은 URL 제외: $url');
+          }
+          return isValid;
+        }).toList();
+
+    if (validImageUrls.isEmpty) {
+      debugPrint('[CommentService] ⚠️ 유효한 이미지 URL이 없음');
+      return;
+    }
+
+    // 🎯 임시 댓글 찾기
+    final commentIndex = _comments.indexWhere((c) => c.id == tempCommentId);
+    if (commentIndex == -1) {
+      debugPrint('[CommentService] ⚠️ 임시 댓글을 찾을 수 없음: $tempCommentId');
+      return;
+    }
+
+    final tempComment = _comments[commentIndex];
+    final originalContent = tempComment.content;
+
+    // 🎯 content를 "[IMAGES:url1,url2,url3]" 형식으로 업데이트
+    final imageUrlsString = validImageUrls.join(',');
+    final finalContent =
+        originalContent == '[IMAGES]' || originalContent == '[IMAGE]'
+            ? '[IMAGES:$imageUrlsString]' // 🎯 여러 이미지 형식
+            : '$originalContent\n[IMAGES:$imageUrlsString]';
+
+    // 🎯 낙관적 업데이트: content와 imageUrl 업데이트 (첫 번째 이미지, 호환성)
+    _comments[commentIndex] = tempComment.copyWith(
+      content: finalContent,
+      imageUrl: validImageUrls.first, // 🎯 첫 번째 이미지 (호환성)
+    );
+    notifyListeners();
+
+    debugPrint(
+      '[CommentService] ✅ 이미지 URL 업데이트 (R2 URL만): $tempCommentId -> $validImageUrls',
+    );
+
+    // 🎯 서버에 댓글 전송
+    try {
+      // 🎯 언급 파싱
+      var mentionedUsernames = MentionParser.extractMentions(finalContent);
+      final currentUsername = await _getCurrentUsername();
+      if (currentUsername != null) {
+        mentionedUsernames =
+            mentionedUsernames.where((u) => u != currentUsername).toList();
+      }
+
+      // 🎯 postId를 정수로 변환
+      final postIdInt = int.tryParse(_currentPostId!);
+      if (postIdInt == null) {
+        throw Exception('postId를 정수로 변환할 수 없습니다: $_currentPostId');
+      }
+
+      // 🎯 parentId를 정수로 변환
+      int? parentIdInt;
+      if (tempComment.parentId != null) {
+        parentIdInt = int.tryParse(tempComment.parentId!);
+        if (parentIdInt == null) {
+          throw Exception('parentId를 정수로 변환할 수 없습니다: ${tempComment.parentId}');
+        }
+      }
+
+      final requestBody = <String, dynamic>{
+        'content': finalContent, // 🎯 "[IMAGES:url1,url2,url3]" 형식
+        'postId': postIdInt,
+        if (parentIdInt != null) 'parentId': parentIdInt,
+        'visibility': tempComment.visibility,
+        'usedUrls': validImageUrls, // 🎯 R2 URL만 포함 (여러 이미지 URL 목록)
+        if (mentionedUsernames.isNotEmpty)
+          'mentionedUsernames': mentionedUsernames,
+      };
+
+      debugPrint('[CommentService] 이미지 댓글 전송 요청: $requestBody');
+
+      final response = await _dio.post(
+        '/api/comments',
+        data: requestBody,
+        options: Options(receiveTimeout: const Duration(seconds: 10)),
+      );
+
+      debugPrint(
+        '[CommentService] 이미지 댓글 전송 응답: ${response.statusCode} - ${response.data}',
+      );
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        final responseData =
+            response.data is Map<String, dynamic>
+                ? Map<String, dynamic>.from(response.data)
+                : <String, dynamic>{};
+
+        final serverComment = Comment.fromJson(responseData);
+
+        // 같은 ID가 이미 있는지 확인 (WebSocket이 먼저 추가했을 수 있음)
+        final existingServerCommentIndex = _comments.indexWhere(
+          (c) => c.id == serverComment.id,
+        );
+        if (existingServerCommentIndex != -1) {
+          debugPrint(
+            '[CommentService] ⚠️ 서버 응답 댓글이 이미 존재함 (WebSocket 먼저 도착) - ID: ${serverComment.id}',
+          );
+          _comments.removeWhere((c) => c.id == tempCommentId);
+          notifyListeners();
+          return;
+        }
+
+        // 임시 댓글 찾아서 교체
+        final tempIndex = _comments.indexWhere((c) => c.id == tempCommentId);
+        if (tempIndex != -1) {
+          debugPrint(
+            '[CommentService] 🔄 임시 댓글 교체: $tempCommentId → ${serverComment.id}',
+          );
+          // 🎯 로컬 이미지 경로 유지 (깜빡임 방지)
+          final tempComment = _comments[tempIndex];
+          _comments[tempIndex] = serverComment.copyWith(
+            localImagePath: tempComment.localImagePath,
+          );
+        } else {
+          debugPrint('[CommentService] ⚠️ 임시 댓글이 없음 (이미 제거됨?)');
+          return;
+        }
+        notifyListeners();
+        debugPrint('[CommentService] 이미지 댓글 전송 성공: ${serverComment.id}');
+      } else {
+        // 실패: pending → failed로 변경
+        final index = _comments.indexWhere((c) => c.id == tempCommentId);
+        if (index != -1) {
+          _comments[index] = _comments[index].copyWith(
+            isPending: false,
+            isFailed: true,
+          );
+          notifyListeners();
+        }
+        debugPrint('[CommentService] 이미지 댓글 전송 실패: ${response.statusCode}');
+        throw HttpException('이미지 댓글 전송 실패: ${response.statusCode}');
+      }
+    } catch (e) {
+      debugPrint('[CommentService] 이미지 댓글 전송 오류 - failed 상태로 변경: $e');
+
+      // 실패 시: pending → failed로 변경
+      final index = _comments.indexWhere((c) => c.id == tempCommentId);
+      if (index != -1) {
+        _comments[index] = _comments[index].copyWith(
+          isPending: false,
+          isFailed: true,
+        );
+        notifyListeners();
+      }
+
+      if (e is DioException) {
+        debugPrint(
+          '[CommentService] Dio 에러: ${e.response?.statusCode} - ${e.response?.data}',
+        );
+      }
+    }
+  }
+
+  /// 댓글 추가 (낙관적 업데이트) - 다중 이미지 지원
   Future<void> addComment({
     required String username,
     required String content,
     String? authorProfileImageUrl, // 🎯 프로필 이미지 URL 추가
     String? parentId,
-    String? imageUrl,
-    String? localImagePath, // 🎯 로컬 이미지 파일 경로
+    List<String>? imageUrls, // 🎯 여러 이미지 URL 목록
+    List<String>? localImagePaths, // 🎯 여러 로컬 이미지 파일 경로
     String? visibleToUsername, // 🎯 비밀 메시지 대상 사용자 (1:1)
+    // 🎯 하위 호환성을 위한 단일 이미지 파라미터 (deprecated)
+    @Deprecated('Use imageUrls instead') String? imageUrl,
+    @Deprecated('Use localImagePaths instead') String? localImagePath,
   }) async {
     if (_currentPostId == null) return;
 
@@ -1499,11 +1698,22 @@ class CommentService extends ChangeNotifier {
       }
     }
 
+    // 🎯 이미지 경로 처리 (하위 호환성 - 댓글에서는 단일 이미지만 사용)
+    final finalLocalImagePath =
+        localImagePath ??
+        (localImagePaths != null && localImagePaths.isNotEmpty
+            ? localImagePaths.first
+            : null);
+    final finalImageUrl =
+        imageUrl ??
+        (imageUrls != null && imageUrls.isNotEmpty ? imageUrls.first : null);
+
     // 🎯 이미지만 보낼 때 content에 [IMAGE] 마커 추가 (렌더링 시 참고용)
     final trimmedContent = content.trim();
+    final hasImage = finalLocalImagePath != null || finalImageUrl != null;
     final optimisticContent =
-        trimmedContent.isEmpty && localImagePath != null
-            ? '[IMAGE]'
+        trimmedContent.isEmpty && hasImage
+            ? '[IMAGE]' // 🎯 댓글은 단일 이미지만 지원
             : trimmedContent;
 
     final optimisticComment = Comment(
@@ -1513,8 +1723,8 @@ class CommentService extends ChangeNotifier {
       authorProfileImageUrl: authorProfileImageUrl ?? '', // 🎯 프로필 이미지 즉시 설정
       postId: _currentPostId!,
       parentId: parentId,
-      imageUrl: imageUrl, // 🎯 서버에서 받은 이미지 URL (초기에는 null)
-      localImagePath: localImagePath, // 🎯 로컬 파일 경로 (업로드 전 표시용)
+      imageUrl: finalImageUrl, // 🎯 단일 이미지 URL
+      localImagePath: finalLocalImagePath, // 🎯 단일 로컬 파일 경로
       visibility: isSecret ? 'PRIVATE' : 'PUBLIC', // 🎯 비밀댓글이면 PRIVATE
       createdAt: utcNow, // 🎯 UTC 시간 사용
       updatedAt: utcNow, // 🎯 UTC 시간 사용
@@ -1537,14 +1747,34 @@ class CommentService extends ChangeNotifier {
     // 3️⃣ 서버에 요청 전송 (댓글 API 사용)
     try {
       // 🎯 댓글 API 명세서에 따른 요청 Body
-      // 🎯 이미지만 보낼 때 content에 [IMAGE] 마커 추가 (렌더링 시 참고용)
+      // 🎯 단일 이미지 URL 처리 및 R2 URL만 필터링
+      String? validImageUrl;
+      if (finalImageUrl != null && finalImageUrl.isNotEmpty) {
+        // 🎯 R2 URL인지 확인 (pending://, 로컬 경로 제외)
+        if (!finalImageUrl.startsWith('pending://') &&
+            !finalImageUrl.startsWith('file://') &&
+            !finalImageUrl.startsWith('/') &&
+            (finalImageUrl.startsWith('http://') ||
+                finalImageUrl.startsWith('https://'))) {
+          validImageUrl = finalImageUrl;
+        } else {
+          debugPrint('[CommentService] ⚠️ 유효하지 않은 URL 제외: $finalImageUrl');
+        }
+      }
+
+      // 🎯 content 처리: 이미지가 있으면 [IMAGE] url 형식
       final trimmedContent = content.trim();
-      final finalContent =
-          trimmedContent.isEmpty && localImagePath != null
-              ? '[IMAGE]'
-              : trimmedContent;
+      String finalContent;
+      if (trimmedContent.isEmpty && validImageUrl != null) {
+        finalContent = '[IMAGE] $validImageUrl';
+      } else if (validImageUrl != null) {
+        finalContent = '$trimmedContent\n[IMAGE] $validImageUrl';
+      } else {
+        finalContent = trimmedContent;
+      }
+
       debugPrint(
-        '[CommentService] content 처리: original="$content", trimmed="$trimmedContent", final="$finalContent", localImagePath=$localImagePath',
+        '[CommentService] content 처리: original="$content", trimmed="$trimmedContent", final="$finalContent", imageUrl=$validImageUrl',
       );
 
       // 🎯 postId를 정수로 변환 (서버가 long 타입을 요구)
@@ -1563,12 +1793,12 @@ class CommentService extends ChangeNotifier {
       }
 
       final requestBody = <String, dynamic>{
-        'content': finalContent, // 명세서: content 필드 사용 (이미지만 보낼 때는 [IMAGE] 마커)
+        'content': finalContent, // 명세서: content 필드 사용
         'postId': postIdInt, // 포스트 ID (정수)
         if (parentIdInt != null) 'parentId': parentIdInt, // 대댓글인 경우
         'visibility': isSecret ? 'PRIVATE' : 'PUBLIC', // 명세서: visibility 필드 사용
-        if (imageUrl != null && imageUrl.isNotEmpty)
-          'imageUrl': imageUrl, // 🎯 이미지 URL
+        if (validImageUrl != null)
+          'usedUrls': [validImageUrl], // 🎯 R2 URL만 포함 (단일 이미지)
         // 🎯 언급 기능: 명세서에 따라 mentionedUsernames 배열 포함
         if (mentionedUsernames.isNotEmpty)
           'mentionedUsernames': mentionedUsernames, // 언급된 사용자 목록
@@ -1803,6 +2033,19 @@ class CommentService extends ChangeNotifier {
   void removeFailedComment(String tempId) {
     _comments.removeWhere((c) => c.id == tempId);
     notifyListeners();
+  }
+
+  /// 댓글을 실패 상태로 표시
+  void markCommentAsFailed(String commentId) {
+    final index = _comments.indexWhere((c) => c.id == commentId);
+    if (index != -1) {
+      _comments[index] = _comments[index].copyWith(
+        isPending: false,
+        isFailed: true,
+      );
+      notifyListeners();
+      debugPrint('[CommentService] 댓글을 실패 상태로 표시: $commentId');
+    }
   }
 
   /// 댓글에 반응 추가/제거 (API 호출) - 서버가 자동으로 토글 처리

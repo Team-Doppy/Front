@@ -8,7 +8,6 @@ import 'package:doppy/data/services/like_service.dart';
 import 'package:doppy/pages/components/shimmer_box.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:provider/provider.dart';
-import 'package:doppy/pages/components/fullscreen_media_viewer.dart';
 import 'package:video_player/video_player.dart';
 
 // ignore: must_be_immutable
@@ -101,7 +100,10 @@ class _PostCardState extends State<PostCard>
 
     // 캐시된 서버 비디오는 참조 해제
     if (_cachedVideoUrl != null) {
-      VideoCacheService().releaseController(_cachedVideoUrl!);
+      VideoCacheService().releaseController(
+        _cachedVideoUrl!,
+        namespace: 'home',
+      );
     }
 
     super.dispose();
@@ -339,125 +341,96 @@ class _PostCardState extends State<PostCard>
         ),
         child: ClipRRect(
           borderRadius: BorderRadius.circular(12), // 보더 두께만큼 작게
-          child: GestureDetector(
-            onLongPress: () {
-              // 이미지/영상 전체화면 보기
-              Navigator.of(context).push(
-                PageRouteBuilder(
-                  opaque: false,
-                  pageBuilder: (context, animation, secondaryAnimation) {
-                    return FadeTransition(
-                      opacity: animation,
-                      child: FullscreenMediaViewer(
-                        imageUrl: widget.thumbnailImageUrl,
-                        isVideo: _isVideo,
-                        preloadedController: _isVideo ? _videoController : null,
-                        imageProvider:
-                            !_isVideo
-                                ? CachedNetworkImageProvider(
-                                  widget.thumbnailImageUrl,
-                                )
-                                : null,
-                        onClose: () => Navigator.of(context).pop(),
-                      ),
-                    );
-                  },
-                ),
-              );
-            },
-            behavior: HitTestBehavior.opaque,
-            child: Stack(
-              fit: StackFit.expand,
-              children: [
-                _isVideo
-                    ? AnimatedSwitcher(
-                      duration: const Duration(milliseconds: 180),
-                      switchInCurve: Curves.easeOut,
-                      switchOutCurve: Curves.easeIn,
-                      child:
-                          (_videoController != null &&
-                                  _videoController!.value.isInitialized)
-                              ? SizedBox.expand(
-                                key: ValueKey(
-                                  'video_ready_${widget.thumbnailImageUrl}',
-                                ),
-                                child: FittedBox(
-                                  fit: BoxFit.cover,
-                                  child: SizedBox(
-                                    width: _videoController!.value.size.width,
-                                    height: _videoController!.value.size.height,
-                                    child: VideoPlayer(_videoController!),
-                                  ),
-                                ),
-                              )
-                              : ShimmerBox(
-                                key: ValueKey(
-                                  'video_shimmer_${widget.thumbnailImageUrl}',
-                                ),
-                                width: double.infinity,
-                                height: double.infinity,
-                                borderRadius: BorderRadius.circular(12),
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              _isVideo
+                  ? AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 180),
+                    switchInCurve: Curves.easeOut,
+                    switchOutCurve: Curves.easeIn,
+                    child:
+                        (_videoController != null &&
+                                _videoController!.value.isInitialized)
+                            ? SizedBox.expand(
+                              key: ValueKey(
+                                'video_ready_${widget.thumbnailImageUrl}',
                               ),
-                    )
-                    : SizedBox.expand(
-                      child: CachedNetworkImage(
-                        imageUrl: widget.thumbnailImageUrl,
-                        fit: BoxFit.cover,
-                        key: ValueKey('bg-${widget.thumbnailImageUrl}'),
-                        fadeInDuration: const Duration(milliseconds: 180),
-                        fadeOutDuration: const Duration(milliseconds: 80),
-                        placeholder:
-                            (context, url) => ShimmerBox(
+                              child: FittedBox(
+                                fit: BoxFit.cover,
+                                child: SizedBox(
+                                  width: _videoController!.value.size.width,
+                                  height: _videoController!.value.size.height,
+                                  child: VideoPlayer(_videoController!),
+                                ),
+                              ),
+                            )
+                            : ShimmerBox(
+                              key: ValueKey(
+                                'video_shimmer_${widget.thumbnailImageUrl}',
+                              ),
                               width: double.infinity,
                               height: double.infinity,
                               borderRadius: BorderRadius.circular(12),
                             ),
-                        errorWidget:
-                            (context, error, stackTrace) => Container(
-                              color:
-                                  Theme.of(context).colorScheme.surfaceVariant,
-                              child: Center(
-                                child: Icon(
-                                  Icons.error,
-                                  color: Theme.of(
-                                    context,
-                                  ).colorScheme.onSurface.withOpacity(0.54),
-                                  size: 40,
-                                ),
+                  )
+                  : SizedBox.expand(
+                    child: CachedNetworkImage(
+                      imageUrl: widget.thumbnailImageUrl,
+                      fit: BoxFit.cover,
+                      key: ValueKey('bg-${widget.thumbnailImageUrl}'),
+                      fadeInDuration: const Duration(milliseconds: 180),
+                      fadeOutDuration: const Duration(milliseconds: 80),
+                      placeholder:
+                          (context, url) => ShimmerBox(
+                            width: double.infinity,
+                            height: double.infinity,
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                      errorWidget:
+                          (context, error, stackTrace) => Container(
+                            color: Theme.of(context).colorScheme.surfaceVariant,
+                            child: Center(
+                              child: Icon(
+                                Icons.error,
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.onSurface.withOpacity(0.54),
+                                size: 40,
                               ),
                             ),
-                        memCacheWidth: 800, // 메모리 캐시 크기 지정
-                        maxWidthDiskCache: 800, // 디스크 캐시 크기
-                      ),
+                          ),
+                      memCacheWidth: 800, // 메모리 캐시 크기 지정
+                      maxWidthDiskCache: 800, // 디스크 캐시 크기
                     ),
+                  ),
 
-                // 음소거 버튼 (영상이 초기화되었을 때만)
-                if (_isVideo &&
-                    _videoController != null &&
-                    _videoController!.value.isInitialized)
-                  Positioned(
-                    right: 6,
-                    top: 6,
-                    child: GestureDetector(
-                      onTap: _toggleMute,
-                      child: Container(
-                        padding: const EdgeInsets.all(8),
-                        decoration: BoxDecoration(
-                          color: Colors.black.withOpacity(0.5),
-                          shape: BoxShape.circle,
-                        ),
-                        child: Icon(
-                          _muteService.isFeedMuted
-                              ? Icons.volume_off_rounded
-                              : Icons.volume_up_rounded,
-                          color: Colors.white,
-                          size: 14,
-                        ),
+              // 음소거 버튼 (영상이 초기화되었을 때만)
+              if (_isVideo &&
+                  _videoController != null &&
+                  _videoController!.value.isInitialized)
+                Positioned(
+                  right: 6,
+                  top: 6,
+                  child: GestureDetector(
+                    onTap: _toggleMute,
+                    child: Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withOpacity(0.5),
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(
+                        _muteService.isFeedMuted
+                            ? Icons.volume_off_rounded
+                            : Icons.volume_up_rounded,
+                        color: Colors.white,
+                        size: 14,
                       ),
                     ),
                   ),
-              ],
-            ),
+                ),
+            ],
           ),
         ),
       );

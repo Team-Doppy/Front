@@ -220,13 +220,13 @@ class DeepLinkHandler {
 
       debugPrint('[DeepLinkHandler] ✅ 친구 데이터 로딩 완료!');
 
-      // 2️⃣ 내 그룹 화면으로 이동 (딥링크 플래그 전달)
+      // 2️⃣ 내 그룹 화면으로 이동 (앱 시작 시 표시되는 바텀시트만 사용)
       debugPrint('[DeepLinkHandler] 2/2 내 그룹 화면으로 이동 중...');
       await Navigator.of(context).push(
         PageRouteBuilder(
           pageBuilder:
               (context, animation, secondaryAnimation) =>
-                  const GroupSelectionScreen(showReceivedRequests: true),
+                  const GroupSelectionScreen(showReceivedRequests: false),
           transitionDuration: const Duration(milliseconds: 220),
           reverseTransitionDuration: const Duration(milliseconds: 220),
           transitionsBuilder: (context, animation, secondaryAnimation, child) {

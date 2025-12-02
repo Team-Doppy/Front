@@ -113,7 +113,14 @@ class PostPublishService {
           }
         }
 
-        editedBase['content'] = {...contentDyn, 'nodes': cleaned};
+        // 🎯 stickers를 유지하면서 nodes만 교체
+        editedBase['content'] = {
+          ...contentDyn,
+          'nodes': cleaned,
+          // stickers가 있으면 유지
+          if (contentDyn['stickers'] != null)
+            'stickers': contentDyn['stickers'],
+        };
       }
     } catch (e) {
       debugPrint('[PostPublishService] 로컬 미디어 정리 중 오류: $e');
@@ -159,16 +166,45 @@ class PostPublishService {
       final stickers = List<dynamic>.from(
         contentDyn['stickers'] as List? ?? [],
       );
+      debugPrint('[PostPublishService] 📌 스티커 수집 시작: ${stickers.length}개');
       for (final s in stickers) {
-        if (s is! Map) continue;
-        if ((s['type'] ?? '') == 'image') {
-          final contentMap = s['content'] as Map<String, dynamic>?;
-          final url = (contentMap?['url'] ?? '').toString();
-          if (url.isNotEmpty) {
-            usedUrls.add(url);
+        if (s is! Map) {
+          debugPrint('[PostPublishService] ⚠️ 스티커가 Map이 아님: $s');
+          continue;
+        }
+        final stickerType = (s['type'] ?? '').toString();
+        debugPrint('[PostPublishService] 📌 스티커 타입: $stickerType');
+        if (stickerType == 'image') {
+          final content = s['content'];
+          String? url;
+
+          if (content is Map) {
+            // ✅ URL + 크기 정보 (PNG 드로잉) 또는 레거시 {url: ...}
+            url = (content['url'] ?? '').toString();
+            debugPrint('[PostPublishService] 📌 스티커 content (Map): $content');
+          } else if (content is String) {
+            // 레거시: content가 직접 URL 문자열인 경우
+            url = content;
+            debugPrint(
+              '[PostPublishService] 📌 스티커 content (String): $content',
+            );
           }
+
+          if (url != null && url.isNotEmpty) {
+            usedUrls.add(url);
+            debugPrint('[PostPublishService] ✅ 스티커 URL 추가: $url');
+          } else {
+            debugPrint(
+              '[PostPublishService] ⚠️ 스티커 URL이 비어있음: content=$content',
+            );
+          }
+        } else {
+          debugPrint('[PostPublishService] ⚠️ 스티커 타입이 image가 아님: $stickerType');
         }
       }
+      debugPrint(
+        '[PostPublishService] 📌 스티커 URL 수집 완료: 총 ${usedUrls.length}개 URL',
+      );
     }
 
     return usedUrls;

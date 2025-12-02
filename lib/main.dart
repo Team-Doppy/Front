@@ -44,6 +44,76 @@ import 'utils/deep_link_handler.dart';
 // Global NavigatorKey for accessing context from anywhere
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
+/// 위로 스와이프하여 닫을 수 있는 알림 위젯
+class _DismissibleNotification extends StatefulWidget {
+  final Widget child;
+  final VoidCallback onTap;
+  final VoidCallback onDismiss;
+
+  const _DismissibleNotification({
+    required this.child,
+    required this.onTap,
+    required this.onDismiss,
+  });
+
+  @override
+  State<_DismissibleNotification> createState() =>
+      _DismissibleNotificationState();
+}
+
+class _DismissibleNotificationState extends State<_DismissibleNotification> {
+  double _dragOffset = 0.0;
+  bool _isDragging = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: widget.onTap,
+      onVerticalDragStart: (_) {
+        setState(() {
+          _isDragging = true;
+        });
+      },
+      onVerticalDragUpdate: (details) {
+        // 위로만 드래그 가능 (음수 방향)
+        if (details.primaryDelta! < 0) {
+          setState(() {
+            _dragOffset += details.primaryDelta!;
+            // 최대 드래그 거리 제한
+            if (_dragOffset < -200) {
+              _dragOffset = -200;
+            }
+          });
+        }
+      },
+      onVerticalDragEnd: (details) {
+        setState(() {
+          _isDragging = false;
+        });
+        // 일정 거리 이상 위로 드래그하면 닫기
+        if (_dragOffset < -80) {
+          widget.onDismiss();
+        } else {
+          // 원위치로 복귀
+          setState(() {
+            _dragOffset = 0.0;
+          });
+        }
+      },
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        curve: Curves.easeOut,
+        transform: Matrix4.translationValues(0, _dragOffset, 0),
+        child: Opacity(
+          opacity:
+              _isDragging ? (1.0 + _dragOffset / 200).clamp(0.0, 1.0) : 1.0,
+          child: widget.child,
+        ),
+      ),
+    );
+  }
+}
+
 /// 🎯 FCM 딥링크 처리
 void _handleDeepLinkFromFcm(String deepLinkUrl) {
   final context = navigatorKey.currentContext;
@@ -111,7 +181,7 @@ Future<void> main() async {
         final context = navigatorKey.currentContext;
         if (context != null) {
           showOverlayNotification((context) {
-            return GestureDetector(
+            return _DismissibleNotification(
               onTap: () {
                 // 🎯 알림 탭 시 딥링크 처리
                 final deepLink = message.data['deepLink'] as String?;
@@ -127,52 +197,78 @@ Future<void> main() async {
                 // 알림 닫기
                 OverlaySupportEntry.of(context)?.dismiss();
               },
-              child: Material(
-                color: Theme.of(context).colorScheme.surface,
-                child: SafeArea(
-                  child: Container(
-                    decoration: BoxDecoration(
-                      color: Theme.of(context).colorScheme.surface,
-                    ),
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 14,
-                    ),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(
-                                notification.title ?? '알림',
-                                style: TextStyle(
-                                  fontWeight: FontWeight.w600,
-                                  fontSize: 15,
-                                  color:
-                                      Theme.of(context).colorScheme.onSurface,
-                                  letterSpacing: -0.2,
-                                ),
-                              ),
-                              if (notification.body != null) ...[
-                                const SizedBox(height: 6),
+              onDismiss: () {
+                OverlaySupportEntry.of(context)?.dismiss();
+              },
+              child: SafeArea(
+                child: Container(
+                  margin: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.surface,
+                    borderRadius: BorderRadius.circular(16),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.1),
+                        blurRadius: 20,
+                        offset: const Offset(0, 4),
+                        spreadRadius: 0,
+                      ),
+                    ],
+                  ),
+                  child: Material(
+                    color: Colors.transparent,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 20,
+                        vertical: 16,
+                      ),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
                                 Text(
-                                  notification.body!,
+                                  notification.title ?? '알림',
                                   style: TextStyle(
-                                    fontSize: 13,
-                                    color: Theme.of(
-                                      context,
-                                    ).colorScheme.onSurface.withOpacity(0.7),
-                                    height: 1.4,
-                                    letterSpacing: -0.1,
+                                    fontWeight: FontWeight.w600,
+                                    fontSize: 16,
+                                    color:
+                                        Theme.of(context).colorScheme.onSurface,
+                                    letterSpacing: -0.3,
+                                    height: 1.3,
                                   ),
                                 ),
+                                if (notification.body != null) ...[
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    notification.body!,
+                                    style: TextStyle(
+                                      fontSize: 14,
+                                      color: Theme.of(
+                                        context,
+                                      ).colorScheme.onSurface.withOpacity(0.7),
+                                      height: 1.4,
+                                      letterSpacing: -0.2,
+                                    ),
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ],
                               ],
-                            ],
+                            ),
                           ),
-                        ),
-                      ],
+                          const SizedBox(width: 8),
+                          Icon(
+                            Icons.chevron_right,
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.onSurface.withOpacity(0.4),
+                            size: 20,
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 ),
@@ -283,35 +379,35 @@ class MyApp extends StatelessWidget {
       builder: (context, localeProvider, child) {
         return OverlaySupport(
           child: MaterialApp(
-          navigatorKey: navigatorKey,
-          title: 'Doppy',
-          debugShowCheckedModeBanner: false,
+            navigatorKey: navigatorKey,
+            title: 'Doppy',
+            debugShowCheckedModeBanner: false,
 
-          // 다국어 설정
-          locale: localeProvider.locale,
-          supportedLocales: AppLocalizations.supportedLocales,
-          localizationsDelegates: [
-            const AppLocalizationsDelegate(),
-            GlobalMaterialLocalizations.delegate,
-            GlobalWidgetsLocalizations.delegate,
-            GlobalCupertinoLocalizations.delegate,
-          ],
+            // 다국어 설정
+            locale: localeProvider.locale,
+            supportedLocales: AppLocalizations.supportedLocales,
+            localizationsDelegates: [
+              const AppLocalizationsDelegate(),
+              GlobalMaterialLocalizations.delegate,
+              GlobalWidgetsLocalizations.delegate,
+              GlobalCupertinoLocalizations.delegate,
+            ],
 
-          theme: AppTheme.lightTheme,
-          darkTheme: AppTheme.darkTheme,
-          themeMode: context.watch<ThemeProvider>().themeMode,
-          home: const SplashScreen(),
-          navigatorObservers: [routeObserver],
-          routes: {
-            '/home': (_) => const RootShell(initialIndex: 0),
-            '/login': (_) => const LoginScreen(),
-            '/search': (_) => const RootShell(initialIndex: 1),
-            '/profile': (context) => const RootShell(initialIndex: 3),
-            '/post-write': (_) => PostwriteScreen(isEditingMode: false),
-          },
+            theme: AppTheme.lightTheme,
+            darkTheme: AppTheme.darkTheme,
+            themeMode: context.watch<ThemeProvider>().themeMode,
+            home: const SplashScreen(),
+            navigatorObservers: [routeObserver],
+            routes: {
+              '/home': (_) => const RootShell(initialIndex: 0),
+              '/login': (_) => const LoginScreen(),
+              '/search': (_) => const RootShell(initialIndex: 1),
+              '/profile': (context) => const RootShell(initialIndex: 3),
+              '/post-write': (_) => PostwriteScreen(isEditingMode: false),
+            },
 
-          onUnknownRoute:
-              (_) => MaterialPageRoute(builder: (_) => const HomeScreen()),
+            onUnknownRoute:
+                (_) => MaterialPageRoute(builder: (_) => const HomeScreen()),
           ),
         );
       },

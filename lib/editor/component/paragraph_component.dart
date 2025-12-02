@@ -202,6 +202,7 @@ class _ParagraphWithDropLinesState extends State<_ParagraphWithDropLines>
           } catch (_) {}
         }
 
+        // 🎯 특수 노드 사이에 있는 빈 ParagraphNode인지 확인
         Widget content = DefaultTextStyle.merge(
           textAlign: _resolveTextAlign(),
           child: KeyedSubtree(key: _subtreeKey, child: widget.child),
@@ -210,9 +211,10 @@ class _ParagraphWithDropLinesState extends State<_ParagraphWithDropLines>
         Widget stack = Stack(
           children: [
             // 본문 내용 마진 제거
+            // 🎯 특수 노드 사이에 있는 빈 노드는 위/아래 패딩 적용 (아래쪽은 조금 더 작게)
             Padding(
-              padding: EdgeInsets.only(top: 6, bottom: showBottom ? 4 : 0),
-              child: content,
+              padding: EdgeInsets.only(top: 5.5, bottom: showBottom ? 4 : 0),
+              child: SizedBox(height: 22, child: content),
             ),
             // 형광펜 오버레이 (스포일러처럼 그리기)
             Builder(
@@ -330,7 +332,7 @@ class _ParagraphWithDropLinesState extends State<_ParagraphWithDropLines>
                 left: 20,
                 right: 20,
                 child: SizedBox(
-                  height: 5,
+                  height: 4,
                   child: ColoredBox(color: AppColors.primary),
                 ),
               ),
@@ -340,7 +342,7 @@ class _ParagraphWithDropLinesState extends State<_ParagraphWithDropLines>
                 left: 20,
                 right: 20,
                 child: SizedBox(
-                  height: 5,
+                  height: 4,
                   child: ColoredBox(color: AppColors.primary),
                 ),
               ),

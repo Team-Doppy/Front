@@ -1,6 +1,5 @@
 import 'package:doppy/pages/components/common_profile_avatar.dart';
 import 'package:doppy/pages/components/comment_reaction_users_bottom_sheet.dart';
-import 'package:doppy/pages/components/shimmer_box.dart';
 import 'package:doppy/utils/time_utils.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -222,103 +221,204 @@ class CommentItem extends StatelessWidget {
     );
   }
 
-  /// 🎯 이미지 위젯 빌드 (로컬 이미지 또는 네트워크 이미지)
+  /// 🎯 이미지 URL 추출 (content에서 파싱) - 단일 이미지만 반환
+  String? _extractImageUrl() {
+    // 🎯 [IMAGES:url1,url2,url3] 형식 파싱 (첫 번째만)
+    if (comment.content.contains('[IMAGES:')) {
+      final regex = RegExp(r'\[IMAGES:(.+?)\]');
+      final match = regex.firstMatch(comment.content);
+      if (match != null) {
+        final urlsString = match.group(1);
+        if (urlsString != null) {
+          final urls =
+              urlsString
+                  .split(',')
+                  .map((url) => url.trim())
+                  .where((url) => url.isNotEmpty)
+                  .toList();
+          if (urls.isNotEmpty) {
+            return urls.first; // 🎯 첫 번째만 반환
+          }
+        }
+      }
+    }
+    // 🎯 [IMAGE] url 형식 파싱
+    else if (comment.content.contains('[IMAGE] ')) {
+      final parts = comment.content.split('[IMAGE] ');
+      if (parts.length > 1 && parts[1].trim().isNotEmpty) {
+        return parts[1].trim();
+      }
+    }
+    // 🎯 imageUrl 필드 사용 (하위 호환성)
+    else if (comment.imageUrl != null &&
+        comment.imageUrl!.isNotEmpty &&
+        !comment.imageUrl!.startsWith('pending://')) {
+      return comment.imageUrl!;
+    }
+
+    return null;
+  }
+
+  /// 🎯 이미지 위젯 빌드 (로컬 이미지 우선, 없으면 네트워크 이미지) - 단일 이미지
   Widget _buildImageWidget(BuildContext context) {
-    if (comment.localImagePath != null && comment.localImagePath!.isNotEmpty) {
-      // 🎯 로컬 이미지 표시 (업로드 중)
-      final imageProvider = FileImage(File(comment.localImagePath!));
-      return RepaintBoundary(
-        child: ClipRRect(
-          key: ValueKey(
-            'image_widget_local_${comment.id}_${comment.localImagePath}',
-          ),
-          borderRadius: BorderRadius.circular(8),
-          child: Stack(
-            children: [
-              GestureDetector(
-                onTap: () {
-                  _showImageFullscreen(
-                    context,
-                    imageProvider,
-                    null,
-                    comment.localImagePath!,
-                  );
-                },
-                child: Image(
-                  image: imageProvider,
-                  key: ValueKey(
-                    'local_image_${comment.id}_${comment.localImagePath}',
+    final imageUrl = _extractImageUrl();
+    final hasLocalImage =
+        comment.localImagePath != null && comment.localImagePath!.isNotEmpty;
+    final hasNetworkImage = imageUrl != null;
+
+    if (!hasLocalImage && !hasNetworkImage) {
+      return const SizedBox.shrink();
+    }
+
+    // 🎯 로컬 이미지가 있으면 계속 로컬 이미지 사용 (전환 없음)
+    // 로컬 이미지가 한 번 로드되면 네트워크 이미지로 바꾸지 않음
+    return RepaintBoundary(
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(8),
+        child:
+            hasLocalImage
+                ? _buildLocalImageWidget(context)
+                : (imageUrl != null
+                    ? _buildNetworkImageWidget(context, imageUrl)
+                    : const SizedBox.shrink()),
+      ),
+    );
+  }
+
+  /// 🎯 로컬 이미지 위젯 빌드
+  Widget _buildLocalImageWidget(BuildContext context) {
+    final imageProvider = FileImage(File(comment.localImagePath!));
+    return Stack(
+      key: ValueKey('local_${comment.id}_${comment.localImagePath}'),
+      children: [
+        GestureDetector(
+          onTap: () {
+            _showImageFullscreen(
+              context,
+              imageProvider,
+              null,
+              comment.localImagePath!,
+            );
+          },
+          child: Hero(
+            tag: 'comment_image_${comment.id}', // 🎯 Hero 태그
+            child: Image(
+              image: imageProvider,
+              width: 200,
+              height: 200,
+              fit: BoxFit.cover,
+              errorBuilder: (context, error, stackTrace) {
+                return Container(
+                  width: 200,
+                  height: 200,
+                  color: Theme.of(context).colorScheme.surface.withOpacity(0.5),
+                  child: Icon(
+                    Icons.broken_image,
+                    color: Theme.of(
+                      context,
+                    ).colorScheme.onSurface.withOpacity(0.5),
                   ),
-                  width: 200,
-                  height: 200,
-                  fit: BoxFit.cover,
-                  errorBuilder: (context, error, stackTrace) {
-                    return Container(
-                      width: 200,
-                      height: 200,
-                      color: Theme.of(
-                        context,
-                      ).colorScheme.surface.withOpacity(0.5),
-                      child: Icon(
-                        Icons.broken_image,
-                        color: Theme.of(
-                          context,
-                        ).colorScheme.onSurface.withOpacity(0.5),
-                      ),
-                    );
-                  },
-                ),
+                );
+              },
+            ),
+          ),
+        ),
+        // 🎯 실패 시에만 작은 X, 새로고침 버튼 표시 (하단)
+        if (comment.isFailed)
+          Positioned(
+            bottom: 4,
+            right: 4,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+              decoration: BoxDecoration(
+                color: Colors.black.withOpacity(0.7),
+                borderRadius: BorderRadius.circular(12),
               ),
-              // 🎯 업로드 중 로딩 인디케이터
-              if (comment.isPending)
-                Container(
-                  width: 200,
-                  height: 200,
-                  color: Colors.black.withOpacity(0.3),
-                  child: Center(
-                    child: CircularProgressIndicator(
-                      valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  GestureDetector(
+                    onTap: () {
+                      commentService.removeFailedComment(comment.id);
+                    },
+                    child: const Icon(
+                      Icons.close,
+                      color: Colors.white,
+                      size: 16,
                     ),
                   ),
-                ),
-            ],
+                  const SizedBox(width: 8),
+                  GestureDetector(
+                    onTap: () {
+                      commentService.retryComment(comment.id);
+                    },
+                    child: const Icon(
+                      Icons.refresh,
+                      color: Colors.white,
+                      size: 16,
+                    ),
+                  ),
+                ],
+              ),
+            ),
           ),
+      ],
+    );
+  }
+
+  /// 🎯 네트워크 이미지 위젯 빌드
+  Widget _buildNetworkImageWidget(BuildContext context, String imageUrl) {
+    return Stack(
+      key: ValueKey('network_${comment.id}_$imageUrl'),
+      children: [
+        _CachedNetworkImageWidget(
+          imageUrl: imageUrl,
+          commentId: comment.id,
+          onImageTap: (imageProvider) {
+            _showImageFullscreen(context, imageProvider, imageUrl, null);
+          },
         ),
-      );
-    } else {
-      // 🎯 네트워크 이미지 표시
-      String? imageUrlToDisplay;
-      if (comment.content.startsWith('[IMAGE] ')) {
-        final parts = comment.content.split('[IMAGE] ');
-        if (parts.length > 1 && parts[1].trim().isNotEmpty) {
-          imageUrlToDisplay = parts[1].trim();
-        }
-      } else if (comment.imageUrl != null &&
-          comment.imageUrl!.isNotEmpty &&
-          !comment.imageUrl!.startsWith('pending://')) {
-        imageUrlToDisplay = comment.imageUrl;
-      }
-
-      if (imageUrlToDisplay == null) {
-        return const SizedBox.shrink();
-      }
-
-      final imageUrl = imageUrlToDisplay; // 🎯 null 체크 후 non-null로 사용
-
-      return RepaintBoundary(
-        child: ClipRRect(
-          key: ValueKey('image_widget_network_${comment.id}_$imageUrl'),
-          borderRadius: BorderRadius.circular(8),
-          child: _CachedNetworkImageWidget(
-            imageUrl: imageUrl,
-            commentId: comment.id,
-            onImageTap: (imageProvider) {
-              _showImageFullscreen(context, imageProvider, imageUrl, null);
-            },
+        // 🎯 실패 시에만 작은 X, 새로고침 버튼 표시 (하단)
+        if (comment.isFailed)
+          Positioned(
+            bottom: 4,
+            right: 4,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+              decoration: BoxDecoration(
+                color: Colors.black.withOpacity(0.7),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  GestureDetector(
+                    onTap: () {
+                      commentService.removeFailedComment(comment.id);
+                    },
+                    child: const Icon(
+                      Icons.close,
+                      color: Colors.white,
+                      size: 16,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  GestureDetector(
+                    onTap: () {
+                      commentService.retryComment(comment.id);
+                    },
+                    child: const Icon(
+                      Icons.refresh,
+                      color: Colors.white,
+                      size: 16,
+                    ),
+                  ),
+                ],
+              ),
+            ),
           ),
-        ),
-      );
-    }
+      ],
+    );
   }
 
   Widget _buildProfileImage(BuildContext context) {
@@ -356,29 +456,18 @@ class CommentItem extends StatelessWidget {
     final canInteract = _canInteractWithPrivateComment();
 
     // 🎯 이미지 URL 추출
-    String? imageUrlToDisplay;
-    if (comment.localImagePath != null && comment.localImagePath!.isNotEmpty) {
-      // 로컬 이미지가 있으면 로컬 이미지 표시
-      imageUrlToDisplay = null; // 로컬 이미지 사용
-    } else if (comment.content.startsWith('[IMAGE] ')) {
-      // content에서 URL 추출: "[IMAGE] https://..."
-      final parts = comment.content.split('[IMAGE] ');
-      if (parts.length > 1 && parts[1].trim().isNotEmpty) {
-        imageUrlToDisplay = parts[1].trim();
-      }
-    } else if (comment.imageUrl != null &&
-        comment.imageUrl!.isNotEmpty &&
-        !comment.imageUrl!.startsWith('pending://')) {
-      imageUrlToDisplay = comment.imageUrl;
-    }
+    final imageUrl = _extractImageUrl();
 
     // 🎯 이미지만 있는지 확인
     final hasImage =
         (comment.localImagePath != null &&
             comment.localImagePath!.isNotEmpty) ||
-        imageUrlToDisplay != null;
+        imageUrl != null;
     final isImageOnly =
-        comment.content == '[IMAGE]' || comment.content.startsWith('[IMAGE] ');
+        hasImage &&
+        (comment.content == '[IMAGE]' ||
+            comment.content.startsWith('[IMAGE] ') ||
+            comment.content.contains('[IMAGES:'));
 
     return GestureDetector(
       onDoubleTap:
@@ -694,22 +783,30 @@ class CommentItem extends StatelessWidget {
     );
   }
 
-  /// 🎯 이미지 전체화면 보기 (배경 블러 + 가운데 이미지 + 다운로드 버튼)
+  /// 🎯 이미지 전체화면 보기 (Hero 애니메이션으로 인스타그램 느낌)
   void _showImageFullscreen(
     BuildContext context,
     ImageProvider imageProvider, // 🎯 이미지 객체 전달 (재로드 방지)
     String? imageUrl, // 🎯 다운로드용 URL
     String? localImagePath, // 🎯 로컬 이미지 경로
   ) {
-    showDialog(
-      context: context,
-      barrierColor: Colors.black.withOpacity(0.8),
-      builder:
-          (context) => _CommentImageFullscreenDialog(
-            imageProvider: imageProvider, // 🎯 이미지 객체 전달
+    Navigator.of(context).push(
+      PageRouteBuilder(
+        opaque: false,
+        barrierColor: Colors.black87,
+        barrierDismissible: true,
+        pageBuilder: (context, animation, secondaryAnimation) {
+          return _CommentImageFullscreenDialog(
+            imageProvider: imageProvider,
             imageUrl: imageUrl,
             localImagePath: localImagePath,
-          ),
+            heroTag: 'comment_image_${comment.id}', // 🎯 Hero 태그
+          );
+        },
+        transitionsBuilder: (context, animation, secondaryAnimation, child) {
+          return FadeTransition(opacity: animation, child: child);
+        },
+      ),
     );
   }
 }
@@ -749,39 +846,44 @@ class _CachedNetworkImageWidgetState extends State<_CachedNetworkImageWidget> {
         // 🎯 이미지 위젯에서 사용하는 ImageProvider 전달 (캐시된 이미지 재사용)
         widget.onImageTap(_imageProvider);
       },
-      child: Image(
-        image:
-            _imageProvider, // 🎯 Image.network 대신 Image 위젯에 직접 전달 (같은 인스턴스 사용)
-        key: ValueKey('network_image_${widget.commentId}_${widget.imageUrl}'),
-        width: 200,
-        height: 200,
-        fit: BoxFit.cover,
-        errorBuilder: (context, error, stackTrace) {
-          return Container(
-            width: 200,
-            height: 200,
-            color: Theme.of(context).colorScheme.surface.withOpacity(0.5),
-            child: Icon(
-              Icons.broken_image,
-              color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
-            ),
-          );
-        },
+      child: Hero(
+        tag: 'comment_image_${widget.commentId}', // 🎯 Hero 태그
+        child: Image(
+          image:
+              _imageProvider, // 🎯 Image.network 대신 Image 위젯에 직접 전달 (같은 인스턴스 사용)
+          key: ValueKey('network_image_${widget.commentId}_${widget.imageUrl}'),
+          width: 200,
+          height: 200,
+          fit: BoxFit.cover,
+          errorBuilder: (context, error, stackTrace) {
+            return Container(
+              width: 200,
+              height: 200,
+              color: Theme.of(context).colorScheme.surface.withOpacity(0.5),
+              child: Icon(
+                Icons.broken_image,
+                color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
+              ),
+            );
+          },
+        ),
       ),
     );
   }
 }
 
-/// 🎯 댓글 이미지 전체화면 다이얼로그
+/// 🎯 댓글 이미지 전체화면 뷰 (Hero 애니메이션)
 class _CommentImageFullscreenDialog extends StatefulWidget {
   final ImageProvider imageProvider; // 🎯 이미지 객체 (재로드 방지)
   final String? imageUrl; // 🎯 다운로드용 URL
   final String? localImagePath; // 🎯 로컬 이미지 경로
+  final String heroTag; // 🎯 Hero 태그
 
   const _CommentImageFullscreenDialog({
     required this.imageProvider,
     required this.imageUrl,
     required this.localImagePath,
+    required this.heroTag,
   });
 
   @override
@@ -793,6 +895,34 @@ class _CommentImageFullscreenDialogState
     extends State<_CommentImageFullscreenDialog> {
   bool _isDownloading = false;
   bool _isDownloaded = false;
+  double _dragOffset = 0.0; // 🎯 드래그 오프셋 (세로)
+
+  void _onVerticalDragUpdate(DragUpdateDetails details) {
+    setState(() {
+      _dragOffset += details.delta.dy;
+      // 🎯 드래그 거리에 따라 스케일 조절 (인스타그램 느낌)
+      final dragDistance = _dragOffset.abs();
+      final scale = (1.0 - (dragDistance / 1000)).clamp(0.85, 1.0);
+      if ((scale - 1.0).abs() > 0.01) {
+        // setState를 최소화
+      }
+    });
+  }
+
+  void _onVerticalDragEnd(DragEndDetails details) {
+    final velocity = details.primaryVelocity ?? 0;
+    final dragDistance = _dragOffset.abs();
+
+    // 🎯 임계값 초과하거나 빠른 스와이프 시 닫기
+    if (dragDistance > 100 || velocity.abs() > 700) {
+      Navigator.of(context).pop();
+    } else {
+      // 🎯 원위치로 복귀
+      setState(() {
+        _dragOffset = 0.0;
+      });
+    }
+  }
 
   Future<void> _downloadImage() async {
     if (_isDownloading || _isDownloaded) return;
@@ -846,152 +976,123 @@ class _CommentImageFullscreenDialogState
 
   @override
   Widget build(BuildContext context) {
-    return Dialog(
-      backgroundColor: Colors.transparent,
-      insetPadding: EdgeInsets.zero,
-      child: Stack(
-        children: [
-          // 🎯 배경 투명 (블러 제거)
-          Positioned.fill(
-            child: GestureDetector(
-              onTap: () => Navigator.of(context).pop(),
-              child: Container(color: Colors.transparent),
-            ),
-          ),
-          // 🎯 가운데 이미지
-          Center(
-            child: GestureDetector(
-              onTap: () => Navigator.of(context).pop(),
-              child: Container(
-                constraints: BoxConstraints(
-                  maxWidth: MediaQuery.of(context).size.width * 0.9,
-                  maxHeight: MediaQuery.of(context).size.height * 0.7,
-                ),
-                child: Stack(
-                  children: [
-                    // 🎯 이미지 (전달받은 ImageProvider 사용, 재로드 없음)
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(12),
-                      child: Image(
-                        image: widget.imageProvider, // 🎯 전달받은 이미지 객체 사용
-                        fit: BoxFit.contain,
-                        errorBuilder: (context, error, stackTrace) {
-                          return Container(
-                            width: 200,
-                            height: 200,
+    // 🎯 드래그 거리에 따른 스케일/투명도 계산
+    final dragDistance = _dragOffset.abs();
+    final scale = (1.0 - (dragDistance / 1000)).clamp(0.85, 1.0);
+    final opacity = (1.0 - (dragDistance / 500)).clamp(0.0, 1.0);
+
+    return Scaffold(
+      backgroundColor: Colors.black.withOpacity(0.9 * opacity),
+      body: GestureDetector(
+        onTap: () => Navigator.of(context).pop(),
+        onVerticalDragUpdate: _onVerticalDragUpdate,
+        onVerticalDragEnd: _onVerticalDragEnd,
+        child: Stack(
+          children: [
+            // 🎯 가운데 이미지 (Hero 애니메이션)
+            Center(
+              child: Transform.translate(
+                offset: Offset(0, _dragOffset),
+                child: Transform.scale(
+                  scale: scale,
+                  child: Hero(
+                    tag: widget.heroTag,
+                    child: Image(
+                      image: widget.imageProvider,
+                      fit: BoxFit.contain,
+                      errorBuilder: (context, error, stackTrace) {
+                        return Container(
+                          width: 200,
+                          height: 200,
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.surface.withOpacity(0.5),
+                          child: Icon(
+                            Icons.broken_image,
                             color: Theme.of(
                               context,
-                            ).colorScheme.surface.withOpacity(0.5),
-                            child: Icon(
-                              Icons.broken_image,
-                              color: Theme.of(
-                                context,
-                              ).colorScheme.onSurface.withOpacity(0.5),
-                            ),
-                          );
-                        },
-                      ),
-                    ),
-                    // 🎯 닫기 X 버튼 (우측 상단)
-                    Positioned(
-                      top: 8,
-                      right: 8,
-                      child: GestureDetector(
-                        onTap: () => Navigator.of(context).pop(),
-                        child: Container(
-                          width: 32,
-                          height: 32,
-                          decoration: BoxDecoration(
-                            color: Colors.white,
-                            shape: BoxShape.circle,
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.black.withOpacity(0.2),
-                                blurRadius: 4,
-                                offset: Offset(0, 2),
-                              ),
-                            ],
+                            ).colorScheme.onSurface.withOpacity(0.5),
                           ),
-                          child: Icon(
-                            Icons.close,
-                            size: 20,
-                            color: Colors.black87,
+                        );
+                      },
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            // 🎯 우측 상단 버튼들
+            SafeArea(
+              child: Positioned(
+                top: 16,
+                right: 16,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // 🎯 다운로드 버튼 (네트워크 이미지만)
+                    if (widget.localImagePath == null &&
+                        widget.imageUrl != null)
+                      GestureDetector(
+                        onTap:
+                            (_isDownloading || _isDownloaded)
+                                ? null
+                                : _downloadImage,
+                        child: Container(
+                          width: 40,
+                          height: 40,
+                          decoration: BoxDecoration(
+                            color: Colors.white.withOpacity(0.9),
+                            shape: BoxShape.circle,
+                          ),
+                          child: Center(
+                            child:
+                                _isDownloading
+                                    ? SizedBox(
+                                      width: 20,
+                                      height: 20,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        valueColor:
+                                            AlwaysStoppedAnimation<Color>(
+                                              Colors.black87,
+                                            ),
+                                      ),
+                                    )
+                                    : Icon(
+                                      _isDownloaded
+                                          ? Icons.check
+                                          : Icons.download,
+                                      size: 22,
+                                      color: Colors.black87,
+                                    ),
                           ),
                         ),
                       ),
-                    ),
-                    // 🎯 다운로드 버튼 (이미지 하단, 흰색 배경)
-                    Positioned(
-                      bottom: 16,
-                      left: 0,
-                      right: 0,
-                      child: Center(
-                        child:
-                            widget.localImagePath == null &&
-                                    widget.imageUrl != null
-                                ? ElevatedButton.icon(
-                                  onPressed:
-                                      (_isDownloading || _isDownloaded)
-                                          ? null
-                                          : _downloadImage,
-                                  icon:
-                                      _isDownloading
-                                          ? SizedBox(
-                                            width: 16,
-                                            height: 16,
-                                            child: CircularProgressIndicator(
-                                              strokeWidth: 2,
-                                              valueColor:
-                                                  AlwaysStoppedAnimation<Color>(
-                                                    Colors.black87,
-                                                  ),
-                                            ),
-                                          )
-                                          : _isDownloaded
-                                          ? Icon(
-                                            Icons.check,
-                                            color: Colors.black87,
-                                          )
-                                          : Icon(
-                                            Icons.download,
-                                            color: Colors.black87,
-                                          ),
-                                  label: Text(
-                                    _isDownloading
-                                        ? '다운로드 중...'
-                                        : _isDownloaded
-                                        ? AppLocalizations.of(
-                                          context,
-                                        ).translate('done')
-                                        : '다운로드',
-                                    style: TextStyle(
-                                      fontSize: 14,
-                                      fontWeight: FontWeight.w500,
-                                      color: Colors.black87,
-                                    ),
-                                  ),
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: Colors.white,
-                                    foregroundColor: Colors.black87,
-                                    padding: EdgeInsets.symmetric(
-                                      horizontal: 24,
-                                      vertical: 12,
-                                    ),
-                                    shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(24),
-                                    ),
-                                    elevation: 2,
-                                  ),
-                                )
-                                : const SizedBox.shrink(),
+                    if (widget.localImagePath == null &&
+                        widget.imageUrl != null)
+                      const SizedBox(width: 12),
+                    // 🎯 닫기 X 버튼
+                    GestureDetector(
+                      onTap: () => Navigator.of(context).pop(),
+                      child: Container(
+                        width: 40,
+                        height: 40,
+                        decoration: BoxDecoration(
+                          color: Colors.white.withOpacity(0.9),
+                          shape: BoxShape.circle,
+                        ),
+                        child: Icon(
+                          Icons.close,
+                          size: 24,
+                          color: Colors.black87,
+                        ),
                       ),
                     ),
                   ],
                 ),
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

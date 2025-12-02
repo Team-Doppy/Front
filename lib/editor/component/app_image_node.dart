@@ -17,5 +17,5 @@ class AppImageNode extends ImageNode {
        );
 
   @override
-  bool get isDeletable => false;
+  bool get isDeletable => true;
 }

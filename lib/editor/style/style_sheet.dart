@@ -1,6 +1,6 @@
 import 'package:doppy/editor/component/clip_component.dart';
 import 'package:doppy/editor/component/row_image_component.dart';
-import 'package:doppy/editor/config.dart';
+import 'package:doppy/editor/utils/config.dart';
 import 'package:doppy/editor/style/defualt_toolbar.dart'; // HighlightAttribution import
 import 'package:doppy/providers/theme_provider.dart';
 import 'package:doppy/theme/app_colors.dart';

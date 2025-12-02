@@ -99,9 +99,11 @@ class _SentRequestsListBottomSheetState
                                 horizontal: 20,
                                 vertical: 8,
                               ),
-                              itemCount: sentRequests.length +
+                              itemCount:
+                                  sentRequests.length +
                                   (friendProvider.hasMoreSentRequests ||
-                                          friendProvider.isLoadingMoreSentRequests
+                                          friendProvider
+                                              .isLoadingMoreSentRequests
                                       ? 1
                                       : 0),
                               itemBuilder: (context, index) {
@@ -109,11 +111,11 @@ class _SentRequestsListBottomSheetState
                                 if (index == sentRequests.length - 3 &&
                                     friendProvider.hasMoreSentRequests &&
                                     !friendProvider.isLoadingMoreSentRequests) {
-                                  WidgetsBinding.instance.addPostFrameCallback(
-                                    (_) {
-                                      friendProvider.loadMoreSentRequests();
-                                    },
-                                  );
+                                  WidgetsBinding.instance.addPostFrameCallback((
+                                    _,
+                                  ) {
+                                    friendProvider.loadMoreSentRequests();
+                                  });
                                 }
 
                                 // 🎯 로딩 인디케이터
@@ -121,9 +123,11 @@ class _SentRequestsListBottomSheetState
                                   return Padding(
                                     padding: const EdgeInsets.all(16.0),
                                     child: Center(
-                                      child: friendProvider.isLoadingMoreSentRequests
-                                          ? const CircularProgressIndicator()
-                                          : const SizedBox.shrink(),
+                                      child:
+                                          friendProvider
+                                                  .isLoadingMoreSentRequests
+                                              ? const CircularProgressIndicator()
+                                              : const SizedBox.shrink(),
                                     ),
                                   );
                                 }
@@ -231,7 +235,7 @@ class _SentRequestsListBottomSheetState
                   context.tr('cancel_friend_request'),
                   style: TextStyle(
                     fontSize: 14,
-                    fontWeight: FontWeight.w500,
+                    fontWeight: FontWeight.w600,
                     color: Theme.of(context).colorScheme.onSurface,
                   ),
                 ),

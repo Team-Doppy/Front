@@ -234,13 +234,16 @@ class DraftService {
       // 🎯 3. 안전한 문서 교체 방식 (에디터 구조 완전히 클리어 후 재구성)
       await _replaceDocumentSafely(editorService, document);
 
-      // 🎯 4. 스티커 복원
+      // 🎯 4. 특수 노드 레지스트리 등록 (임시저장 불러오기 후)
+      editorService.registerAllSpecialNodes();
+
+      // 🎯 5. 스티커 복원
       postReaderService.restoreStickers(
         exported: exportedData,
         stickerService: stickerService,
       );
 
-      // 🎯 5. 레이아웃 재동기화를 위한 notifyListeners 호출
+      // 🎯 6. 레이아웃 재동기화를 위한 notifyListeners 호출
       // EditorService는 ChangeNotifier를 상속하므로 notifyListeners 사용 가능
       (editorService as ChangeNotifier).notifyListeners();
 

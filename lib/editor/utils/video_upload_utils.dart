@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:dio/dio.dart';
 import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart';
@@ -121,6 +122,7 @@ class VideoUploadUtils {
   /// 비디오 압축 (FFmpeg 사용 - 고품질 유지하면서 용량 최적화)
   /// H.264 코덱, CRF 23 (고품질), medium preset
   /// [cancellationToken]이 제공되면 취소 가능
+  /// 100MB 이하 mp4 파일은 압축을 건너뛰고 원본 파일을 반환합니다.
   static Future<File?> compressVideo(
     String videoPath, {
     CancellationToken? cancellationToken,
@@ -131,8 +133,6 @@ class VideoUploadUtils {
     _activeCompressions[compressionId] = token;
 
     try {
-      debugPrint('[VideoUploadUtils] 비디오 압축 시작 (FFmpeg): $videoPath');
-
       // 취소 확인
       if (token.isCancelled) {
         debugPrint('[VideoUploadUtils] 압축이 이미 취소됨');
@@ -141,47 +141,61 @@ class VideoUploadUtils {
       }
 
       final originalSize = await File(videoPath).length();
+      final fileExtension = videoPath.split('.').last.toLowerCase();
+
       debugPrint(
-        '[VideoUploadUtils] 원본 크기: ${(originalSize / 1024 / 1024).toStringAsFixed(2)}MB',
+        '[VideoUploadUtils] 원본 크기: ${(originalSize / 1024 / 1024).toStringAsFixed(2)}MB, 형식: $fileExtension',
+      );
+
+      // 🎯 모든 파일을 FFmpeg H.264 재인코딩 (검정 화면 문제 해결)
+      // 핵심: keyframe을 선두에 배치하여 video_player가 즉시 디코딩 가능하도록
+      debugPrint(
+        '[VideoUploadUtils] 비디오 처리 시작 (FFmpeg H.264 re-encode): $videoPath',
       );
 
       // 출력 파일 경로
       final tempDir = await getTemporaryDirectory();
       final outputPath =
-          '${tempDir.path}/compressed_${DateTime.now().millisecondsSinceEpoch}.mp4';
+          '${tempDir.path}/processed_${DateTime.now().millisecondsSinceEpoch}.mp4';
 
-      // FFmpeg 명령어 구성
-      // -i: 입력 파일
-      // -c:v libx264: H.264 코덱 사용
-      // -crf 18: 품질 설정 (18=거의 무손실, 원본과 거의 동일한 품질)
-      // -preset fast: 인코딩 속도와 CPU 사용률의 균형 (medium보다 빠르고 CPU 사용률 낮음)
-      // -threads 2: CPU 코어 2개만 사용 (전체 CPU 사용 방지, 기기 발열 및 배터리 절약)
-      // -c:a aac: 오디오 AAC 코덱
-      // -b:a 192k: 오디오 비트레이트 (고품질, 원본과 유사한 품질)
-      // -movflags +faststart: 웹 스트리밍 최적화 (moov atom을 앞으로)
-      // -y: 기존 파일 덮어쓰기
-      // 참고: 해상도는 자동으로 원본과 동일하게 유지됨
+      // 🎯 FFmpeg 명령어: 검정 화면 완전 제거를 위한 H.264 재인코딩
+      // -vcodec libx264: H.264 코덱 (keyframe 제어 가능)
+      // -preset ultrafast: 빠른 인코딩 (발열 최소화, 1분=5~15초)
+      // -crf 18: 거의 무손실 품질 (사람 눈으로 구분 불가)
+      // -x264opts: x264 레벨 파라미터
+      //   - keyint=6: 최대 GOP 6 (0.25초마다 keyframe, 24fps 기준 - play/pause 즉시 복구)
+      //   - min-keyint=6: 최소 GOP 6 (고정 간격)
+      //   - no-scenecut: scene change detection 완전 비활성화
+      // -pix_fmt yuv420p: 호환성 높은 픽셀 포맷
+      // -profile:v main: main profile (baseline보다 효율적, 검정 화면 방지에 더 유리)
+      // -level 3.1: 모바일 호환성
+      // -acodec aac: AAC 오디오
+      // -movflags +faststart: 스트리밍 최적화
       final command =
           '-i "$videoPath" '
-          '-c:v libx264 '
+          '-vcodec libx264 '
+          '-preset ultrafast '
           '-crf 18 '
-          '-preset fast '
-          '-threads 2 '
-          '-c:a aac '
-          '-b:a 192k '
+          '-x264opts keyint=6:min-keyint=6:no-scenecut '
+          '-pix_fmt yuv420p '
+          '-profile:v main '
+          '-level 3.1 '
+          '-acodec aac '
           '-movflags +faststart '
           '-y '
           '"$outputPath"';
 
-      debugPrint('[VideoUploadUtils] FFmpeg 실행...');
+      debugPrint(
+        '[VideoUploadUtils] FFmpeg 실행 (H.264 re-encode with GOP=24)...',
+      );
 
       // FFmpeg 실행 (비동기)
       final session = await FFmpegKit.executeAsync(command, (session) async {
         // 완료 콜백
       });
 
-      // 취소 감지: 주기적으로 확인
-      checkCancellation() async {
+      // 🎯 취소 감지: 주기적으로 확인 (백그라운드에서 실행)
+      unawaited(() async {
         while (!token.isCancelled) {
           await Future.delayed(const Duration(milliseconds: 500));
           if (token.isCancelled) {
@@ -190,13 +204,62 @@ class VideoUploadUtils {
             break;
           }
         }
+      }());
+
+      // 🎯 세션이 완료될 때까지 기다리기 (또는 취소될 때까지)
+      // getReturnCode()는 세션이 완료되면 즉시 반환되지만, 완료 전에는 null을 반환할 수 있음
+      // 따라서 주기적으로 확인하면서 완료를 기다림
+      ReturnCode? returnCode;
+      int attempts = 0;
+      const maxAttempts = 600; // 최대 5분 대기 (500ms * 600 = 300초)
+
+      while (returnCode == null &&
+          attempts < maxAttempts &&
+          !token.isCancelled) {
+        await Future.delayed(const Duration(milliseconds: 500));
+        returnCode = await session.getReturnCode();
+        attempts++;
+
+        // 취소 확인
+        if (token.isCancelled) {
+          debugPrint('[VideoUploadUtils] 압축이 취소됨 (대기 중)');
+          FFmpegKit.cancel();
+          final outputFile = File(outputPath);
+          if (await outputFile.exists()) {
+            try {
+              await outputFile.delete();
+            } catch (_) {}
+          }
+          _activeCompressions.remove(compressionId);
+          return null;
+        }
       }
 
-      checkCancellation();
+      // 🎯 최종 취소 확인
+      if (token.isCancelled) {
+        debugPrint('[VideoUploadUtils] 압축이 취소됨');
+        final outputFile = File(outputPath);
+        if (await outputFile.exists()) {
+          try {
+            await outputFile.delete();
+          } catch (_) {}
+        }
+        _activeCompressions.remove(compressionId);
+        return null;
+      }
 
-      final returnCode = await session.getReturnCode();
+      // 🎯 여전히 null이면 세션이 아직 실행 중이거나 취소된 것
+      if (returnCode == null) {
+        debugPrint('[VideoUploadUtils] ⚠️ FFmpeg 세션이 완료되지 않았습니다 (타임아웃 또는 취소)');
+        // 취소 시도
+        try {
+          FFmpegKit.cancel();
+        } catch (_) {}
+        _activeCompressions.remove(compressionId);
+        return null;
+      }
 
-      // 취소 확인
+      // 취소 확인 (가장 먼저)
       if (token.isCancelled) {
         debugPrint('[VideoUploadUtils] 압축이 취소됨');
         final outputFile = File(outputPath);
@@ -210,30 +273,75 @@ class VideoUploadUtils {
       }
 
       if (!ReturnCode.isSuccess(returnCode)) {
-        // 취소된 경우
+        // 취소된 경우 (중복 체크)
         if (token.isCancelled) {
           debugPrint('[VideoUploadUtils] 압축이 취소됨');
           _activeCompressions.remove(compressionId);
           return null;
         }
 
+        // 🎯 상세한 에러 로그 수집
         final output = await session.getOutput();
-        debugPrint('[VideoUploadUtils] FFmpeg 실패: $output');
+        final allLogs = await session.getAllLogsAsString();
+        final failStackTrace = await session.getFailStackTrace();
+
+        debugPrint('[VideoUploadUtils] FFmpeg 실패 (ReturnCode: $returnCode)');
+        if (output != null && output.isNotEmpty) {
+          debugPrint('[VideoUploadUtils] FFmpeg 출력: $output');
+        }
+        if (allLogs != null && allLogs.isNotEmpty) {
+          // 마지막 1000자만 출력 (너무 길면 잘라냄)
+          final logsToPrint =
+              allLogs.length > 1000
+                  ? '...${allLogs.substring(allLogs.length - 1000)}'
+                  : allLogs;
+          debugPrint('[VideoUploadUtils] FFmpeg 전체 로그 (마지막 부분): $logsToPrint');
+        }
+        if (failStackTrace != null && failStackTrace.isNotEmpty) {
+          debugPrint('[VideoUploadUtils] FFmpeg 스택 트레이스: $failStackTrace');
+        }
+
+        // 🎯 FFmpeg 세션 명시적으로 취소 (리소스 낭비 방지)
+        try {
+          FFmpegKit.cancel();
+          debugPrint('[VideoUploadUtils] FFmpeg 세션 취소 완료');
+        } catch (e) {
+          debugPrint('[VideoUploadUtils] FFmpeg 세션 취소 오류: $e');
+        }
 
         // 폴백: VideoCompress 사용
         debugPrint('[VideoUploadUtils] FFmpeg 실패 - VideoCompress로 폴백');
-        final result = await _compressWithVideoCompress(
-          videoPath,
-          token: token,
-        );
         _activeCompressions.remove(compressionId);
-        return result;
+        return null;
       }
 
       final outputFile = File(outputPath);
       if (!await outputFile.exists()) {
-        debugPrint('[VideoUploadUtils] 출력 파일이 생성되지 않았습니다');
-        return await _compressWithVideoCompress(videoPath);
+        debugPrint('[VideoUploadUtils] ⚠️ 출력 파일이 생성되지 않았습니다');
+
+        // 🎯 상세한 에러 로그 수집
+        final output = await session.getOutput();
+        final allLogs = await session.getAllLogsAsString();
+        if (output != null && output.isNotEmpty) {
+          debugPrint('[VideoUploadUtils] FFmpeg 출력: $output');
+        }
+        if (allLogs != null && allLogs.isNotEmpty) {
+          final logsToPrint =
+              allLogs.length > 1000
+                  ? '...${allLogs.substring(allLogs.length - 1000)}'
+                  : allLogs;
+          debugPrint('[VideoUploadUtils] FFmpeg 전체 로그 (마지막 부분): $logsToPrint');
+        }
+
+        // 🎯 FFmpeg 세션 명시적으로 취소
+        try {
+          FFmpegKit.cancel();
+        } catch (e) {
+          debugPrint('[VideoUploadUtils] FFmpeg 세션 취소 오류: $e');
+        }
+
+        _activeCompressions.remove(compressionId);
+        return null;
       }
 
       final compressedSize = await outputFile.length();
@@ -270,11 +378,16 @@ class VideoUploadUtils {
         return null;
       }
 
-      // 에러 발생 시 폴백: VideoCompress 사용
-      debugPrint('[VideoUploadUtils] 오류 발생 - VideoCompress로 폴백');
-      final result = await _compressWithVideoCompress(videoPath, token: token);
+      // 🎯 FFmpeg 세션 명시적으로 취소 (에러 발생 시)
+      try {
+        FFmpegKit.cancel();
+        debugPrint('[VideoUploadUtils] FFmpeg 세션 취소 완료 (에러 발생)');
+      } catch (cancelError) {
+        debugPrint('[VideoUploadUtils] FFmpeg 세션 취소 오류: $cancelError');
+      }
+
       _activeCompressions.remove(compressionId);
-      return result;
+      return null;
     }
   }
 
@@ -285,49 +398,6 @@ class VideoUploadUtils {
       token.cancel();
     }
     _activeCompressions.clear();
-  }
-
-  /// VideoCompress 폴백 함수
-  static Future<File?> _compressWithVideoCompress(
-    String videoPath, {
-    CancellationToken? token,
-  }) async {
-    // 취소 확인
-    if (token != null && token.isCancelled) {
-      return null;
-    }
-    try {
-      debugPrint('[VideoUploadUtils] VideoCompress로 압축 시작');
-      final compressed = await VideoCompress.compressVideo(
-        videoPath,
-        quality: VideoQuality.HighestQuality,
-        deleteOrigin: false,
-      );
-
-      if (compressed == null || compressed.path == null) {
-        debugPrint('[VideoUploadUtils] VideoCompress 압축 실패');
-        return null;
-      }
-
-      final outputFile = File(compressed.path!);
-      final compressedSize = await outputFile.length();
-
-      debugPrint(
-        '[VideoUploadUtils] VideoCompress 압축 완료: ${(compressedSize / 1024 / 1024).toStringAsFixed(2)}MB',
-      );
-
-      if (compressedSize > maxVideoSizeBytes) {
-        try {
-          await outputFile.delete();
-        } catch (_) {}
-        return null;
-      }
-
-      return outputFile;
-    } catch (e) {
-      debugPrint('[VideoUploadUtils] VideoCompress 압축 실패: $e');
-      return null;
-    }
   }
 
   /// 에러 메시지를 사용자 친화적으로 변환

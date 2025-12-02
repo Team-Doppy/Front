@@ -287,6 +287,103 @@ class MyProfileFeedProvider extends BaseFeedProvider {
     notifyListeners();
   }
 
+  /// 🎯 새로 발행한 글을 해당 카테고리의 맨 앞에 배치
+  /// 기존 순서는 유지하고 새 글만 맨 앞으로 이동
+  /// 서버와도 순서 동기화를 수행합니다.
+  Future<void> moveNewPostToFront(String postId) async {
+    try {
+      final postIdInt = int.tryParse(postId);
+      if (postIdInt == null) {
+        debugPrint(
+          '[MyProfileFeedProvider] moveNewPostToFront: 유효하지 않은 postId: $postId',
+        );
+        return;
+      }
+
+      // 현재 데이터에서 찾기
+      Map<String, dynamic>? foundPost;
+      String? categoryId;
+      int? currentIndex;
+
+      for (final catId in postsByCategoryInternal.keys) {
+        final posts = postsByCategoryInternal[catId]!;
+        final idx = posts.indexWhere((p) => (p['id'] as int?) == postIdInt);
+        if (idx != -1) {
+          foundPost = posts[idx];
+          categoryId = catId;
+          currentIndex = idx;
+          break;
+        }
+      }
+
+      if (foundPost == null || categoryId == null || currentIndex == null) {
+        debugPrint(
+          '[MyProfileFeedProvider] moveNewPostToFront: 포스트를 찾을 수 없음: $postId',
+        );
+        return;
+      }
+
+      // 이미 맨 앞에 있으면 아무것도 하지 않음
+      if (currentIndex == 0) {
+        debugPrint(
+          '[MyProfileFeedProvider] moveNewPostToFront: 이미 맨 앞에 있음: $postId',
+        );
+        return;
+      }
+
+      final categoryIdInt = int.tryParse(categoryId);
+      if (categoryIdInt == null) {
+        debugPrint(
+          '[MyProfileFeedProvider] moveNewPostToFront: 유효하지 않은 categoryId: $categoryId',
+        );
+        return;
+      }
+
+      // 🎯 로컬에서 먼저 맨 앞으로 이동 (낙관적 업데이트)
+      final posts = postsByCategoryInternal[categoryId]!;
+      posts.removeAt(currentIndex);
+      posts.insert(0, foundPost);
+
+      // 캐시도 업데이트
+      if (_cachedPostsByCategory != null &&
+          _cachedPostsByCategory!.containsKey(categoryId)) {
+        final cachedPosts = _cachedPostsByCategory![categoryId]!;
+        final cachedIdx = cachedPosts.indexWhere(
+          (p) => (p['id'] as int?) == postIdInt,
+        );
+        if (cachedIdx != -1) {
+          final cachedPost = cachedPosts[cachedIdx];
+          cachedPosts.removeAt(cachedIdx);
+          cachedPosts.insert(0, cachedPost);
+        }
+      }
+
+      notifyListeners();
+      debugPrint(
+        '[MyProfileFeedProvider] ✅ 새 글을 맨 앞에 배치 완료 (로컬): $postId (카테고리: $categoryId)',
+      );
+
+      // 🎯 서버와 순서 동기화 (실패해도 시스템이 뻑나지 않도록 안전하게 처리)
+      try {
+        final orderedPostIds = posts.map((post) => '${post['id']}').toList();
+        await reorderPostsInCategory(categoryIdInt, orderedPostIds);
+        debugPrint('[MyProfileFeedProvider] ✅ 새 글 순서 서버 동기화 완료: $postId');
+      } catch (e, stackTrace) {
+        // 서버 동기화 실패해도 로컬 순서는 유지 (사용자 경험 우선)
+        debugPrint(
+          '[MyProfileFeedProvider] ⚠️ 새 글 순서 서버 동기화 실패 (로컬 순서는 유지됨): $e',
+        );
+        debugPrint('[MyProfileFeedProvider] 스택 트레이스: $stackTrace');
+        // 에러를 다시 throw하지 않음 - 로컬 상태는 이미 변경되었으므로 그대로 유지
+      }
+    } catch (e, stackTrace) {
+      // 예상치 못한 에러 발생 시에도 시스템이 뻑나지 않도록 안전하게 처리
+      debugPrint('[MyProfileFeedProvider] ⚠️ moveNewPostToFront 예상치 못한 에러: $e');
+      debugPrint('[MyProfileFeedProvider] 스택 트레이스: $stackTrace');
+      // 에러를 다시 throw하지 않음 - 시스템 안정성 우선
+    }
+  }
+
   @override
   Future<void> loadMore() async {
     if (_loadingMore || !_hasMore || _username == null) return;

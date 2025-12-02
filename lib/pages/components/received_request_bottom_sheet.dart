@@ -19,6 +19,8 @@ class ReceivedRequestBottomSheet extends StatefulWidget {
   @override
   State<ReceivedRequestBottomSheet> createState() =>
       _ReceivedRequestBottomSheetState();
+
+  static void show(BuildContext context, {required List<Friend> requests}) {}
 }
 
 class _ReceivedRequestBottomSheetState
@@ -34,7 +36,7 @@ class _ReceivedRequestBottomSheetState
       builder: (context, scrollController) {
         return Container(
           decoration: BoxDecoration(
-            color: Colors.white,
+            color: Theme.of(context).colorScheme.surface,
             borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
           ),
           child: Column(
@@ -45,7 +47,9 @@ class _ReceivedRequestBottomSheetState
                 height: 4,
                 margin: const EdgeInsets.only(top: 12, bottom: 8),
                 decoration: BoxDecoration(
-                  color: Colors.grey.withOpacity(0.3),
+                  color: Theme.of(
+                    context,
+                  ).colorScheme.onSurface.withOpacity(0.3),
                   borderRadius: BorderRadius.circular(2),
                 ),
               ),
@@ -68,7 +72,7 @@ class _ReceivedRequestBottomSheetState
                           ).textTheme.headlineSmall?.copyWith(
                             fontWeight: FontWeight.bold,
                             fontSize: 20,
-                            color: Colors.black87,
+                            color: Theme.of(context).colorScheme.onSurface,
                           ),
                         ),
                         const SizedBox(height: 4),
@@ -79,13 +83,24 @@ class _ReceivedRequestBottomSheetState
                                 '{count}',
                                 '${widget.requests.length}',
                               ),
-                          style: Theme.of(context).textTheme.bodyMedium
-                              ?.copyWith(color: Colors.black54),
+                          style: Theme.of(
+                            context,
+                          ).textTheme.bodyMedium?.copyWith(
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.onSurface.withOpacity(0.6),
+                          ),
                         ),
                       ],
                     ),
                     IconButton(
-                      icon: Icon(Icons.close, color: Colors.black54, size: 24),
+                      icon: Icon(
+                        Icons.close,
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.onSurface.withOpacity(0.6),
+                        size: 24,
+                      ),
                       onPressed: () => Navigator.pop(context),
                     ),
                   ],
@@ -105,7 +120,11 @@ class _ReceivedRequestBottomSheetState
                               AppLocalizations.of(
                                 context,
                               ).translate('no_received_requests'),
-                              style: TextStyle(color: Colors.black54),
+                              style: TextStyle(
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.onSurface.withOpacity(0.6),
+                              ),
                             ),
                           ),
                         )
@@ -117,7 +136,12 @@ class _ReceivedRequestBottomSheetState
                           ),
                           itemCount: widget.requests.length,
                           separatorBuilder:
-                              (context, index) => const Divider(height: 1),
+                              (context, index) => Divider(
+                                height: 1,
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.onSurface.withOpacity(0.1),
+                              ),
                           itemBuilder: (context, index) {
                             final request = widget.requests[index];
                             final isProcessing =
@@ -275,14 +299,19 @@ class _RequestTile extends StatelessWidget {
                   style: TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.w600,
-                    color: Colors.black87,
+                    color: Theme.of(context).colorScheme.onSurface,
                   ),
                 ),
                 if (request.alias.isNotEmpty) ...[
                   const SizedBox(height: 2),
                   Text(
                     request.username,
-                    style: TextStyle(fontSize: 14, color: Colors.black54),
+                    style: TextStyle(
+                      fontSize: 14,
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.onSurface.withOpacity(0.6),
+                    ),
                   ),
                 ],
               ],
@@ -296,7 +325,9 @@ class _RequestTile extends StatelessWidget {
                 height: 24,
                 child: CircularProgressIndicator(
                   strokeWidth: 2,
-                  valueColor: AlwaysStoppedAnimation<Color>(Colors.black54),
+                  valueColor: AlwaysStoppedAnimation<Color>(
+                    Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
+                  ),
                 ),
               )
               : Row(
@@ -313,14 +344,18 @@ class _RequestTile extends StatelessWidget {
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(8),
                         ),
-                        side: BorderSide(color: Colors.grey.withOpacity(0.3)),
+                        side: BorderSide(
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.onSurface.withOpacity(0.2),
+                        ),
                       ),
                       child: Text(
                         context.tr('reject'),
                         style: TextStyle(
                           fontSize: 14,
                           fontWeight: FontWeight.w600,
-                          color: Colors.black87,
+                          color: Theme.of(context).colorScheme.onSurface,
                         ),
                       ),
                     ),
@@ -334,7 +369,8 @@ class _RequestTile extends StatelessWidget {
                       onPressed: onAccept,
                       style: ElevatedButton.styleFrom(
                         backgroundColor: Theme.of(context).colorScheme.primary,
-                        foregroundColor: Colors.white,
+                        foregroundColor:
+                            Theme.of(context).colorScheme.onPrimary,
                         padding: EdgeInsets.zero,
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(8),
@@ -343,9 +379,10 @@ class _RequestTile extends StatelessWidget {
                       ),
                       child: Text(
                         context.tr('accept'),
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 14,
                           fontWeight: FontWeight.w600,
+                          color: Theme.of(context).colorScheme.onPrimary,
                         ),
                       ),
                     ),

@@ -600,7 +600,15 @@ class _SearchPostCardState extends State<SearchPostCard>
                           size: 26,
                           borderWidth: 1,
                           borderColor: Colors.transparent,
-                          backgroundColor: Colors.transparent,
+                          // 🎯 프로필 이미지가 없을 때만 배경색 설정 (grey[100] / black)
+                          backgroundColor:
+                              widget.post.profileImageUrl == null ||
+                                      widget.post.profileImageUrl!.isEmpty
+                                  ? (Theme.of(context).brightness ==
+                                          Brightness.light
+                                      ? Colors.grey[100]
+                                      : Colors.black)
+                                  : Colors.transparent,
                         ),
                         const SizedBox(width: 4),
                         Text(

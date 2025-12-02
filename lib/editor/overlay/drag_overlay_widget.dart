@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:doppy/common/widgets/image_error_placeholder.dart';
 import 'package:doppy/editor/component/link_component.dart';
 import 'package:doppy/editor/component/row_image_component.dart';
@@ -90,10 +91,18 @@ class _DragOverlayWidgetState extends State<DragOverlayWidget> {
     }
 
     final node = widget.document.getNodeById(widget.nodeId);
-    if (node == null) return const SizedBox.shrink();
+    if (node == null) {
+      debugPrint('[DragOverlay] 노드를 찾을 수 없음: nodeId=${widget.nodeId}');
+      return const SizedBox.shrink();
+    }
+    debugPrint(
+      '[DragOverlay] 노드 찾음: ${node.runtimeType}, nodeId=${widget.nodeId}',
+    );
 
     Widget preview;
-    debugPrint('widget.nodeType: ${widget.nodeType}');
+    debugPrint(
+      '[DragOverlay] widget.nodeType: ${widget.nodeType}, nodeId: ${widget.nodeId}',
+    );
 
     switch (widget.nodeType) {
       case 'image':
@@ -106,7 +115,9 @@ class _DragOverlayWidgetState extends State<DragOverlayWidget> {
         preview = _buildDividerPreview();
         break;
       case 'clip':
-        preview = _buildClipPreview(node as ClipNode);
+        debugPrint('[DragOverlay] ClipNode 처리 시작');
+        preview = _ClipPreviewWidget(node: node as ClipNode);
+        debugPrint('[DragOverlay] ClipNode 처리 완료');
         break;
       case 'mention':
       case 'paragraph':
@@ -299,109 +310,6 @@ class _DragOverlayWidgetState extends State<DragOverlayWidget> {
     );
   }
 
-  Widget _buildClipPreview(ClipNode node) {
-    // 🎯 썸네일 이미지 사용 (thumbnailPath 우선, 없으면 localPath, 없으면 metadata의 thumbnailUrl)
-    String? thumb;
-    if (node.thumbnailPath.isNotEmpty) {
-      thumb = node.thumbnailPath;
-    } else if (node.localPath.isNotEmpty) {
-      thumb = node.localPath;
-    } else {
-      // metadata에서 썸네일 URL 확인
-      try {
-        final meta = node.metadata;
-        if (meta['thumbnailUrl'] != null) {
-          thumb = meta['thumbnailUrl'].toString();
-        }
-      } catch (_) {}
-    }
-
-    // placeholder: url 비어있고 localPath/thumbnailPath 존재 → 썸네일 파일 + 로딩 오버레이
-    final bool isPlaceholder = node.url.isEmpty && node.localPath.isNotEmpty;
-
-    Widget base;
-    if (thumb != null && thumb.isNotEmpty) {
-      // 썸네일 파일이 있으면 사용
-      if (thumb.startsWith('http://') || thumb.startsWith('https://')) {
-        base = Image.network(
-          thumb,
-          fit: BoxFit.cover,
-          errorBuilder: (context, error, stackTrace) => ImageErrorPlaceholder(),
-        );
-      } else {
-        // 로컬 파일 경로
-        try {
-          final file = File(thumb);
-          if (file.existsSync()) {
-            base = Image.file(file, fit: BoxFit.cover);
-          } else {
-            base = Container(
-              color: Colors.black12,
-              child: const Center(
-                child: Icon(Icons.videocam, color: Colors.black45),
-              ),
-            );
-          }
-        } catch (_) {
-          base = Container(
-            color: Colors.black12,
-            child: const Center(
-              child: Icon(Icons.videocam, color: Colors.black45),
-            ),
-          );
-        }
-      }
-    } else {
-      // 썸네일이 없으면 기본 placeholder 표시 (비디오 URL을 이미지로 로드하지 않음)
-      base = Container(
-        color: Colors.black12,
-        child: const Center(child: Icon(Icons.videocam, color: Colors.black45)),
-      );
-    }
-
-    // 🎯 이미지 노드와 동일하게 고정 크기 사용 (AspectRatio 제거로 깜빡임 방지)
-    return ConstrainedBox(
-      constraints: const BoxConstraints(maxWidth: 150, maxHeight: 220),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(4),
-        child: Stack(
-          children: [
-            Positioned.fill(child: base),
-            if (isPlaceholder)
-              Positioned.fill(
-                child: Container(
-                  color: Colors.black.withOpacity(0.18),
-                  child: const Center(
-                    child: SizedBox(
-                      width: 22,
-                      height: 22,
-                      child: CircularProgressIndicator(strokeWidth: 2.0),
-                    ),
-                  ),
-                ),
-              ),
-            Positioned(
-              right: 6,
-              bottom: 6,
-              child: Container(
-                decoration: BoxDecoration(
-                  color: Colors.black.withOpacity(0.35),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                padding: const EdgeInsets.all(3),
-                child: const Icon(
-                  Icons.videocam,
-                  color: Colors.white,
-                  size: 14,
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
   Widget _buildSplitImagePreview(String imageUrl) {
     return ConstrainedBox(
       constraints: const BoxConstraints(maxWidth: 150, maxHeight: 220),
@@ -547,6 +455,228 @@ class _ImageRowPreviewContentState extends State<_ImageRowPreviewContent> {
             ),
           ),
       ],
+    );
+  }
+}
+
+/// ClipNode 썸네일 미리보기 위젯 (썸네일이 없으면 동적으로 생성)
+class _ClipPreviewWidget extends StatefulWidget {
+  const _ClipPreviewWidget({required this.node});
+
+  final ClipNode node;
+
+  @override
+  State<_ClipPreviewWidget> createState() => _ClipPreviewWidgetState();
+}
+
+class _ClipPreviewWidgetState extends State<_ClipPreviewWidget> {
+  Uint8List? _thumbnailBytes;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadThumbnail();
+  }
+
+  void _loadThumbnail() {
+    debugPrint('[DragOverlay] _loadThumbnail 시작: nodeId=${widget.node.id}');
+    debugPrint('[DragOverlay] thumbnailPath: ${widget.node.thumbnailPath}');
+    debugPrint('[DragOverlay] url: ${widget.node.url}');
+
+    // 🎯 썸네일 이미지 사용 (thumbnailPath 우선, 없으면 전역 캐시 확인, 없으면 metadata의 thumbnailUrl)
+    String? thumb;
+    if (widget.node.thumbnailPath.isNotEmpty) {
+      thumb = widget.node.thumbnailPath;
+      debugPrint('[DragOverlay] 썸네일 경로 (thumbnailPath): $thumb');
+    } else {
+      // 🎯 전역 썸네일 캐시에서 확인
+      if (videoThumbnailCache.containsKey(widget.node.url)) {
+        final cachedBytes = videoThumbnailCache[widget.node.url];
+        if (cachedBytes != null) {
+          debugPrint(
+            '[DragOverlay] 캐시에서 썸네일 발견: ${widget.node.url} (${cachedBytes.length} bytes)',
+          );
+          if (mounted) {
+            setState(() {
+              _thumbnailBytes = cachedBytes;
+            });
+          }
+          return;
+        }
+      } else {
+        // metadata에서 썸네일 URL 확인
+        try {
+          final meta = widget.node.metadata;
+          if (meta['thumbnailUrl'] != null) {
+            thumb = meta['thumbnailUrl'].toString();
+            debugPrint('[DragOverlay] 썸네일 URL (metadata): $thumb');
+          }
+        } catch (_) {}
+      }
+    }
+
+    // 썸네일 파일이 있으면 로드
+    if (thumb != null && thumb.isNotEmpty) {
+      if (thumb.startsWith('http://') || thumb.startsWith('https://')) {
+        // 네트워크 이미지는 그대로 사용 (이미지 위젯에서 처리)
+        debugPrint('[DragOverlay] 네트워크 썸네일 URL: $thumb');
+        return;
+      } else {
+        // 로컬 파일 경로
+        try {
+          final file = File(thumb);
+          if (file.existsSync()) {
+            debugPrint('[DragOverlay] 로컬 썸네일 파일 로드: $thumb');
+            file.readAsBytes().then((bytes) {
+              if (mounted) {
+                setState(() {
+                  _thumbnailBytes = bytes;
+                });
+              }
+            });
+          } else {
+            debugPrint('[DragOverlay] 로컬 썸네일 파일이 존재하지 않음: $thumb');
+          }
+        } catch (e) {
+          debugPrint('[DragOverlay] 로컬 파일 로드 오류: $e');
+        }
+      }
+    } else {
+      debugPrint('[DragOverlay] 썸네일 소스 없음 (캐시에도 없음)');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // 🎯 썸네일 이미지 사용 (thumbnailPath 우선, 없으면 localPath, 없으면 metadata의 thumbnailUrl)
+    String? thumb;
+    if (widget.node.thumbnailPath.isNotEmpty) {
+      thumb = widget.node.thumbnailPath;
+    } else {
+      // 🎯 전역 썸네일 캐시에서 확인
+      if (videoThumbnailCache.containsKey(widget.node.url)) {
+        final cachedBytes = videoThumbnailCache[widget.node.url];
+        if (cachedBytes != null && _thumbnailBytes == null) {
+          if (mounted) {
+            setState(() {
+              _thumbnailBytes = cachedBytes;
+            });
+          }
+        }
+      } else {
+        // metadata에서 썸네일 URL 확인
+        try {
+          final meta = widget.node.metadata;
+          if (meta['thumbnailUrl'] != null) {
+            thumb = meta['thumbnailUrl'].toString();
+            debugPrint('[DragOverlay] 썸네일 URL (metadata): $thumb');
+          }
+        } catch (_) {}
+      }
+    }
+
+    // placeholder: url 비어있고 thumbnailPath 존재 → 썸네일 파일 + 로딩 오버레이
+    final bool isPlaceholder =
+        widget.node.url.isEmpty && widget.node.thumbnailPath.isNotEmpty;
+
+    Widget base;
+
+    // 생성된 썸네일 바이트가 있으면 사용
+    if (_thumbnailBytes != null) {
+      debugPrint(
+        '[DragOverlay] 생성된 썸네일 바이트 사용: ${_thumbnailBytes!.length} bytes',
+      );
+      base = Image.memory(_thumbnailBytes!, fit: BoxFit.cover);
+    } else if (thumb != null && thumb.isNotEmpty) {
+      // 썸네일 파일이 있으면 사용
+      if (thumb.startsWith('http://') || thumb.startsWith('https://')) {
+        debugPrint('[DragOverlay] 네트워크 이미지 로드: $thumb');
+        base = Image.network(
+          thumb,
+          fit: BoxFit.cover,
+          errorBuilder: (context, error, stackTrace) {
+            debugPrint('[DragOverlay] 네트워크 이미지 로드 실패: $error');
+            return _buildPlaceholder();
+          },
+        );
+      } else {
+        // 로컬 파일 경로
+        try {
+          final file = File(thumb);
+          if (file.existsSync()) {
+            debugPrint('[DragOverlay] 로컬 파일 이미지 로드: $thumb');
+            base = Image.file(file, fit: BoxFit.cover);
+          } else {
+            debugPrint('[DragOverlay] 로컬 파일이 존재하지 않음: $thumb');
+            base = _buildPlaceholder();
+          }
+        } catch (e) {
+          debugPrint('[DragOverlay] 로컬 파일 로드 오류: $e');
+          base = _buildPlaceholder();
+        }
+      }
+    } else {
+      // 썸네일이 없으면 기본 placeholder 표시
+      debugPrint(
+        '[DragOverlay] 썸네일 없음 - 기본 placeholder 표시 (url: ${widget.node.url})',
+      );
+      base = _buildPlaceholder();
+    }
+
+    // 썸네일이 없고 캐시에도 없으면 placeholder 표시
+    final bool showPlaceholder = _thumbnailBytes == null && thumb == null;
+
+    // 🎯 이미지 노드와 동일하게 고정 크기 사용 (AspectRatio 제거로 깜빡임 방지)
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 150, maxHeight: 220),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(4),
+        child: Stack(
+          children: [
+            Positioned.fill(child: base),
+            if (isPlaceholder || showPlaceholder)
+              Positioned.fill(
+                child: Container(
+                  color: Colors.black.withOpacity(0.18),
+                  child: const Center(
+                    child: SizedBox(
+                      width: 22,
+                      height: 22,
+                      child: CircularProgressIndicator(strokeWidth: 2.0),
+                    ),
+                  ),
+                ),
+              ),
+            Positioned(
+              right: 6,
+              bottom: 6,
+              child: Container(
+                decoration: BoxDecoration(
+                  color: Colors.black.withOpacity(0.35),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                padding: const EdgeInsets.all(3),
+                child: const Icon(
+                  Icons.videocam,
+                  color: Colors.white,
+                  size: 14,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPlaceholder() {
+    return Container(
+      width: 150,
+      height: 220,
+      color: Colors.black12,
+      child: const Center(
+        child: Icon(Icons.videocam, color: Colors.black45, size: 48),
+      ),
     );
   }
 }

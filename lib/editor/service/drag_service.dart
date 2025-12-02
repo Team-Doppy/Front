@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:doppy/editor/component/link_component.dart';
 import 'package:doppy/editor/component/row_image_component.dart';
+import 'package:doppy/editor/component/pageview_image_component.dart';
 import 'package:doppy/editor/postwrite_screen.dart';
 import 'package:doppy/editor/component/clip_component.dart';
 import 'package:doppy/editor/service/editor_service.dart';
@@ -168,6 +169,16 @@ class DragService extends ChangeNotifier {
   }
 
   void startDrag(String nodeId, BuildContext context, Offset globalPosition) {
+    // 🎯 업로드 중인 그룹 이미지는 드래그 불가
+    final node = editorService.document.getNodeById(nodeId);
+    if (node is ImageRowNode || node is PageViewImageNode) {
+      final meta = (node as dynamic).metadata as Map<String, dynamic>?;
+      if (meta != null && meta['isPlaceholder'] == true) {
+        debugPrint('[DragService] ⚠️ 업로드 중인 그룹 이미지는 드래그할 수 없습니다');
+        return; // 드래그 시작 차단
+      }
+    }
+
     draggingNodeId = nodeId;
     draggingNodeIdNotifier.value = nodeId;
     draggingNodeType = editorService.getNodeType(nodeId);
@@ -186,7 +197,6 @@ class DragService extends ChangeNotifier {
     }
 
     // ClipNode 드래그 시작 시 모든 비디오 일시정지
-    final node = editorService.document.getNodeById(nodeId);
     if (node is ClipNode) {
       _pauseAllVideos();
     }
@@ -684,8 +694,21 @@ class DragService extends ChangeNotifier {
         final bool isSplitDrag = hasSplitImageInfo; // 이미지 행에서 개별 이미지 분리 드래그 중인지
 
         if (isSplitDrag) {
-          // 분리 드래그: 위/아래 제약 없음 (자기 자신, 바로 위/아래 모두 허용)
-          finalCandidate = nodeIndex;
+          // 분리 드래그: 타겟 노드의 위/아래를 정확히 판단
+          final Rect? targetRect = documentLayout.getRectForPosition(position);
+          if (targetRect != null) {
+            final nodeCenter = targetRect.center.dy;
+            if (localPosition.dy < nodeCenter) {
+              // 타겟 노드 위쪽에 드롭 - 타겟 노드 앞에 삽입
+              finalCandidate = nodeIndex;
+            } else {
+              // 타겟 노드 아래쪽에 드롭 - 타겟 노드 뒤에 삽입
+              finalCandidate = nodeIndex + 1;
+            }
+          } else {
+            // targetRect를 가져올 수 없는 경우, 기본적으로 타겟 노드 앞에 삽입
+            finalCandidate = nodeIndex;
+          }
         } else {
           // 일반 드래그: 자기 자신과 바로 아래 위치 차단
           if (nodeIndex == draggingNodeIndex ||

@@ -10,6 +10,8 @@ import 'package:flutter/material.dart';
 import 'package:dio/dio.dart';
 import 'package:http_parser/http_parser.dart';
 import 'package:image/image.dart' as img;
+import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart';
+import 'package:video_player/video_player.dart';
 
 enum UploadState { pending, uploading, success, failed, cancelled }
 
@@ -68,6 +70,9 @@ class UploadService with ChangeNotifier {
   /// 에디터 관련 압축 취소 토큰 (에디터 종료 시 취소용)
   final Map<String, CancellationToken> _editorCompressionTokens = {};
 
+  /// refId별 압축 토큰 추적 (개별 플레이스홀더 삭제 시 취소용)
+  final Map<String, CancellationToken> _refIdCompressionTokens = {};
+
   final AuthService _authService = AuthService();
   final Dio _dio = BaseApiService().dio;
 
@@ -82,6 +87,15 @@ class UploadService with ChangeNotifier {
     return _tasks.any(
       (t) =>
           targetKinds.contains(t.kind) &&
+          (t.state == UploadState.pending || t.state == UploadState.uploading),
+    );
+  }
+
+  /// 특정 refId에 대한 활성 업로드가 있는지 확인
+  bool hasActiveUploadForRef(String refId) {
+    return _tasks.any(
+      (t) =>
+          t.refId == refId &&
           (t.state == UploadState.pending || t.state == UploadState.uploading),
     );
   }
@@ -157,14 +171,32 @@ class UploadService with ChangeNotifier {
 
   /// refId(예: 노드ID)로 모든 태스크 취소
   void cancelByRef(String refId) {
-    // 큐에서 제거
+    // 🎯 1. 압축 취소 (가장 먼저 - 리소스 낭비 방지)
+    final compressionToken = _refIdCompressionTokens[refId];
+    if (compressionToken != null) {
+      debugPrint('[UploadService] 🚫 refId 기반 압축 취소: refId=$refId');
+      compressionToken.cancel();
+      // 🎯 FFmpeg 즉시 중단 (모든 압축 중단 - refId별 추적이 어려워서)
+      // TODO: 나중에 refId별 추적이 가능하면 특정 압축만 취소하도록 개선
+      FFmpegKit.cancel();
+      _refIdCompressionTokens.remove(refId);
+    }
+
+    // 🎯 2. 큐에서 제거
     _queue.removeWhere((t) => t.refId == refId);
-    for (final task in _tasks.where((t) => t.refId == refId)) {
+    final tasksToCancel = _tasks.where((t) => t.refId == refId).toList();
+
+    // 🎯 3. 업로드 태스크 취소
+    for (final task in tasksToCancel) {
       if (task.state == UploadState.uploading &&
           !task.cancelToken.isCancelled) {
         task.cancelToken.cancel('cancelled by refId');
       }
-      task._setState(UploadState.cancelled);
+      // 🎯 pending 상태인 태스크도 취소 상태로 변경
+      if (task.state == UploadState.pending ||
+          task.state == UploadState.uploading) {
+        task._setState(UploadState.cancelled);
+      }
     }
     notifyListeners();
   }
@@ -340,13 +372,33 @@ class UploadService with ChangeNotifier {
         throw Exception(result.error ?? 'R2 업로드 실패');
       }
 
-      // 성공한 URL 가져오기
-      final url =
-          result.imageUrls.isNotEmpty
-              ? result.imageUrls.first
-              : result.videoUrls.first;
+      // 성공한 URL 가져오기 (task.kind에 따라 올바른 URL 선택)
+      String? url;
+      if (task.kind == UploadKind.video) {
+        // 영상인 경우 videoUrls 우선
+        if (result.videoUrls.isNotEmpty) {
+          url = result.videoUrls.first;
+        } else if (result.imageUrls.isNotEmpty) {
+          // 폴백: videoUrls가 없으면 imageUrls 사용 (서버가 잘못 분류한 경우)
+          url = result.imageUrls.first;
+          debugPrint('[Upload] ⚠️ 영상이지만 imageUrls에서 URL 반환됨');
+        }
+      } else {
+        // 이미지인 경우 imageUrls 우선
+        if (result.imageUrls.isNotEmpty) {
+          url = result.imageUrls.first;
+        } else if (result.videoUrls.isNotEmpty) {
+          // 폴백: imageUrls가 없으면 videoUrls 사용 (서버가 잘못 분류한 경우)
+          url = result.videoUrls.first;
+          debugPrint('[Upload] ⚠️ 이미지지만 videoUrls에서 URL 반환됨');
+        }
+      }
 
-      debugPrint('[Upload] R2 업로드 성공: $url');
+      if (url == null) {
+        throw Exception('R2 업로드 성공했지만 URL을 찾을 수 없음');
+      }
+
+      debugPrint('[Upload] R2 업로드 성공 (kind: ${task.kind}): $url');
 
       // 응답 형식 맞추기 (기존 UploadService와 호환)
       return {'accessUrl': url, 'url': url};
@@ -891,10 +943,20 @@ class UploadService with ChangeNotifier {
     int failedCount = 0;
     bool summaryShown = false;
     final Set<String> handled = <String>{};
+    final Set<String> createdPlaceholders = <String>{}; // 🎯 생성된 placeholder 추적
 
     for (final file in files) {
       // 1. Placeholder 생성
       final placeholderId = onCreatePlaceholder(file.path);
+
+      // 🎯 같은 placeholder ID가 이미 생성되었으면 재사용 (그룹 이미지용)
+      final isNewPlaceholder = createdPlaceholders.add(placeholderId);
+
+      if (isNewPlaceholder) {
+        debugPrint('[UploadService] 🆕 새 placeholder 생성: $placeholderId');
+      } else {
+        debugPrint('[UploadService] ♻️ 기존 placeholder 재사용: $placeholderId');
+      }
 
       // 2. 업로드 태스크 생성
       final task = enqueueFile(
@@ -925,7 +987,11 @@ class UploadService with ChangeNotifier {
           debugPrint(
             '[UploadService] ❌ 이미지 업로드 실패: placeholderId=$placeholderId',
           );
-          onDeletePlaceholder(placeholderId);
+          // 🎯 그룹 이미지인 경우 전체 삭제를 한 번만 호출
+          if (createdPlaceholders.contains(placeholderId)) {
+            onDeletePlaceholder(placeholderId);
+            createdPlaceholders.remove(placeholderId); // 중복 삭제 방지
+          }
           failedCount++;
           completed++;
         }
@@ -951,12 +1017,14 @@ class UploadService with ChangeNotifier {
   /// 🎯 에디터 영상 업로드 (전체 플로우)
   /// - 파일 선택부터 placeholder 생성, 썸네일 생성, 압축, 업로드, 노드 교체까지 처리
   /// - Placeholder는 즉시 생성하고, 압축은 비동기로 처리하여 UI 블로킹 방지
+  /// - 🎯 플레이스홀더가 성공적으로 생성된 경우에만 압축/업로드 진행
   Future<void> uploadEditorVideo({
     required File file,
     required String Function(
       String localPath,
       String fileName, {
       String? thumbnailPath,
+      double? aspectRatio,
     })
     onCreatePlaceholder,
     required void Function(String placeholderId, String thumbnailPath)
@@ -974,6 +1042,7 @@ class UploadService with ChangeNotifier {
     showErrorDialog,
     String? existingPlaceholderId, // 🎯 이미 생성된 플레이스홀더 ID (선택적)
     String? editorId, // 🎯 에디터 ID (압축 취소용)
+    String? initialThumbnailPath, // 🎯 트림 시 추출한 썸네일 경로 (선택적)
   }) async {
     // 🎯 즉시 로그 출력 (메서드 진입 시점 확인)
     debugPrint('[UploadService] 🎬 에디터 영상 업로드 시작: ${file.path}');
@@ -990,30 +1059,81 @@ class UploadService with ChangeNotifier {
         return;
       }
 
-      // 2. Placeholder 생성 (이미 생성된 경우 재사용)
-      final originalFileName = file.path.split('/').last;
-      final placeholderId =
-          existingPlaceholderId ??
-          onCreatePlaceholder(
-            file.path,
-            originalFileName,
-            thumbnailPath: '', // 썸네일 없이 먼저 생성
-          );
-      debugPrint(
-        '[UploadService] ✅ Placeholder ${existingPlaceholderId != null ? "재사용" : "생성"}: placeholderId=$placeholderId',
-      );
+      // 2. 영상 비율 정보 가져오기 (플레이스홀더 생성 전)
+      double? aspectRatio;
+      try {
+        final controller = VideoPlayerController.file(file);
+        await controller.initialize();
+        if (controller.value.isInitialized) {
+          final size = controller.value.size;
+          if (size.height > 0) {
+            aspectRatio = size.width / size.height;
+            debugPrint(
+              '[UploadService] 영상 비율: $aspectRatio (${size.width}x${size.height})',
+            );
+          }
+        }
+        await controller.dispose();
+      } catch (e) {
+        debugPrint('[UploadService] 영상 비율 가져오기 실패 (기본값 사용): $e');
+      }
 
-      // 🎯 UI 업데이트를 위해 즉시 반환 (placeholder가 화면에 표시되도록)
-      // 썸네일 생성, 압축, 업로드는 모두 백그라운드에서 비동기로 처리
-      // 즉시 실행 시작 (await하지 않음)
-      () async {
-        // 3. 썸네일 생성 (비동기, 완료되면 플레이스홀더 업데이트)
-        _generateThumbnailAsync(
-          file.path,
-          placeholderId,
-          onUpdateThumbnail,
-          isMounted,
+      // 3. Placeholder 생성 (이미 생성된 경우 재사용)
+      final originalFileName = file.path.split('/').last;
+      String? placeholderId;
+
+      try {
+        placeholderId =
+            existingPlaceholderId ??
+            onCreatePlaceholder(
+              file.path,
+              originalFileName,
+              thumbnailPath: initialThumbnailPath ?? '', // 🎯 트림 시 추출한 썸네일 사용
+              aspectRatio: aspectRatio, // 🎯 비율 정보 전달
+            );
+
+        // 🎯 플레이스홀더 ID가 유효한지 확인
+        if (placeholderId.isEmpty) {
+          debugPrint('[UploadService] ❌ 플레이스홀더 ID가 비어있음');
+          if (isMounted() && context != null) {
+            await showErrorDialog('오류', '영상을 추가할 수 없습니다. 다시 시도해주세요.');
+          }
+          return;
+        }
+
+        debugPrint(
+          '[UploadService] ✅ Placeholder ${existingPlaceholderId != null ? "재사용" : "생성"}: placeholderId=$placeholderId${initialThumbnailPath != null ? " (썸네일 포함)" : ""}',
         );
+      } catch (e) {
+        debugPrint('[UploadService] ❌ 플레이스홀더 생성 실패: $e');
+        if (isMounted() && context != null) {
+          await showErrorDialog('오류', '영상을 추가할 수 없습니다. 다시 시도해주세요.');
+        }
+        return;
+      }
+
+      // 🎯 플레이스홀더가 성공적으로 생성된 경우에만 압축/업로드 진행
+      // UI 업데이트를 위해 즉시 반환 (placeholder가 화면에 표시되도록)
+      // 썸네일 생성, 압축, 업로드는 모두 백그라운드에서 비동기로 처리
+      Future.microtask(() async {
+        // 🎯 플레이스홀더가 여전히 유효한지 확인
+        if (!isMounted() || placeholderId == null || placeholderId.isEmpty) {
+          debugPrint('[UploadService] ⚠️ 플레이스홀더가 유효하지 않아 압축/업로드 중단');
+          return;
+        }
+
+        // 3. 썸네일 생성 (비동기, 완료되면 플레이스홀더 업데이트)
+        // 🎯 트림 시 이미 썸네일이 추출되었으면 스킵
+        if (initialThumbnailPath == null || initialThumbnailPath.isEmpty) {
+          _generateThumbnailAsync(
+            file.path,
+            placeholderId,
+            onUpdateThumbnail,
+            isMounted,
+          );
+        } else {
+          debugPrint('[UploadService] ⏭️ 썸네일 이미 있음 - 생성 스킵');
+        }
 
         // 4. 비디오 압축 및 업로드 (비동기로 처리하여 UI 블로킹 방지)
         await _compressAndUploadVideo(
@@ -1026,16 +1146,20 @@ class UploadService with ChangeNotifier {
           showErrorDialog: showErrorDialog,
           editorId: editorId,
         );
-      }();
+      });
 
       // 메서드 즉시 반환 (placeholder가 UI에 즉시 표시되도록)
       return;
     } catch (e) {
       debugPrint('[UploadService] ❌ 영상 업로드 오류: $e');
+      if (isMounted() && context != null) {
+        await showErrorDialog('오류', '영상 업로드 중 오류가 발생했습니다. 다시 시도해주세요.');
+      }
     }
   }
 
   /// 비디오 압축 및 업로드 (비동기 처리)
+  /// 🎯 플레이스홀더가 유효한 경우에만 압축/업로드 진행
   Future<void> _compressAndUploadVideo({
     required File file,
     required String placeholderId,
@@ -1052,23 +1176,82 @@ class UploadService with ChangeNotifier {
     showErrorDialog,
     String? editorId, // 🎯 에디터 ID (압축 취소용)
   }) async {
-    try {
-      // 비디오 압축 (시간이 오래 걸릴 수 있음)
-      final mp4File = await _compressVideo(file.path, editorId: editorId);
+    // 🎯 플레이스홀더 유효성 확인
+    if (placeholderId.isEmpty) {
+      debugPrint('[UploadService] ⚠️ 플레이스홀더 ID가 비어있어 압축/업로드 중단');
+      return;
+    }
 
-      // 취소된 경우
-      if (mp4File == null && editorId != null) {
+    try {
+      // 🎯 취소 확인 (압축 시작 전) - refId와 editorId 모두 확인
+      // 단, 토큰이 이미 생성되어 있고 취소된 경우에만 중단
+      // 토큰이 아직 생성되지 않았으면 정상 진행 (압축 시작 시 토큰 생성됨)
+      final refToken = _refIdCompressionTokens[placeholderId];
+      if (refToken != null && refToken.isCancelled) {
+        debugPrint(
+          '[UploadService] ⚠️ refId 기반 압축이 이미 취소되어 업로드 중단: refId=$placeholderId',
+        );
+        _refIdCompressionTokens.remove(placeholderId);
+        onDeletePlaceholder(placeholderId);
+        return;
+      }
+
+      if (editorId != null) {
         final token = _editorCompressionTokens[editorId];
         if (token != null && token.isCancelled) {
-          debugPrint('[UploadService] 압축이 취소되어 업로드 중단');
+          debugPrint(
+            '[UploadService] ⚠️ 에디터 압축이 이미 취소되어 업로드 중단: editorId=$editorId',
+          );
           onDeletePlaceholder(placeholderId);
           return;
         }
       }
+
+      File? mp4File;
+      mp4File = await _compressVideo(
+        file.path,
+        editorId: editorId,
+        refId: placeholderId, // 🎯 refId 전달하여 개별 취소 가능하도록
+      );
+
+      // 🎯 취소 확인 (압축 완료 후)
+      if (editorId != null) {
+        final token = _editorCompressionTokens[editorId];
+        if (token != null && token.isCancelled) {
+          debugPrint('[UploadService] 압축이 취소되어 업로드 중단');
+          if (mp4File != null && await mp4File.exists()) {
+            try {
+              await mp4File.delete();
+            } catch (_) {}
+          }
+          onDeletePlaceholder(placeholderId);
+          return;
+        }
+      }
+
+      // 압축 실패 처리
       if (mp4File == null) {
-        onDeletePlaceholder(placeholderId);
-        if (isMounted() && context != null) {
-          await showErrorDialog('업로드 불가', '파일 용량이 너무 큽니다.');
+        debugPrint('[UploadService] ⚠️ 비디오 압축 실패 또는 취소됨');
+
+        // 🎯 취소된 경우가 아니면 플레이스홀더 삭제 및 에러 다이얼로그 표시
+        final wasCancelled =
+            editorId != null &&
+            _editorCompressionTokens[editorId] != null &&
+            _editorCompressionTokens[editorId]!.isCancelled;
+
+        if (!wasCancelled) {
+          onDeletePlaceholder(placeholderId);
+          if (isMounted() && context != null) {
+            // 🎯 압축 실패 원인에 따라 다른 메시지 표시
+            // (실제로는 VideoUploadUtils에서 더 자세한 에러 메시지를 제공할 수 있음)
+            await showErrorDialog(
+              '업로드 불가',
+              '영상 압축에 실패했습니다.\n파일이 손상되었거나 형식이 올바르지 않을 수 있습니다.',
+            );
+          }
+        } else {
+          // 취소된 경우 플레이스홀더만 삭제 (다이얼로그 표시 안 함)
+          onDeletePlaceholder(placeholderId);
         }
         return;
       }
@@ -1090,6 +1273,15 @@ class UploadService with ChangeNotifier {
 
       Future<void> handleOnce() async {
         if (videoHandled) return;
+
+        // 🎯 취소된 경우 리스너 제거하고 종료
+        if (task.state == UploadState.cancelled) {
+          videoHandled = true;
+          try {
+            task.removeListener(listener);
+          } catch (_) {}
+          return;
+        }
 
         if (task.state == UploadState.failed) {
           videoHandled = true;
@@ -1158,22 +1350,66 @@ class UploadService with ChangeNotifier {
         });
   }
 
-  Future<File?> _compressVideo(String videoPath, {String? editorId}) async {
-    // 에디터 ID가 있으면 취소 토큰 생성 및 추적
-    CancellationToken? token;
-    if (editorId != null) {
-      token = CancellationToken();
-      _editorCompressionTokens[editorId] = token;
+  Future<File?> _compressVideo(
+    String videoPath, {
+    String? editorId,
+    String? refId,
+  }) async {
+    // 🎯 refId별 토큰 생성 (개별 취소용)
+    // 이미 취소된 토큰이 있으면 즉시 null 반환
+    CancellationToken? refToken;
+    if (refId != null) {
+      final existingRefToken = _refIdCompressionTokens[refId];
+      if (existingRefToken != null && existingRefToken.isCancelled) {
+        debugPrint('[UploadService] ⚠️ refId 기반 압축이 이미 취소됨: refId=$refId');
+        _refIdCompressionTokens.remove(refId);
+        return null;
+      }
+      refToken = CancellationToken();
+      _refIdCompressionTokens[refId] = refToken;
     }
+
+    // 🎯 에디터 ID별 토큰 생성 (에디터 전체 취소용)
+    // 여러 압축이 동시에 진행될 수 있으므로 리스트로 관리
+    CancellationToken? editorToken;
+    if (editorId != null) {
+      editorToken = CancellationToken();
+      // 🎯 기존 토큰이 있으면 취소하고 새로 생성 (에디터 전체 취소 시 모든 압축 취소)
+      final existingToken = _editorCompressionTokens[editorId];
+      if (existingToken != null) {
+        existingToken.cancel();
+      }
+      _editorCompressionTokens[editorId] = editorToken;
+    }
+
+    // 🎯 두 토큰 중 하나라도 취소되면 압축 취소
+    // refToken이 있으면 그것을 사용하고, editorToken이 취소되면 refToken도 취소
+    // refToken이 없으면 editorToken 사용
+    if (refToken != null && editorToken != null) {
+      // editorToken이 취소되면 refToken도 취소
+      final refTokenFinal = refToken; // 클로저를 위한 로컬 변수
+      editorToken.addListener(() {
+        if (editorToken!.isCancelled) {
+          refTokenFinal.cancel();
+        }
+      });
+    }
+    final effectiveToken = refToken ?? editorToken;
 
     try {
       return await VideoUploadUtils.compressVideo(
         videoPath,
-        cancellationToken: token,
+        cancellationToken: effectiveToken,
       );
     } finally {
       // 완료 후 토큰 제거
-      if (editorId != null) {
+      if (refId != null) {
+        _refIdCompressionTokens.remove(refId);
+      }
+      // 🎯 에디터 토큰은 유지 (다른 압축이 진행 중일 수 있음)
+      // 대신 압축 완료 시 현재 토큰과 비교하여 제거
+      if (editorId != null &&
+          _editorCompressionTokens[editorId] == editorToken) {
         _editorCompressionTokens.remove(editorId);
       }
     }
@@ -1183,10 +1419,12 @@ class UploadService with ChangeNotifier {
   void cancelEditorCompressions(String editorId) {
     final token = _editorCompressionTokens[editorId];
     if (token != null) {
-      debugPrint('[UploadService] 에디터 압축 취소: editorId=$editorId');
+      debugPrint('[UploadService] 🚫 에디터 압축 취소: editorId=$editorId');
       token.cancel();
       _editorCompressionTokens.remove(editorId);
     }
+    // 🎯 해당 에디터의 모든 refId 압축도 취소
+    // (refId는 placeholderId이므로 직접 추적 불가, cancelByRef에서 처리)
   }
 
   Future<void> _showVideoUploadFailedDialog(

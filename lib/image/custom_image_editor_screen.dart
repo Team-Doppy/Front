@@ -8,13 +8,86 @@ import 'package:provider/provider.dart';
 
 // Services
 import 'package:doppy/editor/service/node_component_service.dart';
+import 'package:doppy/l10n/app_localizations.dart';
 
 /// pro_image_editor 패키지 기반의 이미지 편집 화면
 /// 최소 설정으로 시작하여 점진적으로 확장
-class CustomImageEditorScreen extends StatelessWidget {
-  const CustomImageEditorScreen({super.key, required this.imageBytes});
+class CustomImageEditorScreen extends StatefulWidget {
+  const CustomImageEditorScreen({
+    super.key,
+    this.imageBytes,
+    this.imageBytesList,
+    this.onApplyChanges,
+  }) : assert(
+         imageBytes != null || imageBytesList != null,
+         'imageBytes 또는 imageBytesList 중 하나는 필수입니다.',
+       );
 
-  final Uint8List imageBytes;
+  final Uint8List? imageBytes;
+  final List<Uint8List>? imageBytesList;
+
+  /// 편집 완료 시 업로드 및 노드 교체를 처리하는 콜백
+  /// 반환값: true면 성공, false면 실패/타임아웃
+  final Future<bool> Function(Uint8List bytes)? onApplyChanges;
+
+  @override
+  State<CustomImageEditorScreen> createState() =>
+      _CustomImageEditorScreenState();
+}
+
+class _CustomImageEditorScreenState extends State<CustomImageEditorScreen> {
+  late final List<Uint8List> _images;
+  late final PageController _pageController;
+  int _currentIndex = 0;
+  final Map<int, Uint8List> _editedImages = {}; // 편집된 이미지 저장
+
+  @override
+  void initState() {
+    super.initState();
+    // 단일 이미지 또는 다중 이미지 처리
+    if (widget.imageBytesList != null && widget.imageBytesList!.isNotEmpty) {
+      _images = List.from(widget.imageBytesList!);
+    } else if (widget.imageBytes != null) {
+      _images = [widget.imageBytes!];
+    } else {
+      _images = [];
+    }
+    _pageController = PageController(initialPage: 0);
+  }
+
+  @override
+  void dispose() {
+    _pageController.dispose();
+    super.dispose();
+  }
+
+  bool get _isMultiImage => _images.length > 1;
+
+  void _onPageChanged(int index) {
+    setState(() {
+      _currentIndex = index;
+    });
+  }
+
+  void _onImageEdited(int index, Uint8List editedBytes) {
+    setState(() {
+      _editedImages[index] = editedBytes;
+    });
+  }
+
+  void _handleDone() {
+    // 편집된 이미지가 있으면 그것을, 없으면 원본을 반환
+    final List<Uint8List> result = [];
+    for (int i = 0; i < _images.length; i++) {
+      result.add(_editedImages[i] ?? _images[i]);
+    }
+    // 단일 이미지인 경우 Uint8List 반환, 다중 이미지인 경우 List<Uint8List> 반환
+    if (result.length == 1) {
+      Navigator.pop(context, result.first);
+    } else {
+      Navigator.pop(context, result);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -46,6 +119,16 @@ class CustomImageEditorScreen extends StatelessWidget {
               ? ImageEditorDesignMode.cupertino
               : ImageEditorDesignMode.material,
       theme: theme.copyWith(
+        // 🎯 로딩 다이얼로그 텍스트 색상 (짙은 회색)
+        textTheme: theme.textTheme.copyWith(
+          bodyMedium: theme.textTheme.bodyMedium?.copyWith(
+            color: Colors.grey[700], // 🎯 짙은 회색
+          ),
+        ),
+        // 🎯 로딩 인디케이터 색상
+        progressIndicatorTheme: ProgressIndicatorThemeData(
+          color: Theme.of(context).colorScheme.primary, // 🎯 Primary 색상
+        ),
         chipTheme: theme.chipTheme.copyWith(
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(10),
@@ -99,14 +182,16 @@ class CustomImageEditorScreen extends StatelessWidget {
           ).colorScheme.onSurface.withOpacity(0.3),
         ),
       ),
-      i18n: const I18n(
-        cancel: '취소',
+      i18n: I18n(
+        cancel: AppLocalizations.of(context).t('cancel'),
         undo: '되돌리기',
         redo: '다시하기',
-        done: '완료',
-        remove: '삭제',
-        doneLoadingMsg: '변경사항 적용 중...',
-        importStateHistoryMsg: '에디터 초기화 중...',
+        done: AppLocalizations.of(context).t('done'),
+        remove: AppLocalizations.of(context).t('delete'),
+        doneLoadingMsg: AppLocalizations.of(
+          context,
+        ).t('applying_changes'), // 🎯 텍스트 없이 스피너만 표시
+        importStateHistoryMsg: AppLocalizations.of(context).t('loading_image'),
       ),
       mainEditor: MainEditorConfigs(
         style: MainEditorStyle(
@@ -185,12 +270,11 @@ class CustomImageEditorScreen extends StatelessWidget {
           appBarColor: fgColor, // 🎯 fgColor와 일치
           bottomBarBackground: barBgColor, // 🎯 bgColor와 일치
           background: bgColor, // 🎯 bgColor로 통일
-          cropCornerColor: Theme.of(
-            context,
-          ).colorScheme.onSurface.withOpacity(0.4),
+          cropCornerColor:
+              Theme.of(context).colorScheme.primary, // 🎯 Primary 색상
           helperLineColor: Theme.of(
             context,
-          ).colorScheme.onSurface.withOpacity(0.4),
+          ).colorScheme.primary.withOpacity(0.6), // 🎯 Primary 색상 (반투명)
         ),
         icons: CropRotateEditorIcons(
           bottomNavBar: Icons.crop,
@@ -231,24 +315,193 @@ class CustomImageEditorScreen extends StatelessWidget {
     );
 
     return Scaffold(
-      backgroundColor: bgColor, // 🎯 하단 바 밑 배경색 추가
+      backgroundColor: bgColor,
       body: SafeArea(
-        top: false, // 상단 SafeArea는 제거 (앱바가 있으므로)
-        bottom: false, // 하단 SafeArea는 유지
-        child: ProImageEditor.memory(
+        top: false,
+        bottom: false,
+        child:
+            _isMultiImage
+                ? _buildMultiImageEditor(
+                  context,
+                  configs,
+                  nodeService,
+                  selectedId,
+                )
+                : _buildSingleImageEditor(
+                  context,
+                  configs,
+                  nodeService,
+                  selectedId,
+                  _images[0],
+                ),
+      ),
+    );
+  }
+
+  Widget _buildSingleImageEditor(
+    BuildContext context,
+    ProImageEditorConfigs configs,
+    NodeComponentService nodeService,
+    String? selectedId,
+    Uint8List imageBytes,
+  ) {
+    return ProImageEditor.memory(
+      imageBytes,
+      callbacks: ProImageEditorCallbacks(
+        onImageEditingComplete: (Uint8List bytes) async {
+          if (widget.onApplyChanges != null) {
+            try {
+              // 업로드 및 노드 교체 처리 (타임아웃 포함)
+              final success = await widget.onApplyChanges!(bytes).timeout(
+                const Duration(seconds: 30),
+                onTimeout: () {
+                  debugPrint('[CustomImageEditorScreen] 변경사항 반영 타임아웃 (30초)');
+                  return false;
+                },
+              );
+
+              // 🎯 로딩 다이얼로그만 닫기 (ProImageEditor가 알아서 편집기를 닫음)
+              if (context.mounted) {
+                Navigator.of(context, rootNavigator: true).pop();
+              }
+
+              // 🎯 편집기 닫기는 ProImageEditor가 알아서 함 (pop 제거)
+              debugPrint(
+                '[CustomImageEditorScreen] ✅ 변경사항 반영 완료: success=$success',
+              );
+            } catch (e) {
+              debugPrint('[CustomImageEditorScreen] 변경사항 반영 중 오류: $e');
+
+              // 로딩 다이얼로그만 닫기
+              if (context.mounted) {
+                Navigator.of(context, rootNavigator: true).pop();
+              }
+
+              // 🎯 편집기 닫기는 ProImageEditor가 알아서 함 (pop 제거)
+            }
+          } else {
+            // 콜백이 없으면 기존 동작 (편집된 바이트만 반환)
+            if (selectedId != null) {
+              nodeService.applyEditedBytes(nodeId: selectedId, bytes: bytes);
+            }
+            // 🎯 ProImageEditor가 알아서 pop을 실행하므로 여기서는 하지 않음
+          }
+        },
+      ),
+      configs: configs,
+    );
+  }
+
+  Widget _buildMultiImageEditor(
+    BuildContext context,
+    ProImageEditorConfigs configs,
+    NodeComponentService nodeService,
+    String? selectedId,
+  ) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final bgColor =
+        isDark ? AppColors.darkBackground : AppColors.lightBackground;
+    final fgColor =
+        isDark ? AppColors.darkTextPrimary : AppColors.lightTextPrimary;
+    final barBgColor =
+        isDark
+            ? AppColors.darkBackground.withOpacity(0.9)
+            : AppColors.lightBackground.withOpacity(0.95);
+
+    return Scaffold(
+      backgroundColor: bgColor,
+      appBar: AppBar(
+        backgroundColor: barBgColor,
+        elevation: 0,
+        leading: IconButton(
+          icon: Icon(Icons.close, color: fgColor),
+          onPressed: () => Navigator.pop(context),
+        ),
+        centerTitle: true,
+        title: Text(
+          '${_currentIndex + 1} / ${_images.length}',
+          style: TextStyle(
+            color: fgColor,
+            fontSize: 17,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: _handleDone,
+            child: Text(
+              '완료',
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.primary,
+                fontSize: 17,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+        ],
+      ),
+      body: PageView.builder(
+        controller: _pageController,
+        onPageChanged: _onPageChanged,
+        itemCount: _images.length,
+        itemBuilder: (context, index) {
+          // 각 이미지별로 독립적인 편집 상태 관리
+          return _SingleImageEditorWrapper(
+            imageBytes: _editedImages[index] ?? _images[index],
+            configs: configs,
+            onImageEdited: (bytes) {
+              _onImageEdited(index, bytes);
+            },
+          );
+        },
+      ),
+    );
+  }
+}
+
+/// 단일 이미지 편집 래퍼 (다중 이미지 편집에서 사용)
+class _SingleImageEditorWrapper extends StatelessWidget {
+  final Uint8List imageBytes;
+  final ProImageEditorConfigs configs;
+  final Function(Uint8List) onImageEdited;
+
+  const _SingleImageEditorWrapper({
+    required this.imageBytes,
+    required this.configs,
+    required this.onImageEdited,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      children: [
+        ProImageEditor.memory(
           imageBytes,
           callbacks: ProImageEditorCallbacks(
             onImageEditingComplete: (Uint8List bytes) async {
-              // 편집 완료 시 NodeComponentService에 반영
-              if (selectedId != null) {
-                nodeService.applyEditedBytes(nodeId: selectedId, bytes: bytes);
-              }
-              Navigator.pop(context, bytes);
+              // 편집 완료 시 현재 이미지만 저장 (자동으로 다음 이미지로 넘어가지 않음)
+              onImageEdited(bytes);
             },
           ),
           configs: configs,
         ),
-      ),
+        // ProImageEditor의 내장 앱바를 가리는 오버레이
+        Positioned(
+          top: 0,
+          left: 0,
+          right: 0,
+          height: MediaQuery.of(context).padding.top + kToolbarHeight,
+          child: Container(
+            color: Colors.transparent,
+            // 터치 이벤트를 막아서 ProImageEditor의 앱바 버튼이 작동하지 않도록 함
+            child: GestureDetector(
+              onTap: () {}, // 빈 핸들러로 터치 이벤트 소비
+              behavior: HitTestBehavior.opaque,
+            ),
+          ),
+        ),
+      ],
     );
   }
 }
@@ -295,7 +548,7 @@ Future<Uint8List?> openImageEditorPlus(
                   ),
                   const SizedBox(height: 16),
                   Text(
-                    '이미지 불러오는 중...',
+                    context.tr('loading_image'),
                     style: TextStyle(
                       color: Theme.of(context).colorScheme.onSurface,
                       fontSize: 14,

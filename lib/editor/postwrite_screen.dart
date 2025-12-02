@@ -2,18 +2,16 @@ import 'dart:async';
 import 'dart:io';
 import 'package:doppy/editor/editor_appbar.dart';
 import 'package:doppy/editor/component/clip_component.dart'
-    show
-        ClipNode,
-        videoPlayerControllers,
-        ClipComponentBuilder,
-        cleanupAllVideoPlayers;
+    show ClipNode, ClipComponentBuilder, cleanupAllVideoPlayers;
 
 import 'package:doppy/editor/style/selected_toolbar.dart';
+import 'package:doppy/editor/utils/node_type_checker.dart';
 import 'package:doppy/utils/error_handler.dart';
 import 'package:doppy/editor/component/link_component.dart';
 import 'package:doppy/editor/component/app_image_node.dart';
 import 'package:doppy/editor/component/single_image_component.dart';
 import 'package:doppy/editor/component/row_image_component.dart';
+import 'package:doppy/editor/component/pageview_image_component.dart';
 import 'package:doppy/editor/component/title_component.dart';
 import 'package:doppy/editor/component/paragraph_component.dart';
 import 'package:doppy/editor/component/divider_component.dart';
@@ -34,7 +32,6 @@ import 'package:doppy/l10n/app_localizations.dart';
 import 'package:doppy/data/services/upload_service.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:flutter/services.dart';
 import 'package:super_editor/super_editor.dart';
 import 'package:doppy/editor/overlay/draft_list_overlay.dart';
 import 'package:doppy/editor/publish/post_exporter.dart';
@@ -70,7 +67,6 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
   late final MutableDocument document;
   late final MutableDocumentComposer composer;
   late final FocusNode _editorFocusNode;
-  bool _isLoadingDraft = false; // 🎯 임시저장 불러오는 중 플래그
 
   //service
   late final EditorService editorService;
@@ -87,7 +83,6 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
 
   //manipulation
   ScrollController scrollController = ScrollController();
-  Offset? _lastTapPosition; // 마지막 탭 위치 저장
 
   //keyboard
   // 🎯 성능 최적화: isKeyboardVisible은 build에서 MediaQuery로 직접 읽음
@@ -307,12 +302,8 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
   // 이 메서드는 더 이상 사용하지 않음 (스크롤 기반 앱바 제어로 분리)
 
   void _onScrollChanged() {
-    // 🎯 성능 최적화: 스크롤 시 캐시 무효화만 수행
-    try {
-      dragService.invalidateNodeRectCache();
-    } catch (_) {}
-
-    // 🎯 성능 최적화: 앱바 표시/숨김만 처리 (키보드 상태와 분리)
+    // 🎯 스크롤 시에는 캐시 무효화 불필요 (노드 구조 변경이 아니므로)
+    // 앱바 표시/숨김만 처리
     _handleAppBarVisibility();
   }
 
@@ -321,10 +312,23 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     if (!mounted || !scrollController.hasClients) return;
 
     final currentOffset = scrollController.offset;
+    final maxScroll = scrollController.position.maxScrollExtent;
     final delta = currentOffset - _lastOffset;
 
     const scrollThreshold = 3.0;
     const topThreshold = 15.0;
+
+    // 🎯 스크롤할 내용이 없으면 (maxScrollExtent가 0이면) 항상 앱바 표시
+    if (maxScroll <= 0) {
+      if (!_showAppBar) {
+        setState(() {
+          _showAppBar = true;
+          _isScrollingUp = true;
+        });
+      }
+      _lastOffset = currentOffset;
+      return;
+    }
 
     // 맨 위에 있을 때는 항상 앱바 표시
     if (currentOffset <= topThreshold) {
@@ -364,32 +368,29 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
 
   void _onEditorServiceChange() {
     if (mounted) {
-      // 🎯 노드 추가/변경 시 레이아웃이 변경되므로 캐시 무효화
-      // 이미지 분리/병합 등 레이아웃 변경이 큰 경우를 위해 여러 프레임 대기
+      // 🎯 노드 추가/변경 시 캐시 무효화 (다음 프레임에 한 번만)
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted) {
-              dragService.invalidateNodeRectCache();
-              // 🎯 드래그 중이 아닐 때 선택 해제 확인 (드래그 종료 후 다른 로직에서 선택이 다시 설정되는 경우 방지)
-              // 🎯 텍스트 입력 중이 아닐 때만 선택 해제 (텍스트 입력 중에는 키보드 유지)
-              if (dragService.draggingNodeId == null) {
-                final keyboardVisible =
-                    MediaQuery.of(context).viewInsets.bottom > 0;
-                final hasFocus = _editorFocusNode.hasFocus;
-                // 텍스트 입력 중이 아니면 선택 해제
-                // 🎯 하지만 포커스가 없고 키보드도 없을 때만 선택 해제 (텍스트 입력 중에는 키보드 유지)
-                if (!keyboardVisible && !hasFocus) {
-                  final nodeService = context.read<NodeComponentService>();
-                  // 🎯 이미지 분리/병합 후에는 명시적으로 모든 셀렉션 클리어
-                  nodeService.clearSelection();
-                  nodeService.clearHighlightedSelection();
-                  // 🎯 composer.clearSelection()은 호출하지 않음 - 키보드가 내려갈 수 있음
-                }
-              }
+        if (mounted) {
+          dragService.invalidateNodeRectCache();
+          // 🎯 드래그 중이 아닐 때 선택 해제 확인 (드래그 종료 후 다른 로직에서 선택이 다시 설정되는 경우 방지)
+          // 🎯 텍스트 입력 중이 아닐 때만 선택 해제 (텍스트 입력 중에는 키보드 유지)
+          if (dragService.draggingNodeId == null) {
+            final keyboardVisible =
+                MediaQuery.of(context).viewInsets.bottom > 0;
+            final hasFocus = _editorFocusNode.hasFocus;
+            // 텍스트 입력 중이 아니면 선택 해제
+            // 🎯 하지만 포커스가 없고 키보드도 없을 때만 선택 해제 (텍스트 입력 중에는 키보드 유지)
+            if (!keyboardVisible && !hasFocus) {
+              final nodeService = context.read<NodeComponentService>();
+              // 🎯 이미지 분리/병합 후에는 명시적으로 모든 셀렉션 클리어
+              nodeService.clearSelection();
+              nodeService.clearHighlightedSelection();
+              // 🎯 composer.clearSelection()은 호출하지 않음 - 키보드가 내려갈 수 있음
             }
-          });
-        });
+          }
+          // 🎯 특수 노드 삭제/복원 시 앱바 표시 상태 재확인 (스크롤 불가 상태에서는 항상 표시)
+          _handleAppBarVisibility();
+        }
       });
       setState(() {});
     }
@@ -427,36 +428,6 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     } catch (_) {}
 
     if (mounted) Navigator.of(context).pop();
-  }
-
-  // ClipNode 액션 트리거
-  void _triggerClipNodeAction(String nodeId, String action) {
-    debugPrint('[ClipNode] Action triggered: $action for node: $nodeId');
-
-    // 문서에서 ClipNode 찾기
-    final node = document.getNodeById(nodeId);
-    if (node is! ClipNode || node.url.isEmpty) {
-      debugPrint('[ClipNode] ClipNode를 찾을 수 없거나 URL이 비어있습니다');
-      return;
-    }
-
-    // 컨트롤러 찾기
-    final key = 'video_${node.url.hashCode}';
-    final controller = videoPlayerControllers[key];
-
-    if (controller == null) {
-      debugPrint('[ClipNode] 컨트롤러를 찾을 수 없습니다: $key');
-      return;
-    }
-
-    // 액션 실행
-    if (action == 'toggleMute') {
-      controller.toggleMute?.call();
-      debugPrint('[ClipNode] toggleMute() 호출됨');
-    } else if (action == 'restartVideo') {
-      controller.restartVideo?.call();
-      debugPrint('[ClipNode] restartVideo() 호출됨');
-    }
   }
 
   // 제목 노드 업데이트 (썸네일 오버레이에서 제목 변경 시)
@@ -530,201 +501,82 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     }
   }
 
-  // 🎯 빈 공간 탭 처리 (각 컴포넌트가 직접 GestureDetector를 가지므로 여기서는 빈 공간만 처리)
-  void _handleEmptySpaceTap() {
-    if (_lastTapPosition == null) return;
+  // moved to EditorService (getNodeGlobalRect)
+  // _detectVerticalGapAt은 각 컴포넌트의 _handleSpecialNodeTap에서 처리하므로 제거됨
 
-    // 레이아웃이 완료된 후 처리
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || _lastTapPosition == null) return;
-      _handleEmptySpaceTapAfterLayout();
-    });
-  }
+  /// 마지막 특수 노드 아래 빈 공간 클릭 시 빈 문단 추가
+  void _handleTapBelowLastSpecialNode(Offset globalPosition) {
+    final lastIndex = document.nodeCount - 1;
+    if (lastIndex < 0) return;
 
-  void _handleEmptySpaceTapAfterLayout() {
-    if (_lastTapPosition == null) return;
+    final lastNode = document.getNodeAt(lastIndex);
+    if (lastNode == null) return;
 
-    // 1) 세로 노드 사이 클릭 감지 → 특수 노드(텍스트가 아닌) 사이에서 빈 문단 삽입
-    final verticalGapIndex = _detectVerticalGapAt(_lastTapPosition!);
-    if (verticalGapIndex != null) {
-      final before =
-          verticalGapIndex - 1 >= 0
-              ? document.getNodeAt(verticalGapIndex - 1)
-              : null;
-      final after =
-          verticalGapIndex < document.nodeCount
-              ? document.getNodeAt(verticalGapIndex)
-              : null;
+    // 마지막 노드가 특수 노드인지 확인
+    final isSpecial = NodeTypeChecker.isSpecialNode(lastNode);
+    if (!isSpecial) return;
 
-      // 텍스트 노드가 아닌 특수 노드인지 확인
-      bool isSpecialNode(DocumentNode node) {
-        return node is ImageNode ||
-            node is ImageRowNode ||
-            node is ClipNode ||
-            node is LinkNode;
-      }
+    // 마지막 노드의 Rect 확인
+    final nodeRect = dragService.getNodeGlobalRect(lastNode.id);
+    if (nodeRect == null) return;
 
-      final bool isSpecialBefore = before != null && isSpecialNode(before);
-      final bool isSpecialAfter = after != null && isSpecialNode(after);
+    // 🎯 노드 영역 아래 모든 여백을 클릭 가능 영역으로 확장
+    final tapY = globalPosition.dy;
+    final isBelowNode = tapY > nodeRect.bottom;
 
-      if (isSpecialBefore && isSpecialAfter) {
-        // 현재 스크롤 위치 저장
-        final currentScrollOffset =
-            scrollController.hasClients ? scrollController.offset : 0.0;
+    debugPrint(
+      '[PostWrite] 빈 공간 탭 체크: tapY=$tapY, nodeBottom=${nodeRect.bottom}, isBelowNode=$isBelowNode',
+    );
 
-        editorService.insertEmptyParagraphAtIndex(verticalGapIndex);
-        // 🎯 노드 추가 후 레이아웃 변경으로 캐시 무효화
-        dragService.invalidateNodeRectCache();
+    if (isBelowNode) {
+      // 🎯 실제로 그 위치가 비어있는지 확인 (다른 노드가 있는지 체크)
+      final hitTestResult = editorService.findNodeByHitTest(
+        globalPosition,
+        dragService,
+      );
 
-        // 🎯 100ms 대기 후 안정적으로 포커스/스크롤 처리
-        Future.delayed(const Duration(milliseconds: 100), () {
+      debugPrint(
+        '[PostWrite] hitTestResult: ${hitTestResult?.key?.id}, lastNode: ${lastNode.id}',
+      );
+
+      // hit test 결과가 없거나, 마지막 노드인 경우만 빈 공간으로 간주
+      final isEmpty =
+          hitTestResult == null ||
+          hitTestResult.key == null ||
+          hitTestResult.key!.id == lastNode.id;
+
+      debugPrint(
+        '[PostWrite] isEmpty=$isEmpty → 빈 텍스트 추가 ${isEmpty ? "실행" : "스킵"}',
+      );
+
+      if (isEmpty) {
+        editorService.insertEmptyParagraphAtIndex(lastIndex + 1);
+        nodeComponentService.selectNode(null);
+
+        // 🎯 새로 추가된 노드에 즉시 포커스
+        Future.delayed(const Duration(milliseconds: 50), () {
           if (!mounted) return;
 
-          // 🎯 성능 최적화: 키보드 상태는 MediaQuery로 직접 확인
-          final keyboardVisible = MediaQuery.of(context).viewInsets.bottom > 0;
-          if (keyboardVisible) {
-            if (scrollController.hasClients) {
-              scrollController.jumpTo(currentScrollOffset);
-            }
-          } else {
-            // 키보드가 내려가 있을 때만 포커스 요청
-            if (!_editorFocusNode.hasFocus) {
+          final newLastIndex = document.nodeCount - 1;
+          if (newLastIndex >= 0) {
+            final newNode = document.getNodeAt(newLastIndex);
+            if (newNode != null) {
+              composer.setSelectionWithReason(
+                DocumentSelection.collapsed(
+                  position: DocumentPosition(
+                    nodeId: newNode.id,
+                    nodePosition: const TextNodePosition(offset: 0),
+                  ),
+                ),
+                'user_tap_after_special_node',
+              );
               _editorFocusNode.requestFocus();
             }
           }
         });
       }
-      nodeComponentService.selectNode(null);
-      return;
     }
-
-    // 🎯 직접 hit test 방식: 모든 노드의 실제 렌더링 영역을 확인하여 탭 위치가 어느 노드에 있는지 정확히 판단
-    // findNodeAtPosition과 달리 실제 렌더링된 컴포넌트의 글로벌 좌표를 사용하므로 더 정확함
-    final hitTestResult = editorService.findNodeByHitTest(
-      _lastTapPosition!,
-      dragService,
-    );
-
-    if (hitTestResult == null) {
-      // 탭 위치에 노드가 없으면 선택 해제
-      nodeComponentService.selectNode(null);
-      nodeComponentService.clearHighlightedSelection();
-      return;
-    }
-
-    final node = hitTestResult.key;
-    final nodeRect = hitTestResult.value;
-    if (node == null) {
-      nodeComponentService.selectNode(null);
-      nodeComponentService.clearHighlightedSelection();
-      return;
-    }
-
-    final nodeId = node.id;
-
-    // 🎯 텍스트 노드 처리: 텍스트 노드가 감지되면 가장 먼저 모든 셀렉션 해제
-    if (node is ParagraphNode &&
-        node.metadata['mention'] != true &&
-        node.metadata['isTitle'] != true) {
-      // 🎯 특수 노드가 선택된 상태에서 텍스트 노드로 전환할 때 가장 먼저 모든 셀렉션 해제
-      // 🎯 composer.clearSelection()을 호출하지 않음 - SuperEditor가 탭을 처리할 때 자동으로 처리됨
-      // composer.clearSelection()을 호출하면 키보드가 내려갈 수 있음
-      nodeComponentService.selectNode(null);
-      nodeComponentService.clearHighlightedSelection();
-      dragService.invalidateNodeRectCache();
-      // SuperEditor가 탭을 처리하도록 함 (키보드는 SuperEditor가 자동으로 올림)
-      return;
-    }
-
-    // 🎯 마지막 노드 아래 클릭 감지: 특수 노드 아래를 클릭하면 새 빈 문단 추가
-    final lastIndex = document.nodeCount - 1;
-    final isLastNode =
-        lastIndex >= 0 && document.getNodeAt(lastIndex)?.id == nodeId;
-
-    if (isLastNode && nodeRect != null) {
-      if (_lastTapPosition!.dy > nodeRect.bottom + 20) {
-        // 노드 영역 아래(+20px 여유)를 클릭한 경우
-        final isSpecial =
-            node is ImageNode ||
-            node is ImageRowNode ||
-            node is LinkNode ||
-            node is ClipNode;
-
-        // 마지막 노드가 특수 노드라면 새 빈 문단 추가
-        if (isSpecial) {
-          editorService.insertEmptyParagraphAtIndex(lastIndex + 1);
-          // 🎯 노드 추가 후 레이아웃 변경으로 캐시 무효화
-          dragService.invalidateNodeRectCache();
-          nodeComponentService.selectNode(null);
-
-          // 🎯 새로 추가된 노드에 안정적으로 포커스 (100ms 대기)
-          Future.delayed(const Duration(milliseconds: 100), () {
-            if (!mounted) return;
-
-            final newLastIndex = document.nodeCount - 1;
-            if (newLastIndex >= 0) {
-              final newNode = document.getNodeAt(newLastIndex);
-              if (newNode != null) {
-                composer.setSelectionWithReason(
-                  DocumentSelection.collapsed(
-                    position: DocumentPosition(
-                      nodeId: newNode.id,
-                      nodePosition: const TextNodePosition(offset: 0),
-                    ),
-                  ),
-                  'user_tap_after_special_node',
-                );
-                // 🎯 임시저장 불러오는 중이 아니면 포커스 요청
-                if (!_isLoadingDraft) {
-                  _editorFocusNode.requestFocus();
-                }
-              }
-            }
-          });
-          return;
-        }
-      }
-    }
-
-    // 2) 노드가 없는 빈 공간: 선택 해제
-    nodeComponentService.selectNode(null);
-    nodeComponentService.clearHighlightedSelection();
   }
-
-  // moved to EditorService (getNodeGlobalRect)
-
-  int? _detectVerticalGapAt(Offset globalPos) {
-    // delegate to DragService
-    return dragService.detectVerticalGapAt(globalPos);
-  }
-
-  int? _detectImageRowBoundaryGap(ImageRowNode rowNode, Offset globalPos) {
-    const double threshold = 6.0; // 🎯 경계 감지 임계 (12.0 → 6.0으로 줄임)
-    final rect = dragService.getNodeGlobalRect(rowNode.id);
-    if (rect == null) return null;
-
-    // 수직으로 행 안쪽에 위치해야 함 (약간 오차 허용)
-    if (globalPos.dy < rect.top - 8 || globalPos.dy > rect.bottom + 8) {
-      return null;
-    }
-
-    final localX = globalPos.dx - rect.left;
-    final int count = rowNode.imageUrls.length;
-    if (count <= 1) return null;
-    final double slot = rect.width / count;
-
-    // 경계는 k*slot (k=1..count-1). 경계에 가까우면 감지
-    for (int k = 1; k < count; k++) {
-      final double boundaryX = slot * k;
-      if ((localX - boundaryX).abs() <= threshold) {
-        return k; // k번째 경계 = 앞 이미지 인덱스와 뒤 이미지 인덱스 사이
-      }
-    }
-    return null;
-  }
-
-  // 🎯 _handleLongPressStart와 _handleDragMoveAndAutoScroll 제거
-  // 각 컴포넌트가 직접 롱프레스 드래그를 처리하므로 더 이상 필요 없음
 
   Stylesheet _buildStylesheet(BuildContext context) {
     return buildCustomStylesheet(context).copyWith(
@@ -912,80 +764,98 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                                   ).colorScheme.onSurface.withOpacity(0.3),
                                   thickness: 4,
                                   radius: const Radius.circular(12),
-                                  child: SuperEditor(
-                                    gestureMode:
-                                        Platform.isIOS
-                                            ? DocumentGestureMode.iOS
-                                            : DocumentGestureMode.android,
-                                    editor: editor,
-                                    focusNode: _editorFocusNode,
-                                    stylesheet: _buildStylesheet(context),
-                                    selectionStyle: SelectionStyles(
-                                      selectionColor: AppColors.primary
-                                          .withValues(alpha: 0.3),
-                                      highlightEmptyTextBlocks: false,
+                                  child: Listener(
+                                    behavior: HitTestBehavior.translucent,
+                                    onPointerDown: (details) {
+                                      // 🎯 마지막 특수 노드 아래 빈 공간 클릭 감지
+                                      // Listener는 터치를 소비하지 않아 다른 위젯도 정상 작동
+                                      _handleTapBelowLastSpecialNode(
+                                        details.position,
+                                      );
+                                    },
+                                    child: SuperEditor(
+                                      gestureMode:
+                                          Platform.isIOS
+                                              ? DocumentGestureMode.iOS
+                                              : DocumentGestureMode.android,
+                                      editor: editor,
+                                      focusNode: _editorFocusNode,
+                                      stylesheet: _buildStylesheet(context),
+                                      selectionStyle: SelectionStyles(
+                                        selectionColor: AppColors.primary
+                                            .withValues(alpha: 0.3),
+                                        highlightEmptyTextBlocks: false,
+                                      ),
+                                      documentLayoutKey: _documentLayoutKey,
+                                      scrollController: scrollController,
+
+                                      componentBuilders: [
+                                        // 타이틀 문단 전용 빌더(드래그 없음)
+                                        TitleParagraphComponentBuilder(
+                                          editorService: editorService,
+                                        ),
+                                        // 커스텀 이미지 컴포넌트들
+                                        SingleImageComponentBuilder(
+                                          dragService: dragService,
+                                          isDarkMode:
+                                              context
+                                                  .read<ThemeProvider>()
+                                                  .themeMode ==
+                                              ThemeMode.dark,
+                                        ),
+                                        RowImageComponentBuilder(
+                                          dragService: dragService,
+                                          isDarkMode:
+                                              context
+                                                  .read<ThemeProvider>()
+                                                  .themeMode ==
+                                              ThemeMode.dark,
+                                        ),
+                                        PageViewImageComponentBuilder(
+                                          dragService: dragService,
+                                          isDarkMode:
+                                              context
+                                                  .read<ThemeProvider>()
+                                                  .themeMode ==
+                                              ThemeMode.dark,
+                                        ),
+                                        CustomParagraphComponentBuilder(
+                                          dragService: dragService,
+                                          editorService: editorService,
+                                        ),
+
+                                        // 구분선 전용 컴포넌트
+                                        DividerComponentBuilder(
+                                          dragService: dragService,
+                                        ),
+
+                                        LinkComponentBuilder(
+                                          dragService: dragService,
+                                          isDarkMode:
+                                              context
+                                                  .read<ThemeProvider>()
+                                                  .themeMode ==
+                                              ThemeMode.dark,
+                                        ),
+
+                                        ClipComponentBuilder(
+                                          dragService: dragService,
+                                          isEditing: true,
+                                          isDarkMode:
+                                              context
+                                                  .read<ThemeProvider>()
+                                                  .themeMode ==
+                                              ThemeMode.dark,
+                                        ),
+
+                                        // 기본 컴포넌트들 (Paragraph 제외)
+                                        ...defaultComponentBuilders.where(
+                                          (builder) =>
+                                              builder.runtimeType.toString() !=
+                                              'ParagraphComponentBuilder',
+                                        ),
+                                      ],
                                     ),
-                                    documentLayoutKey: _documentLayoutKey,
-                                    scrollController: scrollController,
-
-                                    componentBuilders: [
-                                      // 타이틀 문단 전용 빌더(드래그 없음)
-                                      TitleParagraphComponentBuilder(
-                                        editorService: editorService,
-                                      ),
-                                      // 커스텀 이미지 컴포넌트들
-                                      SingleImageComponentBuilder(
-                                        dragService: dragService,
-                                        isDarkMode:
-                                            context
-                                                .read<ThemeProvider>()
-                                                .themeMode ==
-                                            ThemeMode.dark,
-                                      ),
-                                      RowImageComponentBuilder(
-                                        dragService: dragService,
-                                        isDarkMode:
-                                            context
-                                                .read<ThemeProvider>()
-                                                .themeMode ==
-                                            ThemeMode.dark,
-                                      ),
-                                      CustomParagraphComponentBuilder(
-                                        dragService: dragService,
-                                        editorService: editorService,
-                                      ),
-
-                                      // 구분선 전용 컴포넌트
-                                      DividerComponentBuilder(
-                                        dragService: dragService,
-                                      ),
-
-                                      LinkComponentBuilder(
-                                        dragService: dragService,
-                                        isDarkMode:
-                                            context
-                                                .read<ThemeProvider>()
-                                                .themeMode ==
-                                            ThemeMode.dark,
-                                      ),
-
-                                      ClipComponentBuilder(
-                                        dragService: dragService,
-                                        isEditing: true,
-                                        isDarkMode:
-                                            context
-                                                .read<ThemeProvider>()
-                                                .themeMode ==
-                                            ThemeMode.dark,
-                                      ),
-
-                                      // 기본 컴포넌트들 (Paragraph 제외)
-                                      ...defaultComponentBuilders.where(
-                                        (builder) =>
-                                            builder.runtimeType.toString() !=
-                                            'ParagraphComponentBuilder',
-                                      ),
-                                    ],
                                   ),
                                 ),
                               ],
@@ -996,11 +866,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                     ),
                   ),
 
-                  // 🎯 빈 공간 탭 감지 (스티커 드래그 중에는 무시)
-                  // 각 컴포넌트가 직접 GestureDetector를 가지고 있으므로,
-                  // 여기서는 빈 공간 탭(새 문단 추가 등)만 처리
-                  // 특수 노드와 텍스트 노드는 각각의 GestureDetector와 SuperEditor가 처리
-                  // 전체 화면 GestureDetector는 제거하고, 빈 공간 탭 처리는 나중에 추가 예정
+                  // 🎯 하단 패딩 영역(bottom: 100) 클릭 감지
 
                   // 드래그 오버레이 (키보드가 내려가 있을 때만 표시)
                   if (dragService.draggingNodeId != null && !isKeyboardVisible)
@@ -1024,7 +890,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                   AnimatedPositioned(
                     duration: const Duration(milliseconds: 200),
                     curve: Curves.easeInOut,
-                    top: _showAppBar ? -10 : -100,
+                    top: _showAppBar ? -5 : -100,
                     child:
                         widget.isEditingMode
                             ? EditModeAppBar(
@@ -1279,62 +1145,71 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
   }
 
   void _deleteNode(DocumentNode node, String selectedId) {
-    // 링크/멘션 등 다른 특수 노드 삭제 + 영상 임시노드 업로드 취소 연동
+    // 🎯 중복 삭제 방지: 노드가 이미 삭제되었는지 확인
+    if (document.getNodeById(selectedId) == null) {
+      return; // 이미 삭제됨
+    }
+
+    // 🎯 원자적 삭제: 레지스트리에서 먼저 제거하여 복원 방지
+    editorService.removeSpecialNodeFromRegistry(
+      selectedId,
+      explicitlyDeleted: true,
+    );
+
     try {
       nodeComponentService.selectNode(null);
+
+      // 🎯 비디오 노드 삭제 처리
       if (node is ClipNode) {
-        // placeholder(로컬 경로 존재, url 비어있음)일 때 업로드 취소 후 삭제
         final dynamic dyn = node;
         final String url = (dyn.url as String?) ?? '';
         final String localPath = (dyn.localPath as String?) ?? '';
         if (url.isEmpty && localPath.isNotEmpty) {
-          try {
-            // refId = placeholder 노드 ID 기준으로 업로드 취소
-            context.read<UploadService>().cancelByRef(selectedId);
-          } catch (_) {}
+          // 🎯 플레이스홀더 삭제 (레지스트리 제거 및 업로드 취소는 내부에서 처리)
           editorService.deleteVideoPlaceholderNode(selectedId);
           setState(() {});
           return;
         }
       }
-      document.deleteNode(selectedId);
+
+      // 🎯 그룹 이미지 플레이스홀더 삭제 처리
+      if (node is ImageRowNode || node is PageViewImageNode) {
+        final dynamic dyn = node;
+        final meta = dyn.metadata as Map<String, dynamic>?;
+        final isPlaceholder = meta?['isPlaceholder'] == true;
+
+        if (isPlaceholder) {
+          debugPrint('[PostwriteScreen] 그룹 이미지 플레이스홀더 삭제: $selectedId');
+          editorService.deleteImagePlaceholderNode(selectedId);
+          setState(() {});
+          return;
+        }
+      }
+
+      // 🎯 이미지 노드 삭제 처리
+      if (node is ImageNode) {
+        final dynamic dyn = node;
+        final meta = dyn.metadata as Map<String, dynamic>?;
+        final isPlaceholder = meta?['isPlaceholder'] == true;
+        final imageUrl = (dyn.imageUrl as String?) ?? '';
+
+        if (isPlaceholder || (imageUrl.isEmpty && meta?['localPath'] != null)) {
+          // 🎯 플레이스홀더 삭제 (레지스트리 제거 및 업로드 취소는 내부에서 처리)
+          editorService.deleteImagePlaceholderNode(selectedId);
+          setState(() {});
+          return;
+        }
+      }
+
+      // 🎯 일반 노드 삭제 (삭제 전 다시 한 번 존재 확인)
+      if (document.getNodeById(selectedId) != null) {
+        document.deleteNode(selectedId);
+      }
       setState(() {});
     } catch (e) {
+      // 🎯 에러 발생 시 레지스트리 및 명시적 삭제 목록 정리
+      editorService.removeSpecialNodeFromRegistry(selectedId);
       ErrorHandler.showError(context, context.tr('cannot_delete'));
-    }
-  }
-
-  // 이미지 행에서 특정 이미지 드래그 시작 (분리는 드롭 시)
-  void _startImageRowDrag(String imageRowId, Offset globalPosition) {
-    final rowNode = document.getNodeById(imageRowId) as ImageRowNode?;
-    if (rowNode != null) {
-      final imageIndex = _findClickedImageIndex(rowNode, globalPosition);
-
-      if (imageIndex != null) {
-        dragService.startDrag(imageRowId, context, globalPosition);
-        dragService.setSplitImageInfo(imageRowId, imageIndex);
-      }
-    }
-  }
-
-  // 클릭한 위치에서 가장 근접한 이미지 인덱스 찾기
-  int? _findClickedImageIndex(ImageRowNode rowNode, Offset globalPosition) {
-    try {
-      final imageCount = rowNode.imageUrls.length;
-      final screenWidth = MediaQuery.of(context).size.width;
-      final imageWidth = screenWidth / imageCount;
-
-      // 클릭한 X 좌표에 따라 이미지 인덱스 계산
-      final clickedIndex = (globalPosition.dx / imageWidth).floor();
-
-      // 유효한 인덱스 범위 확인
-      if (clickedIndex >= 0 && clickedIndex < imageCount) {
-        return clickedIndex;
-      }
-
-      return 0;
-    } catch (e) {
-      return 0;
     }
   }
 
@@ -1634,19 +1509,35 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
       }
 
       // 🎯 스티커에서 이미지 URL 수집 (PNG 드로잉 포함)
-      final stickers = exported['stickers'] as List?;
-      if (stickers != null) {
-        debugPrint('  - 스티커 개수: ${stickers.length}');
-        for (final sticker in stickers) {
-          if (sticker is Map && sticker['type'] == 'image') {
-            final contentMap = sticker['content'] as Map<String, dynamic>?;
-            if (contentMap != null) {
-              final String url = (contentMap['url'] ?? '').toString();
-              if (url.isNotEmpty) {
-                usedUrls.add(url);
-                debugPrint('    → 스티커 URL 추가: $url');
-              }
+      // 🎯 스티커는 exported['content']['stickers']에 있음 (exported['stickers']가 아님!)
+      final contentStickers =
+          (content is Map ? (content['stickers'] as List?) : null) ?? const [];
+      debugPrint('  - 스티커 개수: ${contentStickers.length}');
+      for (final sticker in contentStickers) {
+        if (sticker is! Map) continue;
+        final stickerType = (sticker['type'] ?? '').toString();
+        if (stickerType == 'image') {
+          final stickerContent = sticker['content'];
+          String? url;
+
+          if (stickerContent is Map) {
+            // ✅ URL + 크기 정보 (PNG 드로잉) 또는 레거시 {url: ...}
+            url = (stickerContent['url'] ?? '').toString();
+          } else if (stickerContent is String) {
+            // 레거시: content가 직접 URL 문자열인 경우
+            url = stickerContent;
+          }
+
+          if (url != null && url.isNotEmpty) {
+            // HTTP URL인지 확인 (로컬 파일 경로 제외)
+            if (url.startsWith('http://') || url.startsWith('https://')) {
+              usedUrls.add(url);
+              debugPrint('    → 스티커 URL 추가: $url');
+            } else {
+              debugPrint('    → 스티커 URL이 HTTP가 아님 (로컬 파일?): $url');
             }
+          } else {
+            debugPrint('    → 스티커 URL이 비어있음: content=$stickerContent');
           }
         }
       }
@@ -1680,11 +1571,6 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
               (_, __, ___) => DraftListOverlay(
                 currentDraftId: currentDraftId,
                 onLoadDraft: (draftId) async {
-                  // 🎯 임시저장 불러오기 시작 - 포커스 요청 차단
-                  setState(() {
-                    _isLoadingDraft = true;
-                  });
-
                   try {
                     nodeComponentService.clearHighlightedSelectionSilently();
                     nodeComponentService.clearSelectionSilently();
@@ -1694,11 +1580,6 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                     _editorFocusNode.unfocus();
                     FocusManager.instance.primaryFocus?.unfocus();
                   } catch (_) {}
-
-                  if (!mounted) {
-                    setState(() => _isLoadingDraft = false);
-                    return;
-                  }
 
                   final success = await draftService.loadDraft(
                     draftId: draftId,
@@ -1719,31 +1600,20 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                     _editorFocusNode.unfocus();
                     FocusManager.instance.primaryFocus?.unfocus();
 
-                    // 🎯 레이아웃 재동기화를 위해 여러 프레임 대기 후 캐시 무효화
+                    // 🎯 레이아웃 재동기화를 위해 다음 프레임에 캐시 무효화
                     WidgetsBinding.instance.addPostFrameCallback((_) {
-                      WidgetsBinding.instance.addPostFrameCallback((_) {
-                        if (mounted) {
-                          // 🎯 캐시 무효화 및 셀렉션 재확인
-                          dragService.invalidateNodeRectCache();
-                          nodeComponentService.clearSelection();
-                          nodeComponentService.clearHighlightedSelection();
-                          composer.clearSelection();
+                      if (mounted) {
+                        // 🎯 캐시 무효화 및 셀렉션 재확인
+                        dragService.invalidateNodeRectCache();
+                        nodeComponentService.clearSelection();
+                        nodeComponentService.clearHighlightedSelection();
+                        composer.clearSelection();
 
-                          // 🎯 포커스 재확인 및 플래그 해제
-                          _editorFocusNode.unfocus();
-                          FocusManager.instance.primaryFocus?.unfocus();
-                          setState(() {
-                            _isLoadingDraft = false;
-                          });
-                        }
-                      });
+                        // 🎯 포커스 재확인 및 플래그 해제
+                        _editorFocusNode.unfocus();
+                        FocusManager.instance.primaryFocus?.unfocus();
+                      }
                     });
-                  } else {
-                    if (mounted) {
-                      setState(() {
-                        _isLoadingDraft = false;
-                      });
-                    }
                   }
 
                   if (!success && mounted) {

@@ -14,7 +14,6 @@ import 'package:share_plus/share_plus.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:image_gallery_saver/image_gallery_saver.dart';
 import 'package:doppy/l10n/app_localizations.dart';
-import 'package:video_thumbnail/video_thumbnail.dart';
 import 'package:image/image.dart' as img;
 
 /// 📝 포스트 공유 오버레이 (Medium 스타일)
@@ -25,6 +24,7 @@ class SharePostOverlay extends StatefulWidget {
   final String authorUsername;
   final String? authorProfileImageUrl; // 🎯 작성자 프로필 이미지
   final String? thumbnailUrl;
+  final String? preExtractedThumbnailPath; // 🎯 게시 전에 미리 추출한 썸네일 경로
   final int readTime; // 분
   final bool isNewPost; // 🎯 최초 등록 여부
   final Map<String, dynamic>? uploadedData; // 🎯 업로드된 전체 데이터
@@ -37,6 +37,7 @@ class SharePostOverlay extends StatefulWidget {
     required this.authorUsername,
     this.authorProfileImageUrl,
     this.thumbnailUrl,
+    this.preExtractedThumbnailPath,
     required this.readTime,
     this.isNewPost = false, // 🎯 기본값 false
     this.uploadedData, // 🎯 업로드된 데이터
@@ -51,6 +52,7 @@ class SharePostOverlay extends StatefulWidget {
     required String authorUsername,
     String? authorProfileImageUrl, // 🎯 추가
     String? thumbnailUrl,
+    String? preExtractedThumbnailPath, // 🎯 게시 전에 미리 추출한 썸네일 경로
     required int readTime,
     bool isNewPost = false, // 🎯 최초 등록 여부
     Map<String, dynamic>? uploadedData, // 🎯 업로드된 데이터
@@ -73,6 +75,7 @@ class SharePostOverlay extends StatefulWidget {
             authorUsername: authorUsername,
             authorProfileImageUrl: authorProfileImageUrl, // 🎯 전달
             thumbnailUrl: thumbnailUrl,
+            preExtractedThumbnailPath: preExtractedThumbnailPath,
             readTime: readTime,
             isNewPost: isNewPost, // 🎯 전달
             uploadedData: uploadedData, // 🎯 전달
@@ -103,8 +106,6 @@ class _SharePostOverlayState extends State<SharePostOverlay> {
   bool _isBottomSheetCopied = false; // 🎯 바텀시트 내 복사 상태
   bool _isSharingToInstagram = false; // 🎯 인스타그램 공유 중
   ShareTheme _currentTheme = ShareTheme.darkBlur; // 🎯 기본 테마
-  String? _extractedThumbnailPath; // 🎯 비디오에서 추출한 썸네일 경로
-  bool _isExtractingThumbnail = false; // 🎯 썸네일 추출 중
 
   // 🎯 PageView 컨트롤러
   late final PageController _pageController;
@@ -140,90 +141,35 @@ class _SharePostOverlayState extends State<SharePostOverlay> {
     super.initState();
     // 🎯 무한 루프를 위해 중간 페이지부터 시작
     _pageController = PageController(initialPage: 1000);
-    _checkAndExtractVideoThumbnail();
   }
 
   @override
   void dispose() {
     _pageController.dispose();
-    // 추출한 썸네일 파일 정리
-    if (_extractedThumbnailPath != null) {
-      try {
-        File(_extractedThumbnailPath!).delete();
-      } catch (_) {}
-    }
     super.dispose();
-  }
-
-  /// 🎯 비디오 URL인지 확인하고 썸네일 추출
-  Future<void> _checkAndExtractVideoThumbnail() async {
-    if (widget.thumbnailUrl == null || widget.thumbnailUrl!.isEmpty) return;
-
-    final url = widget.thumbnailUrl!.toLowerCase();
-    final isVideo =
-        url.endsWith('.mp4') ||
-        url.endsWith('.mov') ||
-        url.endsWith('.avi') ||
-        url.contains('/video/') ||
-        url.contains('video');
-
-    if (!isVideo) return;
-
-    debugPrint(
-      '[SharePostOverlay] 비디오 URL 감지 - 썸네일 추출 시작: ${widget.thumbnailUrl}',
-    );
-
-    setState(() => _isExtractingThumbnail = true);
-
-    try {
-      final thumbnailPath = await VideoThumbnail.thumbnailFile(
-        video: widget.thumbnailUrl!,
-        thumbnailPath: (await getTemporaryDirectory()).path,
-        imageFormat: ImageFormat.PNG,
-        maxHeight: 1920,
-        quality: 90,
-      );
-
-      if (mounted && thumbnailPath != null) {
-        setState(() {
-          _extractedThumbnailPath = thumbnailPath;
-          _isExtractingThumbnail = false;
-        });
-        debugPrint('[SharePostOverlay] 썸네일 추출 완료: $thumbnailPath');
-      }
-    } catch (e) {
-      debugPrint('[SharePostOverlay] 썸네일 추출 실패: $e');
-      if (mounted) {
-        setState(() => _isExtractingThumbnail = false);
-      }
-    }
   }
 
   /// 🎯 표시할 썸네일 URL/경로 가져오기
   String? get _displayThumbnail {
-    // 추출된 썸네일이 있으면 우선 사용
-    if (_extractedThumbnailPath != null) {
-      return _extractedThumbnailPath;
+    // 🎯 게시 전에 미리 추출한 썸네일이 있으면 우선 사용
+    if (widget.preExtractedThumbnailPath != null &&
+        widget.preExtractedThumbnailPath!.isNotEmpty) {
+      return widget.preExtractedThumbnailPath;
     }
     // 아니면 원본 URL
     return widget.thumbnailUrl;
   }
 
   /// 🎯 썸네일이 로컬 파일인지 확인
-  bool get _isThumbnailLocal => _extractedThumbnailPath != null;
+  bool get _isThumbnailLocal =>
+      widget.preExtractedThumbnailPath != null &&
+      widget.preExtractedThumbnailPath!.isNotEmpty;
 
   /// 🎯 썸네일 이미지 빌더 (로컬/네트워크 자동 판단)
   Widget _buildThumbnailImage({
     required BoxFit fit,
     required Widget errorWidget,
   }) {
-    if (_isExtractingThumbnail) {
-      // 썸네일 추출 중이면 로딩 표시
-      return Center(
-        child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
-      );
-    }
-
     final thumbnail = _displayThumbnail;
     if (thumbnail == null || thumbnail.isEmpty) {
       return errorWidget;

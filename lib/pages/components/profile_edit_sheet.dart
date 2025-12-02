@@ -2,8 +2,9 @@ import 'dart:io';
 import 'package:doppy/data/models/user_model.dart';
 import 'package:doppy/l10n/app_localizations.dart';
 import 'package:doppy/editor/overlay/link_overlay.dart';
+import 'package:doppy/image/media_picker_screen.dart';
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
-import '../../image/native_image_picker.dart';
 
 class ProfileEditBottomSheet extends StatelessWidget {
   final Future<void> Function() onClearProfileImage;
@@ -60,17 +61,26 @@ class ProfileEditBottomSheet extends StatelessWidget {
                 // 현재 시트 닫기
                 Navigator.pop(context);
 
-                // 네이티브 이미지 선택기 사용
-                final picker = NativeImagePicker();
-                final files =
-                    singleSelect
-                        ? await picker.pickSingleImage().then(
-                          (f) => f != null ? [f] : <File>[],
-                        )
-                        : await picker.pickMultipleImages(maxCount: 1);
+                // MediaPickerScreen 사용 (이미지만, 토글 없음, 단일 선택)
+                final result = await Navigator.push<MediaPickerResult>(
+                  context,
+                  CupertinoPageRoute(
+                    builder:
+                        (context) => MediaPickerScreen(
+                          initialMediaType: MediaType.image,
+                          maxSelectionCount:
+                              singleSelect ? 1 : 5, // 🎯 singleSelect에 따라 설정
+                          enableToggle: false, // 토글 없음
+                          onMediaSelected: (file) {
+                            // 단일 선택이므로 바로 처리
+                          },
+                        ),
+                  ),
+                );
 
-                if (files.isNotEmpty) {
-                  onImagesSelected(files);
+                if (result != null && result.files.isNotEmpty) {
+                  // 🎯 단일 선택이므로 첫 번째 파일만 전달
+                  onImagesSelected([result.files.first]);
                 }
               },
             ),

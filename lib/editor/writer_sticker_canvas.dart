@@ -218,6 +218,8 @@ class _StickerViewState extends State<_StickerView> {
         // 🎯 드래그만 지원 (핀치 비활성화)
         onPanStart: (details) {
           debugPrint('[Sticker] 드래그 시작');
+          // 키보드 내리기
+          FocusScope.of(context).unfocus();
           try {
             context.read<EditorService>().editor.composer.clearSelection();
           } catch (e) {}

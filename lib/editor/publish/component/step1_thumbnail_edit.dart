@@ -2,7 +2,8 @@ import 'dart:io';
 import 'dart:ui' as ui;
 import 'dart:typed_data';
 import 'package:doppy/data/services/upload_service.dart';
-import 'package:doppy/image/native_image_picker.dart';
+import 'package:doppy/image/media_picker_screen.dart';
+import 'package:flutter/cupertino.dart';
 import 'package:doppy/image/custom_image_editor_screen.dart';
 import 'package:doppy/editor/service/node_component_service.dart';
 import 'package:doppy/l10n/app_localizations.dart';
@@ -67,6 +68,10 @@ class Step1ThumbnailEdit extends StatefulWidget {
 
 class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
   String get _nsKey => widget.sessionKey;
+
+  // 🎯 업로드 태스크 추적 (썸네일 변경 시 취소용)
+  UploadTask? _currentVideoUploadTask;
+  UploadTask? _currentImageUploadTask; // 🎯 이미지 업로드 태스크도 추적
 
   @override
   Widget build(BuildContext context) {
@@ -478,11 +483,150 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
   }
 
   Future<void> _pickAndUploadImage() async {
-    final picker = NativeImagePicker();
-    final file = await picker.pickSingleImage();
+    final result = await Navigator.push<MediaPickerResult>(
+      context,
+      CupertinoPageRoute(
+        fullscreenDialog: true, // 🎯 defaultToolbar와 동일한 전환 애니메이션
+        builder:
+            (context) => MediaPickerScreen(
+              initialMediaType: MediaType.image,
+              maxSelectionCount: 1,
+              enableToggle: true, // 이미지/영상 토글 가능
+              onMediaSelected: (file) {
+                // 단일 선택이므로 바로 처리
+              },
+            ),
+      ),
+    );
 
-    if (file != null) {
+    if (result != null && result.files.isNotEmpty) {
+      // 🎯 단일 선택이므로 첫 번째 파일만 사용 (안전장치)
+      final file = result.files.first;
       if (!mounted) return;
+
+      // 🎯 실제로 선택된 미디어 타입 확인
+      if (result.selectedMediaType == MediaType.video) {
+        await _processVideoFileFromPicker(file);
+        return;
+      }
+
+      // 🎯 기존 업로드 태스크 모두 취소 (이미지/영상)
+      final upload = context.read<UploadService>();
+      if (_currentVideoUploadTask != null) {
+        upload.cancel(_currentVideoUploadTask!.id);
+        _currentVideoUploadTask?.removeListener(() {});
+        _currentVideoUploadTask = null;
+        debugPrint('[Step1] 이전 영상 업로드 태스크 취소');
+      }
+      if (_currentImageUploadTask != null) {
+        upload.cancel(_currentImageUploadTask!.id);
+        _currentImageUploadTask?.removeListener(() {});
+        _currentImageUploadTask = null;
+        debugPrint('[Step1] 이전 이미지 업로드 태스크 취소');
+      }
+
+      widget.onLocalThumbnailChanged(file);
+      widget.onIsUploadingThumbChanged(true);
+      widget.onVideoControllerChanged(null);
+      widget.onLocalVideoChanged(null);
+
+      final svc = NodeComponentService();
+      svc.clearTempVideoFile(_nsKey);
+
+      try {
+        final tasks = await upload.uploadFilesViaServerBatches([
+          file,
+        ], kind: UploadKind.editorImage);
+        if (tasks.isNotEmpty) {
+          final t = tasks.first;
+          // 🎯 이미지 업로드 태스크 추적
+          _currentImageUploadTask = t;
+
+          // 업로드 완료/실패 리스너 추가
+          bool handled = false;
+          void listener() {
+            if (handled) return;
+            if (t.state == UploadState.success ||
+                t.state == UploadState.failed ||
+                t.state == UploadState.cancelled) {
+              handled = true;
+              t.removeListener(listener);
+              if (_currentImageUploadTask?.id == t.id) {
+                _currentImageUploadTask = null;
+              }
+            }
+          }
+
+          t.addListener(listener);
+
+          final hasUrl = (t.url ?? '').isNotEmpty;
+          if (t.state == UploadState.success && hasUrl) {
+            widget.onThumbnailUrlChanged(t.url!);
+
+            await precacheImage(NetworkImage(t.url!), context);
+
+            if (mounted) {
+              widget.onLocalThumbnailChanged(null);
+            }
+          } else {
+            if (mounted) {
+              ErrorHandler.showError(
+                context,
+                AppLocalizations.of(context).t('thumbnail_upload_failed'),
+              );
+              widget.onLocalThumbnailChanged(null);
+            }
+          }
+        }
+      } catch (e) {
+        if (mounted) {
+          ErrorHandler.handleError(context, e, customMessage: '업로드 오류');
+          widget.onLocalThumbnailChanged(null);
+        }
+      } finally {
+        if (mounted) {
+          widget.onIsUploadingThumbChanged(false);
+          widget.onEditModeChanged(false);
+          widget.controller.reverse();
+          FocusScope.of(context).unfocus();
+        }
+      }
+    }
+  }
+
+  Future<void> _pickAndExtractVideoThumbnail() async {
+    final result = await Navigator.push<MediaPickerResult>(
+      context,
+      CupertinoPageRoute(
+        fullscreenDialog: true, // 🎯 defaultToolbar와 동일한 전환 애니메이션
+        builder:
+            (context) => MediaPickerScreen(
+              initialMediaType: MediaType.video,
+              maxSelectionCount: 1,
+              enableToggle: true, // 이미지/영상 토글 가능
+              onMediaSelected: (file) {
+                // 단일 선택이므로 바로 처리
+              },
+            ),
+      ),
+    );
+
+    if (result == null || result.files.isEmpty || !mounted) return;
+
+    // 🎯 실제로 선택된 미디어 타입 확인
+    if (result.selectedMediaType == MediaType.image) {
+      // 이미지가 선택된 경우 이미지 업로드로 처리 (이미 선택된 파일 사용)
+      final file = result.files.first;
+      if (!mounted) return;
+
+      // 🎯 영상 업로드 중이면 이전 업로드 태스크 취소
+      if (_currentVideoUploadTask != null) {
+        final upload = context.read<UploadService>();
+        upload.cancel(_currentVideoUploadTask!.id);
+        _currentVideoUploadTask?.removeListener(() {});
+        _currentVideoUploadTask = null;
+        debugPrint('[Step1] 이전 영상 업로드 태스크 취소');
+      }
 
       widget.onLocalThumbnailChanged(file);
       widget.onIsUploadingThumbChanged(true);
@@ -531,20 +675,36 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
           FocusScope.of(context).unfocus();
         }
       }
+      return;
     }
+
+    // 🎯 단일 선택이므로 첫 번째 파일만 사용 (안전장치)
+    final videoFile = result.files.first;
+    await _processVideoFileFromPicker(videoFile);
   }
 
-  Future<void> _pickAndExtractVideoThumbnail() async {
-    final picker = NativeImagePicker();
-    final videoFile = await picker.pickSingleVideo();
-
-    if (videoFile == null || !mounted) return;
-
+  /// 🎯 선택된 영상 파일 처리 (MediaPickerScreen에서 선택된 파일을 바로 처리)
+  Future<void> _processVideoFileFromPicker(File videoFile) async {
     final validationError = await VideoUploadUtils.validateFile(
       context,
       videoFile.path,
     );
     if (validationError != null) return;
+
+    // 🎯 기존 업로드 태스크 모두 취소 (이미지/영상)
+    final upload = context.read<UploadService>();
+    if (_currentVideoUploadTask != null) {
+      upload.cancel(_currentVideoUploadTask!.id);
+      _currentVideoUploadTask?.removeListener(() {});
+      _currentVideoUploadTask = null;
+      debugPrint('[Step1] 이전 영상 업로드 태스크 취소');
+    }
+    if (_currentImageUploadTask != null) {
+      upload.cancel(_currentImageUploadTask!.id);
+      _currentImageUploadTask?.removeListener(() {});
+      _currentImageUploadTask = null;
+      debugPrint('[Step1] 이전 이미지 업로드 태스크 취소');
+    }
 
     widget.onIsUploadingThumbChanged(true);
 
@@ -604,8 +764,20 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
         return;
       }
 
+      // 🎯 이전 영상 업로드 태스크 취소
+      if (_currentVideoUploadTask != null) {
+        final upload = context.read<UploadService>();
+        upload.cancel(_currentVideoUploadTask!.id);
+        _currentVideoUploadTask?.removeListener(() {});
+        _currentVideoUploadTask = null;
+        debugPrint('[Step1] 이전 영상 업로드 태스크 취소');
+      }
+
       final upload = context.read<UploadService>();
       final task = upload.enqueueFile(mp4File, kind: UploadKind.video);
+
+      // 🎯 현재 업로드 태스크 저장
+      _currentVideoUploadTask = task;
 
       bool handled = false;
       void listener() async {
@@ -636,6 +808,9 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
             widget.controller.reverse();
             FocusScope.of(context).unfocus();
           }
+
+          // 🎯 업로드 완료 시 태스크 추적 해제
+          _currentVideoUploadTask = null;
         } else if (task.state == UploadState.failed) {
           handled = true;
           if (mounted) {
@@ -648,6 +823,9 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
             widget.controller.reverse();
             FocusScope.of(context).unfocus();
           }
+
+          // 🎯 업로드 실패 시 태스크 추적 해제
+          _currentVideoUploadTask = null;
         } else if (task.state == UploadState.cancelled) {
           handled = true;
           if (mounted) {
@@ -660,6 +838,9 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
             widget.controller.reverse();
             FocusScope.of(context).unfocus();
           }
+
+          // 🎯 업로드 취소 시 태스크 추적 해제
+          _currentVideoUploadTask = null;
         }
       }
 
@@ -676,6 +857,9 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
           widget.onEditModeChanged(false);
           widget.controller.reverse();
           FocusScope.of(context).unfocus();
+
+          // 🎯 타임아웃 시 태스크 추적 해제
+          _currentVideoUploadTask = null;
         }
       });
     } catch (e) {
@@ -689,6 +873,9 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
         widget.controller.reverse();
         FocusScope.of(context).unfocus();
       }
+
+      // 🎯 에러 시 태스크 추적 해제
+      _currentVideoUploadTask = null;
     }
   }
 

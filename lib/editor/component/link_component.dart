@@ -1,10 +1,13 @@
 import 'dart:ui';
 
 import 'package:doppy/editor/component/clip_component.dart';
+import 'package:doppy/editor/utils/config.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:super_editor/super_editor.dart';
 import 'package:doppy/editor/service/drag_service.dart';
 import 'package:doppy/editor/service/node_component_service.dart';
+import 'package:doppy/editor/utils/drop_line_config.dart';
 import 'package:doppy/theme/app_colors.dart';
 import 'dart:math' as math;
 import 'package:provider/provider.dart';
@@ -23,7 +26,7 @@ class LinkNode extends BlockNode {
   });
 
   @override
-  bool get isDeletable => false;
+  bool get isDeletable => true;
   String get nodeType => 'link';
 
   @override
@@ -193,31 +196,23 @@ class _LinkComponentState extends State<_LinkComponent>
 
   static const double marginTop = 4;
   static const double marginBottom = 2;
-  static const double paddingWithText = 12;
 
-  // 🎯 특수 노드 사이/마지막 노드 아래 빈 문단 추가 처리
-  void _handleSpecialNodeTap(Offset globalPosition) {
-    if (widget.dragService == null) return;
+  // 🎯 특수 노드 사이 클릭 감지 플래그
+  bool _isSpecialNodeGapTap = false;
+
+  // 🎯 특수 노드 사이 클릭 감지 (true: 특수 노드 사이 클릭, false: 일반 클릭)
+  bool _handleSpecialNodeTap(Offset globalPosition) {
+    if (widget.dragService == null) return false;
     final editorService = widget.dragService!.editorService;
     final doc = editorService.document;
     final dragService = widget.dragService!;
 
     // 자신의 인덱스와 Rect 확인
     final currentNodeIndex = doc.getNodeIndexById(widget.nodeId);
-    if (currentNodeIndex == -1) return;
+    if (currentNodeIndex == -1) return false;
 
     final nodeRect = dragService.getNodeGlobalRect(widget.nodeId);
-    if (nodeRect == null) return;
-
-    // 🎯 마지막 노드이고 패딩 부분(아래 20px)을 클릭한 경우
-    final isLastNode = currentNodeIndex == doc.nodeCount - 1;
-    if (isLastNode && globalPosition.dy > nodeRect.bottom + 20) {
-      // 마지막 노드 아래 빈 문단 추가
-      editorService.insertEmptyParagraphAtIndex(currentNodeIndex + 1);
-      dragService.invalidateNodeRectCache();
-      context.read<NodeComponentService>().selectNode(null);
-      return;
-    }
+    if (nodeRect == null) return false;
 
     // 🎯 위쪽 이웃 노드 확인
     if (currentNodeIndex > 0) {
@@ -240,7 +235,7 @@ class _LinkComponentState extends State<_LinkComponent>
               editorService.insertEmptyParagraphAtIndex(currentNodeIndex);
               dragService.invalidateNodeRectCache();
               context.read<NodeComponentService>().selectNode(null);
-              return;
+              return true;
             }
           }
         }
@@ -268,12 +263,13 @@ class _LinkComponentState extends State<_LinkComponent>
               editorService.insertEmptyParagraphAtIndex(currentNodeIndex + 1);
               dragService.invalidateNodeRectCache();
               context.read<NodeComponentService>().selectNode(null);
-              return;
+              return true;
             }
           }
         }
       }
     }
+    return false;
   }
 
   OverlayEntry? _previewEntry;
@@ -385,10 +381,7 @@ class _LinkComponentState extends State<_LinkComponent>
                   child: Material(
                     color: Colors.transparent,
                     child: Container(
-                      decoration: BoxDecoration(
-                        color: theme.surface,
-                        borderRadius: BorderRadius.circular(16),
-                      ),
+                      decoration: BoxDecoration(color: theme.surface),
                       clipBehavior: Clip.antiAlias,
                       child:
                           _previewWebCtrl == null
@@ -444,6 +437,22 @@ class _LinkComponentState extends State<_LinkComponent>
     final bool isSelected =
         widget.isEditing && imageService.selectedImageId == widget.nodeId;
 
+    // 🎯 downstream 위치에 커서가 있을 때도 selection 효과 표시
+    bool isDownstreamSelected = false;
+    if (widget.isEditing && seState != null) {
+      // ignore: invalid_use_of_visible_for_testing_member
+      final selection = seState.editContext.composer.selection;
+      if (selection != null &&
+          selection.isCollapsed &&
+          selection.extent.nodeId == widget.nodeId) {
+        final position = selection.extent.nodePosition;
+        if (position is UpstreamDownstreamNodePosition &&
+            position == const UpstreamDownstreamNodePosition.downstream()) {
+          isDownstreamSelected = true;
+        }
+      }
+    }
+
     bool isSelectionHighlighted = false;
     if (widget.isEditing && seState != null && doc != null) {
       // ignore: invalid_use_of_visible_for_testing_member
@@ -465,12 +474,24 @@ class _LinkComponentState extends State<_LinkComponent>
             widget.isEditing && widget.dragService != null
                 ? (details) {
                   // 특수 노드 사이/마지막 노드 아래 빈 문단 추가 처리
-                  _handleSpecialNodeTap(details.globalPosition);
+                  final isGapTap = _handleSpecialNodeTap(
+                    details.globalPosition,
+                  );
+                  setState(() {
+                    _isSpecialNodeGapTap = isGapTap;
+                  });
                 }
                 : null,
         onTap:
             widget.isEditing
                 ? () {
+                  // 🎯 특수 노드 사이 클릭이면 셀렉 보류
+                  if (_isSpecialNodeGapTap) {
+                    setState(() {
+                      _isSpecialNodeGapTap = false;
+                    });
+                    return;
+                  }
                   imageService.selectImage(widget.nodeId);
                 }
                 : null,
@@ -518,7 +539,6 @@ class _LinkComponentState extends State<_LinkComponent>
         child: Container(
           margin: EdgeInsets.only(top: marginTop, bottom: marginBottom),
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(12),
             color: widget.isDarkMode ? const Color(0xFF1C1C1E) : Colors.white,
           ),
           child: Column(
@@ -526,18 +546,12 @@ class _LinkComponentState extends State<_LinkComponent>
             children: [
               // 위: 썸네일
               if (widget.thumbnailUrl.isNotEmpty)
-                ClipRRect(
-                  borderRadius: const BorderRadius.only(
-                    topLeft: Radius.circular(12),
-                    topRight: Radius.circular(12),
-                  ),
-                  child: AspectRatio(
-                    aspectRatio: 16 / 9,
-                    child: Image.network(
-                      widget.thumbnailUrl,
-                      fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) => _buildIconPlaceholder(),
-                    ),
+                AspectRatio(
+                  aspectRatio: 16 / 9,
+                  child: Image.network(
+                    widget.thumbnailUrl,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => _buildIconPlaceholder(),
                   ),
                 )
               else
@@ -552,11 +566,7 @@ class _LinkComponentState extends State<_LinkComponent>
                   color:
                       widget.isDarkMode
                           ? const Color(0xFF1C1C1E)
-                          : Colors.white,
-                  borderRadius: const BorderRadius.only(
-                    bottomLeft: Radius.circular(12),
-                    bottomRight: Radius.circular(12),
-                  ),
+                          : Colors.grey.shade100,
                 ),
                 padding: const EdgeInsets.all(16),
                 child: Column(
@@ -600,7 +610,8 @@ class _LinkComponentState extends State<_LinkComponent>
 
     return Column(
       children: [
-        if (!hasImageAbove) SizedBox(height: paddingWithText),
+        if (!hasImageAbove)
+          SizedBox(height: EditorConfig.specialNodePaddingWithText),
         Stack(
           children: [
             card,
@@ -620,7 +631,7 @@ class _LinkComponentState extends State<_LinkComponent>
                 ),
               ),
             // 선택 테두리 (편집 모드에서만)
-            if (widget.isEditing && isSelected)
+            if (widget.isEditing && (isSelected || isDownstreamSelected))
               Positioned(
                 top: 0,
                 bottom: 0,
@@ -633,7 +644,6 @@ class _LinkComponentState extends State<_LinkComponent>
                       bottom: marginBottom,
                     ),
                     decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(12),
                       border: Border.all(color: AppColors.primary, width: 3),
                     ),
                   ),
@@ -663,7 +673,8 @@ class _LinkComponentState extends State<_LinkComponent>
           ],
         ),
         // 아래쪽 패딩: 링크나 이미지, 멘션이 아래에 있으면 패딩 제거
-        if (!hasImageBelow) SizedBox(height: paddingWithText),
+        if (!hasImageBelow)
+          SizedBox(height: EditorConfig.specialNodePaddingWithText),
       ],
     );
   }
@@ -716,7 +727,15 @@ class _LinkComponentState extends State<_LinkComponent>
   @override
   Rect getEdgeForPosition(NodePosition nodePosition) {
     final box = context.findRenderObject() as RenderBox?;
-    return box == null ? Rect.zero : (Offset.zero & box.size);
+    if (box == null) return Rect.zero;
+
+    // upstream/downstream 위치일 때는 커서를 표시하지 않음 (사용자 요청)
+    // selection 효과만 표시
+    if (nodePosition is UpstreamDownstreamNodePosition) {
+      return Offset.zero & box.size;
+    }
+
+    return Offset.zero & box.size;
   }
 
   @override
@@ -725,7 +744,24 @@ class _LinkComponentState extends State<_LinkComponent>
   NodePosition? movePositionLeft(
     NodePosition currentPosition, [
     MovementModifier? movementModifier,
-  ]) => null;
+  ]) {
+    debugPrint(
+      '[LinkComponent] movePositionLeft 호출: currentPosition=$currentPosition',
+    );
+    // 현재 위치가 이미 downstream이면 null 반환 (삭제 허용)
+    if (currentPosition is UpstreamDownstreamNodePosition) {
+      final downstreamPos = const UpstreamDownstreamNodePosition.downstream();
+      if (currentPosition == downstreamPos) {
+        // 이미 downstream에 있으면 null 반환하여 삭제 허용
+        debugPrint('[LinkComponent] 이미 downstream 위치 - 삭제 허용');
+        return null;
+      }
+    }
+    // 특수 노드 아래에서 백스페이스 시 특수 노드의 끝(downstream) 위치로 이동
+    debugPrint('[LinkComponent] downstream 위치로 이동');
+    return const UpstreamDownstreamNodePosition.downstream();
+  }
+
   @override
   NodePosition? movePositionRight(
     NodePosition currentPosition, [
@@ -737,7 +773,8 @@ class _LinkComponentState extends State<_LinkComponent>
   NodePosition? movePositionDown(NodePosition currentPosition) => null;
   @override
   NodePosition getBeginningPositionNearX(double x) =>
-      const UpstreamDownstreamNodePosition.upstream();
+      // 🎯 upstream 위치로 커서가 가지 못하도록 항상 downstream 반환
+      const UpstreamDownstreamNodePosition.downstream();
   @override
   NodePosition getEndPositionNearX(double x) =>
       const UpstreamDownstreamNodePosition.downstream();
@@ -747,112 +784,18 @@ class _LinkComponentState extends State<_LinkComponent>
   // 드래그 삽입 라인 표시 로직
   bool _shouldShowTopDropLine() {
     if (!widget.isEditing) return false;
-    final svc = widget.dragService;
-    if (svc == null) return false;
-    final di = svc.dropIndex;
-    if (di == null) return false;
-    final current = _getCurrentNodeIndex();
-    if (current == -1) return false;
-
-    // 자기 자신을 드래그 중인 경우 드롭 라인 표시하지 않음
-    if (svc.draggingNodeId == widget.nodeId) return false;
-
-    // 이 노드 위에 삽입하는 경우
-    if (di == current) {
-      return _shouldShowInsertionLine(current, true);
-    }
-    return false;
+    return DropLineConfig.shouldShowTopDropLine(
+      nodeId: widget.nodeId,
+      dragService: widget.dragService,
+    );
   }
 
   bool _shouldShowBottomDropLine() {
     if (!widget.isEditing) return false;
-    final svc = widget.dragService;
-    if (svc == null) return false;
-    final di = svc.dropIndex;
-    if (di == null) return false;
-    final current = _getCurrentNodeIndex();
-    if (current == -1) return false;
-
-    // 자기 자신을 드래그 중인 경우 드롭 라인 표시하지 않음
-    if (svc.draggingNodeId == widget.nodeId) return false;
-
-    // 마지막 노드인지 확인
-    final documentLength = svc.editorService.document.length;
-    final isLastNode = current == documentLength - 1;
-
-    if (isLastNode) {
-      // 마지막 노드일 때는 문서 끝에 삽입하는 경우만 표시
-      return di == documentLength;
-    }
-
-    // 다음 인덱스에 삽입하는 경우
-    if (di == current + 1) {
-      return _shouldShowInsertionLine(current, false);
-    }
-    return false;
-  }
-
-  /// 삽입 라인 표시 여부를 결정하는 공통 로직
-  bool _shouldShowInsertionLine(int currentNodeIndex, bool isTopLine) {
-    if (!widget.isEditing) return false;
-    final svc = widget.dragService;
-    if (svc == null) return false;
-
-    final doc = svc.editorService.document;
-    final documentLength = doc.length;
-
-    // 특수 노드 타입 체크
-    bool isSpecialNode(DocumentNode? node) {
-      if (node == null) return false;
-      return node is LinkNode ||
-          (node is ParagraphNode && node.metadata['mention'] == true) ||
-          node is ImageNode ||
-          node is ImageRowNode ||
-          node is ClipNode;
-    }
-
-    // 텍스트 노드 타입 체크
-    bool isTextNode(DocumentNode? node) {
-      if (node == null) return false;
-      return node is ParagraphNode;
-    }
-
-    if (isTopLine) {
-      // 위쪽 라인 표시 로직
-      if (currentNodeIndex > 0) {
-        final prevNode = doc.getNodeAt(currentNodeIndex - 1);
-
-        // 케이스 1: 앞이 특수 노드인 경우 - 이 노드에서는 라인을 표시하지 않음
-        // (위쪽 특수 노드가 아래쪽 라인을 표시하므로)
-        if (isSpecialNode(prevNode)) {
-          return false;
-        }
-      }
-      return true;
-    } else {
-      // 아래쪽 라인 표시 로직
-      if (currentNodeIndex + 1 < documentLength) {
-        final nextNode = doc.getNodeAt(currentNodeIndex + 1);
-
-        // 케이스 1: 뒤가 특수 노드인 경우 - 이 노드에서는 라인을 표시함
-        // (특수-특수 사이에서는 위쪽 특수 노드가 아래쪽 라인을 표시)
-        if (isSpecialNode(nextNode)) {
-          return true;
-        }
-
-        // 케이스 2: 뒤가 텍스트 노드인 경우 - 이 노드에서는 라인을 표시함
-        if (isTextNode(nextNode)) {
-          return true;
-        }
-      }
-      return true;
-    }
-  }
-
-  int _getCurrentNodeIndex() {
-    final svc = widget.dragService;
-    if (svc == null) return -1;
-    return svc.getNodeIndex(widget.nodeId);
+    return DropLineConfig.shouldShowBottomDropLine(
+      nodeId: widget.nodeId,
+      dragService: widget.dragService,
+    );
   }
 
   // selection이 이 링크 노드를 포함하는지 계산
@@ -893,13 +836,83 @@ class _LinkComponentState extends State<_LinkComponent>
   bool _hasNeighborImage(Document doc, String nodeId, int direction) {
     final myIndex = doc.getNodeIndexById(nodeId);
     if (myIndex == -1) return false;
-    final neighborIndex = myIndex + direction;
-    if (neighborIndex < 0 || neighborIndex >= doc.nodeCount) return false;
-    final neighbor = doc.getNodeAt(neighborIndex);
-    return neighbor is ImageNode ||
-        neighbor is ImageRowNode ||
-        neighbor is ClipNode ||
-        neighbor is LinkNode;
+
+    // 🎯 바로 인접한 노드 확인
+    final immediateIndex = myIndex + direction;
+    if (immediateIndex >= 0 && immediateIndex < doc.nodeCount) {
+      final immediateNeighbor = doc.getNodeAt(immediateIndex);
+      if (immediateNeighbor != null) {
+        // 바로 인접한 노드가 특수 노드인 경우
+        if (immediateNeighbor is ImageNode ||
+            immediateNeighbor is ImageRowNode ||
+            immediateNeighbor is ClipNode ||
+            immediateNeighbor is LinkNode) {
+          return true;
+        }
+
+        // 바로 인접한 노드가 빈 ParagraphNode인 경우
+        if (immediateNeighbor is ParagraphNode) {
+          final isEmpty = immediateNeighbor.text.text.trim().isEmpty;
+          final isTitle = immediateNeighbor.metadata['isTitle'] == true;
+
+          // 빈 ParagraphNode면 그 다음 노드를 확인
+          if (!isTitle && isEmpty) {
+            // 빈 ParagraphNode 다음 노드 확인
+            final nextIndex = immediateIndex + direction;
+            if (nextIndex >= 0 && nextIndex < doc.nodeCount) {
+              final nextNeighbor = doc.getNodeAt(nextIndex);
+              if (nextNeighbor is ImageNode ||
+                  nextNeighbor is ImageRowNode ||
+                  nextNeighbor is ClipNode ||
+                  nextNeighbor is LinkNode) {
+                // 빈 ParagraphNode를 사이에 둔 특수 노드 → 패딩 필요 (false 반환)
+                return false;
+              }
+            }
+            // 빈 ParagraphNode 다음에 특수 노드가 없으면 계속 검색
+          } else if (!isTitle && !isEmpty) {
+            // 텍스트가 있는 ParagraphNode → 패딩 필요
+            return false;
+          }
+        } else {
+          // 다른 타입의 노드면 패딩 필요
+          return false;
+        }
+      }
+    }
+
+    // 🎯 빈 ParagraphNode를 건너뛰고 실제 특수 노드나 텍스트가 있는 노드를 찾음
+    int searchIndex = myIndex + direction;
+    while (searchIndex >= 0 && searchIndex < doc.nodeCount) {
+      final neighbor = doc.getNodeAt(searchIndex);
+      if (neighbor == null) break;
+
+      // 특수 노드인 경우
+      if (neighbor is ImageNode ||
+          neighbor is ImageRowNode ||
+          neighbor is ClipNode ||
+          neighbor is LinkNode) {
+        return true;
+      }
+
+      // 빈 ParagraphNode가 아니면 (텍스트가 있는 경우) 패딩 필요
+      if (neighbor is ParagraphNode) {
+        final isEmpty = neighbor.text.text.trim().isEmpty;
+        final isTitle = neighbor.metadata['isTitle'] == true;
+        // 제목이 아니고 비어있지 않으면 텍스트 노드이므로 패딩 필요
+        if (!isTitle && !isEmpty) {
+          return false; // 텍스트 노드가 있으면 패딩 필요
+        }
+        // 빈 ParagraphNode면 계속 검색
+      } else {
+        // 다른 타입의 노드면 패딩 필요
+        return false;
+      }
+
+      searchIndex += direction;
+    }
+
+    return false;
   }
 
   /// 썸네일 없을 때 아이콘 플레이스홀더
@@ -910,10 +923,6 @@ class _LinkComponentState extends State<_LinkComponent>
             widget.isDarkMode
                 ? const Color(0xFF2C2C2E)
                 : const Color(0xFFF2F2F7),
-        borderRadius: const BorderRadius.only(
-          topLeft: Radius.circular(12),
-          topRight: Radius.circular(12),
-        ),
       ),
       child: Center(
         child: Icon(

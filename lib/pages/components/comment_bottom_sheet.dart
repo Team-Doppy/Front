@@ -10,7 +10,8 @@ import 'package:doppy/l10n/app_localizations.dart';
 import 'package:doppy/utils/time_utils.dart';
 import 'package:doppy/data/models/user_model.dart';
 import 'package:doppy/pages/screens/user_profile_screen.dart';
-import 'package:doppy/image/native_image_picker.dart';
+import 'package:doppy/image/media_picker_screen.dart';
+import 'package:flutter/cupertino.dart';
 import 'package:doppy/data/services/upload_service.dart';
 import 'package:doppy/pages/components/custom_refresh_indicator.dart';
 import 'dart:io';
@@ -46,6 +47,7 @@ class _CommentBottomSheetState extends State<CommentBottomSheet>
   String? _selectedImageUrl; // 🎯 선택된 이미지 URL (임시 또는 실제 URL)
   File? _selectedImageFile; // 🎯 선택된 이미지 파일 (로컬)
   final Map<String, File> _localImageFiles = {}; // 🎯 댓글 ID -> 로컬 파일 매핑
+  final Set<String> _failedUploads = {}; // 🎯 업로드 실패한 댓글 ID 추적
 
   late AnimationController _bounceController;
   late Animation<double> _bounceAnimation;
@@ -296,8 +298,8 @@ class _CommentBottomSheetState extends State<CommentBottomSheet>
 
   void _submitComment() async {
     final text = _textController.text.trim();
-    final imageUrl = _selectedImageUrl; // 🎯 선택된 이미지 URL
-    if (text.isEmpty && imageUrl == null) return; // 🎯 텍스트와 이미지 모두 없으면 리턴
+    final imageFile = _selectedImageFile; // 🎯 선택된 이미지 파일 (단일)
+    if (text.isEmpty && imageFile == null) return; // 🎯 텍스트와 이미지 모두 없으면 리턴
 
     final currentUser = context.read<UserProvider>().currentUser;
     if (currentUser == null) return;
@@ -311,6 +313,7 @@ class _CommentBottomSheetState extends State<CommentBottomSheet>
         _editingComment = null;
         _textController.clear();
         _selectedImageUrl = null; // 🎯 이미지 URL 초기화
+        _selectedImageFile = null; // 🎯 이미지 파일 초기화
       });
 
       // 서버 요청은 백그라운드에서 처리 (await 제거)
@@ -332,9 +335,6 @@ class _CommentBottomSheetState extends State<CommentBottomSheet>
         finalVisibleToUsername = null;
       }
     }
-
-    // 🎯 이미지 파일이 있으면 백그라운드에서 업로드 시작
-    final imageFile = _selectedImageFile;
 
     // 🎯 즉시 상태 초기화 (딜레이 없이)
     setState(() {
@@ -360,7 +360,7 @@ class _CommentBottomSheetState extends State<CommentBottomSheet>
         content: text,
         authorProfileImageUrl: currentUser.profileImageUrl,
         parentId: replyTargetId,
-        localImagePath: imageFile.path,
+        localImagePath: imageFile.path, // 🎯 단일 이미지 경로
         visibleToUsername: finalVisibleToUsername,
         tempId: tempId,
       );
@@ -378,8 +378,8 @@ class _CommentBottomSheetState extends State<CommentBottomSheet>
         content: text,
         authorProfileImageUrl: currentUser.profileImageUrl,
         parentId: replyTargetId,
-        imageUrl: null,
-        localImagePath: null,
+        imageUrl: null, // 🎯 단일 이미지 파라미터 사용
+        localImagePath: null, // 🎯 단일 이미지 파라미터 사용
         visibleToUsername: finalVisibleToUsername,
       );
     }
@@ -390,7 +390,46 @@ class _CommentBottomSheetState extends State<CommentBottomSheet>
     });
   }
 
-  /// 🎯 백그라운드에서 이미지 업로드 (chat/username 경로 사용)
+  /// 🎯 단일 이미지를 개별 댓글로 전송
+  Future<void> _submitSingleImageComment(File imageFile) async {
+    final currentUser = context.read<UserProvider>().currentUser;
+    if (currentUser == null) return;
+
+    final replyTargetId = _replyTarget?.id;
+
+    // 🎯 비밀댓글에 답장하는 경우 자동으로 PRIVATE로 설정
+    String? finalVisibleToUsername = _secretMessageTarget;
+    if (replyTargetId != null && _replyTarget != null) {
+      final isReplyToPrivate =
+          _replyTarget!.isSecret || _replyTarget!.visibility == 'PRIVATE';
+      if (isReplyToPrivate) {
+        finalVisibleToUsername = null;
+      }
+    }
+
+    // 🎯 이미지가 있으면 서버 요청 없이 로컬 이미지로만 표시 (낙관적 업데이트)
+    final tempId =
+        'temp_${DateTime.now().millisecondsSinceEpoch}_${imageFile.path.hashCode}';
+
+    // 🎯 로컬 파일이 있으면 매핑 저장
+    _localImageFiles[tempId] = imageFile;
+
+    // 🎯 낙관적 업데이트만 수행 (서버 요청 없음)
+    _commentService.addCommentLocalOnly(
+      username: currentUser.username,
+      content: '', // 🎯 이미지만 있는 댓글
+      authorProfileImageUrl: currentUser.profileImageUrl,
+      parentId: replyTargetId,
+      localImagePath: imageFile.path,
+      visibleToUsername: finalVisibleToUsername,
+      tempId: tempId,
+    );
+
+    // 🎯 백그라운드에서 이미지 업로드 진행
+    _uploadImageInBackground(imageFile, currentUser.username, tempId);
+  }
+
+  /// 🎯 백그라운드에서 이미지 업로드 (chat/username 경로 사용) - 단일 이미지
   Future<void> _uploadImageInBackground(
     File imageFile,
     String username,
@@ -398,10 +437,6 @@ class _CommentBottomSheetState extends State<CommentBottomSheet>
   ) async {
     try {
       final uploadService = context.read<UploadService>();
-
-      // 🎯 chat/username 경로로 업로드하기 위해 커스텀 경로 지정
-      // UploadService에 경로를 지정할 수 있는 방법이 필요함
-      // 일단 기존 방식으로 업로드하고, 서버에서 경로를 chat/username으로 설정하도록 요청
 
       // 🎯 댓글 이미지 업로드를 위한 태스크 생성
       final task = uploadService.enqueueFile(
@@ -414,12 +449,28 @@ class _CommentBottomSheetState extends State<CommentBottomSheet>
       // 🎯 업로드 완료 대기 (비동기)
       task.addListener(() {
         if (task.state == UploadState.success && task.url != null) {
-          debugPrint('[CommentBottomSheet] 이미지 업로드 완료: ${task.url}');
-
-          // 🎯 업로드 완료 후 댓글의 이미지 URL 업데이트 (확정 처리)
-          _updateCommentImageUrl(tempCommentId, task.url!);
+          // 🎯 R2 URL인지 확인 (pending://, 로컬 경로 제외)
+          final url = task.url!;
+          if (!url.startsWith('pending://') &&
+              !url.startsWith('file://') &&
+              !url.startsWith('/') &&
+              (url.startsWith('http://') || url.startsWith('https://'))) {
+            debugPrint('[CommentBottomSheet] ✅ 이미지 업로드 완료 (R2 URL): $url');
+            // 성공 시 실패 목록에서 제거
+            _failedUploads.remove(tempCommentId);
+            _updateCommentImageUrl(tempCommentId, url);
+          } else {
+            debugPrint('[CommentBottomSheet] ⚠️ 유효하지 않은 URL (R2 URL 아님): $url');
+          }
         } else if (task.state == UploadState.failed) {
-          debugPrint('[CommentBottomSheet] 이미지 업로드 실패: ${task.error}');
+          debugPrint('[CommentBottomSheet] ❌ 이미지 업로드 실패: ${task.error}');
+          // 🎯 실패 시 댓글을 failed 상태로 변경
+          if (mounted) {
+            setState(() {
+              _failedUploads.add(tempCommentId);
+            });
+            _commentService.markCommentAsFailed(tempCommentId);
+          }
         }
       });
     } catch (e) {
@@ -434,10 +485,7 @@ class _CommentBottomSheetState extends State<CommentBottomSheet>
   ) async {
     debugPrint('[CommentBottomSheet] ✅ 이미지 업로드 성공: $actualImageUrl');
 
-    // 🎯 로컬 파일 매핑 제거
-    _localImageFiles.remove(tempCommentId);
-
-    // 🎯 서버에 content: "[IMAGE] https://image-url" 형식으로 댓글 전송
+    // 🎯 서버에 단일 이미지 URL로 댓글 전송
     await _commentService.addCommentWithImageUrl(
       tempCommentId: tempCommentId,
       imageUrl: actualImageUrl,
@@ -1528,11 +1576,8 @@ class _CommentBottomSheetState extends State<CommentBottomSheet>
                 });
               },
               onImageFileSelected: (file) {
-                setState(() {
-                  _selectedImageFile = file;
-                });
-                // 🎯 이미지 선택 시 바로 전송
-                _submitComment();
+                // 🎯 각 이미지를 개별 댓글로 연속 전송
+                _submitSingleImageComment(file);
               },
               onImageRemoved: () {
                 setState(() {
@@ -1795,13 +1840,26 @@ class _CommentInputSectionState extends State<CommentInputSection> {
     });
   }
 
-  /// 🎯 이미지 선택 (업로드는 나중에)
+  /// 🎯 이미지 선택 (업로드는 나중에) - 여러 이미지 지원
   Future<void> _pickAndUploadImage() async {
     try {
-      final picker = NativeImagePicker();
-      final file = await picker.pickSingleImage();
+      final result = await Navigator.push<MediaPickerResult>(
+        context,
+        CupertinoPageRoute(
+          fullscreenDialog: true,
+          builder:
+              (context) => MediaPickerScreen(
+                initialMediaType: MediaType.image,
+                maxSelectionCount: 5, // 🎯 최대 5개까지 선택 가능
+                enableToggle: false, // 토글 없음 (이미지만)
+                onMediaSelected: (file) {
+                  // 선택 완료 시 처리
+                },
+              ),
+        ),
+      );
 
-      if (file == null || !mounted) return;
+      if (result == null || result.files.isEmpty || !mounted) return;
 
       // 🎯 비밀 메시지 모드가 활성화되어 있으면 비밀 메시지 대상 설정
       if (_isPrivate && widget.secretMessageTarget == null) {
@@ -1809,13 +1867,11 @@ class _CommentInputSectionState extends State<CommentInputSection> {
         _showSecretMessageTargetSelector();
       }
 
-      // 🎯 임시 URL 생성 (로컬 파일 경로를 임시 URL로 사용)
-      final tempImageUrl =
-          'pending://local-image-${DateTime.now().millisecondsSinceEpoch}';
-
-      // 🎯 로컬 파일과 임시 URL 저장
-      widget.onImageSelected?.call(tempImageUrl);
-      widget.onImageFileSelected?.call(file);
+      // 🎯 선택된 모든 이미지를 연속적으로 전송 (각각을 개별 댓글로)
+      for (final file in result.files) {
+        // 🎯 각 이미지를 개별 댓글로 전송하기 위해 콜백 호출
+        widget.onImageFileSelected?.call(file);
+      }
     } catch (e) {
       debugPrint('이미지 선택 오류: $e');
       if (mounted) {
@@ -1965,8 +2021,8 @@ class _CommentInputSectionState extends State<CommentInputSection> {
                       fontWeight: FontWeight.w500,
                     ),
                     contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 8, // 🎯 수직 패딩 감소 (12 -> 8)
+                      horizontal: 12,
+                      vertical: 12, // 🎯 수직 패딩 감소 (12 -> 8)
                     ),
                     isDense: true,
                   ),

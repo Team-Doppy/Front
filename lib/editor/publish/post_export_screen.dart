@@ -19,6 +19,8 @@ import 'package:doppy/editor/publish/component/step3_category_selection.dart';
 import 'package:doppy/pages/screens/manage_group_screen.dart';
 import 'dart:io';
 import 'package:video_player/video_player.dart';
+import 'package:video_thumbnail/video_thumbnail.dart';
+import 'package:path_provider/path_provider.dart';
 
 void printLarge(String text, {int chunkSize = 800}) {
   final int len = text.length;
@@ -427,10 +429,75 @@ class _PostExportScreenState extends State<PostExportScreen>
 
       try {
         final feedProvider = context.read<MyProfileFeedProvider>();
-        feedProvider.refresh().catchError((e) {
+        final newPostId = uploadResult['id']?.toString();
+
+        // 🎯 피드 업데이트 전에 VideoCache 재사용 차단
+        // 피드가 업데이트되면서 프로필 화면이 리빌드될 때 CardView/ImageView가
+        // VideoCache 컨트롤러를 재사용하지 못하도록 막아 위젯 트리 변경 중 충돌 방지
+        final videoCache = VideoCacheService();
+        try {
+          videoCache.pauseAll();
+          videoCache.blockReuse();
+          debugPrint('[PostExport] 게시 전 VideoCache 재사용 차단 완료');
+        } catch (e) {
+          debugPrint('[PostExport] VideoCacheService 차단 오류: $e');
+        }
+
+        // 🎯 새 글 발행 후 피드 새로고침
+        await feedProvider.refresh().catchError((e) {
           debugPrint('[PostExport] 백그라운드 재로드 실패: $e');
         });
         debugPrint('[PostExport] 백그라운드 재로드 시작');
+
+        // 🎯 피드 업데이트 완료 후 재사용 차단 해제
+        try {
+          videoCache.unblockReuse();
+          debugPrint('[PostExport] VideoCache 재사용 차단 해제 완료');
+        } catch (e) {
+          debugPrint('[PostExport] VideoCacheService 차단 해제 오류: $e');
+        }
+
+        // 🎯 새로 발행한 글을 해당 카테고리의 맨 앞에 배치 (서버 동기화 포함)
+        // 실패해도 시스템이 뻑나지 않도록 안전하게 처리
+        if (newPostId != null) {
+          // refresh() 완료 후 약간의 지연을 두고 새 글을 맨 앞으로 이동
+          // (서버 응답이 완전히 처리된 후에 이동하기 위해)
+          Future.delayed(const Duration(milliseconds: 100), () async {
+            try {
+              // 🎯 moveNewPostToFront 전에도 VideoCache 재사용 차단
+              // moveNewPostToFront 내부에서 notifyListeners()가 호출되어
+              // 프로필 화면이 리빌드될 때 위젯 트리 충돌 방지
+              final videoCache = VideoCacheService();
+              try {
+                videoCache.pauseAll();
+                videoCache.blockReuse();
+                debugPrint(
+                  '[PostExport] moveNewPostToFront 전 VideoCache 재사용 차단 완료',
+                );
+              } catch (e) {
+                debugPrint('[PostExport] VideoCacheService 차단 오류: $e');
+              }
+
+              await feedProvider.moveNewPostToFront(newPostId);
+              debugPrint('[PostExport] 새 글을 맨 앞에 배치 완료: $newPostId');
+
+              // 🎯 moveNewPostToFront 완료 후 재사용 차단 해제
+              try {
+                videoCache.unblockReuse();
+                debugPrint(
+                  '[PostExport] moveNewPostToFront 후 VideoCache 재사용 차단 해제 완료',
+                );
+              } catch (e) {
+                debugPrint('[PostExport] VideoCacheService 차단 해제 오류: $e');
+              }
+            } catch (e, stackTrace) {
+              // 에러 발생해도 시스템이 뻑나지 않도록 안전하게 처리
+              debugPrint('[PostExport] ⚠️ 새 글 맨 앞 배치 실패 (시스템은 정상 동작): $e');
+              debugPrint('[PostExport] 스택 트레이스: $stackTrace');
+              // 에러를 다시 throw하지 않음 - 글 발행은 이미 성공했으므로
+            }
+          });
+        }
 
         // 🎯 포스트 생성 후 관련 그룹의 postCount 및 포스트 캐시 동기화
         final groupProvider = context.read<GroupProvider>();
@@ -475,26 +542,81 @@ class _PostExportScreenState extends State<PostExportScreen>
         debugPrint('[PostExport] 백그라운드 재로드 실패: $e');
       }
 
-      // 🎯 등록 완료 애니메이션과 함께 현재 화면 닫기
-      await _closeWithAnimation();
+      if (!mounted) return;
+
+      // 🎯 게시 전에 비디오 썸네일이면 미리 추출 (동기 처리)
+      String? preExtractedThumbnailPath;
+      final thumbnailUrl = _exportedThumbnailImageUrl;
+      if (thumbnailUrl.isNotEmpty) {
+        final url = thumbnailUrl.toLowerCase();
+        final isVideo =
+            url.endsWith('.mp4') ||
+            url.endsWith('.mov') ||
+            url.endsWith('.avi') ||
+            url.contains('/video/') ||
+            url.contains('video');
+
+        if (isVideo) {
+          debugPrint('[PostExport] 비디오 썸네일 미리 추출 시작: $thumbnailUrl');
+          try {
+            final tempDir = await getTemporaryDirectory();
+            final thumbnailPath = await VideoThumbnail.thumbnailFile(
+              video: thumbnailUrl,
+              thumbnailPath: tempDir.path,
+              imageFormat: ImageFormat.PNG,
+              maxHeight: 1920,
+              quality: 90,
+            );
+            if (thumbnailPath != null) {
+              preExtractedThumbnailPath = thumbnailPath;
+              debugPrint('[PostExport] 비디오 썸네일 추출 완료: $thumbnailPath');
+            }
+          } catch (e) {
+            debugPrint('[PostExport] 비디오 썸네일 추출 실패: $e');
+            // 실패해도 계속 진행 (원본 URL 사용)
+          }
+        }
+      }
 
       if (!mounted) return;
 
-      // 🎯 공유 오버레이를 pushReplacement로 띄우기
-      await SharePostOverlay.show(
-        context,
-        postId: uploadResult['id']?.toString() ?? '',
-        title: uploadResult['title']?.toString() ?? '',
-        summary: uploadResult['summary']?.toString() ?? '',
-        authorUsername: uploadResult['author']?.toString() ?? '',
-        authorProfileImageUrl:
-            uploadResult['authorProfileImageUrl']?.toString(),
-        thumbnailUrl: uploadResult['thumbnailImageUrl']?.toString(),
-        readTime: (uploadResult['readTime'] as int?) ?? 1,
-        isNewPost: true, // 🎯 최초 등록
-        uploadedData: uploadResult, // 🎯 전체 데이터 전달
-        useReplacement: true, // 🎯 pushReplacement 사용
-      );
+      // 🎯 등록 완료 애니메이션 실행
+      _intro.duration = const Duration(milliseconds: 250);
+      await _intro.reverse();
+      _intro.duration = const Duration(milliseconds: 800);
+
+      if (!mounted) return;
+
+      // 🎯 게시 완료 후 화면 이동 플로우 재설계
+      // 1. PostExportScreen을 제거하고
+      // 2. SharePostOverlay를 pushReplacement로 표시하여 PostwriteScreen을 대체
+
+      // NavigatorState를 미리 저장
+      final navigator = Navigator.of(context);
+
+      // PostExportScreen 제거
+      navigator.pop();
+
+      // 다음 프레임에서 SharePostOverlay를 pushReplacement로 표시 (PostwriteScreen을 대체)
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+
+        SharePostOverlay.show(
+          context,
+          postId: uploadResult['id']?.toString() ?? '',
+          title: uploadResult['title']?.toString() ?? '',
+          summary: uploadResult['summary']?.toString() ?? '',
+          authorUsername: uploadResult['author']?.toString() ?? '',
+          authorProfileImageUrl:
+              uploadResult['authorProfileImageUrl']?.toString(),
+          thumbnailUrl: thumbnailUrl,
+          preExtractedThumbnailPath: preExtractedThumbnailPath,
+          readTime: (uploadResult['readTime'] as int?) ?? 1,
+          isNewPost: true, // 🎯 최초 등록
+          uploadedData: uploadResult, // 🎯 전체 데이터 전달 (썸네일 포함)
+          useReplacement: true,
+        );
+      });
     } catch (e) {
       debugPrint('Upload failed: $e');
 

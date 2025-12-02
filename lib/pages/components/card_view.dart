@@ -68,6 +68,8 @@ class _CardViewState extends State<CardView> {
   }
 
   void _checkIfVideo() {
+    if (!mounted) return;
+
     final url = widget.post.thumbnailImageUrl.toLowerCase();
     _isVideo =
         url.endsWith('.mp4') ||
@@ -76,47 +78,73 @@ class _CardViewState extends State<CardView> {
         url.contains('/videos/') ||
         url.contains('video');
 
-    if (_isVideo) {
+    if (_isVideo && widget.post.thumbnailImageUrl.isNotEmpty) {
       _currentVideoUrl = widget.post.thumbnailImageUrl;
-      _videoController = VideoCacheService().getOrCreateController(
-        _currentVideoUrl!,
-        namespace: 'profile',
-      );
 
-      // 이미 초기화된 경우 바로 재생, 아니면 리스너 등록 후 재생
-      if (_videoController!.value.isInitialized) {
-        _videoController!.setVolume(0);
-        _videoController!.setLooping(true);
-        _videoController!.play();
-        if (mounted) setState(() {});
-      } else {
-        _videoController!.addListener(_onVideoInitialized);
+      try {
+        _videoController = VideoCacheService().getOrCreateController(
+          _currentVideoUrl!,
+          namespace: 'profile',
+        );
+
+        // 이미 초기화된 경우 바로 재생, 아니면 리스너 등록 후 재생
+        if (_videoController != null && _videoController!.value.isInitialized) {
+          if (mounted) {
+            try {
+              _videoController!.setVolume(0);
+              _videoController!.setLooping(true);
+              _videoController!.play();
+              setState(() {});
+            } catch (e) {
+              debugPrint('[CardView] 비디오 재생 오류: $e');
+            }
+          }
+        } else if (_videoController != null) {
+          _videoController!.addListener(_onVideoInitialized);
+        }
+      } catch (e) {
+        debugPrint('[CardView] 비디오 컨트롤러 생성 오류: $e');
+        _videoController = null;
+        _currentVideoUrl = null;
       }
     }
   }
 
   void _onVideoInitialized() {
+    if (!mounted) {
+      _videoController?.removeListener(_onVideoInitialized);
+      return;
+    }
+
     if (_videoController?.value.isInitialized ?? false) {
       _videoController?.removeListener(_onVideoInitialized);
       try {
-        _videoController?.setVolume(0);
-        _videoController?.setLooping(true);
-        _videoController?.play();
-      } catch (_) {}
-      if (mounted) setState(() {});
+        if (_videoController != null && mounted) {
+          _videoController!.setVolume(0);
+          _videoController!.setLooping(true);
+          _videoController!.play();
+          setState(() {});
+        }
+      } catch (e) {
+        debugPrint('[CardView] 비디오 초기화 후 재생 오류: $e');
+      }
     }
   }
 
   @override
   Widget build(BuildContext context) {
     // 취소/해제 레이스로 캐시 컨트롤러가 사라졌다면 한 번만 안전 재획득
-    if (_isVideo && _currentVideoUrl != null) {
-      final cache = VideoCacheService();
-      if (!cache.hasController(_currentVideoUrl!, namespace: 'profile')) {
-        _videoController = cache.getOrCreateController(
-          _currentVideoUrl!,
-          namespace: 'profile',
-        );
+    if (_isVideo && _currentVideoUrl != null && _videoController == null) {
+      try {
+        final cache = VideoCacheService();
+        if (cache.hasController(_currentVideoUrl!, namespace: 'profile')) {
+          _videoController = cache.getOrCreateController(
+            _currentVideoUrl!,
+            namespace: 'profile',
+          );
+        }
+      } catch (e) {
+        debugPrint('[CardView] build에서 컨트롤러 재획득 오류: $e');
       }
     }
     final theme = Theme.of(context);

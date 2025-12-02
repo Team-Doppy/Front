@@ -4,7 +4,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:doppy/data/models/group_model.dart';
 import 'package:doppy/l10n/app_localizations.dart';
 import 'package:doppy/pages/components/group_sheet.dart';
-import 'package:doppy/pages/components/friend_requests_list_bottom_sheet.dart';
+import 'package:doppy/pages/components/received_request_bottom_sheet.dart';
 import 'package:doppy/pages/components/sent_requests_list_bottom_sheet.dart';
 import 'package:doppy/pages/components/custom_refresh_indicator.dart';
 import 'package:doppy/pages/screens/manage_group_screen.dart';
@@ -99,15 +99,6 @@ class _GroupSelectionScreenState extends State<GroupSelectionScreen>
           actualFriendCount,
           friendProvider: friendProvider,
         );
-      }
-
-      // 🎯 딥링크로 진입 시 받은 요청 바텀시트 표시
-      if (widget.showReceivedRequests && mounted) {
-        Future.delayed(const Duration(milliseconds: 500), () {
-          if (mounted && friendProvider.receivedRequests.isNotEmpty) {
-            FriendRequestsListBottomSheet.show(context);
-          }
-        });
       }
     });
   }
@@ -317,7 +308,15 @@ class _GroupSelectionScreenState extends State<GroupSelectionScreen>
                 children: [
                   IconButton(
                     onPressed: () {
-                      FriendRequestsListBottomSheet.show(context);
+                      showModalBottomSheet(
+                        context: context,
+                        backgroundColor: Colors.transparent,
+                        isScrollControlled: true,
+                        builder:
+                            (context) => ReceivedRequestBottomSheet(
+                              requests: friendProvider.receivedRequests,
+                            ),
+                      );
                     },
                     icon: Padding(
                       padding: const EdgeInsets.only(top: 0.0),

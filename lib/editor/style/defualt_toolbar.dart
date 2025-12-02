@@ -1,13 +1,11 @@
 import 'dart:async';
 import 'dart:typed_data';
-import 'package:doppy/data/services/upload_service.dart';
 import 'package:doppy/editor/overlay/sticker_overlay.dart';
 import 'package:doppy/editor/overlay/font_overlay.dart';
 import 'package:doppy/editor/style/font_catalog.dart';
-import 'package:doppy/l10n/app_localizations.dart';
+import 'package:doppy/editor/style/media_upload_handler.dart';
 import 'package:flutter/material.dart';
 import 'package:super_editor/super_editor.dart';
-import 'package:doppy/image/native_image_picker.dart';
 import 'package:doppy/editor/overlay/link_overlay.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
@@ -16,10 +14,7 @@ import 'package:doppy/editor/overlay/mention_overlay.dart';
 import 'package:provider/provider.dart';
 import 'package:doppy/editor/service/sticker_service.dart';
 import 'package:doppy/editor/component/divider_component.dart';
-import 'package:doppy/utils/dialog_utils.dart';
 import 'package:doppy/providers/locale_provider.dart';
-import 'package:doppy/pages/components/custom_refresh_indicator.dart';
-import 'dart:ui';
 
 /// 형광펜 효과 Attribution 정의
 class HighlightAttribution extends ColorAttribution {
@@ -1260,6 +1255,7 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
 
   // 수동으로 툴바 닫기 (텍스트 선택이 있을 때도 강제로 닫을 수 있도록)
   void _forceCloseToolbar() {
+    if (!mounted) return; // 🎯 mounted 체크 추가
     setState(() {
       _expanded = ToolbarSection.none;
     });
@@ -1371,224 +1367,34 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
           size: 27,
           isActive: true,
           onTap: () async {
-            // 키보드 내리기 (한 번만, 충분한 시간 대기)
-            FocusManager.instance.primaryFocus?.unfocus();
-            String mode = 'none';
-            await showModalBottomSheet(
-              backgroundColor: Colors.transparent,
-              context: context,
-              builder:
-                  (context) => ClipRRect(
-                    borderRadius: BorderRadius.circular(16),
-                    child: BackdropFilter(
-                      filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-                      child: Container(
-                        decoration: BoxDecoration(
-                          color: Theme.of(
-                            context,
-                          ).colorScheme.surface.withOpacity(0.6),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        height: 180,
-                        width: double.infinity,
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.center,
+            try {
+              // 키보드 내리기
+              FocusManager.instance.primaryFocus?.unfocus();
+              widget.stylingService.composer.clearSelection();
 
-                          children: [
-                            const SizedBox(height: 8),
-                            Container(
-                              width: 50,
-                              height: 5,
-                              decoration: BoxDecoration(
-                                color: Theme.of(
-                                  context,
-                                ).colorScheme.onSurface.withOpacity(0.3),
-                                borderRadius: BorderRadius.circular(10),
-                              ),
-                            ),
-                            const SizedBox(height: 8),
+              if (!mounted) return;
 
-                            ListTile(
-                              onTap: () async {
-                                mode = 'image';
-                                return Navigator.of(context).pop(mode);
-                              },
+              // 🎯 MediaUploadHandler 생성
+              final handler = MediaUploadHandler(
+                context: context,
+                editorService: widget.editorService,
+                onUploadComplete: _forceCloseToolbar,
+              );
 
-                              title: Text(context.tr('upload_image')),
-                            ),
-                            ListTile(
-                              onTap: () async {
-                                mode = 'short clip';
-                                return Navigator.of(context).pop(mode);
-                              },
+              // 미디어 타입 선택
+              final mode = await handler.showMediaTypeSelector();
+              if (!context.mounted || mode == null) return;
 
-                              title: Text(context.tr('upload_short_clip')),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-            );
-
-            if (!context.mounted) return;
-
-            if (mode == 'image') {
-              try {
-                final picker = NativeImagePicker();
-                final files = await picker.pickMultipleImages(maxCount: 5);
-
-                if (!mounted) return;
-
-                if (files.isNotEmpty) {
-                  debugPrint('DEBUG: 선택된 파일 수: ${files.length}');
-                  final upload = context.read<UploadService>();
-
-                  // 🎯 UploadService의 통합 메서드 사용
-                  await upload.uploadEditorImages(
-                    files: files,
-                    onCreatePlaceholder: (localPath) {
-                      return widget.editorService.addImagePlaceholderNode(
-                        localPath,
-                      );
-                    },
-                    onReplacePlaceholder: (placeholderId, url) async {
-                      await widget.editorService.replacePlaceholderWithUrl(
-                        placeholderId,
-                        url,
-                      );
-                    },
-                    onDeletePlaceholder: (placeholderId) {
-                      widget.editorService.deleteImagePlaceholderNode(
-                        placeholderId,
-                      );
-                    },
-                    isMounted: () => mounted,
-                    context: context,
-                    showErrorDialog: (title, message) async {
-                      await DialogUtils.showInfoDialog(
-                        context,
-                        title: title,
-                        message: message,
-                      );
-                    },
-                  );
-                }
-              } catch (e) {
-                debugPrint('image pick/upload error: $e');
+              // 선택된 타입에 따라 처리
+              if (mode == 'image') {
+                await handler.handleImageUpload();
+              } else if (mode == 'short clip') {
+                await handler.handleVideoUpload();
               }
-            }
-            if (mode == 'short clip') {
-              bool isCancelled = false;
-
-              try {
-                if (!mounted) return;
-
-                // 🎯 에디터 포커스 해제 (리빌드 방지)
-                FocusScope.of(context).unfocus();
-                await Future.delayed(const Duration(milliseconds: 200));
-
-                // 🎯 NativeImagePicker를 사용한 비디오 선택
-                final picker = NativeImagePicker();
-
-                // 1초 후 업로드 인디케이터 표시
-                Future.delayed(const Duration(milliseconds: 1000), () {
-                  if (mounted && !isCancelled) {
-                    widget.videoUploadIndicatorNotifier?.value = true;
-                  }
-                });
-
-                final file = await picker.pickSingleVideo();
-
-                if (!mounted) return;
-                if (file == null || isCancelled) {
-                  // 인디케이터 숨기기
-                  if (mounted) {
-                    widget.videoUploadIndicatorNotifier?.value = false;
-                  }
-                  return;
-                }
-
-                // 업로드 시작 시 인디케이터 유지
-
-                final upload = context.read<UploadService>();
-
-                // 🎯 에디터 인스턴스 ID 생성 (압축 취소용)
-                final editorId = 'editor_${widget.editorService.hashCode}';
-
-                // 🎯 UploadService의 통합 메서드 사용
-                await upload.uploadEditorVideo(
-                  file: file,
-                  editorId: editorId, // 🎯 에디터 ID 전달
-                  onCreatePlaceholder: (localPath, fileName, {thumbnailPath}) {
-                    final placeholderId = widget.editorService
-                        .addVideoClipPlaceholderNode(
-                          localPath,
-                          fileName,
-                          thumbnailPath: thumbnailPath,
-                        );
-                    // 🎯 플레이스홀더 생성 시 인디케이터 숨기기
-                    if (mounted) {
-                      widget.videoUploadIndicatorNotifier?.value = false;
-                    }
-                    return placeholderId;
-                  },
-                  onUpdateThumbnail: (placeholderId, thumbnailPath) {
-                    widget.editorService.updateVideoPlaceholderThumbnail(
-                      placeholderId,
-                      thumbnailPath,
-                    );
-                  },
-                  onReplacePlaceholder: (
-                    placeholderId,
-                    url, {
-                    fallbackLocalPath,
-                  }) async {
-                    await widget.editorService.replaceVideoPlaceholderWithUrl(
-                      placeholderId,
-                      url,
-                      fallbackLocalPath: fallbackLocalPath,
-                    );
-                    // 인디케이터 숨기기
-                    if (mounted) {
-                      widget.videoUploadIndicatorNotifier?.value = false;
-                    }
-                    _forceCloseToolbar();
-                    FocusManager.instance.primaryFocus?.unfocus();
-                  },
-                  onDeletePlaceholder: (placeholderId) {
-                    widget.editorService.deleteVideoPlaceholderNode(
-                      placeholderId,
-                    );
-                    // 인디케이터 숨기기
-                    if (mounted) {
-                      widget.videoUploadIndicatorNotifier?.value = false;
-                    }
-                  },
-                  isMounted: () => mounted,
-                  context: context,
-                  showErrorDialog: (title, message) async {
-                    // 인디케이터 숨기기
-                    if (mounted) {
-                      widget.videoUploadIndicatorNotifier?.value = false;
-                    }
-                    await DialogUtils.showInfoDialog(
-                      context,
-                      title: title,
-                      message: message,
-                    );
-                  },
-                );
-              } catch (e) {
-                debugPrint('video pick/upload error: $e');
-                // 인디케이터 숨기기
-                if (mounted) {
-                  widget.videoUploadIndicatorNotifier?.value = false;
-                }
-                // 에러 발생 시에만 키보드 내리기
-                if (context.mounted) {
-                  FocusManager.instance.primaryFocus?.unfocus();
-                }
+            } catch (e) {
+              debugPrint('[Toolbar] 미디어 업로드 에러: $e');
+              if (context.mounted) {
+                FocusManager.instance.primaryFocus?.unfocus();
               }
             }
           },
@@ -2645,104 +2451,6 @@ class _KeyboardDependentButtons extends StatelessWidget {
           height: 50,
           alignment: Alignment.center,
           child: Icon(icon, size: size ?? (isActive ? 26 : 22), color: color),
-        ),
-      ),
-    );
-  }
-}
-
-/// 비디오 업로드 중 다이얼로그 (opacity 애니메이션)
-class _VideoUploadDialog extends StatefulWidget {
-  final VoidCallback onCancel;
-
-  const _VideoUploadDialog({required this.onCancel});
-
-  @override
-  State<_VideoUploadDialog> createState() => _VideoUploadDialogState();
-}
-
-class _VideoUploadDialogState extends State<_VideoUploadDialog>
-    with SingleTickerProviderStateMixin {
-  late AnimationController _spinnerController;
-  late Animation<double> _rotationAnimation;
-
-  @override
-  void initState() {
-    super.initState();
-
-    // 스피너 회전 애니메이션
-    _spinnerController = AnimationController(
-      duration: const Duration(milliseconds: 1000),
-      vsync: this,
-    )..repeat();
-    _rotationAnimation = Tween<double>(
-      begin: 0.0,
-      end: 1.0,
-    ).animate(_spinnerController);
-  }
-
-  @override
-  void dispose() {
-    _spinnerController.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Dialog(
-      backgroundColor: Theme.of(context).colorScheme.background,
-      insetPadding: EdgeInsets.all(0),
-      child: Container(
-        padding: const EdgeInsets.all(20),
-        decoration: BoxDecoration(
-          color: Theme.of(context).colorScheme.surface,
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            SizedBox(
-              width: 24,
-              height: 24,
-              child: AnimatedBuilder(
-                animation: _rotationAnimation,
-                builder: (context, child) {
-                  return CustomSpinner(
-                    progress: 1.0,
-                    isAnimating: true,
-                    rotation: _rotationAnimation.value,
-                  );
-                },
-              ),
-            ),
-            const SizedBox(height: 12),
-            Text(
-              '영상 업로드 중',
-              style: TextStyle(
-                fontSize: 14,
-                color: Theme.of(context).colorScheme.onSurface,
-              ),
-            ),
-            const SizedBox(height: 16),
-            TextButton(
-              onPressed: widget.onCancel,
-              style: TextButton.styleFrom(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 8,
-                ),
-                minimumSize: const Size(0, 32),
-                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              ),
-              child: Text(
-                '취소',
-                style: TextStyle(
-                  fontSize: 13,
-                  color: Theme.of(context).colorScheme.onSurface,
-                ),
-              ),
-            ),
-          ],
         ),
       ),
     );

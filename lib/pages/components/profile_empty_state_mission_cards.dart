@@ -11,7 +11,8 @@ import 'package:doppy/editor/postwrite_screen.dart';
 import 'package:doppy/l10n/app_localizations.dart';
 import 'package:doppy/data/services/upload_service.dart';
 import 'package:doppy/utils/error_handler.dart';
-import 'package:doppy/image/native_image_picker.dart';
+import 'package:doppy/image/media_picker_screen.dart';
+import 'package:flutter/cupertino.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 /// 프로필에 포스트가 없을 때 표시되는 미션 카드 위젯
@@ -144,10 +145,22 @@ class ProfileEmptyStateMissionCards extends StatelessWidget {
 
     try {
       // 🎯 프로필 이미지가 없을 때는 바로 갤러리에서 선택
-      final picker = NativeImagePicker();
-      final file = await picker.pickSingleImage();
+      final result = await Navigator.push<MediaPickerResult>(
+        context,
+        CupertinoPageRoute(
+          builder: (context) => MediaPickerScreen(
+            initialMediaType: MediaType.image,
+            maxSelectionCount: 1,
+            enableToggle: false, // 토글 없음 (이미지만)
+            onMediaSelected: (file) {
+              // 단일 선택이므로 바로 처리
+            },
+          ),
+        ),
+      );
 
-      if (file != null && context.mounted) {
+      if (result != null && result.files.isNotEmpty && context.mounted) {
+        final file = result.files.first;
         // 업로드 시작
         _handleProfileImageSelected(context, file, myProfileProvider);
       }

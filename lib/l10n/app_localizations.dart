@@ -30,6 +30,7 @@ class AppLocalizations {
       'back': '뒤로',
       'close': '닫기',
       'loading': '로딩 중...',
+      'applying_changes': '변경사항 반영 중',
       'error': '오류',
       'success': '성공',
       'yes': '예',
@@ -186,6 +187,9 @@ class AppLocalizations {
       'who_to_mention': '누구를 언급할까요?',
       'upload_image': '이미지 업로드',
       'upload_short_clip': 'short clip 업로드',
+      'notification': '알림',
+      'video_single_selection_only': '영상은 1개만 선택할 수 있습니다.',
+      'image_max_selection_exceeded': '이미지는 최대 5개까지 선택할 수 있습니다.',
       'publish': '게시',
       'next': '다음',
       'previous': '이전',
@@ -338,7 +342,7 @@ class AppLocalizations {
       'group_delete_failed': '그룹 삭제 중 오류가 발생했습니다',
       'all_friends_group_name_not_editable': '모든 친구 그룹의 이름은 수정할 수 없습니다',
       'create': '생성',
-      'add_with_count': '추가하기 ({count})',
+      'add_with_count': '추가 ({count})',
       'no_friends_in_group': '아직 이 그룹에 멤버가 없어요',
       'no_friends_to_display': '아직 친구가 없어요',
       'select_group_first': '그룹을 먼저 선택해주세요',
@@ -499,6 +503,9 @@ class AppLocalizations {
       'select_at_least_one_group': '최소 1개 이상의 그룹을 선택해야 합니다',
       'thumbnail_upload_failed': '썸네일 업로드에 실패했어요. 다시 시도해주세요.',
       'video_url_failed': '영상 URL을 받지 못했습니다',
+      'video_too_long': '영상은 2분 이하만 선택할 수 있습니다.',
+      'video_trim': '영상 자르기',
+      'trimming': '자르는 중...',
       'thumbnail_select_first': '먼저 썸네일을 선택해주세요',
       'upload_url_failed': '업로드 URL을 받지 못했습니다',
       'category_name_required': '카테고리 이름을 입력하세요.',
@@ -552,6 +559,30 @@ class AppLocalizations {
       // 그룹 선택 화면
       // TODO: 중복 키 정리 - 기존 'my_groups'만 사용
       'scroll_to_explore': '스크롤해서 탐색하기',
+
+      // Media Picker Screen
+      'media_type_video': '영상',
+      'media_type_image': '이미지',
+      'group_image': '그룹이미지',
+      'edit_image': '이미지 편집',
+      'edit_video': '영상 편집',
+      'photo_library_permission_required': '사진 라이브러리 접근 권한이 필요합니다',
+      'open_permission_settings': '권한 설정 열기',
+      'no_videos': '영상이 없습니다',
+      'no_images': '이미지가 없습니다',
+      'cannot_load_image': '이미지를 불러올 수 없습니다.',
+      'cannot_load_media': '미디어를 불러올 수 없습니다.',
+
+      // 그룹 이미지 레이아웃
+      'select_layout': '레이아웃 선택',
+      'grid_2_column': '2열 그리드',
+      'grid_2_column_description': '이미지를 2개씩 나란히 배치',
+      'grid_3_column': '3열 그리드',
+      'grid_3_column_description': '이미지를 3개씩 나란히 배치',
+      'pageview_layout': '페이지뷰',
+      'pageview_layout_description': '좌우 스와이프로 이미지 넘기기',
+      'load_failed_text': '로드 실패',
+      'loading_image': '이미지 불러오는 중',
     },
     'en': {
       // Common
@@ -564,6 +595,7 @@ class AppLocalizations {
       'back': 'Back',
       'close': 'Close',
       'loading': 'Loading...',
+      'applying_changes': 'Applying changes',
       'error': 'Error',
       'success': 'Success',
       'yes': 'Yes',
@@ -726,6 +758,9 @@ class AppLocalizations {
       'who_to_mention': 'Who to mention?',
       'upload_image': 'Upload Image',
       'upload_short_clip': 'Upload Short Clip',
+      'notification': 'Notification',
+      'video_single_selection_only': 'You can only select one video.',
+      'image_max_selection_exceeded': 'You can select up to 5 images.',
       'publish': 'Publish',
       'next': 'Next',
       'previous': 'Prev',
@@ -1044,6 +1079,9 @@ class AppLocalizations {
       'select_at_least_one_group': 'Please select at least one group',
       'thumbnail_upload_failed': 'Thumbnail upload failed. Please try again.',
       'video_url_failed': 'Failed to get video URL',
+      'video_too_long': 'Videos must be 2 minutes or less.',
+      'video_trim': 'Trim Video',
+      'trimming': 'Trimming...',
       'thumbnail_select_first': 'Please select a thumbnail first',
       'upload_url_failed': 'Failed to get upload URL',
       'category_name_required': 'Please enter a category name.',
@@ -1097,6 +1135,31 @@ class AppLocalizations {
       // Group Selection Screen
       'my_groups': 'My Groups',
       'scroll_to_explore': 'Scroll to explore',
+
+      // Media Picker Screen
+      'media_type_video': 'Video',
+      'media_type_image': 'Image',
+      'group_image': 'Group Image',
+      'edit_image': 'Edit Image',
+      'edit_video': 'Edit Video',
+      'photo_library_permission_required':
+          'Photo library access permission is required',
+      'open_permission_settings': 'Open Permission Settings',
+      'no_videos': 'No videos',
+      'no_images': 'No images',
+      'cannot_load_image': 'Cannot load image.',
+      'cannot_load_media': 'Cannot load media.',
+
+      // Group Image Layout
+      'select_layout': 'Select Layout',
+      'grid_2_column': '2-Column Grid',
+      'grid_2_column_description': 'Arrange images 2 per row',
+      'grid_3_column': '3-Column Grid',
+      'grid_3_column_description': 'Arrange images 3 per row',
+      'pageview_layout': 'Page View',
+      'pageview_layout_description': 'Swipe left/right to view images',
+      'load_failed_text': 'Load Failed',
+      'loading_image': 'Loading image',
     },
   };
 

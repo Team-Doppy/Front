@@ -451,7 +451,7 @@ class GroupDropDown {
     onCreateGroup, // 🎯 시그니처 변경
     StateSetter setModalState,
     List<Group> groups, // 🎯 그룹 목록 (중복 체크용)
-    Group? selectedGroup, // 🎯 선택된 그룹 (전체 친구 확인용)
+    Group? selectedGroup, // 🎯 선택된 그룹 (전체 친구 확인용, 이미지 키 공유용)
   ) {
     final nameController = _createGroupController; // 🎯 클래스 멤버 사용
     final descriptionController =
@@ -496,6 +496,7 @@ class GroupDropDown {
               nameController.text.isEmpty
                   ? 'G'
                   : nameController.text[0].toUpperCase(),
+              selectedGroup: selectedGroup, // 🎯 그룹 정보 전달 (이미지 키 공유용)
             ),
           ),
           const SizedBox(height: 20),
@@ -1058,7 +1059,11 @@ class GroupDropDown {
   }
 
   /// 그룹 프로필 아바타 빌드
-  Widget _buildGroupProfileAvatar(BuildContext context, String initialLetter) {
+  Widget _buildGroupProfileAvatar(
+    BuildContext context,
+    String initialLetter, {
+    Group? selectedGroup, // 🎯 그룹 정보 전달 (이미지 키 공유용)
+  }) {
     final isDarkMode = Theme.of(context).brightness == Brightness.dark;
 
     return Container(
@@ -1087,9 +1092,25 @@ class GroupDropDown {
                           ? CachedNetworkImage(
                             width: double.infinity,
                             height: double.infinity,
-                            key: ValueKey('network-${_selectedGroupImageUrl}'),
+                            // 🎯 manage_group_screen과 동일한 키 사용하여 캐시 공유
+                            key:
+                                selectedGroup != null
+                                    ? ValueKey(
+                                      'group-appbar-image-${selectedGroup.id}',
+                                    )
+                                    : ValueKey(
+                                      'network-${_selectedGroupImageUrl}',
+                                    ),
                             imageUrl: _selectedGroupImageUrl!,
                             fit: BoxFit.cover,
+                            fadeInDuration: const Duration(
+                              milliseconds: 0,
+                            ), // 🎯 즉시 표시 (캐시된 이미지)
+                            fadeOutDuration: const Duration(
+                              milliseconds: 0,
+                            ), // 🎯 즉시 사라짐
+                            memCacheWidth: 300, // 🎯 메모리 캐시 크기 지정
+                            maxWidthDiskCache: 300, // 🎯 디스크 캐시 크기 지정
                             placeholder:
                                 (context, url) => Container(
                                   color: Theme.of(context).colorScheme.surface,

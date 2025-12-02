@@ -260,6 +260,7 @@ class NodeComponentService extends ChangeNotifier {
       FocusScope.of(context).unfocus();
 
       // 로딩 다이얼로그 표시 (dialogContext 저장하여 명시적으로 닫기)
+      //여기를 커스텀 스피너로 바꾸면 좋을 듯
       showDialog<void>(
         context: context,
         barrierDismissible: false,
@@ -274,7 +275,7 @@ class NodeComponentService extends ChangeNotifier {
                 child: Center(
                   child: CircularProgressIndicator(
                     strokeWidth: 4,
-                    color: Theme.of(context).colorScheme.onSurface,
+                    color: Colors.white,
                   ),
                 ),
               ),
@@ -324,13 +325,12 @@ class NodeComponentService extends ChangeNotifier {
         return;
       }
 
-      // 로딩 다이얼로그 닫기 (에디터는 유지) - 정상 완료 시
-      if (!isDialogClosed) {
-        isDialogClosed = true;
-        _closeLoadingDialogSafely(context, dialogContext);
-      }
-
       if (response.statusCode != 200) {
+        // 로딩 다이얼로그 닫기
+        if (!isDialogClosed) {
+          isDialogClosed = true;
+          _closeLoadingDialogSafely(context, dialogContext);
+        }
         if (context.mounted) {
           ScaffoldMessenger.of(context).hideCurrentSnackBar();
           ErrorHandler.showError(context, context.tr('image_load_failed'));
@@ -339,7 +339,15 @@ class NodeComponentService extends ChangeNotifier {
       }
 
       final imageBytes = response.bodyBytes;
+
+      // 🎯 이미지 다운로드 완료 후 다이얼로그 닫기 (편집기 열기 전)
+      if (!isDialogClosed) {
+        isDialogClosed = true;
+        _closeLoadingDialogSafely(context, dialogContext);
+      }
+
       // 3. 이미지 편집기 열기 (오버레이 스타일)
+      // 🎯 업로드 및 노드 교체를 처리하는 콜백 전달
       final editedBytes = await Navigator.push<Uint8List?>(
         context,
         PageRouteBuilder(
@@ -348,63 +356,101 @@ class NodeComponentService extends ChangeNotifier {
           opaque: false,
           barrierDismissible: true,
           pageBuilder:
-              (context, _, __) =>
-                  CustomImageEditorScreen(imageBytes: imageBytes),
+              (context, _, __) => CustomImageEditorScreen(
+                imageBytes: imageBytes,
+                onApplyChanges: (Uint8List bytes) async {
+                  // 업로드 및 노드 교체를 동기로 처리
+                  try {
+                    final upload = context.read<UploadService>();
+
+                    // 임시 파일로 변환
+                    final tempDir = await getTemporaryDirectory();
+                    final tempFile = File(
+                      '${tempDir.path}/edited_${DateTime.now().millisecondsSinceEpoch}.jpg',
+                    );
+                    await tempFile.writeAsBytes(bytes);
+
+                    // 🎯 업로드 완료까지 대기
+                    final tasks = await upload.uploadFilesViaServerBatches([
+                      tempFile,
+                    ], kind: UploadKind.editorImage);
+
+                    // 임시 파일 삭제
+                    try {
+                      await tempFile.delete();
+                    } catch (_) {}
+
+                    if (tasks.isEmpty ||
+                        tasks.first.state != UploadState.success) {
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+                        ErrorHandler.showError(
+                          context,
+                          context.tr('image_upload_failed'),
+                        );
+                      }
+                      return false;
+                    }
+
+                    final newUrl = tasks.first.url;
+                    if (newUrl == null || newUrl.isEmpty) {
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+                        ErrorHandler.showError(
+                          context,
+                          context.tr('image_url_failed'),
+                        );
+                      }
+                      return false;
+                    }
+
+                    // 🎯 문서에서 이미지 URL 교체
+                    final nodeIndex = document.getNodeIndexById(imageId);
+                    if (nodeIndex != -1) {
+                      final newNode = AppImageNode(
+                        id: imageId,
+                        imageUrl: newUrl,
+                        altText: node.altText,
+                        metadata: Map<String, dynamic>.from(node.metadata),
+                      );
+
+                      document.deleteNode(imageId);
+                      document.insertNodeAt(nodeIndex, newNode);
+
+                      // 🎯 노드 교체 완료 확인 (이미지 URL이 실제로 변경되었는지)
+                      await Future.delayed(const Duration(milliseconds: 100));
+                      final replacedNode = document.getNodeById(imageId);
+                      if (replacedNode is ImageNode &&
+                          replacedNode.imageUrl == newUrl) {
+                        debugPrint(
+                          '[NodeComponentService] ✅ 이미지 노드 교체 완료: imageId=$imageId, newUrl=$newUrl',
+                        );
+                      }
+
+                      // 🎯 이미지 편집 후 히스토리 저장
+                      editorService.saveHistoryNow();
+                      return true;
+                    }
+                    return false;
+                  } catch (e) {
+                    debugPrint('[NodeComponentService] 변경사항 반영 중 오류: $e');
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+                      ErrorHandler.showError(
+                        context,
+                        context.tr('image_edit_failed'),
+                      );
+                    }
+                    return false;
+                  }
+                },
+              ),
         ),
       );
 
-      if (editedBytes == null || !context.mounted) return;
-
-      final upload = context.read<UploadService>();
-
-      // 임시 파일로 변환
-      final tempDir = await getTemporaryDirectory();
-      final tempFile = File(
-        '${tempDir.path}/edited_${DateTime.now().millisecondsSinceEpoch}.jpg',
-      );
-      await tempFile.writeAsBytes(editedBytes);
-
-      final tasks = await upload.uploadFilesViaServerBatches([
-        tempFile,
-      ], kind: UploadKind.editorImage);
-
-      // 임시 파일 삭제
-      try {
-        await tempFile.delete();
-      } catch (_) {}
-
-      if (tasks.isEmpty || tasks.first.state != UploadState.success) {
-        if (context.mounted) {
-          ScaffoldMessenger.of(context).hideCurrentSnackBar();
-          ErrorHandler.showError(context, context.tr('image_upload_failed'));
-        }
+      // 편집 취소 또는 타임아웃 시 editedBytes는 null
+      if (editedBytes == null || !context.mounted) {
         return;
-      }
-
-      final newUrl = tasks.first.url;
-      if (newUrl == null || newUrl.isEmpty) {
-        if (context.mounted) {
-          ScaffoldMessenger.of(context).hideCurrentSnackBar();
-          ErrorHandler.showError(context, context.tr('image_url_failed'));
-        }
-        return;
-      }
-
-      // 5. 문서에서 이미지 URL 교체
-      final nodeIndex = document.getNodeIndexById(imageId);
-      if (nodeIndex != -1) {
-        final newNode = AppImageNode(
-          id: imageId,
-          imageUrl: newUrl,
-          altText: node.altText,
-          metadata: Map<String, dynamic>.from(node.metadata),
-        );
-
-        document.deleteNode(imageId);
-        document.insertNodeAt(nodeIndex, newNode);
-
-        // 🎯 이미지 편집 후 히스토리 저장
-        editorService.saveHistoryNow();
       }
     } catch (e) {
       debugPrint('[NodeComponentService] 이미지 편집 중 오류: $e');

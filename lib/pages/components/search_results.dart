@@ -189,7 +189,14 @@ class AccountListItem extends StatelessWidget {
                 imageUrl: account.profileImageUrl,
                 username: account.username ?? '',
                 size: 50.0,
-                backgroundColor: Colors.black,
+                // 🎯 프로필 이미지가 없을 때만 배경색 설정 (grey[100] / black)
+                backgroundColor:
+                    account.profileImageUrl == null ||
+                            account.profileImageUrl!.isEmpty
+                        ? (Theme.of(context).brightness == Brightness.light
+                            ? Colors.grey[100]
+                            : Colors.black)
+                        : null,
                 borderColor: Theme.of(context).colorScheme.surface,
                 // 🎯 프로필 이미지가 있을 때는 보더 제거
                 borderWidth: 0,

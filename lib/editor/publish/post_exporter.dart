@@ -371,15 +371,17 @@ class PostExporter {
     // 🎯 백그라운드에서 돌아왔을 때를 대비해 여러 소스에서 author 가져오기
     // 1. AuthService의 동기 캐시에서 먼저 시도 (가장 안정적)
     String author = AuthService().currentUsernameSync ?? '';
-    
+
     // 2. 없으면 AuthProvider에서 가져오기
     if (author.isEmpty) {
       author = AuthProvider().username ?? '';
     }
-    
+
     // 3. 여전히 없으면 에러 (백그라운드에서 돌아왔을 때는 AuthService.currentUsernameSync가 있어야 함)
     if (author.isEmpty) {
-      debugPrint('[PostExporter] ⚠️ author를 가져올 수 없습니다. AuthService.currentUsernameSync와 AuthProvider().username 모두 비어있습니다.');
+      debugPrint(
+        '[PostExporter] ⚠️ author를 가져올 수 없습니다. AuthService.currentUsernameSync와 AuthProvider().username 모두 비어있습니다.',
+      );
       throw StateError('author is required');
     }
 
@@ -682,71 +684,83 @@ class PostExporter {
     result['thumbnailImageUrl'] = thumbnailImageUrl;
 
     // 9. usedImageUrls → URL 문자열로 전환: 문서 노드/썸네일에서 URL을 수집해 문자열 배열로 제공
-    try {
-      final Set<String> usedUrls = <String>{};
+    // 🎯 base에 이미 usedImageUrls가 있으면 사용 (수정 시 PostPublishService에서 이미 수집한 경우)
+    if (base['usedImageUrls'] != null && base['usedImageUrls'] is List) {
+      final existingUrls = List<String>.from(base['usedImageUrls'] as List);
+      debugPrint(
+        '[PostExporter] 📌 base에서 기존 usedImageUrls 사용: ${existingUrls.length}개',
+      );
+      result['usedImageUrls'] = existingUrls;
+    } else {
+      // 🎯 새로 작성하는 경우에만 수집
+      try {
+        final Set<String> usedUrls = <String>{};
 
-      // 문서 노드에서 URL 수집
-      final dynamic content = base['content'];
-      final List<dynamic> nodes =
-          (content is Map)
-              ? List<dynamic>.from(content['nodes'] as List? ?? const [])
-              : const [];
-      for (final n in nodes) {
-        if (n is! Map) continue;
-        final String type = (n['type'] ?? '').toString();
-        if (type == 'image') {
-          // data.url 또는 url 필드에서 추출
-          final data = n['data'] as Map<String, dynamic>?;
-          final String url = (data?['url'] ?? n['url'] ?? '').toString();
-          if (url.isNotEmpty) usedUrls.add(url);
-        } else if (type == 'imageRow') {
-          final List<dynamic> urls = List<dynamic>.from(n['urls'] ?? const []);
-          for (final u in urls) {
-            final String url = u.toString();
+        // 문서 노드에서 URL 수집
+        final dynamic content = base['content'];
+        final List<dynamic> nodes =
+            (content is Map)
+                ? List<dynamic>.from(content['nodes'] as List? ?? const [])
+                : const [];
+        for (final n in nodes) {
+          if (n is! Map) continue;
+          final String type = (n['type'] ?? '').toString();
+          if (type == 'image') {
+            // data.url 또는 url 필드에서 추출
+            final data = n['data'] as Map<String, dynamic>?;
+            final String url = (data?['url'] ?? n['url'] ?? '').toString();
+            if (url.isNotEmpty) usedUrls.add(url);
+          } else if (type == 'imageRow') {
+            final List<dynamic> urls = List<dynamic>.from(
+              n['urls'] ?? const [],
+            );
+            for (final u in urls) {
+              final String url = u.toString();
+              if (url.isNotEmpty) usedUrls.add(url);
+            }
+          } else if (type == 'video') {
+            // data.url에서 추출
+            final data = n['data'] as Map<String, dynamic>?;
+            final String url = (data?['url'] ?? '').toString();
             if (url.isNotEmpty) usedUrls.add(url);
           }
-        } else if (type == 'video') {
-          // data.url에서 추출
-          final data = n['data'] as Map<String, dynamic>?;
-          final String url = (data?['url'] ?? '').toString();
-          if (url.isNotEmpty) usedUrls.add(url);
         }
-      }
 
-      // 썸네일 URL도 포함
-      if (thumbnailImageUrl.trim().isNotEmpty) {
-        usedUrls.add(thumbnailImageUrl.trim());
-      }
+        // 썸네일 URL도 포함
+        if (thumbnailImageUrl.trim().isNotEmpty) {
+          usedUrls.add(thumbnailImageUrl.trim());
+        }
 
-      // 🎯 스티커 이미지 URL도 포함 (PNG 드로잉 포함)
-      final List<dynamic> contentStickers = List<dynamic>.from(
-        (content is Map ? content['stickers'] : null) as List? ?? const [],
-      );
-      debugPrint(
-        '[PostExporter] 📌 content.stickers 개수: ${contentStickers.length}',
-      );
-      for (final s in contentStickers) {
-        if (s is! Map) continue;
-        final String stickerType = (s['type'] ?? '').toString();
-        debugPrint('[PostExporter] 📌 스티커 타입: $stickerType');
-        if (stickerType == 'image') {
-          final contentMap = s['content'] as Map<String, dynamic>?;
-          debugPrint('[PostExporter] 📌 content: $contentMap');
-          if (contentMap != null) {
-            final String url = (contentMap['url'] ?? '').toString();
-            debugPrint('[PostExporter] 📌 URL: $url');
-            if (url.isNotEmpty) {
-              usedUrls.add(url);
-              debugPrint('[PostExporter] ✅ 스티커 URL 추가: $url');
+        // 🎯 스티커 이미지 URL도 포함 (PNG 드로잉 포함)
+        final List<dynamic> contentStickers = List<dynamic>.from(
+          (content is Map ? content['stickers'] : null) as List? ?? const [],
+        );
+        debugPrint(
+          '[PostExporter] 📌 content.stickers 개수: ${contentStickers.length}',
+        );
+        for (final s in contentStickers) {
+          if (s is! Map) continue;
+          final String stickerType = (s['type'] ?? '').toString();
+          debugPrint('[PostExporter] 📌 스티커 타입: $stickerType');
+          if (stickerType == 'image') {
+            final contentMap = s['content'] as Map<String, dynamic>?;
+            debugPrint('[PostExporter] 📌 content: $contentMap');
+            if (contentMap != null) {
+              final String url = (contentMap['url'] ?? '').toString();
+              debugPrint('[PostExporter] 📌 URL: $url');
+              if (url.isNotEmpty) {
+                usedUrls.add(url);
+                debugPrint('[PostExporter] ✅ 스티커 URL 추가: $url');
+              }
             }
           }
         }
-      }
 
-      // 결과 키는 기존과 동일하게 유지(호환)하되 값은 URL 문자열 목록로 제공
-      result['usedImageUrls'] = usedUrls.toList();
-    } catch (e) {
-      debugPrint('❌ usedImageUrls 수집 실패: $e');
+        // 결과 키는 기존과 동일하게 유지(호환)하되 값은 URL 문자열 목록로 제공
+        result['usedImageUrls'] = usedUrls.toList();
+      } catch (e) {
+        debugPrint('❌ usedImageUrls 수집 실패: $e');
+      }
     }
 
     debugPrint('==============================================');

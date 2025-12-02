@@ -1,5 +1,6 @@
 import 'dart:ui' as ui;
 import 'dart:async';
+import 'package:doppy/data/models/post_data.dart';
 import 'package:doppy/data/services/auth_service.dart';
 import 'package:doppy/editor/component/app_image_node.dart';
 import 'package:doppy/editor/component/single_image_component.dart';
@@ -17,6 +18,8 @@ import 'package:super_editor/super_editor.dart';
 import 'package:doppy/editor/style/style_sheet.dart';
 import 'package:doppy/editor/component/row_image_component.dart'
     show RowImageComponentBuilder, ImageRowNode;
+import 'package:doppy/editor/component/pageview_image_component.dart'
+    show PageViewImageComponentBuilder, PageViewImageNode;
 import 'package:doppy/editor/postwrite_screen.dart';
 import 'package:doppy/providers/user_provider.dart';
 import 'package:doppy/providers/group_provider.dart';
@@ -334,6 +337,47 @@ class _PostReaderScreenState extends State<PostReaderScreen>
         });
         _imageViewerCtrl.forward(from: 0.0);
       }
+    } else if (node is PageViewImageNode) {
+      final pageViewNode = node;
+
+      // 스포일러 상태 확인
+      final nodeService = NodeComponentService();
+      bool hasSpoiler = false;
+      try {
+        final isDisabled = nodeService.isSpoilerDisabled(pageViewNode.id);
+
+        if (!isDisabled) {
+          hasSpoiler = nodeService.isSpoiler(pageViewNode.id);
+
+          if (!hasSpoiler) {
+            final meta = pageViewNode.metadata;
+            hasSpoiler = meta['spoiler'] == true;
+          }
+        }
+      } catch (_) {}
+
+      // 스포일러가 있으면 해제
+      if (hasSpoiler) {
+        nodeService.setSpoiler(pageViewNode.id, false);
+        setState(() {});
+        debugPrint('[PostReaderScreen] 페이지뷰 이미지 스포일러 해제: ${pageViewNode.id}');
+        return;
+      }
+
+      // 스포일러가 없으면 full viewer 열기
+      setState(() {
+        _previousAppBarState = _showAppBar;
+        _currentImageUrl =
+            pageViewNode.imageUrls.isNotEmpty
+                ? pageViewNode.imageUrls.first
+                : null;
+        _allImageUrls = List<String>.from(pageViewNode.imageUrls);
+        _isVideoViewer = false;
+        _showImageViewer = true;
+        _showAppBar = false;
+        _bottomBarAnimationDuration = 50;
+      });
+      _imageViewerCtrl.forward(from: 0.0);
     } else if (node is DividerNode) {
       debugPrint('  - Divider');
     } else if (node is ParagraphNode) {
@@ -681,7 +725,7 @@ class _PostReaderScreenState extends State<PostReaderScreen>
       summary: summary,
       authorUsername: authorUsername,
       authorProfileImageUrl: authorProfileImageUrl,
-      thumbnailUrl: thumbnailUrl,
+      thumbnailUrl: thumbnailUrl, // 🎯 썸네일 URL 전달
       readTime: readTime,
       isNewPost: false,
       useReplacement: false,
@@ -1711,6 +1755,11 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                                 isEditing: false, // 읽기 모드
                                 isDarkMode: isDarkMode, // 🎯 성능 최적화: 변수 사용
                               ),
+                              PageViewImageComponentBuilder(
+                                dragService: _dragService,
+                                isEditing: false, // 읽기 모드
+                                isDarkMode: isDarkMode,
+                              ),
                               LinkComponentBuilder(
                                 isEditing: false,
                                 isDarkMode: isDarkMode, // 🎯 성능 최적화: 변수 사용
@@ -1935,7 +1984,6 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                       onMoreTap:
                           !isMyPost
                               ? () {
-                                // 🎯 글 액션 바텀시트 표시
                                 final postId =
                                     widget.exported['id']?.toString() ?? '';
                                 final postTitle =
@@ -2105,6 +2153,10 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                           currentUser != null &&
                           currentUser.username == postAuthor;
 
+                      // 🎯 나만보기 포스트 확인
+                      final accessLevelStr = _accessLevel ?? AccessLevel.public;
+                      final isPrivate = accessLevelStr == AccessLevel.private;
+
                       return Container(
                         height: 74,
                         decoration: BoxDecoration(
@@ -2254,36 +2306,18 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                                 ],
 
                                 const Spacer(),
-                                // 우측: 좋아요 + 댓글
-                                GestureDetector(
-                                  onTap: _toggleLike,
-                                  onLongPress: _openLikedUsersOverlay,
-                                  child: Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      SvgPicture.asset(
-                                        'assets/icons/heart.svg',
-                                        width: 22,
-                                        height: 22,
-                                        color:
-                                            isLiked
-                                                ? const ui.Color.fromARGB(
-                                                  255,
-                                                  255,
-                                                  89,
-                                                  89,
-                                                )
-                                                : Theme.of(context)
-                                                    .colorScheme
-                                                    .onSurface
-                                                    .withOpacity(0.8),
-                                      ),
-                                      const SizedBox(width: 4),
-                                      Text(
-                                        formatCount(likeCount),
-                                        style: TextStyle(
-                                          fontSize: 14,
-                                          fontWeight: FontWeight.w500,
+                                // 우측: 좋아요 + 댓글 (나만보기 포스트 제외)
+                                if (!isPrivate) ...[
+                                  GestureDetector(
+                                    onTap: _toggleLike,
+                                    onLongPress: _openLikedUsersOverlay,
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        SvgPicture.asset(
+                                          'assets/icons/heart.svg',
+                                          width: 22,
+                                          height: 22,
                                           color:
                                               isLiked
                                                   ? const ui.Color.fromARGB(
@@ -2297,11 +2331,31 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                                                       .onSurface
                                                       .withOpacity(0.8),
                                         ),
-                                      ),
-                                    ],
+                                        const SizedBox(width: 4),
+                                        Text(
+                                          formatCount(likeCount),
+                                          style: TextStyle(
+                                            fontSize: 14,
+                                            fontWeight: FontWeight.w500,
+                                            color:
+                                                isLiked
+                                                    ? const ui.Color.fromARGB(
+                                                      255,
+                                                      255,
+                                                      89,
+                                                      89,
+                                                    )
+                                                    : Theme.of(context)
+                                                        .colorScheme
+                                                        .onSurface
+                                                        .withOpacity(0.8),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
                                   ),
-                                ),
-                                const SizedBox(width: 20),
+                                  const SizedBox(width: 20),
+                                ],
                                 GestureDetector(
                                   onTap: _showCommentBottomSheet,
                                   child: Row(
