@@ -1,4 +1,5 @@
 import 'dart:ui' as ui;
+import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:super_editor/super_editor.dart';
@@ -6,7 +7,8 @@ import 'package:doppy/editor/component/app_image_node.dart';
 import 'package:doppy/editor/component/link_component.dart';
 import 'package:doppy/editor/component/row_image_component.dart';
 import 'package:doppy/editor/component/divider_component.dart';
-import 'package:doppy/editor/component/clip_component.dart';
+import 'package:doppy/editor/component/clip_component.dart'
+    show ClipNode, readerVideoControllers;
 import 'package:doppy/editor/service/sticker_service.dart';
 import 'package:doppy/editor/service/node_component_service.dart';
 import 'package:doppy/editor/style/defualt_toolbar.dart';
@@ -526,6 +528,282 @@ class PostReaderService {
     return clipUrls;
   }
 
+  /// 상위 N개 노드에서 이미지 URL을 추출한다
+  List<String> extractTopImageUrls(
+    Map<String, dynamic> content, {
+    int topNodeCount = 3,
+  }) {
+    final List<String> imageUrls = [];
+    final nodes = (content['nodes'] as List?) ?? [];
+    final topNodes = nodes.take(topNodeCount).toList();
+
+    for (final raw in topNodes) {
+      if (imageUrls.length >= 64) break; // 안전 상한
+
+      final m = (raw as Map).cast<String, dynamic>();
+      final type = (m['type'] ?? '').toString();
+      final data = (m['data'] as Map?)?.cast<String, dynamic>();
+
+      bool addSingle(String? u) {
+        final s = (u ?? '').toString();
+        if (s.isNotEmpty && s.startsWith('http')) {
+          imageUrls.add(s);
+          return true;
+        }
+        return false;
+      }
+
+      if (type == 'image' || type == 'img' || type == 'single_image') {
+        // url 필드 우선, 없으면 data.url
+        if (!addSingle(m['url'])) {
+          addSingle(data?['url']);
+        }
+      } else if (type == 'imageRow' ||
+          type == 'image_row' ||
+          type == 'row_image') {
+        // urls 또는 data.urls
+        final rawUrls =
+            (m['urls'] as List?) ?? (data?['urls'] as List?) ?? const [];
+        for (final u in rawUrls) {
+          if (imageUrls.length >= 64) break;
+          addSingle(u?.toString());
+        }
+      } else if (type == 'pageViewImage' || type == 'page_view_image') {
+        // pageViewImage의 imageUrls
+        final rawUrls = (m['imageUrls'] as List?) ?? const [];
+        for (final u in rawUrls) {
+          if (imageUrls.length >= 64) break;
+          addSingle(u?.toString());
+        }
+      }
+    }
+
+    debugPrint(
+      '[PostReaderService] 🖼️ 상위 $topNodeCount개 노드에서 이미지 URL 추출 완료: ${imageUrls.length}개',
+    );
+    if (imageUrls.isNotEmpty) {
+      debugPrint(
+        '[PostReaderService] 🖼️ 추출된 이미지 URL: ${imageUrls.join(", ")}',
+      );
+    }
+    return imageUrls;
+  }
+
+  /// 상위 N개 노드에서 비디오 URL을 추출한다
+  List<String> extractTopClipUrls(
+    Map<String, dynamic> content, {
+    int topNodeCount = 3,
+  }) {
+    final List<String> clipUrls = [];
+    final nodes = (content['nodes'] as List?) ?? [];
+    final topNodes = nodes.take(topNodeCount).toList();
+
+    for (final raw in topNodes) {
+      final m = (raw as Map).cast<String, dynamic>();
+      final type = (m['type'] ?? '').toString();
+
+      if (type == 'clip' || type == 'video') {
+        // video 타입도 포함
+        final data = m['data'] as Map<String, dynamic>?;
+        final url = (data?['url'] ?? m['url'] ?? '').toString();
+        if (url.isNotEmpty && url.startsWith('http')) {
+          clipUrls.add(url);
+        }
+      }
+    }
+
+    debugPrint(
+      '[PostReaderService] 🎬 상위 $topNodeCount개 노드에서 비디오 URL 추출 완료: ${clipUrls.length}개',
+    );
+    if (clipUrls.isNotEmpty) {
+      debugPrint('[PostReaderService] 🎬 추출된 비디오 URL: ${clipUrls.join(", ")}');
+    }
+    return clipUrls;
+  }
+
+  /// 실패해도 계속 진행 (에러는 로그만 남김)
+  Future<void> preloadTopMedia(
+    BuildContext context,
+    Map<String, dynamic> content, {
+    int topNodeCount = 3,
+  }) async {
+    // 상위 노드에서 URL 추출
+    final imageUrls = extractTopImageUrls(content, topNodeCount: topNodeCount);
+    final clipUrls = extractTopClipUrls(content, topNodeCount: topNodeCount);
+
+    if (imageUrls.isEmpty && clipUrls.isEmpty) {
+      debugPrint('[PostReaderService] ⚠️ 프리로드할 미디어가 없습니다');
+      return;
+    }
+
+    debugPrint(
+      '[PostReaderService] 🚀 상위 미디어 프리로드 시작: 이미지 ${imageUrls.length}개, 비디오 ${clipUrls.length}개',
+    );
+
+    // 이미지와 비디오를 병렬로 프리로드 + 크기 측정
+    final futures = <Future>[];
+
+    // 이미지 프리로드 + 크기 측정
+    if (imageUrls.isNotEmpty) {
+      // 🎯 각 이미지별로 크기 측정 및 content 업데이트
+      for (final url in imageUrls) {
+        futures.add(
+          _preloadAndMeasureImage(
+            context,
+            content,
+            url,
+            topNodeCount,
+          ).catchError((e) {
+            debugPrint('[PostReaderService] 이미지 프리로드/측정 실패: $url - $e');
+          }),
+        );
+      }
+    }
+
+    // 비디오 프리로드
+    if (clipUrls.isNotEmpty) {
+      for (final url in clipUrls) {
+        futures.add(
+          _preloadVideoForReader(url).catchError((e) {
+            debugPrint('[PostReaderService] 비디오 프리로드 실패: $url - $e');
+          }),
+        );
+      }
+    }
+
+    // 모든 프리로드 완료 대기 (실패해도 계속 진행)
+    await Future.wait(futures, eagerError: false);
+
+    // 🎯 캐시 적용을 위해 한 프레임 대기
+    final completer = Completer<void>();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      completer.complete();
+    });
+    await completer.future;
+
+    debugPrint(
+      '[PostReaderService] ✅ 상위 미디어 프리로드 완료 (캐시 적용 + 크기 저장): 이미지 ${imageUrls.length}개, 비디오 ${clipUrls.length}개',
+    );
+  }
+
+  /// 🎯 이미지 프리로드 + 크기 측정 + content 메타데이터 저장
+  /// 성능 최적화: 프리로드와 크기 측정을 동시에 수행
+  Future<void> _preloadAndMeasureImage(
+    BuildContext context,
+    Map<String, dynamic> content,
+    String imageUrl,
+    int topNodeCount,
+  ) async {
+    final completer = Completer<ui.Size?>();
+    final imageProvider = NetworkImage(imageUrl);
+
+    // 🚀 프리로드와 크기 측정을 동시에 수행 (중복 제거)
+    final imageStream = imageProvider.resolve(ImageConfiguration.empty);
+
+    imageStream.addListener(
+      ImageStreamListener(
+        (ImageInfo info, bool _) {
+          if (!completer.isCompleted) {
+            final size = ui.Size(
+              info.image.width.toDouble(),
+              info.image.height.toDouble(),
+            );
+            completer.complete(size);
+          }
+        },
+        onError: (exception, stackTrace) {
+          if (!completer.isCompleted) {
+            debugPrint('[PostReaderService] 이미지 프리로드/측정 실패: $imageUrl');
+            completer.complete(null);
+          }
+        },
+      ),
+    );
+
+    final size = await completer.future;
+
+    // content의 해당 노드에 크기 저장
+    if (size != null) {
+      _saveImageSizeToContent(content, imageUrl, size, topNodeCount);
+    }
+  }
+
+  /// 🎯 측정된 이미지 크기를 content의 노드 메타데이터에 저장
+  void _saveImageSizeToContent(
+    Map<String, dynamic> content,
+    String imageUrl,
+    ui.Size size,
+    int topNodeCount,
+  ) {
+    try {
+      final nodes = (content['nodes'] as List?) ?? [];
+      final topNodes = nodes.take(topNodeCount).toList();
+
+      for (final raw in topNodes) {
+        final node = (raw as Map).cast<String, dynamic>();
+        final type = (node['type'] ?? '').toString();
+
+        // ImageRowNode 또는 PageViewImageNode 찾기
+        if (type == 'imageRow' ||
+            type == 'image_row' ||
+            type == 'pageViewImage' ||
+            type == 'page_view_image') {
+          final imageUrls =
+              (node['imageUrls'] as List?)
+                  ?.map((e) => e?.toString() ?? '')
+                  .toList() ??
+              [];
+
+          // 이 노드에 해당 URL이 있는지 확인
+          if (imageUrls.contains(imageUrl)) {
+            // metadata 가져오기 또는 생성
+            final metadata = (node['metadata'] as Map<String, dynamic>?) ?? {};
+            final imageDimensions =
+                (metadata['imageDimensions'] as Map<String, dynamic>?) ?? {};
+
+            // 크기 저장
+            imageDimensions[imageUrl] = {
+              'width': size.width.toInt(),
+              'height': size.height.toInt(),
+            };
+
+            metadata['imageDimensions'] = imageDimensions;
+            node['metadata'] = metadata;
+
+            debugPrint(
+              '[PostReaderService] 💾 content에 이미지 크기 저장: $imageUrl (${size.width.toInt()}x${size.height.toInt()})',
+            );
+            return;
+          }
+        }
+        // 단일 이미지 노드
+        else if (type == 'image') {
+          final url = (node['url'] ?? node['imageUrl'] ?? '').toString();
+          if (url == imageUrl) {
+            final metadata = (node['metadata'] as Map<String, dynamic>?) ?? {};
+            final imageDimensions =
+                (metadata['imageDimensions'] as Map<String, dynamic>?) ?? {};
+
+            imageDimensions[imageUrl] = {
+              'width': size.width.toInt(),
+              'height': size.height.toInt(),
+            };
+
+            metadata['imageDimensions'] = imageDimensions;
+            node['metadata'] = metadata;
+
+            debugPrint(
+              '[PostReaderService] 💾 content에 이미지 크기 저장: $imageUrl (${size.width.toInt()}x${size.height.toInt()})',
+            );
+            return;
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('[PostReaderService] ⚠️ content 크기 저장 실패: $e');
+    }
+  }
+
   /// 이미지를 미리 로드한다
   Future<void> preloadImages(
     BuildContext context,
@@ -538,7 +816,12 @@ class PostReaderService {
       return;
     }
 
-    debugPrint('[PostReaderService] 이미지 ${imagesToPreload.length}개 미리 로드 시작');
+    debugPrint(
+      '[PostReaderService] 🖼️ 이미지 ${imagesToPreload.length}개 미리 로드 시작',
+    );
+    debugPrint(
+      '[PostReaderService] 🖼️ 프리로드할 URL 목록: ${imagesToPreload.join(", ")}',
+    );
 
     try {
       await Future.wait(
@@ -547,14 +830,18 @@ class PostReaderService {
             NetworkImage(url),
             context,
             onError: (e, stack) {
-              debugPrint('[PostReaderService] 이미지 프리캐싱 실패: $url - $e');
+              debugPrint('[PostReaderService] ❌ 이미지 프리캐싱 실패: $url - $e');
             },
-          );
+          ).then((_) {
+            debugPrint('[PostReaderService] ✅ 이미지 프리캐싱 완료: $url');
+          });
         }),
       );
-      debugPrint('[PostReaderService] 이미지 프리캐싱 완료');
+      debugPrint(
+        '[PostReaderService] ✅ 이미지 프리캐싱 완료: ${imagesToPreload.length}개',
+      );
     } catch (e) {
-      debugPrint('[PostReaderService] 이미지 프리캐싱 중 오류: $e');
+      debugPrint('[PostReaderService] ❌ 이미지 프리캐싱 중 오류: $e');
     }
   }
 
@@ -651,6 +938,43 @@ class PostReaderService {
       // 실패 시 캐시에서 제거
       _preloadedControllers.remove(url);
       _preloadTimestamps.remove(url);
+      rethrow;
+    }
+  }
+
+  /// 읽기 모드용 비디오 프리로드 (readerVideoControllers에 저장)
+  static Future<void> _preloadVideoForReader(String url) async {
+    if (url.isEmpty) return;
+
+    // 이미 프리로드된 경우 스킵 (readerVideoControllers 확인)
+    if (readerVideoControllers.containsKey(url)) {
+      debugPrint('[PostReaderService] 이미 프리로드된 비디오 (reader): $url');
+      return;
+    }
+
+    // PostReaderService 캐시도 확인
+    if (_preloadedControllers.containsKey(url)) {
+      // 캐시에서 readerVideoControllers로 이동
+      final controller = _preloadedControllers.remove(url);
+      _preloadTimestamps.remove(url);
+      if (controller != null) {
+        readerVideoControllers[url] = controller;
+        debugPrint('[PostReaderService] 캐시에서 reader로 이동: $url');
+        return;
+      }
+    }
+
+    try {
+      debugPrint('[PostReaderService] 비디오 프리로드 시작 (reader): $url');
+      final controller = VideoPlayerController.networkUrl(Uri.parse(url));
+      readerVideoControllers[url] = controller;
+
+      await controller.initialize();
+      debugPrint('[PostReaderService] ✅ 비디오 프리로드 완료 (reader): $url');
+    } catch (e) {
+      debugPrint('[PostReaderService] ❌ 비디오 프리로드 실패 (reader): $url - $e');
+      // 실패 시 캐시에서 제거
+      readerVideoControllers.remove(url);
       rethrow;
     }
   }

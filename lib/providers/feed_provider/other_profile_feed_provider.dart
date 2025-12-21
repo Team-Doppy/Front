@@ -79,7 +79,7 @@ class OtherProfileFeedProvider extends BaseFeedProvider {
         debugPrint(
           '[OtherProfileFeedProvider] 서버 응답 실패: ${postsResp['message']}',
         );
-        clearData();
+        // 🚀 실패 시에도 기존 데이터는 유지 (에러 상태 표시용)
       }
     } catch (e) {
       debugPrint('[OtherProfileFeedProvider] 서버 로드 실패: $e');
@@ -144,18 +144,10 @@ class OtherProfileFeedProvider extends BaseFeedProvider {
     }
   }
 
-  /// 즉시 화면에서 기존 목록을 비우고 강제 재로딩
+  /// 기존 데이터를 유지하면서 새로운 데이터로 교체
   Future<void> hardRefresh({String? username}) async {
     // 기존 사용자 정보도 초기화
     _username = null;
-
-    // 피드 즉시 초기화
-    clearData();
-
-    // UI 즉시 업데이트 (이전 피드가 보이지 않도록)
-    notifyListeners();
-
-    // 새 데이터 로드
     await loadInitial(username: username, force: true);
   }
 

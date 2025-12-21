@@ -22,11 +22,13 @@ import 'package:super_editor/super_editor.dart';
 
 class SingleImageComponentBuilder implements ComponentBuilder {
   const SingleImageComponentBuilder({
+    required this.screenWidth, // 🎯 외부에서 전달받음
     this.dragService,
     this.isEditing = true,
     this.isDarkMode = false,
   });
 
+  final double screenWidth; // 🚀 한 번만 계산된 화면 너비
   final dynamic dragService; // DragService 타입을 나중에 import해서 수정
   final bool isEditing;
   final bool isDarkMode;
@@ -41,6 +43,7 @@ class SingleImageComponentBuilder implements ComponentBuilder {
         nodeId: componentViewModel.nodeId,
         imageUrl: componentViewModel.imageUrl,
         componentKey: componentContext.componentKey,
+        screenWidth: screenWidth, // 🚀 전달
         dragService: dragService,
         isEditing: isEditing,
         isDarkMode: isDarkMode,
@@ -65,6 +68,7 @@ class SingleImageComponent extends StatefulWidget {
   const SingleImageComponent({
     required this.nodeId,
     required this.imageUrl,
+    required this.screenWidth,
     required GlobalKey componentKey,
     this.dragService,
     this.isEditing = true,
@@ -75,6 +79,7 @@ class SingleImageComponent extends StatefulWidget {
 
   final String nodeId;
   final String imageUrl;
+  final double screenWidth; // 🚀 최고 효율: 외부에서 한 번만 계산된 값
   final GlobalKey _componentKey;
   final dynamic dragService; // DragService 타입을 나중에 import해서 수정
   final bool isEditing;
@@ -95,6 +100,10 @@ class _SingleImageComponentState extends State<SingleImageComponent>
 
   static const double marginTop = 2.5;
   static const double marginBottom = 2.5;
+
+  // 🎯 성능 최적화: 캐싱된 메타데이터 크기
+  Size? _cachedImageSize;
+  bool _sizeInitialized = false;
 
   // 🎯 특수 노드 사이 클릭 감지 (true: 특수 노드 사이 클릭, false: 일반 클릭)
   bool _handleSpecialNodeTap(Offset globalPosition) {
@@ -217,32 +226,18 @@ class _SingleImageComponentState extends State<SingleImageComponent>
             // 🎯 업로드 중 상태 판정 (메타데이터 + 실제 업로드 태스크 존재 여부)
             // ignore: invalid_use_of_visible_for_testing_member
             final doc = seState?.editContext.editor.document;
+            // 🎯 업로드 중 상태 확인 (편집 모드에서만, 읽기 전용 모드에서는 항상 false)
             bool isUploading = false;
-            try {
-              final node = doc?.getNodeById(widget.nodeId);
-              if (node is ImageNode) {
-                final meta =
-                    (node as dynamic).metadata as Map<String, dynamic>?;
-                final isPh = meta != null && (meta['isPlaceholder'] == true);
-                final url = widget.imageUrl;
-                final isLocal = _isLocalPath(url) || url.isEmpty;
-
-                // 🎯 플레이스홀더이거나 로컬 경로인 경우
-                if (isPh || isLocal) {
-                  // 🎯 실제 업로드 태스크가 있을 때만 로딩 표시
-                  try {
-                    final uploadService = context.read<UploadService>();
-                    isUploading = uploadService.hasActiveUploadForRef(
-                      widget.nodeId,
-                    );
-                  } catch (e) {
-                    debugPrint('[SingleImage] UploadService 확인 실패: $e');
-                    // UploadService를 사용할 수 없으면 기존 로직 그대로 사용
-                    isUploading = isPh || isLocal;
-                  }
-                }
+            if (widget.isEditing) {
+              try {
+                final uploadService = context.watch<UploadService>();
+                isUploading = uploadService.hasActiveUploadForRef(
+                  widget.nodeId,
+                );
+              } catch (e) {
+                debugPrint('[SingleImage] UploadService 확인 실패: $e');
               }
-            } catch (_) {}
+            }
 
             final imageService = context.watch<NodeComponentService>();
             final isSelected = imageService.selectedImageId == widget.nodeId;
@@ -526,9 +521,7 @@ class _SingleImageComponentState extends State<SingleImageComponent>
                           Positioned.fill(
                             child: IgnorePointer(
                               ignoring: false,
-                              child: Container(
-                                color: Colors.black.withOpacity(0.6),
-                                alignment: Alignment.center,
+                              child: Center(
                                 child: SizedBox(
                                   width: 20,
                                   height: 20,
@@ -803,10 +796,58 @@ class _SingleImageComponentState extends State<SingleImageComponent>
     return true;
   }
 
+  /// 🎯 메타데이터에서 이미지 크기 가져오기 (쉬머 크기 결정)
+  /// 성능 최적화: 한 번만 조회하고 캐싱
+  Size? _getImageSizeFromMetadata() {
+    // 🚀 이미 조회했으면 캐시 반환
+    if (_sizeInitialized) {
+      return _cachedImageSize;
+    }
+
+    try {
+      final seState = context.findAncestorStateOfType<SuperEditorState>();
+      final doc = seState?.editContext.editor.document;
+      final node = doc?.getNodeById(widget.nodeId);
+
+      if (node is ImageNode) {
+        final meta = (node as dynamic).metadata as Map<String, dynamic>?;
+        if (meta != null) {
+          final dimensions = meta['imageDimensions'] as Map<String, dynamic>?;
+          if (dimensions != null) {
+            // URL 또는 로컬 경로로 크기 찾기
+            final imageUrl = widget.imageUrl;
+            final localPath = meta['localPath']?.toString();
+
+            Map<String, dynamic>? sizeData;
+            if (dimensions.containsKey(imageUrl)) {
+              sizeData = dimensions[imageUrl] as Map<String, dynamic>?;
+            } else if (localPath != null && dimensions.containsKey(localPath)) {
+              sizeData = dimensions[localPath] as Map<String, dynamic>?;
+            }
+
+            if (sizeData != null &&
+                sizeData['width'] != null &&
+                sizeData['height'] != null) {
+              _cachedImageSize = Size(
+                (sizeData['width'] as num).toDouble(),
+                (sizeData['height'] as num).toDouble(),
+              );
+            }
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('[SingleImage] 메타데이터 크기 조회 실패: $e');
+    }
+
+    _sizeInitialized = true;
+    return _cachedImageSize;
+  }
+
   // 이미지 위젯 생성: editedBytes > (업로드중: metadata.localPath) > 로컬 파일 경로 > 네트워크 URL 순서
   Widget _buildImage(Uint8List? editedBytes) {
     if (editedBytes != null) {
-      final double w = MediaQuery.of(context).size.width;
+      final double w = widget.screenWidth; // 🚀 최고 효율: prop 사용
       return Image.memory(
         editedBytes,
         fit: BoxFit.contain,
@@ -816,7 +857,12 @@ class _SingleImageComponentState extends State<SingleImageComponent>
             _lastRenderedChild = child;
             return child;
           }
-          final h = w / (4 / 5);
+          // 🎯 메타데이터에서 실제 크기 가져오기
+          final metaSize = _getImageSizeFromMetadata();
+          final h =
+              metaSize != null
+                  ? (w * metaSize.height / metaSize.width) // 실제 비율
+                  : w / (4 / 5); // 기본 비율
           return _lastRenderedChild ??
               ShimmerBox(width: w, height: h, isDarkMode: widget.isDarkMode);
         },
@@ -840,7 +886,7 @@ class _SingleImageComponentState extends State<SingleImageComponent>
               localPath.startsWith('file://')
                   ? localPath.substring(7)
                   : localPath;
-          final double w = MediaQuery.of(context).size.width;
+          final double w = widget.screenWidth; // 🚀 최고 효율: prop 사용
           return Image.file(
             File(filePath),
             key: ValueKey('$filePath-${Theme.of(context).brightness}'),
@@ -852,7 +898,12 @@ class _SingleImageComponentState extends State<SingleImageComponent>
                 _lastRenderedChild = child;
                 return child;
               }
-              final h = w / (4 / 5);
+              // 🎯 메타데이터에서 실제 크기 가져오기
+              final metaSize = _getImageSizeFromMetadata();
+              final h =
+                  metaSize != null
+                      ? (w * metaSize.height / metaSize.width) // 실제 비율
+                      : w / (4 / 5); // 기본 비율
               return _lastRenderedChild ??
                   ShimmerBox(
                     width: w,
@@ -898,7 +949,12 @@ class _SingleImageComponentState extends State<SingleImageComponent>
           return child;
         }
         final w = MediaQuery.of(context).size.width;
-        final h = w / (4 / 5);
+        // 🎯 메타데이터에서 실제 크기 가져오기
+        final metaSize = _getImageSizeFromMetadata();
+        final h =
+            metaSize != null
+                ? (w * metaSize.height / metaSize.width) // 실제 비율
+                : w / (4 / 5); // 기본 비율
         return _lastRenderedChild ??
             ShimmerBox(width: w, height: h, isDarkMode: widget.isDarkMode);
       },

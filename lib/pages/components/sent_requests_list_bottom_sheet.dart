@@ -36,111 +36,131 @@ class _SentRequestsListBottomSheetState
       builder: (context, friendProvider, child) {
         final sentRequests = friendProvider.sentRequests;
 
-        return DraggableScrollableSheet(
-          initialChildSize: 0.7,
-          minChildSize: 0.5,
-          maxChildSize: 0.95,
-          builder: (context, scrollController) {
-            return Container(
-              decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.surface,
-                borderRadius: const BorderRadius.vertical(
-                  top: Radius.circular(20),
-                ),
+        return Stack(
+          children: [
+            // 🎯 배경 클릭 영역
+            Positioned.fill(
+              child: GestureDetector(
+                onTap: () => Navigator.pop(context),
+                child: Container(color: Colors.transparent),
               ),
-              child: Column(
-                children: [
-                  // 드래그 핸들
-                  Container(
-                    width: 40,
-                    height: 4,
-                    margin: const EdgeInsets.only(top: 12, bottom: 8),
+            ),
+            // 🎯 바텀시트
+            DraggableScrollableSheet(
+              initialChildSize: 0.7,
+              minChildSize: 0.5,
+              maxChildSize: 0.95,
+              builder: (context, scrollController) {
+                return GestureDetector(
+                  // 🎯 내부 컨텐츠 클릭 시 이벤트 소비 (외부로 전파 방지)
+                  onTap: () {},
+                  behavior: HitTestBehavior.opaque,
+                  child: Container(
                     decoration: BoxDecoration(
-                      color: Theme.of(
-                        context,
-                      ).colorScheme.onSurface.withOpacity(0.3),
-                      borderRadius: BorderRadius.circular(2),
+                      color: Theme.of(context).colorScheme.surface,
+                      borderRadius: const BorderRadius.vertical(
+                        top: Radius.circular(24),
+                      ),
                     ),
-                  ),
-
-                  // 헤더
-                  Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 20,
-                      vertical: 8,
-                    ),
-                    child: Row(
+                    child: Column(
                       children: [
-                        Text(
-                          "${context.tr('sent_requests')} (${sentRequests.length})",
-                          style: TextStyle(
-                            fontSize: 20,
-                            fontWeight: FontWeight.bold,
-                            color: Theme.of(context).colorScheme.onSurface,
+                        // 드래그 핸들
+                        Container(
+                          width: 40,
+                          height: 4,
+                          margin: const EdgeInsets.only(top: 12, bottom: 8),
+                          decoration: BoxDecoration(
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.onSurface.withOpacity(0.3),
+                            borderRadius: BorderRadius.circular(2),
                           ),
+                        ),
+
+                        // 헤더
+                        Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 20,
+                            vertical: 8,
+                          ),
+                          child: Row(
+                            children: [
+                              Text(
+                                "${context.tr('sent_requests')} (${sentRequests.length})",
+                                style: TextStyle(
+                                  fontSize: 20,
+                                  fontWeight: FontWeight.bold,
+                                  color:
+                                      Theme.of(context).colorScheme.onSurface,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+
+                        // 리스트
+                        Expanded(
+                          child:
+                              sentRequests.isEmpty
+                                  ? Center(
+                                    child: Column(
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.center,
+                                      children: [],
+                                    ),
+                                  )
+                                  : ListView.builder(
+                                    controller: scrollController,
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 20,
+                                      vertical: 8,
+                                    ),
+                                    itemCount:
+                                        sentRequests.length +
+                                        (friendProvider.hasMoreSentRequests ||
+                                                friendProvider
+                                                    .isLoadingMoreSentRequests
+                                            ? 1
+                                            : 0),
+                                    itemBuilder: (context, index) {
+                                      // 🎯 마지막 아이템에 도달하면 더 불러오기
+                                      if (index == sentRequests.length - 3 &&
+                                          friendProvider.hasMoreSentRequests &&
+                                          !friendProvider
+                                              .isLoadingMoreSentRequests) {
+                                        WidgetsBinding.instance
+                                            .addPostFrameCallback((_) {
+                                              friendProvider
+                                                  .loadMoreSentRequests();
+                                            });
+                                      }
+
+                                      // 🎯 로딩 인디케이터
+                                      if (index >= sentRequests.length) {
+                                        return Padding(
+                                          padding: const EdgeInsets.all(16.0),
+                                          child: Center(
+                                            child:
+                                                friendProvider
+                                                        .isLoadingMoreSentRequests
+                                                    ? const CircularProgressIndicator()
+                                                    : const SizedBox.shrink(),
+                                          ),
+                                        );
+                                      }
+
+                                      final friend = sentRequests[index];
+                                      return _buildRequestTile(context, friend);
+                                    },
+                                  ),
                         ),
                       ],
                     ),
                   ),
-
-                  // 리스트
-                  Expanded(
-                    child:
-                        sentRequests.isEmpty
-                            ? Center(
-                              child: Column(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [],
-                              ),
-                            )
-                            : ListView.builder(
-                              controller: scrollController,
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 20,
-                                vertical: 8,
-                              ),
-                              itemCount:
-                                  sentRequests.length +
-                                  (friendProvider.hasMoreSentRequests ||
-                                          friendProvider
-                                              .isLoadingMoreSentRequests
-                                      ? 1
-                                      : 0),
-                              itemBuilder: (context, index) {
-                                // 🎯 마지막 아이템에 도달하면 더 불러오기
-                                if (index == sentRequests.length - 3 &&
-                                    friendProvider.hasMoreSentRequests &&
-                                    !friendProvider.isLoadingMoreSentRequests) {
-                                  WidgetsBinding.instance.addPostFrameCallback((
-                                    _,
-                                  ) {
-                                    friendProvider.loadMoreSentRequests();
-                                  });
-                                }
-
-                                // 🎯 로딩 인디케이터
-                                if (index >= sentRequests.length) {
-                                  return Padding(
-                                    padding: const EdgeInsets.all(16.0),
-                                    child: Center(
-                                      child:
-                                          friendProvider
-                                                  .isLoadingMoreSentRequests
-                                              ? const CircularProgressIndicator()
-                                              : const SizedBox.shrink(),
-                                    ),
-                                  );
-                                }
-
-                                final friend = sentRequests[index];
-                                return _buildRequestTile(context, friend);
-                              },
-                            ),
-                  ),
-                ],
-              ),
-            );
-          },
+                );
+              },
+            ),
+          ],
         );
       },
     );

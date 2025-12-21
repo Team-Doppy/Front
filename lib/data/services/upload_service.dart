@@ -642,7 +642,7 @@ class UploadService with ChangeNotifier {
 
   String _genId() => DateTime.now().microsecondsSinceEpoch.toString();
 
-  // 이미지 리사이즈/압축: 긴 변 1440px, JPEG 82 (사진 품질용)
+  // 이미지 리사이즈/압축: 긴 변 1440px, JPEG 75 (빠른 로드를 위한 최적화)
   Future<Uint8List> _prepareImageBytes(UploadTask task) async {
     try {
       final raw = task.bytes ?? await task.file!.readAsBytes();
@@ -661,7 +661,7 @@ class UploadService with ChangeNotifier {
       final out = await compute(_resizeImageWorker, {
         'bytes': raw,
         'maxSide': 1440,
-        'quality': 82,
+        'quality': 75, // 🚀 82 → 75 (파일 크기 약 30% 감소, 화질 저하 거의 없음)
         'fileName': task.fileName, // 🎯 파일명 전달 (PNG 감지용)
       });
       return out;
@@ -671,12 +671,16 @@ class UploadService with ChangeNotifier {
   }
 
   // compute용 워커(탑레벨)
+  // 🚀 타겟 파일 크기 기반 적응형 압축 (모든 이미지가 비슷한 크기로)
   static Future<Uint8List> _resizeImageWorker(Map<String, Object?> args) async {
     final bytes = args['bytes'] as Uint8List;
     final int maxSide = (args['maxSide'] as int?) ?? 1440;
-    final int quality = (args['quality'] as int?) ?? 82;
+    final int baseQuality = (args['quality'] as int?) ?? 75;
     final String? fileName = args['fileName'] as String?;
     final bool isPng = fileName?.toLowerCase().endsWith('.png') ?? false;
+
+    // 🚀 타겟 파일 크기: 약 500KB (로드 시간 균일화 목표)
+    const int targetBytes = 500 * 1024;
 
     try {
       final decoded = img.decodeImage(bytes);
@@ -690,24 +694,69 @@ class UploadService with ChangeNotifier {
         return bytes; // 원본 그대로
       }
 
-      if (w <= maxSide && h <= maxSide) {
-        return Uint8List.fromList(img.encodeJpg(decoded, quality: quality));
+      // 리사이즈 필요 여부 확인
+      img.Image? resized;
+      if (w > maxSide || h > maxSide) {
+        final scale = w >= h ? maxSide / w : maxSide / h;
+        final newW = (w * scale).round();
+        final newH = (h * scale).round();
+        resized = img.copyResize(
+          decoded,
+          width: newW,
+          height: newH,
+          interpolation: img.Interpolation.average,
+        );
+      } else {
+        resized = decoded;
       }
-      final scale = w >= h ? maxSide / w : maxSide / h;
-      final newW = (w * scale).round();
-      final newH = (h * scale).round();
-      final resized = img.copyResize(
-        decoded,
-        width: newW,
-        height: newH,
-        interpolation: img.Interpolation.average,
-      );
 
-      // 🎯 PNG는 PNG로, 나머지는 JPG로 인코딩
+      // 🎯 PNG는 PNG로, 나머지는 JPG로 인코딩 (적응형 품질 조정)
       if (isPng) {
         return Uint8List.fromList(img.encodePng(resized, level: 6));
       } else {
-        return Uint8List.fromList(img.encodeJpg(resized, quality: quality));
+        // 🚀 타겟 크기에 맞게 quality 조정 (적응형 압축)
+        int currentQuality = baseQuality;
+        Uint8List result = Uint8List.fromList(
+          img.encodeJpg(resized, quality: currentQuality),
+        );
+
+        // 타겟 크기보다 크면 quality를 낮춰서 재시도 (최소 60까지)
+        if (result.length > targetBytes && currentQuality > 60) {
+          int low = 60;
+          int high = currentQuality;
+
+          // 바이너리 서치로 타겟 크기에 가까운 quality 찾기
+          while (low <= high) {
+            currentQuality = (low + high) ~/ 2;
+            result = Uint8List.fromList(
+              img.encodeJpg(resized, quality: currentQuality),
+            );
+
+            if (result.length > targetBytes) {
+              // 여전히 크면 quality를 더 낮춤
+              high = currentQuality - 1;
+            } else {
+              // 타겟 이하면 quality를 높일 수 있는지 시도
+              if (currentQuality < baseQuality) {
+                final nextQuality = (currentQuality + high).clamp(
+                  currentQuality + 1,
+                  baseQuality,
+                );
+                final nextResult = Uint8List.fromList(
+                  img.encodeJpg(resized, quality: nextQuality),
+                );
+                if (nextResult.length <= targetBytes) {
+                  currentQuality = nextQuality;
+                  result = nextResult;
+                  break;
+                }
+              }
+              break;
+            }
+          }
+        }
+
+        return result;
       }
     } catch (_) {
       return bytes;

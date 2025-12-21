@@ -68,6 +68,9 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
   bool _isLoadingMore = false;
   final ScrollController _scrollController = ScrollController();
 
+  // 🎯 영상 전체 저장용 (모든 앨범에서 수집한 전체 영상)
+  List<AssetEntity> _allVideoMedia = [];
+
   @override
   void initState() {
     super.initState();
@@ -212,15 +215,6 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
   }
 
   Future<void> _loadMedia() async {
-    if (_currentAlbum == null) {
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
-      }
-      return;
-    }
-
     if (mounted) {
       setState(() {
         _isLoading = true;
@@ -231,90 +225,152 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
     }
 
     try {
-      // 🎯 첫 페이지 로드
-      final List<AssetEntity> allMedia = await _currentAlbum!.getAssetListRange(
-        start: 0,
-        end: _pageSize,
-      );
+      List<AssetEntity> media = [];
 
-      // 타입에 따라 필터링
-      List<AssetEntity> media =
-          allMedia.where((asset) {
-            if (_mediaType == MediaType.video) {
-              return asset.type == AssetType.video;
-            } else {
-              return asset.type == AssetType.image;
-            }
-          }).toList();
+      if (_mediaType == MediaType.video) {
+        // 🎯 영상의 경우: 모든 영상 앨범에서 전체 영상 가져오기
+        debugPrint('[MediaPicker] 영상 전체 앨범에서 로드 시작...');
 
-      // 🎯 더 로드할 미디어가 있는지 확인
-      _hasMoreMedia = allMedia.length >= _pageSize;
-
-      // 필터링 후 비어있고, 다른 앨범이 있다면 해당 타입의 미디어가 있는 앨범 찾기
-      if (media.isEmpty && _albums.length > 1) {
-        debugPrint(
-          '[MediaPicker] 현재 앨범에 ${_mediaType == MediaType.video ? "영상" : "이미지"}이 없음. 다른 앨범 찾는 중...',
-        );
-
-        // 해당 타입의 앨범 목록 가져오기
-        final List<AssetPathEntity> targetAlbums =
-            _mediaType == MediaType.video
-                ? await PhotoManager.getAssetPathList(
-                  type: RequestType.video,
-                  hasAll: true,
-                )
-                : await PhotoManager.getAssetPathList(
-                  type: RequestType.image,
-                  hasAll: true,
-                );
-
-        // 타겟 앨범 중에서 미디어가 있는 앨범 찾기
-        for (final targetAlbum in targetAlbums) {
-          if (targetAlbum.id == _currentAlbum!.id) continue; // 현재 앨범은 건너뛰기
-
-          final testMedia = await targetAlbum.getAssetListRange(
-            start: 0,
-            end: 100,
-          );
-          final filteredMedia =
-              testMedia.where((asset) {
-                return _mediaType == MediaType.video
-                    ? asset.type == AssetType.video
-                    : asset.type == AssetType.image;
-              }).toList();
-
-          if (filteredMedia.isNotEmpty) {
-            debugPrint('[MediaPicker] 미디어가 있는 앨범 발견: ${targetAlbum.name}');
-            // 해당 앨범으로 변경
-            setState(() {
-              _currentAlbum = targetAlbum;
-            });
-            // 🎯 첫 페이지만 로드
-            final allMediaFromNewAlbum = await targetAlbum.getAssetListRange(
-              start: 0,
-              end: _pageSize,
+        // 모든 영상 앨범 가져오기 (hasAll: true로 전체 앨범 포함)
+        final List<AssetPathEntity> videoAlbums =
+            await PhotoManager.getAssetPathList(
+              type: RequestType.video,
+              hasAll: true,
             );
-            media =
-                allMediaFromNewAlbum.where((asset) {
-                  return _mediaType == MediaType.video
-                      ? asset.type == AssetType.video
-                      : asset.type == AssetType.image;
-                }).toList();
-            _hasMoreMedia = allMediaFromNewAlbum.length >= _pageSize;
-            break;
+
+        if (videoAlbums.isEmpty) {
+          debugPrint('[MediaPicker] 영상 앨범이 없습니다');
+          if (mounted) {
+            setState(() {
+              _media = [];
+              _isLoading = false;
+              _hasMoreMedia = false;
+            });
+          }
+          return;
+        }
+
+        // 모든 영상 앨범에서 영상 수집
+        final Set<String> seenIds = {}; // 중복 제거용
+
+        for (final album in videoAlbums) {
+          try {
+            // 각 앨범의 모든 영상 가져오기 (페이지네이션 없이 전체)
+            final albumAssets = await album.getAssetListRange(
+              start: 0,
+              end: 10000, // 충분히 큰 값으로 모든 영상 가져오기
+            );
+
+            // 영상만 필터링하고 중복 제거
+            for (final asset in albumAssets) {
+              if (asset.type == AssetType.video &&
+                  !seenIds.contains(asset.id)) {
+                media.add(asset);
+                seenIds.add(asset.id);
+              }
+            }
+          } catch (e) {
+            debugPrint('[MediaPicker] 앨범 ${album.name} 로드 오류: $e');
           }
         }
+
+        // 날짜 순으로 정렬 (최신순)
+        media.sort((a, b) {
+          final aTime = a.createDateTime;
+          final bTime = b.createDateTime;
+
+          return bTime.compareTo(aTime);
+        });
+
+        // 전체 영상 저장
+        _allVideoMedia = media;
+
+        // 첫 페이지만 표시
+        final firstPage = media.take(_pageSize).toList();
+        _hasMoreMedia = media.length > _pageSize;
+
+        debugPrint(
+          '[MediaPicker] 전체 영상 개수: ${media.length}, 첫 페이지: ${firstPage.length}',
+        );
+
+        if (!mounted) return;
+        setState(() {
+          _media = firstPage;
+          _isLoading = false;
+        });
+      } else {
+        // 🎯 이미지의 경우: 기존 로직 유지 (특정 앨범에서만)
+        if (_currentAlbum == null) {
+          if (mounted) {
+            setState(() {
+              _isLoading = false;
+            });
+          }
+          return;
+        }
+
+        final List<AssetEntity> allMedia = await _currentAlbum!
+            .getAssetListRange(start: 0, end: _pageSize);
+
+        // 타입에 따라 필터링
+        media =
+            allMedia.where((asset) {
+              return asset.type == AssetType.image;
+            }).toList();
+
+        // 🎯 더 로드할 미디어가 있는지 확인
+        _hasMoreMedia = allMedia.length >= _pageSize;
+
+        // 필터링 후 비어있고, 다른 앨범이 있다면 이미지가 있는 앨범 찾기
+        if (media.isEmpty && _albums.length > 1) {
+          debugPrint('[MediaPicker] 현재 앨범에 이미지가 없음. 다른 앨범 찾는 중...');
+
+          final List<AssetPathEntity> imageAlbums =
+              await PhotoManager.getAssetPathList(
+                type: RequestType.image,
+                hasAll: true,
+              );
+
+          // 타겟 앨범 중에서 미디어가 있는 앨범 찾기
+          for (final targetAlbum in imageAlbums) {
+            if (targetAlbum.id == _currentAlbum!.id) continue;
+
+            final testMedia = await targetAlbum.getAssetListRange(
+              start: 0,
+              end: 100,
+            );
+            final filteredMedia =
+                testMedia
+                    .where((asset) => asset.type == AssetType.image)
+                    .toList();
+
+            if (filteredMedia.isNotEmpty) {
+              debugPrint('[MediaPicker] 이미지가 있는 앨범 발견: ${targetAlbum.name}');
+              setState(() {
+                _currentAlbum = targetAlbum;
+              });
+              final allMediaFromNewAlbum = await targetAlbum.getAssetListRange(
+                start: 0,
+                end: _pageSize,
+              );
+              media =
+                  allMediaFromNewAlbum
+                      .where((asset) => asset.type == AssetType.image)
+                      .toList();
+              _hasMoreMedia = allMediaFromNewAlbum.length >= _pageSize;
+              break;
+            }
+          }
+        }
+
+        debugPrint('[MediaPicker] 로드된 이미지 개수: ${media.length}');
+
+        if (!mounted) return;
+        setState(() {
+          _media = media;
+          _isLoading = false;
+        });
       }
-
-      debugPrint(
-        '[MediaPicker] 로드된 ${_mediaType == MediaType.video ? "영상" : "이미지"} 개수: ${media.length}',
-      );
-
-      if (!mounted) return;
-      setState(() {
-        _media = media;
-        _isLoading = false;
-      });
     } catch (e) {
       debugPrint('미디어 로드 오류: $e');
       if (mounted) {
@@ -327,46 +383,83 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
 
   // 🎯 추가 미디어 로드 (페이지네이션)
   Future<void> _loadMoreMedia() async {
-    if (_currentAlbum == null || _isLoadingMore || !_hasMoreMedia) return;
+    if (_isLoadingMore || !_hasMoreMedia) return;
 
     setState(() {
       _isLoadingMore = true;
     });
 
     try {
-      _currentPage++;
-      final start = _currentPage * _pageSize;
-      final end = start + _pageSize;
-
-      debugPrint(
-        '[MediaPicker] 📄 페이지 로드: page=$_currentPage, start=$start, end=$end',
-      );
-
-      final List<AssetEntity> newMedia = await _currentAlbum!.getAssetListRange(
-        start: start,
-        end: end,
-      );
-
-      // 타입에 따라 필터링
-      final filtered =
-          newMedia.where((asset) {
-            if (_mediaType == MediaType.video) {
-              return asset.type == AssetType.video;
-            } else {
-              return asset.type == AssetType.image;
-            }
-          }).toList();
-
-      if (mounted) {
-        setState(() {
-          _media.addAll(filtered);
-          _hasMoreMedia = newMedia.length >= _pageSize;
-          _isLoadingMore = false;
-        });
+      if (_mediaType == MediaType.video) {
+        // 🎯 영상의 경우: _allVideoMedia에서 다음 페이지 가져오기
+        _currentPage++;
+        final start = _currentPage * _pageSize;
+        final end = (start + _pageSize).clamp(0, _allVideoMedia.length);
 
         debugPrint(
-          '[MediaPicker] ✅ 추가 로드 완료: ${filtered.length}개, 총 ${_media.length}개',
+          '[MediaPicker] 📄 영상 페이지 로드: page=$_currentPage, start=$start, end=$end (전체: ${_allVideoMedia.length})',
         );
+
+        if (start < _allVideoMedia.length) {
+          final newMedia = _allVideoMedia.sublist(start, end);
+
+          if (mounted) {
+            setState(() {
+              _media.addAll(newMedia);
+              _hasMoreMedia = end < _allVideoMedia.length;
+              _isLoadingMore = false;
+            });
+
+            debugPrint(
+              '[MediaPicker] ✅ 영상 추가 로드 완료: ${newMedia.length}개, 총 ${_media.length}개',
+            );
+          }
+        } else {
+          if (mounted) {
+            setState(() {
+              _hasMoreMedia = false;
+              _isLoadingMore = false;
+            });
+          }
+        }
+      } else {
+        // 🎯 이미지의 경우: 기존 로직 유지
+        if (_currentAlbum == null) {
+          if (mounted) {
+            setState(() {
+              _isLoadingMore = false;
+              _hasMoreMedia = false;
+            });
+          }
+          return;
+        }
+
+        _currentPage++;
+        final start = _currentPage * _pageSize;
+        final end = start + _pageSize;
+
+        debugPrint(
+          '[MediaPicker] 📄 이미지 페이지 로드: page=$_currentPage, start=$start, end=$end',
+        );
+
+        final List<AssetEntity> newMedia = await _currentAlbum!
+            .getAssetListRange(start: start, end: end);
+
+        // 타입에 따라 필터링
+        final filtered =
+            newMedia.where((asset) => asset.type == AssetType.image).toList();
+
+        if (mounted) {
+          setState(() {
+            _media.addAll(filtered);
+            _hasMoreMedia = newMedia.length >= _pageSize;
+            _isLoadingMore = false;
+          });
+
+          debugPrint(
+            '[MediaPicker] ✅ 이미지 추가 로드 완료: ${filtered.length}개, 총 ${_media.length}개',
+          );
+        }
       }
     } catch (e) {
       debugPrint('[MediaPicker] ❌ 추가 로드 오류: $e');
@@ -941,7 +1034,7 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
                   ),
                 ),
               ),
-              /*
+
               const SizedBox(width: 4),
               Divider(color: colorScheme.onSurface.withOpacity(1), height: 24),
               Expanded(
@@ -959,7 +1052,7 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
                     ),
                   ),
                 ),
-              ),*/
+              ),
             ],
             /*
              else ...[
@@ -1175,7 +1268,6 @@ class _VideoThumbnailWidget extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
     return GestureDetector(
       onTap: isDisabled ? null : onTap, // 🎯 비활성화 상태면 탭 불가
       child: Stack(
@@ -1219,7 +1311,7 @@ class _VideoThumbnailWidget extends StatelessWidget {
           if (isSelected)
             Positioned.fill(
               child: Container(
-                color: Colors.white.withOpacity(0.3), // 흰색 30% 투명도
+                color: Colors.white.withOpacity(0.6), // 흰색 30% 투명도
               ),
             ),
           // 선택 표시 (우측 상단)
@@ -1288,7 +1380,6 @@ class _ImageThumbnailWidget extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
     return GestureDetector(
       onTap: isDisabled ? null : onTap, // 🎯 비활성화 상태면 탭 불가
       child: Stack(
@@ -1321,7 +1412,7 @@ class _ImageThumbnailWidget extends StatelessWidget {
           if (isSelected)
             Positioned.fill(
               child: Container(
-                color: Colors.white.withOpacity(0.3), // 흰색 30% 투명도
+                color: Colors.white.withOpacity(0.6), // 흰색 30% 투명도
               ),
             ),
           // 선택 표시 (우측 상단)

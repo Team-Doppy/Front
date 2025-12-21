@@ -41,6 +41,24 @@ class DropLineConfig {
       if (isSplitTarget && dropIndex == currentNodeIndex) {
         return true; // 분리 대상 노드의 위쪽 라인 표시
       }
+      // 🎯 분리 모드일 때 분리 대상 노드가 아니면 라인 숨김
+      return false;
+    }
+
+    // 🎯 드래그 중인 노드가 바로 이웃한 위치에 있으면 라인 숨김
+    final draggingNodeId = dragService.draggingNodeId;
+    if (draggingNodeId != null) {
+      final draggingNodeIndex = dragService.getNodeIndex(draggingNodeId);
+      if (draggingNodeIndex != -1) {
+        // 드래그 중인 노드가 바로 위에 있으면 (현재 노드가 드래그 노드 바로 아래)
+        if (currentNodeIndex == draggingNodeIndex + 1) {
+          return false; // 이웃한 위치이므로 라인 숨김
+        }
+        // 드래그 중인 노드가 현재 노드와 같은 위치면
+        if (currentNodeIndex == draggingNodeIndex) {
+          return false; // 자기 자신이므로 라인 숨김
+        }
+      }
     }
 
     // 이 노드 위에 삽입하는 경우
@@ -62,10 +80,24 @@ class DropLineConfig {
   }) {
     final doc = dragService.editorService.document;
 
+    // 🎯 규칙 0: 드래그 중인 노드가 바로 위에 있으면 숨김
+    final draggingNodeId = dragService.draggingNodeId;
+    if (draggingNodeId != null) {
+      final draggingNodeIndex = dragService.getNodeIndex(draggingNodeId);
+      if (draggingNodeIndex != -1) {
+        // 드래그 중인 노드가 바로 위에 있으면
+        if (currentNodeIndex == draggingNodeIndex + 1) {
+          return false; // 이웃한 위치이므로 라인 숨김
+        }
+      }
+    }
+
     // 🎯 규칙 1: 이전 노드가 특수 노드이면 숨김
     // (특수 노드가 아래쪽 라인을 표시하므로 중복 방지)
     if (currentNodeIndex > 0) {
       final prevNode = doc.getNodeAt(currentNodeIndex - 1);
+      if (prevNode == null) return false;
+
       if (NodeTypeChecker.isSpecialNode(prevNode)) {
         return false;
       }
@@ -97,6 +129,29 @@ class DropLineConfig {
       final isSplitTarget = dragService.draggingNodeId == nodeId;
       if (isSplitTarget && dropIndex == currentNodeIndex + 1) {
         return true; // 분리 대상 노드의 하단 라인 표시
+      }
+      // 🎯 분리 모드일 때 분리 대상 노드가 아니면 라인 숨김
+      return false;
+    }
+
+    // 🎯 드래그 중인 노드가 바로 이웃한 위치에 있으면 라인 숨김
+    final draggingNodeId = dragService.draggingNodeId;
+    if (draggingNodeId != null) {
+      final draggingNodeIndex = dragService.getNodeIndex(draggingNodeId);
+      if (draggingNodeIndex != -1) {
+        // 드래그 중인 노드가 바로 아래에 있으면 (현재 노드가 드래그 노드 바로 위)
+        if (currentNodeIndex == draggingNodeIndex - 1) {
+          return false; // 이웃한 위치이므로 라인 숨김
+        }
+        // 드래그 중인 노드가 현재 노드와 같은 위치면
+        if (currentNodeIndex == draggingNodeIndex) {
+          return false; // 자기 자신이므로 라인 숨김
+        }
+        // 드래그 중인 노드가 바로 아래에 있고, 드롭 인덱스가 그 위치면
+        if (currentNodeIndex + 1 == draggingNodeIndex &&
+            dropIndex == draggingNodeIndex) {
+          return false; // 자기 자신 바로 아래로 드롭하는 경우
+        }
       }
     }
 
@@ -142,9 +197,22 @@ class DropLineConfig {
       }
     }
 
+    // 🎯 규칙 0.5: 드래그 중인 노드가 바로 아래에 있으면 숨김
+    final draggingNodeId = dragService.draggingNodeId;
+    if (draggingNodeId != null) {
+      final draggingNodeIndex = dragService.getNodeIndex(draggingNodeId);
+      if (draggingNodeIndex != -1) {
+        // 드래그 중인 노드가 바로 아래에 있으면
+        if (currentNodeIndex + 1 == draggingNodeIndex) {
+          return false; // 이웃한 위치이므로 라인 숨김
+        }
+      }
+    }
+
     // 🎯 규칙 1: 다음 노드 확인 (일반 드래그)
     if (currentNodeIndex + 1 < documentLength) {
       final nextNode = doc.getNodeAt(currentNodeIndex + 1);
+      if (nextNode == null) return false;
 
       // 다음이 특수 노드이면 숨김 (특수 노드는 자신의 상단 라인을 표시)
       if (NodeTypeChecker.isSpecialNode(nextNode)) {

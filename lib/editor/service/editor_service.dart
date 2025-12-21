@@ -81,21 +81,27 @@ class EditorService extends ChangeNotifier {
     required this.editor,
     required this.document,
     BuildContext? context,
+    bool enableInitialStateSave = true, // 🎯 초기 상태 저장 활성화 여부
   }) : _context = context {
     document.addListener(_onDocumentChanged);
     editor.composer.selectionNotifier.addListener(_onSelectionChanged);
 
-    // 초기 상태 저장 (여러 프레임 후 실행하여 UI 블로킹 방지)
-    // 🎯 사용자가 실제로 편집을 시작할 때까지 충분히 지연
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      // 첫 프레임 후 추가 지연 (UI 렌더링 완료 보장)
-      // 🎯 500ms 후 저장 (사용자가 빠르게 편집해도 첫 상태 기록)
-      Future.delayed(const Duration(milliseconds: 500), () {
-        if (!_initialStateSaved) {
-          _saveInitialState();
-        }
+    if (enableInitialStateSave) {
+      // 초기 상태 저장 (여러 프레임 후 실행하여 UI 블로킹 방지)
+      // 🎯 사용자가 실제로 편집을 시작할 때까지 충분히 지연
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        // 첫 프레임 후 추가 지연 (UI 렌더링 완료 보장)
+        // 🎯 500ms 후 저장 (사용자가 빠르게 편집해도 첫 상태 기록)
+        Future.delayed(const Duration(milliseconds: 500), () {
+          if (!_initialStateSaved) {
+            _saveInitialState();
+          }
+        });
       });
-    });
+    } else {
+      // 읽기 모드: 초기 상태 저장 비활성화
+      _initialStateSaved = true;
+    }
   }
 
   // 🎯 BuildContext 설정 (initState 이후에 설정 가능)
@@ -286,17 +292,18 @@ class EditorService extends ChangeNotifier {
     }
   }
 
-  // 🎯 스냅샷 비교
+  // 🚀 스냅샷 비교 (해시 기반 O(1) 최적화)
   bool _areSnapshotsEqual(_DocumentSnapshot a, _DocumentSnapshot b) {
-    if (a.order.length != b.order.length) return false;
-    if (a.order.join(',') != b.order.join(',')) return false;
+    // 1. 🚀 해시 비교 (가장 빠름 - O(1))
+    if (a.hashCode != b.hashCode) return false;
 
-    for (final id in a.nodes.keys) {
-      if (!b.nodes.containsKey(id)) return false;
-      final nodeA = a.nodes[id];
-      final nodeB = b.nodes[id];
-      if (nodeA is ParagraphNode && nodeB is ParagraphNode) {
-        if (nodeA.text.text != nodeB.text.text) return false;
+    // 2. 🎯 해시가 같으면 추가 검증 (해시 충돌 방지)
+    if (a.order.length != b.order.length) return false;
+
+    // 3. 🎯 빠른 샘플링 체크 (첫/마지막 노드만 확인)
+    if (a.order.isNotEmpty && b.order.isNotEmpty) {
+      if (a.order.first != b.order.first || a.order.last != b.order.last) {
+        return false;
       }
     }
 
@@ -681,6 +688,16 @@ class EditorService extends ChangeNotifier {
       _isExecutingHistory = false;
       notifyListeners();
     }
+  }
+
+  /// 🗑️ Undo/Redo 히스토리 완전 초기화
+  void clearHistory() {
+    _historyTimer?.cancel();
+    _undoStack.clear();
+    _redoStack.clear();
+    _initialStateSaved = false;
+    debugPrint('[EditorService] 🗑️ 히스토리 클리어 완료');
+    notifyListeners();
   }
 
   // 🎯 스냅샷으로 문서 복원
@@ -2089,6 +2106,29 @@ class EditorService extends ChangeNotifier {
       }
     }
     return false;
+  }
+
+  /// 🎯 업로드되지 않은 이미지가 있는지 확인 (UploadService의 task 기반 실제 업로드 상태만 확인)
+  /// 🚀 플레이스홀더 개념 제거 - UploadService의 활성 업로드만 체크하여 가볍고 정확하게 판단
+  bool hasUnuploadedImages() {
+    if (_context == null) return false;
+
+    try {
+      final uploadService = _context!.read<UploadService>();
+      // 🚀 에디터 관련 활성 업로드(pending, uploading)가 있는지만 확인
+      return uploadService.hasActiveUploads();
+    } catch (e) {
+      // UploadService 접근 실패 시 false 반환 (업로드 없음으로 간주)
+      debugPrint(
+        '[EditorService] hasUnuploadedImages: UploadService 접근 실패: $e',
+      );
+      return false;
+    }
+  }
+
+  /// 🎯 네트워크 URL인지 확인하는 static 메서드 (외부에서 사용 가능)
+  static bool isNetworkUrl(String url) {
+    return url.startsWith('http://') || url.startsWith('https://');
   }
 
   /// 문서 내용을 간단 스냅샷으로 직렬화하여 지문(fingerprint)을 생성
@@ -3798,6 +3838,38 @@ class _DocumentSnapshot {
   final Map<String, DocumentNode> nodes; // nodeId -> node
   final List<String> order; // 노드 순서
   final DocumentSelection? selection; // 커서 위치
+  final int _cachedHashCode; // 🚀 캐시된 해시 (O(1) 비교용)
 
-  _DocumentSnapshot({required this.nodes, required this.order, this.selection});
+  _DocumentSnapshot({required this.nodes, required this.order, this.selection})
+    : _cachedHashCode = _computeHash(nodes, order);
+
+  // 🚀 해시 계산 (생성 시 한 번만)
+  static int _computeHash(Map<String, DocumentNode> nodes, List<String> order) {
+    // 노드 개수 + 순서 + 각 노드의 텍스트 해시
+    final values = <int>[order.length, order.join(',').hashCode];
+
+    // 샘플링: 첫/중간/마지막 노드만 체크 (성능 최적화)
+    if (order.isNotEmpty) {
+      final indices = [
+        0,
+        if (order.length > 1) order.length ~/ 2,
+        if (order.length > 1) order.length - 1,
+      ];
+
+      for (final i in indices) {
+        final id = order[i];
+        final node = nodes[id];
+        if (node is ParagraphNode) {
+          values.add(node.text.text.hashCode);
+        } else {
+          values.add(node.runtimeType.hashCode);
+        }
+      }
+    }
+
+    return Object.hashAll(values);
+  }
+
+  @override
+  int get hashCode => _cachedHashCode;
 }

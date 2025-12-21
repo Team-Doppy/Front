@@ -29,139 +29,155 @@ class _ReceivedRequestBottomSheetState
 
   @override
   Widget build(BuildContext context) {
-    return DraggableScrollableSheet(
-      initialChildSize: 0.6,
-      minChildSize: 0.5,
-      maxChildSize: 0.9,
-      builder: (context, scrollController) {
-        return Container(
-          decoration: BoxDecoration(
-            color: Theme.of(context).colorScheme.surface,
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+    return Stack(
+      children: [
+        // 🎯 배경 클릭 영역
+        Positioned.fill(
+          child: GestureDetector(
+            onTap: () => Navigator.pop(context),
+            child: Container(color: Colors.transparent),
           ),
-          child: Column(
-            children: [
-              // 드래그 핸들
-              Container(
-                width: 40,
-                height: 4,
-                margin: const EdgeInsets.only(top: 12, bottom: 8),
+        ),
+        // 🎯 바텀시트
+        DraggableScrollableSheet(
+          initialChildSize: 0.7,
+          minChildSize: 0.5,
+          maxChildSize: 0.9,
+          builder: (context, scrollController) {
+            return GestureDetector(
+              // 🎯 내부 컨텐츠 클릭 시 이벤트 소비 (외부로 전파 방지)
+              onTap: () {},
+              behavior: HitTestBehavior.opaque,
+              child: Container(
                 decoration: BoxDecoration(
-                  color: Theme.of(
-                    context,
-                  ).colorScheme.onSurface.withOpacity(0.3),
-                  borderRadius: BorderRadius.circular(2),
+                  color: Theme.of(context).colorScheme.surface,
+                  borderRadius: const BorderRadius.vertical(
+                    top: Radius.circular(24),
+                  ),
                 ),
-              ),
-
-              // 헤더
-              Padding(
-                padding: const EdgeInsets.fromLTRB(20, 12, 20, 8),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                child: Column(
                   children: [
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          AppLocalizations.of(
-                            context,
-                          ).translate('new_friend_requests'),
-                          style: Theme.of(
-                            context,
-                          ).textTheme.headlineSmall?.copyWith(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 20,
-                            color: Theme.of(context).colorScheme.onSurface,
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          AppLocalizations.of(context)
-                              .translate('requests_count')
-                              .replaceAll(
-                                '{count}',
-                                '${widget.requests.length}',
-                              ),
-                          style: Theme.of(
-                            context,
-                          ).textTheme.bodyMedium?.copyWith(
-                            color: Theme.of(
-                              context,
-                            ).colorScheme.onSurface.withOpacity(0.6),
-                          ),
-                        ),
-                      ],
-                    ),
-                    IconButton(
-                      icon: Icon(
-                        Icons.close,
+                    // 드래그 핸들
+                    Container(
+                      width: 40,
+                      height: 4,
+                      margin: const EdgeInsets.only(top: 12, bottom: 8),
+                      decoration: BoxDecoration(
                         color: Theme.of(
                           context,
-                        ).colorScheme.onSurface.withOpacity(0.6),
-                        size: 24,
+                        ).colorScheme.onSurface.withOpacity(0.3),
+                        borderRadius: BorderRadius.circular(2),
                       ),
-                      onPressed: () => Navigator.pop(context),
                     ),
+
+                    // 헤더
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(20, 12, 20, 8),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                AppLocalizations.of(
+                                  context,
+                                ).translate('new_friend_requests'),
+                                style: Theme.of(
+                                  context,
+                                ).textTheme.headlineSmall?.copyWith(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 20,
+                                  color:
+                                      Theme.of(context).colorScheme.onSurface,
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                AppLocalizations.of(context)
+                                    .translate('requests_count')
+                                    .replaceAll(
+                                      '{count}',
+                                      '${widget.requests.length}',
+                                    ),
+                                style: Theme.of(
+                                  context,
+                                ).textTheme.bodyMedium?.copyWith(
+                                  color: Theme.of(
+                                    context,
+                                  ).colorScheme.onSurface.withOpacity(0.6),
+                                ),
+                              ),
+                            ],
+                          ),
+                          IconButton(
+                            icon: Icon(
+                              Icons.close,
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.onSurface.withOpacity(0.6),
+                              size: 24,
+                            ),
+                            onPressed: () => Navigator.pop(context),
+                          ),
+                        ],
+                      ),
+                    ),
+
+                    const SizedBox(height: 8),
+
+                    // 리스트
+                    Expanded(
+                      child:
+                          widget.requests.isEmpty
+                              ? Padding(
+                                padding: const EdgeInsets.all(32),
+                                child: Center(
+                                  child: Text(
+                                    AppLocalizations.of(
+                                      context,
+                                    ).translate('no_received_requests'),
+                                    style: TextStyle(
+                                      color: Theme.of(
+                                        context,
+                                      ).colorScheme.onSurface.withOpacity(0.6),
+                                    ),
+                                  ),
+                                ),
+                              )
+                              : ListView.builder(
+                                controller: scrollController,
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 20,
+                                  vertical: 8,
+                                ),
+                                itemCount: widget.requests.length,
+                                itemBuilder: (context, index) {
+                                  final request = widget.requests[index];
+                                  final isProcessing =
+                                      _processingRequests[request.username] ??
+                                      false;
+
+                                  return _RequestTile(
+                                    request: request,
+                                    isProcessing: isProcessing,
+                                    onAccept:
+                                        () => _handleRequest(request, true),
+                                    onReject:
+                                        () => _handleRequest(request, false),
+                                  );
+                                },
+                              ),
+                    ),
+
+                    const SizedBox(height: 20),
                   ],
                 ),
               ),
-
-              const SizedBox(height: 8),
-
-              // 리스트
-              Expanded(
-                child:
-                    widget.requests.isEmpty
-                        ? Padding(
-                          padding: const EdgeInsets.all(32),
-                          child: Center(
-                            child: Text(
-                              AppLocalizations.of(
-                                context,
-                              ).translate('no_received_requests'),
-                              style: TextStyle(
-                                color: Theme.of(
-                                  context,
-                                ).colorScheme.onSurface.withOpacity(0.6),
-                              ),
-                            ),
-                          ),
-                        )
-                        : ListView.separated(
-                          controller: scrollController,
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 20,
-                            vertical: 8,
-                          ),
-                          itemCount: widget.requests.length,
-                          separatorBuilder:
-                              (context, index) => Divider(
-                                height: 1,
-                                color: Theme.of(
-                                  context,
-                                ).colorScheme.onSurface.withOpacity(0.1),
-                              ),
-                          itemBuilder: (context, index) {
-                            final request = widget.requests[index];
-                            final isProcessing =
-                                _processingRequests[request.username] ?? false;
-
-                            return _RequestTile(
-                              request: request,
-                              isProcessing: isProcessing,
-                              onAccept: () => _handleRequest(request, true),
-                              onReject: () => _handleRequest(request, false),
-                            );
-                          },
-                        ),
-              ),
-
-              const SizedBox(height: 20),
-            ],
-          ),
-        );
-      },
+            );
+          },
+        ),
+      ],
     );
   }
 

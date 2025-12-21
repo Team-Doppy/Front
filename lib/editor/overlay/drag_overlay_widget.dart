@@ -7,6 +7,7 @@ import 'package:doppy/editor/component/row_image_component.dart';
 import 'package:doppy/editor/component/pageview_image_component.dart';
 import 'package:doppy/editor/component/clip_component.dart';
 import 'package:doppy/editor/component/divider_component.dart';
+import 'package:doppy/editor/service/editor_service.dart';
 import 'package:flutter/material.dart';
 import 'package:super_editor/super_editor.dart';
 
@@ -18,6 +19,7 @@ class DragOverlayWidget extends StatefulWidget {
     this.node,
     this.splitImageUrl,
     this.previewImageLocalPath, // 🎯 클립 노드 썸네일 깜빡임 방지
+    this.previewImageUrl, // 🚀 네트워크 URL (로컬-네트워크 혼용 구조)
     super.key,
   });
 
@@ -26,6 +28,7 @@ class DragOverlayWidget extends StatefulWidget {
   final Document document;
   final String? splitImageUrl;
   final String? previewImageLocalPath;
+  final String? previewImageUrl; // 🚀 네트워크 URL
 
   @override
   State<DragOverlayWidget> createState() => _DragOverlayWidgetState();
@@ -193,21 +196,41 @@ class _DragOverlayWidgetState extends State<DragOverlayWidget> {
     try {
       meta = (node as dynamic).metadata as Map<String, dynamic>?;
     } catch (_) {}
-    final bool isPlaceholder =
-        imageUrl.isEmpty ||
-        (meta != null && meta['isPlaceholder'] == true) ||
-        imageUrl.startsWith('file://');
-    String? localPath;
+
+    // 🚀 로컬-네트워크 혼용 구조: previewImageLocalPath 우선 사용
+    String? localPath = widget.previewImageLocalPath;
+    if (localPath == null || localPath.isEmpty) {
+      // previewImageLocalPath가 없으면 노드에서 추출
     try {
       localPath = meta != null ? (meta['localPath']?.toString()) : null;
     } catch (_) {}
 
+      // imageUrl이 로컬 경로인 경우도 확인
+      if ((localPath == null || localPath.isEmpty) &&
+          imageUrl.isNotEmpty &&
+          !EditorService.isNetworkUrl(imageUrl) &&
+          !imageUrl.startsWith('file://')) {
+        localPath = imageUrl;
+      }
+    }
+
+    final bool isPlaceholder =
+        imageUrl.isEmpty || (meta != null && meta['isPlaceholder'] == true);
+
     Widget baseImage;
-    if (isPlaceholder && (localPath != null && localPath.isNotEmpty)) {
+    // 🚀 로컬 경로 우선 처리
+    if (localPath != null && localPath.isNotEmpty) {
       baseImage = Image.file(File(localPath), fit: BoxFit.cover);
-    } else if (imageUrl.startsWith('http://') ||
-        imageUrl.startsWith('https://')) {
-      // 🎯 Image.network 사용
+    } else if (widget.previewImageUrl != null &&
+        widget.previewImageUrl!.isNotEmpty) {
+      // previewImageUrl 사용 (네트워크 URL)
+      baseImage = Image.network(
+        widget.previewImageUrl!,
+        fit: BoxFit.cover,
+        errorBuilder: (context, error, stackTrace) => ImageErrorPlaceholder(),
+      );
+    } else if (EditorService.isNetworkUrl(imageUrl)) {
+      // 노드의 imageUrl이 네트워크 URL인 경우
       baseImage = Image.network(
         imageUrl,
         fit: BoxFit.cover,
@@ -218,6 +241,9 @@ class _DragOverlayWidgetState extends State<DragOverlayWidget> {
         File(Uri.parse(imageUrl).toFilePath()),
         fit: BoxFit.cover,
       );
+    } else if (imageUrl.isNotEmpty) {
+      // 로컬 경로로 간주
+      baseImage = Image.file(File(imageUrl), fit: BoxFit.cover);
     } else {
       baseImage = ImageErrorPlaceholder();
     }
@@ -333,8 +359,7 @@ class _DragOverlayWidgetState extends State<DragOverlayWidget> {
   }
 
   Widget _buildPageViewImageTile(String imageUrl) {
-    final bool isNetwork =
-        imageUrl.startsWith('http://') || imageUrl.startsWith('https://');
+    final bool isNetwork = EditorService.isNetworkUrl(imageUrl);
     final bool isFileUrl = imageUrl.startsWith('file://');
     final bool isLocalPath = !isNetwork && !isFileUrl && imageUrl.isNotEmpty;
 
@@ -398,14 +423,51 @@ class _DragOverlayWidgetState extends State<DragOverlayWidget> {
   }
 
   Widget _buildSplitImagePreview(String imageUrl) {
+    // 🚀 로컬-네트워크 혼용 구조: 로컬 경로인지 확인
+    final bool isNetwork = EditorService.isNetworkUrl(imageUrl);
+    final bool isFileUrl = imageUrl.startsWith('file://');
+    final bool isLocalPath = !isNetwork && !isFileUrl && imageUrl.isNotEmpty;
+
+    Widget imageWidget;
+    if (isNetwork) {
+      // 네트워크 이미지
+      imageWidget = Image.network(
+        imageUrl,
+        fit: BoxFit.cover,
+        errorBuilder: (context, error, stackTrace) => ImageErrorPlaceholder(),
+      );
+    } else if (isFileUrl || isLocalPath) {
+      // 로컬 파일 경로
+      final String path =
+          isFileUrl ? Uri.parse(imageUrl).toFilePath() : imageUrl;
+      imageWidget = Image.file(File(path), fit: BoxFit.cover);
+    } else {
+      imageWidget = ImageErrorPlaceholder();
+    }
+
+    final bool showOverlay = (isFileUrl || isLocalPath);
+
     return ConstrainedBox(
       constraints: const BoxConstraints(maxWidth: 150, maxHeight: 220),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(4),
-        child: Image.network(
-          imageUrl,
-          fit: BoxFit.cover,
-          errorBuilder: (context, error, stackTrace) => ImageErrorPlaceholder(),
+        child: Stack(
+          children: [
+            Positioned.fill(child: imageWidget),
+            if (showOverlay)
+              Positioned.fill(
+                child: Container(
+                  color: Colors.black.withOpacity(0.18),
+                  child: const Center(
+                    child: SizedBox(
+                      width: 22,
+                      height: 22,
+                      child: CircularProgressIndicator(strokeWidth: 2.0),
+                    ),
+                  ),
+                ),
+              ),
+          ],
         ),
       ),
     );
@@ -502,8 +564,7 @@ class _ImageRowPreviewContentState extends State<_ImageRowPreviewContent> {
   }
 
   Widget _buildRowImageTile(String imageUrl) {
-    final bool isNetwork =
-        imageUrl.startsWith('http://') || imageUrl.startsWith('https://');
+    final bool isNetwork = EditorService.isNetworkUrl(imageUrl);
     final bool isFileUrl = imageUrl.startsWith('file://');
     final bool isLocalPath = !isNetwork && !isFileUrl && imageUrl.isNotEmpty;
 
@@ -612,7 +673,7 @@ class _ClipPreviewWidgetState extends State<_ClipPreviewWidget> {
 
     // 썸네일 파일이 있으면 로드
     if (thumb != null && thumb.isNotEmpty) {
-      if (thumb.startsWith('http://') || thumb.startsWith('https://')) {
+      if (EditorService.isNetworkUrl(thumb)) {
         // 네트워크 이미지는 그대로 사용 (이미지 위젯에서 처리)
         debugPrint('[DragOverlay] 네트워크 썸네일 URL: $thumb');
         return;
@@ -688,7 +749,7 @@ class _ClipPreviewWidgetState extends State<_ClipPreviewWidget> {
       base = Image.memory(_thumbnailBytes!, fit: BoxFit.cover);
     } else if (thumb != null && thumb.isNotEmpty) {
       // 썸네일 파일이 있으면 사용
-      if (thumb.startsWith('http://') || thumb.startsWith('https://')) {
+      if (EditorService.isNetworkUrl(thumb)) {
         debugPrint('[DragOverlay] 네트워크 이미지 로드: $thumb');
         base = Image.network(
           thumb,

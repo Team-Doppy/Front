@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:doppy/data/models/user_model.dart';
 import 'package:doppy/l10n/app_localizations.dart';
 import 'package:doppy/editor/overlay/link_overlay.dart';
@@ -789,10 +790,13 @@ class _ProfileInfoEditBottomSheetState
                   }
 
                   return thumbnailUrl != null
-                      ? Image.network(
-                        thumbnailUrl,
+                      ? CachedNetworkImage(
+                        imageUrl: thumbnailUrl,
                         fit: BoxFit.cover,
-                        errorBuilder: (context, error, stackTrace) {
+                        memCacheWidth: 64,
+                        maxWidthDiskCache: 128,
+                        maxHeightDiskCache: 128,
+                        errorWidget: (context, url, error) {
                           return Icon(
                             Icons.link,
                             color: Theme.of(
@@ -801,10 +805,7 @@ class _ProfileInfoEditBottomSheetState
                             size: 20,
                           );
                         },
-                        loadingBuilder: (context, child, loadingProgress) {
-                          if (loadingProgress == null) {
-                            return child;
-                          }
+                        placeholder: (context, url) {
                           return Icon(
                             Icons.link,
                             color: Theme.of(

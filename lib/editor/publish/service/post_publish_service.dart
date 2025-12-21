@@ -72,6 +72,7 @@ class PostPublishService {
   }
 
   /// 로컬 미디어 노드 정리 (HTTP URL이 아닌 것 제거)
+  /// 업로드되지 않은 미디어가 있으면 StateError 발생
   void _cleanLocalMediaNodes(Map<String, dynamic> editedBase) {
     try {
       bool isHttpUrl(String u) =>
@@ -83,6 +84,7 @@ class PostPublishService {
           contentDyn['nodes'] as List? ?? const [],
         );
         final List<dynamic> cleaned = [];
+        final List<String> localMediaNodes = []; // 업로드되지 않은 미디어 추적
 
         for (final n in nodes) {
           if (n is! Map) continue;
@@ -92,25 +94,51 @@ class PostPublishService {
             final Map<String, dynamic>? data =
                 (n['data'] as Map?)?.cast<String, dynamic>();
             final String url = (data?['url'] ?? n['url'] ?? '').toString();
-            if (isHttpUrl(url)) cleaned.add(n);
+            if (isHttpUrl(url)) {
+              cleaned.add(n);
+            } else if (url.isNotEmpty) {
+              localMediaNodes.add('이미지 (${n['id']})');
+            }
           } else if (type == 'imageRow') {
             final List<dynamic> urls = List<dynamic>.from(
               n['urls'] ?? const [],
             );
             final List<String> httpUrls =
                 urls.map((e) => e.toString()).where(isHttpUrl).toList();
+            final List<String> localUrls =
+                urls
+                    .map((e) => e.toString())
+                    .where((u) => u.isNotEmpty && !isHttpUrl(u))
+                    .toList();
             if (httpUrls.isNotEmpty) {
               n['urls'] = httpUrls;
               cleaned.add(n);
+            }
+            if (localUrls.isNotEmpty) {
+              localMediaNodes.add(
+                '이미지 행 (${n['id']}) - ${localUrls.length}개 업로드 실패',
+              );
             }
           } else if (type == 'video' || type == 'clip') {
             final Map<String, dynamic>? data =
                 (n['data'] as Map?)?.cast<String, dynamic>();
             final String url = (data?['url'] ?? n['url'] ?? '').toString();
-            if (isHttpUrl(url)) cleaned.add(n);
+            if (isHttpUrl(url)) {
+              cleaned.add(n);
+            } else if (url.isNotEmpty) {
+              localMediaNodes.add('비디오 (${n['id']})');
+            }
           } else {
             cleaned.add(n); // 그 외 노드는 그대로 유지
           }
+        }
+
+        // 🚀 업로드되지 않은 미디어가 있으면 에러 발생
+        if (localMediaNodes.isNotEmpty) {
+          throw StateError(
+            '업로드되지 않은 미디어가 있습니다: ${localMediaNodes.join(', ')}. '
+            '모든 미디어가 업로드 완료된 후 발행해주세요.',
+          );
         }
 
         // 🎯 stickers를 유지하면서 nodes만 교체

@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:async';
 
 import 'package:doppy/data/services/video_cache_service.dart';
+import 'package:doppy/data/services/upload_service.dart';
 import 'package:doppy/editor/utils/config.dart';
 import 'package:doppy/l10n/app_localizations.dart';
 import 'package:flutter/material.dart';
@@ -1035,8 +1036,19 @@ class _ClipComponentState extends State<_ClipComponent> with DocumentComponent {
     final videoWidth = screenWidth - (horizontalPadding * 2);
     final maxHeight = videoWidth * 1.5;
 
-    // 로컬 파일 경로가 있으면 (업로드 중) 썸네일과 로딩 표시
-    if (widget.localPath.isNotEmpty) {
+    // 🎯 업로드 중 상태 확인 (편집 모드에서만, 읽기 전용 모드에서는 항상 false)
+    bool isUploading = false;
+    if (widget.isEditing) {
+      try {
+        final uploadService = context.watch<UploadService>();
+        isUploading = uploadService.hasActiveUploadForRef(widget.nodeId);
+      } catch (e) {
+        debugPrint('[ClipComponent] UploadService 확인 실패: $e');
+      }
+    }
+
+    // 로컬 파일 경로가 있고 실제로 업로드 중이면 썸네일과 로딩 표시
+    if (widget.localPath.isNotEmpty && isUploading) {
       _ensureLocalVideoThumbnail();
 
       // 🎯 metadata에서 비율 정보 가져오기 (한 번만 로드)
@@ -1068,13 +1080,11 @@ class _ClipComponentState extends State<_ClipComponent> with DocumentComponent {
                     height: finalHeight,
                   ),
                 ),
-                // 업로드 진행 오버레이 (이미지 업로드와 통일: 검정 0.6)
-                Positioned.fill(
-                  child: Container(
-                    color: Colors.black.withOpacity(0.6),
+                // 업로드 진행 오버레이 (로딩 스피너만 표시) - 실제 업로드 중일 때만
+                if (isUploading)
+                  Positioned.fill(
                     child: Center(child: _buildUploadProgress(context)),
                   ),
-                ),
               ],
             ),
           ),
@@ -1101,12 +1111,9 @@ class _ClipComponentState extends State<_ClipComponent> with DocumentComponent {
                   height: finalHeight, // 🎯 실제 비율 높이 사용
                   isDarkMode: widget.isDarkMode,
                 ),
-              // 업로드 진행 오버레이 (이미지 업로드와 통일: 검정 0.6)
+              // 업로드 진행 오버레이 (로딩 스피너만 표시)
               Positioned.fill(
-                child: Container(
-                  color: Colors.black.withOpacity(0.6),
-                  child: Center(child: _buildUploadProgress(context)),
-                ),
+                child: Center(child: _buildUploadProgress(context)),
               ),
             ],
           ),

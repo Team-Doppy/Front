@@ -5,6 +5,7 @@ import 'package:doppy/editor/component/clip_component.dart';
 import 'package:doppy/editor/postwrite_screen.dart';
 import 'package:doppy/editor/component/link_component.dart';
 import 'package:doppy/editor/service/node_component_service.dart';
+import 'package:doppy/editor/service/editor_service.dart';
 import 'package:doppy/editor/service/drag_service.dart';
 import 'package:doppy/editor/utils/config.dart';
 import 'package:doppy/editor/utils/node_type_checker.dart';
@@ -63,6 +64,7 @@ class ImageRowNode extends BlockNode {
       'nodeType': nodeType,
       'imageUrls': imageUrls,
       'spacing': spacing,
+      if (_metadata.isNotEmpty) 'metadata': _metadata,
     };
   }
 
@@ -71,6 +73,7 @@ class ImageRowNode extends BlockNode {
       id: json['id'] as String,
       imageUrls: List<String>.from(json['imageUrls'] as List),
       spacing: (json['spacing'] as num?)?.toDouble() ?? 0.0,
+      metadata: json['metadata'] as Map<String, dynamic>?,
     );
   }
 
@@ -151,11 +154,13 @@ class ImageRowNode extends BlockNode {
 
 class RowImageComponentBuilder implements ComponentBuilder {
   const RowImageComponentBuilder({
+    required this.screenWidth,
     this.dragService,
     this.isEditing = true,
     this.isDarkMode = false,
   });
 
+  final double screenWidth; // 🚀 최고 효율: 외부에서 전달받음
   final dynamic dragService; // DragService 타입을 나중에 import해서 수정
   final bool isEditing;
   final bool isDarkMode;
@@ -170,6 +175,7 @@ class RowImageComponentBuilder implements ComponentBuilder {
         nodeId: componentViewModel.nodeId,
         imageUrls: componentViewModel.imageUrls,
         spacing: componentViewModel.spacing,
+        screenWidth: screenWidth, // 🚀 최고 효율: 전달
         unifiedHeight: null, // 🎯 metadata 의존 제거
         isDarkMode: isDarkMode,
         componentKey: componentContext.componentKey,
@@ -204,6 +210,7 @@ class ImageRowComponent extends StatefulWidget {
     required this.nodeId,
     required this.imageUrls,
     required this.spacing,
+    required this.screenWidth, // 🎯 외부에서 전달받음
     required GlobalKey componentKey,
     this.unifiedHeight, // 🎯 사용하지 않음 (항상 null)
     this.dragService,
@@ -216,6 +223,7 @@ class ImageRowComponent extends StatefulWidget {
   final String nodeId;
   final List<String> imageUrls;
   final double spacing;
+  final double screenWidth; // 🚀 한 번만 계산된 화면 너비
   final double? unifiedHeight; // 🎯 metadata 의존 제거 (deprecated)
   final dynamic dragService;
   final bool isEditing;
@@ -239,6 +247,10 @@ class _ImageRowComponentState extends State<ImageRowComponent>
   late final AnimationController _scatterCtrl;
   bool _scatterActive = false;
   bool _wasSpoilerVisible = false;
+
+  // 🎯 성능 최적화: EditorService 캐싱 (에디터 모드에서만)
+  EditorService? _cachedEditorService;
+  bool _editorServiceInitialized = false;
 
   // DocumentComponent 필수 메서드들
   @override
@@ -536,8 +548,10 @@ class _ImageRowComponentState extends State<ImageRowComponent>
 
   @override
   Widget build(BuildContext context) {
-    final imageService = context.watch<NodeComponentService>();
-    final isSelected = imageService.selectedImageId == widget.nodeId;
+    // 🚀 성능 최적화: Selector로 필요한 부분만 watch
+    final isSelected = context.select<NodeComponentService, bool>(
+      (service) => service.selectedImageId == widget.nodeId,
+    );
     // selection 핸들이 이 행 이미지 노드를 포함할 때만, 경계가 이 노드면 Downstream일 때 포함
     // ignore: invalid_use_of_visible_for_testing_member
     final seState = context.findAncestorStateOfType<SuperEditorState>();
@@ -742,30 +756,19 @@ class _ImageRowComponentState extends State<ImageRowComponent>
                               .shouldShowImageSpoiler(widget.nodeId, meta);
                         } catch (_) {}
 
-                        // 🎯 업로드 중 상태 확인 (메타데이터 + 실제 업로드 태스크 존재 여부)
+                        // 🎯 업로드 중 상태 확인 (편집 모드에서만, 읽기 전용 모드에서는 항상 false)
                         bool isUploading = false;
-                        try {
-                          final node = doc?.getNodeById(widget.nodeId);
-                          if (node is ImageRowNode) {
-                            final meta = node.metadata;
-                            final isPlaceholder = meta['isPlaceholder'] == true;
-                            // 🎯 플레이스홀더이면서 실제 업로드 태스크가 있을 때만 로딩 표시
-                            if (isPlaceholder) {
-                              try {
-                                final uploadService =
-                                    context.read<UploadService>();
-                                isUploading = uploadService
-                                    .hasActiveUploadForRef(widget.nodeId);
-                              } catch (e) {
-                                debugPrint(
-                                  '[RowImage] UploadService 확인 실패: $e',
-                                );
-                                // UploadService를 사용할 수 없으면 플레이스홀더 상태 그대로 사용
-                                isUploading = isPlaceholder;
-                              }
-                            }
+                        if (widget.isEditing) {
+                          try {
+                            final uploadService =
+                                context.watch<UploadService>();
+                            isUploading = uploadService.hasActiveUploadForRef(
+                              widget.nodeId,
+                            );
+                          } catch (e) {
+                            debugPrint('[RowImage] UploadService 확인 실패: $e');
                           }
-                        } catch (_) {}
+                        }
 
                         // 🎯 노드 레벨 댓글 정보 확인 (이미지 로우 전체)
                         bool hasComments = false;
@@ -890,9 +893,7 @@ class _ImageRowComponentState extends State<ImageRowComponent>
                             if (isUploading)
                               Positioned.fill(
                                 child: IgnorePointer(
-                                  child: Container(
-                                    color: Colors.black.withOpacity(0.6),
-                                    alignment: Alignment.center,
+                                  child: Center(
                                     child: const SizedBox(
                                       width: 24,
                                       height: 24,
@@ -1066,9 +1067,9 @@ class _ImageRowComponentState extends State<ImageRowComponent>
     );
   }
 
-  /// 🎯 완전히 재설계된 높이 계산 로직
-  /// - metadata 의존 완전 제거
-  /// - 실시간 측정 및 즉각 반영
+  /// 🎯 메타데이터 우선 높이 계산 로직
+  /// - metadata의 imageDimensions에서 크기 우선 사용
+  /// - 없으면 실시간 측정 (하위 호환)
   /// - 모든 이미지가 측정되면 평균 높이 계산
   void _measureAndUnifyHeight(String imageUrl, double availableWidth) {
     if (!mounted) return;
@@ -1078,9 +1079,49 @@ class _ImageRowComponentState extends State<ImageRowComponent>
       return;
     }
 
-    debugPrint('[RowImage] 📏 이미지 측정: $imageUrl');
+    // 🎯 1단계: 메타데이터에서 크기 확인
+    // 🚀 캐싱된 EditorService 사용
+    try {
+      final editorService = _getEditorService();
+      if (editorService == null) {
+        _measureImageRealtime(imageUrl, availableWidth);
+        return;
+      }
 
-    // 🎯 로컬/네트워크 자동 판단
+      final doc = editorService.document;
+      final node = doc.getNodeById(widget.nodeId);
+
+      if (node is ImageRowNode) {
+        final dimensions =
+            node.metadata['imageDimensions'] as Map<String, dynamic>?;
+        if (dimensions != null && dimensions.containsKey(imageUrl)) {
+          final size = dimensions[imageUrl] as Map<String, dynamic>?;
+          if (size != null && size['width'] != null && size['height'] != null) {
+            final width = (size['width'] as num).toDouble();
+            final height = (size['height'] as num).toDouble();
+
+            _imageSizes[imageUrl] = Size(width, height);
+
+            // 🎯 모든 이미지가 준비되었는지 확인
+            if (_imageSizes.length == widget.imageUrls.length) {
+              _calculateUnifiedHeight(availableWidth);
+            }
+            return;
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('[RowImage] ⚠️ 메타데이터 접근 실패: $e, 실시간 측정으로 전환');
+    }
+
+    // 🎯 2단계: 메타데이터 없음 → 실시간 측정 (하위 호환)
+    _measureImageRealtime(imageUrl, availableWidth);
+  }
+
+  /// 🎯 실시간 이미지 측정 (메타데이터가 없을 때)
+  void _measureImageRealtime(String imageUrl, double availableWidth) {
+    debugPrint('[RowImage] 📏 메타데이터 없음, 실시간 측정: $imageUrl');
+
     final ImageProvider imageProvider;
     if (_isLocalPath(imageUrl)) {
       final filePath =
@@ -1104,11 +1145,16 @@ class _ImageRowComponentState extends State<ImageRowComponent>
 
               _imageSizes[imageUrl] = originalSize;
               debugPrint(
-                '[RowImage] ✅ 측정: $imageUrl (${originalSize.width.toInt()}x${originalSize.height.toInt()})',
+                '[RowImage] ✅ 측정 완료: $imageUrl (${originalSize.width.toInt()}x${originalSize.height.toInt()})',
               );
               debugPrint(
                 '[RowImage] 📊 진행: ${_imageSizes.length}/${widget.imageUrls.length}',
               );
+
+              // 🎯 에디터 모드에서만 메타데이터에 저장
+              if (widget.isEditing) {
+                _saveImageSizeToMetadata(imageUrl, originalSize);
+              }
 
               // 🎯 모든 이미지가 측정되었는지 확인
               if (_imageSizes.length == widget.imageUrls.length) {
@@ -1120,6 +1166,56 @@ class _ImageRowComponentState extends State<ImageRowComponent>
             },
           ),
         );
+  }
+
+  /// 🎯 성능 최적화: EditorService 캐싱 조회
+  EditorService? _getEditorService() {
+    if (!_editorServiceInitialized) {
+      try {
+        _cachedEditorService = Provider.of<EditorService>(
+          context,
+          listen: false,
+        );
+      } catch (e) {
+        _cachedEditorService = null;
+      }
+      _editorServiceInitialized = true;
+    }
+    return _cachedEditorService;
+  }
+
+  /// 🎯 측정된 이미지 크기를 노드 메타데이터에 저장 (에디터 모드 전용)
+  void _saveImageSizeToMetadata(String imageUrl, Size size) {
+    try {
+      final editorService = _getEditorService();
+      if (editorService == null) return;
+
+      final doc = editorService.document;
+      final node = doc.getNodeById(widget.nodeId);
+
+      if (node is ImageRowNode) {
+        final meta = node.metadata;
+        final imageDimensions = Map<String, dynamic>.from(
+          (meta['imageDimensions'] as Map<String, dynamic>?) ?? {},
+        );
+
+        imageDimensions[imageUrl] = {
+          'width': size.width.toInt(),
+          'height': size.height.toInt(),
+        };
+
+        final updatedNode = node.copyWith(
+          metadata: {...meta, 'imageDimensions': imageDimensions},
+        );
+
+        editorService.document.replaceNodeById(widget.nodeId, updatedNode);
+        debugPrint(
+          '[RowImage] 💾 메타데이터에 크기 저장: $imageUrl (${size.width.toInt()}x${size.height.toInt()})',
+        );
+      }
+    } catch (e) {
+      debugPrint('[RowImage] ⚠️ 메타데이터 저장 실패: $e');
+    }
   }
 
   /// 🎯 통일된 높이 계산 (모든 이미지 측정 완료 후)

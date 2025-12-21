@@ -110,16 +110,38 @@ class Feed {
   Widget buildFeedContent({ScrollController? scrollController}) {
     _mainScrollController = scrollController;
 
-    return Consumer<BaseFeedProvider>(
-      builder: (context, feedProvider, _) {
+    // 🚀 Selector를 사용하여 필요한 값만 구독하여 불필요한 rebuild 방지
+    return Selector<
+      BaseFeedProvider,
+      ({
+        BaseFilter selectedBase,
+        String? selectedCategoryId,
+        bool isLoading,
+        List<Map<String, dynamic>> categories,
+        List<dynamic> posts,
+        Map<String, dynamic>? systemCategoryMappings,
+        bool isReadOnly,
+        NetworkError? networkError,
+      })
+    >(
+      selector:
+          (context, feedProvider) => (
+            selectedBase: feedProvider.selectedBase,
+            selectedCategoryId: feedProvider.selectedCategoryId,
+            isLoading: feedProvider.isLoading,
+            categories: feedProvider.categories,
+            posts: feedProvider.posts,
+            systemCategoryMappings: feedProvider.systemCategoryMappings,
+            isReadOnly: feedProvider.isReadOnly,
+            networkError: feedProvider.networkError,
+          ),
+      builder: (context, data, _) {
         // 필터링 조건 가져오기
-        final filteredBase = feedProvider.selectedBase;
-        final filteredCategoryId = feedProvider.selectedCategoryId;
-
-        // 디버그 로그 제거 (불필요한 빌드 시 로그 방지)
+        final filteredBase = data.selectedBase;
+        final filteredCategoryId = data.selectedCategoryId;
 
         // 로딩 중이면 shimmer 표시
-        if (feedProvider.isLoading && feedProvider.categories.isEmpty) {
+        if (data.isLoading && data.categories.isEmpty) {
           return _buildLoadingShimmer(context);
         }
 
@@ -138,7 +160,7 @@ class Feed {
                   : context.tr('all');
 
           // systemCategoryMappings에서 포스트 ID 목록 가져오기
-          final systemMappings = feedProvider.systemCategoryMappings;
+          final systemMappings = data.systemCategoryMappings;
           List<PostData> filteredPosts = [];
 
           if (systemMappings != null &&
@@ -161,7 +183,8 @@ class Feed {
                       .toSet();
 
               // 모든 포스트에서 해당 ID에 맞는 포스트만 필터링
-              final allPosts = _mapRawToPosts(feedProvider.posts, feedProvider);
+              final feedProvider = context.read<BaseFeedProvider>();
+              final allPosts = _mapRawToPosts(data.posts, feedProvider);
               filteredPosts =
                   allPosts
                       .where((post) => targetPostIds.contains(post.id))
@@ -184,9 +207,9 @@ class Feed {
           // 단, 사용자가 아직 한 번도 재정렬하지 않은 경우에는 "막 생성된 카테고리"를 한시적으로 맨 앞에 배치 (예외 규칙)
           // 타인 프로필/읽기 전용에서는 기존 정렬 정책 유지 (신규 상단, 시스템/미분류 규칙)
           final sortedCategories = List<Map<String, dynamic>>.from(
-            feedProvider.categories,
+            data.categories,
           );
-          if (feedProvider.isReadOnly) {
+          if (data.isReadOnly) {
             sortedCategories.sort((a, b) {
               final bool aUncat = _isUncategorized(a);
               final bool bUncat = _isUncategorized(b);
@@ -209,6 +232,15 @@ class Feed {
               final bool hasUserReordered =
                   (dyn is MyProfileFeedProvider) ? dyn.hasUserReordered : false;
               final bool dragging = _isDraggingCategory.value == true;
+
+              // 🚀 로그 유지: Selector로 불필요한 rebuild 방지했으므로 로그 출력 가능
+              debugPrint(
+                '[Feed] 📋 정렬 로직 체크: hasUserReordered=$hasUserReordered, dragging=$dragging',
+              );
+              debugPrint(
+                '[Feed] 📋 현재 카테고리 순서: ${sortedCategories.map((c) => '${c['id']}:${c['name']}').toList()}',
+              );
+
               if (!hasUserReordered && !dragging) {
                 // 사용자/시스템/미분류 구분
                 final userCats =
@@ -224,6 +256,7 @@ class Feed {
                   final int currentIndex = sortedCategories.indexWhere(
                     (c) => ((c['id'] as int?) ?? -1) == maxId,
                   );
+
                   if (currentIndex > 0) {
                     final moved = sortedCategories.removeAt(currentIndex);
                     // 맨 앞에 삽입 (시스템/미분류는 이미 뒤로 가있으므로 안전)
@@ -231,10 +264,13 @@ class Feed {
                   }
                 }
               }
-            } catch (_) {}
+            } catch (e) {
+              debugPrint('[Feed] ❌ 정렬 로직 에러: $e');
+            }
           }
 
           // 정렬된 순서대로 순회 (리오더 반영 + 신규 상단)
+          final feedProvider = context.read<BaseFeedProvider>();
           for (final cat in sortedCategories) {
             final categoryKey = (cat['id'] ?? '').toString();
             final rawPosts =
@@ -253,7 +289,7 @@ class Feed {
             final posts = _mapRawToPosts(rawPosts, feedProvider);
 
             // 타인 프로필이면 빈 카테고리 숨김
-            if (posts.isEmpty && feedProvider.isReadOnly) continue;
+            if (posts.isEmpty && data.isReadOnly) continue;
 
             // 전체 탭에서 시스템 카테고리 필터링 (미분류는 예외)
             if (filteredBase == BaseFilter.all) {
@@ -270,15 +306,15 @@ class Feed {
         }
 
         // 아무런 글도 없을 때,
-        if (feedProvider.posts.isEmpty ||
+        if (data.posts.isEmpty ||
             categoryMetaDataList.length == 1 &&
                 categoryMetaDataList[0].title == 'system_doppy_uncategorized' &&
                 categoryMetaDataList[0].posts.isEmpty) {
           // 오프라인일 때만 오프라인 안내 노출 (데이터가 있으면 위에서 이미 컨텐츠 렌더)
-          if (feedProvider.networkError != null || !NetworkManager.isOnline) {
+          if (data.networkError != null || !NetworkManager.isOnline) {
             return ErrorStateSliver(
               error:
-                  feedProvider.networkError ??
+                  data.networkError ??
                   NetworkError(
                     type: NetworkErrorType.noConnection,
                     message: 'No internet connection',
@@ -288,6 +324,7 @@ class Feed {
             );
           }
           // 내 프로필일 때는 미션 카드 표시, 타인 프로필일 때는 빈 메시지 표시
+          final feedProvider = context.read<BaseFeedProvider>();
           return ProfileEmptyStateMissionCards(feedProvider: feedProvider);
         }
 

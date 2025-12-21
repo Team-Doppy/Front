@@ -36,9 +36,10 @@ class ErrorHandler {
         backgroundColor: Colors.red.shade600,
         behavior: SnackBarBehavior.floating,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+        elevation: 12.0, // 🎯 바텀 네비게이션 바 위에 표시되도록 높은 elevation
         duration: duration,
         margin: const EdgeInsets.only(
-          bottom: 18, // ← 올릴 높이 (px)
+          bottom: 24, // ← 올릴 높이 (px)
           left: 16,
           right: 16,
         ),
@@ -84,9 +85,10 @@ class ErrorHandler {
         backgroundColor: _bgColor,
         behavior: SnackBarBehavior.floating,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+        elevation: 12.0, // 🎯 바텀 네비게이션 바 위에 표시되도록 높은 elevation
         duration: duration,
         margin: const EdgeInsets.only(
-          bottom: 18, // ← 올릴 높이 (px)
+          bottom: 24, // ← 올릴 높이 (px)
           left: 16,
           right: 16,
         ),

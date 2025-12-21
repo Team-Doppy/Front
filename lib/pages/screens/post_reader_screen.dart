@@ -106,6 +106,7 @@ class _PostReaderScreenState extends State<PostReaderScreen>
   bool _isRenderReady = false; // 스포일러 마스크 렌더링 완료 여부
   bool _accessLevelChanged = false; // 🎯 공개 범위 변경 여부
   bool _documentInitialized = false; // 🎯 문서 초기화 완료 플래그 (재생성 방지)
+  bool _topMediaPreloaded = false; // 🎯 상위 3개 노드 미디어 프리로드 완료 여부
 
   // 스크롤 애니메이션을 위한 변수들
   static const double _appBarHeight = 52.0; // AppBar 높이
@@ -953,26 +954,52 @@ class _PostReaderScreenState extends State<PostReaderScreen>
       // content 객체 추출
       final content = response['content'] as Map<String, dynamic>? ?? {};
 
-      // 🎯 첫 10개 이미지 빠르게 병렬 프리로드
+      // 🎯 상위 3개 노드 미디어 프리로드 (동기적으로 완료될 때까지 대기)
+      if (content.isNotEmpty && content['nodes'] != null && mounted) {
+        debugPrint('[PostReaderScreen] 🚀 서버 응답 후 상위 미디어 프리로드 시작');
+        try {
+          await _postReaderService.preloadTopMedia(
+            context,
+            content,
+            topNodeCount: 3,
+          );
+          debugPrint('[PostReaderScreen] ✅ 서버 응답 후 상위 미디어 프리로드 완료');
+          if (mounted) {
+            setState(() {
+              _topMediaPreloaded = true;
+            });
+          }
+        } catch (e) {
+          debugPrint('[PostReaderScreen] ❌ 서버 응답 후 상위 미디어 프리로드 실패: $e');
+          // 실패해도 로딩 해제
+          if (mounted) {
+            setState(() {
+              _topMediaPreloaded = true;
+            });
+          }
+        }
+      } else {
+        // content가 없으면 바로 완료 처리
+        if (mounted) {
+          setState(() {
+            _topMediaPreloaded = true;
+          });
+        }
+      }
+
+      // 🎯 나머지 이미지도 백그라운드에서 계속 로드 (상위 3개 이후)
       if (content.isNotEmpty && mounted) {
         final imageUrls = _postReaderService.extractImageUrls(content);
         if (imageUrls.isNotEmpty) {
-          // 첫 10개 이미지를 빠르게 병렬 프리로드
-          final first10Images = imageUrls.take(10).toList();
-          Future.microtask(() async {
-            if (mounted) {
-              await _postReaderService.preloadImages(
-                context,
-                first10Images,
-                maxCount: 10,
-              );
-              debugPrint('[PostReaderScreen] ✅ 첫 10개 이미지 프리로드 완료');
-            }
-          });
+          // 상위 3개 노드 이미지는 이미 프리로드했으므로 나머지만 프리로드
+          final topImageUrls = _postReaderService.extractTopImageUrls(
+            content,
+            topNodeCount: 3,
+          );
+          final remainingImages =
+              imageUrls.where((url) => !topImageUrls.contains(url)).toList();
 
-          // 나머지 이미지도 백그라운드에서 계속 로드
-          if (imageUrls.length > 10) {
-            final remainingImages = imageUrls.skip(10).toList();
+          if (remainingImages.isNotEmpty) {
             Future.microtask(() async {
               if (mounted) {
                 await _postReaderService.preloadImages(
@@ -1054,11 +1081,55 @@ class _PostReaderScreenState extends State<PostReaderScreen>
       document: _document,
       composer: _composer,
     );
-    _editorService = EditorService(editor: _editor, document: _document);
+    _editorService = EditorService(
+      editor: _editor,
+      document: _document,
+      enableInitialStateSave: false, // 🚀 포스트 리더에서는 초기저장 불필요
+    );
     _editorService.setDocumentLayoutKey(_layoutKey);
     _dragService = DragService(editorService: _editorService);
     _readOnlyFocus = FocusNode(canRequestFocus: false);
     _scrollCtrl.addListener(_onScroll);
+
+    // 🎯 상위 3개 노드 미디어 프리로드 (로딩 로고 표시 중)
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+
+      // widget.exported['content'] 또는 widget.preloadedContent 사용
+      final content =
+          widget.preloadedContent ??
+          (widget.exported['content'] as Map<String, dynamic>?);
+
+      if (content != null && content['nodes'] != null) {
+        debugPrint(
+          '[PostReaderScreen] 🚀 상위 미디어 프리로드 시작 (initState, content 있음)',
+        );
+        _postReaderService
+            .preloadTopMedia(context, content, topNodeCount: 3)
+            .then((_) {
+              debugPrint('[PostReaderScreen] ✅ 상위 미디어 프리로드 완료 (initState)');
+              if (mounted) {
+                setState(() {
+                  _topMediaPreloaded = true;
+                });
+              }
+            })
+            .catchError((e) {
+              debugPrint('[PostReaderScreen] ❌ 상위 미디어 프리로드 실패 (initState): $e');
+              // 실패해도 로딩 해제
+              if (mounted) {
+                setState(() {
+                  _topMediaPreloaded = true;
+                });
+              }
+            });
+      } else {
+        debugPrint(
+          '[PostReaderScreen] ⚠️ initState에서 content가 없음 - 서버 응답 후 프리로드 예정',
+        );
+        // content가 없으면 서버 응답 후 프리로드할 예정이므로 _topMediaPreloaded는 false 유지
+      }
+    });
 
     // PostReaderScreen은 StickerService를 사용하지 않고
     // widget.exported에서 stickers를 직접 읽어 PostReaderStickers에 전달
@@ -1439,7 +1510,12 @@ class _PostReaderScreenState extends State<PostReaderScreen>
         body: FutureBuilder<Map<String, dynamic>>(
           future: _contentFuture,
           builder: (context, snap) {
-            if (snap.connectionState == ConnectionState.waiting) {
+            // 🎯 로딩 상태: content 로딩 중이거나 상위 미디어 프리로드 중
+            final isLoading =
+                snap.connectionState == ConnectionState.waiting ||
+                (snap.hasData && !_topMediaPreloaded);
+
+            if (isLoading) {
               return GestureDetector(
                 onHorizontalDragEnd: (details) {
                   // 오른쪽으로 스와이프 (velocity.dx > 0)
@@ -1457,7 +1533,7 @@ class _PostReaderScreenState extends State<PostReaderScreen>
             }
 
             // ✅ 데이터/미디어 선행 준비 후 약간 더 대기하여 첫 프레임 안정화
-            if (snap.hasData && !_isRenderReady) {
+            if (snap.hasData && !_isRenderReady && _topMediaPreloaded) {
               Future.delayed(const Duration(milliseconds: 300), () {
                 if (mounted) {
                   setState(() => _isRenderReady = true);
@@ -1593,6 +1669,7 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                 _editorService = EditorService(
                   editor: _editor,
                   document: _document,
+                  enableInitialStateSave: false, // 🚀 포스트 리더에서는 초기저장 불필요
                 );
                 _editorService.setDocumentLayoutKey(_layoutKey);
                 _dragService = DragService(editorService: _editorService);
@@ -1733,119 +1810,134 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                             ),
                           ),
                           // SuperEditor 슬리버
-                          SuperEditor(
-                            editor: _editor,
-                            stylesheet: buildCustomStylesheet(
-                              context,
-                              isReadOnly:
-                                  true, // 🎯 읽기 모드: 전역 폰트 사용 안 함, 블록 metadata만 사용
-                            ),
-                            selectionStyle: SelectionStyles(
-                              selectionColor: Colors.transparent,
-                              highlightEmptyTextBlocks: false,
-                            ),
-                            componentBuilders: [
-                              SingleImageComponentBuilder(
-                                dragService: _dragService,
-                                isEditing: false, // 읽기 모드
-                                isDarkMode: isDarkMode, // 🎯 성능 최적화: 변수 사용
-                              ),
-                              RowImageComponentBuilder(
-                                dragService: _dragService,
-                                isEditing: false, // 읽기 모드
-                                isDarkMode: isDarkMode, // 🎯 성능 최적화: 변수 사용
-                              ),
-                              PageViewImageComponentBuilder(
-                                dragService: _dragService,
-                                isEditing: false, // 읽기 모드
-                                isDarkMode: isDarkMode,
-                              ),
-                              LinkComponentBuilder(
-                                isEditing: false,
-                                isDarkMode: isDarkMode, // 🎯 성능 최적화: 변수 사용
-                              ),
-                              DividerComponentBuilder(),
-                              ClipComponentBuilder(
-                                dragService: _dragService,
-                                isDarkMode: isDarkMode,
-                              ),
-                              CustomParagraphComponentBuilder(
-                                dragService: _dragService,
-                                editorService: _editorService,
-                                isEditing: false, // 읽기 모드
-                                onMentionTap: (names) {
-                                  if (names.isEmpty) return;
-                                  if (names.length == 1) {
-                                    _openUserProfile(names.first);
-                                    return;
-                                  }
-                                  showModalBottomSheet(
-                                    context: context,
-                                    backgroundColor: Colors.transparent,
-                                    builder: (_) {
-                                      return Container(
-                                        decoration: BoxDecoration(
-                                          color:
-                                              Theme.of(
-                                                context,
-                                              ).colorScheme.surface,
-                                          borderRadius:
-                                              const BorderRadius.vertical(
-                                                top: Radius.circular(16),
-                                              ),
-                                        ),
-                                        child: SafeArea(
-                                          top: false,
-                                          child: Column(
-                                            mainAxisSize: MainAxisSize.min,
-                                            children: [
-                                              const SizedBox(height: 8),
-                                              Container(
-                                                width: 40,
-                                                height: 4,
-                                                decoration: BoxDecoration(
-                                                  color: Theme.of(context)
-                                                      .colorScheme
-                                                      .onSurface
-                                                      .withOpacity(0.2),
-                                                  borderRadius:
-                                                      BorderRadius.circular(2),
-                                                ),
-                                              ),
-                                              const SizedBox(height: 8),
-                                              ...names.map(
-                                                (u) => ListTile(
-                                                  title: Text(
-                                                    '@$u',
-                                                    style: TextStyle(
-                                                      color:
-                                                          Theme.of(context)
-                                                              .colorScheme
-                                                              .onSurface,
-                                                      fontWeight:
-                                                          FontWeight.w600,
+                          Builder(
+                            builder: (context) {
+                              final screenWidth =
+                                  MediaQuery.of(
+                                    context,
+                                  ).size.width; // 🚀 최고 효율: 한 번만 계산
+                              return SuperEditor(
+                                editor: _editor,
+                                stylesheet: buildCustomStylesheet(
+                                  context,
+                                  isReadOnly:
+                                      true, // 🎯 읽기 모드: 전역 폰트 사용 안 함, 블록 metadata만 사용
+                                ),
+                                selectionStyle: SelectionStyles(
+                                  selectionColor: Colors.transparent,
+                                  highlightEmptyTextBlocks: false,
+                                ),
+                                componentBuilders: [
+                                  SingleImageComponentBuilder(
+                                    screenWidth: screenWidth, // 🚀 최고 효율: 전달
+                                    dragService: _dragService,
+                                    isEditing: false, // 읽기 모드
+                                    isDarkMode: isDarkMode, // 🎯 성능 최적화: 변수 사용
+                                  ),
+                                  RowImageComponentBuilder(
+                                    screenWidth: screenWidth, // 🚀 최고 효율: 전달
+                                    dragService: _dragService,
+                                    isEditing: false, // 읽기 모드
+                                    isDarkMode: isDarkMode, // 🎯 성능 최적화: 변수 사용
+                                  ),
+                                  PageViewImageComponentBuilder(
+                                    screenWidth: screenWidth, // 🚀 최고 효율: 전달
+                                    dragService: _dragService,
+                                    isEditing: false, // 읽기 모드
+                                    isDarkMode: isDarkMode,
+                                  ),
+                                  LinkComponentBuilder(
+                                    isEditing: false,
+                                    isDarkMode: isDarkMode, // 🎯 성능 최적화: 변수 사용
+                                  ),
+                                  DividerComponentBuilder(),
+                                  ClipComponentBuilder(
+                                    dragService: _dragService,
+                                    isDarkMode: isDarkMode,
+                                  ),
+                                  CustomParagraphComponentBuilder(
+                                    dragService: _dragService,
+                                    editorService: _editorService,
+                                    isEditing: false, // 읽기 모드
+                                    onMentionTap: (names) {
+                                      if (names.isEmpty) return;
+                                      if (names.length == 1) {
+                                        _openUserProfile(names.first);
+                                        return;
+                                      }
+                                      showModalBottomSheet(
+                                        context: context,
+                                        backgroundColor: Colors.transparent,
+                                        builder: (_) {
+                                          return Container(
+                                            decoration: BoxDecoration(
+                                              color:
+                                                  Theme.of(
+                                                    context,
+                                                  ).colorScheme.surface,
+                                              borderRadius:
+                                                  const BorderRadius.vertical(
+                                                    top: Radius.circular(16),
+                                                  ),
+                                            ),
+                                            child: SafeArea(
+                                              top: false,
+                                              child: Column(
+                                                mainAxisSize: MainAxisSize.min,
+                                                children: [
+                                                  const SizedBox(height: 8),
+                                                  Container(
+                                                    width: 40,
+                                                    height: 4,
+                                                    decoration: BoxDecoration(
+                                                      color: Theme.of(context)
+                                                          .colorScheme
+                                                          .onSurface
+                                                          .withOpacity(0.2),
+                                                      borderRadius:
+                                                          BorderRadius.circular(
+                                                            2,
+                                                          ),
                                                     ),
                                                   ),
-                                                  onTap: () {
-                                                    Navigator.of(context).pop();
-                                                    _openUserProfile(u);
-                                                  },
-                                                ),
+                                                  const SizedBox(height: 8),
+                                                  ...names.map(
+                                                    (u) => ListTile(
+                                                      title: Text(
+                                                        '@$u',
+                                                        style: TextStyle(
+                                                          color:
+                                                              Theme.of(context)
+                                                                  .colorScheme
+                                                                  .onSurface,
+                                                          fontWeight:
+                                                              FontWeight.w600,
+                                                        ),
+                                                      ),
+                                                      onTap: () {
+                                                        Navigator.of(
+                                                          context,
+                                                        ).pop();
+                                                        _openUserProfile(u);
+                                                      },
+                                                    ),
+                                                  ),
+                                                  const SizedBox(height: 8),
+                                                ],
                                               ),
-                                              const SizedBox(height: 8),
-                                            ],
-                                          ),
-                                        ),
+                                            ),
+                                          );
+                                        },
                                       );
                                     },
-                                  );
-                                },
-                              ),
-                              ...defaultComponentBuilders,
-                            ],
-                            documentLayoutKey: _layoutKey,
-                            focusNode: _readOnlyFocus,
-                            gestureMode: DocumentGestureMode.mouse,
+                                  ),
+                                  ...defaultComponentBuilders,
+                                ],
+                                documentLayoutKey: _layoutKey,
+                                focusNode: _readOnlyFocus,
+                                gestureMode: DocumentGestureMode.mouse,
+                              );
+                            },
                           ),
                           SliverToBoxAdapter(child: SizedBox(height: 100)),
 

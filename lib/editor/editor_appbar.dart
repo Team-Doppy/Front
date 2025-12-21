@@ -33,6 +33,7 @@ class EditModeAppBar extends StatefulWidget {
   onThumbnailChanged; // 썸네일 변경 콜백 (URL과 ID 전달)
   final String? postId; // 서버에서 데이터 가져오기용
   final bool isSaving; // 저장 중 상태
+  final bool isAutoSaving; // 자동 저장 중 상태
   final ValueNotifier<bool>? videoUploadIndicatorNotifier; // 영상 업로드 인디케이터 상태
 
   const EditModeAppBar({
@@ -45,6 +46,7 @@ class EditModeAppBar extends StatefulWidget {
     this.onTitleSummaryChanged,
     this.postId,
     this.isSaving = false,
+    this.isAutoSaving = false,
     this.onCategoryChanged,
     this.onThumbnailChanged,
     this.videoUploadIndicatorNotifier,
@@ -1054,26 +1056,48 @@ class _EditModeAppBarState extends State<EditModeAppBar> {
                     // 기존 버튼들
                     return Row(
                       children: [
-                        // 더보기 메뉴 버튼
+                        // 더보기 메뉴 버튼 / 자동 저장 로딩 스피너
                         Builder(
                           builder:
                               (btnContext) => IconButton(
-                                icon: Icon(
-                                  Icons.more_horiz_rounded,
-                                  color: Theme.of(
-                                    context,
-                                  ).colorScheme.onSurface.withOpacity(0.6),
-                                  size: 24,
-                                ),
-                                onPressed: () {
-                                  final RenderBox button =
-                                      btnContext.findRenderObject()
-                                          as RenderBox;
-                                  final Offset position = button.localToGlobal(
-                                    Offset.zero,
-                                  );
-                                  _showEditOptionsMenu(btnContext, position);
-                                },
+                                icon:
+                                    widget.isAutoSaving
+                                        ? SizedBox(
+                                          width: 24,
+                                          height: 24,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                            valueColor:
+                                                AlwaysStoppedAnimation<Color>(
+                                                  Theme.of(context)
+                                                      .colorScheme
+                                                      .onSurface
+                                                      .withOpacity(0.6),
+                                                ),
+                                          ),
+                                        )
+                                        : Icon(
+                                          Icons.more_horiz_rounded,
+                                          color: Theme.of(context)
+                                              .colorScheme
+                                              .onSurface
+                                              .withOpacity(0.6),
+                                          size: 24,
+                                        ),
+                                onPressed:
+                                    widget.isAutoSaving
+                                        ? null
+                                        : () {
+                                          final RenderBox button =
+                                              btnContext.findRenderObject()
+                                                  as RenderBox;
+                                          final Offset position = button
+                                              .localToGlobal(Offset.zero);
+                                          _showEditOptionsMenu(
+                                            btnContext,
+                                            position,
+                                          );
+                                        },
                               ),
                         ),
 
@@ -1194,16 +1218,36 @@ class EditorAppBar extends StatelessWidget {
       return;
     }
 
-    // 🎯 sessionKey 계산 (_saveDraft와 동일한 방식)
-    final title = PostExporter.getTitleFromDocument(editorService.document);
-    final titleHash = title.hashCode.abs();
-    final draftIdByTitle = 'draft_$titleHash';
-    final sessionKey = currentDraftId ?? draftIdByTitle;
+    // 🎯 sessionKey 계산 (UUID 기반)
+    // currentDraftId가 있으면 사용, 없으면 안전장치로 생성 (일반적으로는 이미 생성되어 있음)
+    final sessionKey = currentDraftId ?? 'draft_temp';
 
     // 검증 통과 시 다음 화면으로 이동
     cleanupAllVideoPlayers();
     NodeComponentService().selectNode(null);
-    final json = exportToJsonString(context);
+
+    // 🚀 exportToJsonString 호출 시 예외 처리
+    String json;
+    try {
+      json = exportToJsonString(context);
+    } catch (e) {
+      // 발행 시 업로드되지 않은 미디어가 있는 경우
+      if (e is StateError && e.message.contains('발행 불가')) {
+        await DialogUtils.showInfoDialog(
+          context,
+          title: '등록 실패',
+          message: e.message.replaceAll('발행 불가: ', '').split(' (').first,
+        );
+      } else {
+        // 기타 에러
+        ErrorHandler.handleError(
+          context,
+          e,
+          customMessage: '발행 준비 중 오류가 발생했습니다.',
+        );
+      }
+      return;
+    }
 
     Navigator.of(context).push(
       PageRouteBuilder(
@@ -1442,6 +1486,7 @@ class EditorAppBar extends StatelessWidget {
       stickerService: stickerService,
       viewportSize: MediaQuery.of(context).size,
       pretty: true,
+      forPublishing: true, // 발행 시점에는 네트워크 URL로 변환
     );
   }
 }

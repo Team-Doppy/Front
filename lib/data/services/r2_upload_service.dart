@@ -31,6 +31,9 @@ class R2UploadService {
         return 'image/gif';
       case 'webp':
         return 'image/webp';
+      case 'heic':
+      case 'heif':
+        return 'image/heic';
       case 'mp4':
         return 'video/mp4';
       case 'mov':

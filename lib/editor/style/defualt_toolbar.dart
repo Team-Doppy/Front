@@ -2054,13 +2054,39 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
                 mainAxisAlignment: MainAxisAlignment.end,
                 children: [
                   SizedBox(height: 10),
-                  Container(
-                    width: 7,
-                    height: 7,
-                    decoration: BoxDecoration(
-                      color: currentColor,
-                      shape: BoxShape.circle,
-                    ),
+                  // 🎨 여러 색상이 섞여 있으면 무지개 닷 표시
+                  Builder(
+                    builder: (context) {
+                      final colors = _getTextColorsInSelection();
+                      if (colors.length > 1) {
+                        // 무지개 닷 (여러 색상)
+                        return Container(
+                          width: 7,
+                          height: 7,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            gradient: LinearGradient(
+                              colors:
+                                  colors.length > 1
+                                      ? colors
+                                      : [currentColor, currentColor],
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
+                            ),
+                          ),
+                        );
+                      } else {
+                        // 단일 색상 닷
+                        return Container(
+                          width: 7,
+                          height: 7,
+                          decoration: BoxDecoration(
+                            color: currentColor,
+                            shape: BoxShape.circle,
+                          ),
+                        );
+                      }
+                    },
                   ),
                 ],
               ),
@@ -2105,6 +2131,68 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
 
     // 기본 색상 (테마의 onSurface)
     return Theme.of(context).colorScheme.onSurface;
+  }
+
+  /// 선택 영역에 여러 색상이 섞여 있는지 확인 (단일 노드 내 선택만 체크)
+  List<Color> _getTextColorsInSelection() {
+    final selection = widget.stylingService.composer.selection;
+    final colors = <Color>{};
+
+    if (selection != null && !selection.isCollapsed) {
+      final startNode = widget.stylingService.editor.document.getNodeById(
+        selection.base.nodeId,
+      );
+      final endNode = widget.stylingService.editor.document.getNodeById(
+        selection.extent.nodeId,
+      );
+
+      if (startNode is TextNode && endNode is TextNode) {
+        final startPos = selection.base.nodePosition as TextNodePosition;
+        final endPos = selection.extent.nodePosition as TextNodePosition;
+
+        // 🎯 단일 노드 내에서 선택된 경우만 여러 색상 체크
+        if (startNode.id == endNode.id) {
+          final startOffset = startPos.offset;
+          final endOffset = endPos.offset;
+          for (int i = startOffset; i < endOffset; i++) {
+            final attributions = startNode.text.getAllAttributionsAt(i);
+            for (final attribution in attributions) {
+              if (attribution is ColorAttribution &&
+                  attribution is! HighlightAttribution) {
+                colors.add(attribution.color);
+              }
+            }
+          }
+        } else {
+          // 여러 노드에 걸친 선택
+          final startIndex = widget.stylingService.editor.document
+              .getNodeIndexById(startNode.id);
+          final endIndex = widget.stylingService.editor.document
+              .getNodeIndexById(endNode.id);
+
+          for (int i = startIndex; i <= endIndex; i++) {
+            final node = widget.stylingService.editor.document.getNodeAt(i);
+            if (node is TextNode) {
+              final startOffset = i == startIndex ? startPos.offset : 0;
+              final endOffset =
+                  i == endIndex ? endPos.offset : node.text.text.length;
+
+              for (int j = startOffset; j < endOffset; j++) {
+                final attributions = node.text.getAllAttributionsAt(j);
+                for (final attribution in attributions) {
+                  if (attribution is ColorAttribution &&
+                      attribution is! HighlightAttribution) {
+                    colors.add(attribution.color);
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
+    return colors.toList();
   }
 
   /// 현재 형광펜 색상 가져오기

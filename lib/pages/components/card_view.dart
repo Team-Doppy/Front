@@ -213,19 +213,19 @@ class _CardViewState extends State<CardView> {
                                         )
                                     : CachedNetworkImage(
                                       key: ValueKey(
-                                        '${widget.post.thumbnailImageUrl}-${theme.brightness}',
+                                        widget.post.thumbnailImageUrl,
                                       ),
                                       imageUrl: widget.post.thumbnailImageUrl,
+                                      cacheKey: widget.post.thumbnailImageUrl,
                                       fit: BoxFit.cover,
                                       width: double.infinity,
                                       height: 150,
-                                      fadeInDuration: const Duration(
-                                        milliseconds: 180,
-                                      ),
-                                      fadeOutDuration: const Duration(
-                                        milliseconds: 80,
-                                      ),
-                                      fadeInCurve: Curves.easeOut,
+                                      fadeInDuration: Duration.zero,
+                                      fadeOutDuration: Duration.zero,
+                                      useOldImageOnUrlChange:
+                                          true, // 🎯 URL 변경 시 이전 이미지 유지 (깜빡임 방지)
+                                      memCacheWidth: 800, // 메모리 캐시 최적화
+                                      maxWidthDiskCache: 800, // 디스크 캐시 최적화
                                       placeholder:
                                           (context, url) => Container(
                                             color: theme.colorScheme.surface

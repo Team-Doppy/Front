@@ -102,6 +102,8 @@ class DraftService {
       final base = PostExporter.exportToMap(
         editorService: editorService,
         stickerService: stickerService,
+        forPublishing: true, // 🚀 임시저장도 네트워크 이미지로 변환 (로드 속도 향상)
+        allowPartialUpload: false, // 🎯 임시저장도 모든 이미지 업로드 필수 (로컬 경로 방지)
       );
       final String v = visibility.toLowerCase();
       final bool privateOnly = v == 'private';
@@ -156,11 +158,11 @@ class DraftService {
       // 현재 임시저장으로 설정
       await prefs.setString(_currentDraftKey, draftId);
 
-      debugPrint('[DraftService] Draft saved: $draftId');
       return draftId;
-    } catch (e) {
-      debugPrint('[DraftService] Error saving draft: $e');
-      throw Exception('임시저장에 실패했습니다');
+    } catch (e, stackTrace) {
+      debugPrint('[DraftService] ❌ 임시저장 실패: $e');
+      debugPrint('[DraftService] 스택 트레이스: $stackTrace');
+      throw Exception('임시저장에 실패했습니다: $e');
     }
   }
 
@@ -180,73 +182,80 @@ class DraftService {
     }
   }
 
-  /// 특정 임시저장 가져오기
+  /// 특정 임시저장 가져오기 (최적화: 파싱 중 조기 종료)
   Future<DraftData?> getDraft(String draftId) async {
     try {
-      final drafts = await getAllDrafts();
-      return drafts.firstWhere((draft) => draft.id == draftId);
+      final prefs = await SharedPreferences.getInstance();
+      final draftsJson = prefs.getString(_draftsKey);
+
+      if (draftsJson == null) return null;
+
+      // 🚀 JSON 파싱 중 조기 종료 최적화
+      final List<dynamic> draftsList = json.decode(draftsJson);
+
+      // 필요한 드래프트만 찾아서 반환 (전체 리스트 생성하지 않음)
+      for (final jsonData in draftsList) {
+        if (jsonData is Map<String, dynamic> && jsonData['id'] == draftId) {
+          return DraftData.fromJson(jsonData);
+        }
+      }
+
+      return null;
     } catch (e) {
       debugPrint('[DraftService] Error getting draft: $e');
       return null;
     }
   }
 
-  /// 임시저장 불러오기
+  /// 임시저장 불러오기 (최적화)
   Future<bool> loadDraft({
     required String draftId,
     required EditorService editorService,
     required StickerService stickerService,
     NodeComponentService? nodeComponentService,
     dynamic dragService, // DragService 타입 (순환 참조 방지)
+    BuildContext? context, // 🚀 이미지 프리로드용 컨텍스트
   }) async {
     try {
+      // 🚀 1. 드래프트 데이터 로드 (최적화된 방식)
       final draft = await getDraft(draftId);
       if (draft == null) return false;
 
-      // 🎯 1. 모든 셀렉션 명시적 클리어
-      try {
-        editorService.editor.composer.clearSelection();
-        nodeComponentService?.clearSelection();
-        nodeComponentService?.clearHighlightedSelection();
-      } catch (e) {
-        debugPrint('[DraftService] 셀렉션 클리어 실패: $e');
-      }
-
-      // 🎯 2. 캐시 무효화 (레이아웃 정보 초기화)
-      try {
-        if (dragService != null) {
-          // dynamic 타입이므로 직접 메서드 호출 시도
-          (dragService as dynamic).invalidateNodeRectCache();
-        }
-      } catch (e) {
-        debugPrint('[DraftService] 캐시 무효화 실패: $e');
-      }
-
-      // PostReaderService를 사용하여 문서 복원
+      // 🚀 2. 병렬 처리 가능한 작업들을 먼저 수행
+      // JSON 디코딩은 한 번만 수행
       final exportedData = json.decode(draft.content) as Map<String, dynamic>;
       final postReaderService = PostReaderService();
-      // 드래프트 복구시에는 제목 노드도 포함 (includeTitleNode: true)
+
+      // 🚀 3. 초기화 작업들 (병렬 처리 가능)
+      editorService.editor.composer.clearSelection();
+      nodeComponentService?.clearSelection();
+      nodeComponentService?.clearHighlightedSelection();
+      editorService.clearHistory();
+      if (dragService != null) {
+        (dragService as dynamic).invalidateNodeRectCache();
+      }
+
+      // 🚀 4. 문서 복원 및 교체 (특수 노드 등록 포함)
       final document = postReaderService.rebuildDocumentForRead(
         exportedData,
         includeTitleNode: true,
       );
 
-      // 🎯 3. 안전한 문서 교체 방식 (에디터 구조 완전히 클리어 후 재구성)
+      // 🚀 5. 문서 교체 (최적화: 특수 노드 등록 통합)
       await _replaceDocumentSafely(editorService, document);
 
-      // 🎯 4. 특수 노드 레지스트리 등록 (임시저장 불러오기 후)
-      editorService.registerAllSpecialNodes();
-
-      // 🎯 5. 스티커 복원
+      // 🚀 6. 스티커 복원
       postReaderService.restoreStickers(
         exported: exportedData,
         stickerService: stickerService,
       );
 
-      // 🎯 6. 레이아웃 재동기화를 위한 notifyListeners 호출
-      // EditorService는 ChangeNotifier를 상속하므로 notifyListeners 사용 가능
-      (editorService as ChangeNotifier).notifyListeners();
+      // 🚀 7. 전체 네트워크 이미지를 순차적으로 배치 프리캐시
+      if (context != null) {
+        _precacheAllImagesInBatch(context, exportedData);
+      }
 
+      debugPrint('[DraftService] ✅ 임시저장 불러오기 완료');
       return true;
     } catch (e) {
       debugPrint('[DraftService] Error loading draft: $e');
@@ -254,49 +263,107 @@ class DraftService {
     }
   }
 
-  /// 안전한 문서 교체
+  /// 🚀 전체 네트워크 이미지를 순차적으로 배치 프리캐시
+  void _precacheAllImagesInBatch(
+    BuildContext context,
+    Map<String, dynamic> exportedData,
+  ) {
+    try {
+      final postReaderService = PostReaderService();
+      final allImageUrls = postReaderService.extractImageUrls(exportedData);
+
+      // 네트워크 URL만 필터링
+      final networkUrls =
+          allImageUrls.where((url) => EditorService.isNetworkUrl(url)).toList();
+
+      if (networkUrls.isEmpty) return;
+
+      // 🚀 배치로 병렬 프리캐시 (20개씩 동시 처리, 네트워크 부하 분산)
+      Future.microtask(() async {
+        const batchSize = 20; // 한 배치당 동시 처리 개수
+        for (int i = 0; i < networkUrls.length; i += batchSize) {
+          if (!context.mounted) break;
+
+          // 현재 배치 추출
+          final batch = networkUrls.skip(i).take(batchSize).toList();
+
+          // 배치 내에서 병렬로 프리캐시 (await 없이 시작만)
+          for (final url in batch) {
+            if (!context.mounted) break;
+            precacheImage(NetworkImage(url), context).catchError((_) {
+              // 개별 실패는 무시
+            });
+          }
+
+          // 배치 간 짧은 딜레이 (네트워크 부하 분산)
+          if (i + batchSize < networkUrls.length) {
+            await Future.delayed(const Duration(milliseconds: 50));
+          }
+        }
+      });
+    } catch (_) {
+      // 프리캐시 실패는 무시 (나중에 위젯에서 로드됨)
+    }
+  }
+
+  /// 안전한 문서 교체 (최적화: 불필요한 작업 제거)
   Future<void> _replaceDocumentSafely(
     EditorService editorService,
     MutableDocument newDocument,
   ) async {
     try {
-      // 🎯 1. 선택 상태 먼저 초기화 (노드 삭제 전에)
-      editorService.editor.composer.clearSelection();
-
-      // 🎯 2. 현재 문서의 모든 노드를 삭제 (뒤에서부터)
       final currentDoc = editorService.document;
-      while (currentDoc.length > 0) {
+
+      // 🚀 1. 현재 문서의 모든 노드를 삭제 (효율적으로)
+      while (currentDoc.isNotEmpty) {
         final node = currentDoc.getNodeAt(0);
         if (node != null) {
           currentDoc.deleteNode(node.id);
         } else {
-          break; // 안전장치: 노드가 없으면 루프 종료
+          break;
         }
       }
 
-      // 🎯 3. 새 문서의 노드들을 추가 (복사본으로 추가)
+      // 🚀 2. 새 문서의 노드들을 추가하면서 특수 노드 정보 수집
+      final specialNodes = <String, int>{}; // nodeId -> index
+
       for (int i = 0; i < newDocument.length; i++) {
         final node = newDocument.getNodeAt(i);
         if (node != null) {
-          // 노드 복사본 생성하여 추가 (원본과 분리)
+          // 🚀 노드 복사 (새로 생성된 노드이므로 간단한 복사만 수행)
           final copiedNode = _copyNode(node);
           currentDoc.insertNodeAt(i, copiedNode);
+
+          // 🚀 특수 노드 여부 확인 (EditorService의 isSpecialNode 로직 참고)
+          if (_isSpecialNode(copiedNode)) {
+            specialNodes[copiedNode.id] = i;
+          }
         }
       }
 
-      // 🎯 4. 문서 변경 알림 (레이아웃 재계산 트리거)
-      // EditorService는 ChangeNotifier를 상속하므로 notifyListeners 사용 가능
-      (editorService as ChangeNotifier).notifyListeners();
+      // 🚀 3. 특수 노드 레지스트리에 한 번에 등록 (중복 순회 방지)
+      if (specialNodes.isNotEmpty) {
+        // EditorService의 registerAllSpecialNodes 대신 직접 등록
+        // 단, EditorService의 내부 메서드를 직접 호출할 수 없으므로
+        // 여기서는 registerAllSpecialNodes를 호출하되, 이미 문서가 교체된 상태이므로
+        // 한 번만 순회하면 됨
+        editorService.registerAllSpecialNodes();
+      }
 
-      // 🎯 5. 선택 상태 재확인 (선택 설정하지 않음)
-      // - setSelectionWithReason은 포커스를 요청할 수 있음
-      // - 선택이 없어도 사용자가 나중에 탭하면 자동으로 선택이 설정됨
+      // 🚀 4. 선택 상태 확인 (한 번만)
       editorService.editor.composer.clearSelection();
     } catch (e) {
       debugPrint('[DraftService] Error replacing document: $e');
-      // 실패 시 기본 문서로 복구
       _createDefaultDocument(editorService);
     }
+  }
+
+  /// 특수 노드 여부 확인 (EditorService 로직 참고)
+  bool _isSpecialNode(dynamic node) {
+    return node is ImageNode ||
+        node is ClipNode ||
+        node is LinkNode ||
+        node is HorizontalRuleNode;
   }
 
   /// 노드 복사본 생성 (안전한 문서 교체를 위해)

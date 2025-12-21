@@ -74,16 +74,22 @@ class JsonExport {
 /// - 구조 수집 및 직렬화를 모두 담당한다.
 class PostExporter {
   /// 편집 중 문서/스티커를 JSON 문자열로 내보낸다.
+  /// [forPublishing]이 true이면 uploadedUrls를 확인하여 네트워크 URL로 변환
+  /// [allowPartialUpload]이 true이면 업로드 완료되지 않은 이미지는 로컬 경로로 유지 (임시저장용)
   static String exportToJsonString({
     required EditorService editorService,
     required StickerService stickerService,
     Size? viewportSize,
     bool pretty = true,
+    bool forPublishing = false,
+    bool allowPartialUpload = false, // 🚀 임시저장 시 업로드 미완료 이미지 허용
   }) {
     final map = exportToMap(
       editorService: editorService,
       stickerService: stickerService,
       viewportSize: viewportSize,
+      forPublishing: forPublishing,
+      allowPartialUpload: allowPartialUpload,
     );
     return JsonExport.encode(map, pretty: pretty);
   }
@@ -100,10 +106,14 @@ class PostExporter {
   }
 
   /// 편집 중 문서/스티커를 JSON(Map)으로 내보낸다.
+  /// [forPublishing]이 true이면 uploadedUrls를 확인하여 네트워크 URL로 변환
+  /// [allowPartialUpload]이 true이면 업로드 완료되지 않은 이미지는 로컬 경로로 유지 (임시저장용)
   static Map<String, dynamic> exportToMap({
     required EditorService editorService,
     required StickerService stickerService,
     Size? viewportSize,
+    bool forPublishing = false,
+    bool allowPartialUpload = false, // 🚀 임시저장 시 업로드 미완료 이미지 허용
   }) {
     final doc = editorService.document;
     final layout =
@@ -191,7 +201,42 @@ class PostExporter {
           hasSpoiler = meta != null && meta['spoiler'] == true;
         }
 
-        final dataMap = <String, dynamic>{'url': node.imageUrl};
+        // 🚀 forPublishing이 true이고 uploadedUrls가 있으면 네트워크 URL로 변환
+        // - 이미 네트워크 URL이면 그대로 사용 (편집 모드에서 기존 발행된 이미지)
+        // - 로컬 경로이면 uploadedUrls에서 변환 (편집 중 새로 추가한 이미지)
+        String imageUrl = node.imageUrl;
+        if (forPublishing && meta != null) {
+          final isNetworkUrl = _isNetworkUrl(imageUrl);
+
+          if (!isNetworkUrl) {
+            // 로컬 경로인 경우 uploadedUrls에서 변환 (필수)
+            final uploadedUrls = meta['uploadedUrls'] as Map<String, dynamic>?;
+            if (uploadedUrls != null && uploadedUrls[imageUrl] != null) {
+              imageUrl = uploadedUrls[imageUrl].toString();
+              debugPrint(
+                '[PostExporter] 🔄 단일 이미지 네트워크 URL 변환: ${node.imageUrl} -> $imageUrl',
+              );
+            } else {
+              // 🚀 변환 실패: 업로드되지 않은 이미지
+              if (allowPartialUpload) {
+                // 🚀 임시저장 시: 로컬 경로로 유지
+                debugPrint(
+                  '[PostExporter] ⚠️ 단일 이미지 업로드 미완료 (임시저장 허용): ${node.imageUrl}',
+                );
+                // imageUrl은 그대로 로컬 경로 유지
+              } else {
+                // 발행 시: 에러 발생
+                throw StateError(
+                  '발행 불가: 이미지가 업로드되지 않았습니다. '
+                  '이미지 업로드가 완료될 때까지 기다려주세요. (노드 ID: ${node.id}, URL: ${node.imageUrl})',
+                );
+              }
+            }
+          }
+          // 이미 네트워크 URL이면 변환 불필요 (기존 발행된 이미지)
+        }
+
+        final dataMap = <String, dynamic>{'url': imageUrl};
 
         // true일 때만 추가 (false는 키 없음으로 표현)
         if (hasSpoiler) {
@@ -224,10 +269,78 @@ class PostExporter {
         debugPrint('[PostExporter] 🔍 URLs: ${node.imageUrls}');
         debugPrint('[PostExporter] 🔍 metadata: ${meta.keys.toList()}');
 
+        // 🚀 forPublishing이 true이고 uploadedUrls가 있으면 네트워크 URL로 변환
+        // - 이미 네트워크 URL이면 그대로 사용 (편집 모드에서 기존 발행된 이미지)
+        // - 로컬 경로이면 uploadedUrls에서 변환 (편집 중 새로 추가한 이미지)
+        List<String> imageUrls = node.imageUrls;
+        if (forPublishing) {
+          final uploadedUrls = meta['uploadedUrls'] as Map<String, dynamic>?;
+          if (uploadedUrls != null && uploadedUrls.isNotEmpty) {
+            final List<String> convertedUrls = [];
+            final List<String> failedUrls = [];
+
+            for (final url in node.imageUrls) {
+              // 이미 네트워크 URL이면 변환 불필요
+              if (_isNetworkUrl(url)) {
+                convertedUrls.add(url); // 기존 발행된 이미지
+                continue;
+              }
+
+              // 로컬 경로인 경우 변환 (필수)
+              final networkUrl = uploadedUrls[url];
+              if (networkUrl != null) {
+                convertedUrls.add(networkUrl.toString());
+                debugPrint(
+                  '[PostExporter] 🔄 ImageRow 네트워크 URL 변환: $url -> $networkUrl',
+                );
+              } else {
+                failedUrls.add(url);
+              }
+            }
+
+            // 🚀 변환 실패한 URL 처리
+            if (failedUrls.isNotEmpty) {
+              if (allowPartialUpload) {
+                // 🚀 임시저장 시: 업로드 완료된 것만 네트워크 URL로, 나머지는 로컬 경로 유지
+                debugPrint(
+                  '[PostExporter] ⚠️ ImageRow 일부 업로드 미완료 (임시저장 허용): ${failedUrls.join(", ")}',
+                );
+                // 업로드 완료되지 않은 URL은 로컬 경로로 유지
+                convertedUrls.addAll(failedUrls);
+                imageUrls = convertedUrls;
+              } else {
+                // 발행 시: 에러 발생
+                throw StateError(
+                  '발행 불가: 이미지 행의 일부 이미지가 업로드되지 않았습니다. '
+                  '모든 이미지 업로드가 완료될 때까지 기다려주세요. '
+                  '(노드 ID: ${node.id}, 실패한 URL: ${failedUrls.join(", ")})',
+                );
+              }
+            } else {
+              imageUrls = convertedUrls;
+            }
+          } else if (node.imageUrls.any((url) => !_isNetworkUrl(url))) {
+            // uploadedUrls가 없는데 로컬 경로가 있으면 처리
+            if (allowPartialUpload) {
+              // 🚀 임시저장 시: 로컬 경로로 유지
+              debugPrint(
+                '[PostExporter] ⚠️ ImageRow 업로드 미완료 (임시저장 허용, uploadedUrls 없음): ${node.id}',
+              );
+              // imageUrls는 그대로 로컬 경로 유지
+            } else {
+              // 발행 시: 에러 발생
+              throw StateError(
+                '발행 불가: 이미지 행에 업로드되지 않은 이미지가 있습니다. '
+                '이미지 업로드가 완료될 때까지 기다려주세요. (노드 ID: ${node.id})',
+              );
+            }
+          }
+        }
+
         final nodeMap = <String, dynamic>{
           'id': node.id,
           'type': 'imageRow',
-          'urls': node.imageUrls,
+          'urls': imageUrls,
         };
 
         if (node.spacing != 4.0) {
@@ -235,6 +348,41 @@ class PostExporter {
         }
         if (hasSpoiler) {
           nodeMap['spoiler'] = true;
+        }
+
+        // 🚀 이미지 크기 정보 저장 (임시저장 불러올 때 빠른 높이 계산용)
+        final imageSizes = meta['imageSizes'] as Map<String, dynamic>?;
+        if (imageSizes != null && imageSizes.isNotEmpty) {
+          // 🚀 URL 변환이 발생했으면 크기 정보도 키를 변환
+          final convertedSizes = <String, dynamic>{};
+          final uploadedUrls = meta['uploadedUrls'] as Map<String, dynamic>?;
+
+          for (final url in imageUrls) {
+            // 네트워크 URL로 변환된 경우, 로컬 경로 키의 크기 정보를 찾아서 매핑
+            String? sizeKey = url;
+            if (uploadedUrls != null) {
+              // uploadedUrls에서 역방향 검색 (networkUrl -> localPath)
+              String? foundLocalPath;
+              for (final entry in uploadedUrls.entries) {
+                if (entry.value.toString() == url) {
+                  foundLocalPath = entry.key;
+                  break;
+                }
+              }
+              if (foundLocalPath != null && foundLocalPath.isNotEmpty) {
+                sizeKey = foundLocalPath;
+              }
+            }
+
+            final sizeData = imageSizes[sizeKey] ?? imageSizes[url];
+            if (sizeData != null) {
+              convertedSizes[url] = sizeData;
+            }
+          }
+
+          if (convertedSizes.isNotEmpty) {
+            nodeMap['imageSizes'] = convertedSizes;
+          }
         }
 
         debugPrint('[PostExporter] 🔍 최종 nodeMap: $nodeMap');
@@ -255,7 +403,67 @@ class PostExporter {
           hasSpoiler = nodeService.isSpoiler(node.id);
         }
 
-        final dataMap = <String, dynamic>{'url': node.url};
+        // 🚀 forPublishing이 true이고 uploadedUrls가 있으면 네트워크 URL로 변환
+        // - 이미 네트워크 URL이면 그대로 사용 (편집 모드에서 기존 발행된 비디오)
+        // - 로컬 경로이면 uploadedUrls에서 변환 (편집 중 새로 추가한 비디오)
+        String videoUrl = node.url;
+        if (forPublishing) {
+          final isNetworkUrl = _isNetworkUrl(videoUrl);
+
+          if (!isNetworkUrl) {
+            // 로컬 경로인 경우 uploadedUrls에서 변환 (필수)
+            final uploadedUrls = meta['uploadedUrls'] as Map<String, dynamic>?;
+            if (uploadedUrls != null && uploadedUrls.isNotEmpty) {
+              // localPath가 있으면 uploadedUrls에서 찾기
+              if (node.localPath.isNotEmpty &&
+                  uploadedUrls[node.localPath] != null) {
+                videoUrl = uploadedUrls[node.localPath].toString();
+                debugPrint(
+                  '[PostExporter] 🔄 Video 네트워크 URL 변환: ${node.localPath} -> $videoUrl',
+                );
+              } else if (uploadedUrls[videoUrl] != null) {
+                // url 자체가 로컬 경로인 경우
+                videoUrl = uploadedUrls[videoUrl].toString();
+                debugPrint(
+                  '[PostExporter] 🔄 Video 네트워크 URL 변환: ${node.url} -> $videoUrl',
+                );
+              } else {
+                // 🚀 변환 실패: 업로드되지 않은 비디오
+                if (allowPartialUpload) {
+                  // 🚀 임시저장 시: 로컬 경로로 유지
+                  debugPrint(
+                    '[PostExporter] ⚠️ Video 업로드 미완료 (임시저장 허용): ${node.url}',
+                  );
+                  // videoUrl은 그대로 로컬 경로 유지
+                } else {
+                  // 발행 시: 에러 발생
+                  throw StateError(
+                    '발행 불가: 비디오가 업로드되지 않았습니다. '
+                    '비디오 업로드가 완료될 때까지 기다려주세요. (노드 ID: ${node.id}, URL: ${node.url})',
+                  );
+                }
+              }
+            } else {
+              // uploadedUrls가 없는데 로컬 경로면 처리
+              if (allowPartialUpload) {
+                // 🚀 임시저장 시: 로컬 경로로 유지
+                debugPrint(
+                  '[PostExporter] ⚠️ Video 업로드 미완료 (임시저장 허용, uploadedUrls 없음): ${node.id}',
+                );
+                // videoUrl은 그대로 로컬 경로 유지
+              } else {
+                // 발행 시: 에러 발생
+                throw StateError(
+                  '발행 불가: 비디오가 업로드되지 않았습니다. '
+                  '비디오 업로드가 완료될 때까지 기다려주세요. (노드 ID: ${node.id})',
+                );
+              }
+            }
+          }
+          // 이미 네트워크 URL이면 변환 불필요 (기존 발행된 비디오)
+        }
+
+        final dataMap = <String, dynamic>{'url': videoUrl};
 
         if (hasSpoiler) {
           dataMap['spoiler'] = true;
@@ -718,20 +926,29 @@ class PostExporter {
             // data.url 또는 url 필드에서 추출
             final data = n['data'] as Map<String, dynamic>?;
             final String url = (data?['url'] ?? n['url'] ?? '').toString();
-            if (url.isNotEmpty) usedUrls.add(url);
+            // 🚀 발행 시에는 네트워크 URL만 수집 (로컬 경로 제외)
+            if (url.isNotEmpty && _isNetworkUrl(url)) {
+              usedUrls.add(url);
+            }
           } else if (type == 'imageRow') {
             final List<dynamic> urls = List<dynamic>.from(
               n['urls'] ?? const [],
             );
             for (final u in urls) {
               final String url = u.toString();
-              if (url.isNotEmpty) usedUrls.add(url);
+              // 🚀 발행 시에는 네트워크 URL만 수집 (로컬 경로 제외)
+              if (url.isNotEmpty && _isNetworkUrl(url)) {
+                usedUrls.add(url);
+              }
             }
           } else if (type == 'video') {
             // data.url에서 추출
             final data = n['data'] as Map<String, dynamic>?;
             final String url = (data?['url'] ?? '').toString();
-            if (url.isNotEmpty) usedUrls.add(url);
+            // 🚀 발행 시에는 네트워크 URL만 수집 (로컬 경로 제외)
+            if (url.isNotEmpty && _isNetworkUrl(url)) {
+              usedUrls.add(url);
+            }
           }
         }
 
@@ -784,6 +1001,11 @@ class PostExporter {
     debugPrint(JsonExport.encode(result, pretty: true));
 
     return result;
+  }
+
+  /// 네트워크 URL인지 확인하는 헬퍼 함수
+  static bool _isNetworkUrl(String url) {
+    return url.startsWith('http://') || url.startsWith('https://');
   }
 }
 

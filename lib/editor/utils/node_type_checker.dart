@@ -1,23 +1,17 @@
-import 'package:doppy/editor/component/app_image_node.dart';
-import 'package:doppy/editor/component/clip_component.dart';
-import 'package:doppy/editor/component/link_component.dart';
 import 'package:doppy/editor/component/row_image_component.dart';
 import 'package:doppy/editor/component/pageview_image_component.dart';
+import 'package:doppy/editor/utils/config.dart' as config;
 import 'package:super_editor/super_editor.dart';
 
 /// 🎯 노드 타입 체커 유틸리티
 class NodeTypeChecker {
   NodeTypeChecker._();
 
-  /// 특수 노드인지 확인 (이미지, 영상, 링크 등)
+  /// 특수 노드인지 확인 (이미지, 영상, 링크, 구분선 등)
+  /// 🎯 멘션 노드는 일반 텍스트로 처리하므로 특수 노드가 아님
+  /// config.dart의 isSpecialNode()를 사용
   static bool isSpecialNode(DocumentNode? node) {
-    if (node == null) return false;
-    return node is ImageNode ||
-        node is ImageRowNode ||
-        node is PageViewImageNode ||
-        node is ClipNode ||
-        node is LinkNode ||
-        (node is ParagraphNode && node.metadata['mention'] == true);
+    return config.isSpecialNode(node);
   }
 
   /// 이미지 노드인지 확인 (단일, 행, 페이지뷰)

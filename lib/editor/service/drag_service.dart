@@ -6,6 +6,7 @@ import 'package:doppy/editor/postwrite_screen.dart';
 import 'package:doppy/editor/component/clip_component.dart';
 import 'package:doppy/editor/service/editor_service.dart';
 import 'package:doppy/editor/service/node_component_service.dart';
+import 'package:doppy/editor/utils/node_type_checker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:super_editor/super_editor.dart';
@@ -95,7 +96,7 @@ class DragService extends ChangeNotifier {
   }
 
   /// 세로 노드 사이 클릭 감지. 감지 시 삽입 인덱스 반환
-  int? detectVerticalGapAt(Offset globalPos, {double pad = 10.0}) {
+  int? detectVerticalGapAt(Offset globalPos, {double pad = 30.0}) {
     // 🎯 4.0 → 20.0 증가
     final layout =
         editorService.documentLayoutKey?.currentState as DocumentLayout?;
@@ -218,7 +219,15 @@ class DragService extends ChangeNotifier {
       previewImageLocalPath = null;
 
       if (node is ImageNode) {
-        previewImageUrl = node.imageUrl;
+        // 🚀 로컬-네트워크 혼용 구조: 로컬 경로인지 확인
+        final imageUrl = node.imageUrl;
+        if (imageUrl.isNotEmpty && !EditorService.isNetworkUrl(imageUrl)) {
+          // 로컬 경로인 경우
+          previewImageLocalPath = imageUrl;
+        } else {
+          // 네트워크 URL인 경우
+          previewImageUrl = imageUrl;
+        }
       } else if (node is ClipNode) {
         // ClipNode: thumbnailPath 우선, 없으면 metadata의 thumbnailUrl
         if (node.thumbnailPath.isNotEmpty) {
@@ -234,12 +243,24 @@ class DragService extends ChangeNotifier {
       } else if (node is ImageRowNode) {
         // ImageRowNode: 첫 번째 이미지 URL 사용
         if (node.imageUrls.isNotEmpty) {
-          previewImageUrl = node.imageUrls.first;
+          final firstUrl = node.imageUrls.first;
+          // 🚀 로컬-네트워크 혼용 구조: 로컬 경로인지 확인
+          if (firstUrl.isNotEmpty && !EditorService.isNetworkUrl(firstUrl)) {
+            previewImageLocalPath = firstUrl;
+          } else {
+            previewImageUrl = firstUrl;
+          }
         }
       } else if (node is PageViewImageNode) {
         // PageViewImageNode: 첫 번째 이미지 URL 사용
         if (node.imageUrls.isNotEmpty) {
-          previewImageUrl = node.imageUrls.first;
+          final firstUrl = node.imageUrls.first;
+          // 🚀 로컬-네트워크 혼용 구조: 로컬 경로인지 확인
+          if (firstUrl.isNotEmpty && !EditorService.isNetworkUrl(firstUrl)) {
+            previewImageLocalPath = firstUrl;
+          } else {
+            previewImageUrl = firstUrl;
+          }
         }
       } else if (node is LinkNode) {
         previewImageUrl = node.thumbnailUrl;
@@ -313,11 +334,35 @@ class DragService extends ChangeNotifier {
       final imageIndex = _splitImageIndex;
 
       if (rowId != null && imageIndex != null) {
+        // 🎯 분리 전 노드 존재 확인
+        final rowNode = editorService.document.getNodeById(rowId);
+        if (rowNode == null || rowNode is! ImageRowNode) {
+          debugPrint('[DragService] ⚠️ 분리 대상 행이 존재하지 않음: $rowId');
+          _cleanup();
+          return;
+        }
+
+        // 🎯 이미지 인덱스 범위 확인
+        if (imageIndex < 0 || imageIndex >= rowNode.imageUrls.length) {
+          debugPrint(
+            '[DragService] ⚠️ 이미지 인덱스가 범위를 벗어남: $imageIndex (행 이미지 수: ${rowNode.imageUrls.length})',
+          );
+          _cleanup();
+          return;
+        }
+
+        // 🎯 dropIndex 유효성 검증
+        final doc = editorService.document;
+        final validDropIndex =
+            (dropIndex != null && dropIndex! >= 0 && dropIndex! <= doc.length)
+                ? dropIndex
+                : null;
+
         // 분리 확정 시점: targetRowId가 있으면 그 행에 삽입, 없으면 기존 로우 근처 단독 삽입
         final splitImageId = editorService.splitImageFromRow(
           rowId,
           imageIndex,
-          insertIndex: (dragMode == DragType.reorder) ? dropIndex : null,
+          insertIndex: (dragMode == DragType.reorder) ? validDropIndex : null,
         );
         if (splitImageId != null) {
           draggingNodeId = splitImageId;
@@ -358,8 +403,21 @@ class DragService extends ChangeNotifier {
 
     switch (dragMode) {
       case DragType.reorder:
-        if (dropIndex != null) {
-          editorService.reorderNode(draggingNodeId!, dropIndex!);
+        if (dropIndex != null && draggingNodeId != null) {
+          // 🎯 null 체크 후 non-nullable 변수로 할당
+          final nodeId = draggingNodeId!;
+          final doc = editorService.document;
+          final validDropIndex = dropIndex!.clamp(0, doc.length);
+
+          // 🎯 드래그 중인 노드가 여전히 존재하는지 확인
+          final draggingNode = doc.getNodeById(nodeId);
+          if (draggingNode == null) {
+            debugPrint('[DragService] ⚠️ 드래그 중인 노드가 존재하지 않음: $nodeId');
+            _cleanup();
+            return;
+          }
+
+          editorService.reorderNode(nodeId, validDropIndex);
           // 🎯 reorderNode() 후 레이아웃이 완전히 업데이트된 후 캐시 무효화
           // 즉시 무효화하면 레이아웃이 아직 업데이트되지 않아 잘못된 위치를 계산할 수 있음
           // addPostFrameCallback을 사용하여 레이아웃 업데이트 완료 후 캐시 무효화
@@ -394,10 +452,39 @@ class DragService extends ChangeNotifier {
       case DragType.imageRowMerge:
         {
           final String? mergeTargetId = _targetRowId ?? targetNodeId;
-          if (mergeTargetId != null) {
+          if (mergeTargetId != null && draggingNodeId != null) {
+            // 🎯 null 체크 후 non-nullable 변수로 할당
+            final nodeId = draggingNodeId!;
+            final targetId = mergeTargetId;
+
+            // 🎯 병합 전 노드 존재 확인
+            final targetNode = editorService.document.getNodeById(targetId);
+            if (targetNode == null) {
+              debugPrint('[DragService] ⚠️ 병합 대상 노드가 존재하지 않음: $targetId');
+              _cleanup();
+              return;
+            }
+
+            // 🎯 타겟 노드가 이미지 타입인지 확인
+            if (targetNode is! ImageRowNode && targetNode is! ImageNode) {
+              debugPrint(
+                '[DragService] ⚠️ 병합 대상 노드가 이미지 타입이 아님: ${targetNode.runtimeType}',
+              );
+              _cleanup();
+              return;
+            }
+
+            // 🎯 드래그 중인 노드가 여전히 존재하는지 확인
+            final draggingNode = editorService.document.getNodeById(nodeId);
+            if (draggingNode == null) {
+              debugPrint('[DragService] ⚠️ 드래그 중인 노드가 존재하지 않음: $nodeId');
+              _cleanup();
+              return;
+            }
+
             editorService.mergeImagesIntoRow(
-              draggingNodeId!,
-              mergeTargetId,
+              nodeId,
+              targetId,
               isFromLeft: isDraggingFromLeft,
             );
             // 🎯 mergeImagesIntoRow() 후 레이아웃이 완전히 업데이트된 후 캐시 무효화
@@ -606,10 +693,41 @@ class DragService extends ChangeNotifier {
     }
     if (renderBox == null) return null;
 
-    final localPosition = renderBox.globalToLocal(globalPosition);
+    // 🎯 좌표 변환 및 유효성 검증
+    Offset localPosition;
+    try {
+      localPosition = renderBox.globalToLocal(globalPosition);
+      // 무한대 또는 NaN 값 체크
+      if (!localPosition.dx.isFinite || !localPosition.dy.isFinite) {
+        debugPrint('[DragService] ⚠️ 좌표가 유효하지 않음: $localPosition');
+        return null;
+      }
+
+      // 🎯 문서 영역 범위 체크 및 클램핑
+      final documentSize = renderBox.size;
+      if (localPosition.dx < 0 ||
+          localPosition.dx > documentSize.width ||
+          localPosition.dy < 0 ||
+          localPosition.dy > documentSize.height) {
+        // 범위를 벗어나면 가장자리로 클램핑
+        localPosition = Offset(
+          localPosition.dx.clamp(0, documentSize.width),
+          localPosition.dy.clamp(0, documentSize.height),
+        );
+        debugPrint('[DragService] 📍 좌표가 문서 범위를 벗어나 클램핑: $localPosition');
+      }
+    } catch (e) {
+      debugPrint('[DragService] ⚠️ globalToLocal 변환 실패: $e');
+      return null;
+    }
 
     // 문서 끝 부분 감지를 위한 추가 처리
     final documentLength = editorService.document.length;
+
+    // 🎯 빈 문서 처리
+    if (documentLength == 0) {
+      return {'dropIndex': 0};
+    }
 
     // SuperEditor의 정확한 위치 계산 (로컬 좌표 사용)
     DocumentPosition? position;
@@ -662,7 +780,17 @@ class DragService extends ChangeNotifier {
       }
 
       // 병합 모드 점착성 유지: 한 번 병합 모드에 들어가면 드래그가 끝날 때까지 유지
-      if (dragMode == DragType.imageRowMerge || nearHorizontalEdge) {
+      // 🎯 단, 타겟 노드 타입이 여전히 이미지인지 재확인
+      if (dragMode == DragType.imageRowMerge) {
+        // 병합 모드 유지 전 타겟 노드 타입 재확인
+        if (targetNodeType != NodeType.image &&
+            targetNodeType != NodeType.imageRow) {
+          // 타겟이 이미지가 아니면 reorder 모드로 전환
+          dragMode = DragType.reorder;
+        } else {
+          dragMode = DragType.imageRowMerge;
+        }
+      } else if (nearHorizontalEdge) {
         dragMode = DragType.imageRowMerge;
       } else {
         dragMode = DragType.reorder;
@@ -672,9 +800,17 @@ class DragService extends ChangeNotifier {
     }
 
     // 드롭 인덱스 계산
-    final draggingNodeIndex = editorService.document.getNodeIndexById(
-      draggingNodeId!,
-    );
+    // 🎯 draggingNodeId null 체크 강화 (null assertion 제거)
+    int? draggingNodeIndex;
+    if (draggingNodeId != null) {
+      // null 체크 후 non-nullable 변수로 할당
+      final nodeId = draggingNodeId!;
+      draggingNodeIndex = editorService.document.getNodeIndexById(nodeId);
+    } else {
+      // draggingNodeId가 null이면 일반 삽입 모드로 처리
+      draggingNodeIndex = -1;
+    }
+
     int? finalCandidate = nodeIndex;
 
     // 마지막 노드 처리
@@ -715,10 +851,18 @@ class DragService extends ChangeNotifier {
             finalCandidate = nodeIndex;
           }
         } else {
-          // 일반 드래그: 자기 자신과 바로 아래 위치 차단
-          if (nodeIndex == draggingNodeIndex ||
-              nodeIndex == draggingNodeIndex + 1) {
+          // 일반 드래그: 자기 자신과 바로 이웃한 위치 차단
+          // 🎯 자기 자신 바로 위/아래로는 드롭 불가 (라인 숨김)
+          if (nodeIndex == draggingNodeIndex) {
+            // 자기 자신 위치
             finalCandidate = null;
+          } else if (nodeIndex == draggingNodeIndex + 1) {
+            // 자기 자신 바로 아래 위치
+            finalCandidate = null;
+          } else if (nodeIndex == draggingNodeIndex - 1) {
+            // 자기 자신 바로 위 위치 (드래그 노드가 타겟 노드 바로 아래)
+            // 이 경우 타겟 노드 위에 삽입하는 것이므로 허용
+            finalCandidate = nodeIndex;
           } else if (draggingNodeIndex < nodeIndex) {
             // 드래그 중인 노드가 타겟 노드보다 앞에 있으면, 타겟 노드 앞에 삽입
             finalCandidate = nodeIndex;
@@ -740,17 +884,22 @@ class DragService extends ChangeNotifier {
     try {
       if (finalCandidate != null) {
         final doc = editorService.document;
-        int titleIndex = -1;
-        final n = doc.getNodeAt(0);
-        if (n is ParagraphNode && (n.metadata['isTitle'] == true)) {
-          titleIndex = 0;
-        }
-        // 타이틀 바로 아래로 최소 보정. 타이틀 없으면 보정 생략
-        if (titleIndex != -1 && finalCandidate <= titleIndex) {
-          finalCandidate = titleIndex + 1;
+        // 🎯 문서에 노드가 있는지 확인
+        if (doc.nodeCount > 0) {
+          int titleIndex = -1;
+          final n = doc.getNodeAt(0);
+          if (n is ParagraphNode && (n.metadata['isTitle'] == true)) {
+            titleIndex = 0;
+          }
+          // 타이틀 바로 아래로 최소 보정. 타이틀 없으면 보정 생략
+          if (titleIndex != -1 && finalCandidate <= titleIndex) {
+            finalCandidate = titleIndex + 1;
+          }
         }
       }
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('[DragService] ⚠️ 타이틀 노드 체크 중 오류: $e');
+    }
 
     // 가로배치 모드일 때는 dropIndex를 null로 설정 (가로라인 표시 안함)
     if (dragMode == DragType.imageRowMerge) {
@@ -796,12 +945,68 @@ class DragService extends ChangeNotifier {
       _targetRowId = null;
     }
 
-    return {'dropIndex': finalCandidate};
+    // 🎯 빈 문단 자동 삭제를 고려한 드롭 인덱스 조정
+    if (finalCandidate != null) {
+      // 빈 문단을 건너뛰어 실제 삽입될 위치 계산
+      final adjustedIndex = _adjustDropIndexForEmptyParagraphs(
+        finalCandidate,
+        documentLength,
+      );
+
+      // 범위 검증
+      final validDropIndex = adjustedIndex.clamp(0, documentLength);
+      if (validDropIndex != finalCandidate) {
+        debugPrint(
+          '[DragService] 📍 dropIndex 조정: $finalCandidate -> $validDropIndex (빈 문단 고려)',
+        );
+      }
+      return {'dropIndex': validDropIndex};
+    }
+
+    return {'dropIndex': null};
   }
 
   /// 노드 ID로 현재 노드의 인덱스 찾기
   int getNodeIndex(String nodeId) {
     return editorService.document.getNodeIndexById(nodeId);
+  }
+
+  /// 🎯 빈 문단 자동 삭제를 고려한 드롭 인덱스 조정
+  /// 빈 문단 위/아래로 드롭할 때, 드롭 후 빈 문단이 삭제되면
+  /// 실제 삽입 위치가 예상과 다를 수 있으므로 미리 조정
+  int _adjustDropIndexForEmptyParagraphs(
+    int candidateIndex,
+    int documentLength,
+  ) {
+    if (candidateIndex < 0 || candidateIndex > documentLength) {
+      return candidateIndex;
+    }
+
+    final doc = editorService.document;
+
+    // 🎯 드롭 위치 바로 위에 빈 문단이 있으면 건너뛰기
+    // (빈 문단 위로 드롭하면 빈 문단이 삭제되고 그 위치에 삽입됨)
+    if (candidateIndex > 0) {
+      final prevNode = doc.getNodeAt(candidateIndex - 1);
+      if (prevNode != null && NodeTypeChecker.isEmptyParagraph(prevNode)) {
+        // 빈 문단 위로 드롭하는 경우, 빈 문단 위치로 조정
+        return candidateIndex - 1;
+      }
+    }
+
+    // 🎯 드롭 위치에 빈 문단이 있으면 그대로 유지
+    // (빈 문단 위로 드롭하면 빈 문단이 삭제되고 그 위치에 삽입되므로
+    //  빈 문단 위치가 실제 삽입 위치가 됨 - 조정 불필요)
+    if (candidateIndex < documentLength) {
+      final currentNode = doc.getNodeAt(candidateIndex);
+      if (currentNode != null &&
+          NodeTypeChecker.isEmptyParagraph(currentNode)) {
+        // 빈 문단 위치로 드롭하는 경우, 그대로 유지 (빈 문단이 삭제되고 그 위치에 삽입)
+        return candidateIndex;
+      }
+    }
+
+    return candidateIndex;
   }
 
   /// ClipNode 클릭 처리 - 버튼 영역 판단 및 액션 반환

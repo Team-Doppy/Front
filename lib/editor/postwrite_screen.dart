@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'package:uuid/uuid.dart';
 import 'package:doppy/editor/editor_appbar.dart';
 import 'package:doppy/editor/component/clip_component.dart'
     show ClipNode, ClipComponentBuilder, cleanupAllVideoPlayers;
@@ -86,7 +87,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
 
   //keyboard
   // 🎯 성능 최적화: isKeyboardVisible은 build에서 MediaQuery로 직접 읽음
-  String? currentDraftId; // 임시저장 관련
+  String? currentDraftId; // 🎯 UUID 기반 임시저장 ID (글쓰기 시작 시 생성)
 
   // 영상 업로드 인디케이터 상태
   final ValueNotifier<bool> _videoUploadIndicatorNotifier = ValueNotifier<bool>(
@@ -106,6 +107,8 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
 
   // 저장 중 상태
   bool _isSaving = false;
+  bool _isAutoSaving = false; // 자동 저장 중 상태
+  Timer? _autoSaveTimer; // 자동 저장 타이머
   bool _shouldRefreshMyFeed = false; // 수정사항 발생 시 한 번만 새로고침
   bool _categoryChanged = false; // 카테고리 변경 여부
 
@@ -229,6 +232,13 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     // 임시저장 서비스 초기화
     draftService = DraftService();
 
+    // 🎯 새 글 작성 모드: UUID 기반 draftId 생성
+    if (!widget.isEditingMode) {
+      const uuid = Uuid();
+      currentDraftId = 'draft_${uuid.v4()}';
+      debugPrint('[PostwriteScreen] 🆔 UUID 기반 draftId 생성: $currentDraftId');
+    }
+
     // 문서 변경 시 다음 버튼 상태 업데이트
     editorService.addListener(_onEditorServiceChange);
 
@@ -237,6 +247,11 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
 
     // 스티커(그리기 포함) 변경 감지
     stickerService.addListener(_onEditorServiceChange);
+
+    // 🎯 자동 저장 시작 (편집 모드가 아닐 때만)
+    if (!widget.isEditingMode) {
+      _startAutoSave();
+    }
 
     // 🎯 노드 선택 변경 감지: 노드가 선택되면 키보드 내리기
     nodeComponentService.addListener(_onNodeSelectionChanged);
@@ -297,6 +312,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
   bool _showAppBar = true;
   double _lastOffset = 0.0;
   bool _isScrollingUp = false;
+  bool _previousKeyboardVisible = false; // 🎯 키보드 상태 추적
 
   // 🎯 성능 최적화: 키보드 상태 감지는 MediaQuery 변화로 자동 처리됨
   // 이 메서드는 더 이상 사용하지 않음 (스크롤 기반 앱바 제어로 분리)
@@ -584,8 +600,145 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     );
   }
 
-  @override
+  /// 🎯 자동 저장 시작 (30초마다)
+  void _startAutoSave() {
+    _autoSaveTimer?.cancel();
+    _autoSaveTimer = Timer.periodic(const Duration(seconds: 60), (timer) {
+      if (!mounted || widget.isEditingMode) {
+        timer.cancel();
+        return;
+      }
+      _autoSave();
+    });
+  }
+
+  /// 🎯 자동 저장 실행
+  Future<void> _autoSave() async {
+    // 이미 저장 중이면 스킵
+    if (_isAutoSaving || _isSaving) return;
+
+    // 변경사항이 없으면 스킵
+    if (!editorService.shouldPromptSaveOnExit(context)) return;
+
+    // 🎯 업로드되지 않은 이미지가 있으면 스킵
+    if (editorService.hasUnuploadedImages()) {
+      debugPrint('[PostwriteScreen] ⏭️ 업로드 미완료 이미지 존재 - 자동 저장 스킵');
+      return;
+    }
+
+    // 🎯 업로드 중이면 스킵 (모든 종류의 업로드 체크)
+    final uploadService = UploadService();
+    if (uploadService.hasActiveUploads()) {
+      debugPrint('[PostwriteScreen] ⏭️ 업로드 중 - 자동 저장 스킵');
+      return;
+    }
+
+    setState(() {
+      _isAutoSaving = true;
+    });
+
+    try {
+      // 🎯 제목 자동 추출
+      String title = PostExporter.getTitleFromDocument(document);
+
+      // 제목이 없으면 본문에서 발췌
+      if (title.trim().isEmpty) {
+        title = _extractTitleFromBody();
+
+        // 본문도 없으면 로케일 적용된 "제목 없음" 사용
+        if (title.trim().isEmpty) {
+          title = context.tr('no_title');
+        }
+      }
+
+      // 🎯 UUID 기반 draftId 사용 (제목 기반 제거)
+      if (currentDraftId == null) {
+        // 혹시 UUID가 없으면 생성 (안전장치)
+        const uuid = Uuid();
+        currentDraftId = 'draft_${uuid.v4()}';
+        debugPrint('[PostwriteScreen] ⚠️ UUID가 없어서 생성: $currentDraftId');
+      }
+
+      // 현재 draft ID를 sessionKey로 영상 파일만 가져오기
+      final sessionKey = currentDraftId!;
+
+      final videoFilePath = nodeComponentService.getTempVideoFilePath(
+        sessionKey,
+      );
+      final videoThumbnailPath = nodeComponentService.getTempVideoThumbnailPath(
+        sessionKey,
+      );
+
+      // 썸네일은 항상 첫 번째 이미지를 자동으로 설정
+      String thumbnailUrl = '';
+      final firstImageUrl = _findFirstImageUrl();
+      if (firstImageUrl != null && firstImageUrl.isNotEmpty) {
+        thumbnailUrl = firstImageUrl;
+      }
+
+      // 🎯 UUID 기반 자동 저장 (제목은 자동 추출)
+      currentDraftId = await draftService.saveDraft(
+        editorService: editorService,
+        stickerService: stickerService,
+        title: title,
+        summary: '',
+        thumbnailUrl: thumbnailUrl,
+        videoFilePath: videoFilePath,
+        videoThumbnailPath: videoThumbnailPath,
+        visibility: 'public',
+        selectedGroupIds: [],
+        existingDraftId: currentDraftId, // UUID 기반 ID 사용
+      );
+
+      // 저장 스냅샷 마크
+      editorService.markSavedSnapshot();
+      stickerService.saveInitialState();
+
+      debugPrint('[PostwriteScreen] ✅ 자동 저장 완료: $title');
+    } catch (e) {
+      debugPrint('[PostwriteScreen] ⚠️ 자동 저장 실패: $e');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isAutoSaving = false;
+        });
+      }
+    }
+  }
+
+  /// 🎯 본문에서 제목 발췌 (최대 30자)
+  String _extractTitleFromBody() {
+    final buffer = StringBuffer();
+
+    // 제목 노드(0번)를 제외한 본문 노드들에서 텍스트 수집
+    for (int i = 1; i < document.length; i++) {
+      final node = document.getNodeAt(i);
+      if (node is ParagraphNode) {
+        final text = node.text.text.trim();
+        if (text.isNotEmpty) {
+          buffer.write(text);
+          buffer.write(' ');
+
+          // 30자 이상이면 중단
+          if (buffer.length >= 30) break;
+        }
+      }
+    }
+
+    final extracted = buffer.toString().trim();
+    if (extracted.isEmpty) return '';
+
+    // 최대 30자로 제한
+    if (extracted.length > 30) {
+      return extracted.substring(0, 30);
+    }
+
+    return extracted;
+  }
+
   void dispose() {
+    // 🎯 자동 저장 타이머 정리
+    _autoSaveTimer?.cancel();
     // 🎯 에디터 종료 시 진행 중인 비디오 압축 취소
     final uploadService = UploadService();
     uploadService.cancelEditorCompressions('editor_${editorService.hashCode}');
@@ -675,6 +828,20 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     // 🎯 성능 최적화: 키보드 상태는 MediaQuery에서 직접 읽기 (변수 저장 제거)
     final isKeyboardVisible = MediaQuery.of(context).viewInsets.bottom > 0;
 
+    // 🎯 키보드가 내려가면 앱바 강제 표시
+    if (_previousKeyboardVisible && !isKeyboardVisible) {
+      // 키보드가 내려갔을 때
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && !_showAppBar) {
+          setState(() {
+            _showAppBar = true;
+            _isScrollingUp = true;
+          });
+        }
+      });
+    }
+    _previousKeyboardVisible = isKeyboardVisible;
+
     return WillPopScope(
       onWillPop: () async {
         if (widget.isEditingMode) {
@@ -757,106 +924,121 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                             data: AppTheme.lightTheme,
                             child: Stack(
                               children: [
-                                RawScrollbar(
-                                  controller: scrollController,
-                                  thumbColor: Theme.of(
-                                    context,
-                                  ).colorScheme.onSurface.withOpacity(0.3),
-                                  thickness: 4,
-                                  radius: const Radius.circular(12),
-                                  child: Listener(
-                                    behavior: HitTestBehavior.translucent,
-                                    onPointerDown: (details) {
-                                      // 🎯 마지막 특수 노드 아래 빈 공간 클릭 감지
-                                      // Listener는 터치를 소비하지 않아 다른 위젯도 정상 작동
-                                      _handleTapBelowLastSpecialNode(
-                                        details.position,
-                                      );
-                                    },
-                                    child: SuperEditor(
-                                      gestureMode:
-                                          Platform.isIOS
-                                              ? DocumentGestureMode.iOS
-                                              : DocumentGestureMode.android,
-                                      editor: editor,
-                                      focusNode: _editorFocusNode,
-                                      stylesheet: _buildStylesheet(context),
-                                      selectionStyle: SelectionStyles(
-                                        selectionColor: AppColors.primary
-                                            .withValues(alpha: 0.3),
-                                        highlightEmptyTextBlocks: false,
+                                Builder(
+                                  builder: (context) {
+                                    final screenWidth =
+                                        MediaQuery.of(
+                                          context,
+                                        ).size.width; // 🚀 최고 효율: 한 번만 계산
+                                    return RawScrollbar(
+                                      controller: scrollController,
+                                      thumbColor: Theme.of(
+                                        context,
+                                      ).colorScheme.onSurface.withOpacity(0.3),
+                                      thickness: 4,
+                                      radius: const Radius.circular(12),
+                                      child: Listener(
+                                        behavior: HitTestBehavior.translucent,
+                                        onPointerDown: (details) {
+                                          // 🎯 마지막 특수 노드 아래 빈 공간 클릭 감지
+                                          // Listener는 터치를 소비하지 않아 다른 위젯도 정상 작동
+                                          _handleTapBelowLastSpecialNode(
+                                            details.position,
+                                          );
+                                        },
+                                        child: SuperEditor(
+                                          gestureMode:
+                                              Platform.isIOS
+                                                  ? DocumentGestureMode.iOS
+                                                  : DocumentGestureMode.android,
+                                          editor: editor,
+                                          focusNode: _editorFocusNode,
+                                          stylesheet: _buildStylesheet(context),
+                                          selectionStyle: SelectionStyles(
+                                            selectionColor: AppColors.primary
+                                                .withValues(alpha: 0.3),
+                                            highlightEmptyTextBlocks: false,
+                                          ),
+                                          documentLayoutKey: _documentLayoutKey,
+                                          scrollController: scrollController,
+
+                                          componentBuilders: [
+                                            // 타이틀 문단 전용 빌더(드래그 없음)
+                                            TitleParagraphComponentBuilder(
+                                              editorService: editorService,
+                                            ),
+                                            // 커스텀 이미지 컴포넌트들
+                                            SingleImageComponentBuilder(
+                                              screenWidth:
+                                                  screenWidth, // 🚀 최고 효율: 전달
+                                              dragService: dragService,
+                                              isDarkMode:
+                                                  context
+                                                      .read<ThemeProvider>()
+                                                      .themeMode ==
+                                                  ThemeMode.dark,
+                                            ),
+                                            RowImageComponentBuilder(
+                                              screenWidth:
+                                                  screenWidth, // 🚀 최고 효율: 전달
+                                              dragService: dragService,
+                                              isDarkMode:
+                                                  context
+                                                      .read<ThemeProvider>()
+                                                      .themeMode ==
+                                                  ThemeMode.dark,
+                                            ),
+                                            PageViewImageComponentBuilder(
+                                              screenWidth:
+                                                  screenWidth, // 🚀 최고 효율: 전달
+                                              dragService: dragService,
+                                              isDarkMode:
+                                                  context
+                                                      .read<ThemeProvider>()
+                                                      .themeMode ==
+                                                  ThemeMode.dark,
+                                            ),
+                                            CustomParagraphComponentBuilder(
+                                              dragService: dragService,
+                                              editorService: editorService,
+                                            ),
+
+                                            // 구분선 전용 컴포넌트
+                                            DividerComponentBuilder(
+                                              dragService: dragService,
+                                            ),
+
+                                            LinkComponentBuilder(
+                                              dragService: dragService,
+                                              isDarkMode:
+                                                  context
+                                                      .read<ThemeProvider>()
+                                                      .themeMode ==
+                                                  ThemeMode.dark,
+                                            ),
+
+                                            ClipComponentBuilder(
+                                              dragService: dragService,
+                                              isEditing: true,
+                                              isDarkMode:
+                                                  context
+                                                      .read<ThemeProvider>()
+                                                      .themeMode ==
+                                                  ThemeMode.dark,
+                                            ),
+
+                                            // 기본 컴포넌트들 (Paragraph 제외)
+                                            ...defaultComponentBuilders.where(
+                                              (builder) =>
+                                                  builder.runtimeType
+                                                      .toString() !=
+                                                  'ParagraphComponentBuilder',
+                                            ),
+                                          ],
+                                        ),
                                       ),
-                                      documentLayoutKey: _documentLayoutKey,
-                                      scrollController: scrollController,
-
-                                      componentBuilders: [
-                                        // 타이틀 문단 전용 빌더(드래그 없음)
-                                        TitleParagraphComponentBuilder(
-                                          editorService: editorService,
-                                        ),
-                                        // 커스텀 이미지 컴포넌트들
-                                        SingleImageComponentBuilder(
-                                          dragService: dragService,
-                                          isDarkMode:
-                                              context
-                                                  .read<ThemeProvider>()
-                                                  .themeMode ==
-                                              ThemeMode.dark,
-                                        ),
-                                        RowImageComponentBuilder(
-                                          dragService: dragService,
-                                          isDarkMode:
-                                              context
-                                                  .read<ThemeProvider>()
-                                                  .themeMode ==
-                                              ThemeMode.dark,
-                                        ),
-                                        PageViewImageComponentBuilder(
-                                          dragService: dragService,
-                                          isDarkMode:
-                                              context
-                                                  .read<ThemeProvider>()
-                                                  .themeMode ==
-                                              ThemeMode.dark,
-                                        ),
-                                        CustomParagraphComponentBuilder(
-                                          dragService: dragService,
-                                          editorService: editorService,
-                                        ),
-
-                                        // 구분선 전용 컴포넌트
-                                        DividerComponentBuilder(
-                                          dragService: dragService,
-                                        ),
-
-                                        LinkComponentBuilder(
-                                          dragService: dragService,
-                                          isDarkMode:
-                                              context
-                                                  .read<ThemeProvider>()
-                                                  .themeMode ==
-                                              ThemeMode.dark,
-                                        ),
-
-                                        ClipComponentBuilder(
-                                          dragService: dragService,
-                                          isEditing: true,
-                                          isDarkMode:
-                                              context
-                                                  .read<ThemeProvider>()
-                                                  .themeMode ==
-                                              ThemeMode.dark,
-                                        ),
-
-                                        // 기본 컴포넌트들 (Paragraph 제외)
-                                        ...defaultComponentBuilders.where(
-                                          (builder) =>
-                                              builder.runtimeType.toString() !=
-                                              'ParagraphComponentBuilder',
-                                        ),
-                                      ],
-                                    ),
-                                  ),
+                                    );
+                                  },
                                 ),
                               ],
                             ),
@@ -900,6 +1082,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                               currentGroupIds: _editGroupIds,
                               postId: widget.postId,
                               isSaving: _isSaving, // 저장 중 상태 전달
+                              isAutoSaving: _isAutoSaving, // 자동 저장 중 상태 전달
                               videoUploadIndicatorNotifier:
                                   _videoUploadIndicatorNotifier,
                               onVisibilityChanged: (visibility, groupIds) {
@@ -980,16 +1163,21 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                 final bottomPadding =
                     keyboardHeight <= 30 ? 20.0 : keyboardHeight;
 
-                return AnimatedPadding(
-                  duration: const Duration(milliseconds: 20),
-                  curve: Curves.easeOut,
-                  padding: EdgeInsets.only(bottom: bottomPadding),
-                  child: Consumer<NodeComponentService>(
-                    builder: (context, nodeService, child) {
-                      return nodeService.selectedNodeId != null
-                          ? _buildSelectedToolbar()
-                          : _buildDefaultToolbar(isKeyboardVisible);
-                    },
+                final theme = Theme.of(context);
+
+                return Container(
+                  color: theme.colorScheme.background,
+                  child: AnimatedPadding(
+                    duration: const Duration(milliseconds: 20),
+                    curve: Curves.easeOut,
+                    padding: EdgeInsets.only(bottom: bottomPadding),
+                    child: Consumer<NodeComponentService>(
+                      builder: (context, nodeService, child) {
+                        return nodeService.selectedNodeId != null
+                            ? _buildSelectedToolbar()
+                            : _buildDefaultToolbar(isKeyboardVisible);
+                      },
+                    ),
                   ),
                 );
               },
@@ -1033,6 +1221,8 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
       document: document,
       previewImageLocalPath:
           dragService.previewImageLocalPath, // 🎯 클립 썸네일 깜빡임 방지
+      previewImageUrl:
+          dragService.previewImageUrl, // 🚀 네트워크 URL (로컬-네트워크 혼용 구조)
     );
   }
 
@@ -1253,20 +1443,33 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
         return false; // ✅ 실패 반환
       }
 
+      // 🎯 업로드되지 않은 이미지가 있으면 차단
+      if (editorService.hasUnuploadedImages()) {
+        if (mounted) {
+          ErrorHandler.showError(context, context.tr('please_wait_for_upload'));
+        }
+        return false;
+      }
+
       // 🎯 PNG 드로잉 업로드 중이면 차단
       final uploadService = UploadService();
       if (uploadService.hasActiveUploads(kinds: {UploadKind.editorImage})) {
         return false;
       }
 
+      // 🎯 제목 자동 추출
       final title = PostExporter.getTitleFromDocument(document);
 
-      // 제목 기반으로 draftId 생성 (같은 제목이면 덮어쓰기)
-      final titleHash = title.hashCode.abs();
-      final draftIdByTitle = 'draft_$titleHash';
+      // 🎯 UUID 기반 draftId 사용 (제목 기반 제거)
+      if (currentDraftId == null) {
+        // 혹시 UUID가 없으면 생성 (안전장치)
+        const uuid = Uuid();
+        currentDraftId = 'draft_${uuid.v4()}';
+        debugPrint('[PostwriteScreen] ⚠️ UUID가 없어서 생성: $currentDraftId');
+      }
 
       // 현재 draft ID를 sessionKey로 영상 파일만 가져오기
-      final sessionKey = currentDraftId ?? draftIdByTitle;
+      final sessionKey = currentDraftId!;
 
       final videoFilePath = nodeComponentService.getTempVideoFilePath(
         sessionKey,
@@ -1282,7 +1485,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
         thumbnailUrl = firstImageUrl;
       }
 
-      // 제목이 같으면 기존 임시저장을 덮어씀
+      // 🎯 UUID 기반 임시저장 (제목은 자동 추출)
       currentDraftId = await draftService.saveDraft(
         editorService: editorService,
         stickerService: stickerService,
@@ -1293,7 +1496,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
         videoThumbnailPath: videoThumbnailPath,
         visibility: 'public', // 기본값
         selectedGroupIds: [],
-        existingDraftId: draftIdByTitle, // 제목 기반 ID로 덮어쓰기
+        existingDraftId: currentDraftId, // UUID 기반 ID 사용
       );
 
       // 저장 스냅샷 마크
@@ -1367,6 +1570,8 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
       final exported = PostExporter.exportToMap(
         editorService: editorService,
         stickerService: stickerService,
+        forPublishing: true, // 🚀 임시저장도 네트워크 이미지로 변환 (로드 속도 향상)
+        allowPartialUpload: true, // 🚀 임시저장 시 업로드 미완료 이미지 허용 (로컬 경로로 저장)
       );
 
       // 5. content 추출
@@ -1572,6 +1777,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                     stickerService: stickerService,
                     nodeComponentService: nodeComponentService,
                     dragService: dragService,
+                    context: context, // 🚀 이미지 프리로드용 컨텍스트
                   );
 
                   if (success && mounted) {

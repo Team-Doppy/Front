@@ -520,6 +520,12 @@ class MyProfileFeedProvider extends BaseFeedProvider {
 
   @override
   Future<void> reorderAllSections(List<String> newOrderIds) async {
+    debugPrint('[MyProfileFeedProvider] 🎯 reorderAllSections 시작');
+    debugPrint('[MyProfileFeedProvider] 📋 받은 순서 (newOrderIds): $newOrderIds');
+    debugPrint(
+      '[MyProfileFeedProvider] 📋 현재 _hasUserReordered: $_hasUserReordered',
+    );
+
     final orderedIntIds = <int>[];
     for (final idStr in newOrderIds) {
       if (idStr == 'system_doppy_uncategorized') {
@@ -529,17 +535,28 @@ class MyProfileFeedProvider extends BaseFeedProvider {
       final id = int.tryParse(idStr);
       if (id != null) orderedIntIds.add(id);
     }
-    if (orderedIntIds.isEmpty) return;
+
+    debugPrint(
+      '[MyProfileFeedProvider] 📋 변환된 순서 (orderedIntIds): $orderedIntIds',
+    );
+
+    if (orderedIntIds.isEmpty) {
+      debugPrint('[MyProfileFeedProvider] ⚠️ orderedIntIds가 비어있어 종료');
+      return;
+    }
 
     final prevOrder =
         categoriesInternal.map<int>((c) => (c['id'] as int)).toList();
+    debugPrint('[MyProfileFeedProvider] 📋 이전 순서 (prevOrder): $prevOrder');
+
     reorderCategoriesLocally(orderedIntIds); // Optimistic update
 
     try {
       await blogService.reorderCategories(orderedIntIds);
-      debugPrint('[MyProfileFeedProvider] 서버 카테고리 재정렬 성공');
+      debugPrint('[MyProfileFeedProvider] ✅ 서버 카테고리 재정렬 성공');
       _saveToCache(); // Update cache on success
       _hasUserReordered = true; // 사용자가 명시적으로 순서를 바꿈
+      debugPrint('[MyProfileFeedProvider] ✅ _hasUserReordered = true 설정 완료');
     } catch (e) {
       debugPrint('⚠️ [MyProfileFeedProvider] 서버 재정렬 실패, 롤백: $e');
       categoriesInternal
@@ -557,7 +574,21 @@ class MyProfileFeedProvider extends BaseFeedProvider {
 
   @override
   void reorderCategoriesLocally(List<int> orderedIntIds) {
-    if (orderedIntIds.isEmpty) return;
+    debugPrint('[MyProfileFeedProvider] 🔄 reorderCategoriesLocally 시작');
+    debugPrint(
+      '[MyProfileFeedProvider] 📋 받은 순서 (orderedIntIds): $orderedIntIds',
+    );
+
+    if (orderedIntIds.isEmpty) {
+      debugPrint('[MyProfileFeedProvider] ⚠️ orderedIntIds가 비어있어 종료');
+      return;
+    }
+
+    final prevCategories =
+        categoriesInternal.map((c) => '${c['id']}:${c['name']}').toList();
+    debugPrint(
+      '[MyProfileFeedProvider] 📋 이전 categoriesInternal: $prevCategories',
+    );
 
     final orderSet = orderedIntIds.toSet();
 
@@ -565,7 +596,14 @@ class MyProfileFeedProvider extends BaseFeedProvider {
     final ordered = <Map<String, dynamic>>[];
     for (final id in orderedIntIds) {
       final idx = categoriesInternal.indexWhere((c) => (c['id'] as int?) == id);
-      if (idx != -1) ordered.add(categoriesInternal[idx]);
+      if (idx != -1) {
+        ordered.add(categoriesInternal[idx]);
+        debugPrint(
+          '[MyProfileFeedProvider]   ✅ ID $id 찾음 (idx=$idx, name=${categoriesInternal[idx]['name']})',
+        );
+      } else {
+        debugPrint('[MyProfileFeedProvider]   ⚠️ ID $id를 찾을 수 없음');
+      }
     }
 
     // 나머지(요청에 없는 항목) 기존 순서 유지하여 뒤에 추가
@@ -573,13 +611,23 @@ class MyProfileFeedProvider extends BaseFeedProvider {
       final cid = cat['id'] as int?;
       if (cid == null || !orderSet.contains(cid)) {
         ordered.add(cat);
+        debugPrint('[MyProfileFeedProvider]   ➕ 추가 항목: ${cid}:${cat['name']}');
       }
     }
+
+    final newCategories =
+        ordered.map((c) => '${c['id']}:${c['name']}').toList();
+    debugPrint(
+      '[MyProfileFeedProvider] 📋 새로운 categoriesInternal: $newCategories',
+    );
 
     categoriesInternal
       ..clear()
       ..addAll(ordered);
 
+    debugPrint(
+      '[MyProfileFeedProvider] ✅ reorderCategoriesLocally 완료, notifyListeners 호출',
+    );
     notifyListeners();
   }
 }

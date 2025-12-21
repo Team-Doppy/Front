@@ -51,13 +51,19 @@ class PageViewImageNode extends BlockNode {
   }
 
   Map<String, dynamic> toJson() {
-    return {'id': id, 'nodeType': nodeType, 'imageUrls': imageUrls};
+    return {
+      'id': id,
+      'nodeType': nodeType,
+      'imageUrls': imageUrls,
+      if (_metadata.isNotEmpty) 'metadata': _metadata,
+    };
   }
 
   static PageViewImageNode fromJson(Map<String, dynamic> json) {
     return PageViewImageNode(
       id: json['id'] as String,
       imageUrls: List<String>.from(json['imageUrls'] as List),
+      metadata: json['metadata'] as Map<String, dynamic>?,
     );
   }
 
@@ -132,11 +138,13 @@ class PageViewImageNode extends BlockNode {
 
 class PageViewImageComponentBuilder implements ComponentBuilder {
   const PageViewImageComponentBuilder({
+    required this.screenWidth,
     this.dragService,
     this.isEditing = true,
     this.isDarkMode = false,
   });
 
+  final double screenWidth; // 🚀 최고 효율: 외부에서 전달받음
   final dynamic dragService;
   final bool isEditing;
   final bool isDarkMode;
@@ -150,6 +158,7 @@ class PageViewImageComponentBuilder implements ComponentBuilder {
       return PageViewImageComponent(
         nodeId: componentViewModel.nodeId,
         imageUrls: componentViewModel.imageUrls,
+        screenWidth: screenWidth, // 🚀 최고 효율: 전달
         isDarkMode: isDarkMode,
         componentKey: componentContext.componentKey,
         dragService: dragService,
@@ -179,6 +188,7 @@ class PageViewImageComponent extends StatefulWidget {
   const PageViewImageComponent({
     required this.nodeId,
     required this.imageUrls,
+    required this.screenWidth,
     required GlobalKey componentKey,
     this.dragService,
     this.isEditing = true,
@@ -189,6 +199,7 @@ class PageViewImageComponent extends StatefulWidget {
 
   final String nodeId;
   final List<String> imageUrls;
+  final double screenWidth; // 🚀 최고 효율: 외부에서 한 번만 계산된 값
   final dynamic dragService;
   final bool isEditing;
   final bool isDarkMode;
@@ -465,26 +476,16 @@ class _PageViewImageComponentState extends State<PageViewImageComponent>
           .shouldShowImageSpoiler(widget.nodeId, meta);
     } catch (_) {}
 
-    // 🎯 업로드 중 상태 확인 (메타데이터 + 실제 업로드 태스크 존재 여부)
+    // 🎯 업로드 중 상태 확인 (편집 모드에서만, 읽기 전용 모드에서는 항상 false)
     bool isUploading = false;
-    try {
-      final node = doc?.getNodeById(widget.nodeId);
-      if (node is PageViewImageNode) {
-        final meta = node.metadata;
-        final isPlaceholder = meta['isPlaceholder'] == true;
-        // 🎯 플레이스홀더이면서 실제 업로드 태스크가 있을 때만 로딩 표시
-        if (isPlaceholder) {
-          try {
-            final uploadService = context.read<UploadService>();
-            isUploading = uploadService.hasActiveUploadForRef(widget.nodeId);
-          } catch (e) {
-            debugPrint('[PageViewImage] UploadService 확인 실패: $e');
-            // UploadService를 사용할 수 없으면 플레이스홀더 상태 그대로 사용
-            isUploading = isPlaceholder;
-          }
-        }
+    if (widget.isEditing) {
+      try {
+        final uploadService = context.watch<UploadService>();
+        isUploading = uploadService.hasActiveUploadForRef(widget.nodeId);
+      } catch (e) {
+        debugPrint('[PageViewImage] UploadService 확인 실패: $e');
       }
-    } catch (_) {}
+    }
 
     // 댓글 배지 확인
     bool hasComments = false;
@@ -708,9 +709,7 @@ class _PageViewImageComponentState extends State<PageViewImageComponent>
                     if (isUploading)
                       Positioned.fill(
                         child: IgnorePointer(
-                          child: Container(
-                            color: Colors.black.withOpacity(0.6),
-                            alignment: Alignment.center,
+                          child: Center(
                             child: const SizedBox(
                               width: 28,
                               height: 28,

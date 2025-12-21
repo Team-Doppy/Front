@@ -27,6 +27,7 @@ import 'package:doppy/data/models/user_model.dart';
 import 'package:doppy/pages/components/profile_edit_sheet.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:flutter_svg/flutter_svg.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'dart:io';
 import 'dart:ui';
 import 'dart:async';
@@ -1606,12 +1607,15 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                   thumbnailUrl != null
                       ? ClipRRect(
                         borderRadius: BorderRadius.circular(10),
-                        child: Image.network(
-                          thumbnailUrl,
+                        child: CachedNetworkImage(
+                          imageUrl: thumbnailUrl,
                           width: 40,
                           height: 40,
                           fit: BoxFit.cover,
-                          errorBuilder: (context, error, stackTrace) {
+                          // 🚀 링크 이미지는 자주 바뀌지 않으므로 디스크 캐시 사용
+                          memCacheWidth: 80, // 메모리 캐시 크기 (작은 썸네일)
+                          maxWidthDiskCache: 200, // 디스크 캐시 크기
+                          errorWidget: (context, url, error) {
                             return Icon(
                               Icons.link,
                               size: 20,
@@ -1620,10 +1624,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                               ),
                             );
                           },
-                          loadingBuilder: (context, child, loadingProgress) {
-                            if (loadingProgress == null) {
-                              return child;
-                            }
+                          placeholder: (context, url) {
                             return Center(
                               child: SizedBox(
                                 width: 20,

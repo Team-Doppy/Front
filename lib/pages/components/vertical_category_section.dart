@@ -242,6 +242,14 @@ class _VerticalCategorySectionState extends State<VerticalCategorySection> {
                 if (isReadOnly) return;
                 final pf = context.read<MyProfileFeedProvider>();
 
+                // 🎯 카테고리가 아직 로드되지 않았거나 비어있으면 종료
+                if (pf.categories.isEmpty) {
+                  debugPrint('[VerticalCategorySection] ⚠️ 카테고리가 아직 로드되지 않음');
+                  (widget.categoryDropTargetIndex as ValueNotifier<int?>)
+                      .value = null;
+                  return;
+                }
+
                 final prev =
                     pf.categories
                         .where((c) {
@@ -251,17 +259,51 @@ class _VerticalCategorySectionState extends State<VerticalCategorySection> {
                         .map((c) => c['id'].toString())
                         .toList();
 
-                final draggedId = draggedMeta.categoryId ?? '';
-                if (draggedId.isEmpty) return;
+                // 🎯 필터링 후에도 비어있으면 종료
+                if (prev.isEmpty) {
+                  debugPrint('[VerticalCategorySection] ⚠️ 유효한 카테고리가 없음');
+                  (widget.categoryDropTargetIndex as ValueNotifier<int?>)
+                      .value = null;
+                  return;
+                }
 
+                final draggedId = draggedMeta.categoryId ?? '';
+                if (draggedId.isEmpty) {
+                  (widget.categoryDropTargetIndex as ValueNotifier<int?>)
+                      .value = null;
+                  return;
+                }
+
+                // 🎯 원래 위치 찾기
+                final originalIndex = prev.indexOf(draggedId);
+                if (originalIndex == -1) {
+                  debugPrint(
+                    '[VerticalCategorySection] ⚠️ 드래그된 카테고리를 찾을 수 없음: $draggedId',
+                  );
+                  (widget.categoryDropTargetIndex as ValueNotifier<int?>)
+                      .value = null;
+                  return; // 원래 위치를 찾을 수 없으면 종료
+                }
+
+                // 🎯 타겟 인덱스 계산 (유효한 범위로 제한)
                 final targetRaw =
                     (widget.categoryDropTargetIndex.value ??
                         currentSectionIndex);
-                final targetIdx = targetRaw.clamp(0, prev.length);
-                final next = List<String>.from(prev)..remove(draggedId);
-                final insertIdx =
-                    targetIdx >= next.length ? next.length : targetIdx;
-                next.insert(insertIdx, draggedId);
+                final targetIdx =
+                    prev.length > 0 ? targetRaw.clamp(0, prev.length - 1) : 0;
+
+                // 🎯 원래 위치와 타겟 위치가 같으면 순서 변경하지 않음
+                if (originalIndex == targetIdx) {
+                  (widget.categoryDropTargetIndex as ValueNotifier<int?>)
+                      .value = null;
+                  return;
+                }
+
+                // 🎯 새로운 순서 계산: 원래 위치에서 제거 후 타겟 위치에 삽입
+                final next = List<String>.from(prev)..removeAt(originalIndex);
+                next.insert(targetIdx, draggedId);
+
+                // 🎯 순서가 실제로 변경되었는지 확인
                 if (!listEquals(prev, next)) {
                   await pf.reorderAllSections(next);
                 }

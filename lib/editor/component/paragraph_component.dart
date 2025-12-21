@@ -212,9 +212,13 @@ class _ParagraphWithDropLinesState extends State<_ParagraphWithDropLines>
           children: [
             // 본문 내용 마진 제거
             // 🎯 특수 노드 사이에 있는 빈 노드는 위/아래 패딩 적용 (아래쪽은 조금 더 작게)
+            // 🎯 최소 높이 22, 이후 동적 확장
             Padding(
               padding: EdgeInsets.only(top: 5.5, bottom: showBottom ? 4 : 0),
-              child: SizedBox(height: 22, child: content),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(minHeight: 22),
+                child: content,
+              ),
             ),
             // 형광펜 오버레이 (스포일러처럼 그리기)
             Builder(

@@ -49,12 +49,10 @@ Stylesheet buildCustomStylesheet(
               fontSize: 28,
               fontWeight: FontWeight.w900,
               color: titleColor,
-              height: 0,
+              height: 1.4, // 🎯 커서 중앙 정렬 (한글 폰트 최적화)
+              leadingDistribution: TextLeadingDistribution.even,
             );
 
-            // 🎯 구글 폰트 적용 (메타데이터 기반)
-            // GoogleFonts.getFont는 비동기적으로 폰트를 로드하지만,
-            // 폰트가 아직 로드되지 않았을 때는 기본 폰트를 사용하여 UI 블로킹 방지
             if (fontFamily != null && fontFamily.isNotEmpty) {
               try {
                 // 폰트가 로드되지 않았어도 기본 폰트로 즉시 렌더링 (UI 블로킹 방지)
@@ -71,7 +69,7 @@ Stylesheet buildCustomStylesheet(
             return {
               Styles.textStyle: titleStyle,
               Styles.padding: CascadingPadding.only(
-                top: 120,
+                top: 130,
                 bottom: 20,
                 left: 20,
                 right: 20,
@@ -89,7 +87,8 @@ Stylesheet buildCustomStylesheet(
               fontSize: 18,
               fontWeight: FontWeight.bold,
               color: bodyColor,
-              height: 1,
+              height: 1.4, // 🎯 커서 중앙 정렬 (한글 폰트 최적화)
+              leadingDistribution: TextLeadingDistribution.even,
             );
 
             // 구글 폰트 적용
@@ -123,7 +122,8 @@ Stylesheet buildCustomStylesheet(
           TextStyle bodyStyle = TextStyle(
             fontSize: 16,
             color: bodyColor,
-            height: 1.4,
+            height: 1.4, // 🎯 커서 중앙 정렬 (한글 폰트 최적화)
+            leadingDistribution: TextLeadingDistribution.even,
           );
 
           // 🎯 구글 폰트 적용 (메타데이터 기반)
@@ -226,7 +226,8 @@ Stylesheet buildCustomStylesheet(
         } else if (attribution is FontSizeAttribution) {
           style = style.copyWith(
             fontSize: attribution.fontSize,
-            height: 1.2, // 커서가 텍스트에 맞도록 line height 조정
+            height: 1.4, // 🎯 커서 중앙 정렬 (한글 폰트 최적화)
+            leadingDistribution: TextLeadingDistribution.even,
           );
         } else if (attribution is FontFamilyAttribution) {
           // 🎯 span 단위 폰트 (Attribution 기반 정교한 적용) - 최우선 적용
@@ -238,6 +239,8 @@ Stylesheet buildCustomStylesheet(
         fontWeight: isBold ? FontWeight.bold : FontWeight.normal,
         fontStyle: isItalic ? FontStyle.italic : FontStyle.normal,
         decoration: _buildTextDecoration(hasUnderline, hasStrikethrough),
+        height: 1.4, // 🎯 커서 중앙 정렬 (한글 폰트 최적화)
+        leadingDistribution: TextLeadingDistribution.even,
         // 형광펜은 별도 오버레이로 렌더링하므로 배경색은 사용하지 않음
       );
 

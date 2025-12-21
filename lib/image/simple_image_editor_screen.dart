@@ -2,12 +2,10 @@ import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:doppy/theme/app_colors.dart';
 import 'package:flutter/material.dart';
-import 'package:image/image.dart' as img;
-import 'package:flutter/services.dart';
-import 'crop_screen.dart';
+import 'crop_editor.dart';
 
 /// 간단한 커스텀 이미지 편집 화면
-/// 필터, 자르기, 보정, 회전 네 가지 기능 제공
+/// 바텀시트 기반 UI, Undo/Redo, 실시간 미리보기 제공
 class SimpleImageEditorScreen extends StatefulWidget {
   const SimpleImageEditorScreen({
     super.key,
@@ -35,6 +33,7 @@ class _ImageEditState {
 
   // 자르기 관련 상태
   String? selectedAspectRatio; // null = 자유, '1:1', '4:5', '16:9' 등
+  final CropState cropState = CropState(); // 크롭 상태 관리
 
   // 보정 관련 상태
   double brightness = 0.0; // -100 ~ 100
@@ -43,34 +42,66 @@ class _ImageEditState {
   double warmth = 0.0; // -100 ~ 100
 
   // 필터 관련 상태
-  String? selectedFilter; // null = 원본
+  FilterType selectedFilter = FilterType.none;
+  double filterIntensity = 1.0;
 
   // 이미지 이동 및 스케일 관련 상태
-  Offset imageOffset = Offset.zero; // 편집 모드에서 이미지 위치
-  double imageScale = 0.9; // 편집 모드에서 이미지 스케일 (0.9로 축소)
+  Offset imageOffset = Offset.zero;
+  double imageScale = 1.0;
 }
 
-class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen> {
+enum FilterType { none, clear, lucent, bright, tender }
+
+class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
+    with TickerProviderStateMixin {
   late final List<Uint8List> _images;
   late final PageController _pageController;
   int _currentIndex = 0;
   _EditMode _editMode = _EditMode.none;
-  final Map<int, Uint8List> _editedImages = {}; // 편집된 이미지 저장
-  final Map<int, img.Image?> _decodedImages = {}; // 디코딩된 이미지 캐시
-  final Map<int, ui.Image?> _uiImageCache = {}; // UI 이미지 캐시
+  final Map<int, Uint8List> _editedImages = {};
+  final Map<int, ui.Image?> _uiImageCache = {};
+  static const int _maxImageCacheSize = 10; // 최대 UI 이미지 캐시 크기
 
   // 이미지별 편집 상태 관리
   final Map<int, _ImageEditState> _imageEditStates = {};
 
-  // 현재 이미지의 편집 상태를 가져오는 헬퍼
-  _ImageEditState _getCurrentEditState() {
-    return _imageEditStates.putIfAbsent(_currentIndex, () => _ImageEditState());
+  // Undo/Redo 스택 (이미지별) - 최대 20개로 제한됨
+  final Map<int, List<Uint8List>> _history = {};
+  final Map<int, List<Uint8List>> _redoStack = {};
+
+  // 바텀시트 관련
+  bool _isBottomSheetOpen = false;
+  late AnimationController _bottomSheetController;
+  late Animation<double> _bottomSheetAnimation;
+  double _dragOffset = 0.0;
+
+  // 옵션별 바텀시트 높이
+  double get bottomSheetHeight {
+    switch (_editMode) {
+      case _EditMode.crop:
+        return 240; // 크롭: 가로 스크롤 옵션 (작은 높이)
+      case _EditMode.filter:
+        return 300; // 필터: 가로 스크롤 필터 미리보기 (작은 높이)
+      case _EditMode.adjust:
+        return 450; // 조정: 세로 슬라이더들 (더 큰 높이)
+      case _EditMode.none:
+        return 300; // 기본값
+    }
   }
+
+  // UI 토글
+  bool _showUI = true;
+
+  // 필터 스와이프 관련
+  bool _hasSwiped = false;
+
+  // 크롭 관련 상태
+  CropHandleType? _activeCropHandle;
+  final Map<int, Size> _imageDisplaySizes = {}; // 이미지별 표시 크기
 
   @override
   void initState() {
     super.initState();
-    // 단일 이미지 또는 다중 이미지 처리
     if (widget.imageBytesList != null && widget.imageBytesList!.isNotEmpty) {
       _images = List.from(widget.imageBytesList!);
     } else if (widget.imageBytes != null) {
@@ -79,11 +110,21 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen> {
       _images = [];
     }
     _pageController = PageController(initialPage: 0);
+
+    // 애니메이션 컨트롤러 초기화
+    _bottomSheetController = AnimationController(
+      duration: const Duration(milliseconds: 300),
+      vsync: this,
+    );
+    _bottomSheetAnimation = CurvedAnimation(
+      parent: _bottomSheetController,
+      curve: Curves.easeInOut,
+    );
+
     _preloadImages();
   }
 
   Future<void> _preloadImages() async {
-    // 모든 이미지를 미리 로드
     for (int i = 0; i < _images.length; i++) {
       _loadImageToCache(i, _images[i]);
     }
@@ -98,6 +139,8 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen> {
       if (mounted) {
         setState(() {
           _uiImageCache[index] = frame.image;
+          // 🚀 캐시 크기 제한 초과 시 오래된 항목 제거
+          _cleanupImageCache();
         });
       }
     } catch (e) {
@@ -105,52 +148,110 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen> {
     }
   }
 
+  /// 🚀 UI 이미지 캐시 정리 (최대 크기 초과 시 오래된 항목 제거)
+  void _cleanupImageCache() {
+    if (_uiImageCache.length <= _maxImageCacheSize) return;
+
+    // 현재 인덱스와 가까운 항목들은 유지하고, 먼 항목부터 제거
+    final keys = _uiImageCache.keys.toList()..sort();
+    final itemsToRemove = _uiImageCache.length - _maxImageCacheSize;
+
+    for (int i = 0; i < itemsToRemove; i++) {
+      // 현재 인덱스와 가장 먼 항목 제거
+      int removeIndex = 0;
+      int maxDistance = 0;
+      for (int j = 0; j < keys.length; j++) {
+        final distance = (keys[j] - _currentIndex).abs();
+        if (distance > maxDistance) {
+          maxDistance = distance;
+          removeIndex = j;
+        }
+      }
+      if (keys.isNotEmpty) {
+        _uiImageCache.remove(keys[removeIndex]);
+        keys.removeAt(removeIndex);
+      }
+    }
+  }
+
   @override
   void dispose() {
+    // 🚀 모든 캐시 정리 (메모리 최적화)
+    for (final image in _uiImageCache.values) {
+      image?.dispose();
+    }
+    _uiImageCache.clear();
+    _history.clear();
+    _redoStack.clear();
+
     _pageController.dispose();
+    _bottomSheetController.dispose();
     super.dispose();
   }
 
   bool get _isMultiImage => _images.length > 1;
 
-  Future<void> _decodeCurrentImage() async {
-    final index = _currentIndex;
-    if (_decodedImages[index] != null) return;
-
-    try {
-      final bytes = _editedImages[index] ?? _images[index];
-      final decoded = img.decodeImage(bytes);
-      if (decoded != null) {
-        _decodedImages[index] = decoded;
-      }
-    } catch (e) {
-      debugPrint('이미지 디코딩 오류: $e');
-    }
+  _ImageEditState _getCurrentEditState() {
+    return _imageEditStates.putIfAbsent(_currentIndex, () => _ImageEditState());
   }
 
   void _onPageChanged(int index) {
     setState(() {
       _currentIndex = index;
     });
-    _decodeCurrentImage();
   }
 
   void _onImageEdited(int index, Uint8List editedBytes) {
     setState(() {
       _editedImages[index] = editedBytes;
-      _decodedImages[index] = null; // 캐시 무효화
-      _uiImageCache[index] = null; // UI 이미지 캐시 무효화
+      _uiImageCache[index] = null;
+      _saveToHistory(index, editedBytes);
     });
     _loadImageToCache(index, editedBytes);
   }
 
+  void _saveToHistory(int index, Uint8List imageBytes) {
+    _history.putIfAbsent(index, () => []).add(imageBytes);
+    _redoStack.putIfAbsent(index, () => []).clear();
+    if (_history[index]!.length > 20) {
+      _history[index]!.removeAt(0);
+    }
+  }
+
+  void _undo() {
+    final history = _history[_currentIndex];
+    if (history == null || history.length <= 1) return;
+
+    setState(() {
+      _redoStack
+          .putIfAbsent(_currentIndex, () => [])
+          .add(_editedImages[_currentIndex] ?? _images[_currentIndex]);
+      history.removeLast();
+      final previousImage = history.last;
+      _editedImages[_currentIndex] = previousImage;
+      _uiImageCache[_currentIndex] = null;
+    });
+    _loadImageToCache(_currentIndex, _editedImages[_currentIndex]!);
+  }
+
+  void _redo() {
+    final redoStack = _redoStack[_currentIndex];
+    if (redoStack == null || redoStack.isEmpty) return;
+
+    setState(() {
+      final redoImage = redoStack.removeLast();
+      _history.putIfAbsent(_currentIndex, () => []).add(redoImage);
+      _editedImages[_currentIndex] = redoImage;
+      _uiImageCache[_currentIndex] = null;
+    });
+    _loadImageToCache(_currentIndex, _editedImages[_currentIndex]!);
+  }
+
   void _handleDone() {
-    // 편집된 이미지가 있으면 그것을, 없으면 원본을 반환
     final List<Uint8List> result = [];
     for (int i = 0; i < _images.length; i++) {
       result.add(_editedImages[i] ?? _images[i]);
     }
-    // 단일 이미지인 경우 Uint8List 반환, 다중 이미지인 경우 List<Uint8List> 반환
     if (result.length == 1) {
       Navigator.pop(context, result.first);
     } else {
@@ -165,79 +266,372 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen> {
         isDark ? AppColors.darkBackground : AppColors.lightBackground;
     final fgColor =
         isDark ? AppColors.darkTextPrimary : AppColors.lightTextPrimary;
-    final barBgColor =
-        isDark
-            ? AppColors.darkBackground.withOpacity(0.9)
-            : AppColors.lightBackground.withOpacity(0.95);
 
     return Scaffold(
-      backgroundColor: bgColor,
-      body: SafeArea(
-        bottom: false, // 하단은 툴바에서 처리
-        child: Column(
-          children: [
-            // 앱바 (편집 모드가 아닐 때만 표시)
-            if (_editMode == _EditMode.none)
-              _buildAppBar(context, barBgColor, fgColor),
-            // 이미지 미리보기 영역
-            Expanded(
-              child:
-                  _editMode == _EditMode.none
-                      ? _buildImagePreviewArea()
-                      : _buildEditModeContent(),
-            ),
-            // 툴바
-            _editMode == _EditMode.none
-                ? _buildToolbar(context, bgColor, fgColor)
-                : _buildEditModeToolbar(context, bgColor, fgColor),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildAppBar(BuildContext context, Color barBgColor, Color fgColor) {
-    return Container(
-      height: kToolbarHeight,
-      decoration: BoxDecoration(
-        color: barBgColor,
-        border: Border(
-          bottom: BorderSide(color: fgColor.withOpacity(0.1), width: 0.5),
-        ),
-      ),
-      child: Row(
+      backgroundColor: Colors.transparent,
+      body: Stack(
         children: [
-          IconButton(
-            icon: Icon(Icons.close, color: fgColor),
-            onPressed: () => Navigator.pop(context),
-          ),
-          Expanded(
-            child:
-                _isMultiImage
-                    ? Center(
-                      child: Text(
-                        '${_currentIndex + 1} / ${_images.length}',
-                        style: TextStyle(
-                          color: fgColor,
-                          fontSize: 17,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    )
-                    : const SizedBox.shrink(),
-          ),
-          TextButton(
-            onPressed: _handleDone,
-            child: Text(
-              '완료',
-              style: TextStyle(
-                color: Theme.of(context).colorScheme.primary,
-                fontSize: 17,
-                fontWeight: FontWeight.w600,
+          // 글래스 블러 배경
+          Positioned.fill(
+            child: GestureDetector(
+              onTap: _isBottomSheetOpen ? null : () => Navigator.pop(context),
+              child: ClipRRect(
+                child: BackdropFilter(
+                  filter: ui.ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+                  child: Container(color: bgColor.withOpacity(0.8)),
+                ),
               ),
             ),
           ),
-          const SizedBox(width: 8),
+
+          // 이미지 컨테이너
+          AnimatedBuilder(
+            animation: _bottomSheetController,
+            builder: (context, child) {
+              return Positioned(
+                left: 0,
+                right: 0,
+                top: 0,
+                bottom: 0,
+                child: SafeArea(
+                  child: Column(
+                    children: [
+                      // 앱바
+                      AnimatedOpacity(
+                        opacity: _showUI && !_isBottomSheetOpen ? 1.0 : 0.0,
+                        duration: const Duration(milliseconds: 200),
+                        child: Container(
+                          height: kToolbarHeight,
+                          padding: const EdgeInsets.symmetric(horizontal: 8),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Row(
+                                children: [
+                                  IconButton(
+                                    onPressed: () {
+                                      if (_isBottomSheetOpen) {
+                                        _closeBottomSheet();
+                                      } else {
+                                        Navigator.pop(context);
+                                      }
+                                    },
+                                    icon: Icon(
+                                      _isBottomSheetOpen
+                                          ? Icons.arrow_back
+                                          : Icons.close,
+                                      color: Colors.white,
+                                    ),
+                                  ),
+                                  if (!_isBottomSheetOpen) ...[
+                                    IconButton(
+                                      onPressed:
+                                          ((_history[_currentIndex]?.length ??
+                                                      0) >
+                                                  1)
+                                              ? _undo
+                                              : null,
+                                      icon: Icon(
+                                        Icons.undo,
+                                        color:
+                                            ((_history[_currentIndex]?.length ??
+                                                        0) >
+                                                    1)
+                                                ? Colors.white
+                                                : Colors.white.withOpacity(0.3),
+                                      ),
+                                    ),
+                                    IconButton(
+                                      onPressed:
+                                          (_redoStack[_currentIndex]
+                                                      ?.isNotEmpty ??
+                                                  false)
+                                              ? _redo
+                                              : null,
+                                      icon: Icon(
+                                        Icons.redo,
+                                        color:
+                                            (_redoStack[_currentIndex]
+                                                        ?.isNotEmpty ??
+                                                    false)
+                                                ? Colors.white
+                                                : Colors.white.withOpacity(0.3),
+                                      ),
+                                    ),
+                                  ],
+                                ],
+                              ),
+                              if (!_isBottomSheetOpen)
+                                GestureDetector(
+                                  onTap: _handleDone,
+                                  child: ClipRRect(
+                                    borderRadius: BorderRadius.circular(12),
+                                    child: BackdropFilter(
+                                      filter: ui.ImageFilter.blur(
+                                        sigmaX: 10,
+                                        sigmaY: 10,
+                                      ),
+                                      child: Container(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 20,
+                                          vertical: 10,
+                                        ),
+                                        child: const Text(
+                                          '완료',
+                                          style: TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 15,
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ),
+                      ),
+
+                      // 이미지 미리보기
+                      Expanded(
+                        child: LayoutBuilder(
+                          builder: (context, constraints) {
+                            return AnimatedBuilder(
+                              animation: _bottomSheetController,
+                              builder: (context, child) {
+                                final maxTranslateY = -40.0;
+                                final translateY =
+                                    -(bottomSheetHeight - 200) *
+                                    _bottomSheetAnimation.value;
+
+                                // 바텀시트와 겹치는지 확인하여 스케일 계산 (부드럽게)
+                                // 애니메이션 값에 직접 매핑하여 부드럽게 전환
+                                final animationValue =
+                                    _bottomSheetAnimation.value;
+
+                                // 애니메이션 값에 따라 부드럽게 스케일 계산
+                                // 바텀시트가 열릴 때만 스케일 조정
+                                double scale = 1.0;
+                                if (_isBottomSheetOpen && animationValue > 0) {
+                                  final imageAreaHeight = constraints.maxHeight;
+
+                                  // 바텀시트와 이미지가 겹치는 정도를 계산
+                                  // 바텀시트 높이 대비 이미지 영역의 비율로 최대 스케일 감소량 결정
+                                  final maxScaleReduction = (bottomSheetHeight /
+                                          imageAreaHeight *
+                                          0.12)
+                                      .clamp(0.0, 0.12);
+
+                                  // 애니메이션 값에 직접 선형 매핑 (Curves.easeInOut이 이미 적용됨)
+                                  scale =
+                                      1.0 -
+                                      (maxScaleReduction * animationValue);
+                                  scale = scale.clamp(0.88, 1.0);
+                                }
+
+                                return Transform.translate(
+                                  offset: Offset(
+                                    0,
+                                    translateY.clamp(maxTranslateY, 0.0),
+                                  ),
+                                  child: Transform.scale(
+                                    alignment: Alignment.topCenter,
+                                    scale: scale,
+                                    child: Padding(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 0,
+                                      ),
+                                      child:
+                                          _isMultiImage
+                                              ? PageView.builder(
+                                                controller: _pageController,
+                                                onPageChanged: _onPageChanged,
+                                                // 편집 모드일 때는 스와이프 비활성화
+                                                physics:
+                                                    _editMode != _EditMode.none
+                                                        ? const NeverScrollableScrollPhysics()
+                                                        : const PageScrollPhysics(),
+                                                itemCount: _images.length,
+                                                itemBuilder: (context, index) {
+                                                  return _buildImagePreview(
+                                                    context,
+                                                    index,
+                                                    _editedImages[index] ??
+                                                        _images[index],
+                                                  );
+                                                },
+                                              )
+                                              : _buildImagePreview(
+                                                context,
+                                                0,
+                                                _images[0],
+                                              ),
+                                    ),
+                                  ),
+                                );
+                              },
+                            );
+                          },
+                        ),
+                      ),
+
+                      // 메인 툴바
+                      AnimatedOpacity(
+                        opacity: _showUI && !_isBottomSheetOpen ? 1.0 : 0.0,
+                        duration: const Duration(milliseconds: 200),
+                        child: SafeArea(
+                          top: false,
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 20),
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(16),
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 20,
+                                  vertical: 16,
+                                ),
+                                child: Row(
+                                  mainAxisAlignment:
+                                      MainAxisAlignment.spaceEvenly,
+                                  children: [
+                                    _GlassToolButton(
+                                      icon: Icons.tune,
+                                      label: '조정',
+                                      onTap: _toggleAdjustment,
+                                      isActive: _editMode == _EditMode.adjust,
+                                    ),
+                                    Container(
+                                      width: 1,
+                                      height: 40,
+                                      color: Colors.white.withOpacity(0.2),
+                                    ),
+                                    _GlassToolButton(
+                                      icon: Icons.crop,
+                                      label: '자르기',
+                                      onTap: _toggleCrop,
+                                      isActive: _editMode == _EditMode.crop,
+                                    ),
+                                    Container(
+                                      width: 1,
+                                      height: 40,
+                                      color: Colors.white.withOpacity(0.2),
+                                    ),
+                                    _GlassToolButton(
+                                      icon: Icons.color_lens,
+                                      label: '필터',
+                                      onTap: _toggleFilter,
+                                      isActive: _editMode == _EditMode.filter,
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+
+                      const SizedBox(height: 20),
+                    ],
+                  ),
+                ),
+              );
+            },
+          ),
+
+          // 바텀시트
+          if (_isBottomSheetOpen)
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              child: GestureDetector(
+                onPanStart: _onBottomSheetDragStart,
+                onPanUpdate: _onBottomSheetDragUpdate,
+                onPanEnd: _onBottomSheetDragEnd,
+                child: AnimatedBuilder(
+                  animation: _bottomSheetAnimation,
+                  builder: (context, child) {
+                    return Transform.translate(
+                      offset: Offset(
+                        0,
+                        bottomSheetHeight * (1 - _bottomSheetAnimation.value),
+                      ),
+                      child: Container(
+                        height: bottomSheetHeight,
+                        decoration: BoxDecoration(
+                          color: bgColor.withOpacity(1),
+                          borderRadius: const BorderRadius.only(
+                            topLeft: Radius.circular(30),
+                            topRight: Radius.circular(30),
+                          ),
+                        ),
+                        child: Column(
+                          children: [
+                            const SizedBox(height: 12),
+                            Container(
+                              height: 4,
+                              width: 80,
+                              decoration: BoxDecoration(
+                                color: fgColor.withOpacity(0.2),
+                                borderRadius: BorderRadius.circular(4),
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                            Expanded(
+                              child:
+                                  _editMode == _EditMode.crop
+                                      ? _buildCropBottomSheet()
+                                      : _editMode == _EditMode.filter
+                                      ? _buildFilterBottomSheet()
+                                      : _buildAdjustmentBottomSheet(),
+                            ),
+                            Padding(
+                              padding: const EdgeInsets.only(
+                                left: 8.0,
+                                right: 8.0,
+                                bottom: 30.0,
+                              ),
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.end,
+                                children: [
+                                  TextButton(
+                                    onPressed: _closeBottomSheet,
+                                    child: Text(
+                                      '취소',
+                                      style: TextStyle(
+                                        fontSize: 15,
+                                        fontWeight: FontWeight.w600,
+                                        color: fgColor.withOpacity(0.7),
+                                      ),
+                                    ),
+                                  ),
+                                  const Spacer(),
+                                  TextButton(
+                                    onPressed: () {
+                                      _applyEdit();
+                                      _closeBottomSheet();
+                                    },
+                                    child: Text(
+                                      _editMode == _EditMode.crop ? '적용' : '완료',
+                                      style: TextStyle(
+                                        fontSize: 15,
+                                        fontWeight: FontWeight.w600,
+                                        color: fgColor.withOpacity(0.7),
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ),
         ],
       ),
     );
@@ -248,120 +642,178 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen> {
     int index,
     Uint8List imageBytes,
   ) {
-    // 캐시된 이미지가 있으면 바로 사용
-    if (_uiImageCache[index] != null) {
-      return CustomPaint(
-        painter: _ImagePainter(_uiImageCache[index]!),
-        size: Size.infinite,
-      );
-    }
+    final state = _getCurrentEditState();
+    final currentImageBytes = _editedImages[index] ?? imageBytes;
 
-    // 캐시가 없으면 로드
-    _loadImageToCache(index, imageBytes);
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final containerSize = Size(constraints.maxWidth, constraints.maxHeight);
 
-    return Center(
-      child: FutureBuilder<ui.Image>(
-        future: _loadImage(imageBytes),
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return CircularProgressIndicator(
-              color: Theme.of(context).colorScheme.onSurface,
-            );
+        // 크롭 모드일 때 크롭 영역 초기화
+        if (_editMode == _EditMode.crop &&
+            !state.cropState.isCropRectInitialized) {
+          if (_uiImageCache[index] != null) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              CropUtils.initializeCropRect(
+                image: _uiImageCache[index]!,
+                containerSize: containerSize,
+                cropState: state.cropState,
+                onDisplaySizeChanged: (size) {
+                  _imageDisplaySizes[index] = size;
+                },
+              );
+              setState(() {});
+            });
           }
-          if (snapshot.hasError || !snapshot.hasData) {
-            return const Icon(Icons.error);
-          }
-          // 로드된 이미지를 캐시에 저장
-          if (snapshot.hasData) {
-            _uiImageCache[index] = snapshot.data!;
-          }
-          return CustomPaint(
-            painter: _ImagePainter(snapshot.data!),
-            size: Size.infinite,
-          );
-        },
-      ),
-    );
-  }
+        }
 
-  Widget _buildToolbar(BuildContext context, Color bgColor, Color fgColor) {
-    final currentImageBytes =
-        _editedImages[_currentIndex] ?? _images[_currentIndex];
-
-    return Container(
-      padding: EdgeInsets.only(bottom: MediaQuery.of(context).padding.bottom),
-      decoration: BoxDecoration(
-        color: bgColor,
-        border: Border(
-          top: BorderSide(color: fgColor.withOpacity(0.1), width: 0.5),
-        ),
-      ),
-      child: SafeArea(
-        top: false,
-        bottom: false,
-        child: Container(
-          height: 100,
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-            children: [
-              _buildToolButton(
-                context,
-                icon: Icons.crop,
-                label: '자르기',
-                onTap: () => _openCropEditor(_currentIndex, currentImageBytes),
-                fgColor: fgColor,
-              ),
-              _buildToolButton(
-                context,
-                icon: Icons.tune,
-                label: '보정',
-                onTap:
-                    () => _openAdjustEditor(_currentIndex, currentImageBytes),
-                fgColor: fgColor,
-              ),
-              _buildToolButton(
-                context,
-                icon: Icons.auto_awesome,
-                label: '필터',
-                onTap:
-                    () => _openFilterEditor(_currentIndex, currentImageBytes),
-                fgColor: fgColor,
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildToolButton(
-    BuildContext context, {
-    required IconData icon,
-    required String label,
-    required VoidCallback onTap,
-    required Color fgColor,
-  }) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(12),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
+        return Stack(
           children: [
-            Icon(icon, color: fgColor, size: 28),
-            const SizedBox(height: 4),
-            Text(
-              label,
-              style: TextStyle(
-                color: fgColor,
-                fontSize: 12,
-                fontWeight: FontWeight.w500,
-              ),
+            GestureDetector(
+              onTap: _toggleUI,
+              // 크롭 모드에서는 CropEditor가 모든 제스처를 처리
+              onPanUpdate:
+                  _editMode == _EditMode.filter ? _onFilterSwipe : null,
+              onPanEnd:
+                  _editMode == _EditMode.filter ? _onFilterSwipeEnd : null,
+              child:
+                  _getColorFilter(state) != null
+                      ? ColorFiltered(
+                        key: ValueKey(
+                          '${state.selectedFilter}_${state.brightness}_${state.contrast}_${state.saturation}',
+                        ),
+                        colorFilter: _getColorFilter(state)!,
+                        child:
+                            _uiImageCache[index] != null
+                                ? CustomPaint(
+                                  painter: _ImagePainter(
+                                    _uiImageCache[index]!,
+                                    imageOffset:
+                                        _editMode == _EditMode.crop
+                                            ? state.imageOffset
+                                            : Offset.zero,
+                                    imageScale:
+                                        _editMode == _EditMode.crop
+                                            ? state.imageScale
+                                            : 1.0,
+                                  ),
+                                  size: Size.infinite,
+                                )
+                                : Center(
+                                  child: FutureBuilder<ui.Image>(
+                                    future: _loadImage(currentImageBytes),
+                                    builder: (context, snapshot) {
+                                      if (snapshot.connectionState ==
+                                          ConnectionState.waiting) {
+                                        return CircularProgressIndicator(
+                                          color:
+                                              Theme.of(
+                                                context,
+                                              ).colorScheme.onSurface,
+                                        );
+                                      }
+                                      if (snapshot.hasError ||
+                                          !snapshot.hasData) {
+                                        return const Icon(Icons.error);
+                                      }
+                                      if (snapshot.hasData) {
+                                        _uiImageCache[index] = snapshot.data!;
+                                      }
+                                      return CustomPaint(
+                                        painter: _ImagePainter(
+                                          snapshot.data!,
+                                          imageOffset:
+                                              _editMode == _EditMode.crop
+                                                  ? state.imageOffset
+                                                  : Offset.zero,
+                                          imageScale:
+                                              _editMode == _EditMode.crop
+                                                  ? state.imageScale
+                                                  : 1.0,
+                                        ),
+                                        size: Size.infinite,
+                                      );
+                                    },
+                                  ),
+                                ),
+                      )
+                      : (_uiImageCache[index] != null
+                          ? CustomPaint(
+                            painter: _ImagePainter(
+                              _uiImageCache[index]!,
+                              imageOffset:
+                                  _editMode == _EditMode.crop
+                                      ? state.imageOffset
+                                      : Offset.zero,
+                              imageScale:
+                                  _editMode == _EditMode.crop
+                                      ? state.imageScale
+                                      : 1.0,
+                            ),
+                            size: Size.infinite,
+                          )
+                          : Center(
+                            child: FutureBuilder<ui.Image>(
+                              future: _loadImage(currentImageBytes),
+                              builder: (context, snapshot) {
+                                if (snapshot.connectionState ==
+                                    ConnectionState.waiting) {
+                                  return CircularProgressIndicator(
+                                    color:
+                                        Theme.of(context).colorScheme.onSurface,
+                                  );
+                                }
+                                if (snapshot.hasError || !snapshot.hasData) {
+                                  return const Icon(Icons.error);
+                                }
+                                if (snapshot.hasData) {
+                                  _uiImageCache[index] = snapshot.data!;
+                                }
+                                return CustomPaint(
+                                  painter: _ImagePainter(
+                                    snapshot.data!,
+                                    imageOffset:
+                                        _editMode == _EditMode.crop
+                                            ? state.imageOffset
+                                            : Offset.zero,
+                                    imageScale:
+                                        _editMode == _EditMode.crop
+                                            ? state.imageScale
+                                            : 1.0,
+                                  ),
+                                  size: Size.infinite,
+                                );
+                              },
+                            ),
+                          )),
             ),
+            // 크롭 오버레이
+            if (_editMode == _EditMode.crop &&
+                state.cropState.isCropRectInitialized)
+              CropEditor(
+                cropState: state.cropState,
+                imageSize:
+                    _uiImageCache[index] != null
+                        ? Size(
+                          _uiImageCache[index]!.width.toDouble(),
+                          _uiImageCache[index]!.height.toDouble(),
+                        )
+                        : Size.zero,
+                containerSize: containerSize,
+                onCropRectChanged: (rect) {
+                  setState(() {});
+                },
+                onImageTransformChanged: (transform) {
+                  setState(() {
+                    state.imageOffset = transform.offset;
+                    state.imageScale = transform.scale;
+                  });
+                },
+                activeHandle: _activeCropHandle,
+              ),
           ],
-        ),
-      ),
+        );
+      },
     );
   }
 
@@ -371,437 +823,467 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen> {
     return frame.image;
   }
 
-  Widget _buildImagePreviewArea() {
-    return _isMultiImage
-        ? PageView.builder(
-          key: const ValueKey('image_preview'),
-          controller: _pageController,
-          physics: const ClampingScrollPhysics(),
-          onPageChanged: _onPageChanged,
-          itemCount: _images.length,
-          itemBuilder: (context, index) {
-            return _buildImagePreview(
-              context,
-              index,
-              _editedImages[index] ?? _images[index],
-            );
-          },
-        )
-        : _buildImagePreview(context, 0, _images[0]);
-  }
+  ColorFilter? _getColorFilter(_ImageEditState state) {
+    // 필터 + 조정 결합
+    final filterMatrix = _getFilterMatrix(state.selectedFilter);
+    final adjustmentMatrix = _getAdjustmentMatrix(state);
 
-  Widget _buildEditModeContent() {
-    final currentImageBytes =
-        _editedImages[_currentIndex] ?? _images[_currentIndex];
-
-    return switch (_editMode) {
-      _EditMode.crop => _buildCropContent(currentImageBytes),
-      _EditMode.adjust => _buildAdjustContent(currentImageBytes),
-      _EditMode.filter => _buildFilterContent(currentImageBytes),
-      _EditMode.none => _buildImagePreviewArea(),
-    };
-  }
-
-  Widget _buildCropContent(Uint8List imageBytes) {
-    final state = _getCurrentEditState();
-    // 회전이 적용된 경우 회전된 이미지 표시
-    if (state.rotation != 0) {
-      return _buildEditableImage(
-        key: ValueKey('crop_$_currentIndex'),
-        imageBytes: imageBytes,
-        child: FutureBuilder<ui.Image>(
-          future: _getRotatedPreviewImage(),
-          builder: (context, snapshot) {
-            if (snapshot.connectionState == ConnectionState.waiting) {
-              return CircularProgressIndicator(
-                color: Theme.of(context).colorScheme.onSurface,
-              );
-            }
-            if (snapshot.hasError || !snapshot.hasData) {
-              return const Icon(Icons.error);
-            }
-            return CustomPaint(
-              painter: _ImagePainter(snapshot.data!),
-              size: Size.infinite,
-            );
-          },
-        ),
+    // 행렬 곱셈 (간단한 결합)
+    if (filterMatrix != null && adjustmentMatrix != null) {
+      return ColorFilter.matrix(
+        _multiplyMatrices(filterMatrix, adjustmentMatrix),
       );
+    } else if (filterMatrix != null) {
+      return ColorFilter.matrix(filterMatrix);
+    } else if (adjustmentMatrix != null) {
+      return ColorFilter.matrix(adjustmentMatrix);
     }
-    return _buildEditableImage(
-      key: ValueKey('crop_$_currentIndex'),
-      imageBytes: imageBytes,
-      child: _buildImagePreview(context, _currentIndex, imageBytes),
-    );
+    return null;
   }
 
-  Widget _buildAdjustContent(Uint8List imageBytes) {
-    return _buildEditableImage(
-      key: ValueKey('adjust_$_currentIndex'),
-      imageBytes: imageBytes,
-      child: _buildImagePreview(context, _currentIndex, imageBytes),
-    );
+  List<double>? _getFilterMatrix(FilterType filter) {
+    switch (filter) {
+      case FilterType.none:
+        return null;
+      case FilterType.clear:
+        return [
+          1.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          1.1,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          1.1,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+        ];
+      case FilterType.lucent:
+        return [
+          1.1,
+          0.0,
+          0.0,
+          0.0,
+          10.0,
+          0.0,
+          1.1,
+          0.0,
+          0.0,
+          10.0,
+          0.0,
+          0.0,
+          1.1,
+          0.0,
+          10.0,
+          0.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+        ];
+      case FilterType.bright:
+        return [
+          1.2,
+          0.0,
+          0.0,
+          0.0,
+          20.0,
+          0.0,
+          1.2,
+          0.0,
+          0.0,
+          20.0,
+          0.0,
+          0.0,
+          1.2,
+          0.0,
+          20.0,
+          0.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+        ];
+      case FilterType.tender:
+        return [
+          1.0,
+          0.1,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          1.0,
+          0.1,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+        ];
+    }
   }
 
-  Widget _buildFilterContent(Uint8List imageBytes) {
-    return _buildEditableImage(
-      key: ValueKey('filter_$_currentIndex'),
-      imageBytes: imageBytes,
-      child: _buildImagePreview(context, _currentIndex, imageBytes),
-    );
+  List<double>? _getAdjustmentMatrix(_ImageEditState state) {
+    if (state.brightness == 0.0 &&
+        state.contrast == 0.0 &&
+        state.saturation == 0.0) {
+      return null;
+    }
+
+    // 밝기: +value는 밝게, -value는 어둡게
+    final brightness = state.brightness / 100.0;
+    // 대비: +value는 대비 증가, -value는 대비 감소
+    final contrast = 1.0 + (state.contrast / 100.0);
+    // 채도: +value는 채도 증가, -value는 채도 감소
+    final saturation = 1.0 + (state.saturation / 100.0);
+
+    // 간단한 행렬 계산 (채도 포함)
+    final lumR = 0.299;
+    final lumG = 0.587;
+    final lumB = 0.114;
+    final sr = (1.0 - saturation) * lumR;
+    final sg = (1.0 - saturation) * lumG;
+    final sb = (1.0 - saturation) * lumB;
+
+    return [
+      (sr + saturation) * contrast,
+      sg * contrast,
+      sb * contrast,
+      0.0,
+      brightness * 255,
+      sr * contrast,
+      (sg + saturation) * contrast,
+      sb * contrast,
+      0.0,
+      brightness * 255,
+      sr * contrast,
+      sg * contrast,
+      (sb + saturation) * contrast,
+      0.0,
+      brightness * 255,
+      0.0,
+      0.0,
+      0.0,
+      1.0,
+      0.0,
+    ];
   }
 
-  // 편집 모드에서 이미지를 이동 가능하게 하고 축소하는 위젯
-  Widget _buildEditableImage({
-    required Key key,
-    required Uint8List imageBytes,
-    required Widget child,
-  }) {
-    return GestureDetector(
-      onPanUpdate: (details) {
+  List<double> _multiplyMatrices(List<double> a, List<double> b) {
+    // 간단한 행렬 곱셈 (4x5 행렬)
+    final result = List<double>.filled(20, 0.0);
+    for (int i = 0; i < 4; i++) {
+      for (int j = 0; j < 5; j++) {
+        double sum = 0.0;
+        for (int k = 0; k < 4; k++) {
+          sum += a[i * 5 + k] * b[k * 5 + j];
+        }
+        result[i * 5 + j] = sum;
+      }
+    }
+    return result;
+  }
+
+  void _toggleUI() {
+    if (!_isBottomSheetOpen) {
+      setState(() {
+        _showUI = !_showUI;
+      });
+    }
+  }
+
+  void _toggleCrop() {
+    final state = _getCurrentEditState();
+    final wasInCropMode = _editMode == _EditMode.crop;
+
+    setState(() {
+      _editMode = _editMode == _EditMode.crop ? _EditMode.none : _EditMode.crop;
+      _isBottomSheetOpen = _editMode == _EditMode.crop;
+      if (_isBottomSheetOpen) {
+        _bottomSheetController.forward();
+      } else {
+        // 크롭 모드에서 나갈 때 이미지 transform을 부드럽게 초기화
+        if (wasInCropMode) {
+          _resetImageTransformSmoothly(state);
+        }
+        _bottomSheetController.reverse();
+      }
+    });
+  }
+
+  void _resetImageTransformSmoothly(_ImageEditState state) {
+    final startOffset = state.imageOffset;
+    final startScale = state.imageScale;
+    final endOffset = Offset.zero;
+    final endScale = 1.0;
+
+    // 애니메이션으로 부드럽게 초기화
+    void animationListener() {
+      if (!_bottomSheetController.isAnimating &&
+          _bottomSheetController.value == 0.0) {
+        // 애니메이션 완료 후 최종 값 설정
         setState(() {
-          _getCurrentEditState().imageOffset += details.delta;
+          state.imageOffset = endOffset;
+          state.imageScale = endScale;
         });
-      },
-      child: Align(
-        alignment: Alignment.topCenter,
-        child: Padding(
-          padding: const EdgeInsets.only(top: 10), // 상단 여유 공간
-          child: Transform.translate(
-            offset: _getCurrentEditState().imageOffset,
-            child: Transform.scale(
-              scale: _getCurrentEditState().imageScale,
-              child: child,
-            ),
-          ),
-        ),
-      ),
-    );
+        _bottomSheetController.removeListener(animationListener);
+      } else {
+        // 애니메이션 중간 값 보간
+        final progress = 1.0 - _bottomSheetController.value; // reverse이므로 반대로
+        setState(() {
+          state.imageOffset = Offset.lerp(startOffset, endOffset, progress)!;
+          state.imageScale = startScale + (endScale - startScale) * progress;
+        });
+      }
+    }
+
+    _bottomSheetController.addListener(animationListener);
   }
 
-  Future<ui.Image> _getRotatedPreviewImage() async {
+  void _toggleFilter() {
+    setState(() {
+      _editMode =
+          _editMode == _EditMode.filter ? _EditMode.none : _EditMode.filter;
+      _isBottomSheetOpen = _editMode == _EditMode.filter;
+      if (_isBottomSheetOpen) {
+        _bottomSheetController.forward();
+      } else {
+        _bottomSheetController.reverse();
+      }
+    });
+  }
+
+  void _toggleAdjustment() {
+    setState(() {
+      _editMode =
+          _editMode == _EditMode.adjust ? _EditMode.none : _EditMode.adjust;
+      _isBottomSheetOpen = _editMode == _EditMode.adjust;
+      if (_isBottomSheetOpen) {
+        _bottomSheetController.forward();
+      } else {
+        _bottomSheetController.reverse();
+      }
+    });
+  }
+
+  void _closeBottomSheet() {
+    setState(() {
+      _isBottomSheetOpen = false;
+      _editMode = _EditMode.none;
+      _dragOffset = 0.0;
+    });
+    _bottomSheetController.reverse();
+  }
+
+  void _onBottomSheetDragStart(DragStartDetails details) {
+    _bottomSheetController.stop();
+  }
+
+  void _onBottomSheetDragUpdate(DragUpdateDetails details) {
+    setState(() {
+      _dragOffset = (_dragOffset + details.delta.dy).clamp(
+        0.0,
+        bottomSheetHeight,
+      );
+      final progress = 1.0 - (_dragOffset / bottomSheetHeight);
+      _bottomSheetController.value = progress;
+    });
+  }
+
+  void _onBottomSheetDragEnd(DragEndDetails details) {
+    final velocity = details.velocity.pixelsPerSecond.dy;
+    final dismissThreshold = 200.0;
+    if (_dragOffset > dismissThreshold || velocity > 300) {
+      _closeBottomSheet();
+    } else {
+      setState(() {
+        _dragOffset = 0.0;
+      });
+      _bottomSheetController.forward();
+    }
+  }
+
+  void _onFilterSwipe(DragUpdateDetails details) {
+    final deltaX = details.delta.dx;
+    if (deltaX.abs() > 20 && !_hasSwiped) {
+      _hasSwiped = true;
+      final state = _getCurrentEditState();
+      final filters = FilterType.values;
+      final currentIndex = filters.indexOf(state.selectedFilter);
+      int newIndex;
+      if (deltaX > 0) {
+        newIndex = currentIndex > 0 ? currentIndex - 1 : filters.length - 1;
+      } else {
+        newIndex = currentIndex < filters.length - 1 ? currentIndex + 1 : 0;
+      }
+      setState(() {
+        state.selectedFilter = filters[newIndex];
+      });
+    }
+  }
+
+  void _onFilterSwipeEnd(DragEndDetails details) {
+    _hasSwiped = false;
+  }
+
+  void _applyEdit() {
     final currentImageBytes =
         _editedImages[_currentIndex] ?? _images[_currentIndex];
-    final decoded = img.decodeImage(currentImageBytes);
-    if (decoded == null) {
-      final codec = await ui.instantiateImageCodec(currentImageBytes);
-      final frame = await codec.getNextFrame();
-      return frame.image;
-    }
 
+    if (_editMode == _EditMode.crop) {
+      // 크롭 적용
+      _applyCrop(_currentIndex, currentImageBytes);
+    } else {
+      // 필터와 조정은 실시간 적용되므로 히스토리에 저장
+      _saveToHistory(_currentIndex, currentImageBytes);
+    }
+  }
+
+  Future<void> _applyCrop(int index, Uint8List imageBytes) async {
     final state = _getCurrentEditState();
-    img.Image rotated = decoded;
-    if (state.rotation == 90) {
-      rotated = img.copyRotate(decoded, angle: 90);
-    } else if (state.rotation == 180) {
-      rotated = img.copyRotate(decoded, angle: 180);
-    } else if (state.rotation == 270) {
-      rotated = img.copyRotate(decoded, angle: 270);
+    if (!state.cropState.isCropRectInitialized ||
+        _imageDisplaySizes[index] == null ||
+        _uiImageCache[index] == null) {
+      return;
     }
 
-    final bytes = Uint8List.fromList(img.encodePng(rotated));
-    final codec = await ui.instantiateImageCodec(bytes);
-    final frame = await codec.getNextFrame();
-    return frame.image;
-  }
-
-  Widget _buildEditModeToolbar(
-    BuildContext context,
-    Color bgColor,
-    Color fgColor,
-  ) {
-    // 각 편집 모드별 컨트롤 높이 계산
-    double controlsHeight = 0;
-    switch (_editMode) {
-      case _EditMode.crop:
-        controlsHeight = 100;
-        break;
-      case _EditMode.adjust:
-        controlsHeight = 150;
-        break;
-      case _EditMode.filter:
-        controlsHeight = 180;
-        break;
-      case _EditMode.none:
-        controlsHeight = 0;
-        break;
-    }
-
-    return Container(
-      key: ValueKey('edit_toolbar_${_editMode}_$_currentIndex'),
-      decoration: BoxDecoration(
-        color: bgColor,
-        border: Border(
-          top: BorderSide(color: fgColor.withOpacity(0.1), width: 0.5),
-        ),
-      ),
-      child: SafeArea(
-        top: false,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // 편집 모드별 컨트롤
-            SizedBox(
-              height: controlsHeight,
-              child: _buildEditModeControls(context, bgColor, fgColor),
-            ),
-            // 하단 버튼 (X, 체크)
-            Padding(
-              padding: EdgeInsets.only(
-                left: 16,
-                right: 16,
-                top: 16,
-                bottom: 16 + MediaQuery.of(context).padding.bottom,
-              ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  IconButton(
-                    icon: Icon(Icons.close, color: fgColor, size: 28),
-                    onPressed: () {
-                      final savedIndex = _currentIndex; // 현재 인덱스 저장
-
-                      // PageView를 먼저 올바른 페이지로 이동
-                      if (_isMultiImage && _pageController.hasClients) {
-                        _pageController.jumpToPage(savedIndex);
-                      }
-
-                      setState(() {
-                        _editMode = _EditMode.none;
-                        final state = _getCurrentEditState();
-                        state.rotation = 0; // 회전 초기화
-                        state.brightness = 0.0;
-                        state.contrast = 0.0;
-                        state.saturation = 0.0;
-                        state.warmth = 0.0;
-                        state.selectedFilter = null;
-                        state.selectedAspectRatio = null;
-                        state.imageOffset = Offset.zero; // 위치 초기화
-                        state.imageScale = 0.9; // 편집 모드 기본 스케일
-                      });
-
-                      // setState 후에도 다시 한 번 확인하여 동기화
-                      if (_isMultiImage) {
-                        WidgetsBinding.instance.addPostFrameCallback((_) {
-                          if (mounted && _pageController.hasClients) {
-                            final currentPage =
-                                _pageController.page?.round() ?? 0;
-                            if (currentPage != savedIndex) {
-                              _pageController.jumpToPage(savedIndex);
-                            }
-                          }
-                        });
-                      }
-                    },
-                    style: IconButton.styleFrom(
-                      backgroundColor: fgColor.withOpacity(0.1),
-                      padding: const EdgeInsets.all(12),
-                    ),
-                  ),
-                  IconButton(
-                    icon: Icon(Icons.check, color: fgColor, size: 28),
-                    onPressed: _applyEdit,
-                    style: IconButton.styleFrom(
-                      backgroundColor: Theme.of(context).colorScheme.primary,
-                      padding: const EdgeInsets.all(12),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
+    final result = await CropUtils.applyCrop(
+      imageBytes: imageBytes,
+      cropRect: state.cropState.cropRect,
+      imageDisplaySize: _imageDisplaySizes[index]!,
+      uiImage: _uiImageCache[index]!,
+      containerSize: MediaQuery.of(context).size,
+      rotation: state.rotation,
     );
-  }
 
-  Widget _buildEditModeControls(
-    BuildContext context,
-    Color bgColor,
-    Color fgColor,
-  ) {
-    switch (_editMode) {
-      case _EditMode.crop:
-        return _buildCropControls(context, bgColor, fgColor);
-      case _EditMode.adjust:
-        return _buildAdjustControls(context, bgColor, fgColor);
-      case _EditMode.filter:
-        return _buildFilterControls(context, bgColor, fgColor);
-      case _EditMode.none:
-        return const SizedBox.shrink();
+    if (result != null) {
+      _onImageEdited(index, result);
     }
   }
 
-  // 자르기 컨트롤 (비율 선택)
-  Widget _buildCropControls(
-    BuildContext context,
-    Color bgColor,
-    Color fgColor,
-  ) {
-    // 현재 이미지의 편집 상태를 가져옴
+  Widget _buildCropBottomSheet() {
     final state = _getCurrentEditState();
     final cropOptions = [
       {'label': '재설정', 'ratio': 'reset', 'icon': Icons.refresh},
       {'label': '회전', 'ratio': 'rotate', 'icon': Icons.rotate_right},
-      {'label': '자유', 'ratio': null, 'icon': null}, // null = 자유
+      {'label': '자유', 'ratio': null, 'icon': null},
       {'label': '원본', 'ratio': 'original', 'icon': null},
+      {'label': '1:1', 'ratio': '1:1', 'icon': null},
+      {'label': '4:5', 'ratio': '4:5', 'icon': null},
       {'label': '16:9', 'ratio': '16:9', 'icon': null},
-      {'label': '3:2', 'ratio': '3:2', 'icon': null},
+      {'label': '9:16', 'ratio': '9:16', 'icon': null},
     ];
 
-    return Container(
-      height: 60,
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: ListView.builder(
+    return Padding(
+      padding: const EdgeInsets.only(left: 8, right: 4, top: 10, bottom: 30),
+      child: SingleChildScrollView(
         scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 16),
-        itemCount: cropOptions.length,
-        itemBuilder: (context, index) {
-          final option = cropOptions[index];
-          final isSelected = state.selectedAspectRatio == option['ratio'];
-          return Padding(
-            padding: const EdgeInsets.only(right: 12),
-            child: InkWell(
-              onTap: () {
-                setState(() {
-                  if (option['ratio'] == 'reset') {
-                    // 재설정: 모든 편집 상태 초기화
-                    state.selectedAspectRatio = null;
-                    state.imageOffset = Offset.zero;
-                    state.imageScale = 0.9;
-                  } else if (option['ratio'] == 'rotate') {
-                    // 회전은 자르기 모드 내에서 처리 (별도 모드 전환 없음)
-                    // 회전 버튼은 단순히 회전만 수행
-                    final state = _getCurrentEditState();
-                    state.rotation = (state.rotation + 90) % 360;
-                  } else {
-                    _getCurrentEditState().selectedAspectRatio =
-                        option['ratio'] as String?;
-                  }
-                });
-              },
-              borderRadius: BorderRadius.circular(8),
-              child: Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 8,
-                ),
-                decoration: BoxDecoration(
-                  color:
-                      isSelected
-                          ? Theme.of(context).colorScheme.primary
-                          : Colors.transparent,
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(
-                    color:
-                        isSelected
-                            ? Theme.of(context).colorScheme.primary
-                            : fgColor.withOpacity(0.3),
-                    width: 1,
-                  ),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    if (option['icon'] != null)
-                      Icon(
-                        option['icon'] as IconData,
-                        color: isSelected ? Colors.white : fgColor,
-                        size: 18,
-                      ),
-                    if (option['icon'] != null) const SizedBox(width: 4),
-                    Text(
-                      option['label'] as String,
-                      style: TextStyle(
-                        color: isSelected ? Colors.white : fgColor,
-                        fontSize: 14,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          );
-        },
-      ),
-    );
-  }
-
-  // 보정 컨트롤
-  Widget _buildAdjustControls(
-    BuildContext context,
-    Color bgColor,
-    Color fgColor,
-  ) {
-    final state = _getCurrentEditState();
-    final adjustments = [
-      {'label': '재설정', 'icon': Icons.refresh, 'type': 'reset'},
-      {'label': '자동레벨', 'icon': Icons.auto_fix_high, 'type': 'auto_level'},
-      {'label': '자동WB', 'icon': Icons.wb_auto, 'type': 'auto_wb'},
-      {'label': '밝기', 'icon': Icons.brightness_6, 'type': 'brightness'},
-      {'label': '대비', 'icon': Icons.contrast, 'type': 'contrast'},
-      {'label': '채도', 'icon': Icons.palette, 'type': 'saturation'},
-      {'label': '선명', 'icon': Icons.auto_awesome, 'type': 'sharpness'},
-    ];
-
-    return Container(
-      height: 80,
-      padding: const EdgeInsets.symmetric(vertical: 12),
-      child: Column(
-        children: [
-          // 타이틀
-          Text(
-            '보정',
-            style: TextStyle(
-              color: fgColor,
-              fontSize: 16,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          const SizedBox(height: 12),
-          // 옵션 리스트
-          Expanded(
-            child: ListView.builder(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              itemCount: adjustments.length,
-              itemBuilder: (context, index) {
-                final adj = adjustments[index];
+        child: Row(
+          children:
+              cropOptions.map((option) {
+                final isSelected = state.selectedAspectRatio == option['ratio'];
                 return Padding(
-                  padding: const EdgeInsets.only(right: 16),
-                  child: InkWell(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: GestureDetector(
                     onTap: () {
-                      setState(() {
-                        if (adj['type'] == 'reset') {
-                          state.brightness = 0.0;
-                          state.contrast = 0.0;
-                          state.saturation = 0.0;
-                          state.warmth = 0.0;
-                        }
-                        // TODO: 다른 옵션들 구현
-                      });
+                      if (option['ratio'] == 'reset') {
+                        setState(() {
+                          state.selectedAspectRatio = null;
+                          state.cropState.reset();
+                        });
+                        // 크롭 영역 재초기화
+                        WidgetsBinding.instance.addPostFrameCallback((_) {
+                          if (mounted && _uiImageCache[_currentIndex] != null) {
+                            final containerSize = MediaQuery.of(context).size;
+                            CropUtils.initializeCropRect(
+                              image: _uiImageCache[_currentIndex]!,
+                              containerSize: containerSize,
+                              cropState: state.cropState,
+                              onDisplaySizeChanged: (size) {
+                                _imageDisplaySizes[_currentIndex] = size;
+                              },
+                            );
+                            setState(() {});
+                          }
+                        });
+                      } else if (option['ratio'] == 'rotate') {
+                        setState(() {
+                          state.rotation = (state.rotation + 90) % 360;
+                        });
+                      } else {
+                        setState(() {
+                          state.selectedAspectRatio =
+                              option['ratio'] as String?;
+                          state.cropState.isCropRectInitialized = false;
+                        });
+                        // 크롭 영역 재초기화
+                        WidgetsBinding.instance.addPostFrameCallback((_) {
+                          if (mounted && _uiImageCache[_currentIndex] != null) {
+                            final containerSize = MediaQuery.of(context).size;
+                            CropUtils.initializeCropRect(
+                              image: _uiImageCache[_currentIndex]!,
+                              containerSize: containerSize,
+                              cropState: state.cropState,
+                              onDisplaySizeChanged: (size) {
+                                _imageDisplaySizes[_currentIndex] = size;
+                              },
+                            );
+                            setState(() {});
+                          }
+                        });
+                      }
                     },
-                    borderRadius: BorderRadius.circular(8),
                     child: Container(
                       padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
+                        horizontal: 16,
                         vertical: 8,
                       ),
-                      child: Column(
+                      decoration: BoxDecoration(
+                        color:
+                            isSelected
+                                ? Theme.of(context).colorScheme.primary
+                                : Colors.transparent,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color:
+                              isSelected
+                                  ? Theme.of(context).colorScheme.primary
+                                  : Colors.white.withOpacity(0.3),
+                          width: 1,
+                        ),
+                      ),
+                      child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Icon(
-                            adj['icon'] as IconData,
-                            color: fgColor,
-                            size: 24,
-                          ),
-                          const SizedBox(height: 4),
+                          if (option['icon'] != null)
+                            Icon(
+                              option['icon'] as IconData,
+                              color: isSelected ? Colors.white : Colors.white,
+                              size: 18,
+                            ),
+                          if (option['icon'] != null) const SizedBox(width: 4),
                           Text(
-                            adj['label'] as String,
+                            option['label'] as String,
                             style: TextStyle(
-                              color: fgColor,
-                              fontSize: 12,
+                              color: isSelected ? Colors.white : Colors.white,
+                              fontSize: 14,
                               fontWeight: FontWeight.w500,
                             ),
                           ),
@@ -810,65 +1292,43 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen> {
                     ),
                   ),
                 );
-              },
-            ),
-          ),
-        ],
+              }).toList(),
+        ),
       ),
     );
   }
 
-  // 필터 컨트롤 (필터 썸네일)
-  Widget _buildFilterControls(
-    BuildContext context,
-    Color bgColor,
-    Color fgColor,
-  ) {
+  Widget _buildFilterBottomSheet() {
     final state = _getCurrentEditState();
     final filters = [
-      {'name': 'Original', 'filter': null},
-      {'name': 'Clear', 'filter': 'clear'},
-      {'name': 'Lucent', 'filter': 'lucent'},
-      {'name': 'Bright', 'filter': 'bright'},
-      {'name': 'Tender', 'filter': 'tender'},
+      {'name': '원본', 'filter': FilterType.none},
+      {'name': 'Clear', 'filter': FilterType.clear},
+      {'name': 'Lucent', 'filter': FilterType.lucent},
+      {'name': 'Bright', 'filter': FilterType.bright},
+      {'name': 'Tender', 'filter': FilterType.tender},
     ];
 
     final currentImageBytes =
         _editedImages[_currentIndex] ?? _images[_currentIndex];
 
-    return Container(
-      height: 120,
-      padding: const EdgeInsets.symmetric(vertical: 12),
-      child: Column(
-        children: [
-          // 타이틀
-          Text(
-            '필터',
-            style: TextStyle(
-              color: fgColor,
-              fontSize: 16,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          const SizedBox(height: 12),
-          // 필터 썸네일 리스트
-          Expanded(
-            child: ListView.builder(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              itemCount: filters.length,
-              itemBuilder: (context, index) {
-                final filter = filters[index];
-                final isSelected = state.selectedFilter == filter['filter'];
+    return Padding(
+      padding: const EdgeInsets.only(left: 4, right: 4, top: 10, bottom: 40),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          children:
+              filters.map((filter) {
+                final filterType = filter['filter'] as FilterType;
+                final isSelected = state.selectedFilter == filterType;
                 return Padding(
-                  padding: const EdgeInsets.only(right: 12),
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       GestureDetector(
                         onTap: () {
                           setState(() {
-                            state.selectedFilter = filter['filter'];
+                            state.selectedFilter = filterType;
                           });
                         },
                         child: Container(
@@ -880,7 +1340,7 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen> {
                               color:
                                   isSelected
                                       ? Theme.of(context).colorScheme.primary
-                                      : fgColor.withOpacity(0.2),
+                                      : Colors.white.withOpacity(0.2),
                               width: isSelected ? 3 : 1,
                             ),
                           ),
@@ -890,20 +1350,43 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen> {
                               future: _loadImage(currentImageBytes),
                               builder: (context, snapshot) {
                                 if (snapshot.hasData) {
-                                  return CustomPaint(
-                                    painter: _ImagePainter(snapshot.data!),
-                                    size: Size.infinite,
+                                  return ColorFiltered(
+                                    colorFilter: ColorFilter.matrix(
+                                      _getFilterMatrix(filterType) ??
+                                          [
+                                            1,
+                                            0,
+                                            0,
+                                            0,
+                                            0,
+                                            0,
+                                            1,
+                                            0,
+                                            0,
+                                            0,
+                                            0,
+                                            0,
+                                            1,
+                                            0,
+                                            0,
+                                            0,
+                                            0,
+                                            0,
+                                            1,
+                                            0,
+                                          ],
+                                    ),
+                                    child: CustomPaint(
+                                      painter: _ImagePainter(snapshot.data!),
+                                      size: Size.infinite,
+                                    ),
                                   );
                                 }
                                 return Container(
-                                  color: fgColor.withOpacity(0.1),
-                                  child: Center(
+                                  color: Colors.white.withOpacity(0.1),
+                                  child: const Center(
                                     child: CircularProgressIndicator(
                                       strokeWidth: 2,
-                                      color:
-                                          Theme.of(
-                                            context,
-                                          ).colorScheme.onSurface,
                                     ),
                                   ),
                                 );
@@ -919,7 +1402,7 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen> {
                           color:
                               isSelected
                                   ? Theme.of(context).colorScheme.primary
-                                  : fgColor,
+                                  : Colors.white,
                           fontSize: 11,
                           fontWeight:
                               isSelected ? FontWeight.w600 : FontWeight.w400,
@@ -928,125 +1411,129 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen> {
                     ],
                   ),
                 );
-              },
+              }).toList(),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAdjustmentBottomSheet() {
+    final state = _getCurrentEditState();
+    final adjustments = [
+      {'label': '밝기', 'type': 'brightness', 'icon': Icons.brightness_6},
+      {'label': '대비', 'type': 'contrast', 'icon': Icons.contrast},
+      {'label': '채도', 'type': 'saturation', 'icon': Icons.palette},
+    ];
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
+      child: Column(
+        children:
+            adjustments.map((adj) {
+              final type = adj['type'] as String;
+              double value = 0.0;
+              if (type == 'brightness') value = state.brightness;
+              if (type == 'contrast') value = state.contrast;
+              if (type == 'saturation') value = state.saturation;
+
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 20),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(
+                          adj['icon'] as IconData,
+                          color: Colors.white,
+                          size: 20,
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          adj['label'] as String,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 14,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                        const Spacer(),
+                        Text(
+                          value.toStringAsFixed(0),
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 14,
+                          ),
+                        ),
+                      ],
+                    ),
+                    Slider(
+                      value: value,
+                      min: -100,
+                      max: 100,
+                      onChanged: (newValue) {
+                        setState(() {
+                          if (type == 'brightness') state.brightness = newValue;
+                          if (type == 'contrast') state.contrast = newValue;
+                          if (type == 'saturation') state.saturation = newValue;
+                        });
+                      },
+                    ),
+                  ],
+                ),
+              );
+            }).toList(),
+      ),
+    );
+  }
+}
+
+class _GlassToolButton extends StatelessWidget {
+  const _GlassToolButton({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+    this.isActive = false,
+  });
+
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+  final bool isActive;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, color: Colors.white, size: 28),
+          const SizedBox(height: 4),
+          Text(
+            label,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 12,
+              fontWeight: FontWeight.w500,
             ),
           ),
         ],
       ),
     );
   }
-
-  void _applyEdit() {
-    final currentImageBytes =
-        _editedImages[_currentIndex] ?? _images[_currentIndex];
-
-    switch (_editMode) {
-      case _EditMode.crop:
-        // 자르기 모드에서 회전이 있으면 적용
-        final state = _getCurrentEditState();
-        if (state.rotation != 0) {
-          _applyRotation(currentImageBytes);
-        }
-        // TODO: 자르기 적용 로직
-        break;
-      case _EditMode.adjust:
-      case _EditMode.filter:
-        // TODO: 각 편집 모드별 적용 로직
-        break;
-      case _EditMode.none:
-        break;
-    }
-
-    final savedIndex = _currentIndex; // 현재 인덱스 저장
-
-    // PageView를 먼저 올바른 페이지로 이동
-    if (_isMultiImage && _pageController.hasClients) {
-      _pageController.jumpToPage(savedIndex);
-    }
-
-    setState(() {
-      _editMode = _EditMode.none;
-      final state = _getCurrentEditState();
-      // 회전은 초기화하지 않음 (이미 적용된 회전 유지)
-      state.imageOffset = Offset.zero; // 위치 초기화
-      state.imageScale = 0.9; // 편집 모드 기본 스케일
-    });
-
-    // setState 후에도 다시 한 번 확인하여 동기화
-    if (_isMultiImage) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted && _pageController.hasClients) {
-          final currentPage = _pageController.page?.round() ?? 0;
-          if (currentPage != savedIndex) {
-            _pageController.jumpToPage(savedIndex);
-          }
-        }
-      });
-    }
-  }
-
-  void _applyRotation(Uint8List imageBytes) {
-    final decoded = img.decodeImage(imageBytes);
-    if (decoded == null) return;
-
-    final state = _getCurrentEditState();
-    img.Image rotated = decoded;
-    if (state.rotation == 90) {
-      rotated = img.copyRotate(decoded, angle: 90);
-    } else if (state.rotation == 180) {
-      rotated = img.copyRotate(decoded, angle: 180);
-    } else if (state.rotation == 270) {
-      rotated = img.copyRotate(decoded, angle: 270);
-    }
-
-    final bytes = Uint8List.fromList(img.encodeJpg(rotated, quality: 95));
-    _onImageEdited(_currentIndex, bytes);
-  }
-
-  Future<void> _openCropEditor(int index, Uint8List imageBytes) async {
-    final state = _getCurrentEditState();
-    final result = await Navigator.push<Uint8List>(
-      context,
-      PageRouteBuilder(
-        pageBuilder:
-            (context, animation, secondaryAnimation) => CropScreen(
-              imageBytes: imageBytes,
-              initialAspectRatio: state.selectedAspectRatio,
-            ),
-        transitionDuration: Duration.zero,
-        reverseTransitionDuration: Duration.zero,
-      ),
-    );
-
-    if (result != null && mounted) {
-      _onImageEdited(index, result);
-    }
-  }
-
-  void _openAdjustEditor(int index, Uint8List imageBytes) {
-    setState(() {
-      _editMode = _EditMode.adjust;
-      final state = _getCurrentEditState();
-      state.imageOffset = Offset.zero; // 위치 초기화
-      state.imageScale = 0.9; // 축소
-    });
-  }
-
-  void _openFilterEditor(int index, Uint8List imageBytes) {
-    setState(() {
-      _editMode = _EditMode.filter;
-      final state = _getCurrentEditState();
-      state.imageOffset = Offset.zero; // 위치 초기화
-      state.imageScale = 0.9; // 축소
-    });
-  }
 }
 
-/// 이미지 그리기용 Painter
 class _ImagePainter extends CustomPainter {
   final ui.Image image;
+  final Offset imageOffset;
+  final double imageScale;
 
-  _ImagePainter(this.image);
+  _ImagePainter(
+    this.image, {
+    this.imageOffset = Offset.zero,
+    this.imageScale = 1.0,
+  });
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -1057,18 +1544,30 @@ class _ImagePainter extends CustomPainter {
     double offsetX = 0, offsetY = 0;
 
     if (imageAspectRatio > canvasAspectRatio) {
-      // 이미지가 더 넓음
       drawWidth = size.width;
       drawHeight = size.width / imageAspectRatio;
       offsetY = (size.height - drawHeight) / 2;
     } else {
-      // 이미지가 더 높음
       drawHeight = size.height;
       drawWidth = size.height * imageAspectRatio;
       offsetX = (size.width - drawWidth) / 2;
     }
 
-    final rect = Rect.fromLTWH(offsetX, offsetY, drawWidth, drawHeight);
+    // 스케일 적용
+    final scaledWidth = drawWidth * imageScale;
+    final scaledHeight = drawHeight * imageScale;
+
+    // 오프셋 적용 (크롭 영역 중심에 맞춤)
+    final finalOffsetX = offsetX + imageOffset.dx;
+    final finalOffsetY = offsetY + imageOffset.dy;
+
+    final rect = Rect.fromLTWH(
+      finalOffsetX,
+      finalOffsetY,
+      scaledWidth,
+      scaledHeight,
+    );
+
     canvas.drawImageRect(
       image,
       Rect.fromLTWH(0, 0, image.width.toDouble(), image.height.toDouble()),
@@ -1079,6 +1578,8 @@ class _ImagePainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_ImagePainter oldDelegate) {
-    return oldDelegate.image != image;
+    return oldDelegate.image != image ||
+        oldDelegate.imageOffset != imageOffset ||
+        oldDelegate.imageScale != imageScale;
   }
 }
