@@ -182,7 +182,7 @@ class MediaUploadHandler {
     debugPrint(
       '[MediaUploadHandler] 🔨 PageView 그룹 노드 생성 시도: layout=$layout, paths=${localPaths.length}개',
     );
-    final groupPlaceholderId = editorService.addGroupImagePlaceholderNode(
+    final groupPlaceholderId = editorService.addGroupImageNode(
       localPaths: localPaths,
       layout: layout,
     );
@@ -226,7 +226,10 @@ class MediaUploadHandler {
       },
       onDeletePlaceholder: (placeholderId) {
         debugPrint('[MediaUploadHandler] ❌ PageView 그룹 노드 삭제: $placeholderId');
-        editorService.deleteImagePlaceholderNode(groupPlaceholderId);
+        final doc = editorService.document;
+        if (doc.getNodeById(groupPlaceholderId) != null) {
+          doc.deleteNode(groupPlaceholderId);
+        }
       },
       isMounted: () => context.mounted,
       context: context,
@@ -292,7 +295,7 @@ class MediaUploadHandler {
     debugPrint(
       '[MediaUploadHandler] 🔨 ImageRow 그룹 노드 생성 시도: layout=grid2, paths=${localPaths.length}개',
     );
-    final groupPlaceholderId = editorService.addGroupImagePlaceholderNode(
+    final groupPlaceholderId = editorService.addGroupImageNode(
       localPaths: localPaths,
       layout: GroupImageLayout.grid2,
     );
@@ -336,7 +339,10 @@ class MediaUploadHandler {
       },
       onDeletePlaceholder: (placeholderId) {
         debugPrint('[MediaUploadHandler] ❌ ImageRow 그룹 노드 삭제: $placeholderId');
-        editorService.deleteImagePlaceholderNode(groupPlaceholderId);
+        final doc = editorService.document;
+        if (doc.getNodeById(groupPlaceholderId) != null) {
+          doc.deleteNode(groupPlaceholderId);
+        }
       },
       isMounted: () => context.mounted,
       context: context,
@@ -353,13 +359,21 @@ class MediaUploadHandler {
     await upload.uploadEditorImages(
       files: files,
       onCreatePlaceholder: (localPath) {
-        return editorService.addImagePlaceholderNode(localPath);
+        return editorService.addImageNode(localPath);
       },
-      onReplacePlaceholder: (placeholderId, url) async {
-        await editorService.replacePlaceholderWithUrl(placeholderId, url);
+      onReplacePlaceholder: (nodeId, url) async {
+        await editorService.replaceImageUrlByPath(
+          nodeId: nodeId,
+          localPath: files[0].path,
+          url: url,
+        );
       },
       onDeletePlaceholder: (placeholderId) {
-        editorService.deleteImagePlaceholderNode(placeholderId);
+        // 🎯 일반 노드 삭제로 통합
+        final doc = editorService.document;
+        if (doc.getNodeById(placeholderId) != null) {
+          doc.deleteNode(placeholderId);
+        }
       },
       isMounted: () => context.mounted,
       context: context,
@@ -380,30 +394,30 @@ class MediaUploadHandler {
       editorId: editorId,
       initialThumbnailPath: thumbnailPath,
       onCreatePlaceholder: (localPath, fileName, {thumbnailPath, aspectRatio}) {
-        return editorService.addVideoClipPlaceholderNode(
-          localPath,
-          fileName,
+        return editorService.addVideoClipNode(
+          localPath: localPath,
+          label: fileName,
           thumbnailPath: thumbnailPath,
           aspectRatio: aspectRatio,
         );
       },
-      onUpdateThumbnail: (placeholderId, thumbnailPath) {
-        editorService.updateVideoPlaceholderThumbnail(
-          placeholderId,
-          thumbnailPath,
-        );
+      onUpdateThumbnail: (nodeId, thumbnailPath) {
+        editorService.updateVideoThumbnail(nodeId, thumbnailPath);
       },
-      onReplacePlaceholder: (placeholderId, url, {fallbackLocalPath}) async {
-        await editorService.replaceVideoPlaceholderWithUrl(
-          placeholderId,
-          url,
+      onReplacePlaceholder: (nodeId, url, {fallbackLocalPath}) async {
+        await editorService.replaceVideoUrlByPath(
+          nodeId: nodeId,
+          url: url,
           fallbackLocalPath: fallbackLocalPath,
         );
         onUploadComplete?.call();
         // 🎯 키보드 유지 (이미지와 동일하게)
       },
       onDeletePlaceholder: (placeholderId) {
-        editorService.deleteVideoPlaceholderNode(placeholderId);
+        final doc = editorService.document;
+        if (doc.getNodeById(placeholderId) != null) {
+          doc.deleteNode(placeholderId);
+        }
       },
       isMounted: () => context.mounted,
       context: context,

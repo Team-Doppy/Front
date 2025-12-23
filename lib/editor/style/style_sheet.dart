@@ -22,8 +22,8 @@ Stylesheet buildCustomStylesheet(
   BuildContext context, {
   bool isReadOnly = false,
 }) {
-  final bool isDark =
-      context.watch<ThemeProvider>().themeMode == ThemeMode.dark;
+  // 🎯 성능 최적화: watch 대신 read 사용 (테마는 initState에서 감지)
+  final bool isDark = context.read<ThemeProvider>().themeMode == ThemeMode.dark;
   final Color titleColor =
       isDark ? AppColors.darkTextPrimary : AppColors.lightTextPrimary;
   final Color bodyColor =

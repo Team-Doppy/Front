@@ -744,23 +744,7 @@ class _LinkComponentState extends State<_LinkComponent>
   NodePosition? movePositionLeft(
     NodePosition currentPosition, [
     MovementModifier? movementModifier,
-  ]) {
-    debugPrint(
-      '[LinkComponent] movePositionLeft 호출: currentPosition=$currentPosition',
-    );
-    // 현재 위치가 이미 downstream이면 null 반환 (삭제 허용)
-    if (currentPosition is UpstreamDownstreamNodePosition) {
-      final downstreamPos = const UpstreamDownstreamNodePosition.downstream();
-      if (currentPosition == downstreamPos) {
-        // 이미 downstream에 있으면 null 반환하여 삭제 허용
-        debugPrint('[LinkComponent] 이미 downstream 위치 - 삭제 허용');
-        return null;
-      }
-    }
-    // 특수 노드 아래에서 백스페이스 시 특수 노드의 끝(downstream) 위치로 이동
-    debugPrint('[LinkComponent] downstream 위치로 이동');
-    return const UpstreamDownstreamNodePosition.downstream();
-  }
+  ]) => null;
 
   @override
   NodePosition? movePositionRight(

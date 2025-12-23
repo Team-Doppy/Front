@@ -308,15 +308,7 @@ class _PageViewImageComponentState extends State<PageViewImageComponent>
   NodePosition? movePositionLeft(
     NodePosition currentPosition, [
     MovementModifier? movementModifier,
-  ]) {
-    if (currentPosition is UpstreamDownstreamNodePosition) {
-      final downstreamPos = const UpstreamDownstreamNodePosition.downstream();
-      if (currentPosition == downstreamPos) {
-        return null;
-      }
-    }
-    return const UpstreamDownstreamNodePosition.downstream();
-  }
+  ]) => null;
 
   @override
   NodePosition? movePositionRight(

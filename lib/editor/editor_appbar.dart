@@ -1185,8 +1185,8 @@ class EditorAppBar extends StatelessWidget {
   });
 
   Future<void> _onNextButtonTapped(BuildContext context) async {
-    // 플레이스홀더 기반 가드: 문서에 이미지/영상 플레이스홀더가 있으면 진행 차단
-    if (editorService.hasAnyPlaceholders()) {
+    // 업로드 가드: 업로드 중인 미디어가 있으면 진행 차단
+    if (editorService.hasUnuploadedImages()) {
       await DialogUtils.showInfoDialog(
         context,
         title: context.tr('wait_for_media_upload'),

@@ -8,6 +8,7 @@ import 'package:doppy/editor/component/pageview_image_component.dart';
 import 'package:doppy/editor/component/link_component.dart';
 import 'package:doppy/editor/component/clip_component.dart';
 import 'package:doppy/editor/service/node_component_service.dart';
+import 'package:doppy/editor/service/editor_service.dart';
 import 'package:doppy/editor/utils/node_type_checker.dart';
 import 'package:doppy/editor/utils/config.dart';
 import 'package:doppy/editor/utils/drop_line_config.dart';
@@ -174,6 +175,12 @@ class _SingleImageComponentState extends State<SingleImageComponent>
   @override
   void initState() {
     super.initState();
+
+    // 🎯 메타데이터에서 이미지 크기 미리 로드 (shimmer 최적화)
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _getImageSizeFromMetadata(); // 캐싱됨
+    });
+
     _controller = AnimationController.unbounded(vsync: this)
       ..repeat(min: 0, max: 1, period: const Duration(milliseconds: 1300));
     _scatterCtrl = AnimationController(
@@ -196,13 +203,19 @@ class _SingleImageComponentState extends State<SingleImageComponent>
 
   @override
   Widget build(BuildContext context) {
-    // selection 핸들이 이미지 노드를 포함할 때만, 그리고 경계가 이미지인 경우 Downstream일 때만 하이라이트
+    // 🎯 편집 모드에서만 selection 체크 (성능 최적화)
+    DocumentSelection? composerSelection;
+    Document? doc;
     // ignore: invalid_use_of_visible_for_testing_member
-    final seState = context.findAncestorStateOfType<SuperEditorState>();
-    // ignore: invalid_use_of_visible_for_testing_member
-    final composerSelection = seState?.editContext.composer.selection;
-    // ignore: invalid_use_of_visible_for_testing_member
-    final doc = seState?.editContext.editor.document;
+    SuperEditorState? seState;
+    if (widget.isEditing) {
+      // ignore: invalid_use_of_visible_for_testing_member
+      seState = context.findAncestorStateOfType<SuperEditorState>();
+      // ignore: invalid_use_of_visible_for_testing_member
+      composerSelection = seState?.editContext.composer.selection;
+      // ignore: invalid_use_of_visible_for_testing_member
+      doc = seState?.editContext.editor.document;
+    }
     final bool hasImageAbove =
         doc == null ? false : _hasNeighborImage(doc, widget.nodeId, -1);
     final bool hasImageBelow =
@@ -696,18 +709,7 @@ class _SingleImageComponentState extends State<SingleImageComponent>
   NodePosition? movePositionLeft(
     NodePosition currentPosition, [
     MovementModifier? movementModifier,
-  ]) {
-    // 현재 위치가 이미 downstream이면 null 반환 (삭제 허용)
-    if (currentPosition is UpstreamDownstreamNodePosition) {
-      final downstreamPos = const UpstreamDownstreamNodePosition.downstream();
-      if (currentPosition == downstreamPos) {
-        // 이미 downstream에 있으면 null 반환하여 삭제 허용
-        return null;
-      }
-    }
-    // 특수 노드 아래에서 백스페이스 시 특수 노드의 끝(downstream) 위치로 이동
-    return const UpstreamDownstreamNodePosition.downstream();
-  }
+  ]) => null;
 
   @override
   NodePosition? movePositionRight(
@@ -796,52 +798,126 @@ class _SingleImageComponentState extends State<SingleImageComponent>
     return true;
   }
 
-  /// 🎯 메타데이터에서 이미지 크기 가져오기 (쉬머 크기 결정)
-  /// 성능 최적화: 한 번만 조회하고 캐싱
+  /// 🎯 메타데이터에서 이미지 크기 가져오기 (shimmer 크기 결정)
+  /// 최적화: 한 번만 조회하고 캐싱, 중복 로직 제거
   Size? _getImageSizeFromMetadata() {
     // 🚀 이미 조회했으면 캐시 반환
-    if (_sizeInitialized) {
-      return _cachedImageSize;
-    }
+    if (_sizeInitialized) return _cachedImageSize;
+
+    _sizeInitialized = true; // 실패해도 재시도 방지
 
     try {
       final seState = context.findAncestorStateOfType<SuperEditorState>();
       final doc = seState?.editContext.editor.document;
       final node = doc?.getNodeById(widget.nodeId);
 
-      if (node is ImageNode) {
-        final meta = (node as dynamic).metadata as Map<String, dynamic>?;
-        if (meta != null) {
-          final dimensions = meta['imageDimensions'] as Map<String, dynamic>?;
-          if (dimensions != null) {
-            // URL 또는 로컬 경로로 크기 찾기
-            final imageUrl = widget.imageUrl;
-            final localPath = meta['localPath']?.toString();
+      if (node is! ImageNode) return null;
 
-            Map<String, dynamic>? sizeData;
-            if (dimensions.containsKey(imageUrl)) {
-              sizeData = dimensions[imageUrl] as Map<String, dynamic>?;
-            } else if (localPath != null && dimensions.containsKey(localPath)) {
-              sizeData = dimensions[localPath] as Map<String, dynamic>?;
-            }
+      final meta = (node as dynamic).metadata as Map<String, dynamic>?;
+      if (meta == null) return null;
 
-            if (sizeData != null &&
-                sizeData['width'] != null &&
-                sizeData['height'] != null) {
-              _cachedImageSize = Size(
-                (sizeData['width'] as num).toDouble(),
-                (sizeData['height'] as num).toDouble(),
-              );
-            }
-          }
-        }
+      final dimensions = meta['imageDimensions'] as Map<String, dynamic>?;
+      if (dimensions == null || dimensions.isEmpty) return null;
+
+      // URL 또는 로컬 경로로 크기 찾기 (우선순위: imageUrl > localPath)
+      final sizeData =
+          dimensions[widget.imageUrl] ??
+          (meta['localPath'] != null
+              ? dimensions[meta['localPath'].toString()]
+              : null);
+
+      if (sizeData is Map<String, dynamic> &&
+          sizeData['width'] != null &&
+          sizeData['height'] != null) {
+        _cachedImageSize = Size(
+          (sizeData['width'] as num).toDouble(),
+          (sizeData['height'] as num).toDouble(),
+        );
       }
     } catch (e) {
       debugPrint('[SingleImage] 메타데이터 크기 조회 실패: $e');
     }
 
-    _sizeInitialized = true;
     return _cachedImageSize;
+  }
+
+  /// 🎯 이미지 크기 측정 및 저장 (편집 모드 전용)
+  void _measureAndSaveImageSize() {
+    if (!widget.isEditing || _cachedImageSize != null) return;
+
+    try {
+      final imageProvider = NetworkImage(widget.imageUrl);
+      final imageStream = imageProvider.resolve(ImageConfiguration.empty);
+
+      imageStream.addListener(
+        ImageStreamListener(
+          (ImageInfo info, bool _) {
+            if (!mounted) return;
+
+            final size = Size(
+              info.image.width.toDouble(),
+              info.image.height.toDouble(),
+            );
+
+            _cachedImageSize = size;
+            _saveImageSizeToMetadata(size);
+          },
+          onError: (exception, stackTrace) {
+            debugPrint('[SingleImage] 크기 측정 실패: $exception');
+          },
+        ),
+      );
+    } catch (e) {
+      debugPrint('[SingleImage] 크기 측정 시작 실패: $e');
+    }
+  }
+
+  /// 🎯 측정된 이미지 크기를 메타데이터에 저장 (편집 모드 전용)
+  void _saveImageSizeToMetadata(Size size) {
+    if (!widget.isEditing) return;
+
+    try {
+      final seState = context.findAncestorStateOfType<SuperEditorState>();
+      final doc = seState?.editContext.editor.document;
+      final node = doc?.getNodeById(widget.nodeId);
+
+      if (node is! ImageNode) return;
+
+      final meta = Map<String, dynamic>.from(
+        (node as dynamic).metadata as Map<String, dynamic>? ?? {},
+      );
+      final imageDimensions = Map<String, dynamic>.from(
+        (meta['imageDimensions'] as Map<String, dynamic>?) ?? {},
+      );
+
+      imageDimensions[widget.imageUrl] = {
+        'width': size.width.toInt(),
+        'height': size.height.toInt(),
+      };
+
+      meta['imageDimensions'] = imageDimensions;
+
+      // 노드 업데이트 (EditorService를 통해)
+      try {
+        final editorService = Provider.of<EditorService>(
+          context,
+          listen: false,
+        );
+        final updatedNode = ImageNode(
+          id: node.id,
+          imageUrl: node.imageUrl,
+          metadata: meta,
+        );
+        editorService.document.replaceNodeById(widget.nodeId, updatedNode);
+        debugPrint(
+          '[SingleImage] 💾 메타데이터에 크기 저장: ${widget.imageUrl} (${size.width.toInt()}x${size.height.toInt()})',
+        );
+      } catch (e) {
+        debugPrint('[SingleImage] EditorService 접근 실패: $e');
+      }
+    } catch (e) {
+      debugPrint('[SingleImage] 메타데이터 저장 실패: $e');
+    }
   }
 
   // 이미지 위젯 생성: editedBytes > (업로드중: metadata.localPath) > 로컬 파일 경로 > 네트워크 URL 순서
@@ -855,6 +931,15 @@ class _SingleImageComponentState extends State<SingleImageComponent>
         frameBuilder: (context, child, frame, wasSyncLoaded) {
           if (wasSyncLoaded || frame != null) {
             _lastRenderedChild = child;
+            // 🎯 편집 모드에서만 메타데이터 없을 때 크기 측정 (이미지 업로드 시)
+            // 보기 모드에서는 메타데이터 필수 (재계산 안 함)
+            if (widget.isEditing && _cachedImageSize == null) {
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (mounted) {
+                  _measureAndSaveImageSize();
+                }
+              });
+            }
             return child;
           }
           // 🎯 메타데이터에서 실제 크기 가져오기
@@ -896,6 +981,14 @@ class _SingleImageComponentState extends State<SingleImageComponent>
             frameBuilder: (context, child, frame, wasSyncLoaded) {
               if (wasSyncLoaded || frame != null) {
                 _lastRenderedChild = child;
+                // 🎯 편집 모드에서만 메타데이터 없을 때 크기 측정
+                if (widget.isEditing && _cachedImageSize == null) {
+                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                    if (mounted) {
+                      _measureAndSaveImageSize();
+                    }
+                  });
+                }
                 return child;
               }
               // 🎯 메타데이터에서 실제 크기 가져오기
@@ -946,6 +1039,15 @@ class _SingleImageComponentState extends State<SingleImageComponent>
         // 프리로드(캐시 히트)된 경우 즉시 child 렌더 → 쉬머 미노출
         if (wasSyncLoaded || frame != null) {
           _lastRenderedChild = child;
+          // 🎯 편집 모드에서만 메타데이터 없을 때 크기 측정 (이미지 업로드 시)
+          // 보기 모드에서는 메타데이터 필수 (재계산 안 함)
+          if (widget.isEditing && _cachedImageSize == null) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted) {
+                _measureAndSaveImageSize();
+              }
+            });
+          }
           return child;
         }
         final w = MediaQuery.of(context).size.width;

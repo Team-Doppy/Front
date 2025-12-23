@@ -285,23 +285,31 @@ class _VerticalCategorySectionState extends State<VerticalCategorySection> {
                   return; // 원래 위치를 찾을 수 없으면 종료
                 }
 
-                // 🎯 타겟 인덱스 계산 (유효한 범위로 제한)
+                // 🎯 타겟 인덱스 계산
                 final targetRaw =
                     (widget.categoryDropTargetIndex.value ??
                         currentSectionIndex);
-                final targetIdx =
-                    prev.length > 0 ? targetRaw.clamp(0, prev.length - 1) : 0;
 
-                // 🎯 원래 위치와 타겟 위치가 같으면 순서 변경하지 않음
-                if (originalIndex == targetIdx) {
+                // 🎯 타겟 인덱스를 유효한 범위로 제한
+                // prev 배열에서 원본 항목을 제거한 후의 인덱스 범위를 고려
+                final targetIdx = targetRaw.clamp(0, prev.length);
+
+                // 🎯 새로운 순서 계산: 원래 위치에서 제거 후 타겟 위치에 삽입
+                final next = List<String>.from(prev)..removeAt(originalIndex);
+
+                // 제거 후 타겟 인덱스 재조정 (원본이 앞에 있었으면 타겟 인덱스도 -1)
+                final adjustedTargetIdx =
+                    originalIndex < targetIdx ? targetIdx - 1 : targetIdx;
+                final finalTargetIdx = adjustedTargetIdx.clamp(0, next.length);
+
+                // 🎯 원래 위치와 최종 타겟 위치가 같으면 순서 변경하지 않음
+                if (finalTargetIdx == originalIndex) {
                   (widget.categoryDropTargetIndex as ValueNotifier<int?>)
                       .value = null;
                   return;
                 }
 
-                // 🎯 새로운 순서 계산: 원래 위치에서 제거 후 타겟 위치에 삽입
-                final next = List<String>.from(prev)..removeAt(originalIndex);
-                next.insert(targetIdx, draggedId);
+                next.insert(finalTargetIdx, draggedId);
 
                 // 🎯 순서가 실제로 변경되었는지 확인
                 if (!listEquals(prev, next)) {
@@ -376,6 +384,7 @@ class _VerticalCategorySectionState extends State<VerticalCategorySection> {
                                           .isReadOnly;
                                   if (isReadOnly) return;
 
+                                  // 🎯 드래그 상태를 먼저 설정 (정렬 로직 차단용)
                                   (widget.isDraggingCategory
                                           as ValueNotifier<bool>)
                                       .value = true;
@@ -556,6 +565,7 @@ class _VerticalCategorySectionState extends State<VerticalCategorySection> {
                                           );
                                         },
                                 child: CardView(
+                                  key: ValueKey('card-${post.id}'),
                                   post: post,
                                   showViewBadge: !isReadOnly,
                                   isFirst: isFirstPost,
@@ -678,6 +688,9 @@ class _VerticalCategorySectionState extends State<VerticalCategorySection> {
                                         child:
                                             isImageOnly
                                                 ? ImageView(
+                                                  key: ValueKey(
+                                                    'image-${post.id}',
+                                                  ),
                                                   post: post,
                                                   showViewCount:
                                                       !isReadOnly &&
@@ -695,6 +708,9 @@ class _VerticalCategorySectionState extends State<VerticalCategorySection> {
                                         child:
                                             isImageOnly
                                                 ? ImageView(
+                                                  key: ValueKey(
+                                                    'image-${post.id}',
+                                                  ),
                                                   post: post,
                                                   showViewCount:
                                                       !isReadOnly &&
@@ -928,6 +944,7 @@ class _VerticalCategorySectionState extends State<VerticalCategorySection> {
         SizedBox(
           width: double.infinity,
           child: CardView(
+            key: ValueKey('card-${post.id}'),
             post: post,
             showViewBadge: showViewBadge,
             isFirst: isFirstPost,
@@ -954,6 +971,7 @@ class _VerticalCategorySectionState extends State<VerticalCategorySection> {
         borderRadius: BorderRadius.circular(10),
         clipBehavior: Clip.antiAlias,
         child: CardView(
+          key: ValueKey('card-${post.id}'),
           post: post,
           showViewBadge: false,
           isFirst: isFirstPost,

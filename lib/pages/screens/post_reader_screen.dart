@@ -107,6 +107,7 @@ class _PostReaderScreenState extends State<PostReaderScreen>
   bool _accessLevelChanged = false; // 🎯 공개 범위 변경 여부
   bool _documentInitialized = false; // 🎯 문서 초기화 완료 플래그 (재생성 방지)
   bool _topMediaPreloaded = false; // 🎯 상위 3개 노드 미디어 프리로드 완료 여부
+  DateTime? _preloadStartTime; // 🎯 프리로드 시작 시간 (최소 로딩 시간 보장용)
 
   // 스크롤 애니메이션을 위한 변수들
   static const double _appBarHeight = 52.0; // AppBar 높이
@@ -954,16 +955,58 @@ class _PostReaderScreenState extends State<PostReaderScreen>
       // content 객체 추출
       final content = response['content'] as Map<String, dynamic>? ?? {};
 
-      // 🎯 상위 3개 노드 미디어 프리로드 (동기적으로 완료될 때까지 대기)
+      // 🎯 모든 비디오 + 상위 3개 이미지 동기 프리로드 (shimmer 방지)
       if (content.isNotEmpty && content['nodes'] != null && mounted) {
-        debugPrint('[PostReaderScreen] 🚀 서버 응답 후 상위 미디어 프리로드 시작');
+        debugPrint('[PostReaderScreen] 🚀 서버 응답 후 미디어 프리로드 시작');
+        _preloadStartTime = DateTime.now();
+
         try {
+          // 🎯 상위 3개 노드 미디어 프리로드 (이미지 + 비디오)
           await _postReaderService.preloadTopMedia(
             context,
             content,
             topNodeCount: 3,
           );
-          debugPrint('[PostReaderScreen] ✅ 서버 응답 후 상위 미디어 프리로드 완료');
+
+          // 🎯 나머지 비디오 프리로드 (상위 3개 이후)
+          final allClipUrls = _postReaderService.extractClipUrls(content);
+          final topClipUrls = _postReaderService.extractTopClipUrls(
+            content,
+            topNodeCount: 3,
+          );
+          final remainingClips =
+              allClipUrls.where((url) => !topClipUrls.contains(url)).toList();
+
+          if (remainingClips.isNotEmpty) {
+            debugPrint(
+              '[PostReaderScreen] 🎬 나머지 비디오 프리로드 시작 (${remainingClips.length}개)',
+            );
+            final videoFutures = <Future>[];
+            for (final url in remainingClips) {
+              videoFutures.add(
+                PostReaderService.preloadVideoForReader(url).catchError((e) {
+                  debugPrint('[PostReaderScreen] 비디오 프리로드 실패: $url');
+                }),
+              );
+            }
+            await Future.wait(videoFutures, eagerError: false);
+          }
+
+          final elapsed = DateTime.now().difference(_preloadStartTime!);
+          debugPrint(
+            '[PostReaderScreen] ✅ 서버 응답 후 상위 미디어 프리로드 완료 (${elapsed.inMilliseconds}ms)',
+          );
+
+          // 🎯 최소 로딩 시간 보장 (600ms) - 프리로드 완료 체감
+          const minLoadingDuration = Duration(milliseconds: 600);
+          if (elapsed < minLoadingDuration) {
+            final remaining = minLoadingDuration - elapsed;
+            debugPrint(
+              '[PostReaderScreen] ⏳ 최소 로딩 대기: ${remaining.inMilliseconds}ms',
+            );
+            await Future.delayed(remaining);
+          }
+
           if (mounted) {
             setState(() {
               _topMediaPreloaded = true;
@@ -987,11 +1030,11 @@ class _PostReaderScreenState extends State<PostReaderScreen>
         }
       }
 
-      // 🎯 나머지 이미지도 백그라운드에서 계속 로드 (상위 3개 이후)
+      // 🎯 나머지 이미지 백그라운드 프리로드 (비디오는 이미 완료)
       if (content.isNotEmpty && mounted) {
         final imageUrls = _postReaderService.extractImageUrls(content);
         if (imageUrls.isNotEmpty) {
-          // 상위 3개 노드 이미지는 이미 프리로드했으므로 나머지만 프리로드
+          // 상위 3개 노드 이미지는 이미 프리로드했으므로 나머지만
           final topImageUrls = _postReaderService.extractTopImageUrls(
             content,
             topNodeCount: 3,
@@ -1007,7 +1050,9 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                   remainingImages,
                   maxCount: remainingImages.length,
                 );
-                debugPrint('[PostReaderScreen] ✅ 나머지 이미지 프리로드 완료');
+                debugPrint(
+                  '[PostReaderScreen] ✅ 나머지 이미지 프리로드 완료 (${remainingImages.length}개)',
+                );
               }
             });
           }
@@ -1101,33 +1146,66 @@ class _PostReaderScreenState extends State<PostReaderScreen>
           (widget.exported['content'] as Map<String, dynamic>?);
 
       if (content != null && content['nodes'] != null) {
-        debugPrint(
-          '[PostReaderScreen] 🚀 상위 미디어 프리로드 시작 (initState, content 있음)',
-        );
-        _postReaderService
-            .preloadTopMedia(context, content, topNodeCount: 3)
-            .then((_) {
-              debugPrint('[PostReaderScreen] ✅ 상위 미디어 프리로드 완료 (initState)');
-              if (mounted) {
-                setState(() {
-                  _topMediaPreloaded = true;
-                });
-              }
-            })
-            .catchError((e) {
-              debugPrint('[PostReaderScreen] ❌ 상위 미디어 프리로드 실패 (initState): $e');
-              // 실패해도 로딩 해제
-              if (mounted) {
-                setState(() {
-                  _topMediaPreloaded = true;
-                });
-              }
-            });
+        debugPrint('[PostReaderScreen] 🚀 미디어 프리로드 시작 (initState)');
+        _preloadStartTime = DateTime.now();
+
+        // 🎯 모든 비디오 + 상위 3개 이미지 프리로드
+        Future(() async {
+          // 🎯 상위 3개 노드 미디어 프리로드 (이미지 + 비디오)
+          await _postReaderService.preloadTopMedia(
+            context,
+            content,
+            topNodeCount: 3,
+          );
+
+          // 🎯 나머지 비디오 프리로드 (상위 3개 이후)
+          final allClipUrls = _postReaderService.extractClipUrls(content);
+          final topClipUrls = _postReaderService.extractTopClipUrls(
+            content,
+            topNodeCount: 3,
+          );
+          final remainingClips =
+              allClipUrls.where((url) => !topClipUrls.contains(url)).toList();
+
+          if (remainingClips.isNotEmpty) {
+            debugPrint(
+              '[PostReaderScreen] 🎬 나머지 비디오 프리로드 시작 (${remainingClips.length}개)',
+            );
+            final videoFutures = <Future>[];
+            for (final url in remainingClips) {
+              videoFutures.add(
+                PostReaderService.preloadVideoForReader(url).catchError((e) {
+                  debugPrint('[PostReaderScreen] 비디오 프리로드 실패: $url');
+                }),
+              );
+            }
+            await Future.wait(videoFutures, eagerError: false);
+          }
+
+          final elapsed = DateTime.now().difference(_preloadStartTime!);
+          debugPrint(
+            '[PostReaderScreen] ✅ 미디어 프리로드 완료 (initState, ${elapsed.inMilliseconds}ms)',
+          );
+
+          // 최소 로딩 시간 보장
+          const minLoadingDuration = Duration(milliseconds: 600);
+          if (elapsed < minLoadingDuration) {
+            await Future.delayed(minLoadingDuration - elapsed);
+          }
+
+          if (mounted) {
+            setState(() => _topMediaPreloaded = true);
+          }
+        }).catchError((e) {
+          debugPrint('[PostReaderScreen] ❌ 미디어 프리로드 실패 (initState): $e');
+          if (mounted) {
+            setState(() => _topMediaPreloaded = true);
+          }
+        });
       } else {
         debugPrint(
-          '[PostReaderScreen] ⚠️ initState에서 content가 없음 - 서버 응답 후 프리로드 예정',
+          '[PostReaderScreen] ⚠️ initState에서 content 없음 - 서버 응답 후 프리로드',
         );
-        // content가 없으면 서버 응답 후 프리로드할 예정이므로 _topMediaPreloaded는 false 유지
       }
     });
 
@@ -1534,8 +1612,9 @@ class _PostReaderScreenState extends State<PostReaderScreen>
 
             // ✅ 데이터/미디어 선행 준비 후 약간 더 대기하여 첫 프레임 안정화
             if (snap.hasData && !_isRenderReady && _topMediaPreloaded) {
-              Future.delayed(const Duration(milliseconds: 300), () {
+              WidgetsBinding.instance.addPostFrameCallback((_) {
                 if (mounted) {
+                  debugPrint('[PostReaderScreen] 🎨 렌더링 준비 완료');
                   setState(() => _isRenderReady = true);
                 }
               });

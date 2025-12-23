@@ -6,11 +6,14 @@ import 'package:super_editor/super_editor.dart';
 import 'package:doppy/editor/component/app_image_node.dart';
 import 'package:doppy/editor/component/link_component.dart';
 import 'package:doppy/editor/component/row_image_component.dart';
+import 'package:doppy/editor/component/pageview_image_component.dart';
 import 'package:doppy/editor/component/divider_component.dart';
 import 'package:doppy/editor/component/clip_component.dart'
     show ClipNode, readerVideoControllers;
 import 'package:doppy/editor/service/sticker_service.dart';
 import 'package:doppy/editor/service/node_component_service.dart';
+import 'package:doppy/editor/service/font_preload_service.dart';
+import 'package:doppy/editor/style/font_catalog.dart';
 import 'package:doppy/editor/style/defualt_toolbar.dart';
 import 'package:video_player/video_player.dart';
 
@@ -105,6 +108,10 @@ class PostReaderService {
             spoilerNodes.add(id);
           }
 
+          // 🎯 이미지 크기 메타데이터 복원 (shimmer 최적화)
+          final imageDimensionsForSingle =
+              m['imageDimensions'] as Map<String, dynamic>?;
+
           rebuilt.add(
             AppImageNode(
               id: id,
@@ -118,6 +125,9 @@ class PostReaderService {
                         : int.tryParse(commentCount.toString()) ?? 0,
                 if (hasSpoiler) 'spoiler': true,
                 if (paddingMode == 'full') 'padding': 'full',
+                if (imageDimensionsForSingle != null &&
+                    imageDimensionsForSingle.isNotEmpty)
+                  'imageDimensions': imageDimensionsForSingle,
               },
             ),
           );
@@ -177,6 +187,9 @@ class PostReaderService {
             debugPrint('[PostReaderService] imageCommentInfo 파싱 실패: $e');
           }
 
+          // 🎯 이미지 크기 메타데이터 복원 (shimmer 최적화)
+          final imageDimensions = m['imageDimensions'] as Map<String, dynamic>?;
+
           // 메타데이터 구성
           final metadata = <String, dynamic>{
             if (hasSpoiler) 'spoiler': true,
@@ -184,6 +197,8 @@ class PostReaderService {
             if (commentCount > 0) 'commentCount': commentCount,
             if (imageCommentInfo.isNotEmpty)
               'imageCommentInfo': imageCommentInfo,
+            if (imageDimensions != null && imageDimensions.isNotEmpty)
+              'imageDimensions': imageDimensions,
           };
 
           rebuilt.add(
@@ -192,6 +207,84 @@ class PostReaderService {
               imageUrls: urls,
               spacing: (m['spacing'] as num?)?.toDouble() ?? 4.0,
               metadata: metadata.isNotEmpty ? metadata : null,
+            ),
+          );
+          break;
+
+        case 'pageViewImage':
+        case 'pageviewImage':
+        case 'page_view_image':
+          final urls =
+              ((m['imageUrls'] as List?) ?? const [])
+                  .map((e) => e.toString())
+                  .toList();
+
+          // 스포일러 정보 확인
+          final hasSpoiler = m['spoiler'] == true;
+
+          if (hasSpoiler) {
+            spoilerNodes.add(id);
+          }
+
+          // 노드 레벨 댓글 정보
+          final hasComments = (m['hasComments'] ?? false) == true;
+          final commentCount =
+              (m['commentCount'] is num)
+                  ? (m['commentCount'] as num).toInt()
+                  : int.tryParse(m['commentCount']?.toString() ?? '0') ?? 0;
+
+          // imageCommentInfo 파싱
+          final Map<String, Map<String, dynamic>> imageCommentInfo = {};
+          try {
+            final data = m['data'] as Map<String, dynamic>?;
+            final rawCommentInfo =
+                (m['imageCommentInfo'] ?? data?['imageCommentInfo'])
+                    as Map<String, dynamic>?;
+
+            if (rawCommentInfo != null) {
+              for (final url in urls) {
+                if (rawCommentInfo[url] is Map) {
+                  final imgInfo =
+                      (rawCommentInfo[url] as Map).cast<String, dynamic>();
+                  imageCommentInfo[url] = {
+                    'mediaId': imgInfo['mediaId']?.toString(),
+                    'hasComments': imgInfo['hasComments'] == true,
+                    'commentCount':
+                        (imgInfo['commentCount'] is num)
+                            ? (imgInfo['commentCount'] as num).toInt()
+                            : int.tryParse(
+                                  imgInfo['commentCount']?.toString() ?? '0',
+                                ) ??
+                                0,
+                  };
+                }
+              }
+            }
+          } catch (e) {
+            debugPrint(
+              '[PostReaderService] pageViewImage commentInfo 파싱 실패: $e',
+            );
+          }
+
+          // 🎯 이미지 크기 메타데이터 복원
+          final imageDimensions = m['imageDimensions'] as Map<String, dynamic>?;
+
+          // 메타데이터 구성
+          final pvMetadata = <String, dynamic>{
+            if (hasSpoiler) 'spoiler': true,
+            if (hasComments) 'hasComments': hasComments,
+            if (commentCount > 0) 'commentCount': commentCount,
+            if (imageCommentInfo.isNotEmpty)
+              'imageCommentInfo': imageCommentInfo,
+            if (imageDimensions != null && imageDimensions.isNotEmpty)
+              'imageDimensions': imageDimensions,
+          };
+
+          rebuilt.add(
+            PageViewImageNode(
+              id: id,
+              imageUrls: urls,
+              metadata: pvMetadata.isNotEmpty ? pvMetadata : null,
             ),
           );
           break;
@@ -262,9 +355,17 @@ class PostReaderService {
           final String? paddingMode =
               (m['padding'] ?? data?['padding'])?.toString();
 
-          // 🎯 임시저장 복원: thumbnailPath 복원
+          // 🎯 임시저장 복원: thumbnailPath, aspectRatio 복원
           final thumbnailPath = (data?['thumbnailPath'] ?? '').toString();
           final thumbnailUrl = data?['thumbnailUrl']?.toString();
+          final aspectRatioValue = data?['aspectRatio'];
+          double? aspectRatio;
+          if (aspectRatioValue != null) {
+            aspectRatio =
+                (aspectRatioValue is num)
+                    ? aspectRatioValue.toDouble()
+                    : double.tryParse(aspectRatioValue.toString());
+          }
 
           rebuilt.add(
             ClipNode(
@@ -282,6 +383,7 @@ class PostReaderService {
                 if (hasSpoiler) 'spoiler': true,
                 if (paddingMode == 'full') 'padding': 'full',
                 if (thumbnailUrl != null) 'thumbnailUrl': thumbnailUrl,
+                if (aspectRatio != null) 'aspectRatio': aspectRatio,
               },
             ),
           );
@@ -313,9 +415,17 @@ class PostReaderService {
           final String? paddingMode =
               (m['padding'] ?? data?['padding'])?.toString();
 
-          // 🎯 임시저장 복원: thumbnailPath 복원
+          // 🎯 임시저장 복원: thumbnailPath, aspectRatio 복원
           final thumbnailPath = (data?['thumbnailPath'] ?? '').toString();
           final thumbnailUrl = data?['thumbnailUrl']?.toString();
+          final aspectRatioValue = data?['aspectRatio'];
+          double? aspectRatio;
+          if (aspectRatioValue != null) {
+            aspectRatio =
+                (aspectRatioValue is num)
+                    ? aspectRatioValue.toDouble()
+                    : double.tryParse(aspectRatioValue.toString());
+          }
 
           rebuilt.add(
             ClipNode(
@@ -333,6 +443,7 @@ class PostReaderService {
                 if (hasSpoiler) 'spoiler': true,
                 if (paddingMode == 'full') 'padding': 'full',
                 if (thumbnailUrl != null) 'thumbnailUrl': thumbnailUrl,
+                if (aspectRatio != null) 'aspectRatio': aspectRatio,
               },
             ),
           );
@@ -621,6 +732,38 @@ class PostReaderService {
     return clipUrls;
   }
 
+  /// 문서에서 사용된 폰트 추출
+  Set<String> extractUsedFonts(Map<String, dynamic> content) {
+    final Set<String> fontIdentifiers = {};
+    final nodes = (content['nodes'] as List?) ?? [];
+
+    for (final raw in nodes) {
+      if (raw is! Map) continue;
+      final m = raw.cast<String, dynamic>();
+      final type = (m['type'] ?? '').toString();
+
+      if (type == 'paragraph') {
+        // 노드 레벨 fontFamily
+        if (m['fontFamily'] != null) {
+          fontIdentifiers.add(m['fontFamily'].toString());
+        }
+
+        // spans 레벨 fontFamily
+        final spans = (m['spans'] as List?) ?? [];
+        for (final span in spans) {
+          if (span is Map && span['fontFamily'] != null) {
+            fontIdentifiers.add(span['fontFamily'].toString());
+          }
+        }
+      }
+    }
+
+    debugPrint(
+      '[PostReaderService] 🔤 문서에서 사용된 폰트 추출: ${fontIdentifiers.length}개 - ${fontIdentifiers.join(", ")}',
+    );
+    return fontIdentifiers;
+  }
+
   /// 실패해도 계속 진행 (에러는 로그만 남김)
   Future<void> preloadTopMedia(
     BuildContext context,
@@ -633,6 +776,8 @@ class PostReaderService {
 
     if (imageUrls.isEmpty && clipUrls.isEmpty) {
       debugPrint('[PostReaderService] ⚠️ 프리로드할 미디어가 없습니다');
+      // 🎯 미디어가 없어도 폰트는 프리로드 (백그라운드)
+      _preloadFontsInBackground(content);
       return;
     }
 
@@ -640,21 +785,15 @@ class PostReaderService {
       '[PostReaderService] 🚀 상위 미디어 프리로드 시작: 이미지 ${imageUrls.length}개, 비디오 ${clipUrls.length}개',
     );
 
-    // 이미지와 비디오를 병렬로 프리로드 + 크기 측정
+    // 🎯 이미지와 비디오를 병렬로 프리로드 (크기 측정 제거 - 서버 응답에 이미 포함)
     final futures = <Future>[];
 
-    // 이미지 프리로드 + 크기 측정
+    // 이미지 프리로드만 (크기는 서버 응답의 imageDimensions 사용)
     if (imageUrls.isNotEmpty) {
-      // 🎯 각 이미지별로 크기 측정 및 content 업데이트
       for (final url in imageUrls) {
         futures.add(
-          _preloadAndMeasureImage(
-            context,
-            content,
-            url,
-            topNodeCount,
-          ).catchError((e) {
-            debugPrint('[PostReaderService] 이미지 프리로드/측정 실패: $url - $e');
+          precacheImage(NetworkImage(url), context).catchError((e) {
+            debugPrint('[PostReaderService] 이미지 프리로드 실패: $url - $e');
           }),
         );
       }
@@ -664,15 +803,21 @@ class PostReaderService {
     if (clipUrls.isNotEmpty) {
       for (final url in clipUrls) {
         futures.add(
-          _preloadVideoForReader(url).catchError((e) {
-            debugPrint('[PostReaderService] 비디오 프리로드 실패: $url - $e');
+          preloadVideoForReader(url).catchError((e) {
+            debugPrint('[PostReaderService] ⚠️ 비디오 프리로드 실패 (계속 진행): $url - $e');
+            // 에러를 무시하고 계속 진행
+            return null;
           }),
         );
       }
     }
 
     // 모든 프리로드 완료 대기 (실패해도 계속 진행)
-    await Future.wait(futures, eagerError: false);
+    try {
+      await Future.wait(futures, eagerError: false);
+    } catch (e) {
+      debugPrint('[PostReaderService] ⚠️ 프리로드 중 일부 실패 (무시): $e');
+    }
 
     // 🎯 캐시 적용을 위해 한 프레임 대기
     final completer = Completer<void>();
@@ -682,126 +827,58 @@ class PostReaderService {
     await completer.future;
 
     debugPrint(
-      '[PostReaderService] ✅ 상위 미디어 프리로드 완료 (캐시 적용 + 크기 저장): 이미지 ${imageUrls.length}개, 비디오 ${clipUrls.length}개',
-    );
-  }
-
-  /// 🎯 이미지 프리로드 + 크기 측정 + content 메타데이터 저장
-  /// 성능 최적화: 프리로드와 크기 측정을 동시에 수행
-  Future<void> _preloadAndMeasureImage(
-    BuildContext context,
-    Map<String, dynamic> content,
-    String imageUrl,
-    int topNodeCount,
-  ) async {
-    final completer = Completer<ui.Size?>();
-    final imageProvider = NetworkImage(imageUrl);
-
-    // 🚀 프리로드와 크기 측정을 동시에 수행 (중복 제거)
-    final imageStream = imageProvider.resolve(ImageConfiguration.empty);
-
-    imageStream.addListener(
-      ImageStreamListener(
-        (ImageInfo info, bool _) {
-          if (!completer.isCompleted) {
-            final size = ui.Size(
-              info.image.width.toDouble(),
-              info.image.height.toDouble(),
-            );
-            completer.complete(size);
-          }
-        },
-        onError: (exception, stackTrace) {
-          if (!completer.isCompleted) {
-            debugPrint('[PostReaderService] 이미지 프리로드/측정 실패: $imageUrl');
-            completer.complete(null);
-          }
-        },
-      ),
+      '[PostReaderService] ✅ 상위 미디어 프리로드 완료: 이미지 ${imageUrls.length}개, 비디오 ${clipUrls.length}개',
     );
 
-    final size = await completer.future;
-
-    // content의 해당 노드에 크기 저장
-    if (size != null) {
-      _saveImageSizeToContent(content, imageUrl, size, topNodeCount);
-    }
+    // 🎯 폰트 프리로드 (백그라운드에서 비동기로 실행, 미디어 프리로드와 병렬)
+    _preloadFontsInBackground(content);
   }
 
-  /// 🎯 측정된 이미지 크기를 content의 노드 메타데이터에 저장
-  void _saveImageSizeToContent(
-    Map<String, dynamic> content,
-    String imageUrl,
-    ui.Size size,
-    int topNodeCount,
-  ) {
-    try {
-      final nodes = (content['nodes'] as List?) ?? [];
-      final topNodes = nodes.take(topNodeCount).toList();
+  /// 백그라운드에서 폰트 프리로드 (비동기, 에러 무시)
+  void _preloadFontsInBackground(Map<String, dynamic> content) {
+    Future.microtask(() async {
+      try {
+        final fontIdentifiers = extractUsedFonts(content);
+        if (fontIdentifiers.isEmpty) {
+          debugPrint('[PostReaderService] 🔤 프리로드할 폰트 없음');
+          return;
+        }
 
-      for (final raw in topNodes) {
-        final node = (raw as Map).cast<String, dynamic>();
-        final type = (node['type'] ?? '').toString();
+        final fontPreloadService = FontPreloadService();
+        final fontsToLoad = <FontItem>[];
 
-        // ImageRowNode 또는 PageViewImageNode 찾기
-        if (type == 'imageRow' ||
-            type == 'image_row' ||
-            type == 'pageViewImage' ||
-            type == 'page_view_image') {
-          final imageUrls =
-              (node['imageUrls'] as List?)
-                  ?.map((e) => e?.toString() ?? '')
-                  .toList() ??
-              [];
-
-          // 이 노드에 해당 URL이 있는지 확인
-          if (imageUrls.contains(imageUrl)) {
-            // metadata 가져오기 또는 생성
-            final metadata = (node['metadata'] as Map<String, dynamic>?) ?? {};
-            final imageDimensions =
-                (metadata['imageDimensions'] as Map<String, dynamic>?) ?? {};
-
-            // 크기 저장
-            imageDimensions[imageUrl] = {
-              'width': size.width.toInt(),
-              'height': size.height.toInt(),
-            };
-
-            metadata['imageDimensions'] = imageDimensions;
-            node['metadata'] = metadata;
-
-            debugPrint(
-              '[PostReaderService] 💾 content에 이미지 크기 저장: $imageUrl (${size.width.toInt()}x${size.height.toInt()})',
-            );
-            return;
+        for (final identifier in fontIdentifiers) {
+          final font = FontCatalog.findByIdentifier(identifier);
+          if (font != null && !fontPreloadService.isPreloaded(identifier)) {
+            fontsToLoad.add(font);
           }
         }
-        // 단일 이미지 노드
-        else if (type == 'image') {
-          final url = (node['url'] ?? node['imageUrl'] ?? '').toString();
-          if (url == imageUrl) {
-            final metadata = (node['metadata'] as Map<String, dynamic>?) ?? {};
-            final imageDimensions =
-                (metadata['imageDimensions'] as Map<String, dynamic>?) ?? {};
 
-            imageDimensions[imageUrl] = {
-              'width': size.width.toInt(),
-              'height': size.height.toInt(),
-            };
+        if (fontsToLoad.isEmpty) {
+          debugPrint('[PostReaderService] 🔤 모든 폰트가 이미 로드됨');
+          return;
+        }
 
-            metadata['imageDimensions'] = imageDimensions;
-            node['metadata'] = metadata;
+        debugPrint('[PostReaderService] 🔤 폰트 프리로드 시작: ${fontsToLoad.length}개');
 
-            debugPrint(
-              '[PostReaderService] 💾 content에 이미지 크기 저장: $imageUrl (${size.width.toInt()}x${size.height.toInt()})',
-            );
-            return;
+        // 병렬로 폰트 로드 (최대 5개씩)
+        for (int i = 0; i < fontsToLoad.length; i += 5) {
+          final batch = fontsToLoad.skip(i).take(5).toList();
+          await Future.wait(
+            batch.map((font) => fontPreloadService.preloadFont(font)),
+            eagerError: false,
+          );
+          // 배치 간 짧은 딜레이
+          if (i + 5 < fontsToLoad.length) {
+            await Future.delayed(const Duration(milliseconds: 50));
           }
         }
+
+        debugPrint('[PostReaderService] ✅ 폰트 프리로드 완료: ${fontsToLoad.length}개');
+      } catch (e) {
+        debugPrint('[PostReaderService] ⚠️ 폰트 프리로드 실패 (무시): $e');
       }
-    } catch (e) {
-      debugPrint('[PostReaderService] ⚠️ content 크기 저장 실패: $e');
-    }
+    });
   }
 
   /// 이미지를 미리 로드한다
@@ -943,13 +1020,30 @@ class PostReaderService {
   }
 
   /// 읽기 모드용 비디오 프리로드 (readerVideoControllers에 저장)
-  static Future<void> _preloadVideoForReader(String url) async {
-    if (url.isEmpty) return;
+  /// 🎯 최적화: 중복 체크, 빠른 초기화, 에러 핸들링 개선
+  /// 🎯 Public static 메서드: PostReaderScreen에서 나머지 비디오 비동기 프리로드에 사용
+  static Future<void> preloadVideoForReader(String url) async {
+    if (url.isEmpty) {
+      debugPrint('[PostReaderService] ⚠️ 빈 URL로 프리로드 시도');
+      return;
+    }
 
     // 이미 프리로드된 경우 스킵 (readerVideoControllers 확인)
     if (readerVideoControllers.containsKey(url)) {
-      debugPrint('[PostReaderService] 이미 프리로드된 비디오 (reader): $url');
-      return;
+      try {
+        final existing = readerVideoControllers[url];
+        if (existing != null && existing.value.isInitialized) {
+          debugPrint('[PostReaderService] ✅ 이미 프리로드된 비디오 (reader): $url');
+          return;
+        } else {
+          // 무효한 컨트롤러는 제거
+          debugPrint('[PostReaderService] ⚠️ 무효한 컨트롤러 제거: $url');
+          readerVideoControllers.remove(url);
+        }
+      } catch (e) {
+        debugPrint('[PostReaderService] ⚠️ 기존 컨트롤러 확인 실패, 제거: $url - $e');
+        readerVideoControllers.remove(url);
+      }
     }
 
     // PostReaderService 캐시도 확인
@@ -958,24 +1052,66 @@ class PostReaderService {
       final controller = _preloadedControllers.remove(url);
       _preloadTimestamps.remove(url);
       if (controller != null) {
-        readerVideoControllers[url] = controller;
-        debugPrint('[PostReaderService] 캐시에서 reader로 이동: $url');
-        return;
+        try {
+          if (controller.value.isInitialized) {
+            readerVideoControllers[url] = controller;
+            debugPrint('[PostReaderService] ✅ 캐시에서 reader로 이동: $url');
+            return;
+          }
+        } catch (e) {
+          debugPrint('[PostReaderService] ⚠️ 캐시 컨트롤러 무효화: $url - $e');
+        }
       }
     }
 
+    // 새로운 컨트롤러 생성 및 초기화
+    VideoPlayerController? controller;
     try {
-      debugPrint('[PostReaderService] 비디오 프리로드 시작 (reader): $url');
-      final controller = VideoPlayerController.networkUrl(Uri.parse(url));
+      debugPrint('[PostReaderService] 🚀 비디오 프리로드 시작 (reader): $url');
+
+      controller = VideoPlayerController.networkUrl(
+        Uri.parse(url),
+        httpHeaders: {'Accept': 'video/*', 'Connection': 'keep-alive'},
+        videoPlayerOptions: VideoPlayerOptions(
+          mixWithOthers: false,
+          allowBackgroundPlayback: false,
+        ),
+      );
+
+      // 🎯 먼저 맵에 저장 (ClipComponent가 조기 접근 가능)
       readerVideoControllers[url] = controller;
 
-      await controller.initialize();
-      debugPrint('[PostReaderService] ✅ 비디오 프리로드 완료 (reader): $url');
-    } catch (e) {
+      // 초기화 (타임아웃 추가 - 확장성 개선)
+      final stopwatch = Stopwatch()..start();
+      await controller.initialize().timeout(
+        const Duration(seconds: 10),
+        onTimeout: () {
+          throw TimeoutException('비디오 초기화 타임아웃', const Duration(seconds: 10));
+        },
+      );
+      stopwatch.stop();
+
+      debugPrint(
+        '[PostReaderService] ✅ 비디오 프리로드 완료 (reader): $url '
+        '(${stopwatch.elapsedMilliseconds}ms, ${controller.value.size.width}x${controller.value.size.height})',
+      );
+    } catch (e, stackTrace) {
       debugPrint('[PostReaderService] ❌ 비디오 프리로드 실패 (reader): $url - $e');
-      // 실패 시 캐시에서 제거
+      debugPrint('[PostReaderService] 스택: $stackTrace');
+
+      // 실패 시 캐시에서 제거 및 컨트롤러 정리
       readerVideoControllers.remove(url);
-      rethrow;
+
+      if (controller != null) {
+        try {
+          controller.dispose();
+        } catch (disposeError) {
+          debugPrint('[PostReaderService] 컨트롤러 정리 실패: $disposeError');
+        }
+      }
+
+      // 에러를 다시 던지지 않음 (다른 비디오 프리로드에 영향 없도록)
+      // rethrow;
     }
   }
 

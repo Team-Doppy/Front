@@ -154,35 +154,53 @@ class _ParagraphWithDropLinesState extends State<_ParagraphWithDropLines>
 
   @override
   Widget build(BuildContext context) {
-    // NodeComponentService를 Listenable로 추가하여 변경사항 감지
+    // 🎯 성능 최적화: 편집 모드와 보기 모드에 따라 리스너 최소화
     final nodeService = Provider.of<NodeComponentService>(
       context,
       listen: false,
     );
+
+    // 🎯 보기 모드: 초경량 위젯 트리 (스포일러만 처리)
+    if (!widget.isEditing) {
+      return _buildReadOnlyView(context, nodeService);
+    }
+
+    // 🎯 편집 모드: 드래그와 스포일러만 필요할 때 리스닝
+    // 스포일러가 있는지 먼저 체크
+    final hasSpoiler = _hasSpoilerAttribution();
+
+    // 드래그 관련 애니메이션만 필수로 리스닝
+    final dragAnimation = Listenable.merge([
+      widget.dragService,
+      widget.editorService,
+      widget.editorService.editor.composer,
+    ]);
+
+    // 스포일러가 있으면 nodeService도 추가 리스닝
+    final animation =
+        hasSpoiler
+            ? Listenable.merge([dragAnimation, nodeService])
+            : dragAnimation;
+
     return AnimatedBuilder(
-      animation: Listenable.merge([
-        widget.dragService,
-        widget.editorService,
-        widget
-            .editorService
-            .editor
-            .composer, // Composer 변경사항 즉시 감지 (텍스트/attribution 변경)
-        nodeService, // NodeComponentService 변경사항 감지 (ChangeNotifier는 Listenable)
-      ]),
+      animation: animation,
       builder: (context, _) {
+        // 🎯 편집 모드에서만 드래그 라인 계산 (성능 최적화)
+        bool showTop = false;
+        bool showBottom = false;
+
         final currentIndex = widget.dragService.getNodeIndex(widget.nodeId);
         final dropIndex = widget.dragService.dropIndex;
         final isSelf = widget.dragService.draggingNodeId == widget.nodeId;
         final documentLength = widget.editorService.document.length;
         final isLastNode = currentIndex == documentLength - 1;
 
-        bool showTop =
+        showTop =
             dropIndex != null &&
             !isSelf &&
             currentIndex != -1 &&
             dropIndex == currentIndex;
 
-        bool showBottom = false;
         if (isLastNode && dropIndex != null && !isSelf && currentIndex != -1) {
           showBottom = dropIndex == documentLength;
         }
@@ -202,7 +220,6 @@ class _ParagraphWithDropLinesState extends State<_ParagraphWithDropLines>
           } catch (_) {}
         }
 
-        // 🎯 특수 노드 사이에 있는 빈 ParagraphNode인지 확인
         Widget content = DefaultTextStyle.merge(
           textAlign: _resolveTextAlign(),
           child: KeyedSubtree(key: _subtreeKey, child: widget.child),
@@ -210,9 +227,6 @@ class _ParagraphWithDropLinesState extends State<_ParagraphWithDropLines>
 
         Widget stack = Stack(
           children: [
-            // 본문 내용 마진 제거
-            // 🎯 특수 노드 사이에 있는 빈 노드는 위/아래 패딩 적용 (아래쪽은 조금 더 작게)
-            // 🎯 최소 높이 22, 이후 동적 확장
             Padding(
               padding: EdgeInsets.only(top: 5.5, bottom: showBottom ? 4 : 0),
               child: ConstrainedBox(
@@ -220,7 +234,7 @@ class _ParagraphWithDropLinesState extends State<_ParagraphWithDropLines>
                 child: content,
               ),
             ),
-            // 형광펜 오버레이 (스포일러처럼 그리기)
+            // 🎯 형광펜 오버레이 (편집 모드에서만)
             Builder(
               builder: (context) {
                 final hi = _collectHighlightBoxes(context);
@@ -228,81 +242,81 @@ class _ParagraphWithDropLinesState extends State<_ParagraphWithDropLines>
                 return Positioned.fill(
                   child: IgnorePointer(
                     ignoring: true,
-                    child: CustomPaint(
-                      painter: _ParagraphHighlightPainter(highlights: hi),
+                    child: RepaintBoundary(
+                      child: CustomPaint(
+                        painter: _ParagraphHighlightPainter(highlights: hi),
+                      ),
                     ),
                   ),
                 );
               },
             ),
-            // 문단 위에 직접 글리터 렌더링 (로컬 좌표기준이라 오프셋 불필요)
-            // 읽기 모드이고 스포일러가 있을 때는 탭 이벤트를 통과시켜야 함
-            Builder(
-              builder: (context) {
-                // 스포일러 박스를 매번 재계산
-                final boxes = _collectSpoilerBoxes(context, nodeService);
-                final bool maskVisible = boxes.isNotEmpty;
+            // 🎯 스포일러 오버레이 (스포일러가 있을 때만)
+            if (hasSpoiler)
+              Builder(
+                builder: (context) {
+                  final boxes = _collectSpoilerBoxes(context, nodeService);
+                  final bool maskVisible = boxes.isNotEmpty;
 
-                // 현재 마스크가 보이는 동안엔 다음 전환을 대비해 최근 박스를 보관
-                if (maskVisible) {
-                  _prevBoxes = boxes;
-                }
-                // 방금 해제되면 일회성 스캐터 실행 (이전 프레임 박스를 사용)
-                if (_wasMaskVisible &&
-                    !maskVisible &&
-                    _scatterCtrl.status != AnimationStatus.forward) {
-                  _scatterBoxes = _prevBoxes;
-                  if (_scatterBoxes.isNotEmpty) {
-                    // ✅ WidgetsBinding으로 다음 프레임에 setState 호출
-                    WidgetsBinding.instance.addPostFrameCallback((_) {
-                      if (mounted) {
-                        setState(() {
-                          _scatterActive = true;
-                        });
-                        _scatterCtrl
-                          ..reset()
-                          ..forward();
-                      }
-                    });
+                  if (maskVisible) {
+                    _prevBoxes = boxes;
                   }
-                }
-                _wasMaskVisible = maskVisible;
 
-                if (boxes.isEmpty) return const SizedBox.shrink();
+                  if (_wasMaskVisible &&
+                      !maskVisible &&
+                      _scatterCtrl.status != AnimationStatus.forward) {
+                    _scatterBoxes = _prevBoxes;
+                    if (_scatterBoxes.isNotEmpty) {
+                      WidgetsBinding.instance.addPostFrameCallback((_) {
+                        if (mounted) {
+                          setState(() {
+                            _scatterActive = true;
+                          });
+                          _scatterCtrl
+                            ..reset()
+                            ..forward();
+                        }
+                      });
+                    }
+                  }
+                  _wasMaskVisible = maskVisible;
 
-                final theme = Theme.of(context).colorScheme;
-                final brightness = Theme.of(context).brightness;
-                final isLightTheme = brightness == Brightness.light;
-                // 다크 모드의 편집 화면에서는 박스 배경을 투명 처리하여
-                // 회색 박스가 깔리는 현상을 방지한다.
-                final bgColor =
-                    (!isLightTheme && widget.isEditing)
-                        ? Colors.transparent
-                        : theme.background;
-                final dotColor = theme.onSurface;
-                return Positioned.fill(
-                  child: IgnorePointer(
-                    ignoring: widget.isEditing, // 편집 모드에서는 탭 무시, 읽기 모드에서는 탭 통과
-                    child: AnimatedBuilder(
-                      animation: _controller,
-                      builder: (context, __) {
-                        return CustomPaint(
-                          painter: _ParagraphSpoilerPainter(
-                            boxes: boxes,
-                            phase: _controller.value,
-                            isEditing: widget.isEditing,
-                            backgroundColor: bgColor,
-                            dotColor: dotColor,
-                            isLightTheme: isLightTheme,
-                          ),
-                        );
-                      },
+                  if (boxes.isEmpty) return const SizedBox.shrink();
+
+                  final theme = Theme.of(context).colorScheme;
+                  final brightness = Theme.of(context).brightness;
+                  final isLightTheme = brightness == Brightness.light;
+                  final bgColor =
+                      (!isLightTheme && widget.isEditing)
+                          ? Colors.transparent
+                          : theme.background;
+                  final dotColor = theme.onSurface;
+
+                  return Positioned.fill(
+                    child: IgnorePointer(
+                      ignoring: true,
+                      child: AnimatedBuilder(
+                        animation: _controller,
+                        builder: (context, __) {
+                          return RepaintBoundary(
+                            child: CustomPaint(
+                              painter: _ParagraphSpoilerPainter(
+                                boxes: boxes,
+                                phase: _controller.value,
+                                isEditing: true,
+                                backgroundColor: bgColor,
+                                dotColor: dotColor,
+                                isLightTheme: isLightTheme,
+                              ),
+                            ),
+                          );
+                        },
+                      ),
                     ),
-                  ),
-                );
-              },
-            ),
-            // 해제 시 점들이 흩어지는 스캐터 이펙트 (일회성)
+                  );
+                },
+              ),
+            // 🎯 스캐터 이펙트 (해제 시)
             if (_scatterActive)
               Builder(
                 builder: (context) {
@@ -316,12 +330,14 @@ class _ParagraphWithDropLinesState extends State<_ParagraphWithDropLines>
                       child: AnimatedBuilder(
                         animation: _scatterCtrl,
                         builder: (context, __) {
-                          return CustomPaint(
-                            painter: _ParagraphSpoilerScatterPainter(
-                              boxes: _scatterBoxes,
-                              t: _scatterCtrl.value,
-                              dotColor: dotColor,
-                              isLightTheme: isLightTheme,
+                          return RepaintBoundary(
+                            child: CustomPaint(
+                              painter: _ParagraphSpoilerScatterPainter(
+                                boxes: _scatterBoxes,
+                                t: _scatterCtrl.value,
+                                dotColor: dotColor,
+                                isLightTheme: isLightTheme,
+                              ),
                             ),
                           );
                         },
@@ -353,31 +369,105 @@ class _ParagraphWithDropLinesState extends State<_ParagraphWithDropLines>
           ],
         );
 
-        // 읽기 모드에서 멘션 문단이면 탭 콜백 연결
-        try {
-          final node = widget.editorService.editor.document.getNodeById(
-            widget.nodeId,
-          );
-          if (!widget.isEditing &&
-              node is ParagraphNode &&
-              node.metadata['mention'] == true &&
-              widget.onMentionTap != null) {
-            final List<String> names =
-                ((node.metadata['usernames'] as List?)
-                    ?.map((e) => e.toString())
-                    .toList()) ??
-                _extractUsernamesFromText(node.text.text);
-            return GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTap: () => widget.onMentionTap!(names),
-              child: stack,
-            );
-          }
-        } catch (_) {}
-
         return stack;
       },
     );
+  }
+
+  /// 🎯 보기 모드 전용: 초경량 위젯 트리 (스포일러만 처리)
+  Widget _buildReadOnlyView(
+    BuildContext context,
+    NodeComponentService nodeService,
+  ) {
+    final content = DefaultTextStyle.merge(
+      textAlign: _resolveTextAlign(),
+      child: KeyedSubtree(key: _subtreeKey, child: widget.child),
+    );
+
+    // 멘션 탭 처리
+    Widget wrappedContent = content;
+    try {
+      final node = widget.editorService.editor.document.getNodeById(
+        widget.nodeId,
+      );
+      if (node is ParagraphNode &&
+          node.metadata['mention'] == true &&
+          widget.onMentionTap != null) {
+        final List<String> names =
+            ((node.metadata['usernames'] as List?)
+                ?.map((e) => e.toString())
+                .toList()) ??
+            _extractUsernamesFromText(node.text.text);
+        wrappedContent = GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: () => widget.onMentionTap?.call(names),
+          child: content,
+        );
+      }
+    } catch (_) {}
+
+    // 🎯 스포일러 여부를 먼저 확인 (텍스트 attribution만 체크, 렌더링 없음)
+    final hasSpoiler = _hasSpoilerAttribution();
+    if (!hasSpoiler) {
+      // 🎯 스포일러 없으면 초경량 위젯 반환 (애니메이션 리스닝 없음)
+      return RepaintBoundary(
+        child: Padding(
+          padding: const EdgeInsets.only(top: 5.5),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minHeight: 22),
+            child: wrappedContent,
+          ),
+        ),
+      );
+    }
+
+    // 🎯 스포일러가 있을 때만 복잡한 위젯 트리 구성
+    return _SpoilerReadOnlyWidget(
+      nodeId: widget.nodeId,
+      subtreeKey: _subtreeKey,
+      controller: _controller,
+      scatterCtrl: _scatterCtrl,
+      editorService: widget.editorService,
+      nodeService: nodeService,
+      wrappedContent: wrappedContent,
+      onScatterActiveChanged: (active) {
+        if (mounted) {
+          setState(() => _scatterActive = active);
+        }
+      },
+      scatterActive: _scatterActive,
+      wasMaskVisible: _wasMaskVisible,
+      prevBoxes: _prevBoxes,
+      onStateChanged: (wasMaskVisible, prevBoxes, scatterBoxes) {
+        if (mounted) {
+          _wasMaskVisible = wasMaskVisible;
+          _prevBoxes = prevBoxes;
+          _scatterBoxes = scatterBoxes;
+        }
+      },
+    );
+  }
+
+  /// 스포일러 attribution이 있는지 빠르게 체크 (렌더링 없이)
+  bool _hasSpoilerAttribution() {
+    try {
+      final node = widget.editorService.editor.document.getNodeById(
+        widget.nodeId,
+      );
+      if (node is! ParagraphNode) return false;
+      final text = node.text;
+
+      // 텍스트에 스포일러 attribution이 하나라도 있는지만 체크
+      for (int i = 0; i < text.text.length; i++) {
+        final attrs = text.getAllAttributionsAt(i);
+        if (attrs.any((a) => a is NamedAttribution && a.id == 'spoiler')) {
+          return true;
+        }
+      }
+      return false;
+    } catch (_) {
+      return false;
+    }
   }
 
   TextAlign _resolveTextAlign() {
@@ -551,6 +641,250 @@ class _ParagraphWithDropLinesState extends State<_ParagraphWithDropLines>
         .where((e) => e.startsWith('@') && e.length > 1)
         .map((e) => e.substring(1))
         .toList();
+  }
+}
+
+/// 🎯 스포일러가 있는 읽기 모드 패러그래프 전용 위젯
+/// 상태 관리를 독립적으로 수행하여 다른 노드에 영향을 주지 않음
+class _SpoilerReadOnlyWidget extends StatefulWidget {
+  const _SpoilerReadOnlyWidget({
+    required this.nodeId,
+    required this.subtreeKey,
+    required this.controller,
+    required this.scatterCtrl,
+    required this.editorService,
+    required this.nodeService,
+    required this.wrappedContent,
+    required this.onScatterActiveChanged,
+    required this.scatterActive,
+    required this.wasMaskVisible,
+    required this.prevBoxes,
+    required this.onStateChanged,
+  });
+
+  final String nodeId;
+  final GlobalKey subtreeKey;
+  final AnimationController controller;
+  final AnimationController scatterCtrl;
+  final EditorService editorService;
+  final NodeComponentService nodeService;
+  final Widget wrappedContent;
+  final void Function(bool) onScatterActiveChanged;
+  final bool scatterActive;
+  final bool wasMaskVisible;
+  final List<Rect> prevBoxes;
+  final void Function(
+    bool wasMaskVisible,
+    List<Rect> prevBoxes,
+    List<Rect> scatterBoxes,
+  )
+  onStateChanged;
+
+  @override
+  State<_SpoilerReadOnlyWidget> createState() => _SpoilerReadOnlyWidgetState();
+}
+
+class _SpoilerReadOnlyWidgetState extends State<_SpoilerReadOnlyWidget> {
+  bool _wasMaskVisible = false;
+  List<Rect> _prevBoxes = const [];
+
+  @override
+  void initState() {
+    super.initState();
+    _wasMaskVisible = widget.wasMaskVisible;
+    _prevBoxes = widget.prevBoxes;
+
+    // 초기 렌더링 후 박스 계산을 위한 리빌드
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        setState(() {});
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: widget.nodeService,
+      builder: (context, _) {
+        final spoilerBoxes = _collectSpoilerBoxes(context);
+        final bool maskVisible = spoilerBoxes.isNotEmpty;
+
+        // 현재 마스크가 보이면 박스 저장
+        if (maskVisible) {
+          _prevBoxes = spoilerBoxes;
+        }
+
+        // 🎯 스포일러가 해제되었을 때 스캐터 애니메이션 트리거
+        if (_wasMaskVisible &&
+            !maskVisible &&
+            widget.scatterCtrl.status != AnimationStatus.forward) {
+          if (_prevBoxes.isNotEmpty) {
+            // 상태를 부모에 전달
+            widget.onStateChanged(_wasMaskVisible, _prevBoxes, _prevBoxes);
+
+            // 다음 프레임에 스캐터 시작
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted) {
+                widget.onScatterActiveChanged(true);
+                widget.scatterCtrl
+                  ..reset()
+                  ..forward();
+              }
+            });
+          }
+        }
+        _wasMaskVisible = maskVisible;
+
+        return Padding(
+          padding: const EdgeInsets.only(top: 5.5),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minHeight: 22),
+            child: Stack(
+              children: [
+                widget.wrappedContent,
+                // 스포일러 마스크
+                if (spoilerBoxes.isNotEmpty)
+                  Builder(
+                    builder: (context) {
+                      final theme = Theme.of(context).colorScheme;
+                      final brightness = Theme.of(context).brightness;
+                      final isLightTheme = brightness == Brightness.light;
+                      final bgColor = theme.background;
+                      final dotColor = theme.onSurface;
+                      return Positioned.fill(
+                        child: IgnorePointer(
+                          ignoring: false, // 보기 모드에서는 탭 통과
+                          child: AnimatedBuilder(
+                            animation: widget.controller,
+                            builder: (context, __) {
+                              return RepaintBoundary(
+                                child: CustomPaint(
+                                  painter: _ParagraphSpoilerPainter(
+                                    boxes: spoilerBoxes,
+                                    phase: widget.controller.value,
+                                    isEditing: false,
+                                    backgroundColor: bgColor,
+                                    dotColor: dotColor,
+                                    isLightTheme: isLightTheme,
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                // 스캐터 이펙트
+                if (widget.scatterActive)
+                  Builder(
+                    builder: (context) {
+                      final theme = Theme.of(context).colorScheme;
+                      final brightness = Theme.of(context).brightness;
+                      final dotColor = theme.onSurface;
+                      final isLightTheme = brightness == Brightness.light;
+                      return Positioned.fill(
+                        child: IgnorePointer(
+                          ignoring: true,
+                          child: AnimatedBuilder(
+                            animation: widget.scatterCtrl,
+                            builder: (context, __) {
+                              return RepaintBoundary(
+                                child: CustomPaint(
+                                  painter: _ParagraphSpoilerScatterPainter(
+                                    boxes: _prevBoxes,
+                                    t: widget.scatterCtrl.value,
+                                    dotColor: dotColor,
+                                    isLightTheme: isLightTheme,
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  List<Rect> _collectSpoilerBoxes(BuildContext context) {
+    try {
+      final node = widget.editorService.editor.document.getNodeById(
+        widget.nodeId,
+      );
+      if (node is! ParagraphNode) return const [];
+      final text = node.text;
+
+      // 스포일러가 명시적으로 해제되었는지 확인
+      final isDisabled = widget.nodeService.isSpoilerDisabled(widget.nodeId);
+      if (isDisabled) {
+        return const [];
+      }
+
+      // 스포일러 구간 수집
+      final calc = <TextRange>[];
+      bool inSpoiler = false;
+      int start = 0;
+      for (int i = 0; i <= text.text.length; i++) {
+        final attrs =
+            i < text.text.length
+                ? text.getAllAttributionsAt(i)
+                : const <Attribution>{};
+        final has = attrs.any(
+          (a) => a is NamedAttribution && a.id == 'spoiler',
+        );
+        if (has && !inSpoiler) {
+          inSpoiler = true;
+          start = i;
+        } else if (!has && inSpoiler) {
+          inSpoiler = false;
+          calc.add(TextRange(start: start, end: i));
+        }
+      }
+
+      if (calc.isEmpty) {
+        return const [];
+      }
+
+      // RenderParagraph 찾기
+      final ctx = widget.subtreeKey.currentContext;
+      if (ctx == null) return const [];
+      final RenderObject? ro = ctx.findRenderObject();
+      final rp = _findRenderParagraph(ro);
+      if (rp == null) return const [];
+
+      final paraOffset = (rp as RenderBox).localToGlobal(Offset.zero);
+      final hostOffset =
+          (context.findRenderObject() as RenderBox?)?.localToGlobal(
+            Offset.zero,
+          ) ??
+          Offset.zero;
+
+      final boxes = <Rect>[];
+      const double vPad = 0.5;
+      for (final r in calc) {
+        boxes.addAll(
+          _measureLineRectsForRange(
+            rp,
+            r.start,
+            r.end,
+            paraOffset,
+            hostOffset,
+            vPad: vPad,
+          ),
+        );
+      }
+      return boxes;
+    } catch (_) {
+      return const [];
+    }
   }
 }
 

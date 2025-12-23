@@ -415,35 +415,56 @@ class TextStylingService extends ChangeNotifier {
   }
 
   /// 폰트 크기 변경
+  /// 현재 스타일시트의 다른 속성들은 그대로 유지하고 텍스트 높이(폰트 크기)만 수정
   void changeFontSize(double size) {
     final selection = composer.selection;
 
     // 선택이 없으면 다음 입력에 적용
     if (selection == null || selection.isCollapsed) {
-      // 기존 폰트 크기 제거
+      // 🎯 현재 스타일시트에서 폰트 크기만 제거 (다른 속성은 유지)
       final currentAttrs = composer.preferences.currentAttributions.toList();
       for (final attr in currentAttrs) {
         if (attr is FontSizeAttribution) {
           composer.preferences.removeStyle(attr);
         }
       }
-      // 새 폰트 크기 추가
+      // 새 폰트 크기만 추가 (다른 스타일은 그대로 유지)
       composer.preferences.addStyle(FontSizeAttribution(size));
       notifyListeners();
       return;
     }
 
-    // 기존 폰트 크기 속성 제거
-    _removeFontSizeAttributions();
+    // 🎯 선택 영역이 있는 경우: 현재 스타일시트의 다른 속성들은 그대로 유지하고 폰트 크기만 변경
+    // 1. 현재 선택 영역의 모든 속성 가져오기
+    final existingAttributions = _getAttributionsInSelection();
 
-    // 새 폰트 크기 적용
-    final fontSizeAttribution = FontSizeAttribution(size);
-    editor.execute([
+    // 2. 폰트 크기 속성만 제거 (다른 속성은 유지)
+    final fontSizeAttributions =
+        existingAttributions.whereType<FontSizeAttribution>().toSet();
+
+    final requests = <EditRequest>[];
+
+    // 3. 기존 폰트 크기 속성 제거
+    if (fontSizeAttributions.isNotEmpty) {
+      requests.add(
+        RemoveTextAttributionsRequest(
+          documentRange: selection,
+          attributions: fontSizeAttributions,
+        ),
+      );
+    }
+
+    // 4. 새 폰트 크기만 추가 (다른 스타일 속성은 그대로 유지)
+    requests.add(
       AddTextAttributionsRequest(
         documentRange: selection,
-        attributions: {fontSizeAttribution},
+        attributions: {FontSizeAttribution(size)},
       ),
-    ]);
+    );
+
+    if (requests.isNotEmpty) {
+      editor.execute(requests);
+    }
   }
 
   /// 기존 색상 속성 제거
@@ -466,25 +487,6 @@ class TextStylingService extends ChangeNotifier {
         RemoveTextAttributionsRequest(
           documentRange: selection,
           attributions: colorAttributions,
-        ),
-      ]);
-    }
-  }
-
-  /// 기존 폰트 크기 속성 제거
-  void _removeFontSizeAttributions() {
-    final selection = composer.selection;
-    if (selection == null) return;
-
-    final existingAttributions = _getAttributionsInSelection();
-    final fontSizeAttributions =
-        existingAttributions.whereType<FontSizeAttribution>().toSet();
-
-    if (fontSizeAttributions.isNotEmpty) {
-      editor.execute([
-        RemoveTextAttributionsRequest(
-          documentRange: selection,
-          attributions: fontSizeAttributions,
         ),
       ]);
     }
@@ -1114,7 +1116,6 @@ class DefaultToolbar extends StatefulWidget {
   final TextStylingService stylingService;
   final EditorService editorService;
   final ScrollController? scrollController;
-  final bool isKeyboardVisible;
   final VoidCallback? onDismissKeyboard;
   final VoidCallback? onRequestFocus;
   final VoidCallback? onShowDraftList;
@@ -1127,7 +1128,6 @@ class DefaultToolbar extends StatefulWidget {
     required this.editorService,
 
     this.scrollController,
-    this.isKeyboardVisible = false,
     this.onDismissKeyboard,
     this.onRequestFocus,
     this.onShowDraftList,
@@ -1162,6 +1162,20 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
   // 선택 상태 추적
   bool _hasTextSelection = false;
 
+  // 🎯 최적화: debounce 타이머
+  Timer? _selectionDebounceTimer;
+  Timer? _stylesDebounceTimer;
+
+  // 🎯 최적화: 스타일 캐싱
+  Map<String, bool>? _cachedStyles;
+  TextAlign? _cachedAlignment;
+  String? _lastSelectionHash; // 선택 상태 해시 (변경 감지용)
+
+  // 🎯 최적화: 색상/폰트 크기 캐싱
+  Color? _cachedTextColor;
+  double? _cachedFontSize;
+  List<Color>? _cachedTextColors;
+
   @override
   void initState() {
     super.initState();
@@ -1178,12 +1192,44 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
     widget.stylingService.composer.selectionNotifier.removeListener(
       _onSelectionChanged,
     );
+    _selectionDebounceTimer?.cancel();
+    _stylesDebounceTimer?.cancel();
     super.dispose();
   }
 
   void _onSelectionChanged() {
+    if (!mounted) return;
+
+    // 🎯 Debounce: 50ms 후 실행 (드래그 중 과도한 호출 방지)
+    _selectionDebounceTimer?.cancel();
+    _selectionDebounceTimer = Timer(const Duration(milliseconds: 50), () {
+      if (!mounted) return;
+      _onSelectionChangedDebounced();
+    });
+  }
+
+  void _onSelectionChangedDebounced() {
     final selection = widget.stylingService.composer.selection;
     final hasSelection = selection != null && !selection.isCollapsed;
+
+    // 🎯 선택 상태 해시 생성 (변경 감지용)
+    String? selectionHash;
+    if (selection != null) {
+      try {
+        selectionHash =
+            '${selection.base.nodeId}_${selection.base.nodePosition}_${selection.extent.nodeId}_${selection.extent.nodePosition}';
+      } catch (_) {
+        selectionHash = hasSelection.toString();
+      }
+    } else {
+      selectionHash = 'null';
+    }
+
+    // 🎯 선택 상태가 실제로 변경되지 않았으면 무시
+    if (_lastSelectionHash == selectionHash) {
+      return;
+    }
+    _lastSelectionHash = selectionHash;
 
     // 🎯 멘션 노드에서 선택이면 툴바 열지 않음
     bool isMentionNode = false;
@@ -1210,25 +1256,40 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
       });
     }
 
-    _updateStyles();
+    // 🎯 스타일 업데이트도 debounce
+    _stylesDebounceTimer?.cancel();
+    _stylesDebounceTimer = Timer(const Duration(milliseconds: 100), () {
+      if (mounted) {
+        _updateStyles();
+        // 🎯 색상/폰트 크기 캐시도 업데이트
+        _cachedTextColor = null;
+        _cachedFontSize = null;
+        _cachedTextColors = null;
+      }
+    });
   }
 
   void _updateStyles() {
+    if (!mounted) return;
+
     final newStyles = widget.stylingService.getCurrentStyles();
     final newAlignment = widget.stylingService.getCurrentAlignment();
 
-    // 스타일이나 정렬이 실제로 변경된 경우에만 setState 호출
+    // 🎯 캐시와 비교하여 실제 변경 여부 확인
     bool needsUpdate = false;
 
-    if (_currentAlignment != newAlignment) {
+    // 정렬 변경 확인
+    if (_cachedAlignment != newAlignment || _currentAlignment != newAlignment) {
       needsUpdate = true;
     }
 
-    if (_currentStyles.length != newStyles.length) {
+    // 스타일 변경 확인 (캐시 우선 비교)
+    if (_cachedStyles == null || _cachedStyles!.length != newStyles.length) {
       needsUpdate = true;
     } else {
-      for (var key in _currentStyles.keys) {
-        if (_currentStyles[key] != newStyles[key]) {
+      for (var key in newStyles.keys) {
+        if (_cachedStyles![key] != newStyles[key] ||
+            _currentStyles[key] != newStyles[key]) {
           needsUpdate = true;
           break;
         }
@@ -1236,6 +1297,10 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
     }
 
     if (needsUpdate) {
+      // 🎯 캐시 업데이트
+      _cachedStyles = Map<String, bool>.from(newStyles);
+      _cachedAlignment = newAlignment;
+
       setState(() {
         _currentStyles = newStyles;
         _currentAlignment = newAlignment;
@@ -1467,7 +1532,6 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
 
         // 키보드 상태에 따라 변하는 부분만 별도 위젯으로 분리
         _KeyboardDependentButtons(
-          isKeyboardVisible: widget.isKeyboardVisible,
           isEditMode: widget.isEditMode,
           onDismissKeyboard: widget.onDismissKeyboard,
           onShowDraftList: widget.onShowDraftList,
@@ -2097,9 +2161,15 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
     );
   }
 
-  /// 현재 적용 중인 텍스트 색상 가져오기
+  /// 현재 적용 중인 텍스트 색상 가져오기 (캐싱)
   Color _getCurrentTextColor() {
+    // 🎯 캐시가 있으면 반환
+    if (_cachedTextColor != null) {
+      return _cachedTextColor!;
+    }
+
     final selection = widget.stylingService.composer.selection;
+    Color? color;
 
     // 선택 영역이 있으면 해당 범위의 색상 확인
     if (selection != null && !selection.isCollapsed) {
@@ -2113,7 +2183,8 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
           // ✅ 형광펜은 제외하고 글자색만 반환
           if (attribution is ColorAttribution &&
               attribution is! HighlightAttribution) {
-            return attribution.color;
+            color = attribution.color;
+            break;
           }
         }
       }
@@ -2124,17 +2195,24 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
       for (final attr in currentAttrs) {
         // ✅ 형광펜은 제외하고 글자색만 반환
         if (attr is ColorAttribution && attr is! HighlightAttribution) {
-          return attr.color;
+          color = attr.color;
+          break;
         }
       }
     }
 
     // 기본 색상 (테마의 onSurface)
-    return Theme.of(context).colorScheme.onSurface;
+    _cachedTextColor = color ?? Theme.of(context).colorScheme.onSurface;
+    return _cachedTextColor!;
   }
 
-  /// 선택 영역에 여러 색상이 섞여 있는지 확인 (단일 노드 내 선택만 체크)
+  /// 선택 영역에 여러 색상이 섞여 있는지 확인 (단일 노드 내 선택만 체크, 캐싱)
   List<Color> _getTextColorsInSelection() {
+    // 🎯 캐시가 있으면 반환
+    if (_cachedTextColors != null) {
+      return _cachedTextColors!;
+    }
+
     final selection = widget.stylingService.composer.selection;
     final colors = <Color>{};
 
@@ -2192,7 +2270,8 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
       }
     }
 
-    return colors.toList();
+    _cachedTextColors = colors.toList();
+    return _cachedTextColors!;
   }
 
   /// 현재 형광펜 색상 가져오기
@@ -2275,36 +2354,45 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
     );
   }
 
-  // 현재 폰트 사이즈 가져오기
+  // 현재 폰트 사이즈 가져오기 (캐싱)
   double _getCurrentFontSize() {
+    // 🎯 캐시가 있으면 반환
+    if (_cachedFontSize != null) {
+      return _cachedFontSize!;
+    }
+
     final selection = widget.stylingService.composer.selection;
+    double? fontSize;
+
     // 선택이 없거나 커서만 있을 때: preferences에서 조회
     if (selection == null || selection.isCollapsed) {
       final current =
           widget.stylingService.composer.preferences.currentAttributions;
       for (final attr in current) {
         if (attr is FontSizeAttribution) {
-          return attr.fontSize;
+          fontSize = attr.fontSize;
+          break;
         }
       }
-      return 16.0;
-    }
+    } else {
+      final node = widget.stylingService.editor.document.getNodeById(
+        selection.base.nodeId,
+      );
+      if (node is TextNode) {
+        final position = selection.base.nodePosition as TextNodePosition;
+        final attributions = node.text.getAllAttributionsAt(position.offset);
 
-    final node = widget.stylingService.editor.document.getNodeById(
-      selection.base.nodeId,
-    );
-    if (node is! TextNode) return 16.0;
-
-    final position = selection.base.nodePosition as TextNodePosition;
-    final attributions = node.text.getAllAttributionsAt(position.offset);
-
-    for (final attribution in attributions) {
-      if (attribution is FontSizeAttribution) {
-        return attribution.fontSize;
+        for (final attribution in attributions) {
+          if (attribution is FontSizeAttribution) {
+            fontSize = attribution.fontSize;
+            break;
+          }
+        }
       }
     }
 
-    return 16.0; // 기본값
+    _cachedFontSize = fontSize ?? 16.0;
+    return _cachedFontSize!;
   }
 
   // 스티커 종류 선택 메서드
@@ -2482,14 +2570,13 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
 
 /// 키보드 상태에 따라서만 변경되는 버튼들을 별도 위젯으로 분리
 /// 이렇게 하면 키보드 상태 변경 시 이 위젯만 리빌드됨
+/// RepaintBoundary로 감싸져 있어서 rebuild 범위가 제한됨
 class _KeyboardDependentButtons extends StatelessWidget {
-  final bool isKeyboardVisible;
   final bool isEditMode;
   final VoidCallback? onDismissKeyboard;
   final VoidCallback? onShowDraftList;
 
   const _KeyboardDependentButtons({
-    required this.isKeyboardVisible,
     required this.isEditMode,
     this.onDismissKeyboard,
     this.onShowDraftList,
@@ -2497,6 +2584,10 @@ class _KeyboardDependentButtons extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // 🎯 MediaQuery 사용 (키보드 상태 변경 시에만 rebuild)
+    // RepaintBoundary로 감싸져 있어서 rebuild 범위가 제한됨
+    final isKeyboardVisible = MediaQuery.viewInsetsOf(context).bottom > 0;
+
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [

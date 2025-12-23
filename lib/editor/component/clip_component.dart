@@ -11,6 +11,7 @@ import 'package:flutter_svg/svg.dart';
 import 'package:super_editor/super_editor.dart';
 import 'package:doppy/editor/service/drag_service.dart';
 import 'package:doppy/editor/service/node_component_service.dart';
+import 'package:doppy/editor/service/editor_service.dart';
 import 'package:doppy/editor/utils/drop_line_config.dart';
 import 'package:doppy/theme/app_colors.dart';
 import 'dart:math' as math;
@@ -306,8 +307,6 @@ class _ClipComponent extends StatefulWidget {
 class _ClipComponentState extends State<_ClipComponent> with DocumentComponent {
   GlobalKey get componentKey => widget._componentKey;
 
-  static const double marginTop = 4;
-
   // 특수 영역(음소거 버튼, 다시보기 버튼) 탭 여부
   bool _clipNodeSpecialAreaTapped = false;
   // 🎯 특수 노드 사이 클릭 감지 플래그
@@ -337,8 +336,6 @@ class _ClipComponentState extends State<_ClipComponent> with DocumentComponent {
       debugPrint('[ClipComponent] restartVideo() 호출됨');
     }
   }
-
-  static const double marginBottom = 2;
 
   // 🎯 특수 노드 사이 클릭 감지 (true: 특수 노드 사이 클릭, false: 일반 클릭)
   bool _handleSpecialNodeTap(Offset globalPosition) {
@@ -412,44 +409,9 @@ class _ClipComponentState extends State<_ClipComponent> with DocumentComponent {
     return false;
   }
 
-  // 업로드 중 로컬 비디오 썸네일 캐시
-  Uint8List? _localVideoThumbnailBytes;
-  String? _localVideoThumbPath;
-  double? _localVideoThumbAspectRatio; // width / height
   double? _metadataAspectRatio; // metadata에서 가져온 비율 (캐싱)
 
-  Future<void> _ensureLocalVideoThumbnail() async {
-    final String path = widget.localPath;
-    if (path.isEmpty) return;
-    if (_localVideoThumbPath == path && _localVideoThumbnailBytes != null)
-      return;
-    _localVideoThumbPath = path;
-    try {
-      final bytes = await VideoThumbnail.thumbnailData(
-        video: path,
-        imageFormat: ImageFormat.JPEG,
-        quality: 100, // 🎯 최고 화질로 설정
-      );
-      if (mounted && _localVideoThumbPath == path) {
-        // 썸네일 바이트 저장 + 실제 가로세로 비율 계산
-        double? aspect;
-        try {
-          if (bytes != null) {
-            final img = await decodeImageFromList(bytes);
-            if (img.width > 0 && img.height > 0) {
-              aspect = img.width / img.height;
-            }
-          }
-        } catch (_) {}
-        setState(() {
-          _localVideoThumbnailBytes = bytes;
-          if (aspect != null) _localVideoThumbAspectRatio = aspect;
-        });
-      }
-    } catch (_) {}
-  }
-
-  // 🎯 metadata에서 비율 정보를 한 번만 가져오기
+  // 🎯 metadata에서 비율 정보를 한 번만 가져오기 (플레이스홀더용)
   void _loadMetadataAspectRatio() {
     if (_metadataAspectRatio != null) return; // 이미 로드됨
 
@@ -466,19 +428,60 @@ class _ClipComponentState extends State<_ClipComponent> with DocumentComponent {
               (aspectRatioValue is num)
                   ? aspectRatioValue.toDouble()
                   : double.tryParse(aspectRatioValue.toString());
-          debugPrint(
-            '[ClipComponent] metadata에서 비율 가져옴: $_metadataAspectRatio',
-          );
         }
       }
-    } catch (e) {
-      debugPrint('[ClipComponent] metadata 비율 가져오기 실패: $e');
-    }
+    } catch (_) {}
   }
 
   @override
   Widget build(BuildContext context) {
-    // selection 핸들이 링크 노드를 포함하는지 확인
+    // 🎯 보기 모드: 초경량 위젯 트리
+    if (!widget.isEditing) {
+      return _buildReadOnlyView(context);
+    }
+
+    // 🎯 편집 모드: 전체 기능
+    return _buildEditingView(context);
+  }
+
+  /// 🎯 보기 모드 전용: 초경량 위젯 트리
+  Widget _buildReadOnlyView(BuildContext context) {
+    // 패딩 모드 확인 (한 번만)
+    double horizontalPadding = 20.0;
+    try {
+      final editorService = Provider.of<EditorService>(context, listen: false);
+      final node = editorService.document.getNodeById(widget.nodeId);
+      if (node is ClipNode) {
+        final paddingMode = node.metadata['padding'] as String? ?? 'center';
+        horizontalPadding = paddingMode == 'full' ? 0.0 : 20.0;
+      }
+    } catch (_) {}
+
+    return RepaintBoundary(
+      child: Column(
+        children: [
+          SizedBox(height: EditorConfig.specialNodePaddingWithText),
+          Container(
+            width: double.infinity,
+            margin: EdgeInsets.only(
+              left: horizontalPadding,
+              right: horizontalPadding,
+            ),
+            decoration: BoxDecoration(
+              color: Theme.of(
+                context,
+              ).colorScheme.surfaceVariant.withOpacity(0.25),
+            ),
+            child: _buildVideoContent(context, horizontalPadding),
+          ),
+          SizedBox(height: EditorConfig.specialNodePaddingWithText),
+        ],
+      ),
+    );
+  }
+
+  /// 🎯 편집 모드 전용: 전체 기능
+  Widget _buildEditingView(BuildContext context) {
     // ignore: invalid_use_of_visible_for_testing_member
     final seState = context.findAncestorStateOfType<SuperEditorState>();
     // ignore: invalid_use_of_visible_for_testing_member
@@ -486,7 +489,7 @@ class _ClipComponentState extends State<_ClipComponent> with DocumentComponent {
     // ignore: invalid_use_of_visible_for_testing_member
     final doc = seState?.editContext.editor.document;
 
-    // 이웃하는 특수 노드 체크 (이미지, 클립, 링크)
+    // 이웃하는 특수 노드 체크
     final bool hasImageAbove =
         doc == null ? false : _hasNeighborImage(doc, widget.nodeId, -1);
     final bool hasImageBelow =
@@ -495,9 +498,9 @@ class _ClipComponentState extends State<_ClipComponent> with DocumentComponent {
     final imageService = context.watch<NodeComponentService>();
     final isSelected = imageService.selectedImageId == widget.nodeId;
 
-    // 🎯 downstream 위치에 커서가 있을 때도 selection 효과 표시
+    // downstream 위치에 커서가 있을 때도 selection 효과 표시
     bool isDownstreamSelected = false;
-    if (widget.isEditing && seState != null) {
+    if (seState != null) {
       // ignore: invalid_use_of_visible_for_testing_member
       final selection = seState.editContext.composer.selection;
       if (selection != null &&
@@ -522,8 +525,8 @@ class _ClipComponentState extends State<_ClipComponent> with DocumentComponent {
       );
     }
 
-    // 스타일시트 패딩 적용: metadata에서 패딩 모드 확인 (기본값: 'center' = 패딩 있음)
-    double horizontalPadding = 20.0; // 기본 패딩
+    // 패딩 모드 확인
+    double horizontalPadding = 20.0;
     try {
       final node = doc?.getNodeById(widget.nodeId);
       if (node is ClipNode) {
@@ -532,9 +535,8 @@ class _ClipComponentState extends State<_ClipComponent> with DocumentComponent {
       }
     } catch (_) {}
 
-    // 댓글 배지 표시 여부/카운트 (metadata.hasComments/commentCount)
+    // 댓글 배지 표시 여부
     bool hasCommentsFlag = false;
-
     try {
       final node = doc?.getNodeById(widget.nodeId);
       if (node is ClipNode) {
@@ -543,244 +545,229 @@ class _ClipComponentState extends State<_ClipComponent> with DocumentComponent {
       }
     } catch (_) {}
 
-    return Column(
-      children: [
-        if (!hasImageAbove)
-          SizedBox(height: EditorConfig.specialNodePaddingWithText),
-        // 실제 비디오 내용 + 좌/우 세로 라인 (머지 모드에서)
-        LayoutBuilder(
-          builder: (context, constraints) {
-            final card = Container(
-              width: double.infinity,
-              margin: EdgeInsets.only(
+    final double marginTop =
+        hasImageAbove ? 0 : EditorConfig.specialNodePaddingWithText;
+    final double marginBottom =
+        hasImageBelow ? 0 : EditorConfig.specialNodePaddingWithText;
+
+    final card = Container(
+      width: double.infinity,
+      margin: EdgeInsets.only(
+        left: horizontalPadding,
+        right: horizontalPadding,
+      ),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surfaceVariant.withOpacity(0.25),
+      ),
+      child: _buildVideoContent(context, horizontalPadding),
+    );
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        return Stack(
+          children: [
+            // 편집 모드 탭/롱프레스 처리
+            GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTapDown:
+                  widget.dragService != null
+                      ? (details) {
+                        // 특수 노드 사이/마지막 노드 아래 빈 문단 추가 처리
+                        final isGapTap = _handleSpecialNodeTap(
+                          details.globalPosition,
+                        );
+
+                        // 특수 영역(음소거 버튼, 다시보기 버튼) 감지
+                        final action = widget.dragService!.handleClipNodeTap(
+                          widget.nodeId,
+                          details.globalPosition,
+                        );
+                        if (action != null) {
+                          // 특수 영역이면 action 실행
+                          _triggerClipNodeAction(action);
+                          // 특수 영역이면 탭 처리 안 함 (비디오 컨트롤이 처리)
+                          // onTap이 호출되지 않도록 상태 변수 사용
+                          setState(() {
+                            _clipNodeSpecialAreaTapped = true;
+                            _isSpecialNodeGapTap = false;
+                          });
+                        } else {
+                          setState(() {
+                            _clipNodeSpecialAreaTapped = false;
+                            _isSpecialNodeGapTap = isGapTap;
+                          });
+                        }
+                      }
+                      : null,
+              onTap:
+                  widget.dragService != null
+                      ? () {
+                        // 🎯 특수 노드 사이 클릭이면 셀렉 보류
+                        if (_isSpecialNodeGapTap) {
+                          setState(() {
+                            _isSpecialNodeGapTap = false;
+                          });
+                          return;
+                        }
+
+                        // 특수 영역이 탭되었으면 노드 선택 처리 안 함
+                        if (_clipNodeSpecialAreaTapped) {
+                          setState(() {
+                            _clipNodeSpecialAreaTapped = false;
+                          });
+                          return;
+                        }
+
+                        debugPrint(
+                          '[ClipComponent] onTap 호출됨: nodeId=${widget.nodeId}',
+                        );
+                        // 노드 선택/해제
+                        final imageService =
+                            context.read<NodeComponentService>();
+                        final currentSelected = imageService.selectedImageId;
+                        if (currentSelected == widget.nodeId) {
+                          // 같은 노드 재탭: 선택 해제
+                          debugPrint('[ClipComponent] 선택 해제');
+                          imageService.selectNode(null);
+                          widget.dragService?.invalidateNodeRectCache();
+                        } else {
+                          // 다른 노드 선택
+                          debugPrint(
+                            '[ClipComponent] 노드 선택: nodeId=${widget.nodeId}',
+                          );
+                          imageService.selectNode(widget.nodeId);
+                          WidgetsBinding.instance.addPostFrameCallback((_) {
+                            if (mounted) {
+                              widget.dragService?.invalidateNodeRectCache();
+                            }
+                          });
+                        }
+                      }
+                      : null,
+              onLongPressStart:
+                  widget.dragService != null
+                      ? (details) {
+                        // 🎯 키보드 내리기 (viewInsets 사용 안 함)
+                        FocusScope.of(context).unfocus();
+                        // 드래그 시작
+                        widget.dragService?.startDrag(
+                          widget.nodeId,
+                          context,
+                          details.globalPosition,
+                        );
+                      }
+                      : null,
+              onLongPressMoveUpdate:
+                  widget.dragService != null
+                      ? (details) {
+                        // 드래그 업데이트
+                        widget.dragService?.updateDrag(
+                          details.globalPosition,
+                          context,
+                        );
+                      }
+                      : null,
+              onLongPressEnd:
+                  widget.dragService != null
+                      ? (_) {
+                        // 드래그 종료
+                        widget.dragService?.endDrag();
+                      }
+                      : null,
+              child: Padding(
+                padding: EdgeInsets.only(top: marginTop, bottom: marginBottom),
+                child: Stack(
+                  children: [
+                    card,
+                    // 댓글 배지 (읽기 전용 - 포인터 통과)
+                    if (hasCommentsFlag)
+                      Positioned(
+                        top: 4,
+                        right: horizontalPadding + 5,
+                        child: IgnorePointer(
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 6,
+                              vertical: 6,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.onSurface.withOpacity(1),
+                              borderRadius: BorderRadius.circular(20),
+                              border: Border.all(
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.surface.withOpacity(0.1),
+                                width: 1,
+                              ),
+                            ),
+                            child: SvgPicture.asset(
+                              'assets/icons/comment.svg',
+                              width: 12,
+                              height: 12,
+                              colorFilter: ColorFilter.mode(
+                                Theme.of(context).colorScheme.surface,
+                                BlendMode.srcIn,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    // 선택 하이라이트 오버레이
+                    if (isSelectionHighlighted)
+                      Positioned.fill(
+                        child: IgnorePointer(
+                          child: Container(
+                            color: AppColors.primary.withOpacity(0.4),
+                          ),
+                        ),
+                      ),
+                    // 선택 테두리 (horizontalPadding 고려)
+                    if (isSelected || isDownstreamSelected)
+                      Positioned.fill(
+                        child: IgnorePointer(
+                          child: Container(
+                            margin: EdgeInsets.only(
+                              left: horizontalPadding,
+                              right: horizontalPadding,
+                            ),
+                            decoration: BoxDecoration(
+                              border: Border.all(
+                                color: AppColors.primary,
+                                width: 3,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+            if (_shouldShowTopDropLine())
+              Positioned(
+                top: 0,
                 left: horizontalPadding,
                 right: horizontalPadding,
-              ),
-              decoration: BoxDecoration(
-                color: Theme.of(
-                  context,
-                ).colorScheme.surfaceVariant.withOpacity(0.25),
-              ),
-              child: _buildVideoContent(context, horizontalPadding),
-            );
-
-            return Stack(
-              children: [
-                // 🎯 편집 모드에서 탭/롱프레스 처리
-                GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onTapDown:
-                      widget.isEditing && widget.dragService != null
-                          ? (details) {
-                            // 특수 노드 사이/마지막 노드 아래 빈 문단 추가 처리
-                            final isGapTap = _handleSpecialNodeTap(
-                              details.globalPosition,
-                            );
-
-                            // 특수 영역(음소거 버튼, 다시보기 버튼) 감지
-                            final action = widget.dragService!
-                                .handleClipNodeTap(
-                                  widget.nodeId,
-                                  details.globalPosition,
-                                );
-                            if (action != null) {
-                              // 특수 영역이면 action 실행
-                              _triggerClipNodeAction(action);
-                              // 특수 영역이면 탭 처리 안 함 (비디오 컨트롤이 처리)
-                              // onTap이 호출되지 않도록 상태 변수 사용
-                              setState(() {
-                                _clipNodeSpecialAreaTapped = true;
-                                _isSpecialNodeGapTap = false;
-                              });
-                            } else {
-                              setState(() {
-                                _clipNodeSpecialAreaTapped = false;
-                                _isSpecialNodeGapTap = isGapTap;
-                              });
-                            }
-                          }
-                          : null,
-                  onTap:
-                      widget.isEditing && widget.dragService != null
-                          ? () {
-                            // 🎯 특수 노드 사이 클릭이면 셀렉 보류
-                            if (_isSpecialNodeGapTap) {
-                              setState(() {
-                                _isSpecialNodeGapTap = false;
-                              });
-                              return;
-                            }
-
-                            // 특수 영역이 탭되었으면 노드 선택 처리 안 함
-                            if (_clipNodeSpecialAreaTapped) {
-                              setState(() {
-                                _clipNodeSpecialAreaTapped = false;
-                              });
-                              return;
-                            }
-
-                            debugPrint(
-                              '[ClipComponent] onTap 호출됨: nodeId=${widget.nodeId}',
-                            );
-                            // 노드 선택/해제
-                            final imageService =
-                                context.read<NodeComponentService>();
-                            final currentSelected =
-                                imageService.selectedImageId;
-                            if (currentSelected == widget.nodeId) {
-                              // 같은 노드 재탭: 선택 해제
-                              debugPrint('[ClipComponent] 선택 해제');
-                              imageService.selectNode(null);
-                              widget.dragService?.invalidateNodeRectCache();
-                            } else {
-                              // 다른 노드 선택
-                              debugPrint(
-                                '[ClipComponent] 노드 선택: nodeId=${widget.nodeId}',
-                              );
-                              imageService.selectNode(widget.nodeId);
-                              WidgetsBinding.instance.addPostFrameCallback((_) {
-                                if (mounted) {
-                                  widget.dragService?.invalidateNodeRectCache();
-                                }
-                              });
-                            }
-                          }
-                          : null,
-                  onLongPressStart:
-                      widget.isEditing && widget.dragService != null
-                          ? (details) {
-                            // 키보드 내리기
-                            final keyboardVisible =
-                                MediaQuery.of(context).viewInsets.bottom > 0;
-                            if (keyboardVisible) {
-                              FocusScope.of(context).unfocus();
-                            }
-                            // 드래그 시작
-                            widget.dragService?.startDrag(
-                              widget.nodeId,
-                              context,
-                              details.globalPosition,
-                            );
-                          }
-                          : null,
-                  onLongPressMoveUpdate:
-                      widget.isEditing && widget.dragService != null
-                          ? (details) {
-                            // 드래그 업데이트
-                            widget.dragService?.updateDrag(
-                              details.globalPosition,
-                              context,
-                            );
-                          }
-                          : null,
-                  onLongPressEnd:
-                      widget.isEditing && widget.dragService != null
-                          ? (_) {
-                            // 드래그 종료
-                            widget.dragService?.endDrag();
-                          }
-                          : null,
-                  child: Padding(
-                    padding: EdgeInsets.only(
-                      top: marginTop,
-                      bottom: marginBottom,
-                    ),
-                    child: Stack(
-                      children: [
-                        card,
-                        // 댓글 배지 (읽기 전용 - 포인터 통과)
-                        if (hasCommentsFlag)
-                          Positioned(
-                            top: 4,
-                            right: horizontalPadding + 5,
-                            child: IgnorePointer(
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 6,
-                                  vertical: 6,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: Theme.of(
-                                    context,
-                                  ).colorScheme.onSurface.withOpacity(1),
-                                  borderRadius: BorderRadius.circular(20),
-                                  border: Border.all(
-                                    color: Theme.of(
-                                      context,
-                                    ).colorScheme.surface.withOpacity(0.1),
-                                    width: 1,
-                                  ),
-                                ),
-                                child: SvgPicture.asset(
-                                  'assets/icons/comment.svg',
-                                  width: 12,
-                                  height: 12,
-                                  colorFilter: ColorFilter.mode(
-                                    Theme.of(context).colorScheme.surface,
-                                    BlendMode.srcIn,
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ),
-                        // 선택 하이라이트 오버레이
-                        if (isSelectionHighlighted)
-                          Positioned.fill(
-                            child: IgnorePointer(
-                              child: Container(
-                                color: AppColors.primary.withOpacity(0.4),
-                              ),
-                            ),
-                          ),
-                        // 선택 테두리 (horizontalPadding 고려)
-                        if (isSelected || isDownstreamSelected)
-                          Positioned.fill(
-                            child: IgnorePointer(
-                              child: Container(
-                                margin: EdgeInsets.only(
-                                  left: horizontalPadding,
-                                  right: horizontalPadding,
-                                ),
-                                decoration: BoxDecoration(
-                                  border: Border.all(
-                                    color: AppColors.primary,
-                                    width: 3,
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ),
-                      ],
-                    ),
-                  ),
+                child: Padding(
+                  padding: const EdgeInsets.only(bottom: 2),
+                  child: Container(height: 5, color: AppColors.primary),
                 ),
-                if (_shouldShowTopDropLine())
-                  Positioned(
-                    top: 0,
-                    left: horizontalPadding,
-                    right: horizontalPadding,
-                    child: Padding(
-                      padding: const EdgeInsets.only(bottom: 2),
-                      child: Container(height: 5, color: AppColors.primary),
-                    ),
-                  ),
-                if (_shouldShowBottomDropLine())
-                  Positioned(
-                    bottom: 0,
-                    left: horizontalPadding,
-                    right: horizontalPadding,
-                    child: Padding(
-                      padding: const EdgeInsets.only(top: 2),
-                      child: Container(height: 5, color: AppColors.primary),
-                    ),
-                  ),
-              ],
-            );
-          },
-        ),
-        if (!hasImageBelow)
-          SizedBox(height: EditorConfig.specialNodePaddingWithText),
-      ],
+              ),
+            if (_shouldShowBottomDropLine())
+              Positioned(
+                bottom: 0,
+                left: horizontalPadding,
+                right: horizontalPadding,
+                child: Padding(
+                  padding: const EdgeInsets.only(top: 2),
+                  child: Container(height: 5, color: AppColors.primary),
+                ),
+              ),
+          ],
+        );
+      },
     );
   }
 
@@ -849,23 +836,7 @@ class _ClipComponentState extends State<_ClipComponent> with DocumentComponent {
   NodePosition? movePositionLeft(
     NodePosition currentPosition, [
     MovementModifier? movementModifier,
-  ]) {
-    debugPrint(
-      '[ClipComponent] movePositionLeft 호출: currentPosition=$currentPosition',
-    );
-    // 현재 위치가 이미 downstream이면 null 반환 (삭제 허용)
-    if (currentPosition is UpstreamDownstreamNodePosition) {
-      final downstreamPos = const UpstreamDownstreamNodePosition.downstream();
-      if (currentPosition == downstreamPos) {
-        debugPrint('[ClipComponent] downstream 위치에서 백스페이스 - 삭제 허용');
-        // 이미 downstream에 있으면 null 반환하여 삭제 허용
-        return null;
-      }
-    }
-    debugPrint('[ClipComponent] downstream 위치로 이동');
-    // 특수 노드 아래에서 백스페이스 시 특수 노드의 끝(downstream) 위치로 이동
-    return const UpstreamDownstreamNodePosition.downstream();
-  }
+  ]) => null;
 
   @override
   NodePosition? movePositionRight(
@@ -1018,105 +989,39 @@ class _ClipComponentState extends State<_ClipComponent> with DocumentComponent {
     return false;
   }
 
-  /// 업로드 로딩 표시 위젯 (로딩 스피너만)
-  Widget _buildUploadProgress(BuildContext context) {
-    return const SizedBox(
-      width: 28,
-      height: 28,
-      child: CircularProgressIndicator(
-        strokeWidth: 3,
-        valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-      ),
-    );
-  }
-
   Widget _buildVideoContent(BuildContext context, double horizontalPadding) {
-    final screenWidth = MediaQuery.of(context).size.width;
+    // 🎯 키보드 버벅임 방지: MediaQuery.sizeOf 사용 (viewInsets 제외)
+    final screenWidth = MediaQuery.sizeOf(context).width;
     // horizontalPadding을 고려한 실제 비디오 너비
     final videoWidth = screenWidth - (horizontalPadding * 2);
     final maxHeight = videoWidth * 1.5;
 
-    // 🎯 업로드 중 상태 확인 (편집 모드에서만, 읽기 전용 모드에서는 항상 false)
+    // 🎯 업로드 중 상태 확인 (편집 모드에서만, Selector로 최적화)
     bool isUploading = false;
     if (widget.isEditing) {
       try {
-        final uploadService = context.watch<UploadService>();
-        isUploading = uploadService.hasActiveUploadForRef(widget.nodeId);
+        isUploading = context.select<UploadService, bool>(
+          (service) => service.hasActiveUploadForRef(widget.nodeId),
+        );
       } catch (e) {
         debugPrint('[ClipComponent] UploadService 확인 실패: $e');
       }
     }
 
-    // 로컬 파일 경로가 있고 실제로 업로드 중이면 썸네일과 로딩 표시
-    if (widget.localPath.isNotEmpty && isUploading) {
-      _ensureLocalVideoThumbnail();
-
-      // 🎯 metadata에서 비율 정보 가져오기 (한 번만 로드)
-      _loadMetadataAspectRatio();
-
-      // 🎯 우선순위: metadata 비율 > 로컬 썸네일 비율 > 기본 비율
-      final double aspect =
-          _metadataAspectRatio ?? _localVideoThumbAspectRatio ?? (16 / 9);
-
-      // horizontalPadding을 고려한 너비로 높이 계산
-      final calculatedHeight = videoWidth / aspect;
-      final finalHeight =
-          calculatedHeight > maxHeight ? maxHeight : calculatedHeight;
-
-      // 썸네일 경로가 있으면 썸네일을 배경으로 사용
-      if (widget.thumbnailPath.isNotEmpty) {
-        return RepaintBoundary(
-          child: SizedBox(
-            width: videoWidth,
-            height: finalHeight,
-            child: Stack(
-              children: [
-                // 썸네일 배경 (cover 모드로 왜곡 없이 표시)
-                ClipRRect(
-                  child: Image.file(
-                    File(widget.thumbnailPath),
-                    fit: BoxFit.cover, // cover 모드로 왜곡 없이 표시
-                    width: videoWidth,
-                    height: finalHeight,
-                  ),
-                ),
-                // 업로드 진행 오버레이 (로딩 스피너만 표시) - 실제 업로드 중일 때만
-                if (isUploading)
-                  Positioned.fill(
-                    child: Center(child: _buildUploadProgress(context)),
-                  ),
-              ],
-            ),
-          ),
-        );
-      }
-
-      // 썸네일이 없으면 비디오 첫 프레임 썸네일 생성 후 표시 (도착 전까지는 쉬머)
+    // 🎯 로컬 파일 경로가 있으면 바로 비디오 플레이어 표시 (썸네일 X)
+    if (widget.localPath.isNotEmpty) {
+      // 로컬 비디오를 바로 재생
       return RepaintBoundary(
-        child: SizedBox(
-          width: videoWidth,
-          height: finalHeight,
-          child: Stack(
-            children: [
-              if (_localVideoThumbnailBytes != null)
-                Image.memory(
-                  _localVideoThumbnailBytes!,
-                  fit: BoxFit.cover, // cover 모드로 왜곡 없이 표시
-                  width: videoWidth,
-                  height: finalHeight,
-                )
-              else
-                ShimmerBox(
-                  width: videoWidth,
-                  height: finalHeight, // 🎯 실제 비율 높이 사용
-                  isDarkMode: widget.isDarkMode,
-                ),
-              // 업로드 진행 오버레이 (로딩 스피너만 표시)
-              Positioned.fill(
-                child: Center(child: _buildUploadProgress(context)),
-              ),
-            ],
-          ),
+        child: _VisibilityAwareVideoPlayer(
+          key: ValueKey('local_video_${widget.localPath}_${widget.nodeId}'),
+          nodeId: widget.nodeId,
+          url: '', // 로컬이므로 url은 빈 문자열
+          localPath: widget.localPath,
+          thumbnailPath: widget.thumbnailPath,
+          isEditing: widget.isEditing,
+          isDarkMode: widget.isDarkMode,
+          horizontalPadding: horizontalPadding,
+          isUploading: isUploading, // 업로드 중 표시
         ),
       );
     }
@@ -1124,8 +1029,9 @@ class _ClipComponentState extends State<_ClipComponent> with DocumentComponent {
     // 네트워크 URL이 있으면 비디오 플레이어
     if (widget.url.isNotEmpty) {
       // 🎯 플레이스홀더에서 실제 비디오로 전환 시 썸네일을 배경으로 유지하여 검정 화면 방지
-      // thumbnailPath가 있으면 플레이스홀더 썸네일을 배경으로 사용
-      if (widget.thumbnailPath.isNotEmpty) {
+      // thumbnailPath가 있고 파일이 실제로 존재하면 플레이스홀더 썸네일을 배경으로 사용
+      if (widget.thumbnailPath.isNotEmpty &&
+          File(widget.thumbnailPath).existsSync()) {
         // 🎯 metadata에서 비율 정보 가져오기 (한 번만 로드)
         _loadMetadataAspectRatio();
 
@@ -1149,6 +1055,10 @@ class _ClipComponentState extends State<_ClipComponent> with DocumentComponent {
                       fit: BoxFit.cover,
                       width: videoWidth,
                       height: finalHeight,
+                      errorBuilder: (context, error, stackTrace) {
+                        // 파일 로드 실패 시 투명 컨테이너 반환 (비디오 플레이어가 바로 보임)
+                        return const SizedBox.expand();
+                      },
                     ),
                   ),
                 ),
@@ -1182,28 +1092,19 @@ class _ClipComponentState extends State<_ClipComponent> with DocumentComponent {
       );
     }
 
-    // 업로드 완료되지 않으면 텍스트만 표시
-    return Row(
-      children: [
-        const SizedBox(width: 12),
-        const SizedBox(width: 10),
-        Expanded(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 10),
-            child: Text(
-              widget.label.isNotEmpty ? widget.label : 'clip',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: Theme.of(context).colorScheme.onSurface,
-                fontWeight: FontWeight.w600,
-                fontSize: 14,
-              ),
-            ),
-          ),
-        ),
-        const SizedBox(width: 12),
-      ],
+    // 🎯 url도 localPath도 없으면 shimmer 표시 (텍스트 깜빡임 방지)
+    _loadMetadataAspectRatio();
+    final double aspect = _metadataAspectRatio ?? (16 / 9);
+    final calculatedHeight = videoWidth / aspect;
+    final finalHeight =
+        calculatedHeight > maxHeight ? maxHeight : calculatedHeight;
+
+    return RepaintBoundary(
+      child: ShimmerBox(
+        width: videoWidth,
+        height: finalHeight,
+        isDarkMode: widget.isDarkMode,
+      ),
     );
   }
 }
@@ -1212,19 +1113,23 @@ class _ClipComponentState extends State<_ClipComponent> with DocumentComponent {
 class _VisibilityAwareVideoPlayer extends StatefulWidget {
   final String nodeId; // 🎯 nodeId 추가 (metadata 접근용)
   final String url;
+  final String localPath; // 🎯 로컬 비디오 경로
   final String thumbnailPath;
   final bool isEditing;
   final bool isDarkMode;
   final double horizontalPadding;
+  final bool isUploading; // 🎯 업로드 중 표시
 
   const _VisibilityAwareVideoPlayer({
     super.key,
     required this.nodeId,
     required this.url,
+    this.localPath = '',
     required this.thumbnailPath,
     required this.isEditing,
     this.isDarkMode = false,
     required this.horizontalPadding,
+    this.isUploading = false,
   });
 
   @override
@@ -1366,11 +1271,13 @@ class _VisibilityAwareVideoPlayerState
       child: _VideoPlayerWidget(
         nodeId: widget.nodeId, // 🎯 nodeId 전달
         url: widget.url,
+        localPath: widget.localPath,
         thumbnailPath: widget.thumbnailPath,
         shouldAutoPlay: _isVisible,
         isEditing: widget.isEditing,
         isDarkMode: widget.isDarkMode,
         horizontalPadding: widget.horizontalPadding,
+        isUploading: widget.isUploading,
       ),
     );
   }
@@ -1380,20 +1287,24 @@ class _VisibilityAwareVideoPlayerState
 class _VideoPlayerWidget extends StatefulWidget {
   final String nodeId; // 🎯 nodeId 추가 (metadata 접근용)
   final String url;
+  final String localPath; // 🎯 로컬 비디오 경로
   final String thumbnailPath;
   final bool shouldAutoPlay;
   final bool isEditing;
   final bool isDarkMode;
   final double horizontalPadding;
+  final bool isUploading; // 🎯 업로드 중 표시
 
   const _VideoPlayerWidget({
     required this.nodeId,
     required this.url,
+    this.localPath = '',
     required this.thumbnailPath,
     this.shouldAutoPlay = true,
     required this.isEditing,
     this.isDarkMode = false,
     required this.horizontalPadding,
+    this.isUploading = false,
   });
 
   @override
@@ -1411,10 +1322,17 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
   bool _isPreloaded = false; // 프리로드된 컨트롤러인지 여부
   bool _isDisposed = false; // 🎯 dispose 플래그
   final VideoMuteService _muteService = VideoMuteService();
+  double? _metadataAspectRatio; // metadata에서 가져온 비율 (캐싱)
 
   @override
   void initState() {
     super.initState();
+
+    // 🎯 메타데이터에서 aspectRatio 미리 로드 (SingleImageComponent와 동일)
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _loadMetadataAspectRatio();
+    });
+
     // 음소거 서비스 리스너 등록
     _muteService.addListener(_onMuteServiceChanged);
 
@@ -1435,6 +1353,8 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
             _isInitialized = true;
             _isReadyToPlay = true;
             _controller!.addListener(_onVideoStatusChanged);
+            // 🎯 초기 음소거 상태 동기화
+            _controller!.setVolume(_muteService.isReaderMuted ? 0.0 : 1.0);
             debugPrint('[ClipComponent] 캐시된 컨트롤러 재사용: ${widget.url}');
             if (mounted) {
               setState(() {});
@@ -1462,6 +1382,8 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
             _isInitialized = true;
             _isReadyToPlay = true;
             _controller!.addListener(_onVideoStatusChanged);
+            // 🎯 초기 음소거 상태 동기화
+            _controller!.setVolume(_muteService.isReaderMuted ? 0.0 : 1.0);
             debugPrint('[ClipComponent] reader 캐시된 컨트롤러 재사용: ${widget.url}');
             if (mounted) {
               setState(() {});
@@ -1577,6 +1499,8 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
               _isInitialized = true;
               _isReadyToPlay = true;
               _controller!.addListener(_onVideoStatusChanged);
+              // 🎯 초기 음소거 상태 동기화
+              _controller!.setVolume(_muteService.isReaderMuted ? 0.0 : 1.0);
               debugPrint(
                 '[ClipComponent] didUpdateWidget에서 캐시된 컨트롤러 재사용: ${widget.url}',
               );
@@ -1604,6 +1528,8 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
               _isInitialized = true;
               _isReadyToPlay = true;
               _controller!.addListener(_onVideoStatusChanged);
+              // 🎯 초기 음소거 상태 동기화
+              _controller!.setVolume(_muteService.isReaderMuted ? 0.0 : 1.0);
               debugPrint(
                 '[ClipComponent] didUpdateWidget에서 reader 캐시된 컨트롤러 재사용: ${widget.url}',
               );
@@ -1653,78 +1579,131 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
     }
 
     try {
-      debugPrint('[VideoPlayer] 초기화 시작: ${widget.url}');
-
-      // 🎯 모든 모드에서 직접 컨트롤러 생성 (VideoCacheService 사용 안 함)
-      final controller = VideoPlayerController.networkUrl(
-        Uri.parse(widget.url),
-        httpHeaders: {'Accept': 'video/*', 'Connection': 'keep-alive'},
-        videoPlayerOptions: VideoPlayerOptions(
-          mixWithOthers: false,
-          allowBackgroundPlayback: false,
-        ),
+      debugPrint(
+        '[VideoPlayer] 초기화 시작: URL=${widget.url}, Local=${widget.localPath}',
       );
-      _isPreloaded = false;
+
+      // 🎯 프리로드된 컨트롤러 확인 및 재사용
+      VideoPlayerController? controller;
+      bool isPreloaded = false;
+      final cacheKey =
+          widget.localPath.isNotEmpty ? widget.localPath : widget.url;
+
+      if (!widget.isEditing) {
+        // Reader 모드: readerVideoControllers에서 확인
+        controller = readerVideoControllers[cacheKey];
+        if (controller != null && controller.value.isInitialized) {
+          isPreloaded = true;
+          debugPrint('[ClipComponent] ✅ 프리로드된 컨트롤러 재사용: $cacheKey');
+        } else {
+          controller = null; // 무효한 컨트롤러는 무시
+        }
+      } else {
+        // Editor 모드: editorVideoControllers에서 확인
+        controller = editorVideoControllers[cacheKey];
+        if (controller != null && controller.value.isInitialized) {
+          isPreloaded = true;
+          debugPrint('[ClipComponent] ✅ 에디터 캐시 컨트롤러 재사용: $cacheKey');
+        } else {
+          controller = null;
+        }
+      }
+
+      // 프리로드된 컨트롤러가 없으면 새로 생성
+      if (controller == null) {
+        // 🎯 로컬 비디오 우선, 없으면 네트워크 URL 사용
+        if (widget.localPath.isNotEmpty) {
+          controller = VideoPlayerController.file(
+            File(widget.localPath),
+            videoPlayerOptions: VideoPlayerOptions(
+              mixWithOthers: false,
+              allowBackgroundPlayback: false,
+            ),
+          );
+          debugPrint('[ClipComponent] 🔄 새 로컬 컨트롤러 생성: ${widget.localPath}');
+        } else {
+          controller = VideoPlayerController.networkUrl(
+            Uri.parse(widget.url),
+            httpHeaders: {'Accept': 'video/*', 'Connection': 'keep-alive'},
+            videoPlayerOptions: VideoPlayerOptions(
+              mixWithOthers: false,
+              allowBackgroundPlayback: false,
+            ),
+          );
+          debugPrint('[ClipComponent] 🔄 새 네트워크 컨트롤러 생성: ${widget.url}');
+        }
+        isPreloaded = false;
+      }
+
+      _isPreloaded = isPreloaded;
 
       // 🎯 위젯이 dispose되었는지 다시 확인
       if (!mounted) {
         try {
           controller.dispose();
         } catch (_) {}
-        debugPrint(
-          '[ClipComponent] 초기화 취소: 컨트롤러 생성 후 dispose됨 - ${widget.url}',
-        );
+        debugPrint('[ClipComponent] 초기화 취소: 컨트롤러 생성 후 dispose됨 - $cacheKey');
         return;
       }
 
       _controller = controller;
 
-      // 직접 초기화
-      await _controller!.initialize();
+      // 🎯 프리로드된 컨트롤러가 아니면 초기화 필요
+      if (!isPreloaded) {
+        await _controller!.initialize();
 
-      // 🎯 초기화 완료 후에도 위젯이 살아있는지 확인
-      if (!mounted) {
-        try {
-          _controller!.dispose();
-        } catch (_) {}
-        _controller = null;
-        debugPrint('[ClipComponent] 초기화 취소: 초기화 완료 후 dispose됨 - ${widget.url}');
-        return;
+        // 🎯 초기화 완료 후에도 위젯이 살아있는지 확인
+        if (!mounted) {
+          try {
+            _controller!.dispose();
+          } catch (_) {}
+          _controller = null;
+          debugPrint('[ClipComponent] 초기화 취소: 초기화 완료 후 dispose됨 - $cacheKey');
+          return;
+        }
+      } else {
+        // 프리로드된 컨트롤러는 이미 초기화됨
+        debugPrint('[ClipComponent] ✅ 프리로드된 컨트롤러 - 초기화 스킵: $cacheKey');
       }
 
       _isInitialized = true;
-      debugPrint('[ClipComponent] 직접 생성 컨트롤러 사용: ${widget.url}');
 
       // 🎯 전역 맵에 컨트롤러 저장 (드래그앤드롭 시 재사용)
-      // 🎯 기존 컨트롤러가 있으면 dispose 후 교체
-      if (widget.isEditing) {
-        final existing = editorVideoControllers[widget.url];
-        if (existing != null && existing != _controller) {
-          try {
-            if (existing.value.isInitialized) {
-              existing.pause();
+      // 🎯 프리로드된 컨트롤러는 이미 맵에 있으므로 중복 저장 방지
+      if (!isPreloaded) {
+        if (widget.isEditing) {
+          // 기존 컨트롤러가 있으면 dispose 후 교체
+          final existing = editorVideoControllers[cacheKey];
+          if (existing != null && existing != _controller) {
+            try {
+              if (existing.value.isInitialized) {
+                existing.pause();
+              }
+              existing.dispose();
+            } catch (e) {
+              debugPrint('[ClipComponent] 기존 에디터 컨트롤러 정리 오류: $e');
             }
-            existing.dispose();
-          } catch (e) {
-            debugPrint('[ClipComponent] 기존 에디터 컨트롤러 정리 오류: $e');
           }
+          editorVideoControllers[cacheKey] = _controller!;
+          debugPrint('[ClipComponent] 에디터 컨트롤러 등록: $cacheKey');
+        } else {
+          // Reader 모드: 프리로드되지 않은 경우에만 저장
+          final existing = readerVideoControllers[cacheKey];
+          if (existing != null && existing != _controller) {
+            try {
+              if (existing.value.isInitialized) {
+                existing.pause();
+              }
+              existing.dispose();
+            } catch (e) {
+              debugPrint('[ClipComponent] 기존 reader 컨트롤러 정리 오류: $e');
+            }
+          }
+          readerVideoControllers[cacheKey] = _controller!;
+          debugPrint('[ClipComponent] reader 컨트롤러 등록: $cacheKey');
         }
-        editorVideoControllers[widget.url] = _controller!;
-        debugPrint('[ClipComponent] 에디터 컨트롤러 등록: ${widget.url}');
       } else {
-        final existing = readerVideoControllers[widget.url];
-        if (existing != null && existing != _controller) {
-          try {
-            if (existing.value.isInitialized) {
-              existing.pause();
-            }
-            existing.dispose();
-          } catch (e) {
-            debugPrint('[ClipComponent] 기존 reader 컨트롤러 정리 오류: $e');
-          }
-        }
-        readerVideoControllers[widget.url] = _controller!;
-        debugPrint('[ClipComponent] reader 컨트롤러 등록: ${widget.url}');
+        debugPrint('[ClipComponent] 프리로드된 컨트롤러 - 맵 저장 스킵: $cacheKey');
       }
 
       // 음소거 설정
@@ -1733,6 +1712,15 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
           await _controller!.setVolume(_muteService.isReaderMuted ? 0.0 : 1.0);
         } catch (e) {
           debugPrint('[ClipComponent] 볼륨 설정 오류: $e');
+        }
+      }
+
+      // 🎯 편집 모드에서 aspectRatio 메타데이터 저장 (SingleImageComponent와 동일)
+      if (widget.isEditing && _controller != null && !isPreloaded) {
+        final videoSize = _controller!.value.size;
+        if (videoSize.width > 0 && videoSize.height > 0) {
+          final aspectRatio = videoSize.width / videoSize.height;
+          _saveAspectRatioToMetadata(aspectRatio);
         }
       }
 
@@ -1745,15 +1733,19 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
         setState(() {
           _isInitialized = true;
         });
-        debugPrint('[ClipComponent] ✅ 초기화 완료: ${widget.url}');
+        debugPrint('[ClipComponent] ✅ 초기화 완료: $cacheKey');
       }
 
       // 🎯 썸네일이 캐시에 없으면 생성 (비동기로 실행하여 초기화 지연 방지)
-      if (mounted && !videoThumbnailCache.containsKey(widget.url)) {
-        _generateThumbnailForCache(widget.url);
+      // 로컬 비디오는 썸네일 생성 스킵 (이미 thumbnailPath가 있음)
+      if (mounted &&
+          widget.localPath.isEmpty &&
+          !videoThumbnailCache.containsKey(cacheKey)) {
+        _generateThumbnailForCache(cacheKey);
       }
 
-      // 🎯 초기화 완료 후 바로 재생 준비 완료로 설정 (VideoPlayerController가 초기화되면 첫 프레임 준비됨)
+      // 🎯 재생 준비 완료 설정
+      // 프리로드된 컨트롤러는 이미 준비되어 있으므로 즉시 설정
       if (mounted && _controller != null) {
         try {
           // 컨트롤러가 여전히 유효한지 확인
@@ -1761,6 +1753,15 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
           setState(() {
             _isReadyToPlay = true;
           });
+
+          if (isPreloaded) {
+            debugPrint(
+              '[ClipComponent] ✅ 프리로드된 컨트롤러 - 즉시 재생 준비 완료: ${widget.url}',
+            );
+          } else {
+            debugPrint('[ClipComponent] ✅ 새 컨트롤러 - 재생 준비 완료: ${widget.url}');
+          }
+
           // 🎯 뷰포트에 있으면 바로 재생
           if (widget.shouldAutoPlay) {
             _playVideo();
@@ -2026,6 +2027,76 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
     _controller!.pause();
   }
 
+  /// 🎯 metadata에서 비율 정보를 한 번만 가져오기 (캐싱)
+  void _loadMetadataAspectRatio() {
+    if (_metadataAspectRatio != null) return; // 이미 로드됨
+
+    try {
+      // ignore: invalid_use_of_visible_for_testing_member
+      final seState = context.findAncestorStateOfType<SuperEditorState>();
+      // ignore: invalid_use_of_visible_for_testing_member
+      final doc = seState?.editContext.editor.document;
+      final node = doc?.getNodeById(widget.nodeId);
+      if (node is ClipNode) {
+        final aspectRatioValue = node.metadata['aspectRatio'];
+        if (aspectRatioValue != null) {
+          _metadataAspectRatio =
+              (aspectRatioValue is num)
+                  ? aspectRatioValue.toDouble()
+                  : double.tryParse(aspectRatioValue.toString());
+          debugPrint(
+            '[ClipComponent] metadata에서 비율 가져옴: $_metadataAspectRatio',
+          );
+        }
+      }
+    } catch (e) {
+      debugPrint('[ClipComponent] metadata 비율 가져오기 실패: $e');
+    }
+  }
+
+  /// 🎯 측정된 aspectRatio를 메타데이터에 저장 (편집 모드 전용)
+  void _saveAspectRatioToMetadata(double aspectRatio) {
+    if (!widget.isEditing) return;
+
+    try {
+      // ignore: invalid_use_of_visible_for_testing_member
+      final seState = context.findAncestorStateOfType<SuperEditorState>();
+      // ignore: invalid_use_of_visible_for_testing_member
+      final doc = seState?.editContext.editor.document;
+      final node = doc?.getNodeById(widget.nodeId);
+
+      if (node is! ClipNode) return;
+
+      // 메타데이터에 aspectRatio 추가
+      final meta = Map<String, dynamic>.from(node.metadata);
+      meta['aspectRatio'] = aspectRatio;
+
+      // 노드 업데이트 (EditorService를 통해)
+      try {
+        final editorService = Provider.of<EditorService>(
+          context,
+          listen: false,
+        );
+        final updatedNode = ClipNode(
+          id: node.id,
+          label: node.label,
+          colorHex: node.colorHex,
+          url: node.url,
+          localPath: node.localPath,
+          thumbnailPath: node.thumbnailPath,
+          metadata: meta,
+        );
+        editorService.document.replaceNodeById(widget.nodeId, updatedNode);
+        _metadataAspectRatio = aspectRatio; // 캐싱
+        debugPrint('[ClipComponent] 💾 메타데이터에 aspectRatio 저장: $aspectRatio');
+      } catch (e) {
+        debugPrint('[ClipComponent] EditorService 접근 실패: $e');
+      }
+    } catch (e) {
+      debugPrint('[ClipComponent] 메타데이터 저장 실패: $e');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_hasError) {
@@ -2057,32 +2128,35 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
       );
     }
 
-    final screenWidth = MediaQuery.of(context).size.width;
+    // 🎯 키보드 버벅임 방지: MediaQuery.sizeOf 사용 (viewInsets 제외)
+    final screenWidth = MediaQuery.sizeOf(context).width;
     // horizontalPadding을 고려한 실제 비디오 너비
     final videoWidth = screenWidth - (widget.horizontalPadding * 2);
     final maxHeight = videoWidth * 1.5;
 
     // 🎯 초기화 전: 썸네일 또는 쉬머 표시
     if (!_isInitialized || _controller == null) {
-      // 🎯 metadata에서 비율 정보 가져오기 (플레이스홀더에서 실제 비디오로 전환 시 비율 일치)
+      // 🎯 편집 모드에서만 metadata 조회 (성능 최적화)
       double? metadataAspectRatio;
-      try {
-        // ignore: invalid_use_of_visible_for_testing_member
-        final seState = context.findAncestorStateOfType<SuperEditorState>();
-        // ignore: invalid_use_of_visible_for_testing_member
-        final doc = seState?.editContext.editor.document;
-        final node = doc?.getNodeById(widget.nodeId);
-        if (node is ClipNode) {
-          final aspectRatioValue = node.metadata['aspectRatio'];
-          if (aspectRatioValue != null) {
-            metadataAspectRatio =
-                (aspectRatioValue is num)
-                    ? aspectRatioValue.toDouble()
-                    : double.tryParse(aspectRatioValue.toString());
+      if (widget.isEditing) {
+        try {
+          // ignore: invalid_use_of_visible_for_testing_member
+          final seState = context.findAncestorStateOfType<SuperEditorState>();
+          // ignore: invalid_use_of_visible_for_testing_member
+          final doc = seState?.editContext.editor.document;
+          final node = doc?.getNodeById(widget.nodeId);
+          if (node is ClipNode) {
+            final aspectRatioValue = node.metadata['aspectRatio'];
+            if (aspectRatioValue != null) {
+              metadataAspectRatio =
+                  (aspectRatioValue is num)
+                      ? aspectRatioValue.toDouble()
+                      : double.tryParse(aspectRatioValue.toString());
+            }
           }
+        } catch (e) {
+          // 무시
         }
-      } catch (e) {
-        // 무시
       }
 
       final aspectRatio = metadataAspectRatio ?? (16 / 9);
@@ -2211,28 +2285,46 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
                 ),
               ),
             ),
-          // 음소거 버튼
-          Positioned(
-            bottom: 8,
-            right: 8,
-            child: GestureDetector(
-              onTap: toggleMute,
+          // 🎯 업로드 중 오버레이 (로딩 스피너)
+          if (widget.isUploading)
+            Positioned.fill(
               child: Container(
-                padding: EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: Colors.black.withOpacity(0.6),
-                  shape: BoxShape.circle,
-                ),
-                child: Icon(
-                  _muteService.isReaderMuted
-                      ? Icons.volume_off
-                      : Icons.volume_up,
-                  color: Colors.white,
-                  size: 16,
+                color: Colors.black.withOpacity(0.4),
+                child: Center(
+                  child: SizedBox(
+                    width: 28,
+                    height: 28,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 3,
+                      valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                    ),
+                  ),
                 ),
               ),
             ),
-          ),
+          // 음소거 버튼 (업로드 중이 아닐 때만 표시)
+          if (!widget.isUploading)
+            Positioned(
+              bottom: 8,
+              right: 8,
+              child: GestureDetector(
+                onTap: toggleMute,
+                child: Container(
+                  padding: EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withOpacity(0.6),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(
+                    _muteService.isReaderMuted
+                        ? Icons.volume_off
+                        : Icons.volume_up,
+                    color: Colors.white,
+                    size: 16,
+                  ),
+                ),
+              ),
+            ),
         ],
       ),
     );

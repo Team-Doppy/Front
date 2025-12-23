@@ -339,18 +339,7 @@ class _ImageRowComponentState extends State<ImageRowComponent>
   NodePosition? movePositionLeft(
     NodePosition currentPosition, [
     MovementModifier? movementModifier,
-  ]) {
-    // 현재 위치가 이미 downstream이면 null 반환 (삭제 허용)
-    if (currentPosition is UpstreamDownstreamNodePosition) {
-      final downstreamPos = const UpstreamDownstreamNodePosition.downstream();
-      if (currentPosition == downstreamPos) {
-        // 이미 downstream에 있으면 null 반환하여 삭제 허용
-        return null;
-      }
-    }
-    // 특수 노드 아래에서 백스페이스 시 특수 노드의 끝(downstream) 위치로 이동
-    return const UpstreamDownstreamNodePosition.downstream();
-  }
+  ]) => null;
 
   @override
   NodePosition? movePositionRight(
@@ -444,8 +433,12 @@ class _ImageRowComponentState extends State<ImageRowComponent>
   void initState() {
     super.initState();
 
-    // 🎯 metadata 의존 제거 - 항상 새로 측정
     debugPrint('[RowImage] 🔄 높이 측정 시작 (${widget.imageUrls.length}개 이미지)');
+
+    // 🎯 메타데이터에서 미리 크기 로드 (shimmer 최적화)
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _loadImageSizesFromMetadata();
+    });
 
     _controller = AnimationController.unbounded(vsync: this)
       ..repeat(min: 0, max: 1, period: const Duration(milliseconds: 900));
@@ -552,13 +545,20 @@ class _ImageRowComponentState extends State<ImageRowComponent>
     final isSelected = context.select<NodeComponentService, bool>(
       (service) => service.selectedImageId == widget.nodeId,
     );
-    // selection 핸들이 이 행 이미지 노드를 포함할 때만, 경계가 이 노드면 Downstream일 때 포함
+
+    // 🎯 편집 모드에서만 selection 체크 (성능 최적화)
+    DocumentSelection? composerSelection;
+    Document? doc;
     // ignore: invalid_use_of_visible_for_testing_member
-    final seState = context.findAncestorStateOfType<SuperEditorState>();
-    // ignore: invalid_use_of_visible_for_testing_member
-    final composerSelection = seState?.editContext.composer.selection;
-    // ignore: invalid_use_of_visible_for_testing_member
-    final doc = seState?.editContext.editor.document;
+    SuperEditorState? seState;
+    if (widget.isEditing) {
+      // ignore: invalid_use_of_visible_for_testing_member
+      seState = context.findAncestorStateOfType<SuperEditorState>();
+      // ignore: invalid_use_of_visible_for_testing_member
+      composerSelection = seState?.editContext.composer.selection;
+      // ignore: invalid_use_of_visible_for_testing_member
+      doc = seState?.editContext.editor.document;
+    }
 
     // 🎯 downstream 위치에 커서가 있을 때도 selection 효과 표시
     bool isDownstreamSelected = false;
@@ -1067,55 +1067,100 @@ class _ImageRowComponentState extends State<ImageRowComponent>
     );
   }
 
-  /// 🎯 메타데이터 우선 높이 계산 로직
-  /// - metadata의 imageDimensions에서 크기 우선 사용
-  /// - 없으면 실시간 측정 (하위 호환)
-  /// - 모든 이미지가 측정되면 평균 높이 계산
-  void _measureAndUnifyHeight(String imageUrl, double availableWidth) {
+  /// 🎯 메타데이터에서 이미지 크기 미리 로드 (shimmer 최적화)
+  /// initState에서 한 번만 호출되어 모든 이미지 크기를 일괄 로드
+  void _loadImageSizesFromMetadata() {
     if (!mounted) return;
 
-    // 🎯 이미 측정 중인 이미지면 스킵
-    if (_imageSizes.containsKey(imageUrl)) {
-      return;
+    final dimensions = _getImageDimensionsFromMetadata();
+    if (dimensions == null || dimensions.isEmpty) return;
+
+    int loadedCount = 0;
+    for (final imageUrl in widget.imageUrls) {
+      final size = _parseSizeFromDimensions(dimensions, imageUrl);
+      if (size != null) {
+        _imageSizes[imageUrl] = size;
+        loadedCount++;
+      }
     }
 
-    // 🎯 1단계: 메타데이터에서 크기 확인
-    // 🚀 캐싱된 EditorService 사용
+    if (loadedCount > 0) {
+      debugPrint(
+        '[RowImage] 💾 메타데이터에서 크기 로드: $loadedCount/${widget.imageUrls.length}개',
+      );
+
+      // 모든 이미지 크기가 로드되었으면 높이 계산
+      if (_imageSizes.length == widget.imageUrls.length) {
+        final screenWidth = MediaQuery.of(context).size.width;
+        _calculateUnifiedHeight(screenWidth);
+      }
+    }
+  }
+
+  /// 🎯 개별 이미지 높이 측정 (frameBuilder에서 호출)
+  /// 편집 모드에서만 메타데이터 없을 때 실시간 측정
+  /// 보기 모드에서는 메타데이터 필수 (재계산 안 함)
+  void _measureAndUnifyHeight(String imageUrl, double availableWidth) {
+    if (!mounted || _imageSizes.containsKey(imageUrl)) return;
+
+    // 🎯 편집 모드에서만 실시간 측정 (이미지 업로드 시)
+    // 보기 모드에서는 메타데이터가 반드시 있어야 하므로 재계산 안 함
+    if (widget.isEditing) {
+      _measureImageRealtime(imageUrl, availableWidth);
+    }
+  }
+
+  /// 🎯 메타데이터에서 imageDimensions 추출
+  /// 편집 모드: EditorService 사용
+  /// 보기 모드: SuperEditor document 직접 조회
+  Map<String, dynamic>? _getImageDimensionsFromMetadata() {
     try {
-      final editorService = _getEditorService();
-      if (editorService == null) {
-        _measureImageRealtime(imageUrl, availableWidth);
-        return;
+      Document? doc;
+
+      if (widget.isEditing) {
+        // 편집 모드: EditorService에서 document 가져오기
+        final editorService = _getEditorService();
+        if (editorService != null) {
+          doc = editorService.document;
+        }
+      } else {
+        // 보기 모드: SuperEditor에서 직접 document 가져오기
+        // ignore: invalid_use_of_visible_for_testing_member
+        final seState = context.findAncestorStateOfType<SuperEditorState>();
+        // ignore: invalid_use_of_visible_for_testing_member
+        doc = seState?.editContext.editor.document;
       }
 
-      final doc = editorService.document;
+      if (doc == null) return null;
+
       final node = doc.getNodeById(widget.nodeId);
-
       if (node is ImageRowNode) {
-        final dimensions =
-            node.metadata['imageDimensions'] as Map<String, dynamic>?;
-        if (dimensions != null && dimensions.containsKey(imageUrl)) {
-          final size = dimensions[imageUrl] as Map<String, dynamic>?;
-          if (size != null && size['width'] != null && size['height'] != null) {
-            final width = (size['width'] as num).toDouble();
-            final height = (size['height'] as num).toDouble();
-
-            _imageSizes[imageUrl] = Size(width, height);
-
-            // 🎯 모든 이미지가 준비되었는지 확인
-            if (_imageSizes.length == widget.imageUrls.length) {
-              _calculateUnifiedHeight(availableWidth);
-            }
-            return;
-          }
-        }
+        return node.metadata['imageDimensions'] as Map<String, dynamic>?;
       }
     } catch (e) {
-      debugPrint('[RowImage] ⚠️ 메타데이터 접근 실패: $e, 실시간 측정으로 전환');
+      debugPrint('[RowImage] ⚠️ 메타데이터 접근 실패: $e');
+    }
+    return null;
+  }
+
+  /// 🎯 dimensions에서 특정 URL의 Size 파싱 (중복 제거)
+  Size? _parseSizeFromDimensions(
+    Map<String, dynamic> dimensions,
+    String imageUrl,
+  ) {
+    if (!dimensions.containsKey(imageUrl)) return null;
+
+    final sizeData = dimensions[imageUrl] as Map<String, dynamic>?;
+    if (sizeData == null ||
+        sizeData['width'] == null ||
+        sizeData['height'] == null) {
+      return null;
     }
 
-    // 🎯 2단계: 메타데이터 없음 → 실시간 측정 (하위 호환)
-    _measureImageRealtime(imageUrl, availableWidth);
+    return Size(
+      (sizeData['width'] as num).toDouble(),
+      (sizeData['height'] as num).toDouble(),
+    );
   }
 
   /// 🎯 실시간 이미지 측정 (메타데이터가 없을 때)
@@ -1151,7 +1196,8 @@ class _ImageRowComponentState extends State<ImageRowComponent>
                 '[RowImage] 📊 진행: ${_imageSizes.length}/${widget.imageUrls.length}',
               );
 
-              // 🎯 에디터 모드에서만 메타데이터에 저장
+              // 🎯 편집 모드에서는 항상 메타데이터에 저장
+              // (신규 이미지 or 임시저장 복원 시 메타데이터 없는 경우)
               if (widget.isEditing) {
                 _saveImageSizeToMetadata(imageUrl, originalSize);
               }
@@ -1219,48 +1265,32 @@ class _ImageRowComponentState extends State<ImageRowComponent>
   }
 
   /// 🎯 통일된 높이 계산 (모든 이미지 측정 완료 후)
+  /// 최적화: 간단한 평균 계산으로 성능 개선
   void _calculateUnifiedHeight(double availableWidth) {
-    if (!mounted) return;
-
-    final count = widget.imageUrls.length;
-    if (count == 0) return;
+    if (!mounted || widget.imageUrls.isEmpty) return;
 
     // 각 이미지가 차지할 너비 계산
+    final count = widget.imageUrls.length;
     final spacingWidth = widget.spacing * (count - 1);
     final eachWidth = (availableWidth - spacingWidth) / count;
 
-    debugPrint('[RowImage] 🧮 높이 계산:');
-    debugPrint('[RowImage]   총 너비: ${availableWidth.toInt()}px');
-    debugPrint('[RowImage]   이미지당: ${eachWidth.toInt()}px');
-
     // 각 이미지의 원본 비율을 유지했을 때의 높이 계산
-    final heights = <double>[];
+    double totalHeight = 0;
+    int validCount = 0;
+
     for (final url in widget.imageUrls) {
       final size = _imageSizes[url];
       if (size != null && size.width > 0) {
         final aspectRatio = size.height / size.width;
-        final calculatedHeight = eachWidth * aspectRatio;
-        heights.add(calculatedHeight);
-        debugPrint('[RowImage]   → ${calculatedHeight.toInt()}px');
+        totalHeight += eachWidth * aspectRatio;
+        validCount++;
       }
     }
 
-    if (heights.isEmpty) {
-      debugPrint('[RowImage] ⚠️ 측정 가능한 이미지 없음');
-      return;
-    }
+    if (validCount == 0) return;
 
-    // 🎯 평균 계산 (상위/하위 20% 제외하여 극단값 배제)
-    heights.sort();
-    final start = (heights.length * 0.2).floor();
-    final end = (heights.length * 0.8).ceil();
-
-    final filtered =
-        heights.length > 2
-            ? heights.sublist(start, end)
-            : heights; // 2개 이하면 전체 사용
-
-    final avg = filtered.reduce((a, b) => a + b) / filtered.length;
+    // 🎯 간단한 평균 계산 (정렬/필터링 제거)
+    final avg = totalHeight / validCount;
 
     // 🎯 최소/최대 범위 제한 (150px ~ 400px)
     final unified = avg.clamp(150.0, 400.0);

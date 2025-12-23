@@ -7,6 +7,9 @@ import 'package:doppy/editor/service/node_component_service.dart';
 import 'package:doppy/editor/component/row_image_component.dart';
 import 'package:doppy/editor/component/clip_component.dart';
 import 'package:doppy/editor/component/link_component.dart';
+import 'package:doppy/editor/component/app_image_node.dart';
+import 'package:doppy/editor/component/divider_component.dart';
+import 'package:doppy/editor/component/pageview_image_component.dart';
 import 'package:doppy/editor/publish/post_exporter.dart';
 import 'package:doppy/utils/time_utils.dart';
 import 'package:super_editor/super_editor.dart';
@@ -341,15 +344,6 @@ class DraftService {
         }
       }
 
-      // 🚀 3. 특수 노드 레지스트리에 한 번에 등록 (중복 순회 방지)
-      if (specialNodes.isNotEmpty) {
-        // EditorService의 registerAllSpecialNodes 대신 직접 등록
-        // 단, EditorService의 내부 메서드를 직접 호출할 수 없으므로
-        // 여기서는 registerAllSpecialNodes를 호출하되, 이미 문서가 교체된 상태이므로
-        // 한 번만 순회하면 됨
-        editorService.registerAllSpecialNodes();
-      }
-
       // 🚀 4. 선택 상태 확인 (한 번만)
       editorService.editor.composer.clearSelection();
     } catch (e) {
@@ -366,29 +360,58 @@ class DraftService {
         node is HorizontalRuleNode;
   }
 
-  /// 노드 복사본 생성 (안전한 문서 교체를 위해)
+  /// 노드 복사본 생성 (EditorService의 copyNode와 동일한 로직)
+  /// ⚠️ EditorService.copyNode를 사용하는 것이 더 안전하지만,
+  /// 순환 참조 방지를 위해 여기서 직접 구현
   dynamic _copyNode(dynamic node) {
-    // SuperEditor의 노드 타입에 따라 복사
     if (node is ParagraphNode) {
+      // 🎯 AttributedText 전체 복사 (스타일 정보 유지: bold, italic, color 등)
+      final copiedMetadata = Map<String, dynamic>.from(node.metadata);
+      final isMention = copiedMetadata['mention'] == true;
+      final AttributedText attributed = node.text.copyText(0, node.text.length);
+
+      // 🎯 멘션 노드인데 볼드가 없으면 추가
+      if (isMention && node.text.text.isNotEmpty) {
+        final hasBold =
+            attributed
+                .getAttributionSpansInRange(
+                  attributionFilter: (attr) => attr == boldAttribution,
+                  range: SpanRange(0, node.text.text.length - 1),
+                )
+                .isNotEmpty;
+
+        if (!hasBold) {
+          attributed.addAttribution(
+            boldAttribution,
+            SpanRange(0, node.text.text.length - 1),
+          );
+        }
+      }
+
       return ParagraphNode(
         id: node.id,
-        text: AttributedText(node.text.text),
-        metadata: Map<String, dynamic>.from(node.metadata),
+        text: attributed,
+        metadata: copiedMetadata,
       );
-    } else if (node is ImageNode) {
-      return ImageNode(
+    }
+    if (node is ImageNode) {
+      // 🎯 AppImageNode로 변환 (EditorService와 동일)
+      return AppImageNode(
         id: node.id,
         imageUrl: node.imageUrl,
+        altText: node.altText,
         metadata: Map<String, dynamic>.from(node.metadata),
       );
-    } else if (node is ImageRowNode) {
+    }
+    if (node is ImageRowNode) {
       return ImageRowNode(
         id: node.id,
         imageUrls: List<String>.from(node.imageUrls),
         spacing: node.spacing,
         metadata: Map<String, dynamic>.from(node.metadata),
       );
-    } else if (node is ClipNode) {
+    }
+    if (node is ClipNode) {
       return ClipNode(
         id: node.id,
         url: node.url,
@@ -398,12 +421,24 @@ class DraftService {
         colorHex: node.colorHex,
         metadata: Map<String, dynamic>.from(node.metadata),
       );
-    } else if (node is LinkNode) {
+    }
+    if (node is LinkNode) {
       return LinkNode(
         id: node.id,
         url: node.url,
         title: node.title,
+        description: node.description,
         thumbnailUrl: node.thumbnailUrl,
+      );
+    }
+    if (node is DividerNode) {
+      return DividerNode(id: node.id);
+    }
+    if (node is PageViewImageNode) {
+      return PageViewImageNode(
+        id: node.id,
+        imageUrls: List<String>.from(node.imageUrls),
+        metadata: Map<String, dynamic>.from(node.metadata),
       );
     }
     // 알 수 없는 노드 타입은 그대로 반환 (fallback)

@@ -251,14 +251,30 @@ class _GridCategorySectionState extends State<GridCategorySection> {
                 final draggedId = draggedMeta.categoryId ?? '';
                 if (draggedId.isEmpty) return;
 
+                final originalIndex = prev.indexOf(draggedId);
+
                 final targetRaw =
                     (widget.categoryDropTargetIndex.value ??
                         currentSectionIndex);
+
                 final targetIdx = targetRaw.clamp(0, prev.length);
+
                 final next = List<String>.from(prev)..remove(draggedId);
-                // targetIdx가 범위를 넘으면 맨 끝에 추가
-                final insertIdx =
-                    targetIdx >= next.length ? next.length : targetIdx;
+
+                // 🎯 제거 후 타겟 인덱스 재조정 (원본이 앞에 있었으면 타겟 인덱스도 -1)
+                final adjustedTargetIdx =
+                    originalIndex != -1 && originalIndex < targetIdx
+                        ? targetIdx - 1
+                        : targetIdx;
+                final insertIdx = adjustedTargetIdx.clamp(0, next.length);
+
+                // 🎯 원래 위치와 최종 위치가 같으면 순서 변경 스킵
+                if (insertIdx == originalIndex) {
+                  (widget.categoryDropTargetIndex as ValueNotifier<int?>)
+                      .value = null;
+                  return;
+                }
+
                 next.insert(insertIdx, draggedId);
 
                 if (!listEquals(prev, next)) {
@@ -336,6 +352,8 @@ class _GridCategorySectionState extends State<GridCategorySection> {
                                               .read<BaseFeedProvider>()
                                               .isReadOnly;
                                       if (isReadOnly) return;
+
+                                      // 🎯 드래그 상태를 먼저 설정 (정렬 로직 차단용)
                                       (widget.isDraggingCategory
                                               as ValueNotifier<bool>)
                                           .value = true;
@@ -739,6 +757,7 @@ class _GridCategorySectionState extends State<GridCategorySection> {
                     );
                   },
           child: ImageView(
+            key: ValueKey('image-${post.id}'),
             post: post,
             isFirst: false,
             isLast: false,
@@ -883,6 +902,7 @@ class _GridCategorySectionState extends State<GridCategorySection> {
                       child: SizedBox(
                         width: cardWidth,
                         child: ImageView(
+                          key: ValueKey('image-${post.id}'),
                           post: post,
                           isFirst: false,
                           isLast: false,
@@ -895,6 +915,7 @@ class _GridCategorySectionState extends State<GridCategorySection> {
                 childWhenDragging: Opacity(
                   opacity: 0.3,
                   child: ImageView(
+                    key: ValueKey('image-${post.id}'),
                     post: post,
                     isFirst: false,
                     isLast: false,
@@ -904,6 +925,7 @@ class _GridCategorySectionState extends State<GridCategorySection> {
                 child: GestureDetector(
                   onTap: () => _openPost(context, post, index),
                   child: ImageView(
+                    key: ValueKey('image-${post.id}'),
                     post: post,
                     isFirst: false,
                     isLast: false,
