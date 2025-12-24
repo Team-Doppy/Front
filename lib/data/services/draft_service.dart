@@ -256,11 +256,11 @@ class DraftService {
       // 🎯 특수 노드 레지스트리 재등록 (문서 교체 후)
       editorService.registerAllSpecialNodes();
 
-      // 🎯 새 문서의 초기 상태를 히스토리에 저장 (임시저장 불러온 상태를 기준으로)
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        editorService.saveHistoryNow();
-        editorService.markSavedSnapshot();
-      });
+      // 🎯 새 문서의 초기 상태를 히스토리에 동기적으로 저장 (임시저장 불러온 상태를 기준으로)
+      // 🎯 비동기로 실행되면 불러온 직후 노드 삭제 시 히스토리가 제대로 저장되지 않음
+      // 🎯 동기적으로 저장하여 삭제 전에 초기 상태가 확실히 저장되도록 보장
+      editorService.saveInitialStateSync();
+      editorService.markSavedSnapshot();
 
       // 🚀 6. 스티커 복원
       postReaderService.restoreStickers(

@@ -115,6 +115,12 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
   // 🎯 제목 변경 감지용 (수정 완료 버튼에서 체크)
   String? _lastTitleText; // 마지막으로 서버에 저장한 제목
 
+  // 🎯 Frame-coalescing: 구조 변경 처리를 프레임당 1회로 제한
+  bool _structureChangeScheduled = false;
+
+  // 🎯 성능 최적화: keyboardVisibleNotifier를 한 번만 생성하고 값만 갱신
+  late final ValueNotifier<bool> _keyboardVisibleNotifier;
+
   @override
   void initState() {
     super.initState();
@@ -200,6 +206,9 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     // FocusNode 초기화
     _editorFocusNode = FocusNode(debugLabel: 'editor_focus');
 
+    // 🎯 keyboardVisibleNotifier 초기화 (한 번만 생성)
+    _keyboardVisibleNotifier = ValueNotifier<bool>(false);
+
     // 🎯 성능 최적화: 포커스 상태는 MediaQuery로 자동 감지되므로
     // 별도 리스너 없이 build에서 직접 읽어서 사용
     // (키보드 높이 변화는 AnimatedPadding이 자동 처리)
@@ -241,6 +250,9 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
 
     // 문서 변경 시 다음 버튼 상태 업데이트
     editorService.addListener(_onEditorServiceChange);
+
+    // 🎯 document listener 추가: 노드 구조 변경만 감지 (텍스트 입력은 skip)
+    document.addListener(_onDocumentStructureChanged);
 
     // 폰트 변경 감지
     textStylingService.addListener(_onEditorServiceChange);
@@ -312,7 +324,6 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
   bool _showAppBar = true;
   double _lastOffset = 0.0;
   bool _isScrollingUp = false;
-  bool _previousKeyboardVisible = false; // 🎯 키보드 상태 추적
 
   // 🎯 성능 최적화: 키보드 상태 감지는 MediaQuery 변화로 자동 처리됨
   // 이 메서드는 더 이상 사용하지 않음 (스크롤 기반 앱바 제어로 분리)
@@ -382,34 +393,48 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     _lastOffset = currentOffset;
   }
 
-  void _onEditorServiceChange() {
-    if (mounted) {
-      // 🎯 노드 추가/변경 시 캐시 무효화 (다음 프레임에 한 번만)
+  // 🎯 document 구조 변경 감지 (텍스트 입력은 skip)
+  void _onDocumentStructureChanged(DocumentChangeLog changeLog) {
+    if (!mounted) return;
+
+    final change = changeLog.changes[0];
+    // 🎯 노드 구조 변경 시에만 처리 (텍스트 입력은 skip)
+    if (change is NodeInsertedEvent ||
+        change is NodeRemovedEvent ||
+        change is NodeChangeEvent ||
+        change is NodeMovedEvent) {
+      // 🎯 Frame-coalescing: 이미 예약되어 있으면 스킵 (프레임당 1회만 처리)
+      if (_structureChangeScheduled) return;
+
+      _structureChangeScheduled = true;
+
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) {
-          dragService.invalidateNodeRectCache();
-          // 🎯 드래그 중이 아닐 때 선택 해제 확인 (드래그 종료 후 다른 로직에서 선택이 다시 설정되는 경우 방지)
-          // 🎯 텍스트 입력 중이 아닐 때만 선택 해제 (텍스트 입력 중에는 키보드 유지)
-          if (dragService.draggingNodeId == null) {
-            final keyboardVisible =
-                MediaQuery.of(context).viewInsets.bottom > 0;
-            final hasFocus = _editorFocusNode.hasFocus;
-            // 텍스트 입력 중이 아니면 선택 해제
-            // 🎯 하지만 포커스가 없고 키보드도 없을 때만 선택 해제 (텍스트 입력 중에는 키보드 유지)
-            if (!keyboardVisible && !hasFocus) {
-              final nodeService = context.read<NodeComponentService>();
-              // 🎯 이미지 분리/병합 후에는 명시적으로 모든 셀렉션 클리어
-              nodeService.clearSelection();
-              nodeService.clearHighlightedSelection();
-              // 🎯 composer.clearSelection()은 호출하지 않음 - 키보드가 내려갈 수 있음
-            }
+        _structureChangeScheduled = false;
+        if (!mounted) return;
+
+        dragService.invalidateNodeRectCache();
+        // 🎯 드래그 중이 아닐 때 선택 해제 확인
+        if (dragService.draggingNodeId == null) {
+          final keyboardVisible = MediaQuery.of(context).viewInsets.bottom > 0;
+          final hasFocus = _editorFocusNode.hasFocus;
+          // 텍스트 입력 중이 아니면 선택 해제
+          if (!keyboardVisible && !hasFocus) {
+            final nodeService = context.read<NodeComponentService>();
+            nodeService.clearSelection();
+            nodeService.clearHighlightedSelection();
           }
-          // 🎯 특수 노드 삭제/복원 시 앱바 표시 상태 재확인 (스크롤 불가 상태에서는 항상 표시)
-          _handleAppBarVisibility();
         }
+        // 🎯 특수 노드 삭제/복원 시 앱바 표시 상태 재확인
+        _handleAppBarVisibility();
       });
-      setState(() {});
     }
+  }
+
+  void _onEditorServiceChange() {
+    if (!mounted) return;
+    // 🎯 SuperEditor가 build에서 직접 생성되므로 언두/리두 후 자동 rebuild됨
+    // 명시적 레이아웃 무효화 불필요
+    setState(() {});
   }
 
   // 드래그 프리뷰 렌더링을 위한 리스너
@@ -766,7 +791,9 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     nodeComponentService.removeListener(_onNodeSelectionChanged);
     dragService.removeListener(_onDragging);
     scrollController.removeListener(_onScrollChanged);
+    document.removeListener(_onDocumentStructureChanged);
     _editorFocusNode.dispose();
+    _keyboardVisibleNotifier.dispose();
 
     // 🎯 카테고리 변경 시 피드 프로바이더 캐시 초기화 + 새로고침
     if (_categoryChanged) {
@@ -821,26 +848,24 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
   }
 
   @override
-  Widget build(BuildContext context) {
+  void didChangeDependencies() {
+    super.didChangeDependencies();
     // 🎯 EditorService에 context 설정 (노드 선택 해제용)
+    // didChangeDependencies에서 호출하여 build마다 호출되지 않도록 최적화
     editorService.setContext(context);
+  }
 
+  @override
+  Widget build(BuildContext context) {
     // 🎯 성능 최적화: 키보드 상태는 MediaQuery에서 직접 읽기 (변수 저장 제거)
     final isKeyboardVisible = MediaQuery.of(context).viewInsets.bottom > 0;
 
-    // 🎯 키보드가 내려가면 앱바 강제 표시
-    if (_previousKeyboardVisible && !isKeyboardVisible) {
-      // 키보드가 내려갔을 때
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted && !_showAppBar) {
-          setState(() {
-            _showAppBar = true;
-            _isScrollingUp = true;
-          });
-        }
-      });
+    // 🎯 keyboardVisibleNotifier 값 갱신 (매 build마다 생성하지 않고 값만 변경)
+    if (_keyboardVisibleNotifier.value != isKeyboardVisible) {
+      _keyboardVisibleNotifier.value = isKeyboardVisible;
     }
-    _previousKeyboardVisible = isKeyboardVisible;
+
+    // 🎯 키보드 이벤트로 setState 제거 (스크롤 기반으로만 앱바 제어)
 
     return WillPopScope(
       onWillPop: () async {
@@ -924,121 +949,117 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                             data: AppTheme.lightTheme,
                             child: Stack(
                               children: [
-                                Builder(
-                                  builder: (context) {
-                                    final screenWidth =
-                                        MediaQuery.of(
-                                          context,
-                                        ).size.width; // 🚀 최고 효율: 한 번만 계산
-                                    return RawScrollbar(
-                                      controller: scrollController,
-                                      thumbColor: Theme.of(
-                                        context,
-                                      ).colorScheme.onSurface.withOpacity(0.3),
-                                      thickness: 4,
-                                      radius: const Radius.circular(12),
-                                      child: Listener(
-                                        behavior: HitTestBehavior.translucent,
-                                        onPointerDown: (details) {
-                                          // 🎯 마지막 특수 노드 아래 빈 공간 클릭 감지
-                                          // Listener는 터치를 소비하지 않아 다른 위젯도 정상 작동
-                                          _handleTapBelowLastSpecialNode(
-                                            details.position,
-                                          );
-                                        },
-                                        child: SuperEditor(
-                                          gestureMode:
-                                              Platform.isIOS
-                                                  ? DocumentGestureMode.iOS
-                                                  : DocumentGestureMode.android,
-                                          editor: editor,
-                                          focusNode: _editorFocusNode,
-                                          stylesheet: _buildStylesheet(context),
-                                          selectionStyle: SelectionStyles(
-                                            selectionColor: AppColors.primary
-                                                .withValues(alpha: 0.3),
-                                            highlightEmptyTextBlocks: false,
+                                RawScrollbar(
+                                  controller: scrollController,
+                                  thumbColor: Theme.of(
+                                    context,
+                                  ).colorScheme.onSurface.withOpacity(0.3),
+                                  thickness: 4,
+                                  radius: const Radius.circular(12),
+                                  child: Listener(
+                                    behavior: HitTestBehavior.translucent,
+                                    onPointerDown: (details) {
+                                      // 🎯 마지막 특수 노드 아래 빈 공간 클릭 감지
+                                      // Listener는 터치를 소비하지 않아 다른 위젯도 정상 작동
+                                      _handleTapBelowLastSpecialNode(
+                                        details.position,
+                                      );
+                                    },
+                                    child: Builder(
+                                      builder: (context) {
+                                        final screenWidth =
+                                            MediaQuery.of(context).size.width;
+                                        return RepaintBoundary(
+                                          child: SuperEditor(
+                                            gestureMode:
+                                                Platform.isIOS
+                                                    ? DocumentGestureMode.iOS
+                                                    : DocumentGestureMode
+                                                        .android,
+                                            editor: editor,
+                                            focusNode: _editorFocusNode,
+                                            stylesheet: _buildStylesheet(
+                                              context,
+                                            ),
+                                            selectionStyle: SelectionStyles(
+                                              selectionColor: AppColors.primary
+                                                  .withValues(alpha: 0.3),
+                                              highlightEmptyTextBlocks: false,
+                                            ),
+                                            documentLayoutKey:
+                                                _documentLayoutKey,
+                                            scrollController: scrollController,
+                                            componentBuilders: [
+                                              // 타이틀 문단 전용 빌더(드래그 없음)
+                                              TitleParagraphComponentBuilder(
+                                                editorService: editorService,
+                                              ),
+                                              // 커스텀 이미지 컴포넌트들
+                                              SingleImageComponentBuilder(
+                                                screenWidth: screenWidth,
+                                                dragService: dragService,
+                                                isDarkMode:
+                                                    context
+                                                        .read<ThemeProvider>()
+                                                        .themeMode ==
+                                                    ThemeMode.dark,
+                                              ),
+                                              RowImageComponentBuilder(
+                                                screenWidth: screenWidth,
+                                                dragService: dragService,
+                                                isDarkMode:
+                                                    context
+                                                        .read<ThemeProvider>()
+                                                        .themeMode ==
+                                                    ThemeMode.dark,
+                                              ),
+                                              PageViewImageComponentBuilder(
+                                                screenWidth: screenWidth,
+                                                dragService: dragService,
+                                                isDarkMode:
+                                                    context
+                                                        .read<ThemeProvider>()
+                                                        .themeMode ==
+                                                    ThemeMode.dark,
+                                              ),
+                                              CustomParagraphComponentBuilder(
+                                                dragService: dragService,
+                                                editorService: editorService,
+                                              ),
+                                              // 구분선 전용 컴포넌트
+                                              DividerComponentBuilder(
+                                                dragService: dragService,
+                                              ),
+                                              LinkComponentBuilder(
+                                                dragService: dragService,
+                                                isDarkMode:
+                                                    context
+                                                        .read<ThemeProvider>()
+                                                        .themeMode ==
+                                                    ThemeMode.dark,
+                                              ),
+                                              ClipComponentBuilder(
+                                                dragService: dragService,
+                                                isEditing: true,
+                                                isDarkMode:
+                                                    context
+                                                        .read<ThemeProvider>()
+                                                        .themeMode ==
+                                                    ThemeMode.dark,
+                                              ),
+                                              // 기본 컴포넌트들 (Paragraph 제외)
+                                              ...defaultComponentBuilders.where(
+                                                (builder) =>
+                                                    builder.runtimeType
+                                                        .toString() !=
+                                                    'ParagraphComponentBuilder',
+                                              ),
+                                            ],
                                           ),
-                                          documentLayoutKey: _documentLayoutKey,
-                                          scrollController: scrollController,
-
-                                          componentBuilders: [
-                                            // 타이틀 문단 전용 빌더(드래그 없음)
-                                            TitleParagraphComponentBuilder(
-                                              editorService: editorService,
-                                            ),
-                                            // 커스텀 이미지 컴포넌트들
-                                            SingleImageComponentBuilder(
-                                              screenWidth:
-                                                  screenWidth, // 🚀 최고 효율: 전달
-                                              dragService: dragService,
-                                              isDarkMode:
-                                                  context
-                                                      .read<ThemeProvider>()
-                                                      .themeMode ==
-                                                  ThemeMode.dark,
-                                            ),
-                                            RowImageComponentBuilder(
-                                              screenWidth:
-                                                  screenWidth, // 🚀 최고 효율: 전달
-                                              dragService: dragService,
-                                              isDarkMode:
-                                                  context
-                                                      .read<ThemeProvider>()
-                                                      .themeMode ==
-                                                  ThemeMode.dark,
-                                            ),
-                                            PageViewImageComponentBuilder(
-                                              screenWidth:
-                                                  screenWidth, // 🚀 최고 효율: 전달
-                                              dragService: dragService,
-                                              isDarkMode:
-                                                  context
-                                                      .read<ThemeProvider>()
-                                                      .themeMode ==
-                                                  ThemeMode.dark,
-                                            ),
-                                            CustomParagraphComponentBuilder(
-                                              dragService: dragService,
-                                              editorService: editorService,
-                                            ),
-
-                                            // 구분선 전용 컴포넌트
-                                            DividerComponentBuilder(
-                                              dragService: dragService,
-                                            ),
-
-                                            LinkComponentBuilder(
-                                              dragService: dragService,
-                                              isDarkMode:
-                                                  context
-                                                      .read<ThemeProvider>()
-                                                      .themeMode ==
-                                                  ThemeMode.dark,
-                                            ),
-
-                                            ClipComponentBuilder(
-                                              dragService: dragService,
-                                              isEditing: true,
-                                              isDarkMode:
-                                                  context
-                                                      .read<ThemeProvider>()
-                                                      .themeMode ==
-                                                  ThemeMode.dark,
-                                            ),
-
-                                            // 기본 컴포넌트들 (Paragraph 제외)
-                                            ...defaultComponentBuilders.where(
-                                              (builder) =>
-                                                  builder.runtimeType
-                                                      .toString() !=
-                                                  'ParagraphComponentBuilder',
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                    );
-                                  },
+                                        );
+                                      },
+                                    ),
+                                  ),
                                 ),
                               ],
                             ),
@@ -1160,7 +1181,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
         // bottomNavigationBar 내부의 MediaQuery 접근 최소화
         bottomNavigationBar: _BottomBar(
           keyboardHeight: MediaQuery.of(context).viewInsets.bottom,
-          isKeyboardVisible: isKeyboardVisible,
+          keyboardVisibleNotifier: _keyboardVisibleNotifier,
           textStylingService: textStylingService,
           editorService: editorService,
           scrollController: scrollController,
@@ -1702,7 +1723,9 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                   );
 
                   if (success && mounted) {
-                    currentDraftId = draftId;
+                    setState(() {
+                      currentDraftId = draftId;
+                    });
 
                     // 🎯 불러온 상태를 저장 스냅샷으로 간주
                     editorService.markSavedSnapshot();
@@ -1712,20 +1735,8 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                     _editorFocusNode.unfocus();
                     FocusManager.instance.primaryFocus?.unfocus();
 
-                    // 🎯 레이아웃 재동기화를 위해 다음 프레임에 캐시 무효화
-                    WidgetsBinding.instance.addPostFrameCallback((_) {
-                      if (mounted) {
-                        // 🎯 캐시 무효화 및 셀렉션 재확인
-                        dragService.invalidateNodeRectCache();
-                        nodeComponentService.clearSelection();
-                        nodeComponentService.clearHighlightedSelection();
-                        composer.clearSelection();
-
-                        // 🎯 포커스 재확인 및 플래그 해제
-                        _editorFocusNode.unfocus();
-                        FocusManager.instance.primaryFocus?.unfocus();
-                      }
-                    });
+                    // 🎯 SuperEditor가 build에서 직접 생성되므로 setState로 자동 rebuild됨
+                    // 레이아웃 캐시 무효화는 불필요 (자동 재계산됨)
                   }
 
                   if (!success && mounted) {
@@ -1753,7 +1764,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
 /// 키보드 높이를 파라미터로 받아 MediaQuery 접근 최소화
 class _BottomBar extends StatelessWidget {
   final double keyboardHeight;
-  final bool isKeyboardVisible;
+  final ValueNotifier<bool> keyboardVisibleNotifier;
   final TextStylingService textStylingService;
   final EditorService editorService;
   final ScrollController scrollController;
@@ -1769,7 +1780,7 @@ class _BottomBar extends StatelessWidget {
 
   const _BottomBar({
     required this.keyboardHeight,
-    required this.isKeyboardVisible,
+    required this.keyboardVisibleNotifier,
     required this.textStylingService,
     required this.editorService,
     required this.scrollController,
@@ -1817,10 +1828,7 @@ class _BottomBar extends StatelessWidget {
                         onChangeAlignment: onChangeMediaAlignment,
                       );
                     }
-                    // 키보드 상태를 ValueNotifier로 변환
-                    final keyboardVisibleNotifier = ValueNotifier<bool>(
-                      isKeyboardVisible,
-                    );
+                    // 🎯 keyboardVisibleNotifier는 상위에서 생성되어 전달됨 (매 build마다 생성하지 않음)
                     return DefaultToolbar(
                       stylingService: textStylingService,
                       editorService: editorService,

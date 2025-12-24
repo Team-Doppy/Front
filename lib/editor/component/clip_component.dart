@@ -1050,21 +1050,10 @@ class _ClipComponentState extends State<_ClipComponent> with DocumentComponent {
               children: [
                 // 🎯 플레이스홀더 썸네일 배경 (비디오가 준비되기 전까지 표시)
                 Positioned.fill(
-                  child: ClipRRect(
-                    child: Image.file(
-                      File(widget.thumbnailPath),
-                      fit: BoxFit.cover,
-                      width: videoWidth,
-                      height: finalHeight,
-                      errorBuilder: (context, error, stackTrace) {
-                        // 🎯 썸네일 로딩 실패 시 쉬머 표시 (임시저장 불러올 때 에러 위젯 방지)
-                        return ShimmerBox(
-                          width: videoWidth,
-                          height: finalHeight,
-                          isDarkMode: widget.isDarkMode,
-                        );
-                      },
-                    ),
+                  child: _buildThumbnailOrShimmer(
+                    thumbnailPath: widget.thumbnailPath,
+                    width: videoWidth,
+                    height: finalHeight,
                   ),
                 ),
                 // 🎯 비디오 플레이어 (준비되면 썸네일 위에 표시)
@@ -1109,6 +1098,38 @@ class _ClipComponentState extends State<_ClipComponent> with DocumentComponent {
         width: videoWidth,
         height: finalHeight,
         isDarkMode: widget.isDarkMode,
+      ),
+    );
+  }
+
+  /// 🎯 썸네일 이미지 또는 쉬머 위젯 빌드 (에러 처리 포함)
+  Widget _buildThumbnailOrShimmer({
+    required String thumbnailPath,
+    required double width,
+    required double height,
+  }) {
+    if (thumbnailPath.isEmpty) {
+      return ShimmerBox(
+        width: width,
+        height: height,
+        isDarkMode: widget.isDarkMode,
+      );
+    }
+
+    return ClipRRect(
+      child: Image.file(
+        File(thumbnailPath),
+        fit: BoxFit.cover,
+        width: width,
+        height: height,
+        errorBuilder: (context, error, stackTrace) {
+          // 🎯 썸네일 로딩 실패 시 쉬머 표시 (임시저장 불러올 때 에러 위젯 방지)
+          return ShimmerBox(
+            width: width,
+            height: height,
+            isDarkMode: widget.isDarkMode,
+          );
+        },
       ),
     );
   }
@@ -1317,6 +1338,48 @@ class _VideoPlayerWidget extends StatefulWidget {
 }
 
 class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
+  // 🎯 비디오 높이 계산 헬퍼 메서드
+  double _calculateVideoHeight(
+    double aspectRatio,
+    double videoWidth,
+    double maxHeight,
+  ) {
+    final calculatedHeight = videoWidth / aspectRatio;
+    return calculatedHeight > maxHeight ? maxHeight : calculatedHeight;
+  }
+
+  /// 🎯 썸네일 이미지 또는 쉬머 위젯 빌드 (에러 처리 포함)
+  Widget _buildThumbnailOrShimmer({
+    required String thumbnailPath,
+    required double width,
+    required double height,
+  }) {
+    if (thumbnailPath.isEmpty) {
+      return ShimmerBox(
+        width: width,
+        height: height,
+        isDarkMode: widget.isDarkMode,
+      );
+    }
+
+    return ClipRRect(
+      child: Image.file(
+        File(thumbnailPath),
+        fit: BoxFit.cover,
+        width: width,
+        height: height,
+        errorBuilder: (context, error, stackTrace) {
+          // 🎯 썸네일 로딩 실패 시 쉬머 표시 (임시저장 불러올 때 에러 위젯 방지)
+          return ShimmerBox(
+            width: width,
+            height: height,
+            isDarkMode: widget.isDarkMode,
+          );
+        },
+      ),
+    );
+  }
+
   VideoPlayerController? _controller;
   bool _isInitialized = false;
   bool _isReadyToPlay = false; // 🎯 실제 재생 준비 완료 여부 (버퍼링 포함)
@@ -2165,40 +2228,26 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
       }
 
       final aspectRatio = metadataAspectRatio ?? (16 / 9);
-      final calculatedHeight = videoWidth / aspectRatio;
-      final finalHeight =
-          calculatedHeight > maxHeight ? maxHeight : calculatedHeight;
-
-      if (widget.thumbnailPath.isNotEmpty) {
-        return SizedBox(
-          width: videoWidth,
-          height: finalHeight,
-          child: ClipRRect(
-            child: Image.file(
-              File(widget.thumbnailPath),
-              fit: BoxFit.cover,
-              width: videoWidth,
-              height: finalHeight,
-              errorBuilder: (context, error, stackTrace) {
-                // 🎯 썸네일 로딩 실패 시 쉬머 표시 (임시저장 불러올 때 에러 위젯 방지)
-                return ShimmerBox(
-                  width: videoWidth,
-                  height: finalHeight,
-                  isDarkMode: widget.isDarkMode,
-                );
-              },
-            ),
-          ),
-        );
-      }
-
-      return ClipRRect(
-        child: ShimmerBox(
-          width: videoWidth,
-          height: finalHeight,
-          isDarkMode: widget.isDarkMode,
-        ),
+      final finalHeight = _calculateVideoHeight(
+        aspectRatio,
+        videoWidth,
+        maxHeight,
       );
+
+      // 🎯 썸네일 또는 쉬머 표시 (중복 코드 제거)
+      final thumbnailWidget = _buildThumbnailOrShimmer(
+        thumbnailPath: widget.thumbnailPath,
+        width: videoWidth,
+        height: finalHeight,
+      );
+
+      return widget.thumbnailPath.isNotEmpty
+          ? SizedBox(
+            width: videoWidth,
+            height: finalHeight,
+            child: ClipRRect(child: thumbnailWidget),
+          )
+          : ClipRRect(child: thumbnailWidget);
     }
 
     // 원본 비율 계산
@@ -2206,10 +2255,12 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
     final originalAspectRatio =
         videoSize.height > 0 ? videoSize.width / videoSize.height : 16 / 9;
 
-    // 원본 비율에서 계산한 높이
-    final calculatedHeight = videoWidth / originalAspectRatio;
-    final finalHeight =
-        calculatedHeight > maxHeight ? maxHeight : calculatedHeight;
+    // 원본 비율에서 계산한 높이 (중복 코드 제거)
+    final finalHeight = _calculateVideoHeight(
+      originalAspectRatio,
+      videoWidth,
+      maxHeight,
+    );
 
     // 🎯 썸네일을 배경으로 유지하여 검정 화면 방지
     return SizedBox(
@@ -2218,33 +2269,13 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
       child: Stack(
         children: [
           // 🎯 썸네일 배경 (항상 표시하여 검정 화면 방지)
-          if (widget.thumbnailPath.isNotEmpty)
-            Positioned.fill(
-              child: ClipRRect(
-                child: Image.file(
-                  File(widget.thumbnailPath),
-                  fit: BoxFit.cover,
-                  width: videoWidth,
-                  height: finalHeight,
-                  errorBuilder: (context, error, stackTrace) {
-                    // 🎯 썸네일 로딩 실패 시 쉬머 표시 (임시저장 불러올 때 에러 위젯 방지)
-                    return ShimmerBox(
-                      width: videoWidth,
-                      height: finalHeight,
-                      isDarkMode: widget.isDarkMode,
-                    );
-                  },
-                ),
-              ),
-            )
-          else
-            Positioned.fill(
-              child: ShimmerBox(
-                width: videoWidth,
-                height: finalHeight,
-                isDarkMode: widget.isDarkMode,
-              ),
+          Positioned.fill(
+            child: _buildThumbnailOrShimmer(
+              thumbnailPath: widget.thumbnailPath,
+              width: videoWidth,
+              height: finalHeight,
             ),
+          ),
           // 🎯 VideoPlayer 표시 (초기화 완료되면 항상 표시)
           ClipRRect(
             child: SizedBox(

@@ -123,6 +123,17 @@ class EditorService extends ChangeNotifier {
     debugPrint('[EditorService] 📸 초기 상태 저장 (nodes: ${snapshot.nodes.length})');
   }
 
+  // 🎯 빈 문단인지 확인 (중복 코드 제거)
+  bool _shouldSkipNode(DocumentNode node) {
+    if (node is ParagraphNode) {
+      final isTitle = node.metadata['isTitle'] == true;
+      final isEmpty = node.text.text.trim().isEmpty;
+      // 제목이 아니고 비어있으면 스킵
+      return !isTitle && isEmpty;
+    }
+    return false;
+  }
+
   // 🎯 모든 노드를 비동기로 deep copy (초기 상태 저장용, UI 블로킹 방지)
   Future<_DocumentSnapshot> _copyAllNodesAsync() async {
     final nodes = <String, DocumentNode>{};
@@ -130,32 +141,24 @@ class EditorService extends ChangeNotifier {
 
     for (int i = 0; i < document.nodeCount; i++) {
       final node = document.getNodeAt(i);
-      if (node != null) {
-        // 🎯 빈 문단은 저장하지 않음 (제목 제외)
-        if (node is ParagraphNode) {
-          final isTitle = node.metadata['isTitle'] == true;
-          final isEmpty = node.text.text.trim().isEmpty;
+      if (node == null) continue;
 
-          // 제목이 아니고 비어있으면 스킵
-          if (!isTitle && isEmpty) {
-            continue;
-          }
-        }
+      // 🎯 빈 문단은 저장하지 않음 (제목 제외) - 중복 코드 제거
+      if (_shouldSkipNode(node)) continue;
 
-        // 🎯 노드 복사 전 지연 (UI 업데이트 기회 제공)
-        await Future.delayed(const Duration(milliseconds: 50));
+      // 🎯 노드 복사 전 지연 (UI 업데이트 기회 제공)
+      await Future.delayed(const Duration(milliseconds: 50));
 
-        // 🎯 노드 복사를 microtask로 분산하여 UI 블로킹 방지
-        await Future.microtask(() {
-          nodes[node.id] = _copyNode(node);
-          order.add(node.id);
-        });
+      // 🎯 노드 복사를 microtask로 분산하여 UI 블로킹 방지
+      await Future.microtask(() {
+        nodes[node.id] = _copyNode(node);
+        order.add(node.id);
+      });
 
-        // 🎯 각 노드 복사 후 UI 업데이트 기회 제공 (Hang 방지)
-        // 더 긴 지연으로 UI 스레드에 충분한 시간 제공
-        if (i < document.nodeCount - 1) {
-          await Future.delayed(const Duration(milliseconds: 200));
-        }
+      // 🎯 각 노드 복사 후 UI 업데이트 기회 제공 (Hang 방지)
+      // 더 긴 지연으로 UI 스레드에 충분한 시간 제공
+      if (i < document.nodeCount - 1) {
+        await Future.delayed(const Duration(milliseconds: 200));
       }
     }
 
@@ -173,29 +176,21 @@ class EditorService extends ChangeNotifier {
 
     for (int i = 0; i < document.nodeCount; i++) {
       final node = document.getNodeAt(i);
-      if (node != null) {
-        // 🎯 빈 문단은 저장하지 않음 (제목 제외)
-        if (node is ParagraphNode) {
-          final isTitle = node.metadata['isTitle'] == true;
-          final isEmpty = node.text.text.trim().isEmpty;
+      if (node == null) continue;
 
-          // 제목이 아니고 비어있으면 스킵
-          if (!isTitle && isEmpty) {
-            continue;
-          }
-        }
+      // 🎯 빈 문단은 저장하지 않음 (제목 제외) - 중복 코드 제거
+      if (_shouldSkipNode(node)) continue;
 
-        // 🎯 노드 복사를 microtask로 분산하여 UI 블로킹 방지
-        await Future.microtask(() {
-          nodes[node.id] = _copyNode(node);
-          order.add(node.id);
-        });
+      // 🎯 노드 복사를 microtask로 분산하여 UI 블로킹 방지
+      await Future.microtask(() {
+        nodes[node.id] = _copyNode(node);
+        order.add(node.id);
+      });
 
-        // 🎯 각 노드 복사 후 짧은 지연 (UI 업데이트 기회 제공, Hang 방지)
-        // 20개마다만 지연하여 성능 최적화 (100 노드 시 20ms)
-        if (i < document.nodeCount - 1 && i % 20 == 0) {
-          await Future.delayed(const Duration(milliseconds: 1));
-        }
+      // 🎯 각 노드 복사 후 짧은 지연 (UI 업데이트 기회 제공, Hang 방지)
+      // 20개마다만 지연하여 성능 최적화 (100 노드 시 20ms)
+      if (i < document.nodeCount - 1 && i % 20 == 0) {
+        await Future.delayed(const Duration(milliseconds: 1));
       }
     }
 
@@ -217,21 +212,7 @@ class EditorService extends ChangeNotifier {
       // 🎯 비동기로 노드 복사 (UI 블로킹 방지)
       Future.microtask(() async {
         final snapshot = await _copyAllNodesAsyncFast();
-
-        _undoStack.add(snapshot);
-        _redoStack.clear();
-
-        // 최대 30개까지만 유지
-        if (_undoStack.length > 30) {
-          _undoStack.removeAt(0);
-        }
-
-        debugPrint(
-          '[EditorService] 📸 즉시 저장 (total: ${_undoStack.length}, nodes: ${snapshot.nodes.length})',
-        );
-
-        // 🎯 Undo/Redo 버튼 상태 업데이트
-        notifyListeners();
+        _addToHistoryStack(snapshot, '즉시 저장');
       });
     } else {
       // 디바운싱 (텍스트 입력)
@@ -245,20 +226,27 @@ class EditorService extends ChangeNotifier {
           return;
         }
 
-        _undoStack.add(snapshot);
-        _redoStack.clear();
-
-        // 최대 30개까지만 유지
-        if (_undoStack.length > 30) {
-          _undoStack.removeAt(0);
-        }
-
-        debugPrint('[EditorService] 📸 디바운싱 저장 (total: ${_undoStack.length})');
-
-        // 🎯 Undo/Redo 버튼 상태 업데이트
-        notifyListeners();
+        _addToHistoryStack(snapshot, '디바운싱 저장');
       });
     }
+  }
+
+  /// 🎯 히스토리 스택에 스냅샷 추가 (중복 코드 제거)
+  void _addToHistoryStack(_DocumentSnapshot snapshot, String logLabel) {
+    _undoStack.add(snapshot);
+    _redoStack.clear();
+
+    // 최대 30개까지만 유지
+    if (_undoStack.length > 30) {
+      _undoStack.removeAt(0);
+    }
+
+    debugPrint(
+      '[EditorService] 📸 $logLabel (total: ${_undoStack.length}, nodes: ${snapshot.nodes.length})',
+    );
+
+    // 🎯 Undo/Redo 버튼 상태 업데이트
+    notifyListeners();
   }
 
   // 🚀 스냅샷 비교 (해시 기반 O(1) 최적화)
@@ -319,21 +307,13 @@ class EditorService extends ChangeNotifier {
 
     for (int i = 0; i < document.nodeCount; i++) {
       final node = document.getNodeAt(i);
-      if (node != null) {
-        // 🎯 빈 문단은 저장하지 않음 (제목 제외)
-        if (node is ParagraphNode) {
-          final isTitle = node.metadata['isTitle'] == true;
-          final isEmpty = node.text.text.trim().isEmpty;
+      if (node == null) continue;
 
-          // 제목이 아니고 비어있으면 스킵
-          if (!isTitle && isEmpty) {
-            continue;
-          }
-        }
+      // 🎯 빈 문단은 저장하지 않음 (제목 제외) - 중복 코드 제거
+      if (_shouldSkipNode(node)) continue;
 
-        nodes[node.id] = _copyNode(node);
-        order.add(node.id);
-      }
+      nodes[node.id] = _copyNode(node);
+      order.add(node.id);
     }
 
     return _DocumentSnapshot(
@@ -509,80 +489,87 @@ class EditorService extends ChangeNotifier {
 
   // 🎯 Undo 실행
   void undo() {
-    // 🎯 이미 실행 중이면 무시 (연속 실행 방지)
-    if (_isExecutingHistory) {
-      debugPrint('[EditorService] ⚠️ Undo 실행 중 - 무시');
-      return;
-    }
+    _executeHistoryOperation(
+      canExecute: canUndo,
+      errorMessage: 'Undo 불가 (첫 상태)',
+      operation: () {
+        // 🎯 현재 상태를 redo 스택에 저장
+        final currentSnapshot = _undoStack.removeLast();
+        _redoStack.add(currentSnapshot);
 
-    if (!canUndo) {
-      debugPrint('[EditorService] ❌ Undo 불가 (첫 상태)');
-      return;
-    }
+        // 🎯 이전 상태로 복원
+        final previousSnapshot = _undoStack.last;
+        _restoreFromSnapshot(previousSnapshot);
 
-    try {
-      _isExecutingHistory = true;
-      _historyTimer?.cancel();
-
-      // 🎯 현재 상태를 redo 스택에 저장
-      final currentSnapshot = _undoStack.removeLast();
-      _redoStack.add(currentSnapshot);
-
-      // 🎯 이전 상태로 복원
-      final previousSnapshot = _undoStack.last;
-      _restoreFromSnapshot(previousSnapshot);
-
-      debugPrint('[EditorService] ⬅️ Undo 완료 (남은: ${_undoStack.length})');
-    } catch (e) {
-      debugPrint('[EditorService] Undo 실패: $e');
-      // 🎯 에러 발생 시 스택 복구 시도
-      if (_redoStack.isNotEmpty) {
-        try {
-          _undoStack.add(_redoStack.removeLast());
-        } catch (_) {}
-      }
-    } finally {
-      _isExecutingHistory = false;
-      notifyListeners();
-    }
+        debugPrint('[EditorService] ⬅️ Undo 완료 (남은: ${_undoStack.length})');
+      },
+      onError: () {
+        // 🎯 에러 발생 시 스택 복구 시도
+        if (_redoStack.isNotEmpty) {
+          try {
+            _undoStack.add(_redoStack.removeLast());
+          } catch (_) {}
+        }
+      },
+    );
   }
 
   // 🎯 Redo 실행
   void redo() {
+    _executeHistoryOperation(
+      canExecute: canRedo,
+      errorMessage: 'Redo 불가 (없음)',
+      operation: () {
+        // 🎯 Redo 스택에서 다음 상태 가져오기
+        final nextSnapshot = _redoStack.removeLast();
+        _undoStack.add(nextSnapshot);
+
+        // 🎯 다음 상태로 복원
+        _restoreFromSnapshot(nextSnapshot);
+
+        debugPrint(
+          '[EditorService] ➡️ Redo 완료 (남은 redo: ${_redoStack.length})',
+        );
+
+        // 🎯 레지스트리 정리 (삭제된 노드 제거)
+        _cleanupRegistry();
+      },
+      onError: () {
+        // 🎯 에러 발생 시 스택 복구 시도
+        if (_undoStack.length > 1) {
+          try {
+            _redoStack.add(_undoStack.removeLast());
+          } catch (_) {}
+        }
+      },
+    );
+  }
+
+  /// 🎯 히스토리 작업 실행 공통 로직 (undo/redo 중복 코드 제거)
+  void _executeHistoryOperation({
+    required bool canExecute,
+    required String errorMessage,
+    required VoidCallback operation,
+    VoidCallback? onError,
+  }) {
     // 🎯 이미 실행 중이면 무시 (연속 실행 방지)
     if (_isExecutingHistory) {
-      debugPrint('[EditorService] ⚠️ Redo 실행 중 - 무시');
+      debugPrint('[EditorService] ⚠️ 히스토리 실행 중 - 무시');
       return;
     }
 
-    if (!canRedo) {
-      debugPrint('[EditorService] ❌ Redo 불가 (없음)');
+    if (!canExecute) {
+      debugPrint('[EditorService] ❌ $errorMessage');
       return;
     }
 
     try {
       _isExecutingHistory = true;
       _historyTimer?.cancel();
-
-      // 🎯 Redo 스택에서 다음 상태 가져오기
-      final nextSnapshot = _redoStack.removeLast();
-      _undoStack.add(nextSnapshot);
-
-      // 🎯 다음 상태로 복원
-      _restoreFromSnapshot(nextSnapshot);
-
-      debugPrint('[EditorService] ➡️ Redo 완료 (남은 redo: ${_redoStack.length})');
-
-      // 🎯 레지스트리 정리 (삭제된 노드 제거)
-      _cleanupRegistry();
+      operation();
     } catch (e) {
-      debugPrint('[EditorService] Redo 실패: $e');
-      // 🎯 에러 발생 시 스택 복구 시도
-      if (_undoStack.length > 1) {
-        try {
-          _redoStack.add(_undoStack.removeLast());
-        } catch (_) {}
-      }
+      debugPrint('[EditorService] 히스토리 작업 실패: $e');
+      onError?.call();
     } finally {
       _isExecutingHistory = false;
       notifyListeners();
@@ -597,6 +584,17 @@ class EditorService extends ChangeNotifier {
     _initialStateSaved = false;
     debugPrint('[EditorService] 🗑️ 히스토리 클리어 완료');
     notifyListeners();
+  }
+
+  /// 🎯 초기 상태를 동기적으로 저장 (임시저장 불러올 때 사용)
+  /// 비동기로 실행되면 불러온 직후 노드 삭제 시 히스토리가 제대로 저장되지 않음
+  void saveInitialStateSync() {
+    if (_isExecutingHistory) return;
+
+    // 🎯 동기적으로 노드 복사 (임시저장 불러올 때는 즉시 저장 필요)
+    final snapshot = _copyAllNodes();
+    _addToHistoryStack(snapshot, '초기 상태 동기 저장 완료');
+    _initialStateSaved = true;
   }
 
   // 🎯 스냅샷으로 문서 복원
