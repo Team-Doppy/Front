@@ -561,13 +561,15 @@ class TextStylingService extends ChangeNotifier {
     };
   }
 
-  /// 텍스트 정렬 적용 (문서 전체 일괄 적용)
+  /// 텍스트 정렬 적용 (문서 전체 ParagraphNode에 적용)
+  /// 정렬은 문서 레이아웃 설정이므로 전체에 일괄 적용 (Google Docs / Notion 스타일)
   void applyTextAlignment(TextAlign alignment) {
-    _applyAlignmentToAllTextNodes(alignment);
+    applyGlobalTextAlignment(alignment);
   }
 
-  /// 모든 텍스트 노드에 정렬 적용 (이미지 제외)
-  void _applyAlignmentToAllTextNodes(TextAlign alignment) {
+  /// 문서 전체 ParagraphNode에 정렬 적용 (전역 정렬)
+  /// 정렬 버튼은 자주 누르지 않으므로 성능 문제 없음
+  void applyGlobalTextAlignment(TextAlign alignment) {
     final requests = <EditRequest>[];
 
     for (int i = 0; i < editor.document.nodeCount; i++) {
@@ -587,7 +589,6 @@ class TextStylingService extends ChangeNotifier {
           ),
         );
       }
-      // 🎯 ImageNode는 제외 (이미지는 정렬하지 않음)
     }
 
     if (requests.isNotEmpty) {
@@ -880,7 +881,7 @@ extension _TopExpandedRow on _DefaultToolbarState {
               isActive: _currentStyles['bold'] ?? false,
               onTap: () {
                 widget.stylingService.toggleBold();
-                _updateStyles();
+                _updateStyles(updateAlignment: false); // 🎯 스타일만 업데이트
               },
               size: 24,
             ),
@@ -891,7 +892,7 @@ extension _TopExpandedRow on _DefaultToolbarState {
               isActive: _currentStyles['italic'] ?? false,
               onTap: () {
                 widget.stylingService.toggleItalic();
-                _updateStyles();
+                _updateStyles(updateAlignment: false); // 🎯 스타일만 업데이트
               },
               size: 24,
             ),
@@ -902,7 +903,7 @@ extension _TopExpandedRow on _DefaultToolbarState {
               isActive: _currentStyles['underline'] ?? false,
               onTap: () {
                 widget.stylingService.toggleUnderline();
-                _updateStyles();
+                _updateStyles(updateAlignment: false); // 🎯 스타일만 업데이트
               },
               size: 24,
             ),
@@ -913,7 +914,7 @@ extension _TopExpandedRow on _DefaultToolbarState {
               isActive: _currentStyles['strikethrough'] ?? false,
               onTap: () {
                 widget.stylingService.toggleStrikethrough();
-                _updateStyles();
+                _updateStyles(updateAlignment: false); // 🎯 스타일만 업데이트
               },
               size: 24,
             ),
@@ -936,7 +937,7 @@ extension _TopExpandedRow on _DefaultToolbarState {
                   _hasTextSelection
                       ? () {
                         widget.stylingService.toggleSpoiler();
-                        _updateStyles();
+                        _updateStyles(updateAlignment: false); // 🎯 스타일만 업데이트
                       }
                       : () {},
               size: 28,
@@ -1045,7 +1046,9 @@ extension _TopExpandedRow on _DefaultToolbarState {
               onTap: () {
                 final offset = widget.scrollController?.offset;
                 widget.stylingService.applyTextAlignment(TextAlign.left);
-                _updateStyles();
+                _updateStyles(
+                  updateAlignment: true,
+                ); // 🎯 정렬 버튼 클릭 시에만 alignment 업데이트
                 if (offset != null) {
                   WidgetsBinding.instance.addPostFrameCallback((_) {
                     widget.scrollController?.jumpTo(offset);
@@ -1060,7 +1063,9 @@ extension _TopExpandedRow on _DefaultToolbarState {
               onTap: () {
                 final offset = widget.scrollController?.offset;
                 widget.stylingService.applyTextAlignment(TextAlign.center);
-                _updateStyles();
+                _updateStyles(
+                  updateAlignment: true,
+                ); // 🎯 정렬 버튼 클릭 시에만 alignment 업데이트
                 if (offset != null) {
                   WidgetsBinding.instance.addPostFrameCallback((_) {
                     widget.scrollController?.jumpTo(offset);
@@ -1075,7 +1080,9 @@ extension _TopExpandedRow on _DefaultToolbarState {
               onTap: () {
                 final offset = widget.scrollController?.offset;
                 widget.stylingService.applyTextAlignment(TextAlign.right);
-                _updateStyles();
+                _updateStyles(
+                  updateAlignment: true,
+                ); // 🎯 정렬 버튼 클릭 시에만 alignment 업데이트
                 if (offset != null) {
                   WidgetsBinding.instance.addPostFrameCallback((_) {
                     widget.scrollController?.jumpTo(offset);
@@ -1121,6 +1128,7 @@ class DefaultToolbar extends StatefulWidget {
   final VoidCallback? onShowDraftList;
   final bool isEditMode;
   final ValueNotifier<bool>? videoUploadIndicatorNotifier; // 영상 업로드 인디케이터 상태
+  final ValueNotifier<bool>? keyboardVisibleNotifier; // 🎯 키보드 상태 (외부에서 주입)
 
   const DefaultToolbar({
     super.key,
@@ -1133,6 +1141,7 @@ class DefaultToolbar extends StatefulWidget {
     this.onShowDraftList,
     this.isEditMode = false,
     this.videoUploadIndicatorNotifier,
+    this.keyboardVisibleNotifier, // 🎯 키보드 상태 주입
   });
 
   @override
@@ -1179,7 +1188,7 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
   @override
   void initState() {
     super.initState();
-    _updateStyles();
+    _updateStyles(updateAlignment: true); // 🎯 초기화 시에는 둘 다 업데이트
 
     // 선택 상태 변화 감지
     widget.stylingService.composer.selectionNotifier.addListener(
@@ -1200,6 +1209,12 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
   void _onSelectionChanged() {
     if (!mounted) return;
 
+    // 🎯 collapsed selection이면 스타일 재계산/디바운스 생략
+    final selection = widget.stylingService.composer.selection;
+    if (selection == null || selection.isCollapsed) {
+      return;
+    }
+
     // 🎯 Debounce: 50ms 후 실행 (드래그 중 과도한 호출 방지)
     _selectionDebounceTimer?.cancel();
     _selectionDebounceTimer = Timer(const Duration(milliseconds: 50), () {
@@ -1211,6 +1226,7 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
   void _onSelectionChangedDebounced() {
     final selection = widget.stylingService.composer.selection;
     final hasSelection = selection != null && !selection.isCollapsed;
+    final isCollapsed = selection == null || selection.isCollapsed;
 
     // 🎯 선택 상태 해시 생성 (변경 감지용)
     String? selectionHash;
@@ -1256,11 +1272,19 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
       });
     }
 
-    // 🎯 스타일 업데이트도 debounce
+    // 🎯 collapsed selection일 때는 스타일 재계산 스킵 (preferences 기반으로 충분)
+    if (isCollapsed) {
+      _stylesDebounceTimer?.cancel();
+      return;
+    }
+
+    // 🎯 스타일 업데이트도 debounce (alignment는 업데이트 안 함 - 키보드 변화 시 불필요한 문서 순회 방지)
     _stylesDebounceTimer?.cancel();
     _stylesDebounceTimer = Timer(const Duration(milliseconds: 100), () {
       if (mounted) {
-        _updateStyles();
+        _updateStyles(
+          updateAlignment: false,
+        ); // 🎯 selection 변경 시에는 styles만 업데이트
         // 🎯 색상/폰트 크기 캐시도 업데이트
         _cachedTextColor = null;
         _cachedFontSize = null;
@@ -1269,18 +1293,27 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
     });
   }
 
-  void _updateStyles() {
+  /// 🎯 스타일만 업데이트 (selection 변경 시 사용, alignment는 업데이트 안 함)
+  void _updateStyles({bool updateAlignment = false}) {
     if (!mounted) return;
 
     final newStyles = widget.stylingService.getCurrentStyles();
-    final newAlignment = widget.stylingService.getCurrentAlignment();
+
+    // 🎯 alignment는 정렬 버튼 클릭 시에만 업데이트 (키보드 변화 시 불필요한 문서 순회 방지)
+    TextAlign? newAlignment;
+    if (updateAlignment) {
+      newAlignment = widget.stylingService.getCurrentAlignment();
+    }
 
     // 🎯 캐시와 비교하여 실제 변경 여부 확인
     bool needsUpdate = false;
 
-    // 정렬 변경 확인
-    if (_cachedAlignment != newAlignment || _currentAlignment != newAlignment) {
-      needsUpdate = true;
+    // 정렬 변경 확인 (updateAlignment가 true일 때만)
+    if (updateAlignment && newAlignment != null) {
+      if (_cachedAlignment != newAlignment ||
+          _currentAlignment != newAlignment) {
+        needsUpdate = true;
+      }
     }
 
     // 스타일 변경 확인 (캐시 우선 비교)
@@ -1299,11 +1332,15 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
     if (needsUpdate) {
       // 🎯 캐시 업데이트
       _cachedStyles = Map<String, bool>.from(newStyles);
-      _cachedAlignment = newAlignment;
+      if (updateAlignment && newAlignment != null) {
+        _cachedAlignment = newAlignment;
+      }
 
       setState(() {
         _currentStyles = newStyles;
-        _currentAlignment = newAlignment;
+        if (updateAlignment && newAlignment != null) {
+          _currentAlignment = newAlignment;
+        }
       });
     }
   }
@@ -1502,7 +1539,9 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
             }
             final offset = widget.scrollController?.offset;
             widget.stylingService.applyTextAlignment(nextAlignment);
-            _updateStyles();
+            _updateStyles(
+              updateAlignment: true,
+            ); // 🎯 정렬 버튼 클릭 시에만 alignment 업데이트
             if (offset != null) {
               WidgetsBinding.instance.addPostFrameCallback((_) {
                 widget.scrollController?.jumpTo(offset);
@@ -1531,10 +1570,12 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
         const Expanded(child: SizedBox()),
 
         // 키보드 상태에 따라 변하는 부분만 별도 위젯으로 분리
+        // 🎯 키보드 상태를 외부에서 주입받아 MediaQuery 직접 읽기 방지
         _KeyboardDependentButtons(
           isEditMode: widget.isEditMode,
           onDismissKeyboard: widget.onDismissKeyboard,
           onShowDraftList: widget.onShowDraftList,
+          keyboardVisibleNotifier: widget.keyboardVisibleNotifier,
         ),
         // 더 이상 하단에서 펼치지 않음
       ],
@@ -2008,7 +2049,7 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
           setState(() {
             _textPanel = TextPanel.none; // 크기 선택 후 패널 닫기
           });
-          _updateStyles();
+          _updateStyles(updateAlignment: false); // 🎯 스타일만 업데이트
           if (offset != null) {
             WidgetsBinding.instance.addPostFrameCallback((_) {
               widget.scrollController?.jumpTo(offset);
@@ -2232,7 +2273,7 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
         if (startNode.id == endNode.id) {
           final startOffset = startPos.offset;
           final endOffset = endPos.offset;
-          for (int i = startOffset; i < endOffset; i++) {
+          for (final i in _sampleOffsets(startOffset, endOffset)) {
             final attributions = startNode.text.getAllAttributionsAt(i);
             for (final attribution in attributions) {
               if (attribution is ColorAttribution &&
@@ -2255,7 +2296,7 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
               final endOffset =
                   i == endIndex ? endPos.offset : node.text.text.length;
 
-              for (int j = startOffset; j < endOffset; j++) {
+              for (final j in _sampleOffsets(startOffset, endOffset)) {
                 final attributions = node.text.getAllAttributionsAt(j);
                 for (final attribution in attributions) {
                   if (attribution is ColorAttribution &&
@@ -2272,6 +2313,16 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
 
     _cachedTextColors = colors.toList();
     return _cachedTextColors!;
+  }
+
+  // 🎯 텍스트 속성 계산 시 전체 범위 순회 대신 대표 offset만 샘플링
+  List<int> _sampleOffsets(int start, int end) {
+    if (end <= start) return const [];
+    final mid = (start + end) >> 1;
+    final last = end - 1;
+    final candidates = <int>{start, mid, last};
+    candidates.removeWhere((o) => o < start || o >= end);
+    return candidates.toList();
   }
 
   /// 현재 형광펜 색상 가져오기
@@ -2345,7 +2396,7 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
             setState(() {
               _textPanel = TextPanel.none; // 색상 선택 후 패널 닫기
             });
-            _updateStyles();
+            _updateStyles(updateAlignment: false); // 🎯 스타일만 업데이트
           }),
         ],
 
@@ -2507,7 +2558,7 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
                             color,
                             selectionOverride: selectionSnapshot,
                           );
-                          _updateStyles();
+                          _updateStyles(updateAlignment: false); // 🎯 스타일만 업데이트
                           Navigator.pop(context);
                         },
                         child: Container(
@@ -2532,7 +2583,7 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
                         widget.stylingService._removeHighlightAttributions(
                           selectionOverride: selectionSnapshot,
                         );
-                        _updateStyles();
+                        _updateStyles(updateAlignment: false); // 🎯 스타일만 업데이트
                         Navigator.pop(context);
                       },
                       child: Container(
@@ -2570,24 +2621,52 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
 
 /// 키보드 상태에 따라서만 변경되는 버튼들을 별도 위젯으로 분리
 /// 이렇게 하면 키보드 상태 변경 시 이 위젯만 리빌드됨
-/// RepaintBoundary로 감싸져 있어서 rebuild 범위가 제한됨
+/// 🎯 키보드 상태를 외부에서 주입받아 MediaQuery 직접 읽기 방지 (캐싱된 위젯에서도 동작)
 class _KeyboardDependentButtons extends StatelessWidget {
   final bool isEditMode;
   final VoidCallback? onDismissKeyboard;
   final VoidCallback? onShowDraftList;
+  final ValueNotifier<bool>? keyboardVisibleNotifier; // 🎯 키보드 상태 (외부에서 주입)
 
   const _KeyboardDependentButtons({
     required this.isEditMode,
     this.onDismissKeyboard,
     this.onShowDraftList,
+    this.keyboardVisibleNotifier, // 🎯 키보드 상태 주입
   });
 
   @override
   Widget build(BuildContext context) {
-    // 🎯 MediaQuery 사용 (키보드 상태 변경 시에만 rebuild)
-    // RepaintBoundary로 감싸져 있어서 rebuild 범위가 제한됨
-    final isKeyboardVisible = MediaQuery.viewInsetsOf(context).bottom > 0;
+    // 🎯 키보드 상태를 ValueNotifier로 받아서 캐싱된 위젯에서도 동작
+    if (keyboardVisibleNotifier != null) {
+      return ValueListenableBuilder<bool>(
+        valueListenable: keyboardVisibleNotifier!,
+        builder: (context, isKeyboardVisible, _) {
+          return Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // 키보드가 올라와 있을 때만 키보드 내리기 버튼 표시
+              if (isKeyboardVisible)
+                Padding(
+                  padding: const EdgeInsets.only(right: 4),
+                  child: _buildMainIcon(
+                    context: context,
+                    icon: Icons.keyboard_arrow_down,
+                    isActive: false,
+                    size: 30,
+                    onTap: () {
+                      onDismissKeyboard?.call();
+                    },
+                  ),
+                ),
+            ],
+          );
+        },
+      );
+    }
 
+    // 🎯 fallback: keyboardVisibleNotifier가 없으면 MediaQuery 사용 (레거시 지원)
+    final isKeyboardVisible = MediaQuery.viewInsetsOf(context).bottom > 0;
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [

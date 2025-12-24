@@ -118,13 +118,7 @@ Stylesheet buildCustomStylesheet(
 
           // 메타데이터에서 폰트 정보 읽기
           final fontFamily = docNode.metadata['fontFamily'] as String?;
-
-          TextStyle bodyStyle = TextStyle(
-            fontSize: 16,
-            color: bodyColor,
-            height: 1.4, // 🎯 커서 중앙 정렬 (한글 폰트 최적화)
-            leadingDistribution: TextLeadingDistribution.even,
-          );
+          TextStyle bodyStyle = TextStyle(fontSize: 16, color: bodyColor);
 
           // 🎯 구글 폰트 적용 (메타데이터 기반)
           // 폰트가 이미 로드되었는지 확인하고, 로드되지 않았으면 기본 폰트 사용
@@ -239,7 +233,7 @@ Stylesheet buildCustomStylesheet(
         fontWeight: isBold ? FontWeight.bold : FontWeight.normal,
         fontStyle: isItalic ? FontStyle.italic : FontStyle.normal,
         decoration: _buildTextDecoration(hasUnderline, hasStrikethrough),
-        height: 1.4, // 🎯 커서 중앙 정렬 (한글 폰트 최적화)
+        //height: 1.4, // 🎯 커서 중앙 정렬 (한글 폰트 최적화)
         leadingDistribution: TextLeadingDistribution.even,
         // 형광펜은 별도 오버레이로 렌더링하므로 배경색은 사용하지 않음
       );

@@ -647,7 +647,8 @@ class _ClipComponentState extends State<_ClipComponent> with DocumentComponent {
               onLongPressStart:
                   widget.dragService != null
                       ? (details) {
-                        // 🎯 키보드 내리기 (viewInsets 사용 안 함)
+                        // 🎯 키보드 내리기 + 포커스 해제 (드래그 시작 시)
+                        FocusManager.instance.primaryFocus?.unfocus();
                         FocusScope.of(context).unfocus();
                         // 드래그 시작
                         widget.dragService?.startDrag(
@@ -1056,8 +1057,12 @@ class _ClipComponentState extends State<_ClipComponent> with DocumentComponent {
                       width: videoWidth,
                       height: finalHeight,
                       errorBuilder: (context, error, stackTrace) {
-                        // 파일 로드 실패 시 투명 컨테이너 반환 (비디오 플레이어가 바로 보임)
-                        return const SizedBox.expand();
+                        // 🎯 썸네일 로딩 실패 시 쉬머 표시 (임시저장 불러올 때 에러 위젯 방지)
+                        return ShimmerBox(
+                          width: videoWidth,
+                          height: finalHeight,
+                          isDarkMode: widget.isDarkMode,
+                        );
                       },
                     ),
                   ),
@@ -2174,6 +2179,14 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
               fit: BoxFit.cover,
               width: videoWidth,
               height: finalHeight,
+              errorBuilder: (context, error, stackTrace) {
+                // 🎯 썸네일 로딩 실패 시 쉬머 표시 (임시저장 불러올 때 에러 위젯 방지)
+                return ShimmerBox(
+                  width: videoWidth,
+                  height: finalHeight,
+                  isDarkMode: widget.isDarkMode,
+                );
+              },
             ),
           ),
         );
@@ -2213,6 +2226,14 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
                   fit: BoxFit.cover,
                   width: videoWidth,
                   height: finalHeight,
+                  errorBuilder: (context, error, stackTrace) {
+                    // 🎯 썸네일 로딩 실패 시 쉬머 표시 (임시저장 불러올 때 에러 위젯 방지)
+                    return ShimmerBox(
+                      width: videoWidth,
+                      height: finalHeight,
+                      isDarkMode: widget.isDarkMode,
+                    );
+                  },
                 ),
               ),
             )

@@ -420,8 +420,10 @@ class _PageViewImageComponentState extends State<PageViewImageComponent>
 
   @override
   Widget build(BuildContext context) {
-    final imageService = context.watch<NodeComponentService>();
-    final isSelected = imageService.selectedImageId == widget.nodeId;
+    // 🎯 성능 최적화: context.watch → context.select로 변경
+    final isSelected = context.select<NodeComponentService, bool>(
+      (service) => service.selectedImageId == widget.nodeId,
+    );
 
     // ignore: invalid_use_of_visible_for_testing_member
     final seState = context.findAncestorStateOfType<SuperEditorState>();
@@ -469,11 +471,13 @@ class _PageViewImageComponentState extends State<PageViewImageComponent>
     } catch (_) {}
 
     // 🎯 업로드 중 상태 확인 (편집 모드에서만, 읽기 전용 모드에서는 항상 false)
+    // 🎯 성능 최적화: context.watch → context.select로 변경
     bool isUploading = false;
     if (widget.isEditing) {
       try {
-        final uploadService = context.watch<UploadService>();
-        isUploading = uploadService.hasActiveUploadForRef(widget.nodeId);
+        isUploading = context.select<UploadService, bool>(
+          (service) => service.hasActiveUploadForRef(widget.nodeId),
+        );
       } catch (e) {
         debugPrint('[PageViewImage] UploadService 확인 실패: $e');
       }
@@ -500,317 +504,329 @@ class _PageViewImageComponentState extends State<PageViewImageComponent>
     }
     _wasSpoilerVisible = isSpoilerFlag;
 
-    return Column(
-      children: [
-        if (!hasImageAbove)
-          SizedBox(height: EditorConfig.specialNodePaddingWithText),
-        Stack(
-          children: [
-            GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTapDown:
-                  widget.isEditing && widget.dragService != null
-                      ? (details) {
-                        final isGapTap = _handleSpecialNodeTap(
-                          details.globalPosition,
-                        );
-                        setState(() {
-                          _isSpecialNodeGapTap = isGapTap;
-                        });
-                      }
-                      : null,
-              onTap:
-                  widget.isEditing && widget.dragService != null
-                      ? () {
-                        if (_isSpecialNodeGapTap) {
+    // 🎯 RepaintBoundary로 감싸서 키보드 애니메이션 시 불필요한 repaint 방지
+    return RepaintBoundary(
+      child: Column(
+        children: [
+          if (!hasImageAbove)
+            SizedBox(height: EditorConfig.specialNodePaddingWithText),
+          Stack(
+            children: [
+              GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTapDown:
+                    widget.isEditing && widget.dragService != null
+                        ? (details) {
+                          final isGapTap = _handleSpecialNodeTap(
+                            details.globalPosition,
+                          );
                           setState(() {
-                            _isSpecialNodeGapTap = false;
+                            _isSpecialNodeGapTap = isGapTap;
                           });
-                          return;
                         }
+                        : null,
+                onTap:
+                    widget.isEditing && widget.dragService != null
+                        ? () {
+                          if (_isSpecialNodeGapTap) {
+                            setState(() {
+                              _isSpecialNodeGapTap = false;
+                            });
+                            return;
+                          }
 
-                        final imageService =
-                            context.read<NodeComponentService>();
-                        final currentSelected = imageService.selectedImageId;
-                        if (currentSelected == widget.nodeId) {
-                          imageService.selectNode(null);
-                          widget.dragService?.invalidateNodeRectCache();
-                        } else {
-                          imageService.selectNode(widget.nodeId);
-                          WidgetsBinding.instance.addPostFrameCallback((_) {
-                            if (mounted) {
-                              widget.dragService?.invalidateNodeRectCache();
-                            }
-                          });
+                          final imageService =
+                              context.read<NodeComponentService>();
+                          final currentSelected = imageService.selectedImageId;
+                          if (currentSelected == widget.nodeId) {
+                            imageService.selectNode(null);
+                            widget.dragService?.invalidateNodeRectCache();
+                          } else {
+                            imageService.selectNode(widget.nodeId);
+                            WidgetsBinding.instance.addPostFrameCallback((_) {
+                              if (mounted) {
+                                widget.dragService?.invalidateNodeRectCache();
+                              }
+                            });
+                          }
                         }
-                      }
-                      : null,
-              onLongPressStart:
-                  widget.isEditing && widget.dragService != null
-                      ? (details) {
-                        final keyboardVisible =
-                            MediaQuery.of(context).viewInsets.bottom > 0;
-                        if (keyboardVisible) {
+                        : null,
+                onLongPressStart:
+                    widget.isEditing && widget.dragService != null
+                        ? (details) {
+                          // 🎯 키보드 내리기 + 포커스 해제 (드래그 시작 시)
+                          FocusManager.instance.primaryFocus?.unfocus();
                           FocusScope.of(context).unfocus();
+                          widget.dragService?.startDrag(
+                            widget.nodeId,
+                            context,
+                            details.globalPosition,
+                          );
                         }
-                        widget.dragService?.startDrag(
-                          widget.nodeId,
-                          context,
-                          details.globalPosition,
-                        );
-                      }
-                      : null,
-              onLongPressMoveUpdate:
-                  widget.isEditing && widget.dragService != null
-                      ? (details) {
-                        widget.dragService?.updateDrag(
-                          details.globalPosition,
-                          context,
-                        );
-                      }
-                      : null,
-              onLongPressEnd:
-                  widget.isEditing && widget.dragService != null
-                      ? (_) {
-                        widget.dragService?.endDrag();
-                      }
-                      : null,
-              child: Padding(
-                padding: const EdgeInsets.only(
-                  top: marginTop,
-                  bottom: marginBottom,
-                ),
-                child: Stack(
-                  children: [
-                    // 🎯 PageView로 이미지 표시 (0.8 fraction)
-                    SizedBox(
-                      height: 400, // 고정 높이
-                      child: PageView.builder(
-                        padEnds: false,
-                        controller: _pageController,
-                        itemCount: widget.imageUrls.length,
-                        onPageChanged: (index) {
-                          setState(() {
-                            _currentPage = index;
-                          });
-                        },
-                        itemBuilder: (context, index) {
-                          final imageUrl = widget.imageUrls[index];
+                        : null,
+                onLongPressMoveUpdate:
+                    widget.isEditing && widget.dragService != null
+                        ? (details) {
+                          widget.dragService?.updateDrag(
+                            details.globalPosition,
+                            context,
+                          );
+                        }
+                        : null,
+                onLongPressEnd:
+                    widget.isEditing && widget.dragService != null
+                        ? (_) {
+                          widget.dragService?.endDrag();
+                        }
+                        : null,
+                child: Padding(
+                  padding: const EdgeInsets.only(
+                    top: marginTop,
+                    bottom: marginBottom,
+                  ),
+                  child: Stack(
+                    children: [
+                      // 🎯 PageView로 이미지 표시 (0.8 fraction)
+                      SizedBox(
+                        height: 400, // 고정 높이
+                        child: PageView.builder(
+                          padEnds: false,
+                          controller: _pageController,
+                          itemCount: widget.imageUrls.length,
+                          onPageChanged: (index) {
+                            setState(() {
+                              _currentPage = index;
+                            });
+                          },
+                          itemBuilder: (context, index) {
+                            final imageUrl = widget.imageUrls[index];
 
-                          return Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 4),
-                            child: ClipRRect(
-                              borderRadius: BorderRadius.circular(8),
-                              child: Stack(
-                                children: [
-                                  ImageFiltered(
-                                    imageFilter:
-                                        isSpoilerFlag
-                                            ? ui.ImageFilter.blur(
-                                              sigmaX: 12,
-                                              sigmaY: 12,
-                                            )
-                                            : ui.ImageFilter.blur(
-                                              sigmaX: 0,
-                                              sigmaY: 0,
+                            return Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 4,
+                              ),
+                              child: ClipRRect(
+                                borderRadius: BorderRadius.circular(8),
+                                child: Stack(
+                                  children: [
+                                    ImageFiltered(
+                                      imageFilter:
+                                          isSpoilerFlag
+                                              ? ui.ImageFilter.blur(
+                                                sigmaX: 12,
+                                                sigmaY: 12,
+                                              )
+                                              : ui.ImageFilter.blur(
+                                                sigmaX: 0,
+                                                sigmaY: 0,
+                                              ),
+                                      child: _buildImageWidget(imageUrl),
+                                    ),
+                                    if (isSpoilerFlag)
+                                      Positioned.fill(
+                                        child: IgnorePointer(
+                                          child: Container(
+                                            color: Colors.black.withOpacity(
+                                              0.15,
                                             ),
-                                    child: _buildImageWidget(imageUrl),
-                                  ),
-                                  if (isSpoilerFlag)
-                                    Positioned.fill(
-                                      child: IgnorePointer(
-                                        child: Container(
-                                          color: Colors.black.withOpacity(0.15),
+                                          ),
                                         ),
                                       ),
-                                    ),
-                                ],
+                                  ],
+                                ),
                               ),
-                            ),
-                          );
-                        },
-                      ),
-                    ),
-
-                    // 🎯 하단 인디케이터 (1/6 형식)
-                    Positioned(
-                      bottom: 8,
-                      left: 0,
-                      right: 0,
-                      child: IgnorePointer(
-                        child: Center(
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 8,
-                              vertical: 4,
-                            ),
-                            decoration: BoxDecoration(
-                              color: Colors.black.withOpacity(0.6),
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            child: Text(
-                              '${_currentPage + 1}/${widget.imageUrls.length}',
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 12,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ),
+                            );
+                          },
                         ),
                       ),
-                    ),
 
-                    // 댓글 배지
-                    if (hasComments)
+                      // 🎯 하단 인디케이터 (1/6 형식)
                       Positioned(
-                        top: 4,
-                        right: 5,
-                        child: IgnorePointer(
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 6,
-                              vertical: 6,
-                            ),
-                            decoration: BoxDecoration(
-                              color: Theme.of(
-                                context,
-                              ).colorScheme.onSurface.withOpacity(1),
-                              borderRadius: BorderRadius.circular(20),
-                              border: Border.all(
-                                color: Theme.of(
-                                  context,
-                                ).colorScheme.surface.withOpacity(0.1),
-                                width: 1,
-                              ),
-                            ),
-                            child: SvgPicture.asset(
-                              'assets/icons/comment.svg',
-                              width: 12,
-                              height: 12,
-                              colorFilter: ColorFilter.mode(
-                                Theme.of(context).colorScheme.surface,
-                                BlendMode.srcIn,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-
-                    // 🎯 업로드 중 로딩 스피너
-                    if (isUploading)
-                      Positioned.fill(
+                        bottom: 8,
+                        left: 0,
+                        right: 0,
                         child: IgnorePointer(
                           child: Center(
-                            child: const SizedBox(
-                              width: 28,
-                              height: 28,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 4,
-                                color: Colors.white,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 4,
+                              ),
+                              decoration: BoxDecoration(
+                                color: Colors.black.withOpacity(0.6),
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: Text(
+                                '${_currentPage + 1}/${widget.imageUrls.length}',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                ),
                               ),
                             ),
                           ),
                         ),
                       ),
 
-                    if (isSelectionHighlighted)
-                      Positioned.fill(
-                        child: IgnorePointer(
-                          child: Container(
-                            color: AppColors.primary.withOpacity(0.4),
-                          ),
-                        ),
-                      ),
-
-                    // 스포일러 마스킹
-                    if (isSpoilerFlag || _scatterActive)
-                      Positioned.fill(
-                        child: IgnorePointer(
-                          child: AnimatedBuilder(
-                            animation:
-                                _scatterActive ? _scatterCtrl : _controller,
-                            builder: (context, _) {
-                              if (_scatterActive) {
-                                return CustomPaint(
-                                  painter: _PageViewImageSpoilerScatterPainter(
-                                    progress: _scatterCtrl.value,
-                                    backgroundColor: Colors.white,
-                                    dotColor: Colors.white,
-                                    isLightTheme:
-                                        Theme.of(context).brightness ==
-                                        Brightness.light,
-                                  ),
-                                );
-                              } else {
-                                return CustomPaint(
-                                  painter: _PageViewImageSpoilerPainter(
-                                    phase: _controller.value,
-                                    isEditing: widget.isEditing,
-                                    backgroundColor: Colors.transparent,
-                                    dotColor: Colors.white,
-                                    isLightTheme:
-                                        Theme.of(context).brightness ==
-                                        Brightness.light,
-                                  ),
-                                );
-                              }
-                            },
-                          ),
-                        ),
-                      ),
-
-                    // 선택 보더
-                    if (isSelected || isDownstreamSelected)
-                      Positioned.fill(
-                        child: IgnorePointer(
-                          child: Container(
-                            decoration: BoxDecoration(
-                              border: Border.all(
-                                color: AppColors.primary,
-                                width: 3,
+                      // 댓글 배지
+                      if (hasComments)
+                        Positioned(
+                          top: 4,
+                          right: 5,
+                          child: IgnorePointer(
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 6,
+                                vertical: 6,
+                              ),
+                              decoration: BoxDecoration(
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.onSurface.withOpacity(1),
+                                borderRadius: BorderRadius.circular(20),
+                                border: Border.all(
+                                  color: Theme.of(
+                                    context,
+                                  ).colorScheme.surface.withOpacity(0.1),
+                                  width: 1,
+                                ),
+                              ),
+                              child: SvgPicture.asset(
+                                'assets/icons/comment.svg',
+                                width: 12,
+                                height: 12,
+                                colorFilter: ColorFilter.mode(
+                                  Theme.of(context).colorScheme.surface,
+                                  BlendMode.srcIn,
+                                ),
                               ),
                             ),
                           ),
                         ),
-                      ),
-                  ],
-                ),
-              ),
-            ),
 
-            // 드래그 라인 오버레이
-            Positioned.fill(
-              child: AnimatedBuilder(
-                animation: widget.dragService,
-                builder: (context, _) {
-                  return Stack(
-                    children: [
-                      if (_shouldShowTopDropLine())
-                        Positioned(
-                          top: 0,
-                          left: 0,
-                          right: 0,
-                          child: Container(height: 5, color: AppColors.primary),
+                      // 🎯 업로드 중 로딩 스피너
+                      if (isUploading)
+                        Positioned.fill(
+                          child: IgnorePointer(
+                            child: Center(
+                              child: const SizedBox(
+                                width: 28,
+                                height: 28,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 4,
+                                  color: Colors.white,
+                                ),
+                              ),
+                            ),
+                          ),
                         ),
-                      if (_shouldShowBottomDropLine())
-                        Positioned(
-                          bottom: 0,
-                          left: 0,
-                          right: 0,
-                          child: Container(height: 5, color: AppColors.primary),
+
+                      if (isSelectionHighlighted)
+                        Positioned.fill(
+                          child: IgnorePointer(
+                            child: Container(
+                              color: AppColors.primary.withOpacity(0.4),
+                            ),
+                          ),
+                        ),
+
+                      // 스포일러 마스킹
+                      if (isSpoilerFlag || _scatterActive)
+                        Positioned.fill(
+                          child: IgnorePointer(
+                            child: AnimatedBuilder(
+                              animation:
+                                  _scatterActive ? _scatterCtrl : _controller,
+                              builder: (context, _) {
+                                if (_scatterActive) {
+                                  return CustomPaint(
+                                    painter:
+                                        _PageViewImageSpoilerScatterPainter(
+                                          progress: _scatterCtrl.value,
+                                          backgroundColor: Colors.white,
+                                          dotColor: Colors.white,
+                                          isLightTheme:
+                                              Theme.of(context).brightness ==
+                                              Brightness.light,
+                                        ),
+                                  );
+                                } else {
+                                  return CustomPaint(
+                                    painter: _PageViewImageSpoilerPainter(
+                                      phase: _controller.value,
+                                      isEditing: widget.isEditing,
+                                      backgroundColor: Colors.transparent,
+                                      dotColor: Colors.white,
+                                      isLightTheme:
+                                          Theme.of(context).brightness ==
+                                          Brightness.light,
+                                    ),
+                                  );
+                                }
+                              },
+                            ),
+                          ),
+                        ),
+
+                      // 선택 보더
+                      if (isSelected || isDownstreamSelected)
+                        Positioned.fill(
+                          child: IgnorePointer(
+                            child: Container(
+                              decoration: BoxDecoration(
+                                border: Border.all(
+                                  color: AppColors.primary,
+                                  width: 3,
+                                ),
+                              ),
+                            ),
+                          ),
                         ),
                     ],
-                  );
-                },
+                  ),
+                ),
               ),
-            ),
-          ],
-        ),
 
-        if (!hasImageBelow)
-          SizedBox(height: EditorConfig.specialNodePaddingWithText),
-      ],
+              // 드래그 라인 오버레이
+              Positioned.fill(
+                child: AnimatedBuilder(
+                  animation: widget.dragService,
+                  builder: (context, _) {
+                    return Stack(
+                      children: [
+                        if (_shouldShowTopDropLine())
+                          Positioned(
+                            top: 0,
+                            left: 0,
+                            right: 0,
+                            child: Container(
+                              height: 5,
+                              color: AppColors.primary,
+                            ),
+                          ),
+                        if (_shouldShowBottomDropLine())
+                          Positioned(
+                            bottom: 0,
+                            left: 0,
+                            right: 0,
+                            child: Container(
+                              height: 5,
+                              color: AppColors.primary,
+                            ),
+                          ),
+                      ],
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+
+          if (!hasImageBelow)
+            SizedBox(height: EditorConfig.specialNodePaddingWithText),
+        ],
+      ),
     );
   }
 

@@ -106,7 +106,7 @@ class DraftService {
         editorService: editorService,
         stickerService: stickerService,
         forPublishing: true, // 🚀 임시저장도 네트워크 이미지로 변환 (로드 속도 향상)
-        allowPartialUpload: false, // 🎯 임시저장도 모든 이미지 업로드 필수 (로컬 경로 방지)
+        allowPartialUpload: false, // 🎯 임시저장 시에는 네트워크 URL만 저장 (업로드 중이면 스킵)
       );
       final String v = visibility.toLowerCase();
       final bool privateOnly = v == 'private';
@@ -233,7 +233,13 @@ class DraftService {
       editorService.editor.composer.clearSelection();
       nodeComponentService?.clearSelection();
       nodeComponentService?.clearHighlightedSelection();
+
+      // 🎯 히스토리 초기화 (임시저장 불러오기 시 필수)
       editorService.clearHistory();
+
+      // 🎯 특수 노드 레지스트리 클리어 및 재등록 (임시저장 불러오기 시 필수)
+      // 🎯 문서 교체 후 registerAllSpecialNodes()로 레지스트리에 재등록됨
+
       if (dragService != null) {
         (dragService as dynamic).invalidateNodeRectCache();
       }
@@ -246,6 +252,15 @@ class DraftService {
 
       // 🚀 5. 문서 교체 (최적화: 특수 노드 등록 통합)
       await _replaceDocumentSafely(editorService, document);
+
+      // 🎯 특수 노드 레지스트리 재등록 (문서 교체 후)
+      editorService.registerAllSpecialNodes();
+
+      // 🎯 새 문서의 초기 상태를 히스토리에 저장 (임시저장 불러온 상태를 기준으로)
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        editorService.saveHistoryNow();
+        editorService.markSavedSnapshot();
+      });
 
       // 🚀 6. 스티커 복원
       postReaderService.restoreStickers(
@@ -310,12 +325,17 @@ class DraftService {
   }
 
   /// 안전한 문서 교체 (최적화: 불필요한 작업 제거)
+  /// 🎯 히스토리 저장 방지: 문서 교체 중에는 히스토리에 저장하지 않음
   Future<void> _replaceDocumentSafely(
     EditorService editorService,
     MutableDocument newDocument,
   ) async {
     try {
       final currentDoc = editorService.document;
+
+      // 🎯 문서 교체 중에는 EditorService의 _isExecutingHistory 플래그가
+      // 🎯 true로 설정되어 있어서 히스토리 저장이 자동으로 방지됨
+      // 🎯 리스너는 유지하되, 히스토리 저장만 스킵됨
 
       // 🚀 1. 현재 문서의 모든 노드를 삭제 (효율적으로)
       while (currentDoc.isNotEmpty) {
@@ -344,7 +364,7 @@ class DraftService {
         }
       }
 
-      // 🚀 4. 선택 상태 확인 (한 번만)
+      // 🚀 3. 선택 상태 확인 (한 번만)
       editorService.editor.composer.clearSelection();
     } catch (e) {
       debugPrint('[DraftService] Error replacing document: $e');

@@ -192,14 +192,14 @@ class MediaUploadHandler {
 
     await upload.uploadEditorImages(
       files: files,
-      onCreatePlaceholder: (localPath) {
+      onCreateNode: (localPath) {
         debugPrint(
-          '[MediaUploadHandler] 📝 onCreatePlaceholder: 기존 그룹 ID 재사용 $groupPlaceholderId',
+          '[MediaUploadHandler] 📝 onCreateNode: 기존 그룹 ID 재사용 $groupPlaceholderId',
         );
-        // 이미 생성된 그룹 플레이스홀더 ID 반환
+        // 이미 생성된 그룹 노드 ID 반환
         return groupPlaceholderId;
       },
-      onReplacePlaceholder: (placeholderId, url) async {
+      onUploadComplete: (nodeId, url) async {
         String? targetLocalPath;
         for (final path in localPaths) {
           if (!uploadedUrls.containsKey(path)) {
@@ -220,12 +220,12 @@ class MediaUploadHandler {
           );
         } else {
           debugPrint(
-            '[MediaUploadHandler] ⚠️ PageView URL 교체 실패: targetLocalPath를 찾을 수 없음 (placeholderId=$placeholderId)',
+            '[MediaUploadHandler] ⚠️ PageView URL 교체 실패: targetLocalPath를 찾을 수 없음 (nodeId=$nodeId)',
           );
         }
       },
-      onDeletePlaceholder: (placeholderId) {
-        debugPrint('[MediaUploadHandler] ❌ PageView 그룹 노드 삭제: $placeholderId');
+      onDeleteNode: (nodeId) {
+        debugPrint('[MediaUploadHandler] ❌ PageView 그룹 노드 삭제: $nodeId');
         final doc = editorService.document;
         if (doc.getNodeById(groupPlaceholderId) != null) {
           doc.deleteNode(groupPlaceholderId);
@@ -305,14 +305,14 @@ class MediaUploadHandler {
 
     await upload.uploadEditorImages(
       files: groupFiles,
-      onCreatePlaceholder: (localPath) {
+      onCreateNode: (localPath) {
         debugPrint(
-          '[MediaUploadHandler] 📝 onCreatePlaceholder: 기존 그룹 ID 재사용 $groupPlaceholderId',
+          '[MediaUploadHandler] 📝 onCreateNode: 기존 그룹 ID 재사용 $groupPlaceholderId',
         );
-        // 이미 생성된 그룹 플레이스홀더 ID 반환
+        // 이미 생성된 그룹 노드 ID 반환
         return groupPlaceholderId;
       },
-      onReplacePlaceholder: (placeholderId, url) async {
+      onUploadComplete: (nodeId, url) async {
         String? targetLocalPath;
         for (final path in localPaths) {
           if (!uploadedUrls.containsKey(path)) {
@@ -333,12 +333,12 @@ class MediaUploadHandler {
           );
         } else {
           debugPrint(
-            '[MediaUploadHandler] ⚠️ ImageRow URL 교체 실패: targetLocalPath를 찾을 수 없음 (placeholderId=$placeholderId)',
+            '[MediaUploadHandler] ⚠️ ImageRow URL 교체 실패: targetLocalPath를 찾을 수 없음 (nodeId=$nodeId)',
           );
         }
       },
-      onDeletePlaceholder: (placeholderId) {
-        debugPrint('[MediaUploadHandler] ❌ ImageRow 그룹 노드 삭제: $placeholderId');
+      onDeleteNode: (nodeId) {
+        debugPrint('[MediaUploadHandler] ❌ ImageRow 그룹 노드 삭제: $nodeId');
         final doc = editorService.document;
         if (doc.getNodeById(groupPlaceholderId) != null) {
           doc.deleteNode(groupPlaceholderId);
@@ -358,21 +358,21 @@ class MediaUploadHandler {
   Future<void> _uploadImages(List<File> files, UploadService upload) async {
     await upload.uploadEditorImages(
       files: files,
-      onCreatePlaceholder: (localPath) {
+      onCreateNode: (localPath) {
         return editorService.addImageNode(localPath);
       },
-      onReplacePlaceholder: (nodeId, url) async {
+      onUploadComplete: (nodeId, url) async {
         await editorService.replaceImageUrlByPath(
           nodeId: nodeId,
           localPath: files[0].path,
           url: url,
         );
       },
-      onDeletePlaceholder: (placeholderId) {
+      onDeleteNode: (nodeId) {
         // 🎯 일반 노드 삭제로 통합
         final doc = editorService.document;
-        if (doc.getNodeById(placeholderId) != null) {
-          doc.deleteNode(placeholderId);
+        if (doc.getNodeById(nodeId) != null) {
+          doc.deleteNode(nodeId);
         }
       },
       isMounted: () => context.mounted,
@@ -393,7 +393,7 @@ class MediaUploadHandler {
       file: file,
       editorId: editorId,
       initialThumbnailPath: thumbnailPath,
-      onCreatePlaceholder: (localPath, fileName, {thumbnailPath, aspectRatio}) {
+      onCreateNode: (localPath, fileName, {thumbnailPath, aspectRatio}) {
         return editorService.addVideoClipNode(
           localPath: localPath,
           label: fileName,
@@ -404,19 +404,25 @@ class MediaUploadHandler {
       onUpdateThumbnail: (nodeId, thumbnailPath) {
         editorService.updateVideoThumbnail(nodeId, thumbnailPath);
       },
-      onReplacePlaceholder: (nodeId, url, {fallbackLocalPath}) async {
+      onUploadComplete: (
+        nodeId,
+        url, {
+        fallbackLocalPath,
+        processedLocalPath,
+      }) async {
         await editorService.replaceVideoUrlByPath(
           nodeId: nodeId,
           url: url,
           fallbackLocalPath: fallbackLocalPath,
+          processedLocalPath: processedLocalPath, // 🎯 ffmpeg 처리된 경로 전달
         );
         onUploadComplete?.call();
         // 🎯 키보드 유지 (이미지와 동일하게)
       },
-      onDeletePlaceholder: (placeholderId) {
+      onDeleteNode: (nodeId) {
         final doc = editorService.document;
-        if (doc.getNodeById(placeholderId) != null) {
-          doc.deleteNode(placeholderId);
+        if (doc.getNodeById(nodeId) != null) {
+          doc.deleteNode(nodeId);
         }
       },
       isMounted: () => context.mounted,

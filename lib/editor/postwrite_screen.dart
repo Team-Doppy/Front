@@ -3,12 +3,13 @@ import 'dart:io';
 import 'package:uuid/uuid.dart';
 import 'package:doppy/editor/editor_appbar.dart';
 import 'package:doppy/editor/component/clip_component.dart'
-    show ClipComponentBuilder, cleanupAllVideoPlayers;
+    show ClipNode, ClipComponentBuilder, cleanupAllVideoPlayers;
 
 import 'package:doppy/editor/style/selected_toolbar.dart';
 import 'package:doppy/editor/utils/node_type_checker.dart';
 import 'package:doppy/utils/error_handler.dart';
 import 'package:doppy/editor/component/link_component.dart';
+import 'package:doppy/editor/component/app_image_node.dart';
 import 'package:doppy/editor/component/single_image_component.dart';
 import 'package:doppy/editor/component/row_image_component.dart';
 import 'package:doppy/editor/component/pageview_image_component.dart';
@@ -445,6 +446,36 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     if (mounted) Navigator.of(context).pop();
   }
 
+  // 제목 노드 업데이트 (썸네일 오버레이에서 제목 변경 시)
+  void _updateTitleNode(String newTitle) {
+    try {
+      // 첫 번째 노드가 제목 노드인지 확인
+      final firstNode = document.getNodeAt(0);
+      if (firstNode is! ParagraphNode ||
+          firstNode.metadata['isTitle'] != true) {
+        debugPrint('[PostwriteScreen] 제목 노드를 찾을 수 없습니다');
+        return;
+      }
+
+      // 새 제목 노드 생성
+      final newTitleNode = ParagraphNode(
+        id: firstNode.id,
+        text: AttributedText(newTitle),
+        metadata: firstNode.metadata,
+      );
+
+      // 노드 교체
+      document.replaceNodeById(firstNode.id, newTitleNode);
+
+      // UI 갱신
+      setState(() {});
+
+      debugPrint('[PostwriteScreen] 제목 노드 업데이트 완료: "$newTitle"');
+    } catch (e) {
+      debugPrint('[PostwriteScreen] 제목 노드 업데이트 실패: $e');
+    }
+  }
+
   // 서버에 적용된 제목을 원본 데이터에 반영 (변경 감지 시 사용)
   Map<String, dynamic> _updateOriginalWithServerTitle(
     Map<String, dynamic> original,
@@ -589,8 +620,16 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     // 변경사항이 없으면 스킵
     if (!editorService.shouldPromptSaveOnExit(context)) return;
 
-    // 🎯 업로드 중이면 자동 저장 스킵
+    // 🎯 업로드되지 않은 이미지가 있으면 스킵
     if (editorService.hasUnuploadedImages()) {
+      debugPrint('[PostwriteScreen] ⏭️ 업로드 미완료 이미지 존재 - 자동 저장 스킵');
+      return;
+    }
+
+    // 🎯 업로드 중이면 스킵 (모든 종류의 업로드 체크)
+    final uploadService = UploadService();
+    if (uploadService.hasActiveUploads()) {
+      debugPrint('[PostwriteScreen] ⏭️ 업로드 중 - 자동 저장 스킵');
       return;
     }
 
@@ -599,12 +638,17 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     });
 
     try {
-      // 🎯 제목 자동 추출 (없으면 본문에서 발췌)
-      String title = PostExporter.getTitleOrExtractFromBody(document);
+      // 🎯 제목 자동 추출
+      String title = PostExporter.getTitleFromDocument(document);
 
-      // 본문도 없으면 로케일 적용된 "제목 없음" 사용
+      // 제목이 없으면 본문에서 발췌
       if (title.trim().isEmpty) {
-        title = context.tr('no_title');
+        title = _extractTitleFromBody();
+
+        // 본문도 없으면 로케일 적용된 "제목 없음" 사용
+        if (title.trim().isEmpty) {
+          title = context.tr('no_title');
+        }
       }
 
       // 🎯 UUID 기반 draftId 사용 (제목 기반 제거)
@@ -627,7 +671,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
 
       // 썸네일은 항상 첫 번째 이미지를 자동으로 설정
       String thumbnailUrl = '';
-      final firstImageUrl = editorService.findFirstImageUrl();
+      final firstImageUrl = _findFirstImageUrl();
       if (firstImageUrl != null && firstImageUrl.isNotEmpty) {
         thumbnailUrl = firstImageUrl;
       }
@@ -660,6 +704,36 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
         });
       }
     }
+  }
+
+  /// 🎯 본문에서 제목 발췌 (최대 30자)
+  String _extractTitleFromBody() {
+    final buffer = StringBuffer();
+
+    // 제목 노드(0번)를 제외한 본문 노드들에서 텍스트 수집
+    for (int i = 1; i < document.length; i++) {
+      final node = document.getNodeAt(i);
+      if (node is ParagraphNode) {
+        final text = node.text.text.trim();
+        if (text.isNotEmpty) {
+          buffer.write(text);
+          buffer.write(' ');
+
+          // 30자 이상이면 중단
+          if (buffer.length >= 30) break;
+        }
+      }
+    }
+
+    final extracted = buffer.toString().trim();
+    if (extracted.isEmpty) return '';
+
+    // 최대 30자로 제한
+    if (extracted.length > 30) {
+      return extracted.substring(0, 30);
+    }
+
+    return extracted;
   }
 
   void dispose() {
@@ -980,9 +1054,12 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                   if (dragService.draggingNodeId != null && !isKeyboardVisible)
                     _buildDragOverlay(),
 
-                  // 스티커 캔버스 (최상위 레이어 - 터치 우선권)
+                  // 🎯 성능 최적화: 스티커 캔버스 RepaintBoundary로 분리
+                  // 키보드 토글과 무관한 repaint 차단
                   Positioned.fill(
-                    child: StickerCanvas(scrollController: scrollController),
+                    child: RepaintBoundary(
+                      child: StickerCanvas(scrollController: scrollController),
+                    ),
                   ),
 
                   // 저장 중 전체 화면 블록 오버레이
@@ -994,69 +1071,75 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                       ),
                     ),
 
-                  // 앱바
-                  AnimatedPositioned(
-                    duration: const Duration(milliseconds: 200),
-                    curve: Curves.easeInOut,
-                    top: _showAppBar ? -5 : -100,
-                    child:
-                        widget.isEditingMode
-                            ? EditModeAppBar(
-                              editorService: editorService,
-                              onSave: _saveEditedPost,
-                              currentVisibility: _editVisibility,
-                              currentGroupIds: _editGroupIds,
-                              postId: widget.postId,
-                              isSaving: _isSaving, // 저장 중 상태 전달
-                              isAutoSaving: _isAutoSaving, // 자동 저장 중 상태 전달
-                              videoUploadIndicatorNotifier:
-                                  _videoUploadIndicatorNotifier,
-                              onVisibilityChanged: (visibility, groupIds) {
-                                setState(() {
-                                  _editVisibility = visibility;
-                                  _editGroupIds = groupIds;
-                                });
-                                _shouldRefreshMyFeed = true;
-                                // 공개범위 변경 플래그만 설정 (dispose에서 새로고침)
-                              },
-                              onTitleSummaryChanged: (title, summary) {
-                                // 썸네일 오버레이에서 제목/요약이 변경되면 에디터 제목 노드 업데이트
-                                editorService.updateTitleNode(title);
-                                // 서버에 적용된 제목/요약 저장 (선택적 업데이트용)
-                                setState(() {
-                                  _serverAppliedTitle = title;
-                                  _serverAppliedSummary = summary;
-                                });
-                                debugPrint(
-                                  '[PostwriteScreen] 제목/요약 업데이트 및 서버 적용: title=$title, summary=$summary',
-                                );
-                                _shouldRefreshMyFeed = true;
-                              },
-                              onCategoryChanged: () {
-                                _categoryChanged = true;
-                                // 카테고리 변경 플래그 설정 (dispose에서 캐시 초기화 + 새로고침)
-                              },
-                              onThumbnailChanged: (url, id) {
-                                debugPrint(
-                                  '[PostwriteScreen] onThumbnailChanged 콜백 받음: url=$url, id=$id',
-                                );
-                                // 서버에 적용된 썸네일 URL 저장 (선택적 업데이트용)
-                                setState(() {
-                                  _serverAppliedThumbnailUrl = url;
-                                });
-                                _shouldRefreshMyFeed = true;
-                                // 썸네일 변경 플래그만 설정 (dispose에서 선택적 업데이트)
-                              },
-                            )
-                            : EditorAppBar(
-                              editorService: editorService,
-                              stickerService: stickerService,
-                              onSaveDraft: _saveDraft,
-                              onLoadDraft: _showDraftList,
-                              currentDraftId: currentDraftId,
-                              videoUploadIndicatorNotifier:
-                                  _videoUploadIndicatorNotifier,
-                            ),
+                  // 🎯 성능 최적화: AnimatedSlide로 레이아웃 계산 → transform 변경
+                  // paint만 발생하여 성능 향상
+                  Positioned(
+                    top: -5,
+                    left: 0,
+                    right: 0,
+                    child: AnimatedSlide(
+                      duration: const Duration(milliseconds: 200),
+                      curve: Curves.easeInOut,
+                      offset: _showAppBar ? Offset.zero : const Offset(0, -1),
+                      child:
+                          widget.isEditingMode
+                              ? EditModeAppBar(
+                                editorService: editorService,
+                                onSave: _saveEditedPost,
+                                currentVisibility: _editVisibility,
+                                currentGroupIds: _editGroupIds,
+                                postId: widget.postId,
+                                isSaving: _isSaving, // 저장 중 상태 전달
+                                isAutoSaving: _isAutoSaving, // 자동 저장 중 상태 전달
+                                videoUploadIndicatorNotifier:
+                                    _videoUploadIndicatorNotifier,
+                                onVisibilityChanged: (visibility, groupIds) {
+                                  setState(() {
+                                    _editVisibility = visibility;
+                                    _editGroupIds = groupIds;
+                                  });
+                                  _shouldRefreshMyFeed = true;
+                                  // 공개범위 변경 플래그만 설정 (dispose에서 새로고침)
+                                },
+                                onTitleSummaryChanged: (title, summary) {
+                                  // 썸네일 오버레이에서 제목/요약이 변경되면 에디터 제목 노드 업데이트
+                                  _updateTitleNode(title);
+                                  // 서버에 적용된 제목/요약 저장 (선택적 업데이트용)
+                                  setState(() {
+                                    _serverAppliedTitle = title;
+                                    _serverAppliedSummary = summary;
+                                  });
+                                  debugPrint(
+                                    '[PostwriteScreen] 제목/요약 업데이트 및 서버 적용: title=$title, summary=$summary',
+                                  );
+                                  _shouldRefreshMyFeed = true;
+                                },
+                                onCategoryChanged: () {
+                                  _categoryChanged = true;
+                                  // 카테고리 변경 플래그 설정 (dispose에서 캐시 초기화 + 새로고침)
+                                },
+                                onThumbnailChanged: (url, id) {
+                                  debugPrint(
+                                    '[PostwriteScreen] onThumbnailChanged 콜백 받음: url=$url, id=$id',
+                                  );
+                                  // 서버에 적용된 썸네일 URL 저장 (선택적 업데이트용)
+                                  setState(() {
+                                    _serverAppliedThumbnailUrl = url;
+                                  });
+                                  _shouldRefreshMyFeed = true;
+                                  // 썸네일 변경 플래그만 설정 (dispose에서 선택적 업데이트)
+                                },
+                              )
+                              : EditorAppBar(
+                                editorService: editorService,
+                                stickerService: stickerService,
+                                onSaveDraft: _saveDraft,
+                                onLoadDraft: _showDraftList,
+                                currentDraftId: currentDraftId,
+                                videoUploadIndicatorNotifier:
+                                    _videoUploadIndicatorNotifier,
+                              ),
+                    ),
                   ),
 
                   // 툴바 위 패딩
@@ -1073,42 +1156,32 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
           ],
         ),
 
-        bottomNavigationBar: Consumer<StickerService>(
-          builder: (context, stickerService, child) {
-            return ValueListenableBuilder<bool>(
-              valueListenable: stickerService.isDraggingNotifier,
-              builder: (context, isDragging, child) {
-                // 스티커 드래그 중이면 툴바 숨김
-                if (isDragging) {
-                  return const SizedBox.shrink();
-                }
-
-                // 🎯 성능 최적화: AnimatedPadding으로 고정 duration 애니메이션
-                // MediaQuery 변화가 20번 발생해도 Flutter는 1번만 애니메이션
-                final keyboardHeight = MediaQuery.of(context).viewInsets.bottom;
-                final bottomPadding =
-                    keyboardHeight <= 30 ? 20.0 : keyboardHeight;
-
-                final theme = Theme.of(context);
-
-                return Container(
-                  color: theme.colorScheme.background,
-                  child: AnimatedPadding(
-                    duration: const Duration(milliseconds: 20),
-                    curve: Curves.easeOut,
-                    padding: EdgeInsets.only(bottom: bottomPadding),
-                    child: Consumer<NodeComponentService>(
-                      builder: (context, nodeService, child) {
-                        return nodeService.selectedNodeId != null
-                            ? _buildSelectedToolbar()
-                            : _buildDefaultToolbar();
-                      },
-                    ),
-                  ),
-                );
-              },
+        // 🎯 성능 최적화: 키보드 높이를 상위에서 한 번만 계산하여 전달
+        // bottomNavigationBar 내부의 MediaQuery 접근 최소화
+        bottomNavigationBar: _BottomBar(
+          keyboardHeight: MediaQuery.of(context).viewInsets.bottom,
+          isKeyboardVisible: isKeyboardVisible,
+          textStylingService: textStylingService,
+          editorService: editorService,
+          scrollController: scrollController,
+          onDismissKeyboard: () {
+            _editorFocusNode.unfocus();
+          },
+          onShowDraftList: _showDraftList,
+          videoUploadIndicatorNotifier: _videoUploadIndicatorNotifier,
+          nodeComponentService: nodeComponentService,
+          document: document,
+          onEditImage: (selectedId, node) {
+            nodeComponentService.editImage(
+              context: context,
+              imageId: selectedId,
+              node: node as ImageNode,
+              editorService: editorService,
+              document: document,
             );
           },
+          onDeleteNode: _deleteNode,
+          onChangeMediaAlignment: _changeMediaAlignment,
         ),
       ),
     );
@@ -1152,41 +1225,121 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     );
   }
 
-  Widget _buildDefaultToolbar() {
-    return DefaultToolbar(
-      stylingService: textStylingService,
-      editorService: editorService,
-      scrollController: scrollController,
-      onDismissKeyboard: () {
-        _editorFocusNode.unfocus();
-      },
-      onShowDraftList: _showDraftList,
-      videoUploadIndicatorNotifier: _videoUploadIndicatorNotifier,
-    );
+  /// 미디어(이미지/영상) 정렬 변경
+  Future<void> _changeMediaAlignment(
+    DocumentNode node,
+    String selectedId,
+  ) async {
+    // 메타데이터에서 현재 패딩 정보 가져오기 (기본값: 'center' = 패딩 있음)
+    final currentPadding = node.metadata['padding'] as String? ?? 'center';
+
+    // 다음 패딩 모드로 전환
+    final nextPadding = _getNextPaddingMode(currentPadding);
+
+    // 메타데이터 업데이트
+    final updatedMetadata = Map<String, dynamic>.from(node.metadata);
+    updatedMetadata['padding'] = nextPadding;
+
+    DocumentNode newNode;
+
+    if (node is ImageNode) {
+      newNode = AppImageNode(
+        id: node.id,
+        imageUrl: node.imageUrl,
+        altText: node.altText,
+        metadata: updatedMetadata,
+      );
+    } else if (node is ClipNode) {
+      newNode = ClipNode(
+        id: node.id,
+        label: node.label,
+        colorHex: node.colorHex,
+        url: node.url,
+        localPath: node.localPath,
+        thumbnailPath: node.thumbnailPath,
+        metadata: updatedMetadata,
+      );
+    } else {
+      return; // 지원하지 않는 노드 타입
+    }
+
+    // editor.execute를 사용하여 노드 교체
+    editor.execute([
+      ReplaceNodeRequest(existingNodeId: selectedId, newNode: newNode),
+    ]);
+
+    // 확장/축소 후 자동으로 선택 해제
+    NodeComponentService().clearSelection();
   }
 
-  Widget _buildSelectedToolbar() {
-    final selectedId = nodeComponentService.selectedNodeId;
-    if (selectedId == null) return const SizedBox.shrink();
-    final node = document.getNodeById(selectedId);
-    // 링크/멘션/이미지 공통 삭제 전용 툴바
-    return SelectedToolbar(
-      node: node,
-      selectedId: selectedId,
-      onEdit:
-          () => nodeComponentService.editImage(
-            context: context,
-            imageId: selectedId,
-            node: node as ImageNode,
-            editorService: editorService,
-            document: document,
-          ),
-      onDelete: (node, selectedId) => document.deleteNode(selectedId),
-      onChangeAlignment: (node, selectedId) {
-        editorService.changeMediaAlignment(selectedId);
-        nodeComponentService.clearSelection();
-      },
+  String _getNextPaddingMode(String current) {
+    switch (current) {
+      case 'full':
+        return 'center';
+      case 'center':
+      default:
+        return 'full';
+    }
+  }
+
+  void _deleteNode(DocumentNode node, String selectedId) {
+    // 🎯 중복 삭제 방지: 노드가 이미 삭제되었는지 확인
+    if (document.getNodeById(selectedId) == null) {
+      return; // 이미 삭제됨
+    }
+
+    // 🎯 원자적 삭제: 레지스트리에서 먼저 제거하여 복원 방지
+    editorService.removeSpecialNodeFromRegistry(
+      selectedId,
+      explicitlyDeleted: true,
     );
+
+    try {
+      nodeComponentService.selectNode(null);
+
+      // 🎯 노드 삭제 (삭제 전 다시 한 번 존재 확인)
+      if (document.getNodeById(selectedId) != null) {
+        document.deleteNode(selectedId);
+      }
+      setState(() {});
+    } catch (e) {
+      // 🎯 에러 발생 시 레지스트리 및 명시적 삭제 목록 정리
+      editorService.removeSpecialNodeFromRegistry(selectedId);
+      ErrorHandler.showError(context, context.tr('cannot_delete'));
+    }
+  }
+
+  /// 문서에서 첫 번째 이미지 URL 찾기
+  String? _findFirstImageUrl() {
+    try {
+      final doc = editorService.document;
+      for (int i = 0; i < doc.nodeCount; i++) {
+        final node = doc.getNodeAt(i);
+
+        // ImageNode인 경우
+        if (node is ImageNode) {
+          final url = node.imageUrl;
+          if (url.isNotEmpty &&
+              (url.startsWith('http://') || url.startsWith('https://'))) {
+            return url;
+          }
+        }
+
+        // ImageRowNode인 경우 (첫 번째 이미지 사용)
+        if (node is ImageRowNode) {
+          if (node.imageUrls.isNotEmpty) {
+            final url = node.imageUrls.first;
+            if (url.isNotEmpty &&
+                (url.startsWith('http://') || url.startsWith('https://'))) {
+              return url;
+            }
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('[PostwriteScreen] 이미지 찾기 실패: $e');
+    }
+    return null;
   }
 
   /// 수동 임시저장 (새 버전 생성)
@@ -1211,11 +1364,17 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
         return false; // ✅ 실패 반환
       }
 
-      // 🎯 업로드 중이면 차단
+      // 🎯 업로드되지 않은 이미지가 있으면 차단
       if (editorService.hasUnuploadedImages()) {
         if (mounted) {
           ErrorHandler.showError(context, context.tr('please_wait_for_upload'));
         }
+        return false;
+      }
+
+      // 🎯 PNG 드로잉 업로드 중이면 차단
+      final uploadService = UploadService();
+      if (uploadService.hasActiveUploads(kinds: {UploadKind.editorImage})) {
         return false;
       }
 
@@ -1242,7 +1401,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
 
       // 🎯 썸네일은 항상 첫 번째 이미지를 자동으로 설정
       String thumbnailUrl = '';
-      final firstImageUrl = editorService.findFirstImageUrl();
+      final firstImageUrl = _findFirstImageUrl();
       if (firstImageUrl != null && firstImageUrl.isNotEmpty) {
         thumbnailUrl = firstImageUrl;
       }
@@ -1285,7 +1444,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     // 이미 저장 중이면 무시
     if (_isSaving) return;
 
-    // 업로드 중이면 차단
+    // 업로드 중 플레이스홀더가 있으면 차단 (작성 시와 동일 정책)
     if (editorService.hasUnuploadedImages()) {
       await DialogUtils.showInfoDialog(
         context,
@@ -1346,7 +1505,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
       final title = PostExporter.getTitleFromDocument(document);
 
       // 7. 사용된 이미지/비디오 URL 수집
-      final usedImageUrls = PostExporter.collectUsedMediaUrls(exported);
+      final usedImageUrls = _collectUsedMediaUrls(exported);
 
       debugPrint('[PostwriteScreen] Export 완료');
       debugPrint('  - 제목: $title');
@@ -1407,6 +1566,104 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
         ErrorHandler.handleError(context, e);
       }
     } finally {}
+  }
+
+  /// 사용된 이미지/비디오 URL 수집
+  /// PostExporter와 동일한 로직 사용
+  List<String> _collectUsedMediaUrls(Map<String, dynamic> exported) {
+    final Set<String> usedUrls = <String>{};
+
+    try {
+      // content의 nodes에서 이미지/비디오 URL 수집
+      final dynamic content = exported['content'];
+      final List<dynamic> nodes =
+          (content is Map)
+              ? List<dynamic>.from(content['nodes'] as List? ?? const [])
+              : const [];
+
+      debugPrint('[PostwriteScreen] URL 수집 시작 (노드 개수: ${nodes.length})');
+
+      for (int i = 0; i < nodes.length; i++) {
+        final n = nodes[i];
+        if (n is! Map) continue;
+
+        final String type = (n['type'] ?? '').toString();
+        debugPrint('  - 노드[$i] 타입: $type');
+
+        if (type == 'image') {
+          // data.url 또는 url 필드에서 추출
+          final data = n['data'] as Map<String, dynamic>?;
+          final String url = (data?['url'] ?? n['url'] ?? '').toString();
+          if (url.isNotEmpty) {
+            usedUrls.add(url);
+            debugPrint('    → 이미지 URL 추가: $url');
+          }
+        } else if (type == 'imageRow') {
+          // urls 필드에서 추출
+          final List<dynamic> urls = List<dynamic>.from(n['urls'] ?? const []);
+          for (final u in urls) {
+            final String url = u.toString();
+            if (url.isNotEmpty) {
+              usedUrls.add(url);
+              debugPrint('    → 이미지행 URL 추가: $url');
+            }
+          }
+        } else if (type == 'video' || type == 'clip') {
+          // data.url에서 추출 (비디오도 usedImageUrls에 포함!)
+          final data = n['data'] as Map<String, dynamic>?;
+          final String url = (data?['url'] ?? '').toString();
+          if (url.isNotEmpty) {
+            usedUrls.add(url);
+            debugPrint('    → 비디오 URL 추가: $url');
+          }
+        }
+      }
+
+      // 🎯 스티커에서 이미지 URL 수집 (PNG 드로잉 포함)
+      // 🎯 스티커는 exported['content']['stickers']에 있음 (exported['stickers']가 아님!)
+      final contentStickers =
+          (content is Map ? (content['stickers'] as List?) : null) ?? const [];
+      debugPrint('  - 스티커 개수: ${contentStickers.length}');
+      for (final sticker in contentStickers) {
+        if (sticker is! Map) continue;
+        final stickerType = (sticker['type'] ?? '').toString();
+        if (stickerType == 'image') {
+          final stickerContent = sticker['content'];
+          String? url;
+
+          if (stickerContent is Map) {
+            // ✅ URL + 크기 정보 (PNG 드로잉) 또는 레거시 {url: ...}
+            url = (stickerContent['url'] ?? '').toString();
+          } else if (stickerContent is String) {
+            // 레거시: content가 직접 URL 문자열인 경우
+            url = stickerContent;
+          }
+
+          if (url != null && url.isNotEmpty) {
+            // HTTP URL인지 확인 (로컬 파일 경로 제외)
+            if (url.startsWith('http://') || url.startsWith('https://')) {
+              usedUrls.add(url);
+              debugPrint('    → 스티커 URL 추가: $url');
+            } else {
+              debugPrint('    → 스티커 URL이 HTTP가 아님 (로컬 파일?): $url');
+            }
+          } else {
+            debugPrint('    → 스티커 URL이 비어있음: content=$stickerContent');
+          }
+        }
+      }
+
+      debugPrint('[PostwriteScreen] ✅ 총 수집된 미디어 URL: ${usedUrls.length}개');
+      if (usedUrls.isNotEmpty) {
+        for (final url in usedUrls) {
+          debugPrint('  - $url');
+        }
+      }
+    } catch (e) {
+      debugPrint('[PostwriteScreen] 미디어 URL 수집 실패: $e');
+    }
+
+    return usedUrls.toList();
   }
 
   /// 임시저장 목록 보기
@@ -1489,5 +1746,98 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
         );
       }
     }
+  }
+}
+
+/// 🎯 성능 최적화: bottomNavigationBar를 별도 위젯으로 분리
+/// 키보드 높이를 파라미터로 받아 MediaQuery 접근 최소화
+class _BottomBar extends StatelessWidget {
+  final double keyboardHeight;
+  final bool isKeyboardVisible;
+  final TextStylingService textStylingService;
+  final EditorService editorService;
+  final ScrollController scrollController;
+  final VoidCallback onDismissKeyboard;
+  final VoidCallback onShowDraftList;
+  final ValueNotifier<bool> videoUploadIndicatorNotifier;
+  final NodeComponentService nodeComponentService;
+  final Document document;
+  final void Function(String selectedId, DocumentNode node) onEditImage;
+  final void Function(DocumentNode node, String selectedId) onDeleteNode;
+  final void Function(DocumentNode node, String selectedId)
+  onChangeMediaAlignment;
+
+  const _BottomBar({
+    required this.keyboardHeight,
+    required this.isKeyboardVisible,
+    required this.textStylingService,
+    required this.editorService,
+    required this.scrollController,
+    required this.onDismissKeyboard,
+    required this.onShowDraftList,
+    required this.videoUploadIndicatorNotifier,
+    required this.nodeComponentService,
+    required this.document,
+    required this.onEditImage,
+    required this.onDeleteNode,
+    required this.onChangeMediaAlignment,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Consumer<StickerService>(
+      builder: (context, stickerService, child) {
+        return ValueListenableBuilder<bool>(
+          valueListenable: stickerService.isDraggingNotifier,
+          builder: (context, isDragging, child) {
+            // 스티커 드래그 중이면 툴바 숨김
+            if (isDragging) {
+              return const SizedBox.shrink();
+            }
+
+            // 🎯 키보드 높이를 파라미터로 받아 MediaQuery 접근 제거
+            final bottomPadding = keyboardHeight <= 30 ? 20.0 : keyboardHeight;
+            final theme = Theme.of(context);
+
+            return Container(
+              color: theme.colorScheme.background,
+              child: Padding(
+                padding: EdgeInsets.only(bottom: bottomPadding),
+                child: Selector<NodeComponentService, String?>(
+                  selector: (_, service) => service.selectedNodeId,
+                  builder: (context, selectedId, _) {
+                    if (selectedId != null) {
+                      final node = document.getNodeById(selectedId);
+                      if (node == null) return const SizedBox.shrink();
+                      return SelectedToolbar(
+                        node: node,
+                        selectedId: selectedId,
+                        onEdit: () => onEditImage(selectedId, node),
+                        onDelete: onDeleteNode,
+                        onChangeAlignment: onChangeMediaAlignment,
+                      );
+                    }
+                    // 키보드 상태를 ValueNotifier로 변환
+                    final keyboardVisibleNotifier = ValueNotifier<bool>(
+                      isKeyboardVisible,
+                    );
+                    return DefaultToolbar(
+                      stylingService: textStylingService,
+                      editorService: editorService,
+                      scrollController: scrollController,
+                      keyboardVisibleNotifier: keyboardVisibleNotifier,
+                      onDismissKeyboard: onDismissKeyboard,
+                      onShowDraftList: onShowDraftList,
+                      videoUploadIndicatorNotifier:
+                          videoUploadIndicatorNotifier,
+                    );
+                  },
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
   }
 }

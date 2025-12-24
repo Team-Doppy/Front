@@ -145,33 +145,11 @@ class _CropEditorState extends State<CropEditor> {
   void _moveCropRect(Offset delta) {
     final state = widget.cropState;
     final imageBounds = _getImageDisplayBounds();
-    const handlePadding = 22.0; // 핸들 크기의 절반 (터치 영역 44 / 2)
-
-    // 이미지 경계에서 패딩을 뺀 실제 사용 가능한 영역
-    final availableBounds = Rect.fromLTRB(
-      imageBounds.left + handlePadding,
-      imageBounds.top + handlePadding,
-      imageBounds.right - handlePadding,
-      imageBounds.bottom - handlePadding,
-    );
 
     Rect newRect = state.cropRect.shift(delta);
 
-    // 이미지 표시 영역 경계 제한 (패딩 고려)
-    if (newRect.left < availableBounds.left) {
-      newRect = newRect.shift(Offset(availableBounds.left - newRect.left, 0));
-    }
-    if (newRect.top < availableBounds.top) {
-      newRect = newRect.shift(Offset(0, availableBounds.top - newRect.top));
-    }
-    if (newRect.right > availableBounds.right) {
-      newRect = newRect.shift(Offset(availableBounds.right - newRect.right, 0));
-    }
-    if (newRect.bottom > availableBounds.bottom) {
-      newRect = newRect.shift(
-        Offset(0, availableBounds.bottom - newRect.bottom),
-      );
-    }
+    // 이미지 rect와 교차하여 크롭 박스가 항상 이미지 내부에 있도록 보장
+    newRect = _constrainCropRectToImageBounds(newRect, imageBounds);
 
     // 크롭 영역 이동 시에는 이미지 변환 업데이트하지 않음 (이미지 고정)
     state.cropRect = newRect;
@@ -223,28 +201,20 @@ class _CropEditorState extends State<CropEditor> {
   }
 
   void _resetCropRect() {
-    // 크롭 영역을 이미지 전체로 리셋 (핸들 패딩 고려)
+    // 크롭 영역을 이미지 전체로 리셋 (이미지 rect에 정확히 맞게)
     final imageBounds = _getImageDisplayBounds();
-    const handlePadding = 22.0; // 핸들 크기의 절반 (터치 영역 44 / 2)
-
-    // 이미지 경계에서 패딩을 뺀 실제 사용 가능한 영역
-    final availableBounds = Rect.fromLTRB(
-      imageBounds.left + handlePadding,
-      imageBounds.top + handlePadding,
-      imageBounds.right - handlePadding,
-      imageBounds.bottom - handlePadding,
-    );
 
     final newRect = Rect.fromLTWH(
-      availableBounds.left,
-      availableBounds.top,
-      availableBounds.width,
-      availableBounds.height,
+      imageBounds.left,
+      imageBounds.top,
+      imageBounds.width,
+      imageBounds.height,
     );
 
-    widget.cropState.cropRect = newRect;
-    widget.onCropRectChanged(newRect);
-    _viewRect = newRect;
+    // 이미지 rect와 교차하여 확실히 이미지 내부에 포함되도록 보장
+    widget.cropState.cropRect = newRect.intersect(imageBounds);
+    widget.onCropRectChanged(widget.cropState.cropRect);
+    _viewRect = widget.cropState.cropRect;
 
     // 이미지 원래 위치로 복귀
     if (widget.onImageTransformChanged != null) {
@@ -381,15 +351,6 @@ class _CropEditorState extends State<CropEditor> {
   ) {
     final state = widget.cropState;
     final imageBounds = _getImageDisplayBounds();
-    const handlePadding = 22.0; // 핸들 크기의 절반 (터치 영역 44 / 2)
-
-    // 이미지 경계에서 패딩을 뺀 실제 사용 가능한 영역
-    final availableBounds = Rect.fromLTRB(
-      imageBounds.left + handlePadding,
-      imageBounds.top + handlePadding,
-      imageBounds.right - handlePadding,
-      imageBounds.bottom - handlePadding,
-    );
 
     Rect newRect = state.cropRect;
 
@@ -397,11 +358,11 @@ class _CropEditorState extends State<CropEditor> {
       case CropHandleType.topLeft:
         newRect = Rect.fromLTRB(
           (state.cropRect.left + delta.dx).clamp(
-            availableBounds.left,
+            imageBounds.left,
             state.cropRect.right - minSize,
           ),
           (state.cropRect.top + delta.dy).clamp(
-            availableBounds.top,
+            imageBounds.top,
             state.cropRect.bottom - minSize,
           ),
           state.cropRect.right,
@@ -412,12 +373,12 @@ class _CropEditorState extends State<CropEditor> {
         newRect = Rect.fromLTRB(
           state.cropRect.left,
           (state.cropRect.top + delta.dy).clamp(
-            availableBounds.top,
+            imageBounds.top,
             state.cropRect.bottom - minSize,
           ),
           (state.cropRect.right + delta.dx).clamp(
             state.cropRect.left + minSize,
-            availableBounds.right,
+            imageBounds.right,
           ),
           state.cropRect.bottom,
         );
@@ -425,14 +386,14 @@ class _CropEditorState extends State<CropEditor> {
       case CropHandleType.bottomLeft:
         newRect = Rect.fromLTRB(
           (state.cropRect.left + delta.dx).clamp(
-            availableBounds.left,
+            imageBounds.left,
             state.cropRect.right - minSize,
           ),
           state.cropRect.top,
           state.cropRect.right,
           (state.cropRect.bottom + delta.dy).clamp(
             state.cropRect.top + minSize,
-            availableBounds.bottom,
+            imageBounds.bottom,
           ),
         );
         break;
@@ -442,11 +403,11 @@ class _CropEditorState extends State<CropEditor> {
           state.cropRect.top,
           (state.cropRect.right + delta.dx).clamp(
             state.cropRect.left + minSize,
-            availableBounds.right,
+            imageBounds.right,
           ),
           (state.cropRect.bottom + delta.dy).clamp(
             state.cropRect.top + minSize,
-            availableBounds.bottom,
+            imageBounds.bottom,
           ),
         );
         break;
@@ -454,7 +415,7 @@ class _CropEditorState extends State<CropEditor> {
         newRect = Rect.fromLTRB(
           state.cropRect.left,
           (state.cropRect.top + delta.dy).clamp(
-            availableBounds.top,
+            imageBounds.top,
             state.cropRect.bottom - minSize,
           ),
           state.cropRect.right,
@@ -468,14 +429,14 @@ class _CropEditorState extends State<CropEditor> {
           state.cropRect.right,
           (state.cropRect.bottom + delta.dy).clamp(
             state.cropRect.top + minSize,
-            availableBounds.bottom,
+            imageBounds.bottom,
           ),
         );
         break;
       case CropHandleType.left:
         newRect = Rect.fromLTRB(
           (state.cropRect.left + delta.dx).clamp(
-            availableBounds.left,
+            imageBounds.left,
             state.cropRect.right - minSize,
           ),
           state.cropRect.top,
@@ -489,35 +450,53 @@ class _CropEditorState extends State<CropEditor> {
           state.cropRect.top,
           (state.cropRect.right + delta.dx).clamp(
             state.cropRect.left + minSize,
-            availableBounds.right,
+            imageBounds.right,
           ),
           state.cropRect.bottom,
         );
         break;
     }
 
-    newRect = _constrainCropRectToImageBounds(newRect, availableBounds);
+    newRect = _constrainCropRectToImageBounds(newRect, imageBounds);
     widget.cropState.cropRect = newRect;
     widget.onCropRectChanged(newRect);
     // pro_image_editor 로직: 크롭 영역 조정 중에는 이미지 고정 (변환 업데이트 안 함)
     setState(() {});
   }
 
-  Rect _constrainCropRectToImageBounds(Rect rect, Rect availableBounds) {
-    // 크롭 영역이 사용 가능한 영역을 벗어나지 않도록 제한
-    if (rect.left < availableBounds.left) {
-      rect = rect.shift(Offset(availableBounds.left - rect.left, 0));
+  Rect _constrainCropRectToImageBounds(Rect rect, Rect imageBounds) {
+    // 이미지 rect와 교차하여 크롭 박스가 항상 이미지 내부에 있도록 보장
+    Rect constrained = rect.intersect(imageBounds);
+
+    // intersect가 빈 rect를 반환할 수 있으므로, 최소 크기 보장
+    if (constrained.isEmpty) {
+      // 빈 rect인 경우 이미지 중심에 최소 크기로 생성
+      const minSize = 50.0;
+      final centerX = imageBounds.center.dx;
+      final centerY = imageBounds.center.dy;
+      constrained = Rect.fromCenter(
+        center: Offset(centerX, centerY),
+        width: minSize.clamp(0.0, imageBounds.width),
+        height: minSize.clamp(0.0, imageBounds.height),
+      ).intersect(imageBounds);
     }
-    if (rect.top < availableBounds.top) {
-      rect = rect.shift(Offset(0, availableBounds.top - rect.top));
-    }
-    if (rect.right > availableBounds.right) {
-      rect = rect.shift(Offset(availableBounds.right - rect.right, 0));
-    }
-    if (rect.bottom > availableBounds.bottom) {
-      rect = rect.shift(Offset(0, availableBounds.bottom - rect.bottom));
-    }
-    return rect;
+
+    // 최종적으로 모든 좌표가 이미지 경계 내에 있는지 확인
+    final finalLeft = constrained.left.clamp(
+      imageBounds.left,
+      imageBounds.right,
+    );
+    final finalTop = constrained.top.clamp(imageBounds.top, imageBounds.bottom);
+    final finalRight = constrained.right.clamp(
+      imageBounds.left,
+      imageBounds.right,
+    );
+    final finalBottom = constrained.bottom.clamp(
+      imageBounds.top,
+      imageBounds.bottom,
+    );
+
+    return Rect.fromLTRB(finalLeft, finalTop, finalRight, finalBottom);
   }
 
   /// 크롭 영역 조정 종료 시 자동 정렬 (pro_image_editor의 _onScaleEnd 로직)
@@ -826,38 +805,67 @@ class CropUtils {
 
     onDisplaySizeChanged(Size(displayWidth, displayHeight));
 
-    // 핸들이 이미지 안쪽에 위치하도록 패딩 추가
-    const handlePadding = 22.0; // 핸들 크기의 절반 (터치 영역 44 / 2)
-    final availableWidth = displayWidth - (handlePadding * 2);
-    final availableHeight = displayHeight - (handlePadding * 2);
-    final availableOffsetX = offsetX + handlePadding;
-    final availableOffsetY = offsetY + handlePadding;
-
-    // 크롭 영역 초기화 (이미지 전체, 패딩 고려)
+    // 크롭 영역 초기화 (이미지 rect에 정확히 맞게)
     final aspectRatio = _parseAspectRatio(cropState.selectedAspectRatio);
     double cropWidth, cropHeight;
 
     if (aspectRatio != null) {
-      if (aspectRatio > availableWidth / availableHeight) {
-        cropWidth = availableWidth;
+      if (aspectRatio > displayWidth / displayHeight) {
+        cropWidth = displayWidth;
         cropHeight = cropWidth / aspectRatio;
       } else {
-        cropHeight = availableHeight;
+        cropHeight = displayHeight;
         cropWidth = cropHeight * aspectRatio;
       }
     } else {
-      cropWidth = availableWidth;
-      cropHeight = availableHeight;
+      cropWidth = displayWidth;
+      cropHeight = displayHeight;
     }
 
-    final centerX = availableOffsetX + availableWidth / 2;
-    final centerY = availableOffsetY + availableHeight / 2;
+    // 이미지 경계 내에 완전히 포함되도록 보장
+    final imageLeft = offsetX;
+    final imageTop = offsetY;
+    final imageRight = offsetX + displayWidth;
+    final imageBottom = offsetY + displayHeight;
 
-    cropState.cropRect = Rect.fromCenter(
-      center: Offset(centerX, centerY),
-      width: cropWidth,
-      height: cropHeight,
+    // 크롭 박스가 이미지 경계를 벗어나지 않도록 제한
+    cropWidth = cropWidth.clamp(0.0, displayWidth);
+    cropHeight = cropHeight.clamp(0.0, displayHeight);
+
+    // 중심점 계산 (이미지 경계 내에 있도록)
+    final centerX = (imageLeft + imageRight) / 2;
+    final centerY = (imageTop + imageBottom) / 2;
+
+    // 크롭 박스 위치 계산 (이미지 경계 내에 완전히 포함되도록)
+    final cropLeft = (centerX - cropWidth / 2).clamp(
+      imageLeft,
+      imageRight - cropWidth,
     );
+    final cropTop = (centerY - cropHeight / 2).clamp(
+      imageTop,
+      imageBottom - cropHeight,
+    );
+    final cropRight = cropLeft + cropWidth;
+    final cropBottom = cropTop + cropHeight;
+
+    // 이미지 rect 생성
+    final imageRect = Rect.fromLTRB(
+      imageLeft,
+      imageTop,
+      imageRight,
+      imageBottom,
+    );
+
+    // 크롭 박스 rect 생성
+    final cropRect = Rect.fromLTRB(cropLeft, cropTop, cropRight, cropBottom);
+
+    // 이미지 rect와 교차하여 크롭 박스가 항상 이미지 내부에 있도록 보장
+    cropState.cropRect = cropRect.intersect(imageRect);
+
+    // intersect가 빈 rect를 반환할 경우 이미지 전체로 설정
+    if (cropState.cropRect.isEmpty) {
+      cropState.cropRect = imageRect;
+    }
     cropState.isCropRectInitialized = true;
   }
 

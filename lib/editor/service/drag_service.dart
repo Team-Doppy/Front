@@ -294,11 +294,6 @@ class DragService extends ChangeNotifier {
     }
     // 그 외의 경우는 computeDropInfo에서 설정한 값을 그대로 사용
 
-    debugPrint('최종 dragMode: $dragMode');
-    debugPrint('최종 dropIndex: $dropIndex');
-    debugPrint('최종 targetNodeId: $targetNodeId');
-    debugPrint('=== updateDrag 끝 ===');
-
     // 항상 UI 업데이트 (드래그 오버레이 부드러운 이동을 위해)
     notifyListeners();
 
@@ -321,7 +316,6 @@ class DragService extends ChangeNotifier {
           (targetNodeId != null && targetNodeId == _splitImageRowId) ||
           (_targetRowId != null && _targetRowId == _splitImageRowId);
       if (backToOriginal && dragMode != DragType.imageRowMerge) {
-        _ensureSelectionCleared();
         _cleanup();
         return;
       }
@@ -369,17 +363,8 @@ class DragService extends ChangeNotifier {
           draggingNodeType = editorService.getNodeType(splitImageId);
           handledBySplitInsertion =
               (dragMode == DragType.reorder && dropIndex != null);
-          // 🎯 splitImageFromRow() 후 레이아웃이 완전히 업데이트된 후 캐시 무효화
-          // 이미지 분리는 레이아웃 변경이 크므로 세 프레임을 기다려서 이미지 로딩 및 레이아웃 완전 안정화
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              WidgetsBinding.instance.addPostFrameCallback((_) {
-                invalidateNodeRectCache();
-                // 🎯 레이아웃 안정화 후 선택 해제 확인
-                _ensureSelectionCleared();
-              });
-            });
-          });
+          // 🎯 분리 성공 시 즉시 캐시 무효화
+          invalidateNodeRectCache();
         }
       }
     }
@@ -387,16 +372,6 @@ class DragService extends ChangeNotifier {
     // 실제 노드 이동 실행
     // 분리하면서 이미 원하는 위치로 삽입한 경우 추가 이동 불필요
     if (handledBySplitInsertion) {
-      // 🎯 이미지 분리 후 추가로 한 번 더 셀렉션 클리어 (레이아웃 안정화 후)
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            invalidateNodeRectCache();
-            _ensureSelectionCleared();
-          });
-        });
-      });
-      _ensureSelectionCleared();
       _cleanup();
       return;
     }
@@ -404,12 +379,11 @@ class DragService extends ChangeNotifier {
     switch (dragMode) {
       case DragType.reorder:
         if (dropIndex != null && draggingNodeId != null) {
-          // 🎯 null 체크 후 non-nullable 변수로 할당
           final nodeId = draggingNodeId!;
           final doc = editorService.document;
           final validDropIndex = dropIndex!.clamp(0, doc.length);
 
-          // 🎯 드래그 중인 노드가 여전히 존재하는지 확인
+          // 드래그 중인 노드가 여전히 존재하는지 확인
           final draggingNode = doc.getNodeById(nodeId);
           if (draggingNode == null) {
             debugPrint('[DragService] ⚠️ 드래그 중인 노드가 존재하지 않음: $nodeId');
@@ -418,46 +392,19 @@ class DragService extends ChangeNotifier {
           }
 
           editorService.reorderNode(nodeId, validDropIndex);
-          // 🎯 reorderNode() 후 레이아웃이 완전히 업데이트된 후 캐시 무효화
-          // 즉시 무효화하면 레이아웃이 아직 업데이트되지 않아 잘못된 위치를 계산할 수 있음
-          // addPostFrameCallback을 사용하여 레이아웃 업데이트 완료 후 캐시 무효화
-          // 이미지 노드나 이미지로우 노드는 레이아웃 변경이 크므로 더 많은 프레임을 기다림
-          final isImageNode =
-              draggingNodeType == NodeType.image ||
-              draggingNodeType == NodeType.imageRow;
-
-          if (isImageNode) {
-            // 이미지 노드: 세 프레임을 기다려서 이미지 로딩 및 레이아웃 완전 안정화
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              WidgetsBinding.instance.addPostFrameCallback((_) {
-                WidgetsBinding.instance.addPostFrameCallback((_) {
-                  invalidateNodeRectCache();
-                  // 🎯 레이아웃 안정화 후 선택 해제 확인
-                  _ensureSelectionCleared();
-                });
-              });
-            });
-          } else {
-            // 텍스트 노드 등: 두 프레임을 기다려서 레이아웃 안정화
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              WidgetsBinding.instance.addPostFrameCallback((_) {
-                invalidateNodeRectCache();
-                // 🎯 레이아웃 안정화 후 선택 해제 확인
-                _ensureSelectionCleared();
-              });
-            });
-          }
+          invalidateNodeRectCache();
+          _cleanup();
+          return;
         }
         break;
       case DragType.imageRowMerge:
         {
           final String? mergeTargetId = _targetRowId ?? targetNodeId;
           if (mergeTargetId != null && draggingNodeId != null) {
-            // 🎯 null 체크 후 non-nullable 변수로 할당
             final nodeId = draggingNodeId!;
             final targetId = mergeTargetId;
 
-            // 🎯 병합 전 노드 존재 확인
+            // 병합 전 노드 존재 확인
             final targetNode = editorService.document.getNodeById(targetId);
             if (targetNode == null) {
               debugPrint('[DragService] ⚠️ 병합 대상 노드가 존재하지 않음: $targetId');
@@ -465,7 +412,7 @@ class DragService extends ChangeNotifier {
               return;
             }
 
-            // 🎯 타겟 노드가 이미지 타입인지 확인
+            // 타겟 노드가 이미지 타입인지 확인
             if (targetNode is! ImageRowNode && targetNode is! ImageNode) {
               debugPrint(
                 '[DragService] ⚠️ 병합 대상 노드가 이미지 타입이 아님: ${targetNode.runtimeType}',
@@ -474,7 +421,7 @@ class DragService extends ChangeNotifier {
               return;
             }
 
-            // 🎯 드래그 중인 노드가 여전히 존재하는지 확인
+            // 드래그 중인 노드가 여전히 존재하는지 확인
             final draggingNode = editorService.document.getNodeById(nodeId);
             if (draggingNode == null) {
               debugPrint('[DragService] ⚠️ 드래그 중인 노드가 존재하지 않음: $nodeId');
@@ -487,15 +434,9 @@ class DragService extends ChangeNotifier {
               targetId,
               isFromLeft: isDraggingFromLeft,
             );
-            // 🎯 mergeImagesIntoRow() 후 레이아웃이 완전히 업데이트된 후 캐시 무효화
-            // 이미지 병합은 레이아웃 변경이 크므로 두 프레임을 기다려서 안정화
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              WidgetsBinding.instance.addPostFrameCallback((_) {
-                invalidateNodeRectCache();
-                // 🎯 레이아웃 안정화 후 선택 해제 확인
-                _ensureSelectionCleared();
-              });
-            });
+            invalidateNodeRectCache();
+            _cleanup();
+            return;
           }
         }
         break;
@@ -503,9 +444,7 @@ class DragService extends ChangeNotifier {
         break;
     }
 
-    // 🎯 드래그 종료 후 명시적으로 모든 선택 해제
-    _ensureSelectionCleared();
-
+    // 드래그 종료 처리
     _cleanup();
   }
 
@@ -538,7 +477,7 @@ class DragService extends ChangeNotifier {
     _splitImageIndex = null;
     _targetRowId = null;
 
-    // 🎯 cleanup 후에도 선택 해제 확인 (다른 로직에서 선택이 다시 설정되는 경우 대비)
+    // 선택 해제 (다른 로직에서 선택이 다시 설정되는 경우 대비)
     _ensureSelectionCleared();
 
     notifyListeners();
@@ -851,23 +790,13 @@ class DragService extends ChangeNotifier {
             finalCandidate = nodeIndex;
           }
         } else {
-          // 일반 드래그: 자기 자신과 바로 이웃한 위치 차단
-          // 🎯 자기 자신 바로 위/아래로는 드롭 불가 (라인 숨김)
+          // 일반 드래그: 드롭 인덱스 계산
+          // 🎯 자기 자신 위치만 제외하고, 나머지는 모두 허용
           if (nodeIndex == draggingNodeIndex) {
-            // 자기 자신 위치
+            // 자기 자신 위치 - 드롭 불가
             finalCandidate = null;
-          } else if (nodeIndex == draggingNodeIndex + 1) {
-            // 자기 자신 바로 아래 위치
-            finalCandidate = null;
-          } else if (nodeIndex == draggingNodeIndex - 1) {
-            // 자기 자신 바로 위 위치 (드래그 노드가 타겟 노드 바로 아래)
-            // 이 경우 타겟 노드 위에 삽입하는 것이므로 허용
-            finalCandidate = nodeIndex;
-          } else if (draggingNodeIndex < nodeIndex) {
-            // 드래그 중인 노드가 타겟 노드보다 앞에 있으면, 타겟 노드 앞에 삽입
-            finalCandidate = nodeIndex;
           } else {
-            // 드래그 중인 노드가 타겟 노드보다 뒤에 있으면, 타겟 노드 앞에 삽입
+            // 타겟 노드 위치에 삽입 (바로 위/아래도 허용)
             finalCandidate = nodeIndex;
           }
         }

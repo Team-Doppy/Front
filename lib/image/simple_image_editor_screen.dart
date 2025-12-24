@@ -75,17 +75,17 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
   late Animation<double> _bottomSheetAnimation;
   double _dragOffset = 0.0;
 
-  // 옵션별 바텀시트 높이
+  // 옵션별 바텀시트 높이 (간격을 줄이기 위해 높이 감소)
   double get bottomSheetHeight {
     switch (_editMode) {
       case _EditMode.crop:
-        return 240; // 크롭: 가로 스크롤 옵션 (작은 높이)
+        return 200; // 크롭: 가로 스크롤 옵션 (간격 줄임)
       case _EditMode.filter:
-        return 300; // 필터: 가로 스크롤 필터 미리보기 (작은 높이)
+        return 250; // 필터: 가로 스크롤 필터 미리보기 (간격 줄임)
       case _EditMode.adjust:
-        return 450; // 조정: 세로 슬라이더들 (더 큰 높이)
+        return 380; // 조정: 세로 슬라이더들 (간격 줄임)
       case _EditMode.none:
-        return 300; // 기본값
+        return 250; // 기본값
     }
   }
 
@@ -284,354 +284,309 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
             ),
           ),
 
-          // 이미지 컨테이너
-          AnimatedBuilder(
-            animation: _bottomSheetController,
-            builder: (context, child) {
-              return Positioned(
-                left: 0,
-                right: 0,
-                top: 0,
-                bottom: 0,
-                child: SafeArea(
-                  child: Column(
-                    children: [
-                      // 앱바
-                      AnimatedOpacity(
-                        opacity: _showUI && !_isBottomSheetOpen ? 1.0 : 0.0,
-                        duration: const Duration(milliseconds: 200),
-                        child: Container(
-                          height: kToolbarHeight,
-                          padding: const EdgeInsets.symmetric(horizontal: 8),
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              Row(
-                                children: [
-                                  IconButton(
-                                    onPressed: () {
-                                      if (_isBottomSheetOpen) {
-                                        _closeBottomSheet();
-                                      } else {
-                                        Navigator.pop(context);
-                                      }
-                                    },
-                                    icon: Icon(
-                                      _isBottomSheetOpen
-                                          ? Icons.arrow_back
-                                          : Icons.close,
-                                      color: Colors.white,
-                                    ),
-                                  ),
-                                  if (!_isBottomSheetOpen) ...[
-                                    IconButton(
-                                      onPressed:
-                                          ((_history[_currentIndex]?.length ??
-                                                      0) >
-                                                  1)
-                                              ? _undo
-                                              : null,
-                                      icon: Icon(
-                                        Icons.undo,
-                                        color:
-                                            ((_history[_currentIndex]?.length ??
-                                                        0) >
-                                                    1)
-                                                ? Colors.white
-                                                : Colors.white.withOpacity(0.3),
-                                      ),
-                                    ),
-                                    IconButton(
-                                      onPressed:
-                                          (_redoStack[_currentIndex]
-                                                      ?.isNotEmpty ??
-                                                  false)
-                                              ? _redo
-                                              : null,
-                                      icon: Icon(
-                                        Icons.redo,
-                                        color:
-                                            (_redoStack[_currentIndex]
-                                                        ?.isNotEmpty ??
-                                                    false)
-                                                ? Colors.white
-                                                : Colors.white.withOpacity(0.3),
-                                      ),
-                                    ),
-                                  ],
-                                ],
+          // 메인 컨테이너
+          Positioned.fill(
+            child: SafeArea(
+              child: Column(
+                children: [
+                  // 앱바 (바텀시트가 올라올 때 위로 사라짐)
+                  AnimatedBuilder(
+                    animation: _bottomSheetAnimation,
+                    builder: (context, child) {
+                      final p = _bottomSheetAnimation.value;
+                      final currentHeight = kToolbarHeight * (1 - p);
+                      final opacity =
+                          _showUI && !_isBottomSheetOpen ? 1.0 : 0.0;
+
+                      if (currentHeight <= 0) {
+                        return const SizedBox.shrink();
+                      }
+
+                      return ClipRect(
+                        child: Align(
+                          alignment: Alignment.bottomCenter,
+                          child: AnimatedOpacity(
+                            opacity: opacity,
+                            duration: const Duration(milliseconds: 200),
+                            child: Container(
+                              height: currentHeight,
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
                               ),
-                              if (!_isBottomSheetOpen)
-                                GestureDetector(
-                                  onTap: _handleDone,
-                                  child: ClipRRect(
-                                    borderRadius: BorderRadius.circular(12),
-                                    child: BackdropFilter(
-                                      filter: ui.ImageFilter.blur(
-                                        sigmaX: 10,
-                                        sigmaY: 10,
-                                      ),
-                                      child: Container(
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 20,
-                                          vertical: 10,
+                              child: Row(
+                                mainAxisAlignment:
+                                    MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Row(
+                                    children: [
+                                      IconButton(
+                                        onPressed: () {
+                                          if (_isBottomSheetOpen) {
+                                            _closeBottomSheet();
+                                          } else {
+                                            Navigator.pop(context);
+                                          }
+                                        },
+                                        icon: Icon(
+                                          _isBottomSheetOpen
+                                              ? Icons.arrow_back
+                                              : Icons.close,
+                                          color: Colors.white,
                                         ),
-                                        child: const Text(
-                                          '완료',
-                                          style: TextStyle(
-                                            color: Colors.white,
-                                            fontSize: 15,
-                                            fontWeight: FontWeight.w600,
+                                      ),
+                                      if (!_isBottomSheetOpen) ...[
+                                        IconButton(
+                                          onPressed:
+                                              ((_history[_currentIndex]
+                                                              ?.length ??
+                                                          0) >
+                                                      1)
+                                                  ? _undo
+                                                  : null,
+                                          icon: Icon(
+                                            Icons.undo,
+                                            color:
+                                                ((_history[_currentIndex]
+                                                                ?.length ??
+                                                            0) >
+                                                        1)
+                                                    ? Colors.white
+                                                    : Colors.white.withOpacity(
+                                                      0.3,
+                                                    ),
+                                          ),
+                                        ),
+                                        IconButton(
+                                          onPressed:
+                                              (_redoStack[_currentIndex]
+                                                          ?.isNotEmpty ??
+                                                      false)
+                                                  ? _redo
+                                                  : null,
+                                          icon: Icon(
+                                            Icons.redo,
+                                            color:
+                                                (_redoStack[_currentIndex]
+                                                            ?.isNotEmpty ??
+                                                        false)
+                                                    ? Colors.white
+                                                    : Colors.white.withOpacity(
+                                                      0.3,
+                                                    ),
+                                          ),
+                                        ),
+                                      ],
+                                    ],
+                                  ),
+                                  if (!_isBottomSheetOpen)
+                                    GestureDetector(
+                                      onTap: _handleDone,
+                                      child: ClipRRect(
+                                        borderRadius: BorderRadius.circular(12),
+                                        child: BackdropFilter(
+                                          filter: ui.ImageFilter.blur(
+                                            sigmaX: 10,
+                                            sigmaY: 10,
+                                          ),
+                                          child: Container(
+                                            padding: const EdgeInsets.symmetric(
+                                              horizontal: 20,
+                                              vertical: 10,
+                                            ),
+                                            child: const Text(
+                                              '완료',
+                                              style: TextStyle(
+                                                color: Colors.white,
+                                                fontSize: 15,
+                                                fontWeight: FontWeight.w600,
+                                              ),
+                                            ),
                                           ),
                                         ),
                                       ),
                                     ),
-                                  ),
-                                ),
-                            ],
+                                ],
+                              ),
+                            ),
                           ),
                         ),
-                      ),
+                      );
+                    },
+                  ),
 
-                      // 이미지 미리보기
-                      Expanded(
-                        child: LayoutBuilder(
-                          builder: (context, constraints) {
-                            return AnimatedBuilder(
-                              animation: _bottomSheetController,
-                              builder: (context, child) {
-                                final maxTranslateY = -40.0;
-                                final translateY =
-                                    -(bottomSheetHeight - 200) *
-                                    _bottomSheetAnimation.value;
-
-                                // 바텀시트와 겹치는지 확인하여 스케일 계산 (부드럽게)
-                                // 애니메이션 값에 직접 매핑하여 부드럽게 전환
-                                final animationValue =
-                                    _bottomSheetAnimation.value;
-
-                                // 애니메이션 값에 따라 부드럽게 스케일 계산
-                                // 바텀시트가 열릴 때만 스케일 조정
-                                double scale = 1.0;
-                                if (_isBottomSheetOpen && animationValue > 0) {
-                                  final imageAreaHeight = constraints.maxHeight;
-
-                                  // 바텀시트와 이미지가 겹치는 정도를 계산
-                                  // 바텀시트 높이 대비 이미지 영역의 비율로 최대 스케일 감소량 결정
-                                  final maxScaleReduction = (bottomSheetHeight /
-                                          imageAreaHeight *
-                                          0.12)
-                                      .clamp(0.0, 0.12);
-
-                                  // 애니메이션 값에 직접 선형 매핑 (Curves.easeInOut이 이미 적용됨)
-                                  scale =
-                                      1.0 -
-                                      (maxScaleReduction * animationValue);
-                                  scale = scale.clamp(0.88, 1.0);
-                                }
-
-                                return Transform.translate(
-                                  offset: Offset(
-                                    0,
-                                    translateY.clamp(maxTranslateY, 0.0),
-                                  ),
-                                  child: Transform.scale(
-                                    alignment: Alignment.topCenter,
-                                    scale: scale,
-                                    child: Padding(
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 0,
-                                      ),
-                                      child:
-                                          _isMultiImage
-                                              ? PageView.builder(
-                                                controller: _pageController,
-                                                onPageChanged: _onPageChanged,
-                                                // 편집 모드일 때는 스와이프 비활성화
-                                                physics:
-                                                    _editMode != _EditMode.none
-                                                        ? const NeverScrollableScrollPhysics()
-                                                        : const PageScrollPhysics(),
-                                                itemCount: _images.length,
-                                                itemBuilder: (context, index) {
-                                                  return _buildImagePreview(
-                                                    context,
-                                                    index,
-                                                    _editedImages[index] ??
-                                                        _images[index],
-                                                  );
-                                                },
-                                              )
-                                              : _buildImagePreview(
-                                                context,
-                                                0,
-                                                _images[0],
-                                              ),
-                                    ),
-                                  ),
+                  // 이미지 미리보기 (Expanded가 자동으로 조정됨)
+                  Expanded(
+                    child:
+                        _isMultiImage
+                            ? PageView.builder(
+                              controller: _pageController,
+                              onPageChanged: _onPageChanged,
+                              physics:
+                                  _editMode != _EditMode.none
+                                      ? const NeverScrollableScrollPhysics()
+                                      : const PageScrollPhysics(),
+                              itemCount: _images.length,
+                              itemBuilder: (context, index) {
+                                return _buildImagePreview(
+                                  context,
+                                  index,
+                                  _editedImages[index] ?? _images[index],
                                 );
                               },
-                            );
-                          },
-                        ),
-                      ),
-
-                      // 메인 툴바
-                      AnimatedOpacity(
-                        opacity: _showUI && !_isBottomSheetOpen ? 1.0 : 0.0,
-                        duration: const Duration(milliseconds: 200),
-                        child: SafeArea(
-                          top: false,
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 20),
-                            child: ClipRRect(
-                              borderRadius: BorderRadius.circular(16),
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 20,
-                                  vertical: 16,
-                                ),
-                                child: Row(
-                                  mainAxisAlignment:
-                                      MainAxisAlignment.spaceEvenly,
-                                  children: [
-                                    _GlassToolButton(
-                                      icon: Icons.tune,
-                                      label: '조정',
-                                      onTap: _toggleAdjustment,
-                                      isActive: _editMode == _EditMode.adjust,
-                                    ),
-                                    Container(
-                                      width: 1,
-                                      height: 40,
-                                      color: Colors.white.withOpacity(0.2),
-                                    ),
-                                    _GlassToolButton(
-                                      icon: Icons.crop,
-                                      label: '자르기',
-                                      onTap: _toggleCrop,
-                                      isActive: _editMode == _EditMode.crop,
-                                    ),
-                                    Container(
-                                      width: 1,
-                                      height: 40,
-                                      color: Colors.white.withOpacity(0.2),
-                                    ),
-                                    _GlassToolButton(
-                                      icon: Icons.color_lens,
-                                      label: '필터',
-                                      onTap: _toggleFilter,
-                                      isActive: _editMode == _EditMode.filter,
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-
-                      const SizedBox(height: 20),
-                    ],
+                            )
+                            : _buildImagePreview(context, 0, _images[0]),
                   ),
-                ),
-              );
-            },
-          ),
 
-          // 바텀시트
-          if (_isBottomSheetOpen)
-            Positioned(
-              left: 0,
-              right: 0,
-              bottom: 0,
-              child: GestureDetector(
-                onPanStart: _onBottomSheetDragStart,
-                onPanUpdate: _onBottomSheetDragUpdate,
-                onPanEnd: _onBottomSheetDragEnd,
-                child: AnimatedBuilder(
-                  animation: _bottomSheetAnimation,
-                  builder: (context, child) {
-                    return Transform.translate(
-                      offset: Offset(
-                        0,
-                        bottomSheetHeight * (1 - _bottomSheetAnimation.value),
-                      ),
-                      child: Container(
-                        height: bottomSheetHeight,
-                        decoration: BoxDecoration(
-                          color: bgColor.withOpacity(1),
-                          borderRadius: const BorderRadius.only(
-                            topLeft: Radius.circular(30),
-                            topRight: Radius.circular(30),
-                          ),
-                        ),
-                        child: Column(
-                          children: [
-                            const SizedBox(height: 12),
-                            Container(
-                              height: 4,
-                              width: 80,
-                              decoration: BoxDecoration(
-                                color: fgColor.withOpacity(0.2),
-                                borderRadius: BorderRadius.circular(4),
-                              ),
-                            ),
-                            const SizedBox(height: 12),
-                            Expanded(
-                              child:
-                                  _editMode == _EditMode.crop
-                                      ? _buildCropBottomSheet()
-                                      : _editMode == _EditMode.filter
-                                      ? _buildFilterBottomSheet()
-                                      : _buildAdjustmentBottomSheet(),
-                            ),
-                            Padding(
-                              padding: const EdgeInsets.only(
-                                left: 8.0,
-                                right: 8.0,
-                                bottom: 30.0,
+                  // 메인 툴바 (바텀시트가 열리면 완전히 제거하여 간격 줄임)
+                  if (!_isBottomSheetOpen)
+                    AnimatedOpacity(
+                      opacity: _showUI ? 1.0 : 0.0,
+                      duration: const Duration(milliseconds: 200),
+                      child: SafeArea(
+                        top: false,
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 20),
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(16),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 20,
+                                vertical: 16,
                               ),
                               child: Row(
-                                mainAxisAlignment: MainAxisAlignment.end,
+                                mainAxisAlignment:
+                                    MainAxisAlignment.spaceEvenly,
                                 children: [
-                                  TextButton(
-                                    onPressed: _closeBottomSheet,
-                                    child: Text(
-                                      '취소',
-                                      style: TextStyle(
-                                        fontSize: 15,
-                                        fontWeight: FontWeight.w600,
-                                        color: fgColor.withOpacity(0.7),
-                                      ),
-                                    ),
+                                  _GlassToolButton(
+                                    icon: Icons.tune,
+                                    label: '조정',
+                                    onTap: _toggleAdjustment,
+                                    isActive: _editMode == _EditMode.adjust,
                                   ),
-                                  const Spacer(),
-                                  TextButton(
-                                    onPressed: () {
-                                      _applyEdit();
-                                      _closeBottomSheet();
-                                    },
-                                    child: Text(
-                                      _editMode == _EditMode.crop ? '적용' : '완료',
-                                      style: TextStyle(
-                                        fontSize: 15,
-                                        fontWeight: FontWeight.w600,
-                                        color: fgColor.withOpacity(0.7),
-                                      ),
-                                    ),
+                                  Container(
+                                    width: 1,
+                                    height: 40,
+                                    color: Colors.white.withOpacity(0.2),
+                                  ),
+                                  _GlassToolButton(
+                                    icon: Icons.crop,
+                                    label: '자르기',
+                                    onTap: _toggleCrop,
+                                    isActive: _editMode == _EditMode.crop,
+                                  ),
+                                  Container(
+                                    width: 1,
+                                    height: 40,
+                                    color: Colors.white.withOpacity(0.2),
+                                  ),
+                                  _GlassToolButton(
+                                    icon: Icons.color_lens,
+                                    label: '필터',
+                                    onTap: _toggleFilter,
+                                    isActive: _editMode == _EditMode.filter,
                                   ),
                                 ],
                               ),
                             ),
-                          ],
+                          ),
                         ),
                       ),
-                    );
-                  },
-                ),
+                    ),
+
+                  // 바텀시트 (일반 위젯으로 올라오고 내려감)
+                  AnimatedBuilder(
+                    animation: _bottomSheetAnimation,
+                    builder: (context, child) {
+                      final currentHeight =
+                          bottomSheetHeight * _bottomSheetAnimation.value;
+
+                      if (currentHeight <= 0) {
+                        return const SizedBox.shrink();
+                      }
+
+                      return GestureDetector(
+                        onPanStart: _onBottomSheetDragStart,
+                        onPanUpdate: _onBottomSheetDragUpdate,
+                        onPanEnd: _onBottomSheetDragEnd,
+                        child: Container(
+                          height: currentHeight,
+                          decoration: BoxDecoration(
+                            color: bgColor.withOpacity(1),
+                            borderRadius: const BorderRadius.only(
+                              topLeft: Radius.circular(30),
+                              topRight: Radius.circular(30),
+                            ),
+                          ),
+                          child: Column(
+                            children: [
+                              const SizedBox(height: 12),
+                              Container(
+                                height: 4,
+                                width: 80,
+                                decoration: BoxDecoration(
+                                  color: fgColor.withOpacity(0.2),
+                                  borderRadius: BorderRadius.circular(4),
+                                ),
+                              ),
+                              const SizedBox(height: 12),
+                              Expanded(
+                                child:
+                                    _editMode == _EditMode.crop
+                                        ? _buildCropBottomSheet()
+                                        : _editMode == _EditMode.filter
+                                        ? _buildFilterBottomSheet()
+                                        : _buildAdjustmentBottomSheet(),
+                              ),
+                              Padding(
+                                padding: const EdgeInsets.only(
+                                  left: 8.0,
+                                  right: 8.0,
+                                  bottom: 30.0,
+                                ),
+                                child: Row(
+                                  mainAxisAlignment: MainAxisAlignment.end,
+                                  children: [
+                                    TextButton(
+                                      onPressed: _closeBottomSheet,
+                                      child: Text(
+                                        '취소',
+                                        style: TextStyle(
+                                          fontSize: 15,
+                                          fontWeight: FontWeight.w600,
+                                          color: fgColor.withOpacity(0.7),
+                                        ),
+                                      ),
+                                    ),
+                                    const Spacer(),
+                                    TextButton(
+                                      onPressed: () {
+                                        _applyEdit();
+                                        _closeBottomSheet();
+                                      },
+                                      child: Text(
+                                        _editMode == _EditMode.crop
+                                            ? '적용'
+                                            : '완료',
+                                        style: TextStyle(
+                                          fontSize: 15,
+                                          fontWeight: FontWeight.w600,
+                                          color: fgColor.withOpacity(0.7),
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ],
               ),
             ),
+          ),
         ],
       ),
     );

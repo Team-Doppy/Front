@@ -102,10 +102,12 @@ class VideoService {
 
   /// Video placeholder를 실제 URL로 교체
   /// - 기본은 id로 찾고, 실패 시 fallbackLocalPath가 주어지면 localPath로 검색해 교체
+  /// - processedLocalPath가 주어지면 ffmpeg 처리된 경로로 localPath 업데이트
   Future<void> replaceVideoPlaceholderWithUrl(
     String id,
     String url, {
     String? fallbackLocalPath,
+    String? processedLocalPath, // 🎯 ffmpeg 처리된 비디오 경로
     required bool Function(String) isNetworkUrl,
   }) async {
     // 🎯 플레이스홀더 교체 시 히스토리 저장 방지 (교체 후에는 실제 노드이므로 히스토리 저장)
@@ -151,35 +153,49 @@ class VideoService {
       // - ClipComponent는 localPath가 있으면 로컬 비디오를 표시하므로, 업로드 완료 후에도 localPath 유지
       // - url은 네트워크 URL로 설정하여 발행 시 사용 (임시저장 시에는 localPath 사용)
       // - 네트워크 URL로 교체는 임시저장/발행 시 PostExporter에서 처리
-      final localPath = nodeFound.localPath;
+      final originalLocalPath = nodeFound.localPath; // 원본 경로 (이미지의 imageUrl처럼)
       final uploadedUrls = Map<String, String>.from(
         (existingMetadata['uploadedUrls'] as Map<String, dynamic>?)
                 ?.cast<String, String>() ??
             {},
       );
 
-      // localPath가 로컬 경로인 경우 uploadedUrls에 저장
-      if (localPath.isNotEmpty && !isNetworkUrl(localPath)) {
-        uploadedUrls[localPath] = url;
+      // 🎯 이미지와 동일하게: uploadedUrls에는 원본 경로를 키로 저장
+      if (originalLocalPath.isNotEmpty && !isNetworkUrl(originalLocalPath)) {
+        uploadedUrls[originalLocalPath] = url;
         debugPrint(
-          '[VideoService] 🔄 Video uploadedUrls 저장: $localPath -> $url',
+          '[VideoService] 🔄 Video uploadedUrls 저장: $originalLocalPath -> $url',
         );
       }
 
-      // 🎯 ClipComponent는 localPath가 있으면 로컬 비디오를 표시하므로,
-      // 업로드 완료 후에도 localPath를 유지하고 url도 네트워크 URL로 설정
-      // (임시저장 복원 시 localPath 사용, 발행 시 url 사용)
+      // 🎯 processedLocalPath가 있으면 ffmpeg 처리된 경로로 localPath 업데이트
+      // 이미지와 동일한 구조: imageUrl은 원본 경로 유지, localPath는 ffmpeg 처리된 경로 사용
+      final finalLocalPath =
+          processedLocalPath != null && processedLocalPath.isNotEmpty
+              ? processedLocalPath
+              : originalLocalPath;
+
+      // 🎯 원본 경로를 metadata에 저장하여 발행 시 찾을 수 있도록 함 (이미지와 동일한 구조)
+      final updatedMetadata = <String, dynamic>{
+        ...existingMetadata,
+        'uploadedUrls': uploadedUrls,
+      };
+
+      // 원본 경로가 ffmpeg 처리된 경로와 다르면 metadata에 저장
+      if (processedLocalPath != null &&
+          processedLocalPath.isNotEmpty &&
+          processedLocalPath != originalLocalPath) {
+        updatedMetadata['originalLocalPath'] = originalLocalPath;
+      }
+
       final newNode = ClipNode(
         id: nodeFound.id,
         label: nodeFound.label,
         colorHex: nodeFound.colorHex,
         url: url, // 네트워크 URL (발행 시 사용)
-        localPath: localPath, // 로컬 경로 유지 (임시저장 복원용, ClipComponent가 로컬 비디오 표시)
+        localPath: finalLocalPath, // 🎯 ffmpeg 처리된 경로 사용 (있으면)
         thumbnailPath: nodeFound.thumbnailPath, // 썸네일 경로 유지
-        metadata: {
-          ...existingMetadata,
-          'uploadedUrls': uploadedUrls,
-        }, // uploadedUrls 추가
+        metadata: updatedMetadata, // uploadedUrls 및 originalLocalPath 포함
       );
 
       editor.execute([

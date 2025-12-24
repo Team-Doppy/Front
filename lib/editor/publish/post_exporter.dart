@@ -328,11 +328,27 @@ class PostExporter {
                 '[PostExporter] 🔄 단일 이미지 네트워크 URL 변환: ${node.imageUrl} -> $imageUrl',
               );
             } else {
-              // 🚀 변환 실패: 업로드되지 않은 이미지 (임시저장/발행 모두 불가)
-              throw StateError(
-                '${allowPartialUpload ? '임시저장' : '발행'} 불가: 이미지가 업로드되지 않았습니다. '
-                '이미지 업로드가 완료될 때까지 기다려주세요. (노드 ID: ${node.id}, URL: ${node.imageUrl})',
-              );
+              // 🎯 UploadService로 실제 업로드 상태 확인 (ref 태스크 기반)
+              final isUploading = editorService.isNodeUploading(node.id);
+
+              if (isUploading) {
+                // 🚀 업로드 중: 임시저장 불가 (업로드 완료 대기)
+                throw StateError(
+                  '임시저장 불가: 이미지가 업로드 중입니다. '
+                  '이미지 업로드가 완료될 때까지 기다려주세요. (노드 ID: ${node.id}, URL: ${node.imageUrl})',
+                );
+              } else if (allowPartialUpload) {
+                // 🎯 allowPartialUpload이 true이면 로컬 경로 유지 (발행 시에만 사용)
+                debugPrint(
+                  '[PostExporter] 🎯 임시저장: 단일 이미지 로컬 경로 유지 (노드 ID: ${node.id})',
+                );
+              } else {
+                // 🚀 변환 실패: 업로드되지 않은 이미지 (발행/임시저장 불가)
+                throw StateError(
+                  '${allowPartialUpload ? "임시저장" : "발행"} 불가: 이미지가 업로드되지 않았습니다. '
+                  '이미지 업로드가 완료될 때까지 기다려주세요. (노드 ID: ${node.id}, URL: ${node.imageUrl})',
+                );
+              }
             }
           }
           // 이미 네트워크 URL이면 변환 불필요 (기존 발행된 이미지)
@@ -400,22 +416,59 @@ class PostExporter {
               }
             }
 
-            // 🚀 변환 실패한 URL 처리 (임시저장/발행 모두 불가)
+            // 🚀 변환 실패한 URL 처리
             if (failedUrls.isNotEmpty) {
-              throw StateError(
-                '${allowPartialUpload ? '임시저장' : '발행'} 불가: 이미지 행의 일부 이미지가 업로드되지 않았습니다. '
-                '모든 이미지 업로드가 완료될 때까지 기다려주세요. '
-                '(노드 ID: ${node.id}, 실패한 URL: ${failedUrls.join(", ")})',
-              );
+              // 🎯 UploadService로 실제 업로드 상태 확인 (ref 태스크 기반)
+              final isUploading = editorService.isNodeUploading(node.id);
+
+              if (isUploading) {
+                // 🚀 업로드 중: 임시저장 불가 (업로드 완료 대기)
+                throw StateError(
+                  '임시저장 불가: 이미지 행의 일부 이미지가 업로드 중입니다. '
+                  '이미지 업로드가 완료될 때까지 기다려주세요. '
+                  '(노드 ID: ${node.id}, 실패한 URL: ${failedUrls.join(", ")})',
+                );
+              } else if (allowPartialUpload) {
+                // 🎯 allowPartialUpload이 true이면 로컬 경로 유지 (발행 시에만 사용)
+                debugPrint(
+                  '[PostExporter] 🎯 임시저장: ImageRow 일부 이미지 로컬 경로 유지 (노드 ID: ${node.id}, 실패한 URL: ${failedUrls.join(", ")})',
+                );
+                // 변환된 URL과 실패한 URL을 모두 포함
+                imageUrls = convertedUrls + failedUrls;
+              } else {
+                // 🚀 변환 실패: 업로드되지 않은 이미지 (발행/임시저장 불가)
+                throw StateError(
+                  '${allowPartialUpload ? "임시저장" : "발행"} 불가: 이미지 행의 일부 이미지가 업로드되지 않았습니다. '
+                  '모든 이미지 업로드가 완료될 때까지 기다려주세요. '
+                  '(노드 ID: ${node.id}, 실패한 URL: ${failedUrls.join(", ")})',
+                );
+              }
             } else {
               imageUrls = convertedUrls;
             }
           } else if (node.imageUrls.any((url) => !_isNetworkUrl(url))) {
-            // uploadedUrls가 없는데 로컬 경로가 있으면 에러 (임시저장/발행 모두 불가)
-            throw StateError(
-              '${allowPartialUpload ? '임시저장' : '발행'} 불가: 이미지 행에 업로드되지 않은 이미지가 있습니다. '
-              '이미지 업로드가 완료될 때까지 기다려주세요. (노드 ID: ${node.id})',
-            );
+            // uploadedUrls가 없는데 로컬 경로가 있으면
+            // 🎯 UploadService로 실제 업로드 상태 확인 (ref 태스크 기반)
+            final isUploading = editorService.isNodeUploading(node.id);
+
+            if (isUploading) {
+              // 🚀 업로드 중: 임시저장 불가 (업로드 완료 대기)
+              throw StateError(
+                '임시저장 불가: 이미지 행이 업로드 중입니다. '
+                '이미지 업로드가 완료될 때까지 기다려주세요. (노드 ID: ${node.id})',
+              );
+            } else if (allowPartialUpload) {
+              // 🎯 allowPartialUpload이 true이면 로컬 경로 유지 (발행 시에만 사용)
+              debugPrint(
+                '[PostExporter] 🎯 임시저장: ImageRow 로컬 경로 유지 (노드 ID: ${node.id})',
+              );
+            } else {
+              // 🚀 변환 실패: 업로드되지 않은 이미지 (발행/임시저장 불가)
+              throw StateError(
+                '${allowPartialUpload ? "임시저장" : "발행"} 불가: 이미지 행에 업로드되지 않은 이미지가 있습니다. '
+                '이미지 업로드가 완료될 때까지 기다려주세요. (노드 ID: ${node.id})',
+              );
+            }
           }
         }
 
@@ -494,22 +547,48 @@ class PostExporter {
 
           if (!isNetworkUrl) {
             // 로컬 경로인 경우 uploadedUrls에서 변환 (필수)
+            // 🎯 이미지와 동일한 구조: 원본 경로를 키로 사용
             final uploadedUrls = meta['uploadedUrls'] as Map<String, dynamic>?;
             if (uploadedUrls != null && uploadedUrls.isNotEmpty) {
-              // localPath가 있으면 uploadedUrls에서 찾기
-              if (node.localPath.isNotEmpty &&
-                  uploadedUrls[node.localPath] != null) {
-                videoUrl = uploadedUrls[node.localPath].toString();
-                debugPrint(
-                  '[PostExporter] 🔄 Video 네트워크 URL 변환: ${node.localPath} -> $videoUrl',
-                );
-              } else if (uploadedUrls[videoUrl] != null) {
-                // url 자체가 로컬 경로인 경우
-                videoUrl = uploadedUrls[videoUrl].toString();
-                debugPrint(
-                  '[PostExporter] 🔄 Video 네트워크 URL 변환: ${node.url} -> $videoUrl',
-                );
-              } else {
+              // 원본 경로를 metadata에서 가져오기
+              final originalPath = meta['originalLocalPath'] as String?;
+
+              // 🎯 원본 경로를 우선적으로 사용 (uploadedUrls의 키는 원본 경로)
+              String? foundUrl;
+              if (originalPath != null && originalPath.isNotEmpty) {
+                foundUrl = uploadedUrls[originalPath]?.toString();
+                if (foundUrl != null) {
+                  videoUrl = foundUrl;
+                  debugPrint(
+                    '[PostExporter] 🔄 Video 네트워크 URL 변환 (원본 경로): $originalPath -> $videoUrl',
+                  );
+                }
+              }
+
+              // 원본 경로로 찾지 못했으면 localPath로 시도
+              if (foundUrl == null && node.localPath.isNotEmpty) {
+                foundUrl = uploadedUrls[node.localPath]?.toString();
+                if (foundUrl != null) {
+                  videoUrl = foundUrl;
+                  debugPrint(
+                    '[PostExporter] 🔄 Video 네트워크 URL 변환 (localPath): ${node.localPath} -> $videoUrl',
+                  );
+                }
+              }
+
+              // localPath로도 찾지 못했으면 url 자체가 로컬 경로인 경우 시도
+              if (foundUrl == null && videoUrl.isNotEmpty) {
+                foundUrl = uploadedUrls[videoUrl]?.toString();
+                if (foundUrl != null) {
+                  videoUrl = foundUrl;
+                  debugPrint(
+                    '[PostExporter] 🔄 Video 네트워크 URL 변환 (url): ${node.url} -> $videoUrl',
+                  );
+                }
+              }
+
+              // 모든 시도 실패
+              if (foundUrl == null) {
                 // 🚀 변환 실패: 업로드되지 않은 비디오 (임시저장/발행 모두 불가)
                 throw StateError(
                   '${allowPartialUpload ? '임시저장' : '발행'} 불가: 비디오가 업로드되지 않았습니다. '

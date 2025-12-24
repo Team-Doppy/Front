@@ -4,6 +4,9 @@ import 'package:flutter_svg/svg.dart';
 import 'package:super_editor/super_editor.dart';
 import 'package:doppy/editor/service/node_component_service.dart';
 import 'package:doppy/editor/component/row_image_component.dart';
+import 'package:doppy/editor/service/editor_service.dart';
+import 'package:provider/provider.dart';
+import 'package:doppy/editor/component/app_image_node.dart';
 
 class SelectedToolbar extends StatefulWidget {
   const SelectedToolbar({
@@ -13,6 +16,7 @@ class SelectedToolbar extends StatefulWidget {
     required this.onEdit,
     required this.onDelete,
     this.onChangeAlignment,
+    this.editorService, // 🎯 Provider context 문제 방지
   });
 
   final String? selectedId;
@@ -20,6 +24,7 @@ class SelectedToolbar extends StatefulWidget {
   final VoidCallback onEdit;
   final void Function(DocumentNode node, String selectedId) onDelete;
   final void Function(DocumentNode node, String selectedId)? onChangeAlignment;
+  final EditorService? editorService; // 🎯 Provider context 문제 방지
 
   @override
   State<SelectedToolbar> createState() => _SelectedToolbarState();
@@ -120,11 +125,63 @@ class _SelectedToolbarState extends State<SelectedToolbar> {
                 label: '스포일러',
                 onTap: () {
                   if (widget.selectedId != null) {
-                    // 현재 상태의 반대로 설정 (toggleSpoiler 대신 setSpoiler 사용)
-                    NodeComponentService().setSpoiler(
-                      widget.selectedId!,
-                      !isImageSpoiler,
-                    );
+                    final newSpoilerValue = !isImageSpoiler;
+                    final nodeId = widget.selectedId!;
+
+                    // 1. NodeComponentService에 스포일러 상태 저장
+                    NodeComponentService().setSpoiler(nodeId, newSpoilerValue);
+
+                    // 2. 문서의 metadata도 업데이트 (복원 시 스포일러 상태 유지)
+                    try {
+                      // 🎯 prop으로 전달받은 editorService 우선 사용, 없으면 Provider로 접근
+                      final editorService =
+                          widget.editorService ?? context.read<EditorService>();
+                      final node = editorService.document.getNodeById(nodeId);
+
+                      if (node is ImageNode) {
+                        final meta = Map<String, dynamic>.from(
+                          (node as dynamic).metadata as Map<String, dynamic>? ??
+                              {},
+                        );
+                        if (newSpoilerValue) {
+                          meta['spoiler'] = true;
+                        } else {
+                          meta.remove('spoiler');
+                        }
+
+                        final updatedNode = AppImageNode(
+                          id: nodeId,
+                          imageUrl: (node as dynamic).imageUrl as String,
+                          altText: node.altText,
+                          metadata: meta,
+                        );
+
+                        editorService.editor.execute([
+                          ReplaceNodeRequest(
+                            existingNodeId: nodeId,
+                            newNode: updatedNode,
+                          ),
+                        ]);
+                      } else if (node is ImageRowNode) {
+                        final meta = Map<String, dynamic>.from(node.metadata);
+                        if (newSpoilerValue) {
+                          meta['spoiler'] = true;
+                        } else {
+                          meta.remove('spoiler');
+                        }
+
+                        final updatedNode = node.copyWith(metadata: meta);
+                        editorService.editor.execute([
+                          ReplaceNodeRequest(
+                            existingNodeId: nodeId,
+                            newNode: updatedNode,
+                          ),
+                        ]);
+                      }
+                    } catch (e) {
+                      debugPrint('[SelectedToolbar] 스포일러 metadata 업데이트 실패: $e');
+                    }
+
                     if (mounted) setState(() {});
                   }
                 },

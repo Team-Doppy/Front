@@ -972,13 +972,12 @@ class UploadService with ChangeNotifier {
   }
 
   /// 🎯 에디터 이미지 업로드 (전체 플로우)
-  /// - 파일 선택부터 placeholder 생성, 업로드, 노드 교체까지 처리
+  /// - 파일 선택부터 노드 생성, 업로드, 노드 업데이트까지 처리
   Future<void> uploadEditorImages({
     required List<File> files,
-    required String Function(String localPath) onCreatePlaceholder,
-    required Future<void> Function(String placeholderId, String url)
-    onReplacePlaceholder,
-    required void Function(String placeholderId) onDeletePlaceholder,
+    required String Function(String localPath) onCreateNode,
+    required Future<void> Function(String nodeId, String url) onUploadComplete,
+    required void Function(String nodeId) onDeleteNode,
     required bool Function() isMounted,
     required BuildContext? context,
     required Future<void> Function(String title, String message)
@@ -992,26 +991,26 @@ class UploadService with ChangeNotifier {
     int failedCount = 0;
     bool summaryShown = false;
     final Set<String> handled = <String>{};
-    final Set<String> createdPlaceholders = <String>{}; // 🎯 생성된 placeholder 추적
+    final Set<String> createdNodes = <String>{}; // 🎯 생성된 노드 추적
 
     for (final file in files) {
-      // 1. Placeholder 생성
-      final placeholderId = onCreatePlaceholder(file.path);
+      // 1. 노드 생성
+      final nodeId = onCreateNode(file.path);
 
-      // 🎯 같은 placeholder ID가 이미 생성되었으면 재사용 (그룹 이미지용)
-      final isNewPlaceholder = createdPlaceholders.add(placeholderId);
+      // 🎯 같은 노드 ID가 이미 생성되었으면 재사용 (그룹 이미지용)
+      final isNewNode = createdNodes.add(nodeId);
 
-      if (isNewPlaceholder) {
-        debugPrint('[UploadService] 🆕 새 placeholder 생성: $placeholderId');
+      if (isNewNode) {
+        debugPrint('[UploadService] 🆕 새 노드 생성: $nodeId');
       } else {
-        debugPrint('[UploadService] ♻️ 기존 placeholder 재사용: $placeholderId');
+        debugPrint('[UploadService] ♻️ 기존 노드 재사용: $nodeId');
       }
 
       // 2. 업로드 태스크 생성
       final task = enqueueFile(
         file,
         kind: UploadKind.editorImage,
-        refId: placeholderId,
+        refId: nodeId,
       );
 
       // 3. 업로드 완료 처리
@@ -1027,19 +1026,17 @@ class UploadService with ChangeNotifier {
 
         if (task.state == UploadState.success && (task.url ?? '').isNotEmpty) {
           debugPrint(
-            '[UploadService] ✅ 이미지 업로드 완료: placeholderId=$placeholderId, url=${task.url}',
+            '[UploadService] ✅ 이미지 업로드 완료: nodeId=$nodeId, url=${task.url}',
           );
-          await onReplacePlaceholder(placeholderId, task.url!);
+          await onUploadComplete(nodeId, task.url!);
           completed++;
         } else if (task.state == UploadState.failed ||
             task.state == UploadState.cancelled) {
-          debugPrint(
-            '[UploadService] ❌ 이미지 업로드 실패: placeholderId=$placeholderId',
-          );
+          debugPrint('[UploadService] ❌ 이미지 업로드 실패: nodeId=$nodeId');
           // 🎯 그룹 이미지인 경우 전체 삭제를 한 번만 호출
-          if (createdPlaceholders.contains(placeholderId)) {
-            onDeletePlaceholder(placeholderId);
-            createdPlaceholders.remove(placeholderId); // 중복 삭제 방지
+          if (createdNodes.contains(nodeId)) {
+            onDeleteNode(nodeId);
+            createdNodes.remove(nodeId); // 중복 삭제 방지
           }
           failedCount++;
           completed++;
@@ -1064,9 +1061,9 @@ class UploadService with ChangeNotifier {
   }
 
   /// 🎯 에디터 영상 업로드 (전체 플로우)
-  /// - 파일 선택부터 placeholder 생성, 썸네일 생성, 압축, 업로드, 노드 교체까지 처리
-  /// - Placeholder는 즉시 생성하고, 압축은 비동기로 처리하여 UI 블로킹 방지
-  /// - 🎯 플레이스홀더가 성공적으로 생성된 경우에만 압축/업로드 진행
+  /// - 파일 선택부터 노드 생성, 썸네일 생성, 압축, 업로드, 노드 업데이트까지 처리
+  /// - 노드는 즉시 생성하고, 압축은 비동기로 처리하여 UI 블로킹 방지
+  /// - 🎯 노드가 성공적으로 생성된 경우에만 압축/업로드 진행
   Future<void> uploadEditorVideo({
     required File file,
     required String Function(
@@ -1075,21 +1072,22 @@ class UploadService with ChangeNotifier {
       String? thumbnailPath,
       double? aspectRatio,
     })
-    onCreatePlaceholder,
-    required void Function(String placeholderId, String thumbnailPath)
+    onCreateNode,
+    required void Function(String nodeId, String thumbnailPath)
     onUpdateThumbnail,
     required Future<void> Function(
-      String placeholderId,
+      String nodeId,
       String url, {
       String? fallbackLocalPath,
+      String? processedLocalPath, // 🎯 ffmpeg 처리된 비디오 경로
     })
-    onReplacePlaceholder,
-    required void Function(String placeholderId) onDeletePlaceholder,
+    onUploadComplete,
+    required void Function(String nodeId) onDeleteNode,
     required bool Function() isMounted,
     required BuildContext? context,
     required Future<void> Function(String title, String message)
     showErrorDialog,
-    String? existingPlaceholderId, // 🎯 이미 생성된 플레이스홀더 ID (선택적)
+    String? existingNodeId, // 🎯 이미 생성된 노드 ID (선택적)
     String? editorId, // 🎯 에디터 ID (압축 취소용)
     String? initialThumbnailPath, // 🎯 트림 시 추출한 썸네일 경로 (선택적)
   }) async {
@@ -1108,7 +1106,7 @@ class UploadService with ChangeNotifier {
         return;
       }
 
-      // 2. 영상 비율 정보 가져오기 (플레이스홀더 생성 전)
+      // 2. 영상 비율 정보 가져오기 (노드 생성 전)
       double? aspectRatio;
       try {
         final controller = VideoPlayerController.file(file);
@@ -1127,23 +1125,23 @@ class UploadService with ChangeNotifier {
         debugPrint('[UploadService] 영상 비율 가져오기 실패 (기본값 사용): $e');
       }
 
-      // 3. Placeholder 생성 (이미 생성된 경우 재사용)
+      // 3. 노드 생성 (이미 생성된 경우 재사용)
       final originalFileName = file.path.split('/').last;
-      String? placeholderId;
+      String? nodeId;
 
       try {
-        placeholderId =
-            existingPlaceholderId ??
-            onCreatePlaceholder(
+        nodeId =
+            existingNodeId ??
+            onCreateNode(
               file.path,
               originalFileName,
               thumbnailPath: initialThumbnailPath ?? '', // 🎯 트림 시 추출한 썸네일 사용
               aspectRatio: aspectRatio, // 🎯 비율 정보 전달
             );
 
-        // 🎯 플레이스홀더 ID가 유효한지 확인
-        if (placeholderId.isEmpty) {
-          debugPrint('[UploadService] ❌ 플레이스홀더 ID가 비어있음');
+        // 🎯 노드 ID가 유효한지 확인
+        if (nodeId.isEmpty) {
+          debugPrint('[UploadService] ❌ 노드 ID가 비어있음');
           if (isMounted() && context != null) {
             await showErrorDialog('오류', '영상을 추가할 수 없습니다. 다시 시도해주세요.');
           }
@@ -1151,32 +1149,32 @@ class UploadService with ChangeNotifier {
         }
 
         debugPrint(
-          '[UploadService] ✅ Placeholder ${existingPlaceholderId != null ? "재사용" : "생성"}: placeholderId=$placeholderId${initialThumbnailPath != null ? " (썸네일 포함)" : ""}',
+          '[UploadService] ✅ 노드 ${existingNodeId != null ? "재사용" : "생성"}: nodeId=$nodeId${initialThumbnailPath != null ? " (썸네일 포함)" : ""}',
         );
       } catch (e) {
-        debugPrint('[UploadService] ❌ 플레이스홀더 생성 실패: $e');
+        debugPrint('[UploadService] ❌ 노드 생성 실패: $e');
         if (isMounted() && context != null) {
           await showErrorDialog('오류', '영상을 추가할 수 없습니다. 다시 시도해주세요.');
         }
         return;
       }
 
-      // 🎯 플레이스홀더가 성공적으로 생성된 경우에만 압축/업로드 진행
-      // UI 업데이트를 위해 즉시 반환 (placeholder가 화면에 표시되도록)
+      // 🎯 노드가 성공적으로 생성된 경우에만 압축/업로드 진행
+      // UI 업데이트를 위해 즉시 반환 (노드가 화면에 표시되도록)
       // 썸네일 생성, 압축, 업로드는 모두 백그라운드에서 비동기로 처리
       Future.microtask(() async {
-        // 🎯 플레이스홀더가 여전히 유효한지 확인
-        if (!isMounted() || placeholderId == null || placeholderId.isEmpty) {
-          debugPrint('[UploadService] ⚠️ 플레이스홀더가 유효하지 않아 압축/업로드 중단');
+        // 🎯 노드가 여전히 유효한지 확인
+        if (!isMounted() || nodeId == null || nodeId.isEmpty) {
+          debugPrint('[UploadService] ⚠️ 노드가 유효하지 않아 압축/업로드 중단');
           return;
         }
 
-        // 3. 썸네일 생성 (비동기, 완료되면 플레이스홀더 업데이트)
+        // 3. 썸네일 생성 (비동기, 완료되면 노드 업데이트)
         // 🎯 트림 시 이미 썸네일이 추출되었으면 스킵
         if (initialThumbnailPath == null || initialThumbnailPath.isEmpty) {
           _generateThumbnailAsync(
             file.path,
-            placeholderId,
+            nodeId,
             onUpdateThumbnail,
             isMounted,
           );
@@ -1187,9 +1185,9 @@ class UploadService with ChangeNotifier {
         // 4. 비디오 압축 및 업로드 (비동기로 처리하여 UI 블로킹 방지)
         await _compressAndUploadVideo(
           file: file,
-          placeholderId: placeholderId,
-          onDeletePlaceholder: onDeletePlaceholder,
-          onReplacePlaceholder: onReplacePlaceholder,
+          nodeId: nodeId,
+          onDeleteNode: onDeleteNode,
+          onUploadComplete: onUploadComplete,
           isMounted: isMounted,
           context: context,
           showErrorDialog: showErrorDialog,
@@ -1197,7 +1195,7 @@ class UploadService with ChangeNotifier {
         );
       });
 
-      // 메서드 즉시 반환 (placeholder가 UI에 즉시 표시되도록)
+      // 메서드 즉시 반환 (노드가 UI에 즉시 표시되도록)
       return;
     } catch (e) {
       debugPrint('[UploadService] ❌ 영상 업로드 오류: $e');
@@ -1208,26 +1206,27 @@ class UploadService with ChangeNotifier {
   }
 
   /// 비디오 압축 및 업로드 (비동기 처리)
-  /// 🎯 플레이스홀더가 유효한 경우에만 압축/업로드 진행
+  /// 🎯 노드가 유효한 경우에만 압축/업로드 진행
   Future<void> _compressAndUploadVideo({
     required File file,
-    required String placeholderId,
-    required void Function(String placeholderId) onDeletePlaceholder,
+    required String nodeId,
+    required void Function(String nodeId) onDeleteNode,
     required Future<void> Function(
-      String placeholderId,
+      String nodeId,
       String url, {
       String? fallbackLocalPath,
+      String? processedLocalPath, // 🎯 ffmpeg 처리된 비디오 경로
     })
-    onReplacePlaceholder,
+    onUploadComplete,
     required bool Function() isMounted,
     required BuildContext? context,
     required Future<void> Function(String title, String message)
     showErrorDialog,
     String? editorId, // 🎯 에디터 ID (압축 취소용)
   }) async {
-    // 🎯 플레이스홀더 유효성 확인
-    if (placeholderId.isEmpty) {
-      debugPrint('[UploadService] ⚠️ 플레이스홀더 ID가 비어있어 압축/업로드 중단');
+    // 🎯 노드 유효성 확인
+    if (nodeId.isEmpty) {
+      debugPrint('[UploadService] ⚠️ 노드 ID가 비어있어 압축/업로드 중단');
       return;
     }
 
@@ -1235,13 +1234,13 @@ class UploadService with ChangeNotifier {
       // 🎯 취소 확인 (압축 시작 전) - refId와 editorId 모두 확인
       // 단, 토큰이 이미 생성되어 있고 취소된 경우에만 중단
       // 토큰이 아직 생성되지 않았으면 정상 진행 (압축 시작 시 토큰 생성됨)
-      final refToken = _refIdCompressionTokens[placeholderId];
+      final refToken = _refIdCompressionTokens[nodeId];
       if (refToken != null && refToken.isCancelled) {
         debugPrint(
-          '[UploadService] ⚠️ refId 기반 압축이 이미 취소되어 업로드 중단: refId=$placeholderId',
+          '[UploadService] ⚠️ refId 기반 압축이 이미 취소되어 업로드 중단: refId=$nodeId',
         );
-        _refIdCompressionTokens.remove(placeholderId);
-        onDeletePlaceholder(placeholderId);
+        _refIdCompressionTokens.remove(nodeId);
+        onDeleteNode(nodeId);
         return;
       }
 
@@ -1251,7 +1250,7 @@ class UploadService with ChangeNotifier {
           debugPrint(
             '[UploadService] ⚠️ 에디터 압축이 이미 취소되어 업로드 중단: editorId=$editorId',
           );
-          onDeletePlaceholder(placeholderId);
+          onDeleteNode(nodeId);
           return;
         }
       }
@@ -1260,7 +1259,7 @@ class UploadService with ChangeNotifier {
       mp4File = await _compressVideo(
         file.path,
         editorId: editorId,
-        refId: placeholderId, // 🎯 refId 전달하여 개별 취소 가능하도록
+        refId: nodeId, // 🎯 refId 전달하여 개별 취소 가능하도록
       );
 
       // 🎯 취소 확인 (압축 완료 후)
@@ -1273,7 +1272,7 @@ class UploadService with ChangeNotifier {
               await mp4File.delete();
             } catch (_) {}
           }
-          onDeletePlaceholder(placeholderId);
+          onDeleteNode(nodeId);
           return;
         }
       }
@@ -1282,14 +1281,14 @@ class UploadService with ChangeNotifier {
       if (mp4File == null) {
         debugPrint('[UploadService] ⚠️ 비디오 압축 실패 또는 취소됨');
 
-        // 🎯 취소된 경우가 아니면 플레이스홀더 삭제 및 에러 다이얼로그 표시
+        // 🎯 취소된 경우가 아니면 노드 삭제 및 에러 다이얼로그 표시
         final wasCancelled =
             editorId != null &&
             _editorCompressionTokens[editorId] != null &&
             _editorCompressionTokens[editorId]!.isCancelled;
 
         if (!wasCancelled) {
-          onDeletePlaceholder(placeholderId);
+          onDeleteNode(nodeId);
           if (isMounted() && context != null) {
             // 🎯 압축 실패 원인에 따라 다른 메시지 표시
             // (실제로는 VideoUploadUtils에서 더 자세한 에러 메시지를 제공할 수 있음)
@@ -1299,8 +1298,8 @@ class UploadService with ChangeNotifier {
             );
           }
         } else {
-          // 취소된 경우 플레이스홀더만 삭제 (다이얼로그 표시 안 함)
-          onDeletePlaceholder(placeholderId);
+          // 취소된 경우 노드만 삭제 (다이얼로그 표시 안 함)
+          onDeleteNode(nodeId);
         }
         return;
       }
@@ -1313,7 +1312,7 @@ class UploadService with ChangeNotifier {
         mp4File,
         kind: UploadKind.video,
         overrideName: mp4FileName,
-        refId: placeholderId,
+        refId: nodeId,
       );
 
       // 업로드 완료 처리
@@ -1334,7 +1333,7 @@ class UploadService with ChangeNotifier {
 
         if (task.state == UploadState.failed) {
           videoHandled = true;
-          onDeletePlaceholder(placeholderId);
+          onDeleteNode(nodeId);
           if (isMounted() && context != null) {
             await _showVideoUploadFailedDialog(context, task.error);
           }
@@ -1343,10 +1342,12 @@ class UploadService with ChangeNotifier {
           } catch (_) {}
         } else if (task.state == UploadState.success && task.url != null) {
           videoHandled = true;
-          await onReplacePlaceholder(
-            placeholderId,
+          await onUploadComplete(
+            nodeId,
             task.url!,
             fallbackLocalPath: file.path,
+            processedLocalPath:
+                mp4File?.path, // 🎯 ffmpeg 처리된 경로 전달 (null일 수 있음)
           );
           try {
             task.removeListener(listener);
@@ -1364,8 +1365,8 @@ class UploadService with ChangeNotifier {
       Future.delayed(const Duration(seconds: 2), handleOnce);
     } catch (e) {
       debugPrint('[UploadService] ❌ 비디오 압축/업로드 오류: $e');
-      // 🎯 에러 발생 시 즉시 플레이스홀더 삭제 및 에러 다이얼로그 표시
-      onDeletePlaceholder(placeholderId);
+      // 🎯 에러 발생 시 즉시 노드 삭제 및 에러 다이얼로그 표시
+      onDeleteNode(nodeId);
       if (isMounted() && context != null) {
         await _showVideoUploadFailedDialog(context, e);
       }
