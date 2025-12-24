@@ -1023,6 +1023,7 @@ class _ClipComponentState extends State<_ClipComponent> with DocumentComponent {
           isDarkMode: widget.isDarkMode,
           horizontalPadding: horizontalPadding,
           isUploading: isUploading, // 업로드 중 표시
+          dragService: widget.dragService, // 🎯 dragService 전달
         ),
       );
     }
@@ -1065,6 +1066,7 @@ class _ClipComponentState extends State<_ClipComponent> with DocumentComponent {
                   isEditing: widget.isEditing,
                   isDarkMode: widget.isDarkMode,
                   horizontalPadding: horizontalPadding,
+                  dragService: widget.dragService, // 🎯 dragService 전달
                 ),
               ],
             ),
@@ -1082,6 +1084,7 @@ class _ClipComponentState extends State<_ClipComponent> with DocumentComponent {
           isEditing: widget.isEditing,
           isDarkMode: widget.isDarkMode,
           horizontalPadding: horizontalPadding,
+          dragService: widget.dragService, // 🎯 dragService 전달
         ),
       );
     }
@@ -1145,6 +1148,7 @@ class _VisibilityAwareVideoPlayer extends StatefulWidget {
   final bool isDarkMode;
   final double horizontalPadding;
   final bool isUploading; // 🎯 업로드 중 표시
+  final DragService? dragService; // 🎯 dragService 추가 (EditorService 접근용)
 
   const _VisibilityAwareVideoPlayer({
     super.key,
@@ -1156,6 +1160,7 @@ class _VisibilityAwareVideoPlayer extends StatefulWidget {
     this.isDarkMode = false,
     required this.horizontalPadding,
     this.isUploading = false,
+    this.dragService, // 🎯 dragService 추가
   });
 
   @override
@@ -1304,6 +1309,7 @@ class _VisibilityAwareVideoPlayerState
         isDarkMode: widget.isDarkMode,
         horizontalPadding: widget.horizontalPadding,
         isUploading: widget.isUploading,
+        dragService: widget.dragService, // 🎯 dragService 전달
       ),
     );
   }
@@ -1320,6 +1326,7 @@ class _VideoPlayerWidget extends StatefulWidget {
   final bool isDarkMode;
   final double horizontalPadding;
   final bool isUploading; // 🎯 업로드 중 표시
+  final DragService? dragService; // 🎯 dragService 추가 (EditorService 접근용)
 
   const _VideoPlayerWidget({
     required this.nodeId,
@@ -1331,6 +1338,7 @@ class _VideoPlayerWidget extends StatefulWidget {
     this.isDarkMode = false,
     required this.horizontalPadding,
     this.isUploading = false,
+    this.dragService, // 🎯 dragService 추가
   });
 
   @override
@@ -2141,10 +2149,27 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
 
       // 노드 업데이트 (EditorService를 통해)
       try {
-        final editorService = Provider.of<EditorService>(
-          context,
-          listen: false,
-        );
+        // 🎯 dragService를 통해 editorService 접근 (Provider context 문제 방지)
+        EditorService? editorService;
+        if (widget.dragService != null) {
+          editorService =
+              (widget.dragService as dynamic).editorService as EditorService?;
+        }
+
+        // 🎯 dragService가 없으면 Provider로 접근 시도 (fallback)
+        if (editorService == null) {
+          try {
+            editorService = Provider.of<EditorService>(context, listen: false);
+          } catch (e) {
+            debugPrint('[ClipComponent] Provider로 EditorService 접근 실패: $e');
+          }
+        }
+
+        if (editorService == null) {
+          debugPrint('[ClipComponent] EditorService를 찾을 수 없음');
+          return;
+        }
+
         final updatedNode = ClipNode(
           id: node.id,
           label: node.label,

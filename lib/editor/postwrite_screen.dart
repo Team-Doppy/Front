@@ -282,20 +282,57 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
         }
       }
 
-      // 편집 모드가 아닐 때만 커서 이동
-      if (!widget.isEditingMode) {
-        final node = document.getNodeById('2');
-        if (node is ParagraphNode) {
-          final offset = node.text.text.length;
+      // 🎯 에디터 진입 시 키보드 올리기 및 제목 노드 밑 2번째 노드에 포커스
+      // 제목 노드가 인덱스 0이므로, 2번째 노드는 인덱스 2
+      if (document.nodeCount > 2) {
+        final targetNode = document.getNodeAt(2);
+        if (targetNode is ParagraphNode) {
+          final offset = targetNode.text.text.length;
           composer.setSelectionWithReason(
             DocumentSelection.collapsed(
               position: DocumentPosition(
-                nodeId: node.id,
+                nodeId: targetNode.id,
                 nodePosition: TextNodePosition(offset: offset),
               ),
             ),
             SelectionReason.userInteraction,
           );
+          // 🎯 키보드 올리기
+          _editorFocusNode.requestFocus();
+        }
+      } else if (document.nodeCount == 2) {
+        // 노드가 2개만 있으면 (제목 + 1개) 마지막 노드에 포커스
+        final targetNode = document.getNodeAt(1);
+        if (targetNode is ParagraphNode) {
+          final offset = targetNode.text.text.length;
+          composer.setSelectionWithReason(
+            DocumentSelection.collapsed(
+              position: DocumentPosition(
+                nodeId: targetNode.id,
+                nodePosition: TextNodePosition(offset: offset),
+              ),
+            ),
+            SelectionReason.userInteraction,
+          );
+          // 🎯 키보드 올리기
+          _editorFocusNode.requestFocus();
+        }
+      } else if (document.nodeCount == 1) {
+        // 노드가 1개만 있으면 (제목만) 제목에 포커스
+        final targetNode = document.getNodeAt(0);
+        if (targetNode is ParagraphNode) {
+          final offset = targetNode.text.text.length;
+          composer.setSelectionWithReason(
+            DocumentSelection.collapsed(
+              position: DocumentPosition(
+                nodeId: targetNode.id,
+                nodePosition: TextNodePosition(offset: offset),
+              ),
+            ),
+            SelectionReason.userInteraction,
+          );
+          // 🎯 키보드 올리기
+          _editorFocusNode.requestFocus();
         }
       }
       try {
@@ -1308,6 +1345,10 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     if (document.getNodeById(selectedId) == null) {
       return; // 이미 삭제됨
     }
+
+    // 🎯 삭제 전 현재 상태를 히스토리에 동기적으로 저장
+    // 🎯 NodeRemovedEvent가 비동기로 처리되기 전에 삭제 전 상태를 확실히 저장
+    editorService.saveHistoryBeforeDelete();
 
     // 🎯 원자적 삭제: 레지스트리에서 먼저 제거하여 복원 방지
     editorService.removeSpecialNodeFromRegistry(

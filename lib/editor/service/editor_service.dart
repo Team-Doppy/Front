@@ -72,6 +72,8 @@ class EditorService extends ChangeNotifier {
   bool _isExecutingHistory = false;
   Timer? _historyTimer;
   bool _initialStateSaved = false; // 🎯 초기 상태 저장 완료 플래그 (중복 방지)
+  bool _isDeletingNode = false; // 🎯 노드 삭제 중 플래그 (중복 저장 방지)
+  bool _firstChangeAfterLoad = false; // 🎯 임시저장 불러온 직후 첫 변경사항 플래그
 
   // 🎯 NodeComponentService 참조 (노드 선택 해제용)
   BuildContext? _context;
@@ -215,14 +217,22 @@ class EditorService extends ChangeNotifier {
         _addToHistoryStack(snapshot, '즉시 저장');
       });
     } else {
-      // 디바운싱 (텍스트 입력)
+      // 디바운싱 (텍스트 입력/삭제)
       _historyTimer?.cancel();
+      debugPrint('[EditorService] ⏱️ 디바운싱 타이머 시작 (1초 후 저장 예정)');
       _historyTimer = Timer(Duration(seconds: 1), () {
+        // 🎯 타이머 실행 시점에 다시 체크 (이미 실행 중이면 스킵)
+        if (_isExecutingHistory) {
+          debugPrint('[EditorService] ⚠️ 디바운싱 저장 스킵 (히스토리 실행 중)');
+          return;
+        }
+
         final snapshot = _copyAllNodes();
 
         // 중복 방지
         if (_undoStack.isNotEmpty &&
             _areSnapshotsEqual(_undoStack.last, snapshot)) {
+          debugPrint('[EditorService] ⚠️ 디바운싱 저장 스킵 (중복 스냅샷)');
           return;
         }
 
@@ -276,20 +286,45 @@ class EditorService extends ChangeNotifier {
     }
 
     try {
+      // 🎯 히스토리가 비어있으면 현재 상태를 초기 상태로 저장 (임시저장 불러온 직후에도 동작)
       if (_undoStack.isEmpty) {
         debugPrint('[EditorService] 🎯 히스토리 비어있음 - 현재 상태를 초기 상태로 저장');
         _saveCurrentState(immediate: true);
+        // 🎯 초기 상태 저장 후에도 변경 이벤트는 계속 처리해야 함 (return 하지 않음)
       }
 
       // TextInsertionEvent, TextDeletedEvent - 디바운싱 적용 (1초 후 저장)
+      // 🎯 단, 임시저장 불러온 직후 첫 변경사항만 즉시 저장, 그 다음부터는 디바운싱
       if (change is TextInsertionEvent || change is TextDeletedEvent) {
-        _saveCurrentState(immediate: false);
+        if (_firstChangeAfterLoad) {
+          // 🎯 임시저장 불러온 직후 첫 변경사항은 즉시 저장 (히스토리 누락 방지)
+          debugPrint('[EditorService] 🎯 임시저장 불러온 직후 첫 변경 - 즉시 저장');
+          _saveCurrentState(immediate: true);
+          _firstChangeAfterLoad = false; // 🎯 플래그 해제 (다음부터는 디바운싱)
+        } else {
+          // 🎯 그 다음부터는 디바운싱 적용
+          _saveCurrentState(immediate: false);
+        }
         return;
       }
 
-      // 🎯 NodeInsertedEvent (엔터, 이미지/영상 추가), NodeRemoved (삭제), NodeChangeEvent (노드 변경), NodeMovedEvent (이동) - 즉시 저장!
+      // 🎯 NodeRemovedEvent는 _deleteNode에서 이미 삭제 전 상태를 저장했으므로 중복 저장 방지
+      if (change is NodeRemovedEvent) {
+        // 🎯 삭제 전 상태가 이미 저장되었으면 삭제 후 상태도 저장 (undo/redo를 위해)
+        if (_isDeletingNode) {
+          _isDeletingNode = false; // 플래그 해제
+          // 🎯 삭제 후 상태 저장 (redo를 위해)
+          _saveCurrentState(immediate: true);
+        }
+        // 🎯 _deleteNode에서 저장하지 않은 경우 (다른 경로로 삭제된 경우)는 즉시 저장
+        else {
+          _saveCurrentState(immediate: true);
+        }
+        return;
+      }
+
+      // 🎯 NodeInsertedEvent (엔터, 이미지/영상 추가), NodeChangeEvent (노드 변경), NodeMovedEvent (이동) - 즉시 저장!
       if (change is NodeInsertedEvent ||
-          change is NodeRemovedEvent ||
           change is NodeChangeEvent ||
           change is NodeMovedEvent) {
         _saveCurrentState(immediate: true);
@@ -487,6 +522,19 @@ class EditorService extends ChangeNotifier {
     _saveCurrentState(immediate: true);
   }
 
+  /// 🎯 노드 삭제 전 상태를 동기적으로 저장 (삭제 전 상태 확실히 보존)
+  /// NodeRemovedEvent가 비동기로 처리되기 전에 삭제 전 상태를 저장
+  void saveHistoryBeforeDelete() {
+    if (_isExecutingHistory) return;
+
+    // 🎯 삭제 중 플래그 설정 (NodeRemovedEvent에서 중복 저장 방지)
+    _isDeletingNode = true;
+
+    // 🎯 동기적으로 노드 복사 (삭제 전 상태를 확실히 저장)
+    final snapshot = _copyAllNodes();
+    _addToHistoryStack(snapshot, '노드 삭제 전 상태 저장');
+  }
+
   // 🎯 Undo 실행
   void undo() {
     _executeHistoryOperation(
@@ -501,7 +549,11 @@ class EditorService extends ChangeNotifier {
         final previousSnapshot = _undoStack.last;
         _restoreFromSnapshot(previousSnapshot);
 
-        debugPrint('[EditorService] ⬅️ Undo 완료 (남은: ${_undoStack.length})');
+        // 🎯 초기 상태로 복원된 경우에만 redo 스택 비우기
+        // 🎯 _undoStack.length == 1이면 초기 상태만 남은 것이므로 초기 상태로 복원된 것
+        if (_undoStack.isNotEmpty && _undoStack.length == 1) {
+          _redoStack.clear();
+        }
       },
       onError: () {
         // 🎯 에러 발생 시 스택 복구 시도
@@ -582,6 +634,7 @@ class EditorService extends ChangeNotifier {
     _undoStack.clear();
     _redoStack.clear();
     _initialStateSaved = false;
+    _firstChangeAfterLoad = false; // 🎯 플래그도 초기화
     debugPrint('[EditorService] 🗑️ 히스토리 클리어 완료');
     notifyListeners();
   }
@@ -595,6 +648,7 @@ class EditorService extends ChangeNotifier {
     final snapshot = _copyAllNodes();
     _addToHistoryStack(snapshot, '초기 상태 동기 저장 완료');
     _initialStateSaved = true;
+    _firstChangeAfterLoad = true; // 🎯 임시저장 불러온 직후 첫 변경사항 플래그 설정
   }
 
   // 🎯 스냅샷으로 문서 복원
