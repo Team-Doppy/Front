@@ -11,6 +11,7 @@ import 'package:flutter_svg/flutter_svg.dart';
 
 import 'package:doppy/editor/service/editor_service.dart';
 import 'package:doppy/editor/overlay/mention_overlay.dart';
+import 'package:doppy/editor/utils/config.dart';
 import 'package:provider/provider.dart';
 import 'package:doppy/editor/service/sticker_service.dart';
 import 'package:doppy/editor/component/divider_component.dart';
@@ -2442,7 +2443,7 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
       }
     }
 
-    _cachedFontSize = fontSize ?? 16.0;
+    _cachedFontSize = fontSize ?? EditorConfig.defaultBodyFontSize;
     return _cachedFontSize!;
   }
 

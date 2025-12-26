@@ -204,17 +204,18 @@ class _SingleImageComponentState extends State<SingleImageComponent>
   @override
   Widget build(BuildContext context) {
     // 🎯 편집 모드에서만 selection 체크 (성능 최적화)
+    // 🎯 읽기 모드에서도 doc에 접근하여 특수 노드 간격 확인 (포스트 라이트와 동일하게)
     DocumentSelection? composerSelection;
     Document? doc;
     // ignore: invalid_use_of_visible_for_testing_member
     SuperEditorState? seState;
+    // ignore: invalid_use_of_visible_for_testing_member
+    seState = context.findAncestorStateOfType<SuperEditorState>();
+    // ignore: invalid_use_of_visible_for_testing_member
+    doc = seState?.editContext.editor.document;
     if (widget.isEditing) {
       // ignore: invalid_use_of_visible_for_testing_member
-      seState = context.findAncestorStateOfType<SuperEditorState>();
-      // ignore: invalid_use_of_visible_for_testing_member
       composerSelection = seState?.editContext.composer.selection;
-      // ignore: invalid_use_of_visible_for_testing_member
-      doc = seState?.editContext.editor.document;
     }
     final bool hasImageAbove =
         doc == null ? false : _hasNeighborImage(doc, widget.nodeId, -1);
@@ -230,6 +231,10 @@ class _SingleImageComponentState extends State<SingleImageComponent>
           // 실제 이미지 내용 + 좌/우 세로 라인 (머지 모드에서)
           LayoutBuilder(
             builder: (context, constraints) {
+              debugPrint(
+                '[SingleImage] LayoutBuilder 호출: nodeId=${widget.nodeId}, constraints.maxWidth=${constraints.maxWidth}, screenWidth=${widget.screenWidth}',
+              );
+
               // 🎯 성능 최적화: context.watch → context.select로 변경하여 필요한 부분만 rebuild
               final editedBytes = context
                   .select<NodeComponentService, Uint8List?>(
@@ -852,97 +857,214 @@ class _SingleImageComponentState extends State<SingleImageComponent>
   }
 
   /// 🎯 이미지 크기 측정 및 저장 (편집 모드 전용)
-  void _measureAndSaveImageSize() {
-    if (!widget.isEditing || _cachedImageSize != null) return;
+  /// 🎯 RowImage 스타일: 간결한 구현
+  void _measureAndSaveImageSize() async {
+    if (!widget.isEditing || !mounted) {
+      return;
+    }
+
+    // 🎯 메타데이터에서 크기를 먼저 확인 (임시저장 등에서 이미 저장된 경우 스킵)
+    if (_cachedImageSize == null) {
+      final metaSize = _getImageSizeFromMetadata();
+      if (metaSize != null) {
+        // 메타데이터에 크기가 있으면 측정 불필요
+        return;
+      }
+    } else {
+      // 이미 캐시된 크기가 있으면 측정 불필요
+      return;
+    }
 
     try {
-      final imageProvider = NetworkImage(widget.imageUrl);
-      final imageStream = imageProvider.resolve(ImageConfiguration.empty);
+      Uint8List? imageBytes;
 
-      imageStream.addListener(
-        ImageStreamListener(
-          (ImageInfo info, bool _) {
-            if (!mounted) return;
+      // 로컬 파일 경로 확인
+      if (_isLocalPath(widget.imageUrl)) {
+        final filePath =
+            widget.imageUrl.startsWith('file://')
+                ? widget.imageUrl.substring(7)
+                : widget.imageUrl;
+        try {
+          final file = File(filePath);
+          if (await file.exists()) {
+            imageBytes = await file.readAsBytes();
+          }
+        } catch (e) {
+          assert(() {
+            debugPrint('[SingleImage] 로컬 파일 읽기 실패: $e');
+            return true;
+          }());
+        }
+      } else {
+        // 네트워크 이미지: HTTP 요청으로 헤더만 읽기
+        try {
+          final uri = Uri.parse(widget.imageUrl);
+          final client = HttpClient();
+          final request = await client.getUrl(uri);
+          request.headers.set(
+            HttpHeaders.rangeHeader,
+            'bytes=0-8192',
+          ); // 헤더만 읽기
+          final response = await request.close();
 
-            final size = Size(
-              info.image.width.toDouble(),
-              info.image.height.toDouble(),
-            );
+          if (response.statusCode == 200 || response.statusCode == 206) {
+            final bytes = <int>[];
+            await for (final chunk in response) {
+              bytes.addAll(chunk);
+              if (bytes.length >= 8192) break;
+            }
+            imageBytes = Uint8List.fromList(bytes);
+          }
+          client.close();
+        } catch (e) {
+          assert(() {
+            debugPrint('[SingleImage] 네트워크 이미지 헤더 읽기 실패: $e');
+            return true;
+          }());
+        }
+      }
 
-            _cachedImageSize = size;
-            _saveImageSizeToMetadata(size);
-          },
-          onError: (exception, stackTrace) {
-            debugPrint('[SingleImage] 크기 측정 실패: $exception');
-          },
-        ),
+      if (imageBytes == null || !mounted) {
+        return;
+      }
+
+      // 🎯 instantiateImageCodec 사용 (헤더만 읽어서 크기 얻기)
+      final codec = await ui.instantiateImageCodec(imageBytes);
+      final frame = await codec.getNextFrame();
+
+      if (!mounted) {
+        frame.image.dispose();
+        return;
+      }
+
+      final size = Size(
+        frame.image.width.toDouble(),
+        frame.image.height.toDouble(),
       );
+
+      // 메모리 정리
+      frame.image.dispose();
+
+      if (!mounted) return;
+
+      _cachedImageSize = size;
+      _saveImageSizeToMetadata(size);
     } catch (e) {
-      debugPrint('[SingleImage] 크기 측정 시작 실패: $e');
+      // 🎯 크기 측정 실패는 조용히 처리 (이미지 표시에는 영향 없음)
+      // 헤더만으로는 디코딩 불가능한 이미지 형식이 있을 수 있음
+      // 이미지는 정상적으로 표시되므로 크기 측정 실패는 무시
+      // debugPrint('[SingleImage] 크기 측정 실패: $e');
     }
   }
 
   /// 🎯 측정된 이미지 크기를 메타데이터에 저장 (편집 모드 전용)
+  /// 🎯 RowImage 스타일: 간결하고 최적화된 구현
   void _saveImageSizeToMetadata(Size size) {
     if (!widget.isEditing) return;
 
     try {
-      final seState = context.findAncestorStateOfType<SuperEditorState>();
-      final doc = seState?.editContext.editor.document;
-      final node = doc?.getNodeById(widget.nodeId);
+      final editorService = _getEditorService();
+      if (editorService == null) {
+        assert(() {
+          debugPrint('[SingleImage] ⚠️ EditorService를 찾을 수 없어서 저장 실패');
+          return true;
+        }());
+        return;
+      }
 
-      if (node is! ImageNode) return;
+      final doc = editorService.document;
+      final node = doc.getNodeById(widget.nodeId);
 
-      final meta = Map<String, dynamic>.from(
-        (node as dynamic).metadata as Map<String, dynamic>? ?? {},
-      );
-      final imageDimensions = Map<String, dynamic>.from(
-        (meta['imageDimensions'] as Map<String, dynamic>?) ?? {},
-      );
+      if (node is ImageNode) {
+        final meta = node.metadata;
+        final imageDimensions = Map<String, dynamic>.from(
+          (meta['imageDimensions'] as Map<String, dynamic>?) ?? {},
+        );
 
-      imageDimensions[widget.imageUrl] = {
-        'width': size.width.toInt(),
-        'height': size.height.toInt(),
-      };
+        final sizeData = {
+          'width': size.width.toInt(),
+          'height': size.height.toInt(),
+        };
 
-      meta['imageDimensions'] = imageDimensions;
-
-      // 노드 업데이트 (EditorService를 통해)
-      try {
-        // 🎯 dragService를 통해 editorService 접근 (Provider context 문제 방지)
-        EditorService? editorService;
-        if (widget.dragService != null) {
-          editorService =
-              (widget.dragService as dynamic).editorService as EditorService?;
+        // 🎯 성능 최적화: 이미 같은 크기가 저장되어 있으면 스킵
+        final existingSize =
+            imageDimensions[widget.imageUrl] as Map<String, dynamic>?;
+        if (existingSize != null &&
+            existingSize['width'] == size.width.toInt() &&
+            existingSize['height'] == size.height.toInt()) {
+          return; // 동일한 크기는 재저장하지 않음
         }
 
-        // 🎯 dragService가 없으면 Provider로 접근 시도 (fallback)
-        if (editorService == null) {
-          try {
-            editorService = Provider.of<EditorService>(context, listen: false);
-          } catch (e) {
-            debugPrint('[SingleImage] Provider로 EditorService 접근 실패: $e');
+        // 🎯 로컬 경로를 키로 저장
+        imageDimensions[widget.imageUrl] = sizeData;
+
+        // 🎯 성능 최적화: 업로드된 네트워크 URL도 키로 저장 (나중에 매칭 용이)
+        final uploadedUrls = meta['uploadedUrls'] as Map<String, dynamic>?;
+        if (uploadedUrls != null && uploadedUrls.containsKey(widget.imageUrl)) {
+          final networkUrl = uploadedUrls[widget.imageUrl].toString();
+          if (networkUrl.isNotEmpty) {
+            imageDimensions[networkUrl] = sizeData;
           }
         }
 
-        if (editorService == null) {
-          debugPrint('[SingleImage] EditorService를 찾을 수 없음');
-          return;
-        }
         final updatedNode = ImageNode(
           id: node.id,
           imageUrl: node.imageUrl,
-          metadata: meta,
+          metadata: {...meta, 'imageDimensions': imageDimensions},
         );
+
         editorService.document.replaceNodeById(widget.nodeId, updatedNode);
-        debugPrint(
-          '[SingleImage] 💾 메타데이터에 크기 저장: ${widget.imageUrl} (${size.width.toInt()}x${size.height.toInt()})',
-        );
-      } catch (e) {
-        debugPrint('[SingleImage] EditorService 접근 실패: $e');
+
+        assert(() {
+          debugPrint(
+            '[SingleImage] ✅ 이미지 크기 저장 완료: nodeId=${widget.nodeId}, url=${widget.imageUrl}, size=${size.width.toInt()}x${size.height.toInt()}',
+          );
+          return true;
+        }());
+      } else {
+        assert(() {
+          debugPrint(
+            '[SingleImage] ⚠️ ImageNode를 찾을 수 없음: nodeId=${widget.nodeId}',
+          );
+          return true;
+        }());
       }
+    } catch (e, stackTrace) {
+      assert(() {
+        debugPrint('[SingleImage] ❌ 메타데이터 저장 실패: $e');
+        debugPrint('[SingleImage] 스택: $stackTrace');
+        return true;
+      }());
+    }
+  }
+
+  /// 🎯 성능 최적화: EditorService 캐싱 조회 (RowImage 스타일)
+  EditorService? _getEditorService() {
+    // 🎯 dragService를 통해 editorService 접근 (Provider context 문제 방지)
+    if (widget.dragService != null) {
+      try {
+        final editorService =
+            (widget.dragService as dynamic).editorService as EditorService?;
+        if (editorService != null) {
+          return editorService;
+        }
+      } catch (e) {
+        assert(() {
+          debugPrint('[SingleImage] dragService로 EditorService 접근 실패: $e');
+          return true;
+        }());
+      }
+    }
+
+    // 🎯 dragService가 없으면 Provider로 접근 시도 (fallback)
+    try {
+      return Provider.of<EditorService>(context, listen: false);
     } catch (e) {
-      debugPrint('[SingleImage] 메타데이터 저장 실패: $e');
+      assert(() {
+        debugPrint('[SingleImage] Provider로 EditorService 접근 실패: $e');
+        return true;
+      }());
+      return null;
     }
   }
 

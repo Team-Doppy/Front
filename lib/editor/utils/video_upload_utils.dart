@@ -119,8 +119,8 @@ class VideoUploadUtils {
     }
   }
 
-  /// 비디오 압축 (FFmpeg 사용 - 고품질 유지하면서 용량 최적화)
-  /// H.264 코덱, CRF 23 (고품질), medium preset
+  /// 비디오 압축 (FFmpeg 사용 - 고품질 유지하면서 용량 및 로딩 속도 최적화)
+  /// H.264 코덱, CRF 20 (고품질), veryfast preset, GOP 24 (1초 간격)
   /// [cancellationToken]이 제공되면 취소 가능
   /// 100MB 이하 mp4 파일은 압축을 건너뛰고 원본 파일을 반환합니다.
   static Future<File?> compressVideo(
@@ -158,25 +158,25 @@ class VideoUploadUtils {
       final outputPath =
           '${tempDir.path}/processed_${DateTime.now().millisecondsSinceEpoch}.mp4';
 
-      // 🎯 FFmpeg 명령어: 검정 화면 완전 제거를 위한 H.264 재인코딩
+      // 🎯 FFmpeg 명령어: 고품질 압축 및 빠른 로딩을 위한 H.264 재인코딩
       // -vcodec libx264: H.264 코덱 (keyframe 제어 가능)
-      // -preset ultrafast: 빠른 인코딩 (발열 최소화, 1분=5~15초)
-      // -crf 18: 거의 무손실 품질 (사람 눈으로 구분 불가)
+      // -preset veryfast: 빠른 인코딩 + 적절한 압축 효율 (ultrafast보다 효율적)
+      // -crf 20: 고품질 (18보다 약간 낮지만 체감 차이 거의 없음, 파일 크기 감소)
       // -x264opts: x264 레벨 파라미터
-      //   - keyint=6: 최대 GOP 6 (0.25초마다 keyframe, 24fps 기준 - play/pause 즉시 복구)
-      //   - min-keyint=6: 최소 GOP 6 (고정 간격)
+      //   - keyint=24: 최대 GOP 24 (1초마다 keyframe, 24fps 기준 - 초기 로딩 최적화)
+      //   - min-keyint=24: 최소 GOP 24 (고정 간격)
       //   - no-scenecut: scene change detection 완전 비활성화
       // -pix_fmt yuv420p: 호환성 높은 픽셀 포맷
-      // -profile:v main: main profile (baseline보다 효율적, 검정 화면 방지에 더 유리)
+      // -profile:v main: main profile (baseline보다 효율적)
       // -level 3.1: 모바일 호환성
       // -acodec aac: AAC 오디오
-      // -movflags +faststart: 스트리밍 최적화
+      // -movflags +faststart: 스트리밍 최적화 (moov atom 앞 배치)
       final command =
           '-i "$videoPath" '
           '-vcodec libx264 '
-          '-preset ultrafast '
-          '-crf 18 '
-          '-x264opts keyint=6:min-keyint=6:no-scenecut '
+          '-preset veryfast '
+          '-crf 20 '
+          '-x264opts keyint=24:min-keyint=24:no-scenecut '
           '-pix_fmt yuv420p '
           '-profile:v main '
           '-level 3.1 '
@@ -186,7 +186,7 @@ class VideoUploadUtils {
           '"$outputPath"';
 
       debugPrint(
-        '[VideoUploadUtils] FFmpeg 실행 (H.264 re-encode with GOP=24)...',
+        '[VideoUploadUtils] FFmpeg 실행 (H.264 re-encode with GOP=24, preset=veryfast, CRF=20)...',
       );
 
       // FFmpeg 실행 (비동기)

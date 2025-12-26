@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:doppy/theme/app_colors.dart';
 import 'package:doppy/data/services/draft_service.dart';
 import 'package:doppy/l10n/app_localizations.dart';
+import 'package:doppy/utils/dialog_utils.dart';
 
 class DraftListOverlay extends StatefulWidget {
   const DraftListOverlay({
@@ -18,21 +19,10 @@ class DraftListOverlay extends StatefulWidget {
   State<DraftListOverlay> createState() => _DraftListOverlayState();
 }
 
-class _DraftListOverlayState extends State<DraftListOverlay>
-    with SingleTickerProviderStateMixin {
+class _DraftListOverlayState extends State<DraftListOverlay> {
   late Map<String, List<DraftData>> _drafts;
   String? _swipingDraftId;
   double _swipeProgress = 0.0;
-  late final AnimationController _ctrl;
-  late final Animation<double> _fade;
-  late final Animation<double> _scale;
-  late final Animation<double> _slideY;
-
-  // 아래로 스와이프 관련 변수들
-  double _verticalDragStartY = 0.0;
-  double _verticalDragCurrentY = 0.0;
-  bool _isDragging = false;
-  bool _isScrolling = false;
 
   bool _isLoading = true;
 
@@ -45,22 +35,6 @@ class _DraftListOverlayState extends State<DraftListOverlay>
   void initState() {
     super.initState();
     _drafts = {}; // 초기화
-
-    _ctrl = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 240),
-      reverseDuration: const Duration(milliseconds: 200),
-    );
-    _fade = CurvedAnimation(parent: _ctrl, curve: Curves.easeOutCubic);
-    _scale = Tween<double>(
-      begin: 0.98,
-      end: 1.0,
-    ).animate(CurvedAnimation(parent: _ctrl, curve: Curves.easeOut));
-    _slideY = Tween<double>(
-      begin: 24.0,
-      end: 0.0,
-    ).animate(CurvedAnimation(parent: _ctrl, curve: Curves.easeOut));
-    _ctrl.forward();
 
     // 깊은 복사로 로컬 상태 보관 (UI 반영 위해 직접 수정)
     _loadDrafts();
@@ -113,11 +87,10 @@ class _DraftListOverlayState extends State<DraftListOverlay>
   @override
   void dispose() {
     _scrollController.dispose();
-    _ctrl.dispose();
     super.dispose();
   }
 
-  void _closeWithAnimation() {
+  void _close() {
     Navigator.of(context).pop();
   }
 
@@ -150,46 +123,7 @@ class _DraftListOverlayState extends State<DraftListOverlay>
           // 배경 블러 + 반투명
           Positioned.fill(
             child: GestureDetector(
-              onTap: () => _closeWithAnimation(),
-              onPanStart: (details) {
-                _verticalDragStartY = details.globalPosition.dy;
-                _isDragging = true;
-                _isScrolling = false;
-              },
-              onPanUpdate: (details) {
-                if (_isDragging && !_isScrolling) {
-                  _verticalDragCurrentY = details.globalPosition.dy;
-                  final deltaY = _verticalDragCurrentY - _verticalDragStartY;
-
-                  // 아래로 드래그할 때만 반응 (스크롤이 아닌 경우)
-                  if (deltaY > 50) {
-                    // 50px 이상 드래그해야 시작
-                    setState(() {
-                      // 드래그 거리에 따라 bouncing 효과
-                      final progress = ((deltaY - 50) / 300).clamp(0.0, 1.0);
-                      final bounceEffect =
-                          1.0 - (progress * 0.4); // 최대 40%까지 줄어듦
-                      _ctrl.value = bounceEffect;
-                    });
-                  }
-                }
-              },
-              onPanEnd: (details) {
-                if (_isDragging && !_isScrolling) {
-                  final deltaY = _verticalDragCurrentY - _verticalDragStartY;
-                  final velocity = details.velocity.pixelsPerSecond.dy;
-
-                  // 아래로 충분히 드래그했거나 빠른 속도로 아래로 스와이프했을 때 닫기
-                  if (deltaY > 200 || velocity > 800) {
-                    _closeWithAnimation();
-                  } else {
-                    // 원래 위치로 복원
-                    _ctrl.forward();
-                  }
-
-                  _isDragging = false;
-                }
-              },
+              onTap: () => _close(),
               child: BackdropFilter(
                 filter: ui.ImageFilter.blur(sigmaX: 10, sigmaY: 10),
                 child: Container(
@@ -208,88 +142,16 @@ class _DraftListOverlayState extends State<DraftListOverlay>
             left: 0,
             right: 0,
             bottom: 10,
-            child: AnimatedBuilder(
-              animation: _ctrl,
-              builder: (context, child) {
-                return Opacity(
-                  opacity: _fade.value,
-                  child: Transform.translate(
-                    offset: Offset(0, _slideY.value),
-                    child: Transform.scale(scale: _scale.value, child: child),
-                  ),
-                );
-              },
-              child: NotificationListener<ScrollNotification>(
-                onNotification: (notification) {
-                  // 스크롤 중일 때는 드래그 감지 비활성화
-                  if (notification is ScrollStartNotification) {
-                    _isScrolling = true;
-                  } else if (notification is ScrollEndNotification) {
-                    _isScrolling = false;
-                  }
-                  return false;
-                },
-                child: GestureDetector(
-                  onPanStart: (details) {
-                    if (!_isScrolling) {
-                      _verticalDragStartY = details.globalPosition.dy;
-                      _isDragging = true;
-                    }
-                  },
-                  onPanUpdate: (details) {
-                    if (_isDragging && !_isScrolling) {
-                      _verticalDragCurrentY = details.globalPosition.dy;
-                      final deltaY =
-                          _verticalDragCurrentY - _verticalDragStartY;
-
-                      // 아래로 드래그할 때만 반응 (스크롤이 아닌 경우)
-                      if (deltaY > 300) {
-                        // 300px 이상 드래그해야 시작
-                        setState(() {
-                          // 드래그 거리에 따라 bouncing 효과
-                          final progress = ((deltaY - 300) / 300).clamp(
-                            0.0,
-                            1.0,
-                          );
-                          final bounceEffect =
-                              1.0 - (progress * 0.4); // 최대 40%까지 줄어듦
-                          _ctrl.value = bounceEffect;
-                        });
-                      }
-                    }
-                  },
-                  onPanEnd: (details) {
-                    if (_isDragging && !_isScrolling) {
-                      final deltaY =
-                          _verticalDragCurrentY - _verticalDragStartY;
-                      final velocity = details.velocity.pixelsPerSecond.dy;
-
-                      // 아래로 충분히 드래그했거나 빠른 속도로 아래로 스와이프했을 때 닫기
-                      if (deltaY > 200 || velocity > 800) {
-                        _closeWithAnimation();
-                      } else {
-                        // 원래 위치로 복원
-                        _ctrl.forward();
-                      }
-
-                      _isDragging = false;
-                    }
-                  },
-                  child: SafeArea(
-                    child: Container(
-                      decoration: BoxDecoration(
-                        color: Colors.transparent,
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(16),
-                        child:
-                            _drafts.isEmpty
-                                ? _buildEmptyState()
-                                : _buildDraftList(),
-                      ),
-                    ),
-                  ),
+            child: SafeArea(
+              child: Container(
+                decoration: BoxDecoration(
+                  color: Colors.transparent,
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(16),
+                  child:
+                      _drafts.isEmpty ? _buildEmptyState() : _buildDraftList(),
                 ),
               ),
             ),
@@ -319,7 +181,7 @@ class _DraftListOverlayState extends State<DraftListOverlay>
                   child: Row(
                     children: [
                       GestureDetector(
-                        onTap: () => _closeWithAnimation(),
+                        onTap: () => _close(),
                         child: Text(
                           context.tr('close'),
                           style: TextStyle(
@@ -401,14 +263,13 @@ class _DraftListOverlayState extends State<DraftListOverlay>
     final isCurrentDraft = widget.currentDraftId == draft.id;
     final isDarkMode = Theme.of(context).brightness == Brightness.dark;
 
-    // 스와이프 거리 계산
-    final double swipeOffset = isSwiping ? _swipeProgress * 80 : 0.0;
-    final bool showDeleteButton = isSwiping && _swipeProgress >= 0.8;
+    final double deleteButtonWidth = 120.0;
 
     return GestureDetector(
       key: ValueKey('draft_${draft.id}'),
       onTap: () async {
         if (isSwiping) {
+          // 스와이프 중이면 닫기
           setState(() {
             _swipingDraftId = null;
             _swipeProgress = 0.0;
@@ -421,6 +282,7 @@ class _DraftListOverlayState extends State<DraftListOverlay>
       },
       onHorizontalDragStart: (details) {
         if (_swipingDraftId != null && _swipingDraftId != draft.id) {
+          // 다른 아이템이 스와이프 중이면 닫기
           setState(() {
             _swipingDraftId = null;
             _swipeProgress = 0.0;
@@ -429,19 +291,19 @@ class _DraftListOverlayState extends State<DraftListOverlay>
       },
       onHorizontalDragUpdate: (details) {
         if (details.delta.dx < 0) {
+          // 왼쪽으로 스와이프
           setState(() {
             _swipingDraftId = draft.id;
-            _swipeProgress = (_swipeProgress + (-details.delta.dx / 80)).clamp(
-              0.0,
-              1.0,
-            );
+            _swipeProgress = (_swipeProgress +
+                    (-details.delta.dx / deleteButtonWidth))
+                .clamp(0.0, 1.0);
           });
         } else if (details.delta.dx > 0 && isSwiping) {
+          // 오른쪽으로 스와이프 (닫기)
           setState(() {
-            _swipeProgress = (_swipeProgress - (details.delta.dx / 80)).clamp(
-              0.0,
-              1.0,
-            );
+            _swipeProgress = (_swipeProgress -
+                    (details.delta.dx / deleteButtonWidth))
+                .clamp(0.0, 1.0);
             if (_swipeProgress <= 0.1) {
               _swipingDraftId = null;
               _swipeProgress = 0.0;
@@ -451,11 +313,13 @@ class _DraftListOverlayState extends State<DraftListOverlay>
       },
       onHorizontalDragEnd: (details) {
         if (_swipeProgress < 0.5) {
+          // 50% 미만이면 닫기
           setState(() {
             _swipingDraftId = null;
             _swipeProgress = 0.0;
           });
         } else {
+          // 50% 이상이면 열린 상태 유지
           setState(() {
             _swipeProgress = 1.0;
           });
@@ -465,48 +329,62 @@ class _DraftListOverlayState extends State<DraftListOverlay>
         height: 85,
         child: Stack(
           children: [
-            // 삭제 버튼 배경
-            if (isSwiping)
-              Positioned(
-                right: 0,
-                top: 0,
-                bottom: 0,
-                width: 80,
-                child: Container(
-                  color: Colors.red.withOpacity(0.1),
-                  child: AnimatedOpacity(
-                    opacity: showDeleteButton ? 1.0 : 0.0,
-                    duration: const Duration(milliseconds: 150),
-                    child: GestureDetector(
-                      onTap: () async {
-                        setState(() {
-                          _swipingDraftId = null;
-                          _swipeProgress = 0.0;
-                        });
+            // 삭제 버튼 (항상 표시, 스와이프 시 보임)
+            Positioned(
+              right: 0,
+              top: 0,
+              bottom: 0,
+              width: deleteButtonWidth,
+              child: GestureDetector(
+                onTap: () async {
+                  // 확인 다이얼로그 표시
+                  final confirmed = await DialogUtils.showConfirmDialog(
+                    context,
+                    title: context.tr('delete_draft_confirm_title'),
+                    message: context.tr('delete_draft_confirm_message'),
+                    confirmText: context.tr('delete'),
+                    cancelText: context.tr('cancel'),
+                    isDestructive: true,
+                  );
 
-                        final draftService = DraftService();
-                        await draftService.deleteDraft(draft.id);
-                        _loadDrafts();
-                      },
-                      child: Center(
-                        child: Text(
-                          '삭제',
+                  if (confirmed == true) {
+                    setState(() {
+                      _swipingDraftId = null;
+                      _swipeProgress = 0.0;
+                    });
+
+                    final draftService = DraftService();
+                    await draftService.deleteDraft(draft.id);
+                    _loadDrafts();
+                  }
+                },
+                child: Container(
+                  color: Colors.red.withOpacity(0.15),
+                  child: Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.delete_outline, color: Colors.red, size: 24),
+                        const SizedBox(height: 4),
+                        Text(
+                          context.tr('delete'),
                           style: TextStyle(
                             color: Colors.red,
                             fontSize: 14,
-                            fontWeight: FontWeight.w500,
+                            fontWeight: FontWeight.w600,
                           ),
                         ),
-                      ),
+                      ],
                     ),
                   ),
                 ),
               ),
+            ),
 
             // 메인 아이템
             Positioned.fill(
               child: Transform.translate(
-                offset: Offset(-swipeOffset, 0),
+                offset: Offset(-_swipeProgress * deleteButtonWidth, 0),
                 child: Container(
                   color:
                       isDarkMode

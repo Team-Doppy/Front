@@ -47,6 +47,10 @@ class AppLocalizations {
           '알림을 받으려면 설정에서 알림 권한을 허용해주세요.',
       'open_settings': '설정 열기',
       'marketing_consent': '마케팅 정보 수신',
+      'notification_enabled': '알림이 켜졌습니다',
+      'notification_disabled': '알림이 꺼졌습니다',
+      'marketing_enabled': '마케팅 알림이 켜졌습니다',
+      'marketing_disabled': '마케팅 알림이 꺼졌습니다',
       'language_settings': '언어',
       'theme_settings': '테마',
       'dark': '다크',
@@ -516,6 +520,8 @@ class AppLocalizations {
       'draft_load_failed': '임시저장을 불러올 수 없습니다',
       'draft_list_failed': '임시저장 목록을 불러올 수 없습니다',
       'no_drafts': '임시저장된 글이 없습니다',
+      'delete_draft_confirm_title': '임시저장 삭제',
+      'delete_draft_confirm_message': '이 임시저장을 삭제하시겠습니까?\n삭제된 내용은 복구할 수 없습니다.',
 
       // 프로필 관련
       'profile_image_upload_failed': '프로필 이미지 업로드에 실패했습니다',
@@ -613,6 +619,10 @@ class AppLocalizations {
           'Please allow notification permissions in Settings to receive notifications.',
       'open_settings': 'Open Settings',
       'marketing_consent': 'Marketing Consent',
+      'notification_enabled': 'Notifications enabled',
+      'notification_disabled': 'Notifications disabled',
+      'marketing_enabled': 'Marketing notifications enabled',
+      'marketing_disabled': 'Marketing notifications disabled',
       'language_settings': 'Language',
       'theme_settings': 'Theme',
       'dark': 'Dark',
@@ -1092,6 +1102,9 @@ class AppLocalizations {
       'draft_load_failed': 'Failed to load draft',
       'draft_list_failed': 'Failed to load draft list',
       'no_drafts': 'No drafts saved',
+      'delete_draft_confirm_title': 'Delete Draft',
+      'delete_draft_confirm_message':
+          'Are you sure you want to delete this draft?\nDeleted content cannot be recovered.',
 
       // Profile Related
       'profile_image_upload_failed': 'Failed to upload profile image',

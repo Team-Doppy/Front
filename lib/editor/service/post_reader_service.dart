@@ -352,8 +352,8 @@ class PostReaderService {
           }
 
           // 패딩 모드 복원 (노드 레벨 우선, data 내 보조, 기본값: 'center')
-          final String? paddingMode =
-              (m['padding'] ?? data?['padding'])?.toString();
+          final String paddingMode =
+              (m['padding'] ?? data?['padding'])?.toString() ?? 'center';
 
           // 🎯 임시저장 복원: thumbnailPath, aspectRatio 복원
           final thumbnailPath = (data?['thumbnailPath'] ?? '').toString();
@@ -381,7 +381,7 @@ class PostReaderService {
                         ? commentCount.toInt()
                         : int.tryParse(commentCount.toString()) ?? 0,
                 if (hasSpoiler) 'spoiler': true,
-                if (paddingMode == 'full') 'padding': 'full',
+                'padding': paddingMode, // 🎯 항상 설정 (기본값: 'center')
                 if (thumbnailUrl != null) 'thumbnailUrl': thumbnailUrl,
                 if (aspectRatio != null) 'aspectRatio': aspectRatio,
               },
@@ -412,8 +412,8 @@ class PostReaderService {
           }
 
           // 패딩 모드 복원 (노드 레벨 우선, data 내 보조, 기본값: 'center')
-          final String? paddingMode =
-              (m['padding'] ?? data?['padding'])?.toString();
+          final String paddingMode =
+              (m['padding'] ?? data?['padding'])?.toString() ?? 'center';
 
           // 🎯 임시저장 복원: thumbnailPath, aspectRatio 복원
           final thumbnailPath = (data?['thumbnailPath'] ?? '').toString();
@@ -441,7 +441,7 @@ class PostReaderService {
                         ? commentCount.toInt()
                         : int.tryParse(commentCount.toString()) ?? 0,
                 if (hasSpoiler) 'spoiler': true,
-                if (paddingMode == 'full') 'padding': 'full',
+                'padding': paddingMode, // 🎯 항상 설정 (기본값: 'center')
                 if (thumbnailUrl != null) 'thumbnailUrl': thumbnailUrl,
                 if (aspectRatio != null) 'aspectRatio': aspectRatio,
               },
@@ -639,97 +639,120 @@ class PostReaderService {
     return clipUrls;
   }
 
-  /// 상위 N개 노드에서 이미지 URL을 추출한다
-  List<String> extractTopImageUrls(
+  /// 첫 텍스트 노드 제외 후, 첫 N개 미디어 노드(이미지+영상 합쳐서)에서 모든 미디어 URL을 추출한다
+  Map<String, List<String>> extractFirstMediaUrls(
     Map<String, dynamic> content, {
-    int topNodeCount = 3,
+    int mediaNodeCount = 3,
   }) {
     final List<String> imageUrls = [];
+    final List<String> clipUrls = [];
     final nodes = (content['nodes'] as List?) ?? [];
-    final topNodes = nodes.take(topNodeCount).toList();
+    int mediaNodeCounter = 0;
 
-    for (final raw in topNodes) {
-      if (imageUrls.length >= 64) break; // 안전 상한
+    bool addSingleImage(String? u) {
+      final s = (u ?? '').toString();
+      if (s.isNotEmpty && s.startsWith('http')) {
+        imageUrls.add(s);
+        return true;
+      }
+      return false;
+    }
 
-      final m = (raw as Map).cast<String, dynamic>();
+    bool addSingleClip(String? u) {
+      final s = (u ?? '').toString();
+      if (s.isNotEmpty && s.startsWith('http')) {
+        clipUrls.add(s);
+        return true;
+      }
+      return false;
+    }
+
+    for (final raw in nodes) {
+      if (mediaNodeCounter >= mediaNodeCount) break;
+
+      if (raw is! Map) continue;
+      final m = raw.cast<String, dynamic>();
       final type = (m['type'] ?? '').toString();
       final data = (m['data'] as Map?)?.cast<String, dynamic>();
 
-      bool addSingle(String? u) {
-        final s = (u ?? '').toString();
-        if (s.isNotEmpty && s.startsWith('http')) {
-          imageUrls.add(s);
-          return true;
-        }
-        return false;
-      }
+      bool isMediaNode = false;
 
+      // 이미지 노드 처리
       if (type == 'image' || type == 'img' || type == 'single_image') {
-        // url 필드 우선, 없으면 data.url
-        if (!addSingle(m['url'])) {
-          addSingle(data?['url']);
+        isMediaNode = true;
+        if (!addSingleImage(m['url'])) {
+          addSingleImage(data?['url']);
         }
       } else if (type == 'imageRow' ||
           type == 'image_row' ||
           type == 'row_image') {
-        // urls 또는 data.urls
+        isMediaNode = true;
         final rawUrls =
             (m['urls'] as List?) ?? (data?['urls'] as List?) ?? const [];
         for (final u in rawUrls) {
           if (imageUrls.length >= 64) break;
-          addSingle(u?.toString());
+          addSingleImage(u?.toString());
         }
-      } else if (type == 'pageViewImage' || type == 'page_view_image') {
-        // pageViewImage의 imageUrls
+      } else if (type == 'pageViewImage' ||
+          type == 'page_view_image' ||
+          type == 'pageviewImage') {
+        isMediaNode = true;
         final rawUrls = (m['imageUrls'] as List?) ?? const [];
         for (final u in rawUrls) {
           if (imageUrls.length >= 64) break;
-          addSingle(u?.toString());
+          addSingleImage(u?.toString());
         }
+      }
+      // 영상 노드 처리
+      else if (type == 'clip' || type == 'video') {
+        isMediaNode = true;
+        final url = (data?['url'] ?? m['url'] ?? '').toString();
+        addSingleClip(url);
+      }
+
+      // 미디어 노드인 경우에만 카운터 증가 (이미지+영상 합쳐서 카운트)
+      if (isMediaNode) {
+        mediaNodeCounter++;
       }
     }
 
     debugPrint(
-      '[PostReaderService] 🖼️ 상위 $topNodeCount개 노드에서 이미지 URL 추출 완료: ${imageUrls.length}개',
+      '[PostReaderService] 🎯 첫 $mediaNodeCount개 미디어 노드(이미지+영상 합쳐서)에서 URL 추출 완료: 이미지 ${imageUrls.length}개, 비디오 ${clipUrls.length}개',
     );
     if (imageUrls.isNotEmpty) {
       debugPrint(
         '[PostReaderService] 🖼️ 추출된 이미지 URL: ${imageUrls.join(", ")}',
       );
     }
-    return imageUrls;
-  }
-
-  /// 상위 N개 노드에서 비디오 URL을 추출한다
-  List<String> extractTopClipUrls(
-    Map<String, dynamic> content, {
-    int topNodeCount = 3,
-  }) {
-    final List<String> clipUrls = [];
-    final nodes = (content['nodes'] as List?) ?? [];
-    final topNodes = nodes.take(topNodeCount).toList();
-
-    for (final raw in topNodes) {
-      final m = (raw as Map).cast<String, dynamic>();
-      final type = (m['type'] ?? '').toString();
-
-      if (type == 'clip' || type == 'video') {
-        // video 타입도 포함
-        final data = m['data'] as Map<String, dynamic>?;
-        final url = (data?['url'] ?? m['url'] ?? '').toString();
-        if (url.isNotEmpty && url.startsWith('http')) {
-          clipUrls.add(url);
-        }
-      }
-    }
-
-    debugPrint(
-      '[PostReaderService] 🎬 상위 $topNodeCount개 노드에서 비디오 URL 추출 완료: ${clipUrls.length}개',
-    );
     if (clipUrls.isNotEmpty) {
       debugPrint('[PostReaderService] 🎬 추출된 비디오 URL: ${clipUrls.join(", ")}');
     }
-    return clipUrls;
+
+    return {'images': imageUrls, 'clips': clipUrls};
+  }
+
+  /// 첫 텍스트 노드 제외 후, 첫 N개 미디어 노드에서 이미지 URL을 추출한다 (하위 호환성)
+  List<String> extractTopImageUrls(
+    Map<String, dynamic> content, {
+    int mediaNodeCount = 3,
+  }) {
+    final result = extractFirstMediaUrls(
+      content,
+      mediaNodeCount: mediaNodeCount,
+    );
+    return result['images'] ?? [];
+  }
+
+  /// 첫 텍스트 노드 제외 후, 첫 N개 미디어 노드에서 비디오 URL을 추출한다 (하위 호환성)
+  List<String> extractTopClipUrls(
+    Map<String, dynamic> content, {
+    int mediaNodeCount = 3,
+  }) {
+    final result = extractFirstMediaUrls(
+      content,
+      mediaNodeCount: mediaNodeCount,
+    );
+    return result['clips'] ?? [];
   }
 
   /// 문서에서 사용된 폰트 추출
@@ -765,14 +788,19 @@ class PostReaderService {
   }
 
   /// 실패해도 계속 진행 (에러는 로그만 남김)
+  /// 첫 텍스트 노드 제외 후, 첫 N개 미디어 노드(이미지+영상 합쳐서)에 있는 모든 미디어를 프리로드
   Future<void> preloadTopMedia(
     BuildContext context,
     Map<String, dynamic> content, {
-    int topNodeCount = 3,
+    int mediaNodeCount = 3,
   }) async {
-    // 상위 노드에서 URL 추출
-    final imageUrls = extractTopImageUrls(content, topNodeCount: topNodeCount);
-    final clipUrls = extractTopClipUrls(content, topNodeCount: topNodeCount);
+    // 첫 텍스트 노드 제외 후, 첫 N개 미디어 노드(이미지+영상 합쳐서)에서 모든 미디어 URL 추출
+    final mediaUrls = extractFirstMediaUrls(
+      content,
+      mediaNodeCount: mediaNodeCount,
+    );
+    final imageUrls = mediaUrls['images'] ?? [];
+    final clipUrls = mediaUrls['clips'] ?? [];
 
     if (imageUrls.isEmpty && clipUrls.isEmpty) {
       debugPrint('[PostReaderService] ⚠️ 프리로드할 미디어가 없습니다');
@@ -782,7 +810,7 @@ class PostReaderService {
     }
 
     debugPrint(
-      '[PostReaderService] 🚀 상위 미디어 프리로드 시작: 이미지 ${imageUrls.length}개, 비디오 ${clipUrls.length}개',
+      '[PostReaderService] 🚀 첫 $mediaNodeCount개 미디어 노드 프리로드 시작: 이미지 ${imageUrls.length}개, 비디오 ${clipUrls.length}개',
     );
 
     // 🎯 이미지와 비디오를 병렬로 프리로드 (크기 측정 제거 - 서버 응답에 이미 포함)

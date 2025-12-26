@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:doppy/editor/utils/config.dart';
 import 'app_colors.dart';
 
 /// 넷플릭스 스타일 텍스트 스타일 정의
@@ -170,7 +171,7 @@ class AppTextStyles {
 
   static const TextStyle editorDefault = TextStyle(
     fontFamily: fontFamily,
-    fontSize: 16,
+    fontSize: EditorConfig.defaultBodyFontSize,
     fontWeight: FontWeight.w400,
     letterSpacing: 0,
     height: 1.5,
@@ -196,9 +197,9 @@ class AppTextStyles {
       fontWeight: FontWeight.w400,
       height: 1.4,
     ),
-    16.0: const TextStyle(
+    EditorConfig.defaultBodyFontSize: const TextStyle(
       fontFamily: fontFamily,
-      fontSize: 16,
+      fontSize: EditorConfig.defaultBodyFontSize,
       fontWeight: FontWeight.w400,
       height: 1.5,
     ),
@@ -230,9 +231,10 @@ class AppTextStyles {
     bool isSecondary = false,
   }) {
     return style.copyWith(
-      color: isSecondary
-          ? AppColors.getTextSecondary(isDark)
-          : AppColors.getTextPrimary(isDark),
+      color:
+          isSecondary
+              ? AppColors.getTextSecondary(isDark)
+              : AppColors.getTextPrimary(isDark),
     );
   }
 

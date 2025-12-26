@@ -2362,7 +2362,9 @@ class EditorService extends ChangeNotifier {
   }
 
   /// 지정 인덱스에 빈 문단을 삽입하고 캐럿을 그 문단 앞으로 이동
-  void insertEmptyParagraphAtIndex(int index) {
+  /// 빈 문단을 지정된 인덱스에 추가하고, 0.1초 후 포커스를 설정합니다.
+  /// 새로 추가된 노드 ID를 반환합니다.
+  String? insertEmptyParagraphAtIndex(int index) {
     try {
       final doc = editor.document;
       int insertIndex = index;
@@ -2382,7 +2384,8 @@ class EditorService extends ChangeNotifier {
         InsertNodeAtIndexRequest(nodeIndex: insertIndex, newNode: newParagraph),
       ]);
 
-      WidgetsBinding.instance.addPostFrameCallback((_) {
+      // 🎯 안정화를 위해 0.1초 대기 후 포커스 설정 및 키보드 올리기
+      Future.delayed(const Duration(milliseconds: 100), () {
         try {
           editor.execute([
             ChangeSelectionRequest(
@@ -2396,10 +2399,15 @@ class EditorService extends ChangeNotifier {
               SelectionReason.userInteraction,
             ),
           ]);
+          // 🎯 키보드 올리기
+          FocusManager.instance.primaryFocus?.requestFocus();
         } catch (_) {}
       });
       // 🎯 editor.execute()가 자동으로 document 리스너를 호출하므로 notifyListeners() 불필요
-    } catch (_) {}
+      return paragraphId;
+    } catch (_) {
+      return null;
+    }
   }
 
   /// 언급 노드를 문단(Paragraph) 기반으로 삽입한다.
@@ -2598,11 +2606,13 @@ class EditorService extends ChangeNotifier {
             {},
       );
 
-      // uploadedUrls에는 원본 경로를 키로 저장
+      // 🎯 uploadedUrls에는 원본 경로를 키로 저장 (이미지와 동일한 패턴)
       if (originalLocalPath.isNotEmpty &&
           !(originalLocalPath.startsWith('http://') ||
               originalLocalPath.startsWith('https://'))) {
         uploadedUrls[originalLocalPath] = url;
+        // 🎯 성능 최적화: 네트워크 URL도 키로 저장 (나중에 매칭 용이)
+        uploadedUrls[url] = url; // 자기 자신을 가리킴 (일관성 유지)
       }
 
       // processedLocalPath가 있으면 ffmpeg 처리된 경로로 localPath 업데이트
@@ -2614,6 +2624,7 @@ class EditorService extends ChangeNotifier {
       final updatedMetadata = <String, dynamic>{
         ...existingMetadata,
         'uploadedUrls': uploadedUrls,
+        'padding': existingMetadata['padding'] as String? ?? 'center',
       };
 
       if (processedLocalPath != null &&
@@ -2650,6 +2661,10 @@ class EditorService extends ChangeNotifier {
     if (node is ClipNode) {
       final existingMetadata = Map<String, dynamic>.from(node.metadata);
       existingMetadata['thumbnailPath'] = thumbnailPath;
+      // 🎯 padding이 없으면 기본값 'center' 설정 (싱글 이미지와 동일)
+      if (!existingMetadata.containsKey('padding')) {
+        existingMetadata['padding'] = 'center';
+      }
 
       final updated = ClipNode(
         id: node.id,
@@ -2676,6 +2691,9 @@ class EditorService extends ChangeNotifier {
       label: label,
       colorHex: colorHex,
       url: url,
+      metadata: {
+        'padding': 'center', // 🎯 기본값 설정 (싱글 이미지와 동일)
+      },
     );
     _insertComponentNodeAtNextLine(node);
   }
@@ -2930,6 +2948,19 @@ class EditorService extends ChangeNotifier {
     required String localPath,
     required String url,
   }) async {
+    await replaceGroupImageUrlsByPath(
+      groupNodeId: groupNodeId,
+      urlMap: {localPath: url},
+    );
+  }
+
+  /// 🎯 성능 최적화: 여러 URL을 한 번에 배치 업데이트 (중복 document 읽기/쓰기 방지)
+  Future<void> replaceGroupImageUrlsByPath({
+    required String groupNodeId,
+    required Map<String, String> urlMap, // localPath -> networkUrl 매핑
+  }) async {
+    if (urlMap.isEmpty) return;
+
     _isExecutingHistory = true;
     try {
       final node = editor.document.getNodeById(groupNodeId);
@@ -2943,10 +2974,15 @@ class EditorService extends ChangeNotifier {
               {},
         );
 
-        uploadedUrls[localPath] = url;
-        debugPrint(
-          '[EditorService] 🔄 ImageRow URL 저장 (${uploadedUrls.length}/${node.imageUrls.length}): $localPath -> $url',
-        );
+        // 🎯 배치 업데이트: 여러 URL을 한 번에 추가
+        uploadedUrls.addAll(urlMap);
+
+        assert(() {
+          debugPrint(
+            '[EditorService] 🔄 ImageRow URL 배치 저장 (${uploadedUrls.length}/${node.imageUrls.length}): ${urlMap.length}개 추가',
+          );
+          return true;
+        }());
 
         final updated = node.copyWith(
           metadata: {...meta, 'uploadedUrls': uploadedUrls},
@@ -2961,10 +2997,15 @@ class EditorService extends ChangeNotifier {
               {},
         );
 
-        uploadedUrls[localPath] = url;
-        debugPrint(
-          '[EditorService] 🔄 PageView URL 저장 (${uploadedUrls.length}/${node.imageUrls.length}): $localPath -> $url',
-        );
+        // 🎯 배치 업데이트: 여러 URL을 한 번에 추가
+        uploadedUrls.addAll(urlMap);
+
+        assert(() {
+          debugPrint(
+            '[EditorService] 🔄 PageView URL 배치 저장 (${uploadedUrls.length}/${node.imageUrls.length}): ${urlMap.length}개 추가',
+          );
+          return true;
+        }());
 
         final updated = node.copyWith(
           metadata: {...meta, 'uploadedUrls': uploadedUrls},

@@ -92,14 +92,24 @@ class DropLineConfig {
       }
     }
 
-    // 🎯 규칙 1: 이전 노드가 특수 노드이면 숨김
-    // (특수 노드가 아래쪽 라인을 표시하므로 중복 방지)
+    // 🎯 규칙 1: 이전 노드가 특수 노드인 경우
     if (currentNodeIndex > 0) {
       final prevNode = doc.getNodeAt(currentNodeIndex - 1);
       if (prevNode == null) return false;
 
+      // 🎯 연속된 특수 노드 사이 드롭라인 표시 허용
+      // 드래그 중인 노드가 특수 노드이고, 드롭 인덱스가 현재 노드 위치일 때는 표시
       if (NodeTypeChecker.isSpecialNode(prevNode)) {
-        return false;
+        final draggingNodeId = dragService.draggingNodeId;
+        if (draggingNodeId != null) {
+          final draggingNode = doc.getNodeById(draggingNodeId);
+          // 드래그 중인 노드가 특수 노드이고, 드롭 인덱스가 현재 위치면 표시
+          if (NodeTypeChecker.isSpecialNode(draggingNode) &&
+              dragService.dropIndex == currentNodeIndex) {
+            return true; // 연속된 특수 노드 사이 드롭라인 표시
+          }
+        }
+        return false; // 그 외의 경우는 중복 방지를 위해 숨김
       }
     }
 
@@ -214,9 +224,19 @@ class DropLineConfig {
       final nextNode = doc.getNodeAt(currentNodeIndex + 1);
       if (nextNode == null) return false;
 
-      // 다음이 특수 노드이면 숨김 (특수 노드는 자신의 상단 라인을 표시)
+      // 🎯 연속된 특수 노드 사이 드롭라인 표시 허용
+      // 다음이 특수 노드인 경우
       if (NodeTypeChecker.isSpecialNode(nextNode)) {
-        return false;
+        final draggingNodeId = dragService.draggingNodeId;
+        if (draggingNodeId != null) {
+          final draggingNode = doc.getNodeById(draggingNodeId);
+          // 드래그 중인 노드가 특수 노드이고, 드롭 인덱스가 다음 노드 위치면 표시
+          if (NodeTypeChecker.isSpecialNode(draggingNode) &&
+              dragService.dropIndex == currentNodeIndex + 1) {
+            return true; // 연속된 특수 노드 사이 드롭라인 표시
+          }
+        }
+        return false; // 그 외의 경우는 중복 방지를 위해 숨김
       }
 
       // 다음이 텍스트 노드이면 표시

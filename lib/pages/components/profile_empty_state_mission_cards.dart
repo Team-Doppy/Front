@@ -30,7 +30,7 @@ class ProfileEmptyStateMissionCards extends StatelessWidget {
           height: 280,
           child: Center(
             child: Text(
-              '아직은 포스트가 없어요',
+              context.tr('no_posts_on_profile'),
               style: GoogleFonts.notoSansKr(
                 fontSize: 16,
                 color: Theme.of(context).colorScheme.onSurface.withOpacity(0.3),
@@ -148,14 +148,15 @@ class ProfileEmptyStateMissionCards extends StatelessWidget {
       final result = await Navigator.push<MediaPickerResult>(
         context,
         CupertinoPageRoute(
-          builder: (context) => MediaPickerScreen(
-            initialMediaType: MediaType.image,
-            maxSelectionCount: 1,
-            enableToggle: false, // 토글 없음 (이미지만)
-            onMediaSelected: (file) {
-              // 단일 선택이므로 바로 처리
-            },
-          ),
+          builder:
+              (context) => MediaPickerScreen(
+                initialMediaType: MediaType.image,
+                maxSelectionCount: 1,
+                enableToggle: false, // 토글 없음 (이미지만)
+                onMediaSelected: (file) {
+                  // 단일 선택이므로 바로 처리
+                },
+              ),
         ),
       );
 

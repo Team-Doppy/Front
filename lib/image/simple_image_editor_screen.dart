@@ -2,7 +2,15 @@ import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:doppy/theme/app_colors.dart';
 import 'package:flutter/material.dart';
-import 'crop_editor.dart';
+import 'crop_editor.dart'
+    show
+        CropState,
+        CropUtils,
+        CropHandleType,
+        ImageRectUtils,
+        ImageWithCropPainter,
+        CropGestureUtils,
+        CropHandleBuilder;
 
 /// 간단한 커스텀 이미지 편집 화면
 /// 바텀시트 기반 UI, Undo/Redo, 실시간 미리보기 제공
@@ -98,6 +106,8 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
   // 크롭 관련 상태
   CropHandleType? _activeCropHandle;
   final Map<int, Size> _imageDisplaySizes = {}; // 이미지별 표시 크기
+  final Map<int, Size> _containerSizes = {}; // 이미지별 컨테이너 크기 (LayoutBuilder 기준)
+  bool _isBottomSheetAnimationComplete = false; // 바텀시트 애니메이션 완료 여부
 
   @override
   void initState() {
@@ -120,6 +130,19 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
       parent: _bottomSheetController,
       curve: Curves.easeInOut,
     );
+
+    // 애니메이션 완료 리스너 추가
+    _bottomSheetController.addStatusListener((status) {
+      if (status == AnimationStatus.completed && _isBottomSheetOpen) {
+        setState(() {
+          _isBottomSheetAnimationComplete = true;
+        });
+      } else if (status == AnimationStatus.dismissed) {
+        setState(() {
+          _isBottomSheetAnimationComplete = false;
+        });
+      }
+    });
 
     _preloadImages();
   }
@@ -497,10 +520,7 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
                   AnimatedBuilder(
                     animation: _bottomSheetAnimation,
                     builder: (context, child) {
-                      final currentHeight =
-                          bottomSheetHeight * _bottomSheetAnimation.value;
-
-                      if (currentHeight <= 0) {
+                      if (_bottomSheetAnimation.value <= 0) {
                         return const SizedBox.shrink();
                       }
 
@@ -508,80 +528,85 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
                         onPanStart: _onBottomSheetDragStart,
                         onPanUpdate: _onBottomSheetDragUpdate,
                         onPanEnd: _onBottomSheetDragEnd,
-                        child: Container(
-                          height: currentHeight,
-                          decoration: BoxDecoration(
-                            color: bgColor.withOpacity(1),
-                            borderRadius: const BorderRadius.only(
-                              topLeft: Radius.circular(30),
-                              topRight: Radius.circular(30),
+                        child: ClipRect(
+                          child: Align(
+                            alignment: Alignment.topCenter,
+                            heightFactor: _bottomSheetAnimation.value,
+                            child: Container(
+                              height: bottomSheetHeight,
+                              decoration: BoxDecoration(
+                                color: bgColor.withOpacity(1),
+                                borderRadius: const BorderRadius.only(
+                                  topLeft: Radius.circular(30),
+                                  topRight: Radius.circular(30),
+                                ),
+                              ),
+                              child: child,
                             ),
                           ),
-                          child: Column(
+                        ),
+                      );
+                    },
+                    child: Column(
+                      children: [
+                        const SizedBox(height: 12),
+                        Container(
+                          height: 4,
+                          width: 80,
+                          decoration: BoxDecoration(
+                            color: fgColor.withOpacity(0.2),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        Expanded(
+                          child:
+                              _editMode == _EditMode.crop
+                                  ? _buildCropBottomSheet()
+                                  : _editMode == _EditMode.filter
+                                  ? _buildFilterBottomSheet()
+                                  : _buildAdjustmentBottomSheet(),
+                        ),
+                        Padding(
+                          padding: const EdgeInsets.only(
+                            left: 8.0,
+                            right: 8.0,
+                            bottom: 30.0,
+                          ),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.end,
                             children: [
-                              const SizedBox(height: 12),
-                              Container(
-                                height: 4,
-                                width: 80,
-                                decoration: BoxDecoration(
-                                  color: fgColor.withOpacity(0.2),
-                                  borderRadius: BorderRadius.circular(4),
+                              TextButton(
+                                onPressed: _closeBottomSheet,
+                                child: Text(
+                                  '취소',
+                                  style: TextStyle(
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.w600,
+                                    color: fgColor.withOpacity(0.7),
+                                  ),
                                 ),
                               ),
-                              const SizedBox(height: 12),
-                              Expanded(
-                                child:
-                                    _editMode == _EditMode.crop
-                                        ? _buildCropBottomSheet()
-                                        : _editMode == _EditMode.filter
-                                        ? _buildFilterBottomSheet()
-                                        : _buildAdjustmentBottomSheet(),
-                              ),
-                              Padding(
-                                padding: const EdgeInsets.only(
-                                  left: 8.0,
-                                  right: 8.0,
-                                  bottom: 30.0,
-                                ),
-                                child: Row(
-                                  mainAxisAlignment: MainAxisAlignment.end,
-                                  children: [
-                                    TextButton(
-                                      onPressed: _closeBottomSheet,
-                                      child: Text(
-                                        '취소',
-                                        style: TextStyle(
-                                          fontSize: 15,
-                                          fontWeight: FontWeight.w600,
-                                          color: fgColor.withOpacity(0.7),
-                                        ),
-                                      ),
-                                    ),
-                                    const Spacer(),
-                                    TextButton(
-                                      onPressed: () {
-                                        _applyEdit();
-                                        _closeBottomSheet();
-                                      },
-                                      child: Text(
-                                        _editMode == _EditMode.crop
-                                            ? '적용'
-                                            : '완료',
-                                        style: TextStyle(
-                                          fontSize: 15,
-                                          fontWeight: FontWeight.w600,
-                                          color: fgColor.withOpacity(0.7),
-                                        ),
-                                      ),
-                                    ),
-                                  ],
+                              const Spacer(),
+                              TextButton(
+                                onPressed: () {
+                                  _applyEdit();
+                                  _closeBottomSheet();
+                                },
+                                child: Text(
+                                  _editMode == _EditMode.crop ? '적용' : '완료',
+                                  style: TextStyle(
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.w600,
+                                    color: fgColor.withOpacity(0.7),
+                                  ),
                                 ),
                               ),
                             ],
                           ),
                         ),
-                      );
-                    },
+                      ],
+                    ),
                   ),
                 ],
               ),
@@ -603,16 +628,27 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
     return LayoutBuilder(
       builder: (context, constraints) {
         final containerSize = Size(constraints.maxWidth, constraints.maxHeight);
+        // LayoutBuilder의 containerSize 저장 (MediaQuery.size 대신 사용)
+        _containerSizes[index] = containerSize;
 
         // 크롭 모드일 때 크롭 영역 초기화
+        // ✅ 바텀시트가 완전히 올라온 상태에서만 초기화 (애니메이션 완료 후)
+        // ✅ transform이 적용된 상태에서는 절대 크롭 초기화 안 함
+        // 크롭은 항상 "정렬된 이미지" 기준
         if (_editMode == _EditMode.crop &&
-            !state.cropState.isCropRectInitialized) {
+            !state.cropState.isCropRectInitialized &&
+            state.imageScale == 1.0 &&
+            state.imageOffset == Offset.zero &&
+            _isBottomSheetAnimationComplete) {
+          // 바텀시트 완전히 올라온 상태
           if (_uiImageCache[index] != null) {
             WidgetsBinding.instance.addPostFrameCallback((_) {
               CropUtils.initializeCropRect(
                 image: _uiImageCache[index]!,
                 containerSize: containerSize,
                 cropState: state.cropState,
+                scale: 1.0,
+                offset: Offset.zero,
                 onDisplaySizeChanged: (size) {
                   _imageDisplaySizes[index] = size;
                 },
@@ -622,15 +658,27 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
           }
         }
 
+        // 이미지와 크롭을 하나의 Stack으로 통합
         return Stack(
           children: [
             GestureDetector(
               onTap: _toggleUI,
-              // 크롭 모드에서는 CropEditor가 모든 제스처를 처리
+              onPanStart:
+                  _editMode == _EditMode.crop
+                      ? (details) =>
+                          _onCropPanStart(details, index, containerSize)
+                      : null,
               onPanUpdate:
-                  _editMode == _EditMode.filter ? _onFilterSwipe : null,
+                  _editMode == _EditMode.crop
+                      ? (details) =>
+                          _onCropPanUpdate(details, index, containerSize)
+                      : (_editMode == _EditMode.filter ? _onFilterSwipe : null),
               onPanEnd:
-                  _editMode == _EditMode.filter ? _onFilterSwipeEnd : null,
+                  _editMode == _EditMode.crop
+                      ? (details) => _onCropPanEnd(details)
+                      : (_editMode == _EditMode.filter
+                          ? _onFilterSwipeEnd
+                          : null),
               child:
                   _getColorFilter(state) != null
                       ? ColorFiltered(
@@ -641,16 +689,14 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
                         child:
                             _uiImageCache[index] != null
                                 ? CustomPaint(
-                                  painter: _ImagePainter(
+                                  painter: ImageWithCropPainter(
                                     _uiImageCache[index]!,
-                                    imageOffset:
+                                    imageOffset: Offset.zero,
+                                    imageScale: 1.0,
+                                    cropState:
                                         _editMode == _EditMode.crop
-                                            ? state.imageOffset
-                                            : Offset.zero,
-                                    imageScale:
-                                        _editMode == _EditMode.crop
-                                            ? state.imageScale
-                                            : 1.0,
+                                            ? state.cropState
+                                            : null,
                                   ),
                                   size: Size.infinite,
                                 )
@@ -675,16 +721,14 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
                                         _uiImageCache[index] = snapshot.data!;
                                       }
                                       return CustomPaint(
-                                        painter: _ImagePainter(
+                                        painter: ImageWithCropPainter(
                                           snapshot.data!,
-                                          imageOffset:
+                                          imageOffset: Offset.zero,
+                                          imageScale: 1.0,
+                                          cropState:
                                               _editMode == _EditMode.crop
-                                                  ? state.imageOffset
-                                                  : Offset.zero,
-                                          imageScale:
-                                              _editMode == _EditMode.crop
-                                                  ? state.imageScale
-                                                  : 1.0,
+                                                  ? state.cropState
+                                                  : null,
                                         ),
                                         size: Size.infinite,
                                       );
@@ -694,16 +738,14 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
                       )
                       : (_uiImageCache[index] != null
                           ? CustomPaint(
-                            painter: _ImagePainter(
+                            painter: ImageWithCropPainter(
                               _uiImageCache[index]!,
-                              imageOffset:
+                              imageOffset: Offset.zero,
+                              imageScale: 1.0,
+                              cropState:
                                   _editMode == _EditMode.crop
-                                      ? state.imageOffset
-                                      : Offset.zero,
-                              imageScale:
-                                  _editMode == _EditMode.crop
-                                      ? state.imageScale
-                                      : 1.0,
+                                      ? state.cropState
+                                      : null,
                             ),
                             size: Size.infinite,
                           )
@@ -725,16 +767,14 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
                                   _uiImageCache[index] = snapshot.data!;
                                 }
                                 return CustomPaint(
-                                  painter: _ImagePainter(
+                                  painter: ImageWithCropPainter(
                                     snapshot.data!,
-                                    imageOffset:
+                                    imageOffset: Offset.zero,
+                                    imageScale: 1.0,
+                                    cropState:
                                         _editMode == _EditMode.crop
-                                            ? state.imageOffset
-                                            : Offset.zero,
-                                    imageScale:
-                                        _editMode == _EditMode.crop
-                                            ? state.imageScale
-                                            : 1.0,
+                                            ? state.cropState
+                                            : null,
                                   ),
                                   size: Size.infinite,
                                 );
@@ -742,29 +782,20 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
                             ),
                           )),
             ),
-            // 크롭 오버레이
+            // 크롭 핸들들
             if (_editMode == _EditMode.crop &&
                 state.cropState.isCropRectInitialized)
-              CropEditor(
+              CropHandleBuilder.buildCropHandles(
                 cropState: state.cropState,
-                imageSize:
-                    _uiImageCache[index] != null
-                        ? Size(
-                          _uiImageCache[index]!.width.toDouble(),
-                          _uiImageCache[index]!.height.toDouble(),
-                        )
-                        : Size.zero,
-                containerSize: containerSize,
-                onCropRectChanged: (rect) {
-                  setState(() {});
-                },
-                onImageTransformChanged: (transform) {
+                activeHandle: _activeCropHandle,
+                onHandleChanged: (handle) {
                   setState(() {
-                    state.imageOffset = transform.offset;
-                    state.imageScale = transform.scale;
+                    _activeCropHandle = handle;
                   });
                 },
-                activeHandle: _activeCropHandle,
+                onUpdate: () {
+                  setState(() {});
+                },
               ),
           ],
         );
@@ -966,50 +997,25 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
 
   void _toggleCrop() {
     final state = _getCurrentEditState();
-    final wasInCropMode = _editMode == _EditMode.crop;
 
     setState(() {
+      if (_editMode != _EditMode.crop) {
+        // ✅ 크롭 진입 시 transform 강제 고정
+        state.imageOffset = Offset.zero;
+        state.imageScale = 1.0;
+        // 크롭 모드 진입 시 초기화 플래그 리셋
+        state.cropState.isCropRectInitialized = false;
+        _isBottomSheetAnimationComplete = false;
+      }
+
       _editMode = _editMode == _EditMode.crop ? _EditMode.none : _EditMode.crop;
       _isBottomSheetOpen = _editMode == _EditMode.crop;
       if (_isBottomSheetOpen) {
         _bottomSheetController.forward();
       } else {
-        // 크롭 모드에서 나갈 때 이미지 transform을 부드럽게 초기화
-        if (wasInCropMode) {
-          _resetImageTransformSmoothly(state);
-        }
         _bottomSheetController.reverse();
       }
     });
-  }
-
-  void _resetImageTransformSmoothly(_ImageEditState state) {
-    final startOffset = state.imageOffset;
-    final startScale = state.imageScale;
-    final endOffset = Offset.zero;
-    final endScale = 1.0;
-
-    // 애니메이션으로 부드럽게 초기화
-    void animationListener() {
-      if (!_bottomSheetController.isAnimating &&
-          _bottomSheetController.value == 0.0) {
-        // 애니메이션 완료 후 최종 값 설정
-        setState(() {
-          state.imageOffset = endOffset;
-          state.imageScale = endScale;
-        });
-        _bottomSheetController.removeListener(animationListener);
-      } else {
-        // 애니메이션 중간 값 보간
-        final progress = 1.0 - _bottomSheetController.value; // reverse이므로 반대로
-        setState(() {
-          state.imageOffset = Offset.lerp(startOffset, endOffset, progress)!;
-          state.imageScale = startScale + (endScale - startScale) * progress;
-        });
-      }
-    }
-
-    _bottomSheetController.addListener(animationListener);
   }
 
   void _toggleFilter() {
@@ -1111,20 +1117,83 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
     }
   }
 
+  // 크롭 제스처 처리
+  Offset _cropPanStart = Offset.zero;
+
+  void _onCropPanStart(
+    DragStartDetails details,
+    int index,
+    Size containerSize,
+  ) {
+    final state = _getCurrentEditState();
+    if (!state.cropState.isCropRectInitialized) return;
+
+    final pos = details.localPosition;
+    final cropRect = state.cropState.cropRect;
+
+    // 핸들 영역 확인
+    _activeCropHandle = CropGestureUtils.getHandleAtPosition(pos, cropRect);
+    if (_activeCropHandle == null && cropRect.contains(pos)) {
+      // 크롭 영역 내부 드래그 = 이동
+      _cropPanStart = details.globalPosition;
+    } else {
+      _cropPanStart = details.globalPosition;
+    }
+  }
+
+  void _onCropPanUpdate(
+    DragUpdateDetails details,
+    int index,
+    Size containerSize,
+  ) {
+    final state = _getCurrentEditState();
+    if (!state.cropState.isCropRectInitialized) return;
+
+    final delta = details.globalPosition - _cropPanStart;
+
+    if (_activeCropHandle != null) {
+      // 핸들 드래그 = 리사이즈
+      CropGestureUtils.updateCropRectResize(
+        _activeCropHandle!,
+        delta,
+        state.cropState,
+      );
+    } else {
+      // 크롭 영역 이동
+      CropGestureUtils.updateCropRectMove(delta, state.cropState);
+    }
+
+    _cropPanStart = details.globalPosition;
+    setState(() {});
+  }
+
+  void _onCropPanEnd(DragEndDetails details) {
+    setState(() {
+      _activeCropHandle = null;
+    });
+  }
+
   Future<void> _applyCrop(int index, Uint8List imageBytes) async {
     final state = _getCurrentEditState();
     if (!state.cropState.isCropRectInitialized ||
-        _imageDisplaySizes[index] == null ||
         _uiImageCache[index] == null) {
+      return;
+    }
+
+    // LayoutBuilder의 constraints를 사용 (MediaQuery.size 사용 금지)
+    final containerSize = _containerSizes[index];
+    if (containerSize == null) {
+      debugPrint('⚠️ containerSize가 없습니다. LayoutBuilder에서 설정되지 않았습니다.');
       return;
     }
 
     final result = await CropUtils.applyCrop(
       imageBytes: imageBytes,
-      cropRect: state.cropState.cropRect,
-      imageDisplaySize: _imageDisplaySizes[index]!,
+      cropState: state.cropState,
       uiImage: _uiImageCache[index]!,
-      containerSize: MediaQuery.of(context).size,
+      containerSize: containerSize,
+      scale: state.imageScale,
+      offset: state.imageOffset,
       rotation: state.rotation,
     );
 
@@ -1166,16 +1235,22 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
                         // 크롭 영역 재초기화
                         WidgetsBinding.instance.addPostFrameCallback((_) {
                           if (mounted && _uiImageCache[_currentIndex] != null) {
-                            final containerSize = MediaQuery.of(context).size;
-                            CropUtils.initializeCropRect(
-                              image: _uiImageCache[_currentIndex]!,
-                              containerSize: containerSize,
-                              cropState: state.cropState,
-                              onDisplaySizeChanged: (size) {
-                                _imageDisplaySizes[_currentIndex] = size;
-                              },
-                            );
-                            setState(() {});
+                            // LayoutBuilder constraints 사용
+                            final containerSize =
+                                _containerSizes[_currentIndex];
+                            if (containerSize != null) {
+                              CropUtils.initializeCropRect(
+                                image: _uiImageCache[_currentIndex]!,
+                                containerSize: containerSize,
+                                cropState: state.cropState,
+                                scale: 1.0,
+                                offset: Offset.zero,
+                                onDisplaySizeChanged: (size) {
+                                  _imageDisplaySizes[_currentIndex] = size;
+                                },
+                              );
+                              setState(() {});
+                            }
                           }
                         });
                       } else if (option['ratio'] == 'rotate') {
@@ -1191,16 +1266,22 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
                         // 크롭 영역 재초기화
                         WidgetsBinding.instance.addPostFrameCallback((_) {
                           if (mounted && _uiImageCache[_currentIndex] != null) {
-                            final containerSize = MediaQuery.of(context).size;
-                            CropUtils.initializeCropRect(
-                              image: _uiImageCache[_currentIndex]!,
-                              containerSize: containerSize,
-                              cropState: state.cropState,
-                              onDisplaySizeChanged: (size) {
-                                _imageDisplaySizes[_currentIndex] = size;
-                              },
-                            );
-                            setState(() {});
+                            // LayoutBuilder constraints 사용
+                            final containerSize =
+                                _containerSizes[_currentIndex];
+                            if (containerSize != null) {
+                              CropUtils.initializeCropRect(
+                                image: _uiImageCache[_currentIndex]!,
+                                containerSize: containerSize,
+                                cropState: state.cropState,
+                                scale: 1.0,
+                                offset: Offset.zero,
+                                onDisplaySizeChanged: (size) {
+                                  _imageDisplaySizes[_currentIndex] = size;
+                                },
+                              );
+                              setState(() {});
+                            }
                           }
                         });
                       }
@@ -1332,7 +1413,12 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
                                           ],
                                     ),
                                     child: CustomPaint(
-                                      painter: _ImagePainter(snapshot.data!),
+                                      painter: ImageWithCropPainter(
+                                        snapshot.data!,
+                                        imageOffset: Offset.zero,
+                                        imageScale: 1.0,
+                                        cropState: null,
+                                      ),
                                       size: Size.infinite,
                                     ),
                                   );
@@ -1476,65 +1562,5 @@ class _GlassToolButton extends StatelessWidget {
         ],
       ),
     );
-  }
-}
-
-class _ImagePainter extends CustomPainter {
-  final ui.Image image;
-  final Offset imageOffset;
-  final double imageScale;
-
-  _ImagePainter(
-    this.image, {
-    this.imageOffset = Offset.zero,
-    this.imageScale = 1.0,
-  });
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final imageAspectRatio = image.width / image.height;
-    final canvasAspectRatio = size.width / size.height;
-
-    double drawWidth, drawHeight;
-    double offsetX = 0, offsetY = 0;
-
-    if (imageAspectRatio > canvasAspectRatio) {
-      drawWidth = size.width;
-      drawHeight = size.width / imageAspectRatio;
-      offsetY = (size.height - drawHeight) / 2;
-    } else {
-      drawHeight = size.height;
-      drawWidth = size.height * imageAspectRatio;
-      offsetX = (size.width - drawWidth) / 2;
-    }
-
-    // 스케일 적용
-    final scaledWidth = drawWidth * imageScale;
-    final scaledHeight = drawHeight * imageScale;
-
-    // 오프셋 적용 (크롭 영역 중심에 맞춤)
-    final finalOffsetX = offsetX + imageOffset.dx;
-    final finalOffsetY = offsetY + imageOffset.dy;
-
-    final rect = Rect.fromLTWH(
-      finalOffsetX,
-      finalOffsetY,
-      scaledWidth,
-      scaledHeight,
-    );
-
-    canvas.drawImageRect(
-      image,
-      Rect.fromLTWH(0, 0, image.width.toDouble(), image.height.toDouble()),
-      rect,
-      Paint(),
-    );
-  }
-
-  @override
-  bool shouldRepaint(_ImagePainter oldDelegate) {
-    return oldDelegate.image != image ||
-        oldDelegate.imageOffset != imageOffset ||
-        oldDelegate.imageScale != imageScale;
   }
 }

@@ -9,6 +9,7 @@ import 'package:doppy/providers/locale_provider.dart';
 import 'package:doppy/l10n/app_localizations.dart';
 import 'package:doppy/theme/app_colors.dart';
 import 'package:doppy/utils/dialog_utils.dart';
+import 'package:doppy/utils/error_handler.dart';
 import 'package:doppy/pages/components/account_deletion_confirm.dart';
 import 'package:doppy/data/services/user_service.dart';
 import 'package:doppy/data/services/auth_service.dart';
@@ -48,6 +49,15 @@ class _SettingScreenState extends State<SettingScreen> {
       final newValue = await _userService.toggleNotificationEnabled();
       // 서버 응답으로 최종 확인 (UserProvider 업데이트)
       userProvider.updateNotificationEnabled(newValue);
+
+      // 🎯 스낵바로 상태 알림 (로케일 적용)
+      if (mounted) {
+        final message =
+            newValue
+                ? context.tr('notification_enabled')
+                : context.tr('notification_disabled');
+        ErrorHandler.showInfo(context, message);
+      }
 
       // 🎯 알림 설정 변경 시 FCM 토큰 검사 및 서버 동기화
       try {
@@ -115,6 +125,15 @@ class _SettingScreenState extends State<SettingScreen> {
       final newValue = await _userService.toggleMarketingConsent();
       // 서버 응답으로 최종 확인 (UserProvider 업데이트)
       userProvider.updateMarketingEnabled(newValue);
+
+      // 🎯 스낵바로 상태 알림 (로케일 적용)
+      if (mounted) {
+        final message =
+            newValue
+                ? context.tr('marketing_enabled')
+                : context.tr('marketing_disabled');
+        ErrorHandler.showInfo(context, message);
+      }
     } catch (e) {
       debugPrint('[SettingScreen] 마케팅 토글 실패: $e');
       // 롤백 (UserProvider 업데이트)

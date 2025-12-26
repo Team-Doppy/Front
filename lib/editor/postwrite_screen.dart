@@ -630,28 +630,6 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
       if (isEmpty) {
         editorService.insertEmptyParagraphAtIndex(lastIndex + 1);
         nodeComponentService.selectNode(null);
-
-        // 🎯 새로 추가된 노드에 즉시 포커스
-        Future.delayed(const Duration(milliseconds: 50), () {
-          if (!mounted) return;
-
-          final newLastIndex = document.nodeCount - 1;
-          if (newLastIndex >= 0) {
-            final newNode = document.getNodeAt(newLastIndex);
-            if (newNode != null) {
-              composer.setSelectionWithReason(
-                DocumentSelection.collapsed(
-                  position: DocumentPosition(
-                    nodeId: newNode.id,
-                    nodePosition: const TextNodePosition(offset: 0),
-                  ),
-                ),
-                'user_tap_after_special_node',
-              );
-              _editorFocusNode.requestFocus();
-            }
-          }
-        });
       }
     }
   }
@@ -1076,6 +1054,8 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                                                     ThemeMode.dark,
                                               ),
                                               ClipComponentBuilder(
+                                                screenWidth:
+                                                    screenWidth, // 🚀 전달
                                                 dragService: dragService,
                                                 isEditing: true,
                                                 isDarkMode:
@@ -1288,11 +1268,17 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     DocumentNode node,
     String selectedId,
   ) async {
+    debugPrint(
+      '[PostWriteScreen] 토글 시작: nodeType=${node.runtimeType}, nodeId=$selectedId',
+    );
+
     // 메타데이터에서 현재 패딩 정보 가져오기 (기본값: 'center' = 패딩 있음)
     final currentPadding = node.metadata['padding'] as String? ?? 'center';
+    debugPrint('[PostWriteScreen] 현재 padding: $currentPadding');
 
     // 다음 패딩 모드로 전환
     final nextPadding = _getNextPaddingMode(currentPadding);
+    debugPrint('[PostWriteScreen] 다음 padding: $nextPadding');
 
     // 메타데이터 업데이트
     final updatedMetadata = Map<String, dynamic>.from(node.metadata);
@@ -1322,9 +1308,19 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     }
 
     // editor.execute를 사용하여 노드 교체
+    debugPrint(
+      '[PostWriteScreen] 노드 교체 실행: newNode.metadata=${newNode.metadata}',
+    );
     editor.execute([
       ReplaceNodeRequest(existingNodeId: selectedId, newNode: newNode),
     ]);
+    debugPrint('[PostWriteScreen] 노드 교체 완료');
+
+    // 교체 후 확인
+    final replacedNode = editor.document.getNodeById(selectedId);
+    if (replacedNode != null) {
+      debugPrint('[PostWriteScreen] 교체 후 노드 메타데이터: ${replacedNode.metadata}');
+    }
 
     // 확장/축소 후 자동으로 선택 해제
     NodeComponentService().clearSelection();

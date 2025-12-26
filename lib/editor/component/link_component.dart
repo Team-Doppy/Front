@@ -2,7 +2,6 @@ import 'dart:ui';
 
 import 'package:doppy/editor/component/clip_component.dart';
 import 'package:doppy/editor/utils/config.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:super_editor/super_editor.dart';
 import 'package:doppy/editor/service/drag_service.dart';
@@ -417,13 +416,9 @@ class _LinkComponentState extends State<_LinkComponent>
 
   @override
   Widget build(BuildContext context) {
-    // selection 핸들이 링크 노드를 포함하는지 확인 (편집 모드에서만)
+    // 🎯 읽기 모드에서도 doc에 접근하여 특수 노드 간격 확인 (포스트 라이트와 동일하게)
     // ignore: invalid_use_of_visible_for_testing_member
-    final seState =
-        widget.isEditing
-            // ignore: invalid_use_of_visible_for_testing_member
-            ? context.findAncestorStateOfType<SuperEditorState>()
-            : null;
+    final seState = context.findAncestorStateOfType<SuperEditorState>();
     // ignore: invalid_use_of_visible_for_testing_member
     final doc = seState?.editContext.editor.document;
 

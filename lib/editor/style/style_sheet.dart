@@ -118,7 +118,12 @@ Stylesheet buildCustomStylesheet(
 
           // 메타데이터에서 폰트 정보 읽기
           final fontFamily = docNode.metadata['fontFamily'] as String?;
-          TextStyle bodyStyle = TextStyle(fontSize: 16, color: bodyColor);
+          TextStyle bodyStyle = TextStyle(
+            fontSize: 16,
+            color: bodyColor,
+            height: 1.4, // 🎯 커서 위치 일관성 유지 (FontSizeAttribution과 동일)
+            leadingDistribution: TextLeadingDistribution.even,
+          );
 
           // 🎯 구글 폰트 적용 (메타데이터 기반)
           // 폰트가 이미 로드되었는지 확인하고, 로드되지 않았으면 기본 폰트 사용
@@ -141,7 +146,27 @@ Stylesheet buildCustomStylesheet(
             ),
           };
         }
-        if (docNode is ImageNode) {
+        if (docNode is ClipNode) {
+          // 메타데이터에서 패딩 모드 확인 (기본값: 'center' = 패딩 있음)
+          final paddingMode =
+              docNode.metadata['padding'] as String? ?? 'center';
+
+          // 'full' 모드면 좌우 패딩 없음, 'center' 모드면 기본 패딩
+          final horizontalPadding = paddingMode == 'full' ? 0.0 : 20.0;
+
+          debugPrint(
+            '[StyleSheet] ClipNode 패딩 적용: nodeId=${docNode.id}, paddingMode=$paddingMode, horizontalPadding=$horizontalPadding',
+          );
+
+          return {
+            Styles.padding: CascadingPadding.only(
+              top: EditorConfig.imagePadding,
+              bottom: EditorConfig.imagePadding,
+              left: horizontalPadding,
+              right: horizontalPadding,
+            ),
+          };
+        } else if (docNode is ImageNode) {
           // 메타데이터에서 패딩 모드 확인
           final paddingMode =
               docNode.metadata['padding'] as String? ?? 'center';
@@ -157,28 +182,11 @@ Stylesheet buildCustomStylesheet(
               right: horizontalPadding,
             ),
           };
-        }
-        if (docNode is ImageRowNode) {
+        } else if (docNode is ImageRowNode) {
           return {
             Styles.padding: CascadingPadding.symmetric(
               vertical: EditorConfig.imagePadding,
               horizontal: 0,
-            ),
-          };
-        }
-
-        if (docNode is ClipNode) {
-          // 메타데이터에서 패딩 모드 확인 (기본값: 'center' = 패딩 있음)
-          final paddingMode =
-              docNode.metadata['padding'] as String? ?? 'center';
-
-          // 'full' 모드면 좌우 패딩 없음, 'center' 모드면 기본 패딩
-          final horizontalPadding = paddingMode == 'full' ? 0.0 : 20.0;
-
-          return {
-            Styles.padding: CascadingPadding.symmetric(
-              vertical: 0,
-              horizontal: horizontalPadding,
             ),
           };
         }

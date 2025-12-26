@@ -961,18 +961,18 @@ class _PostReaderScreenState extends State<PostReaderScreen>
         _preloadStartTime = DateTime.now();
 
         try {
-          // 🎯 상위 3개 노드 미디어 프리로드 (이미지 + 비디오)
+          // 🎯 첫 텍스트 제외 후, 첫 3개 미디어 노드 프리로드 (이미지 + 비디오)
           await _postReaderService.preloadTopMedia(
             context,
             content,
-            topNodeCount: 3,
+            mediaNodeCount: 3,
           );
 
-          // 🎯 나머지 비디오 프리로드 (상위 3개 이후)
+          // 🎯 나머지 비디오 프리로드 (첫 3개 미디어 노드 이후)
           final allClipUrls = _postReaderService.extractClipUrls(content);
           final topClipUrls = _postReaderService.extractTopClipUrls(
             content,
-            topNodeCount: 3,
+            mediaNodeCount: 3,
           );
           final remainingClips =
               allClipUrls.where((url) => !topClipUrls.contains(url)).toList();
@@ -1034,10 +1034,10 @@ class _PostReaderScreenState extends State<PostReaderScreen>
       if (content.isNotEmpty && mounted) {
         final imageUrls = _postReaderService.extractImageUrls(content);
         if (imageUrls.isNotEmpty) {
-          // 상위 3개 노드 이미지는 이미 프리로드했으므로 나머지만
+          // 첫 3개 미디어 노드 내 이미지는 이미 프리로드했으므로 나머지만
           final topImageUrls = _postReaderService.extractTopImageUrls(
             content,
-            topNodeCount: 3,
+            mediaNodeCount: 3,
           );
           final remainingImages =
               imageUrls.where((url) => !topImageUrls.contains(url)).toList();
@@ -1149,20 +1149,20 @@ class _PostReaderScreenState extends State<PostReaderScreen>
         debugPrint('[PostReaderScreen] 🚀 미디어 프리로드 시작 (initState)');
         _preloadStartTime = DateTime.now();
 
-        // 🎯 모든 비디오 + 상위 3개 이미지 프리로드
+        // 🎯 모든 비디오 + 첫 3개 미디어 노드 이미지 프리로드
         Future(() async {
-          // 🎯 상위 3개 노드 미디어 프리로드 (이미지 + 비디오)
+          // 🎯 첫 텍스트 제외 후, 첫 3개 미디어 노드 프리로드 (이미지 + 비디오)
           await _postReaderService.preloadTopMedia(
             context,
             content,
-            topNodeCount: 3,
+            mediaNodeCount: 3,
           );
 
-          // 🎯 나머지 비디오 프리로드 (상위 3개 이후)
+          // 🎯 나머지 비디오 프리로드 (첫 3개 미디어 노드 이후)
           final allClipUrls = _postReaderService.extractClipUrls(content);
           final topClipUrls = _postReaderService.extractTopClipUrls(
             content,
-            topNodeCount: 3,
+            mediaNodeCount: 3,
           );
           final remainingClips =
               allClipUrls.where((url) => !topClipUrls.contains(url)).toList();
@@ -1931,6 +1931,7 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                                   ),
                                   DividerComponentBuilder(),
                                   ClipComponentBuilder(
+                                    screenWidth: screenWidth, // 🚀 전달
                                     dragService: _dragService,
                                     isDarkMode: isDarkMode,
                                   ),

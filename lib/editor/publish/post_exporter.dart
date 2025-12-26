@@ -386,6 +386,14 @@ class PostExporter {
         debugPrint('[PostExporter] 🔍 ImageRowNode 저장 시작: ${node.id}');
         debugPrint('[PostExporter] 🔍 URLs: ${node.imageUrls}');
         debugPrint('[PostExporter] 🔍 metadata: ${meta.keys.toList()}');
+        debugPrint(
+          '[PostExporter] 🔍 imageDimensions 존재 여부: ${meta.containsKey('imageDimensions')}',
+        );
+        if (meta.containsKey('imageDimensions')) {
+          debugPrint(
+            '[PostExporter] 🔍 imageDimensions 내용: ${meta['imageDimensions']}',
+          );
+        }
 
         // 🚀 forPublishing이 true이고 uploadedUrls가 있으면 네트워크 URL로 변환
         // - 이미 네트워크 URL이면 그대로 사용 (편집 모드에서 기존 발행된 이미지)
@@ -485,16 +493,24 @@ class PostExporter {
           nodeMap['spoiler'] = true;
         }
 
-        // 🚀 이미지 크기 정보 저장 (임시저장 불러올 때 빠른 높이 계산용)
-        final imageSizes = meta['imageSizes'] as Map<String, dynamic>?;
-        if (imageSizes != null && imageSizes.isNotEmpty) {
-          // 🚀 URL 변환이 발생했으면 크기 정보도 키를 변환
-          final convertedSizes = <String, dynamic>{};
+        // 이미지 크기 정보 저장 (임시저장 불러올 때 빠른 높이 계산용)
+        final imageDimensions =
+            meta['imageDimensions'] as Map<String, dynamic>?;
+        debugPrint(
+          '[PostExporter] 🔍 imageDimensions 체크: ${imageDimensions != null ? "있음 (${imageDimensions.length}개)" : "없음"}',
+        );
+
+        if (imageDimensions != null && imageDimensions.isNotEmpty) {
+          debugPrint(
+            '[PostExporter] 🔍 imageDimensions 키: ${imageDimensions.keys.toList()}',
+          );
+          // URL 변환이 발생했으면 크기 정보도 키를 변환
+          final convertedDimensions = <String, dynamic>{};
           final uploadedUrls = meta['uploadedUrls'] as Map<String, dynamic>?;
 
           for (final url in imageUrls) {
             // 네트워크 URL로 변환된 경우, 로컬 경로 키의 크기 정보를 찾아서 매핑
-            String? sizeKey = url;
+            String? dimensionKey = url;
             if (uploadedUrls != null) {
               // uploadedUrls에서 역방향 검색 (networkUrl -> localPath)
               String? foundLocalPath;
@@ -505,19 +521,54 @@ class PostExporter {
                 }
               }
               if (foundLocalPath != null && foundLocalPath.isNotEmpty) {
-                sizeKey = foundLocalPath;
+                dimensionKey = foundLocalPath;
               }
             }
 
-            final sizeData = imageSizes[sizeKey] ?? imageSizes[url];
-            if (sizeData != null) {
-              convertedSizes[url] = sizeData;
+            // 🎯 여러 키로 시도: dimensionKey, url, 그리고 imageDimensions의 모든 키에서 매칭
+            dynamic dimensionData =
+                imageDimensions[dimensionKey] ?? imageDimensions[url];
+
+            // 🎯 정확히 매칭되지 않으면 부분 매칭 시도 (URL 끝부분 비교)
+            if (dimensionData == null) {
+              for (final key in imageDimensions.keys) {
+                if (key.toString().endsWith(url.split('/').last) ||
+                    url.endsWith(key.toString().split('/').last)) {
+                  dimensionData = imageDimensions[key];
+                  break;
+                }
+              }
+            }
+
+            if (dimensionData != null) {
+              convertedDimensions[url] = dimensionData;
+              debugPrint(
+                '[PostExporter] ✅ 이미지 크기 매칭 성공: $url -> $dimensionData',
+              );
+            } else {
+              debugPrint('[PostExporter] ⚠️ 이미지 크기 매칭 실패: $url');
             }
           }
 
-          if (convertedSizes.isNotEmpty) {
-            nodeMap['imageSizes'] = convertedSizes;
+          // 🎯 convertedDimensions 저장 (발행/임시저장 모두)
+          if (convertedDimensions.isNotEmpty) {
+            nodeMap['imageDimensions'] = convertedDimensions;
+            debugPrint(
+              '[PostExporter] ✅ convertedDimensions 저장: ${convertedDimensions.length}개',
+            );
+          } else {
+            // 🎯 convertedDimensions가 비어있으면 원본 그대로 저장 (발행/임시저장 모두)
+            // 발행된 글을 다른 사람이 볼 때도 빠른 높이 계산을 위해 필요
+            // URL 매칭이 실패해도 원본 메타데이터를 그대로 저장
+            nodeMap['imageDimensions'] = imageDimensions;
+            debugPrint(
+              '[PostExporter] ✅ 원본 imageDimensions 저장 (매칭 실패했지만 원본 저장): ${imageDimensions.length}개',
+            );
           }
+        } else {
+          debugPrint(
+            '[PostExporter] ⚠️ imageDimensions가 없거나 비어있음 - 메타데이터에 저장되지 않았을 수 있음',
+          );
         }
 
         debugPrint('[PostExporter] 🔍 최종 nodeMap: $nodeMap');

@@ -943,8 +943,10 @@ List<Rect> _measureLineRectsForRange(
     final tboxes = rp.getBoxesForSelection(sel);
     if (tboxes.isEmpty) continue;
 
-    double lineTopLocal = tboxes.map((b) => b.top).reduce(min) + vPad;
-    double lineBottomLocal = tboxes.map((b) => b.bottom).reduce(max) - vPad;
+    // 🎯 위쪽 패딩을 더 크게 하여 텍스트가 삐져나오지 않도록 수정
+    const double topPad = 2.5; // 위쪽 패딩을 더 크게 설정
+    double lineTopLocal = tboxes.map((b) => b.top).reduce(min) - topPad;
+    double lineBottomLocal = tboxes.map((b) => b.bottom).reduce(max) + vPad;
     double lineLeftLocal = tboxes.map((b) => b.left).reduce(min);
     double lineRightLocal = tboxes.map((b) => b.right).reduce(max);
 

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:ui';
 import 'package:doppy/data/services/upload_service.dart';
@@ -172,7 +173,9 @@ class MediaUploadHandler {
     UploadService upload,
   ) async {
     final localPaths = files.map((f) => f.path).toList();
-    final Map<String, String> uploadedUrls = {};
+    // 🎯 성능 최적화: Set 사용으로 O(1) 조회
+    final uploadedPathsSet = <String>{};
+    final Map<String, String> pendingUrls = {}; // 배치 업데이트용
 
     debugPrint(
       '[MediaUploadHandler] 🎯 PageView 그룹 업로드 시작: ${files.length}개, localPaths=${localPaths.length}개',
@@ -190,6 +193,19 @@ class MediaUploadHandler {
       '[MediaUploadHandler] ✅ PageView 그룹 노드 생성 완료: $groupPlaceholderId (layout=$layout)',
     );
 
+    // 🎯 배치 업데이트 함수
+    Future<void> flushBatch() async {
+      if (pendingUrls.isEmpty) return;
+
+      final urlsToUpdate = Map<String, String>.from(pendingUrls);
+      pendingUrls.clear();
+
+      await editorService.replaceGroupImageUrlsByPath(
+        groupNodeId: groupPlaceholderId,
+        urlMap: urlsToUpdate,
+      );
+    }
+
     await upload.uploadEditorImages(
       files: files,
       onCreateNode: (localPath) {
@@ -200,28 +216,39 @@ class MediaUploadHandler {
         return groupPlaceholderId;
       },
       onUploadComplete: (nodeId, url) async {
+        // 🎯 성능 최적화: Set 사용으로 O(1) 조회
         String? targetLocalPath;
         for (final path in localPaths) {
-          if (!uploadedUrls.containsKey(path)) {
+          if (!uploadedPathsSet.contains(path)) {
             targetLocalPath = path;
             break;
           }
         }
 
         if (targetLocalPath != null) {
-          uploadedUrls[targetLocalPath] = url;
-          debugPrint(
-            '[MediaUploadHandler] 🔄 PageView URL 교체 (${uploadedUrls.length}/${files.length}): $targetLocalPath → $url',
-          );
-          await editorService.replaceGroupImageUrlByPath(
-            groupNodeId: groupPlaceholderId,
-            localPath: targetLocalPath,
-            url: url,
-          );
+          uploadedPathsSet.add(targetLocalPath);
+          pendingUrls[targetLocalPath] = url;
+
+          assert(() {
+            debugPrint(
+              '[MediaUploadHandler] 📦 PageView URL 배치 대기 (${pendingUrls.length}/${files.length}): $targetLocalPath → $url',
+            );
+            return true;
+          }());
+
+          // 🎯 모든 이미지가 완료되면 즉시 배치 처리
+          // 1-6개라는 작은 수이므로 타이머 없이 즉시 처리
+          if (pendingUrls.length == files.length) {
+            await flushBatch();
+          }
+          // 일부만 완료된 경우는 다음 완료 시점에 처리 (타이머 불필요)
         } else {
-          debugPrint(
-            '[MediaUploadHandler] ⚠️ PageView URL 교체 실패: targetLocalPath를 찾을 수 없음 (nodeId=$nodeId)',
-          );
+          assert(() {
+            debugPrint(
+              '[MediaUploadHandler] ⚠️ PageView URL 교체 실패: targetLocalPath를 찾을 수 없음 (nodeId=$nodeId)',
+            );
+            return true;
+          }());
         }
       },
       onDeleteNode: (nodeId) {
@@ -235,6 +262,9 @@ class MediaUploadHandler {
       context: context,
       showErrorDialog: _showErrorDialog,
     );
+
+    // 🎯 남은 배치 처리 (모든 업로드 완료 후)
+    await flushBatch();
 
     debugPrint(
       '[MediaUploadHandler] ✅ PageView 그룹 업로드 완료: groupId=$groupPlaceholderId',
@@ -285,7 +315,9 @@ class MediaUploadHandler {
     UploadService upload,
   ) async {
     final localPaths = groupFiles.map((f) => f.path).toList();
-    final Map<String, String> uploadedUrls = {};
+    // 🎯 성능 최적화: Set 사용으로 O(1) 조회
+    final uploadedPathsSet = <String>{};
+    final Map<String, String> pendingUrls = {}; // 배치 업데이트용
 
     debugPrint(
       '[MediaUploadHandler] 🎯 ImageRow 그룹 업로드 시작: ${groupFiles.length}개, localPaths=${localPaths.length}개',
@@ -303,6 +335,19 @@ class MediaUploadHandler {
       '[MediaUploadHandler] ✅ ImageRow 그룹 노드 생성 완료: $groupPlaceholderId (layout=grid2)',
     );
 
+    // 🎯 배치 업데이트 함수
+    Future<void> flushBatch() async {
+      if (pendingUrls.isEmpty) return;
+
+      final urlsToUpdate = Map<String, String>.from(pendingUrls);
+      pendingUrls.clear();
+
+      await editorService.replaceGroupImageUrlsByPath(
+        groupNodeId: groupPlaceholderId,
+        urlMap: urlsToUpdate,
+      );
+    }
+
     await upload.uploadEditorImages(
       files: groupFiles,
       onCreateNode: (localPath) {
@@ -313,28 +358,39 @@ class MediaUploadHandler {
         return groupPlaceholderId;
       },
       onUploadComplete: (nodeId, url) async {
+        // 🎯 성능 최적화: Set 사용으로 O(1) 조회
         String? targetLocalPath;
         for (final path in localPaths) {
-          if (!uploadedUrls.containsKey(path)) {
+          if (!uploadedPathsSet.contains(path)) {
             targetLocalPath = path;
             break;
           }
         }
 
         if (targetLocalPath != null) {
-          uploadedUrls[targetLocalPath] = url;
-          debugPrint(
-            '[MediaUploadHandler] 🔄 ImageRow URL 교체 (${uploadedUrls.length}/${groupFiles.length}): $targetLocalPath → $url',
-          );
-          await editorService.replaceGroupImageUrlByPath(
-            groupNodeId: groupPlaceholderId,
-            localPath: targetLocalPath,
-            url: url,
-          );
+          uploadedPathsSet.add(targetLocalPath);
+          pendingUrls[targetLocalPath] = url;
+
+          assert(() {
+            debugPrint(
+              '[MediaUploadHandler] 📦 ImageRow URL 배치 대기 (${pendingUrls.length}/${groupFiles.length}): $targetLocalPath → $url',
+            );
+            return true;
+          }());
+
+          // 🎯 모든 이미지가 완료되면 즉시 배치 처리
+          // 1-6개라는 작은 수이므로 타이머 없이 즉시 처리
+          if (pendingUrls.length == groupFiles.length) {
+            await flushBatch();
+          }
+          // 일부만 완료된 경우는 다음 완료 시점에 처리 (타이머 불필요)
         } else {
-          debugPrint(
-            '[MediaUploadHandler] ⚠️ ImageRow URL 교체 실패: targetLocalPath를 찾을 수 없음 (nodeId=$nodeId)',
-          );
+          assert(() {
+            debugPrint(
+              '[MediaUploadHandler] ⚠️ ImageRow URL 교체 실패: targetLocalPath를 찾을 수 없음 (nodeId=$nodeId)',
+            );
+            return true;
+          }());
         }
       },
       onDeleteNode: (nodeId) {
@@ -349,6 +405,9 @@ class MediaUploadHandler {
       showErrorDialog: _showErrorDialog,
     );
 
+    // 🎯 남은 배치 처리 (모든 업로드 완료 후)
+    await flushBatch();
+
     debugPrint(
       '[MediaUploadHandler] ✅ ImageRow 그룹 업로드 완료: groupId=$groupPlaceholderId',
     );
@@ -356,17 +415,33 @@ class MediaUploadHandler {
 
   /// 일반 이미지 업로드
   Future<void> _uploadImages(List<File> files, UploadService upload) async {
+    // 🎯 nodeId와 localPath 매핑 (여러 파일 업로드 시 각각의 localPath 추적)
+    final nodeIdToLocalPath = <String, String>{};
+
     await upload.uploadEditorImages(
       files: files,
       onCreateNode: (localPath) {
-        return editorService.addImageNode(localPath);
+        final nodeId = editorService.addImageNode(localPath);
+        nodeIdToLocalPath[nodeId] = localPath; // 매핑 저장
+        return nodeId;
       },
       onUploadComplete: (nodeId, url) async {
-        await editorService.replaceImageUrlByPath(
-          nodeId: nodeId,
-          localPath: files[0].path,
-          url: url,
-        );
+        // 🎯 매핑에서 정확한 localPath 가져오기
+        final localPath = nodeIdToLocalPath[nodeId];
+        if (localPath != null) {
+          await editorService.replaceImageUrlByPath(
+            nodeId: nodeId,
+            localPath: localPath,
+            url: url,
+          );
+        } else {
+          assert(() {
+            debugPrint(
+              '[MediaUploadHandler] ⚠️ 일반 이미지 URL 교체 실패: nodeId=$nodeId에 대한 localPath를 찾을 수 없음',
+            );
+            return true;
+          }());
+        }
       },
       onDeleteNode: (nodeId) {
         // 🎯 일반 노드 삭제로 통합
