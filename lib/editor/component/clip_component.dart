@@ -204,7 +204,8 @@ class ClipComponentViewModel extends SingleColumnLayoutComponentViewModel {
     required this.url,
     required this.localPath,
     required this.thumbnailPath,
-  }) : super(padding: EdgeInsets.zero, createdAt: DateTime.now());
+    required EdgeInsets padding, // 🎯 외부에서 전달받음
+  }) : super(padding: padding, createdAt: DateTime.now());
 
   final String label;
   final String colorHex;
@@ -220,6 +221,7 @@ class ClipComponentViewModel extends SingleColumnLayoutComponentViewModel {
     url: url,
     localPath: localPath,
     thumbnailPath: thumbnailPath,
+    padding: padding as EdgeInsets, // 🎯 복사 시에도 padding 유지
   );
 }
 
@@ -264,6 +266,14 @@ class ClipComponentBuilder implements ComponentBuilder {
     DocumentNode node,
   ) {
     if (node is ClipNode) {
+      // 🎯 메타데이터에서 패딩 모드 읽기
+      final paddingMode = node.metadata['padding'] as String? ?? 'center';
+      final horizontalPadding = paddingMode == 'full' ? 0.0 : 20.0;
+
+      debugPrint(
+        '[ClipComponentBuilder] createViewModel: nodeId=${node.id}, paddingMode=$paddingMode, horizontalPadding=$horizontalPadding',
+      );
+
       return ClipComponentViewModel(
         nodeId: node.id,
         label: node.label,
@@ -271,6 +281,10 @@ class ClipComponentBuilder implements ComponentBuilder {
         url: node.url,
         localPath: node.localPath,
         thumbnailPath: node.thumbnailPath,
+        padding: EdgeInsets.only(
+          left: horizontalPadding,
+          right: horizontalPadding,
+        ),
       );
     }
     return null;
