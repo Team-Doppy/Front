@@ -43,22 +43,30 @@ class ImageRectUtils {
     required Size imageSize,
     double scale = 1.0,
     Offset offset = Offset.zero,
+    double topMargin = 0.0,
+    double bottomMargin = 0.0,
   }) {
     final imageAspect = imageSize.width / imageSize.height;
-    final containerAspect = containerSize.width / containerSize.height;
+
+    // 마진을 적용한 실제 컨테이너 크기
+    final availableHeight = containerSize.height - topMargin - bottomMargin;
+    final availableSize = Size(containerSize.width, availableHeight);
+    final containerAspect = availableSize.width / availableSize.height;
 
     // 기본 표시 크기 계산 (scale 1.0 기준)
     double baseDisplayWidth, baseDisplayHeight;
     double baseImageOffsetX = 0, baseImageOffsetY = 0;
 
     if (imageAspect > containerAspect) {
-      baseDisplayWidth = containerSize.width;
-      baseDisplayHeight = containerSize.width / imageAspect;
-      baseImageOffsetY = (containerSize.height - baseDisplayHeight) / 2;
+      baseDisplayWidth = availableSize.width;
+      baseDisplayHeight = availableSize.width / imageAspect;
+      baseImageOffsetY =
+          topMargin + (availableSize.height - baseDisplayHeight) / 2;
     } else {
-      baseDisplayHeight = containerSize.height;
-      baseDisplayWidth = containerSize.height * imageAspect;
+      baseDisplayHeight = availableSize.height;
+      baseDisplayWidth = availableSize.height * imageAspect;
       baseImageOffsetX = (containerSize.width - baseDisplayWidth) / 2;
+      baseImageOffsetY = topMargin;
     }
 
     // 스케일 적용 (이미지 중심 기준으로 확대)
@@ -154,253 +162,246 @@ class CropState {
 class CropUtils {
   CropUtils._();
 
-  /// 크롭 영역 초기화 (크롭 시작 시 1회만 호출)
-  /// 🎯 이미지 좌표 기준으로 초기화
+  /// 크롭 영역 초기화
   static void initializeCropRect({
     required ui.Image image,
     required Size containerSize,
     required CropState cropState,
-    required ValueChanged<Size> onDisplaySizeChanged,
     double scale = 1.0,
     Offset offset = Offset.zero,
+    Function(Size)? onDisplaySizeChanged,
   }) {
     final imageSize = Size(image.width.toDouble(), image.height.toDouble());
-    final imageRect = ImageRectUtils.computeImageRect(
+
+    // ✅ 실제 화면에 표시된 이미지 rect 계산 (scale과 offset 반영)
+    // 크롭 모드이므로 상하 마진 4픽셀 적용
+    final displayImageRect = ImageRectUtils.computeImageRect(
       containerSize: containerSize,
       imageSize: imageSize,
-      scale: 1.0,
-      offset: Offset.zero,
+      scale: scale,
+      offset: offset,
+      topMargin: 4.0,
+      bottomMargin: 4.0,
     );
 
-    onDisplaySizeChanged(Size(imageRect.width, imageRect.height));
-
-    // 🎯 이미지 좌표 기준으로 크롭 영역 초기화
-    final aspectRatio = _parseAspectRatio(cropState.selectedAspectRatio);
-    double cropWidth, cropHeight;
-
-    if (aspectRatio != null) {
-      if (aspectRatio > imageSize.width / imageSize.height) {
-        cropWidth = imageSize.width;
-        cropHeight = cropWidth / aspectRatio;
-      } else {
-        cropHeight = imageSize.height;
-        cropWidth = cropHeight * aspectRatio;
-      }
-    } else {
-      cropWidth = imageSize.width;
-      cropHeight = imageSize.height;
+    if (onDisplaySizeChanged != null) {
+      onDisplaySizeChanged(
+        Size(displayImageRect.width, displayImageRect.height),
+      );
     }
 
-    // 크롭 박스가 이미지 경계를 벗어나지 않도록 제한
-    cropWidth = cropWidth.clamp(0.0, imageSize.width);
-    cropHeight = cropHeight.clamp(0.0, imageSize.height);
-
-    // 중심점 계산 (이미지 경계 내에 있도록)
-    final centerX = imageSize.width / 2;
-    final centerY = imageSize.height / 2;
-
-    // 크롭 박스 위치 계산 (이미지 좌표 기준)
-    final cropLeft = (centerX - cropWidth / 2).clamp(
-      0.0,
-      imageSize.width - cropWidth,
-    );
-    final cropTop = (centerY - cropHeight / 2).clamp(
-      0.0,
-      imageSize.height - cropHeight,
+    // ✅ 화면에 실제로 보이는 이미지 영역 계산 (containerSize와의 교집합)
+    final visibleImageRect = displayImageRect.intersect(
+      Rect.fromLTWH(0, 0, containerSize.width, containerSize.height),
     );
 
-    // 🎯 cropRectImage 설정 (이미지 좌표, 단일 진실)
+    // ✅ 비율 확인
+    final targetAspectRatio =
+        cropState.selectedAspectRatio != null
+            ? CropGestureUtils.parseAspectRatio(cropState.selectedAspectRatio)
+            : null;
+
+    // ✅ 기본 크롭 영역 계산 (비율이 있으면 비율 적용)
+    final margin = 0.0; // 여백 없음 - 이미지 경계에 완전히 붙임
+    double cropWidth;
+    double cropHeight;
+
+    if (targetAspectRatio != null) {
+      // 비율이 지정된 경우: 비율에 맞게 크롭 영역 계산
+      // 화면에 보이는 이미지 영역의 80% 정도를 차지하도록 설정
+      const targetCropRatio = 0.8;
+      final targetVisibleWidth = visibleImageRect.width * targetCropRatio;
+      final targetVisibleHeight = visibleImageRect.height * targetCropRatio;
+
+      final targetAspect = targetAspectRatio;
+      final targetVisibleAspect = targetVisibleWidth / targetVisibleHeight;
+
+      if (targetAspect > targetVisibleAspect) {
+        // 비율이 더 넓음: 너비를 기준으로 높이 계산
+        cropWidth = targetVisibleWidth;
+        cropHeight = targetVisibleWidth / targetAspect;
+      } else {
+        // 비율이 더 높음: 높이를 기준으로 너비 계산
+        cropHeight = targetVisibleHeight;
+        cropWidth = targetVisibleHeight * targetAspect;
+      }
+
+      // 화면에 보이는 영역을 초과하지 않도록 제한
+      cropWidth = cropWidth.clamp(0.0, visibleImageRect.width);
+      cropHeight = cropHeight.clamp(0.0, visibleImageRect.height);
+    } else {
+      // 비율이 없는 경우: 전체 영역 사용
+      cropWidth = (visibleImageRect.width - margin * 2).clamp(
+        0.0,
+        visibleImageRect.width,
+      );
+      cropHeight = (visibleImageRect.height - margin * 2).clamp(
+        0.0,
+        visibleImageRect.height,
+      );
+    }
+
+    final cropLeft =
+        visibleImageRect.left + (visibleImageRect.width - cropWidth) / 2;
+    final cropTop =
+        visibleImageRect.top + (visibleImageRect.height - cropHeight) / 2;
+
+    // ✅ 화면 좌표를 이미지 좌표로 변환
+    final scaleX = imageSize.width / displayImageRect.width;
+    final scaleY = imageSize.height / displayImageRect.height;
+
+    // ✅ 화면 좌표의 크롭 박스를 이미지 좌표로 변환
+    // displayImageRect 기준으로 상대 좌표 계산
+    final cropRectImageLeft = (cropLeft - displayImageRect.left) * scaleX;
+    final cropRectImageTop = (cropTop - displayImageRect.top) * scaleY;
+    final cropRectImageWidth = cropWidth * scaleX;
+    final cropRectImageHeight = cropHeight * scaleY;
+
+    // ✅ 최종적으로 이미지 경계 내로 클램프
     cropState.cropRectImage = Rect.fromLTWH(
-      cropLeft,
-      cropTop,
-      cropWidth,
-      cropHeight,
+      cropRectImageLeft.clamp(0.0, imageSize.width),
+      cropRectImageTop.clamp(0.0, imageSize.height),
+      cropRectImageWidth.clamp(
+        0.0,
+        imageSize.width - cropRectImageLeft.clamp(0.0, imageSize.width),
+      ),
+      cropRectImageHeight.clamp(
+        0.0,
+        imageSize.height - cropRectImageTop.clamp(0.0, imageSize.height),
+      ),
     );
-
     cropState.isCropRectInitialized = true;
   }
 
-  /// 비율 파싱
-  static double? _parseAspectRatio(String? ratio) {
-    if (ratio == null || ratio == 'original') return null;
-    switch (ratio) {
-      case '1:1':
-        return 1.0;
-      case '4:5':
-        return 4 / 5;
-      case '16:9':
-        return 16 / 9;
-      case '9:16':
-        return 9 / 16;
-      case '3:4':
-        return 3 / 4;
-      case '4:3':
-        return 4 / 3;
-      default:
-        return null;
-    }
-  }
-
   /// 크롭 적용
-  /// pixel cropRect → normalized → 실제 이미지 좌표 변환
   static Future<Uint8List?> applyCrop({
     required Uint8List imageBytes,
     required CropState cropState,
     required ui.Image uiImage,
     required Size containerSize,
-    double scale = 1.0,
-    Offset offset = Offset.zero,
-    int rotation = 0,
+    required double scale,
+    required Offset offset,
+    required int rotation,
   }) async {
+    if (cropState.cropRectImage == null) return null;
+
     try {
-      final decoded = img.decodeImage(imageBytes);
-      if (decoded == null) return null;
+      final image = img.decodeImage(imageBytes);
+      if (image == null) return null;
 
       // 회전 적용
-      img.Image processed = decoded;
+      img.Image rotatedImage = image;
       if (rotation != 0) {
-        processed = img.copyRotate(decoded, angle: rotation.toDouble());
+        rotatedImage = img.copyRotate(image, angle: rotation.toDouble());
       }
 
-      // 🎯 이미지 좌표계 cropRect 사용 (AutoZoom 후에도 동일한 이미지 영역 유지)
-      if (cropState.cropRectImage != null) {
-        // 이미지 좌표계 cropRect를 직접 사용
-        final imageCrop = cropState.cropRectImage!;
-        final imageSize = Size(
-          uiImage.width.toDouble(),
-          uiImage.height.toDouble(),
-        );
-
-        // 이미지 좌표를 정규화된 좌표로 변환
-        cropState.normalizedLeft = (imageCrop.left / imageSize.width).clamp(
-          0.0,
-          1.0,
-        );
-        cropState.normalizedTop = (imageCrop.top / imageSize.height).clamp(
-          0.0,
-          1.0,
-        );
-        cropState.normalizedWidth = (imageCrop.width / imageSize.width).clamp(
-          0.0,
-          1.0,
-        );
-        cropState.normalizedHeight = (imageCrop.height / imageSize.height)
-            .clamp(0.0, 1.0);
-      } else {
-        // fallback: normalized 값 사용 (저장/복원용)
-        // normalized는 이미 올바른 값이어야 함
-      }
-
-      // normalized를 실제 이미지 좌표로 변환
+      // 크롭 영역을 이미지 좌표계에서 픽셀 좌표로 변환
+      // scale과 offset을 고려하여 실제 이미지에서 크롭할 영역 계산
       final imageSize = Size(
-        processed.width.toDouble(),
-        processed.height.toDouble(),
+        rotatedImage.width.toDouble(),
+        rotatedImage.height.toDouble(),
       );
 
-      final cropX =
-          (cropState.normalizedLeft * imageSize.width)
-              .clamp(0.0, imageSize.width)
-              .toInt();
-      final cropY =
-          (cropState.normalizedTop * imageSize.height)
-              .clamp(0.0, imageSize.height)
-              .toInt();
-      final cropWidth =
-          (cropState.normalizedWidth * imageSize.width)
-              .clamp(0.0, (imageSize.width - cropX).toDouble())
-              .toInt();
-      final cropHeight =
-          (cropState.normalizedHeight * imageSize.height)
-              .clamp(0.0, (imageSize.height - cropY).toDouble())
-              .toInt();
+      // cropRectImage는 이미 이미지 좌표계이므로 그대로 사용
+      final cropRect = cropState.cropRectImage!;
 
-      // 크롭 적용
+      // 이미지 경계 내로 클램프
+      final clampedCropRect = Rect.fromLTWH(
+        cropRect.left.clamp(0.0, imageSize.width),
+        cropRect.top.clamp(0.0, imageSize.height),
+        cropRect.width.clamp(0.0, imageSize.width - cropRect.left),
+        cropRect.height.clamp(0.0, imageSize.height - cropRect.top),
+      );
+
+      // 크롭 실행
       final cropped = img.copyCrop(
-        processed,
-        x: cropX,
-        y: cropY,
-        width: cropWidth,
-        height: cropHeight,
+        rotatedImage,
+        x: clampedCropRect.left.toInt(),
+        y: clampedCropRect.top.toInt(),
+        width: clampedCropRect.width.toInt(),
+        height: clampedCropRect.height.toInt(),
       );
 
-      // JPG로 인코딩
-      return Uint8List.fromList(img.encodeJpg(cropped, quality: 95));
+      // Uint8List로 변환
+      return Uint8List.fromList(img.encodePng(cropped));
     } catch (e) {
-      debugPrint('크롭 에러: $e');
+      debugPrint('크롭 적용 오류: $e');
       return null;
     }
   }
-
-  /// 핸들 위치에서 핸들 타입 찾기
-  static CropHandleType? getHandleAtPosition(Offset pos, Rect cropRect) {
-    const handleSize = 30.0;
-    const handleRadius = handleSize / 2;
-
-    final handles = [
-      (CropHandleType.topLeft, cropRect.topLeft),
-      (CropHandleType.topRight, cropRect.topRight),
-      (CropHandleType.bottomLeft, cropRect.bottomLeft),
-      (CropHandleType.bottomRight, cropRect.bottomRight),
-      (CropHandleType.top, Offset(cropRect.center.dx, cropRect.top)),
-      (CropHandleType.bottom, Offset(cropRect.center.dx, cropRect.bottom)),
-      (CropHandleType.left, Offset(cropRect.left, cropRect.center.dy)),
-      (CropHandleType.right, Offset(cropRect.right, cropRect.center.dy)),
-    ];
-
-    for (final (type, position) in handles) {
-      if ((pos - position).distance < handleRadius) {
-        return type;
-      }
-    }
-    return null;
-  }
 }
 
-/// 이미지 전용 Painter (transform 적용)
-/// ❗ 크롭 관련 코드는 모두 제거 - 레이어 분리
+/// 이미지 Painter
 class ImagePainter extends CustomPainter {
   final ui.Image image;
   final Offset imageOffset;
   final double imageScale;
 
-  ImagePainter(
-    this.image, {
-    this.imageOffset = Offset.zero,
-    this.imageScale = 1.0,
-  });
+  ImagePainter(this.image, this.imageOffset, this.imageScale);
 
   @override
   void paint(Canvas canvas, Size size) {
+    // image는 항상 non-null이므로 null 체크 불필요
+
     final imageSize = Size(image.width.toDouble(), image.height.toDouble());
+    final imageAspect = imageSize.width / imageSize.height;
+    final containerAspect = size.width / size.height;
 
-    // ✅ computeImageRect를 "유일한 진실"로 사용
-    // canvas transform을 사용하지 않고, computeImageRect가 계산한 rect를 직접 사용
-    final imageRect = ImageRectUtils.computeImageRect(
-      containerSize: size,
-      imageSize: imageSize,
-      scale: imageScale,
-      offset: imageOffset,
+    double baseDisplayWidth, baseDisplayHeight;
+    double baseImageOffsetX = 0, baseImageOffsetY = 0;
+
+    // ImagePainter는 크롭 모드에서만 사용되므로 항상 마진 적용
+    const topMargin = 4.0;
+    const bottomMargin = 4.0;
+    final availableHeight = size.height - topMargin - bottomMargin;
+
+    if (imageAspect > containerAspect) {
+      baseDisplayWidth = size.width;
+      baseDisplayHeight = size.width / imageAspect;
+      baseImageOffsetY = topMargin + (availableHeight - baseDisplayHeight) / 2;
+    } else {
+      baseDisplayHeight = availableHeight;
+      baseDisplayWidth = availableHeight * imageAspect;
+      baseImageOffsetX = (size.width - baseDisplayWidth) / 2;
+      baseImageOffsetY = topMargin;
+    }
+
+    final scaledWidth = baseDisplayWidth * imageScale;
+    final scaledHeight = baseDisplayHeight * imageScale;
+
+    final scaledImageOffsetX =
+        baseImageOffsetX - (scaledWidth - baseDisplayWidth) / 2;
+    final scaledImageOffsetY =
+        baseImageOffsetY - (scaledHeight - baseDisplayHeight) / 2;
+
+    final finalImageOffsetX = scaledImageOffsetX + imageOffset.dx;
+    final finalImageOffsetY = scaledImageOffsetY + imageOffset.dy;
+
+    final srcRect = Rect.fromLTWH(
+      0,
+      0,
+      image.width.toDouble(),
+      image.height.toDouble(),
+    );
+    final dstRect = Rect.fromLTWH(
+      finalImageOffsetX,
+      finalImageOffsetY,
+      scaledWidth,
+      scaledHeight,
     );
 
-    // 이미지 그리기 (transform 없이 직접 rect 사용)
-    canvas.drawImageRect(
-      image,
-      Rect.fromLTWH(0, 0, image.width.toDouble(), image.height.toDouble()),
-      imageRect,
-      Paint(),
-    );
+    canvas.drawImageRect(image, srcRect, dstRect, Paint());
   }
 
   @override
   bool shouldRepaint(ImagePainter oldDelegate) {
-    return oldDelegate.image != image ||
-        oldDelegate.imageOffset != imageOffset ||
-        oldDelegate.imageScale != imageScale;
+    return oldDelegate.imageOffset != imageOffset ||
+        oldDelegate.imageScale != imageScale ||
+        oldDelegate.image != image;
   }
 }
 
-/// 크롭 오버레이 전용 Painter (transform 미적용 - screen 좌표로 직접 그림)
-/// ❗ 절대 canvas transform 사용 금지
+/// 크롭 오버레이 Painter
 class CropOverlayPainter extends CustomPainter {
   final Rect cropRectScreen;
   final Rect imageRect;
@@ -409,47 +410,56 @@ class CropOverlayPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    // 이미지 영역과 겹치는지 확인
-    if (!imageRect.overlaps(cropRectScreen)) {
-      return;
+    // 어두운 배경 (크롭 영역 외부만) - 크롭 박스 안은 제외
+    final darkPaint = Paint()..color = Colors.black.withOpacity(0.8);
+
+    // 크롭 영역을 제외한 4개의 사각형 영역에 어두운 필터 적용
+    // 위쪽 영역
+    if (cropRectScreen.top > 0) {
+      canvas.drawRect(
+        Rect.fromLTWH(0, 0, size.width, cropRectScreen.top),
+        darkPaint,
+      );
     }
 
-    // 어두운 오버레이 (크롭 영역 외부)
-    final overlayPaint =
-        Paint()
-          ..color = Colors.black.withOpacity(0.5)
-          ..style = PaintingStyle.fill;
+    // 아래쪽 영역
+    if (cropRectScreen.bottom < size.height) {
+      canvas.drawRect(
+        Rect.fromLTWH(
+          0,
+          cropRectScreen.bottom,
+          size.width,
+          size.height - cropRectScreen.bottom,
+        ),
+        darkPaint,
+      );
+    }
 
-    // 상단
-    canvas.drawRect(
-      Rect.fromLTRB(0, 0, size.width, cropRectScreen.top),
-      overlayPaint,
-    );
-    // 하단
-    canvas.drawRect(
-      Rect.fromLTRB(0, cropRectScreen.bottom, size.width, size.height),
-      overlayPaint,
-    );
-    // 좌측
-    canvas.drawRect(
-      Rect.fromLTRB(
-        0,
-        cropRectScreen.top,
-        cropRectScreen.left,
-        cropRectScreen.bottom,
-      ),
-      overlayPaint,
-    );
-    // 우측
-    canvas.drawRect(
-      Rect.fromLTRB(
-        cropRectScreen.right,
-        cropRectScreen.top,
-        size.width,
-        cropRectScreen.bottom,
-      ),
-      overlayPaint,
-    );
+    // 왼쪽 영역
+    if (cropRectScreen.left > 0) {
+      canvas.drawRect(
+        Rect.fromLTWH(
+          0,
+          cropRectScreen.top,
+          cropRectScreen.left,
+          cropRectScreen.height,
+        ),
+        darkPaint,
+      );
+    }
+
+    // 오른쪽 영역
+    if (cropRectScreen.right < size.width) {
+      canvas.drawRect(
+        Rect.fromLTWH(
+          cropRectScreen.right,
+          cropRectScreen.top,
+          size.width - cropRectScreen.right,
+          cropRectScreen.height,
+        ),
+        darkPaint,
+      );
+    }
 
     // 크롭 박스 테두리
     final borderPaint =
@@ -460,60 +470,35 @@ class CropOverlayPainter extends CustomPainter {
 
     canvas.drawRect(cropRectScreen, borderPaint);
 
-    // 격자선 (3x3)
+    // 3x3 그리드
     final gridPaint =
         Paint()
           ..color = Colors.white.withOpacity(0.5)
           ..style = PaintingStyle.stroke
           ..strokeWidth = 1.0;
 
-    // 세로선 2개
-    canvas.drawLine(
-      Offset(
-        cropRectScreen.left + cropRectScreen.width / 3,
-        cropRectScreen.top,
-      ),
-      Offset(
-        cropRectScreen.left + cropRectScreen.width / 3,
-        cropRectScreen.bottom,
-      ),
-      gridPaint,
-    );
-    canvas.drawLine(
-      Offset(
-        cropRectScreen.left + cropRectScreen.width * 2 / 3,
-        cropRectScreen.top,
-      ),
-      Offset(
-        cropRectScreen.left + cropRectScreen.width * 2 / 3,
-        cropRectScreen.bottom,
-      ),
-      gridPaint,
-    );
+    final thirdWidth = cropRectScreen.width / 3;
+    final thirdHeight = cropRectScreen.height / 3;
 
-    // 가로선 2개
-    canvas.drawLine(
-      Offset(
-        cropRectScreen.left,
-        cropRectScreen.top + cropRectScreen.height / 3,
-      ),
-      Offset(
-        cropRectScreen.right,
-        cropRectScreen.top + cropRectScreen.height / 3,
-      ),
-      gridPaint,
-    );
-    canvas.drawLine(
-      Offset(
-        cropRectScreen.left,
-        cropRectScreen.top + cropRectScreen.height * 2 / 3,
-      ),
-      Offset(
-        cropRectScreen.right,
-        cropRectScreen.top + cropRectScreen.height * 2 / 3,
-      ),
-      gridPaint,
-    );
+    // 세로 선 2개
+    for (int i = 1; i < 3; i++) {
+      final x = cropRectScreen.left + thirdWidth * i;
+      canvas.drawLine(
+        Offset(x, cropRectScreen.top),
+        Offset(x, cropRectScreen.bottom),
+        gridPaint,
+      );
+    }
+
+    // 가로 선 2개
+    for (int i = 1; i < 3; i++) {
+      final y = cropRectScreen.top + thirdHeight * i;
+      canvas.drawLine(
+        Offset(cropRectScreen.left, y),
+        Offset(cropRectScreen.right, y),
+        gridPaint,
+      );
+    }
   }
 
   @override
@@ -523,7 +508,7 @@ class CropOverlayPainter extends CustomPainter {
   }
 }
 
-/// 각진 크롭 핸들 Painter
+/// 크롭 핸들 코너 Painter
 class CropCornerHandlePainter extends CustomPainter {
   final CropHandleType type;
   final double handleLength;
@@ -534,7 +519,7 @@ class CropCornerHandlePainter extends CustomPainter {
     required this.type,
     required this.handleLength,
     required this.handleThickness,
-    this.handleColor = Colors.white,
+    required this.handleColor,
   });
 
   @override
@@ -542,70 +527,68 @@ class CropCornerHandlePainter extends CustomPainter {
     final paint =
         Paint()
           ..color = handleColor
-          ..strokeWidth = handleThickness
           ..style = PaintingStyle.stroke
-          ..strokeCap = StrokeCap.square;
+          ..strokeWidth = handleThickness
+          ..strokeCap = StrokeCap.round;
 
-    final bracketLength = handleLength;
-    // 테두리 안쪽으로 더 넣기 (테두리 두께 + 여유 공간)
-    // ImageWithCropPainter의 borderPaint strokeWidth = 2.0
-    const borderWidth = 2.0;
-    const extraInset = 14.0; // 추가 여유 공간
-    final inset = borderWidth + extraInset;
+    final center = Offset(size.width / 2, size.height / 2);
+    final halfLength = handleLength / 2;
 
     switch (type) {
       case CropHandleType.topLeft:
+        // ┘ 모양 (좌우+상하 반전: 아래쪽과 오른쪽으로)
         canvas.drawLine(
-          Offset(inset, inset),
-          Offset(inset + bracketLength, inset),
+          Offset(center.dx, center.dy + halfLength),
+          center,
           paint,
         );
         canvas.drawLine(
-          Offset(inset, inset),
-          Offset(inset, inset + bracketLength),
+          center,
+          Offset(center.dx + halfLength, center.dy),
           paint,
         );
         break;
       case CropHandleType.topRight:
+        // └ 모양 (좌우+상하 반전: 아래쪽과 왼쪽으로)
         canvas.drawLine(
-          Offset(size.width - inset - bracketLength, inset),
-          Offset(size.width - inset, inset),
+          Offset(center.dx, center.dy + halfLength),
+          center,
           paint,
         );
         canvas.drawLine(
-          Offset(size.width - inset, inset),
-          Offset(size.width - inset, inset + bracketLength),
+          center,
+          Offset(center.dx - halfLength, center.dy),
           paint,
         );
         break;
       case CropHandleType.bottomLeft:
+        // ┐ 모양 (좌우+상하 반전: 위쪽과 오른쪽으로)
         canvas.drawLine(
-          Offset(inset, size.height - inset - bracketLength),
-          Offset(inset, size.height - inset),
+          Offset(center.dx, center.dy - halfLength),
+          center,
           paint,
         );
         canvas.drawLine(
-          Offset(inset, size.height - inset),
-          Offset(inset + bracketLength, size.height - inset),
+          center,
+          Offset(center.dx + halfLength, center.dy),
           paint,
         );
         break;
       case CropHandleType.bottomRight:
+        // ┌ 모양 (좌우+상하 반전: 위쪽과 왼쪽으로)
         canvas.drawLine(
-          Offset(size.width - inset - bracketLength, size.height - inset),
-          Offset(size.width - inset, size.height - inset),
+          Offset(center.dx, center.dy - halfLength),
+          center,
           paint,
         );
         canvas.drawLine(
-          Offset(size.width - inset, size.height - inset - bracketLength),
-          Offset(size.width - inset, size.height - inset),
+          center,
+          Offset(center.dx - halfLength, center.dy),
           paint,
         );
         break;
       case CropHandleType.top:
-        // 위쪽 중간 - 테두리 라인 위에 정확히 위치 (inset 없음)
-        final center = Offset(size.width / 2, inset);
-        final halfLength = handleLength / 2;
+        // ─ 모양 (위)
         canvas.drawLine(
           Offset(center.dx - halfLength, center.dy),
           Offset(center.dx + halfLength, center.dy),
@@ -613,32 +596,26 @@ class CropCornerHandlePainter extends CustomPainter {
         );
         break;
       case CropHandleType.bottom:
-        // 아래쪽 중간 - 테두리 라인 위에 정확히 위치 (inset 없음)
-        final centerBottom = Offset(size.width / 2, size.height - inset);
-        final halfLengthBottom = handleLength / 2;
+        // ─ 모양 (아래)
         canvas.drawLine(
-          Offset(centerBottom.dx - halfLengthBottom, centerBottom.dy),
-          Offset(centerBottom.dx + halfLengthBottom, centerBottom.dy),
+          Offset(center.dx - halfLength, center.dy),
+          Offset(center.dx + halfLength, center.dy),
           paint,
         );
         break;
       case CropHandleType.left:
-        // 왼쪽 중간 - inset만큼 안쪽에 위치
-        final centerLeft = Offset(inset, size.height / 2);
-        final halfLengthLeft = handleLength / 2;
+        // │ 모양 (왼쪽)
         canvas.drawLine(
-          Offset(centerLeft.dx, centerLeft.dy - halfLengthLeft),
-          Offset(centerLeft.dx, centerLeft.dy + halfLengthLeft),
+          Offset(center.dx, center.dy - halfLength),
+          Offset(center.dx, center.dy + halfLength),
           paint,
         );
         break;
       case CropHandleType.right:
-        // 오른쪽 중간 - inset만큼 안쪽에 위치
-        final centerRight = Offset(size.width - inset, size.height / 2);
-        final halfLengthRight = handleLength / 2;
+        // │ 모양 (오른쪽)
         canvas.drawLine(
-          Offset(centerRight.dx, centerRight.dy - halfLengthRight),
-          Offset(centerRight.dx, centerRight.dy + halfLengthRight),
+          Offset(center.dx, center.dy - halfLength),
+          Offset(center.dx, center.dy + halfLength),
           paint,
         );
         break;
@@ -705,109 +682,276 @@ class CropGestureUtils {
             : imageSize.height) *
         0.1;
 
+    // ✅ 비율 확인
+    final aspectRatio = parseAspectRatio(cropState.selectedAspectRatio);
+
     Rect newRect = cropState.cropRectImage!;
 
-    switch (handle) {
-      case CropHandleType.topLeft:
-        newRect = Rect.fromLTRB(
-          (cropState.cropRectImage!.left + imageDelta.dx).clamp(
-            0.0,
-            cropState.cropRectImage!.right - minSize,
-          ),
-          (cropState.cropRectImage!.top + imageDelta.dy).clamp(
-            0.0,
-            cropState.cropRectImage!.bottom - minSize,
-          ),
-          cropState.cropRectImage!.right,
-          cropState.cropRectImage!.bottom,
-        );
-        break;
-      case CropHandleType.topRight:
-        newRect = Rect.fromLTRB(
-          cropState.cropRectImage!.left,
-          (cropState.cropRectImage!.top + imageDelta.dy).clamp(
-            0.0,
-            cropState.cropRectImage!.bottom - minSize,
-          ),
-          (cropState.cropRectImage!.right + imageDelta.dx).clamp(
-            cropState.cropRectImage!.left + minSize,
-            imageSize.width,
-          ),
-          cropState.cropRectImage!.bottom,
-        );
-        break;
-      case CropHandleType.bottomLeft:
-        newRect = Rect.fromLTRB(
-          (cropState.cropRectImage!.left + imageDelta.dx).clamp(
-            0.0,
-            cropState.cropRectImage!.right - minSize,
-          ),
-          cropState.cropRectImage!.top,
-          cropState.cropRectImage!.right,
-          (cropState.cropRectImage!.bottom + imageDelta.dy).clamp(
-            cropState.cropRectImage!.top + minSize,
-            imageSize.height,
-          ),
-        );
-        break;
-      case CropHandleType.bottomRight:
-        newRect = Rect.fromLTRB(
-          cropState.cropRectImage!.left,
-          cropState.cropRectImage!.top,
-          (cropState.cropRectImage!.right + imageDelta.dx).clamp(
-            cropState.cropRectImage!.left + minSize,
-            imageSize.width,
-          ),
-          (cropState.cropRectImage!.bottom + imageDelta.dy).clamp(
-            cropState.cropRectImage!.top + minSize,
-            imageSize.height,
-          ),
-        );
-        break;
-      case CropHandleType.top:
-        newRect = Rect.fromLTRB(
-          cropState.cropRectImage!.left,
-          (cropState.cropRectImage!.top + imageDelta.dy).clamp(
-            0.0,
-            cropState.cropRectImage!.bottom - minSize,
-          ),
-          cropState.cropRectImage!.right,
-          cropState.cropRectImage!.bottom,
-        );
-        break;
-      case CropHandleType.bottom:
-        newRect = Rect.fromLTRB(
-          cropState.cropRectImage!.left,
-          cropState.cropRectImage!.top,
-          cropState.cropRectImage!.right,
-          (cropState.cropRectImage!.bottom + imageDelta.dy).clamp(
-            cropState.cropRectImage!.top + minSize,
-            imageSize.height,
-          ),
-        );
-        break;
-      case CropHandleType.left:
-        newRect = Rect.fromLTRB(
-          (cropState.cropRectImage!.left + imageDelta.dx).clamp(
-            0.0,
-            cropState.cropRectImage!.right - minSize,
-          ),
-          cropState.cropRectImage!.top,
-          cropState.cropRectImage!.right,
-          cropState.cropRectImage!.bottom,
-        );
-        break;
-      case CropHandleType.right:
-        newRect = Rect.fromLTRB(
-          cropState.cropRectImage!.left,
-          cropState.cropRectImage!.top,
-          (cropState.cropRectImage!.right + imageDelta.dx).clamp(
-            cropState.cropRectImage!.left + minSize,
-            imageSize.width,
-          ),
-          cropState.cropRectImage!.bottom,
-        );
-        break;
+    if (aspectRatio != null) {
+      // ✅ 비율 모드: 한 핸들을 드래그하면 중심점 기준으로 크기가 조정되고 모든 핸들이 함께 움직임
+      final currentRect = cropState.cropRectImage!;
+      final centerX = currentRect.center.dx;
+      final centerY = currentRect.center.dy;
+
+      // ✅ 경계에 도달했는지 확인 (비율 깨짐 방지)
+      const tolerance = 0.1;
+      final isAtLeftEdge = currentRect.left <= tolerance;
+      final isAtRightEdge = currentRect.right >= imageSize.width - tolerance;
+      final isAtTopEdge = currentRect.top <= tolerance;
+      final isAtBottomEdge = currentRect.bottom >= imageSize.height - tolerance;
+
+      // 드래그된 핸들의 이동량에 따라 크롭박스 크기 변화 계산
+      double widthDelta = 0.0;
+      double heightDelta = 0.0;
+
+      switch (handle) {
+        case CropHandleType.topLeft:
+          // 왼쪽 위로 드래그: 크기 감소 또는 증가
+          // 왼쪽 경계 도달 + 왼쪽으로 확대 시도 → 차단
+          if (isAtLeftEdge && imageDelta.dx < 0) {
+            return; // 비율 깨짐 방지
+          }
+          // 위쪽 경계 도달 + 위로 확대 시도 → 차단
+          if (isAtTopEdge && imageDelta.dy < 0) {
+            return; // 비율 깨짐 방지
+          }
+          widthDelta = -imageDelta.dx * 2;
+          heightDelta = -imageDelta.dy * 2;
+          break;
+        case CropHandleType.topRight:
+          // 오른쪽 위로 드래그: 너비 증가, 높이 감소
+          // 오른쪽 경계 도달 + 오른쪽으로 확대 시도 → 차단
+          if (isAtRightEdge && imageDelta.dx > 0) {
+            return; // 비율 깨짐 방지
+          }
+          // 위쪽 경계 도달 + 위로 확대 시도 → 차단
+          if (isAtTopEdge && imageDelta.dy < 0) {
+            return; // 비율 깨짐 방지
+          }
+          widthDelta = imageDelta.dx * 2;
+          heightDelta = -imageDelta.dy * 2;
+          break;
+        case CropHandleType.bottomLeft:
+          // 왼쪽 아래로 드래그: 너비 감소, 높이 증가
+          // 왼쪽 경계 도달 + 왼쪽으로 확대 시도 → 차단
+          if (isAtLeftEdge && imageDelta.dx < 0) {
+            return; // 비율 깨짐 방지
+          }
+          // 아래쪽 경계 도달 + 아래로 확대 시도 → 차단
+          if (isAtBottomEdge && imageDelta.dy > 0) {
+            return; // 비율 깨짐 방지
+          }
+          widthDelta = -imageDelta.dx * 2;
+          heightDelta = imageDelta.dy * 2;
+          break;
+        case CropHandleType.bottomRight:
+          // 오른쪽 아래로 드래그: 크기 증가
+          // 오른쪽 경계 도달 + 오른쪽으로 확대 시도 → 차단
+          if (isAtRightEdge && imageDelta.dx > 0) {
+            return; // 비율 깨짐 방지
+          }
+          // 아래쪽 경계 도달 + 아래로 확대 시도 → 차단
+          if (isAtBottomEdge && imageDelta.dy > 0) {
+            return; // 비율 깨짐 방지
+          }
+          widthDelta = imageDelta.dx * 2;
+          heightDelta = imageDelta.dy * 2;
+          break;
+        case CropHandleType.top:
+          // 위로 드래그: 높이 감소
+          // 위쪽 경계 도달 + 위로 확대 시도 → 차단
+          if (isAtTopEdge && imageDelta.dy < 0) {
+            return; // 비율 깨짐 방지
+          }
+          heightDelta = -imageDelta.dy * 2;
+          break;
+        case CropHandleType.bottom:
+          // 아래로 드래그: 높이 증가
+          // 아래쪽 경계 도달 + 아래로 확대 시도 → 차단
+          if (isAtBottomEdge && imageDelta.dy > 0) {
+            return; // 비율 깨짐 방지
+          }
+          heightDelta = imageDelta.dy * 2;
+          break;
+        case CropHandleType.left:
+          // 왼쪽으로 드래그: 너비 감소
+          // 왼쪽 경계 도달 + 왼쪽으로 확대 시도 → 차단
+          if (isAtLeftEdge && imageDelta.dx < 0) {
+            return; // 비율 깨짐 방지
+          }
+          widthDelta = -imageDelta.dx * 2;
+          break;
+        case CropHandleType.right:
+          // 오른쪽으로 드래그: 너비 증가
+          // 오른쪽 경계 도달 + 오른쪽으로 확대 시도 → 차단
+          if (isAtRightEdge && imageDelta.dx > 0) {
+            return; // 비율 깨짐 방지
+          }
+          widthDelta = imageDelta.dx * 2;
+          break;
+      }
+
+      // 새로운 크기 계산
+      double newWidth = currentRect.width + widthDelta;
+      double newHeight = currentRect.height + heightDelta;
+
+      // aspectRatio가 null이 아님은 위의 if 조건으로 보장됨
+      final targetAspect = aspectRatio;
+
+      // 비율에 맞게 조정 (더 큰 변화를 기준으로)
+      final widthChangeRatio = widthDelta.abs() / currentRect.width;
+      final heightChangeRatio = heightDelta.abs() / currentRect.height;
+
+      if (widthChangeRatio > heightChangeRatio) {
+        // 너비 변화가 더 큼: 너비를 기준으로 높이 조정
+        newHeight = newWidth / targetAspect;
+      } else {
+        // 높이 변화가 더 큼: 높이를 기준으로 너비 조정
+        newWidth = newHeight * targetAspect;
+      }
+
+      // ✅ 비율 조정 직후 비율 검증: 비율이 깨지면 스킵
+      final adjustedAspect = newWidth / newHeight;
+      if ((adjustedAspect - targetAspect).abs() > 0.001) {
+        // 비율이 깨졌으면 이번 업데이트를 스킵
+        return;
+      }
+
+      // 최소 크기 보장
+      newWidth = newWidth.clamp(minSize, imageSize.width);
+      newHeight = newHeight.clamp(minSize, imageSize.height);
+
+      // 최소 크기 클램프 후 비율 검증: 비율이 깨지면 스킵
+      final clampedAspect = newWidth / newHeight;
+      if ((clampedAspect - targetAspect).abs() > 0.001) {
+        // 최소 크기 클램프로 비율이 깨졌으면 이번 업데이트를 스킵
+        return;
+      }
+
+      // 중심점을 기준으로 새 크롭박스 생성 (비율 모드에서는 모든 핸들이 함께 움직임)
+      newRect = Rect.fromCenter(
+        center: Offset(centerX, centerY),
+        width: newWidth,
+        height: newHeight,
+      );
+
+      // 이미지 경계 내로 클램프
+      if (newRect.left < 0) {
+        newRect = newRect.shift(Offset(-newRect.left, 0));
+      }
+      if (newRect.top < 0) {
+        newRect = newRect.shift(Offset(0, -newRect.top));
+      }
+      if (newRect.right > imageSize.width) {
+        newRect = newRect.shift(Offset(imageSize.width - newRect.right, 0));
+      }
+      if (newRect.bottom > imageSize.height) {
+        newRect = newRect.shift(Offset(0, imageSize.height - newRect.bottom));
+      }
+    } else {
+      // ✅ 자유 모드: 각 핸들을 개별적으로 움직임
+      switch (handle) {
+        case CropHandleType.topLeft:
+          newRect = Rect.fromLTRB(
+            (cropState.cropRectImage!.left + imageDelta.dx).clamp(
+              0.0,
+              cropState.cropRectImage!.right - minSize,
+            ),
+            (cropState.cropRectImage!.top + imageDelta.dy).clamp(
+              0.0,
+              cropState.cropRectImage!.bottom - minSize,
+            ),
+            cropState.cropRectImage!.right,
+            cropState.cropRectImage!.bottom,
+          );
+          break;
+        case CropHandleType.topRight:
+          newRect = Rect.fromLTRB(
+            cropState.cropRectImage!.left,
+            (cropState.cropRectImage!.top + imageDelta.dy).clamp(
+              0.0,
+              cropState.cropRectImage!.bottom - minSize,
+            ),
+            (cropState.cropRectImage!.right + imageDelta.dx).clamp(
+              cropState.cropRectImage!.left + minSize,
+              imageSize.width,
+            ),
+            cropState.cropRectImage!.bottom,
+          );
+          break;
+        case CropHandleType.bottomLeft:
+          newRect = Rect.fromLTRB(
+            (cropState.cropRectImage!.left + imageDelta.dx).clamp(
+              0.0,
+              cropState.cropRectImage!.right - minSize,
+            ),
+            cropState.cropRectImage!.top,
+            cropState.cropRectImage!.right,
+            (cropState.cropRectImage!.bottom + imageDelta.dy).clamp(
+              cropState.cropRectImage!.top + minSize,
+              imageSize.height,
+            ),
+          );
+          break;
+        case CropHandleType.bottomRight:
+          newRect = Rect.fromLTRB(
+            cropState.cropRectImage!.left,
+            cropState.cropRectImage!.top,
+            (cropState.cropRectImage!.right + imageDelta.dx).clamp(
+              cropState.cropRectImage!.left + minSize,
+              imageSize.width,
+            ),
+            (cropState.cropRectImage!.bottom + imageDelta.dy).clamp(
+              cropState.cropRectImage!.top + minSize,
+              imageSize.height,
+            ),
+          );
+          break;
+        case CropHandleType.top:
+          newRect = Rect.fromLTRB(
+            cropState.cropRectImage!.left,
+            (cropState.cropRectImage!.top + imageDelta.dy).clamp(
+              0.0,
+              cropState.cropRectImage!.bottom - minSize,
+            ),
+            cropState.cropRectImage!.right,
+            cropState.cropRectImage!.bottom,
+          );
+          break;
+        case CropHandleType.bottom:
+          newRect = Rect.fromLTRB(
+            cropState.cropRectImage!.left,
+            cropState.cropRectImage!.top,
+            cropState.cropRectImage!.right,
+            (cropState.cropRectImage!.bottom + imageDelta.dy).clamp(
+              cropState.cropRectImage!.top + minSize,
+              imageSize.height,
+            ),
+          );
+          break;
+        case CropHandleType.left:
+          newRect = Rect.fromLTRB(
+            (cropState.cropRectImage!.left + imageDelta.dx).clamp(
+              0.0,
+              cropState.cropRectImage!.right - minSize,
+            ),
+            cropState.cropRectImage!.top,
+            cropState.cropRectImage!.right,
+            cropState.cropRectImage!.bottom,
+          );
+          break;
+        case CropHandleType.right:
+          newRect = Rect.fromLTRB(
+            cropState.cropRectImage!.left,
+            cropState.cropRectImage!.top,
+            (cropState.cropRectImage!.right + imageDelta.dx).clamp(
+              cropState.cropRectImage!.left + minSize,
+              imageSize.width,
+            ),
+            cropState.cropRectImage!.bottom,
+          );
+          break;
+      }
     }
 
     // 🎯 최종 검증: 이미지 경계 내로 clamp
@@ -866,16 +1010,8 @@ class CropHandleBuilder {
           imageSize: imageSize,
         );
 
-    final aspectRatio = CropGestureUtils.parseAspectRatio(
-      cropState.selectedAspectRatio,
-    );
-    final isAspectRatioLocked = aspectRatio != null;
-
-    if (isAspectRatioLocked) {
-      return const SizedBox.shrink();
-    }
-
     // ✅ 핸들은 크롭박스 좌표를 기준으로 직접 배치 (clamp 없이)
+    // 비율 모드에서도 핸들이 보이지만, 리사이즈 시 비율이 유지됨
     return Stack(
       children: [
         _CropHandleWidget(
@@ -1027,7 +1163,7 @@ class _CropHandleWidgetState extends State<_CropHandleWidget> {
   @override
   Widget build(BuildContext context) {
     final isActive = widget.activeHandle == widget.type;
-    final handleSize = isActive ? 40.0 : 30.0;
+    final handleSize = 30.0; // 액티브 상태와 관계없이 항상 같은 크기
     final touchSize = 44.0;
 
     return Positioned(
@@ -1037,12 +1173,14 @@ class _CropHandleWidgetState extends State<_CropHandleWidget> {
         onPanStart: (details) {
           widget.onHandleChanged(widget.type);
           setState(() {
-            _panStart = details.globalPosition;
+            // ✅ localPosition 사용 (위젯 기준 좌표)
+            _panStart = details.localPosition;
           });
         },
         onPanUpdate: (details) {
           if (_panStart == null) return;
-          final delta = details.globalPosition - _panStart!;
+          // ✅ localPosition 사용 (위젯 기준 좌표)
+          final delta = details.localPosition - _panStart!;
           // 외부 리사이즈 콜백이 있으면 사용, 없으면 기본 동작
           if (widget.onResize != null) {
             widget.onResize!(widget.type, delta);
@@ -1056,7 +1194,8 @@ class _CropHandleWidgetState extends State<_CropHandleWidget> {
             );
           }
           setState(() {
-            _panStart = details.globalPosition;
+            // ✅ localPosition 사용 (위젯 기준 좌표)
+            _panStart = details.localPosition;
           });
           widget.onUpdate();
         },
@@ -1087,7 +1226,7 @@ class _CropHandleWidgetState extends State<_CropHandleWidget> {
     double handleSize,
     bool isActive,
   ) {
-    final handleThickness = isActive ? 5.0 : 4.0;
+    final handleThickness = 4.0; // 액티브 상태와 관계없이 항상 같은 두께
     final handleLength = handleSize * 0.6;
 
     return Container(
@@ -1103,4 +1242,645 @@ class _CropHandleWidgetState extends State<_CropHandleWidget> {
       ),
     );
   }
+}
+
+/// 🎯 크롭 제스처 핸들러 클래스
+/// 크롭 관련 모든 제스처 처리를 담당
+class CropGestureHandler {
+  // 드래그 중 상태
+  bool _isDraggingImage = false;
+  Rect? _frozenImageRect;
+  Rect? _frozenCropRectScreen;
+  Offset? _lastPanPosition;
+  CropHandleType? _activeCropHandle;
+
+  // 핀치 줌 상태
+  double? _initialScale; // 핀치 시작 시 초기 scale
+  bool _isPinching = false;
+
+  // 드래그 감도 및 복귀 감도
+  static const double _dragResistance = 0.6;
+  static const double _snapBackStrength = 1.5;
+  static const double _minImageScale = 1.0; // 최소 줌 레벨 (축소 제한)
+
+  /// 드래그 시작 처리
+  void onScaleStart({
+    required ScaleStartDetails details,
+    required CropState cropState,
+    required ui.Image uiImage,
+    required Size containerSize,
+    required double imageScale,
+    required Offset imageOffset,
+  }) {
+    _lastPanPosition = details.focalPoint;
+    _initialScale = imageScale; // 핀치 줌을 위한 초기 scale 저장
+    _isPinching = false;
+
+    if (cropState.isCropRectInitialized && cropState.cropRectImage != null) {
+      final imageSize = Size(
+        uiImage.width.toDouble(),
+        uiImage.height.toDouble(),
+      );
+      final currentImageRect = ImageRectUtils.computeImageRect(
+        containerSize: containerSize,
+        imageSize: imageSize,
+        scale: imageScale,
+        offset: imageOffset,
+      );
+
+      // ✅ 드래그 시작 시 imageRect와 cropRectScreen 모두 freeze (복귀 기준으로 사용)
+      _frozenImageRect = currentImageRect;
+      _frozenCropRectScreen = ImageRectUtils.imageToScreenRect(
+        imageRect: cropState.cropRectImage!,
+        screenImageRect: currentImageRect,
+        imageSize: imageSize,
+      );
+      _isDraggingImage = true;
+    }
+  }
+
+  /// 드래그 업데이트 처리 (고무줄 저항 포함) + 핀치 줌 처리
+  ScaleUpdateResult? onScaleUpdate({
+    required ScaleUpdateDetails details,
+    required CropState cropState,
+    required ui.Image uiImage,
+    required Size containerSize,
+    required double imageScale,
+    required Offset imageOffset,
+    required VoidCallback onStateChanged,
+  }) {
+    if (!cropState.isCropRectInitialized) return null;
+    // 핸들 드래그 중이면 무시
+    if (_activeCropHandle != null) return null;
+
+    // 핀치 줌 처리 (scale 변화가 있을 때)
+    if ((details.scale - 1.0).abs() >= 0.001) {
+      _isPinching = true;
+      _initialScale ??= imageScale;
+
+      // 새로운 scale 계산 (초기 scale * 현재 scale 변화)
+      double newScale = _initialScale! * details.scale;
+
+      // ✅ 축소 시도 시: 현재 스케일이 이미 1.0 이하면 더 이상 축소 불가
+      if (details.scale < 1.0 && imageScale <= _minImageScale) {
+        // 축소 시도 무시
+        return null;
+      }
+
+      // ✅ 계산된 스케일이 1.0 미만이면 무시 (더 이상 축소 불가)
+      if (newScale < _minImageScale) {
+        return null;
+      }
+
+      // 최소 scale 제한 (1.0 이하로 내려가지 않음)
+      newScale = newScale.clamp(_minImageScale, 5.0);
+
+      return ScaleUpdateResult(
+        scale: newScale,
+        offset: null, // 핀치 줌 중에는 offset 변경 없음
+      );
+    }
+
+    // 핀치 줌이 아닌 경우 (scale이 1.0에 가까움) = 일반 드래그
+    _isPinching = false;
+    // (1) delta 계산 (이전 위치와 현재 위치의 차이)
+    if (_lastPanPosition == null) {
+      _lastPanPosition = details.focalPoint;
+      return null;
+    }
+    final delta = details.focalPoint - _lastPanPosition!;
+    _lastPanPosition = details.focalPoint;
+
+    final imageSize = Size(uiImage.width.toDouble(), uiImage.height.toDouble());
+
+    // ✅ 스케일이 1.0 이하이고 크롭박스가 이미지 경계에 붙어있으면 드래그 막기
+    if (imageScale <= _minImageScale && cropState.cropRectImage != null) {
+      const tolerance = 0.1; // 경계 판정 여유값
+      final cropRect = cropState.cropRectImage!;
+
+      // 왼쪽으로 드래그하려고 하는데 왼쪽 경계에 붙어있으면 막기
+      if (delta.dx < 0 && cropRect.left <= tolerance) {
+        return null;
+      }
+      // 오른쪽으로 드래그하려고 하는데 오른쪽 경계에 붙어있으면 막기
+      if (delta.dx > 0 && cropRect.right >= imageSize.width - tolerance) {
+        return null;
+      }
+      // 위로 드래그하려고 하는데 위쪽 경계에 붙어있으면 막기
+      if (delta.dy < 0 && cropRect.top <= tolerance) {
+        return null;
+      }
+      // 아래로 드래그하려고 하는데 아래쪽 경계에 붙어있으면 막기
+      if (delta.dy > 0 && cropRect.bottom >= imageSize.height - tolerance) {
+        return null;
+      }
+    }
+
+    final proposedOffset = imageOffset + delta;
+
+    // (2) 고무줄 감쇠 판정
+    final testImageRect = ImageRectUtils.computeImageRect(
+      containerSize: containerSize,
+      imageSize: imageSize,
+      scale: imageScale,
+      offset: proposedOffset,
+    );
+    final testCropRectScreen = ImageRectUtils.imageToScreenRect(
+      imageRect: cropState.cropRectImage!,
+      screenImageRect: testImageRect,
+      imageSize: imageSize,
+    );
+
+    // (3) 고무줄 감쇠 적용
+    double dx = delta.dx;
+    double dy = delta.dy;
+
+    if (testCropRectScreen.left < 0 ||
+        testCropRectScreen.right > containerSize.width) {
+      dx *= _dragResistance;
+    }
+
+    if (testCropRectScreen.top < 0 ||
+        testCropRectScreen.bottom > containerSize.height) {
+      dy *= _dragResistance;
+    }
+
+    // (4) 새로운 offset 반환
+    return ScaleUpdateResult(
+      scale: null,
+      offset: Offset(dx / imageScale, dy / imageScale),
+    );
+  }
+
+  /// 드래그 종료 처리 (복귀 로직 포함) + 핀치 줌 종료 처리
+  CropDragEndResult? onScaleEnd({
+    required CropState cropState,
+    required ui.Image uiImage,
+    required Size containerSize,
+    required double imageScale,
+    required Offset imageOffset,
+  }) {
+    _lastPanPosition = null;
+
+    // ✅ 핸들 리사이즈 중이면 복귀 로직 스킵
+    if (_activeCropHandle != null) {
+      _isDraggingImage = false;
+      _frozenImageRect = null;
+      _frozenCropRectScreen = null;
+      _initialScale = null;
+      _isPinching = false;
+      return null;
+    }
+
+    // ✅ 핀치 줌이 끝났을 때 처리
+    if (_isPinching) {
+      // scale이 최소값보다 작으면 복귀
+      if (imageScale < _minImageScale) {
+        _isDraggingImage = false;
+        _frozenImageRect = null;
+        _frozenCropRectScreen = null;
+        _initialScale = null;
+        _isPinching = false;
+
+        // scale을 최소값으로 복귀
+        return CropDragEndResult(
+          snapBackOffset: null,
+          cropRectImagePosition: null,
+          cropRectImageSize: Size(
+            cropState.cropRectImage!.width,
+            cropState.cropRectImage!.height,
+          ),
+          snapBackScale: _minImageScale, // 복귀할 scale 값
+        );
+      }
+
+      // ✅ 핀치 줌 후: 크롭박스가 이미지 영역 밖으로 나갔는지 확인 후 복귀
+      final imageSize = Size(
+        uiImage.width.toDouble(),
+        uiImage.height.toDouble(),
+      );
+
+      // 현재 scale 기준으로 이미지 rect 계산
+      final currentImageRect = ImageRectUtils.computeImageRect(
+        containerSize: containerSize,
+        imageSize: imageSize,
+        scale: imageScale,
+        offset: imageOffset,
+      );
+
+      // 화면에서 크롭박스 위치는 고정 (_frozenCropRectScreen 기준)
+      if (_frozenCropRectScreen != null) {
+        // ✅ 드래그 종료와 동일한 로직: 크롭박스가 이미지 영역 밖으로 나갔는지 확인
+        double adjustX = 0.0;
+        double adjustY = 0.0;
+
+        // 이미지가 고정된 크롭박스 왼쪽으로 벗어나면 오른쪽으로 이동
+        if (currentImageRect.left > _frozenCropRectScreen!.left) {
+          adjustX = _frozenCropRectScreen!.left - currentImageRect.left;
+        }
+        // 이미지가 고정된 크롭박스 오른쪽으로 벗어나면 왼쪽으로 이동
+        else if (currentImageRect.right < _frozenCropRectScreen!.right) {
+          adjustX = _frozenCropRectScreen!.right - currentImageRect.right;
+        }
+
+        // 이미지가 고정된 크롭박스 위로 벗어나면 아래로 이동
+        if (currentImageRect.top > _frozenCropRectScreen!.top) {
+          adjustY = _frozenCropRectScreen!.top - currentImageRect.top;
+        }
+        // 이미지가 고정된 크롭박스 아래로 벗어나면 위로 이동
+        else if (currentImageRect.bottom < _frozenCropRectScreen!.bottom) {
+          adjustY = _frozenCropRectScreen!.bottom - currentImageRect.bottom;
+        }
+
+        Offset? snapBackOffset;
+
+        // ✅ 벗어났으면 offset 조정하여 복귀
+        if (adjustX != 0.0 || adjustY != 0.0) {
+          snapBackOffset = Offset(
+            (adjustX / imageScale) * _snapBackStrength,
+            (adjustY / imageScale) * _snapBackStrength,
+          );
+        }
+
+        // snap-back offset이 있으면 적용된 상태로 다시 계산
+        final finalImageRect =
+            snapBackOffset != null
+                ? ImageRectUtils.computeImageRect(
+                  containerSize: containerSize,
+                  imageSize: imageSize,
+                  scale: imageScale,
+                  offset: imageOffset + snapBackOffset,
+                )
+                : currentImageRect;
+
+        // 화면 좌표를 이미지 좌표로 변환
+        final sx = finalImageRect.width / imageSize.width;
+        final sy = finalImageRect.height / imageSize.height;
+
+        // 화면 좌표의 크롭박스를 이미지 좌표로 변환
+        final cropRectImageLeft =
+            (_frozenCropRectScreen!.left - finalImageRect.left) / sx;
+        final cropRectImageTop =
+            (_frozenCropRectScreen!.top - finalImageRect.top) / sy;
+        final cropRectImageWidth = _frozenCropRectScreen!.width / sx;
+        final cropRectImageHeight = _frozenCropRectScreen!.height / sy;
+
+        // 이미지 경계 내로 클램프
+        final newCropRectImage = Rect.fromLTWH(
+          cropRectImageLeft.clamp(0.0, imageSize.width),
+          cropRectImageTop.clamp(0.0, imageSize.height),
+          cropRectImageWidth.clamp(
+            0.0,
+            imageSize.width - cropRectImageLeft.clamp(0.0, imageSize.width),
+          ),
+          cropRectImageHeight.clamp(
+            0.0,
+            imageSize.height - cropRectImageTop.clamp(0.0, imageSize.height),
+          ),
+        );
+
+        _isDraggingImage = false;
+        _frozenImageRect = null;
+        _frozenCropRectScreen = null;
+        _initialScale = null;
+        _isPinching = false;
+
+        return CropDragEndResult(
+          snapBackOffset: snapBackOffset,
+          cropRectImagePosition: Offset(
+            newCropRectImage.left,
+            newCropRectImage.top,
+          ),
+          cropRectImageSize: Size(
+            newCropRectImage.width,
+            newCropRectImage.height,
+          ),
+          snapBackScale: null,
+        );
+      }
+
+      _isDraggingImage = false;
+      _frozenImageRect = null;
+      _frozenCropRectScreen = null;
+      _initialScale = null;
+      _isPinching = false;
+      return null;
+    }
+
+    // ✅ 드래그 완료 시: 고정된 기준으로 크롭박스 밖으로 나갔는지 확인 후 복귀
+    if (cropState.isCropRectInitialized &&
+        _isDraggingImage &&
+        _frozenCropRectScreen != null) {
+      final imageSize = Size(
+        uiImage.width.toDouble(),
+        uiImage.height.toDouble(),
+      );
+
+      // 현재 이미지 rect (최종 offset 기준)
+      final currentImageRect = ImageRectUtils.computeImageRect(
+        containerSize: containerSize,
+        imageSize: imageSize,
+        scale: imageScale,
+        offset: imageOffset,
+      );
+
+      // ✅ 고정된 기준(_frozenCropRectScreen)으로 벗어남 확인
+      double adjustX = 0.0;
+      double adjustY = 0.0;
+
+      // 이미지가 고정된 크롭박스 왼쪽으로 벗어나면 오른쪽으로 이동
+      if (currentImageRect.left > _frozenCropRectScreen!.left) {
+        adjustX = _frozenCropRectScreen!.left - currentImageRect.left;
+      }
+      // 이미지가 고정된 크롭박스 오른쪽으로 벗어나면 왼쪽으로 이동
+      else if (currentImageRect.right < _frozenCropRectScreen!.right) {
+        adjustX = _frozenCropRectScreen!.right - currentImageRect.right;
+      }
+
+      // 이미지가 고정된 크롭박스 위로 벗어나면 아래로 이동
+      if (currentImageRect.top > _frozenCropRectScreen!.top) {
+        adjustY = _frozenCropRectScreen!.top - currentImageRect.top;
+      }
+      // 이미지가 고정된 크롭박스 아래로 벗어나면 위로 이동
+      else if (currentImageRect.bottom < _frozenCropRectScreen!.bottom) {
+        adjustY = _frozenCropRectScreen!.bottom - currentImageRect.bottom;
+      }
+
+      Offset? snapBackOffset;
+      Offset? cropRectImageUpdate;
+
+      // ✅ 벗어났으면 offset 조정하여 복귀
+      if (adjustX != 0.0 || adjustY != 0.0) {
+        snapBackOffset = Offset(
+          (adjustX / imageScale) * _snapBackStrength,
+          (adjustY / imageScale) * _snapBackStrength,
+        );
+      }
+
+      // ✅ 드래그 종료 시: 현재 화면 중앙에 있는 크롭박스 기준으로 cropRectImage 업데이트
+      final finalImageRect = ImageRectUtils.computeImageRect(
+        containerSize: containerSize,
+        imageSize: imageSize,
+        scale: imageScale,
+        offset:
+            snapBackOffset != null ? imageOffset + snapBackOffset : imageOffset,
+      );
+      final containerCenter = Offset(
+        containerSize.width / 2,
+        containerSize.height / 2,
+      );
+      final sx = finalImageRect.width / imageSize.width;
+      final sy = finalImageRect.height / imageSize.height;
+      final cropSizeScreen = Size(
+        cropState.cropRectImage!.width * sx,
+        cropState.cropRectImage!.height * sy,
+      );
+      final centerScreenRect = Rect.fromCenter(
+        center: containerCenter,
+        width: cropSizeScreen.width,
+        height: cropSizeScreen.height,
+      );
+      // 화면 좌표 → 이미지 좌표 변환
+      cropRectImageUpdate = Offset(
+        (centerScreenRect.left - finalImageRect.left) / sx,
+        (centerScreenRect.top - finalImageRect.top) / sy,
+      );
+
+      // ✅ 드래그 종료 시 freeze 해제
+      _isDraggingImage = false;
+      _frozenImageRect = null;
+      _frozenCropRectScreen = null;
+
+      return CropDragEndResult(
+        snapBackOffset: snapBackOffset,
+        cropRectImagePosition: cropRectImageUpdate,
+        cropRectImageSize: Size(
+          cropState.cropRectImage!.width,
+          cropState.cropRectImage!.height,
+        ),
+      );
+    }
+
+    // ✅ 드래그 종료 시 freeze 해제
+    _isDraggingImage = false;
+    _frozenImageRect = null;
+    _frozenCropRectScreen = null;
+    _initialScale = null;
+    _isPinching = false;
+
+    return null;
+  }
+
+  /// 활성 핸들 설정
+  void setActiveHandle(CropHandleType? handle) {
+    _activeCropHandle = handle;
+  }
+
+  /// 활성 핸들 가져오기
+  CropHandleType? get activeHandle => _activeCropHandle;
+
+  /// 드래그 중 여부
+  bool get isDraggingImage => _isDraggingImage;
+
+  /// Freeze된 이미지 rect 가져오기
+  Rect? get frozenImageRect => _frozenImageRect;
+
+  /// Freeze된 크롭 rect (화면 좌표) 가져오기
+  Rect? get frozenCropRectScreen => _frozenCropRectScreen;
+
+  /// 리셋
+  void reset() {
+    _isDraggingImage = false;
+    _frozenImageRect = null;
+    _frozenCropRectScreen = null;
+    _lastPanPosition = null;
+    _activeCropHandle = null;
+    _initialScale = null;
+    _isPinching = false;
+  }
+}
+
+/// 드래그 종료 결과
+class CropDragEndResult {
+  final Offset? snapBackOffset;
+  final Offset? cropRectImagePosition;
+  final Size cropRectImageSize;
+  final double? snapBackScale; // 핀치 줌 복귀용 scale
+
+  CropDragEndResult({
+    this.snapBackOffset,
+    this.cropRectImagePosition,
+    required this.cropRectImageSize,
+    this.snapBackScale,
+  });
+}
+
+/// 스케일 업데이트 결과
+class ScaleUpdateResult {
+  final double? scale;
+  final Offset? offset;
+
+  ScaleUpdateResult({this.scale, this.offset});
+}
+
+/// Auto Zoom 유틸리티
+class CropAutoZoom {
+  CropAutoZoom._();
+
+  /// 크롭 윈도우가 화면의 80% 범위를 유지하도록 자동 줌
+  /// 크롭 윈도우 중심을 화면 중앙에 맞춤
+  static AutoZoomResult autoZoomToCrop({
+    required CropState cropState,
+    required ui.Image uiImage,
+    required Size containerSize,
+    required double currentScale,
+    required Offset currentOffset,
+  }) {
+    final imageSize = Size(uiImage.width.toDouble(), uiImage.height.toDouble());
+
+    if (cropState.cropRectImage == null) {
+      return AutoZoomResult(scale: currentScale, offset: currentOffset);
+    }
+
+    final width = containerSize.width;
+    final height = containerSize.height;
+    final containerCenter = Offset(width / 2, height / 2);
+
+    // ✅ image 좌표 기준으로 한 번만 계산
+    // 1) 크롭 중심을 image 좌표에서 직접 가져오기
+    final cropCenterImage = cropState.cropRectImage!.center;
+
+    // 2) 현재 scale 기준으로 크롭 크기 계산 (scale 결정용)
+    final currentImageRect = ImageRectUtils.computeImageRect(
+      containerSize: containerSize,
+      imageSize: imageSize,
+      scale: currentScale,
+      offset: Offset.zero,
+    );
+
+    final currentCropRectScreen = ImageRectUtils.imageToScreenRect(
+      imageRect: cropState.cropRectImage!,
+      screenImageRect: currentImageRect,
+      imageSize: imageSize,
+    );
+
+    // 3) 크롭 윈도우 크기에 따라 scale 계산
+    const maxZoom = 5.0;
+    const minRatio = 0.75; // 최소 80% (줌 인 - 리사이즈 후 크롭박스가 화면의 80% 차지)
+    const maxRatio = 0.8; // 최대 85% (줌 아웃 기준)
+
+    final cropRatioX = currentCropRectScreen.width / width;
+    final cropRatioY = currentCropRectScreen.height / height;
+    final cropRatio = cropRatioX < cropRatioY ? cropRatioX : cropRatioY;
+
+    double targetScale = currentScale;
+
+    // 크롭이 너무 작으면 줌 인
+    if (cropRatio < minRatio && currentScale < maxZoom) {
+      targetScale = (currentScale / cropRatio * minRatio).clamp(1.0, maxZoom);
+    }
+    // 크롭이 너무 크면 줌 아웃 (단, scale이 1보다 클 때만)
+    else if (cropRatio > maxRatio && currentScale > 1.0) {
+      targetScale = (currentScale / cropRatio * maxRatio).clamp(1.0, maxZoom);
+    }
+
+    // ✅ targetScale 적용 후 실제 이미지 rect가 화면 안에 들어오는지 검증
+    double finalTargetScale = targetScale;
+
+    // targetScale로 계산된 이미지 rect 확인
+    final testImageRect = ImageRectUtils.computeImageRect(
+      containerSize: containerSize,
+      imageSize: imageSize,
+      scale: targetScale,
+      offset: Offset.zero,
+    );
+
+    // 이미지가 화면 안에 들어오는지 확인
+    if (testImageRect.left < 0 ||
+        testImageRect.top < 0 ||
+        testImageRect.right > width ||
+        testImageRect.bottom > height) {
+      // 이미지가 화면 안에 들어오는 최대 scale 계산
+      final imageAspect = imageSize.width / imageSize.height;
+      final containerAspect = width / height;
+
+      double maxValidScale;
+      if (imageAspect > containerAspect) {
+        final baseDisplayHeight = width / imageAspect;
+        maxValidScale = height / baseDisplayHeight;
+      } else {
+        final baseDisplayWidth = height * imageAspect;
+        final maxScaleByWidth = width / baseDisplayWidth;
+
+        final cropWidth = cropState.cropRectImage!.width;
+        final cropHeight = cropState.cropRectImage!.height;
+
+        final maxScaleByCropWidth =
+            (width * imageSize.width) / (cropWidth * height * imageAspect);
+        final maxScaleByCropHeight =
+            (height * imageSize.height) / (cropHeight * height);
+
+        final maxScaleByCrop =
+            maxScaleByCropWidth < maxScaleByCropHeight
+                ? maxScaleByCropWidth
+                : maxScaleByCropHeight;
+
+        maxValidScale =
+            maxScaleByWidth < maxScaleByCrop ? maxScaleByWidth : maxScaleByCrop;
+      }
+
+      maxValidScale = maxValidScale > maxZoom ? maxZoom : maxValidScale;
+
+      // 추가로 크롭박스 크기 기준으로도 제한
+      final testCropRect = ImageRectUtils.imageToScreenRect(
+        imageRect: cropState.cropRectImage!,
+        screenImageRect: testImageRect,
+        imageSize: imageSize,
+      );
+
+      if (testCropRect.width > width || testCropRect.height > height) {
+        final cropWidthRatio = testCropRect.width / width;
+        final cropHeightRatio = testCropRect.height / height;
+        final cropMaxRatio =
+            cropWidthRatio > cropHeightRatio ? cropWidthRatio : cropHeightRatio;
+        final maxCropScale = targetScale / cropMaxRatio;
+        maxValidScale =
+            maxValidScale < maxCropScale ? maxValidScale : maxCropScale;
+      }
+
+      finalTargetScale = targetScale.clamp(1.0, maxValidScale);
+    }
+
+    targetScale = finalTargetScale;
+
+    // 4) targetScale 적용 후 이미지 rect 계산 (offset=0 기준)
+    final imageRectAtTargetScale = ImageRectUtils.computeImageRect(
+      containerSize: containerSize,
+      imageSize: imageSize,
+      scale: targetScale,
+      offset: Offset.zero,
+    );
+
+    // 5) crop 중심을 image 좌표에서 직접 screen 좌표로 변환
+    final scaleX = imageRectAtTargetScale.width / imageSize.width;
+    final scaleY = imageRectAtTargetScale.height / imageSize.height;
+
+    final cropCenterScreenAtTargetScale = Offset(
+      imageRectAtTargetScale.left + cropCenterImage.dx * scaleX,
+      imageRectAtTargetScale.top + cropCenterImage.dy * scaleY,
+    );
+
+    // 6) offset 계산
+    final targetOffset = containerCenter - cropCenterScreenAtTargetScale;
+
+    return AutoZoomResult(scale: targetScale, offset: targetOffset);
+  }
+}
+
+/// Auto Zoom 결과
+class AutoZoomResult {
+  final double scale;
+  final Offset offset;
+
+  AutoZoomResult({required this.scale, required this.offset});
 }

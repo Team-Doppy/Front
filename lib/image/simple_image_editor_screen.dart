@@ -6,12 +6,13 @@ import 'crop_editor.dart'
     show
         CropState,
         CropUtils,
-        CropHandleType,
         ImageRectUtils,
         ImagePainter,
         CropOverlayPainter,
         CropGestureUtils,
-        CropHandleBuilder;
+        CropHandleBuilder,
+        CropGestureHandler,
+        CropAutoZoom;
 
 /// 간단한 커스텀 이미지 편집 화면
 /// 바텀시트 기반 UI, Undo/Redo, 실시간 미리보기 제공
@@ -109,16 +110,12 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
   bool _hasSwiped = false;
 
   // 크롭 관련 상태
-  CropHandleType? _activeCropHandle;
   final Map<int, Size> _imageDisplaySizes = {}; // 이미지별 표시 크기
   final Map<int, Size> _containerSizes = {}; // 이미지별 컨테이너 크기 (LayoutBuilder 기준)
   bool _isBottomSheetAnimationComplete = false; // 바텀시트 애니메이션 완료 여부
-  Offset? _lastPanPosition; // 드래그 시작 위치 추적
 
-  // ✅ 드래그 중 크롭박스 고정을 위한 상태
-  bool _isDraggingImage = false;
-  Rect? _frozenImageRect; // 드래그 중 고정된 이미지 rect
-  Rect? _frozenCropRectScreen; // 드래그 중 고정된 크롭박스 위치
+  // ✅ 크롭 제스처 핸들러 (이미지별)
+  final Map<int, CropGestureHandler> _cropGestureHandlers = {};
 
   @override
   void initState() {
@@ -231,6 +228,11 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
 
   _ImageEditState _getCurrentEditState() {
     return _imageEditStates.putIfAbsent(_currentIndex, () => _ImageEditState());
+  }
+
+  /// 크롭 제스처 핸들러 가져오기 (이미지별)
+  CropGestureHandler _getCropGestureHandler(int index) {
+    return _cropGestureHandlers.putIfAbsent(index, () => CropGestureHandler());
   }
 
   void _onPageChanged(int index) {
@@ -723,30 +725,25 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
                 : null;
 
         // ✅ 크롭 관련 계산용 imageRect (드래그 중이면 freeze된 값 사용)
+        final cropHandler = _getCropGestureHandler(index);
         final imageRectForCrop =
-            _isDraggingImage && _frozenImageRect != null
-                ? _frozenImageRect!
+            cropHandler.isDraggingImage && cropHandler.frozenImageRect != null
+                ? cropHandler.frozenImageRect!
                 : currentImageRect;
 
         // 크롭 오버레이용 screen 좌표 계산
-        // ✅ build에서는 단순히 imageToScreenRect만 수행 (중앙 정렬은 AutoZoom에서만)
+        // ✅ 항상 imageToScreenRect로 계산만 (절대 저장/freeze 금지)
         Rect? cropRectScreen;
         if (_editMode == _EditMode.crop &&
             state.cropState.isCropRectInitialized &&
             state.cropState.cropRectImage != null &&
             imageRectForCrop != null &&
             imageSize != null) {
-          if (_frozenCropRectScreen != null) {
-            // 드래그 시작 후: 고정된 크롭박스 위치 사용 (드래그 종료 후에도 계속 유지)
-            cropRectScreen = _frozenCropRectScreen;
-          } else {
-            // 드래그 중이 아닐 때: 정상적으로 계산 (중앙 정렬은 AutoZoom에서 처리)
-            cropRectScreen = ImageRectUtils.imageToScreenRect(
-              imageRect: state.cropState.cropRectImage!,
-              screenImageRect: imageRectForCrop,
-              imageSize: imageSize,
-            );
-          }
+          cropRectScreen = ImageRectUtils.imageToScreenRect(
+            imageRect: state.cropState.cropRectImage!,
+            screenImageRect: imageRectForCrop,
+            imageSize: imageSize,
+          );
         }
 
         return GestureDetector(
@@ -791,8 +788,8 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
                                   ? CustomPaint(
                                     painter: ImagePainter(
                                       _uiImageCache[index]!,
-                                      imageOffset: state.imageOffset,
-                                      imageScale: state.imageScale,
+                                      state.imageOffset,
+                                      state.imageScale,
                                     ),
                                     size: Size.infinite,
                                   )
@@ -819,8 +816,8 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
                                         return CustomPaint(
                                           painter: ImagePainter(
                                             snapshot.data!,
-                                            imageOffset: state.imageOffset,
-                                            imageScale: state.imageScale,
+                                            state.imageOffset,
+                                            state.imageScale,
                                           ),
                                           size: Size.infinite,
                                         );
@@ -832,8 +829,8 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
                             ? CustomPaint(
                               painter: ImagePainter(
                                 _uiImageCache[index]!,
-                                imageOffset: state.imageOffset,
-                                imageScale: state.imageScale,
+                                state.imageOffset,
+                                state.imageScale,
                               ),
                               size: Size.infinite,
                             )
@@ -859,8 +856,8 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
                                   return CustomPaint(
                                     painter: ImagePainter(
                                       snapshot.data!,
-                                      imageOffset: state.imageOffset,
-                                      imageScale: state.imageScale,
+                                      state.imageOffset,
+                                      state.imageScale,
                                     ),
                                     size: Size.infinite,
                                   );
@@ -890,14 +887,13 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
                   imageSize != null)
                 CropHandleBuilder.buildCropHandles(
                   cropState: state.cropState,
-                  activeHandle: _activeCropHandle,
+                  activeHandle: cropHandler.activeHandle,
                   onHandleChanged: (handle) {
                     debugPrint(
-                      '🔄 [onHandleChanged] 이전: $_activeCropHandle → 새로운: $handle',
+                      '🔄 [onHandleChanged] 이전: ${cropHandler.activeHandle} → 새로운: $handle',
                     );
-                    setState(() {
-                      _activeCropHandle = handle;
-                    });
+                    cropHandler.setActiveHandle(handle);
+                    setState(() {});
                   },
                   onUpdate: () {
                     setState(() {});
@@ -914,9 +910,11 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
                           uiImage.height.toDouble(),
                         );
                         // ✅ 리사이즈 중에도 freeze된 imageRect 사용
+                        final cropHandler = _getCropGestureHandler(index);
                         final resizeImageRect =
-                            _isDraggingImage && _frozenImageRect != null
-                                ? _frozenImageRect!
+                            cropHandler.isDraggingImage &&
+                                    cropHandler.frozenImageRect != null
+                                ? cropHandler.frozenImageRect!
                                 : ImageRectUtils.computeImageRect(
                                   containerSize: containerSize,
                                   imageSize: imageSize,
@@ -936,21 +934,23 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
                     }
                   },
                   onResizeEnd: () {
-                    // 🎯 리사이즈 완료 시 Auto Zoom 실행 (안정적으로 항상 실행)
+                    // 🎯 리사이즈 완료 시 Auto Zoom 실행
                     debugPrint('✅ [onResizeEnd] 리사이즈 완료 - Auto Zoom 실행');
                     final containerSize = _containerSizes[index];
                     if (containerSize != null) {
-                      // PostFrameCallback으로 다음 프레임에서 실행 (setState 완료 후)
-                      WidgetsBinding.instance.addPostFrameCallback((_) {
-                        _autoZoomToCrop(index, containerSize);
-                      });
+                      final uiImage = _uiImageCache[index];
+                      if (uiImage != null) {
+                        WidgetsBinding.instance.addPostFrameCallback((_) {
+                          _autoZoomToCrop(index, containerSize);
+                        });
+                      }
                     } else {
                       debugPrint('❌ [Auto Zoom 실패] containerSize가 null');
                     }
                   },
                   screenImageRect: imageRectForCrop, // ✅ freeze된 imageRect 사용
                   imageSize: imageSize,
-                  cropRectScreen: cropRectScreen, // ✅ 드래그 중 고정된 크롭박스 위치 전달
+                  cropRectScreen: cropRectScreen, // ✅ 항상 계산된 값 전달 (freeze 금지)
                 ),
             ],
           ),
@@ -1162,15 +1162,24 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
         // 크롭 모드 진입 시 초기화 플래그 리셋
         state.cropState.isCropRectInitialized = false;
         _isBottomSheetAnimationComplete = false;
-        // 크롭 모드 진입 시 freeze 상태 초기화
-        _frozenCropRectScreen = null;
-        _frozenImageRect = null;
-        _isDraggingImage = false;
+        // 크롭 모드 진입 시 제스처 핸들러 리셋
+        _getCropGestureHandler(_currentIndex).reset();
       } else {
-        // 크롭 모드 종료 시 freeze 상태 초기화
-        _frozenCropRectScreen = null;
-        _frozenImageRect = null;
-        _isDraggingImage = false;
+        // 크롭 모드 종료 시: 원본 이미지로 복원
+        if (_currentIndex < _originalImages.length) {
+          _images[_currentIndex] = _originalImages[_currentIndex];
+          _uiImageCache[_currentIndex] = null;
+
+          // transform 상태도 초기화
+          state.imageOffset = Offset.zero;
+          state.imageScale = 1.0;
+          state.cropState.reset();
+
+          // UI 이미지 다시 로드
+          _loadImageToCache(_currentIndex, _originalImages[_currentIndex]);
+        }
+        // 크롭 모드 종료 시 제스처 핸들러 리셋
+        _getCropGestureHandler(_currentIndex).reset();
       }
 
       _editMode = _editMode == _EditMode.crop ? _EditMode.none : _EditMode.crop;
@@ -1214,11 +1223,28 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
     _bottomSheetController.reverse().then((_) {
       if (!mounted) return;
       setState(() {
+        // ✅ 크롭 모드 취소 시: 원본 이미지로 복원
+        if (_editMode == _EditMode.crop) {
+          if (_currentIndex < _originalImages.length) {
+            _images[_currentIndex] = _originalImages[_currentIndex];
+            _uiImageCache[_currentIndex] = null;
+
+            // transform 상태도 초기화
+            final state = _imageEditStates[_currentIndex];
+            if (state != null) {
+              state.imageOffset = Offset.zero;
+              state.imageScale = 1.0;
+              state.cropState.reset();
+            }
+
+            // UI 이미지 다시 로드
+            _loadImageToCache(_currentIndex, _originalImages[_currentIndex]);
+          }
+        }
+
         _isBottomSheetOpen = false;
         _editMode = _EditMode.none;
         _dragOffset = 0.0;
-        // ✅ 취소 시: 이미지는 그대로 유지 (transform 상태도 유지)
-        // 크롭 적용 시에만 새로운 이미지로 교체됨
       });
     });
   }
@@ -1286,55 +1312,25 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
     }
   }
 
-  // 크롭 제스처 처리
+  // 크롭 제스처 처리 (CropGestureHandler 위임)
   void _onCropScaleStart(
     ScaleStartDetails details,
     int index,
     Size containerSize,
   ) {
-    // 드래그 시작 위치 저장
-    _lastPanPosition = details.focalPoint;
-
-    // ✅ 드래그 시작 시 크롭박스 위치 고정
     final state = _getCurrentEditState();
-    if (state.cropState.isCropRectInitialized &&
-        state.cropState.cropRectImage != null) {
-      final uiImage = _uiImageCache[index];
-      if (uiImage != null) {
-        final imageSize = Size(
-          uiImage.width.toDouble(),
-          uiImage.height.toDouble(),
-        );
-        final currentImageRect = ImageRectUtils.computeImageRect(
-          containerSize: containerSize,
-          imageSize: imageSize,
-          scale: state.imageScale,
-          offset: state.imageOffset,
-        );
+    final uiImage = _uiImageCache[index];
+    if (uiImage == null) return;
 
-        // ✅ imageRect와 cropRectScreen을 동시에 freeze
-        _frozenImageRect = currentImageRect;
-
-        final computedCropRectScreen = ImageRectUtils.imageToScreenRect(
-          imageRect: state.cropState.cropRectImage!,
-          screenImageRect: currentImageRect,
-          imageSize: imageSize,
-        );
-
-        // 크롭박스를 화면 중앙에 고정
-        final containerCenter = Offset(
-          containerSize.width / 2,
-          containerSize.height / 2,
-        );
-        final cropCenter = computedCropRectScreen.center;
-        final centerDiff = containerCenter - cropCenter;
-
-        // 크롭박스를 화면 중앙으로 이동하여 고정
-        _frozenCropRectScreen = computedCropRectScreen.shift(centerDiff);
-        _isDraggingImage = true;
-        setState(() {}); // 고정된 크롭박스 표시를 위해 업데이트
-      }
-    }
+    final cropHandler = _getCropGestureHandler(index);
+    cropHandler.onScaleStart(
+      details: details,
+      cropState: state.cropState,
+      uiImage: uiImage,
+      containerSize: containerSize,
+      imageScale: state.imageScale,
+      imageOffset: state.imageOffset,
+    );
   }
 
   void _onCropScaleUpdate(
@@ -1344,226 +1340,87 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
   ) {
     final state = _getCurrentEditState();
     if (!state.cropState.isCropRectInitialized) return;
-    // 핸들 드래그 중이면 무시
-    if (_activeCropHandle != null) return;
 
-    // 핀치 줌이 아닌 경우 (scale이 1.0에 가까움) = 일반 드래그
-    if ((details.scale - 1.0).abs() < 0.001) {
-      // (1) delta 계산 (이전 위치와 현재 위치의 차이)
-      if (_lastPanPosition == null) {
-        _lastPanPosition = details.focalPoint;
-        return;
+    final uiImage = _uiImageCache[index];
+    if (uiImage == null) return;
+
+    final cropHandler = _getCropGestureHandler(index);
+    final updateResult = cropHandler.onScaleUpdate(
+      details: details,
+      cropState: state.cropState,
+      uiImage: uiImage,
+      containerSize: containerSize,
+      imageScale: state.imageScale,
+      imageOffset: state.imageOffset,
+      onStateChanged: () => setState(() {}),
+    );
+
+    if (updateResult != null) {
+      if (updateResult.scale != null) {
+        // 핀치 줌: scale 업데이트
+        state.imageScale = updateResult.scale!;
       }
-      final delta = details.focalPoint - _lastPanPosition!;
-      _lastPanPosition = details.focalPoint;
-      final proposedOffset = state.imageOffset + delta;
-
-      final uiImage = _uiImageCache[index];
-      if (uiImage == null) return;
-      final imageSize = Size(
-        uiImage.width.toDouble(),
-        uiImage.height.toDouble(),
-      );
-
-      // (2) 고무줄 감쇠 판정
-      // ✅ freeze된 크롭박스를 기준으로 판정 (드래그 중에는 freeze된 값 사용)
-      Rect? testCropRectScreen;
-      if (_isDraggingImage && _frozenCropRectScreen != null) {
-        // 드래그 중: freeze된 크롭박스에 delta를 적용한 위치로 판정
-        testCropRectScreen = _frozenCropRectScreen!.shift(delta);
-      } else {
-        // 드래그 중이 아닐 때: proposedOffset 적용 시의 crop 위치 계산
-        final testImageRect = ImageRectUtils.computeImageRect(
-          containerSize: containerSize,
-          imageSize: imageSize,
-          scale: state.imageScale,
-          offset: proposedOffset,
-        );
-        testCropRectScreen = ImageRectUtils.imageToScreenRect(
-          imageRect: state.cropState.cropRectImage!,
-          screenImageRect: testImageRect,
-          imageSize: imageSize,
-        );
+      if (updateResult.offset != null) {
+        // 드래그: offset 업데이트
+        state.imageOffset += updateResult.offset!;
       }
-
-      // (3) 고무줄 감쇠 적용
-      double dx = delta.dx;
-      double dy = delta.dy;
-
-      const resistance = 0.25; // 0.15 ~ 0.35 사이에서 튜닝
-
-      if (testCropRectScreen.left < 0 ||
-          testCropRectScreen.right > containerSize.width) {
-        dx *= resistance;
-      }
-
-      if (testCropRectScreen.top < 0 ||
-          testCropRectScreen.bottom > containerSize.height) {
-        dy *= resistance;
-      }
-
-      // (4) imageOffset만 업데이트
-      // ❗ cropRect는 여기서 절대 수정하지 않는다
-      // ✅ scale을 고려하여 delta 조정 (scale > 1일 때 실제 이동 거리 감소)
-      state.imageOffset += Offset(dx / state.imageScale, dy / state.imageScale);
-
       setState(() {});
     }
   }
 
   void _onCropScaleEnd(ScaleEndDetails details, int index, Size containerSize) {
-    // 드래그 종료 시 위치 초기화
-    _lastPanPosition = null;
-
     final state = _getCurrentEditState();
     final uiImage = _uiImageCache[index];
+    if (uiImage == null) return;
 
-    // ✅ 이미지가 크롭 영역 밖으로 나갔는지 확인하고 크롭 영역 안으로 복귀시킴
-    if (uiImage != null &&
-        _frozenCropRectScreen != null &&
-        state.cropState.isCropRectInitialized) {
-      final imageSize = Size(
-        uiImage.width.toDouble(),
-        uiImage.height.toDouble(),
-      );
+    final cropHandler = _getCropGestureHandler(index);
+    final result = cropHandler.onScaleEnd(
+      cropState: state.cropState,
+      uiImage: uiImage,
+      containerSize: containerSize,
+      imageScale: state.imageScale,
+      imageOffset: state.imageOffset,
+    );
 
-      // 현재 이미지 rect (최종 offset 기준)
-      final currentImageRect = ImageRectUtils.computeImageRect(
-        containerSize: containerSize,
-        imageSize: imageSize,
-        scale: state.imageScale,
-        offset: state.imageOffset,
-      );
-
-      // 크롭박스는 고정 위치 사용
-      final cropRectScreen = _frozenCropRectScreen!;
-
-      // 이미지가 크롭박스 밖으로 나갔는지 확인하고 조정
-      double adjustX = 0.0;
-      double adjustY = 0.0;
-
-      // 이미지가 크롭박스 왼쪽으로 벗어나면 오른쪽으로 이동
-      if (currentImageRect.left > cropRectScreen.left) {
-        adjustX = cropRectScreen.left - currentImageRect.left;
-      }
-      // 이미지가 크롭박스 오른쪽으로 벗어나면 왼쪽으로 이동
-      else if (currentImageRect.right < cropRectScreen.right) {
-        adjustX = cropRectScreen.right - currentImageRect.right;
+    if (result != null) {
+      // ✅ snap-back offset 적용
+      if (result.snapBackOffset != null) {
+        state.imageOffset += result.snapBackOffset!;
       }
 
-      // 이미지가 크롭박스 위로 벗어나면 아래로 이동
-      if (currentImageRect.top > cropRectScreen.top) {
-        adjustY = cropRectScreen.top - currentImageRect.top;
-      }
-      // 이미지가 크롭박스 아래로 벗어나면 위로 이동
-      else if (currentImageRect.bottom < cropRectScreen.bottom) {
-        adjustY = cropRectScreen.bottom - currentImageRect.bottom;
-      }
-
-      // offset 보정 적용 (이미지가 크롭박스 안으로 들어오도록)
-      if (adjustX != 0.0 || adjustY != 0.0) {
-        state.imageOffset += Offset(adjustX, adjustY);
+      // ✅ cropRectImage 위치 업데이트 (크기 유지)
+      if (result.cropRectImagePosition != null) {
+        state.cropState.cropRectImage = Rect.fromLTWH(
+          result.cropRectImagePosition!.dx,
+          result.cropRectImagePosition!.dy,
+          result.cropRectImageSize.width,
+          result.cropRectImageSize.height,
+        );
       }
     }
-
-    // ✅ 드래그 종료 후에도 크롭박스는 고정 위치 유지
-    // _frozenCropRectScreen은 해제하지 않음 (크롭박스가 고정 위치에 계속 유지됨)
-    // _frozenImageRect만 해제 (드래그 종료 후에는 현재 imageOffset 기준으로 계산)
-    _isDraggingImage = false;
-    _frozenImageRect = null;
-    // _frozenCropRectScreen은 유지 (크롭박스 고정 위치 유지)
 
     setState(() {});
   }
 
-  /// 🎯 Auto Zoom to Crop (단순화된 버전)
-  /// 크롭 윈도우가 화면의 50%~65% 범위를 유지하도록 자동 줌
-  /// 크롭 윈도우 중심을 화면 중앙에 맞춤 (크롭은 고정, 이미지만 이동)
+  /// Auto Zoom to Crop (CropAutoZoom 위임)
   void _autoZoomToCrop(int index, Size containerSize) {
-    // ✅ 드래그 중이면 AutoZoom 실행 안 함
-    if (_isDraggingImage) return;
+    final cropHandler = _getCropGestureHandler(index);
+    if (cropHandler.isDraggingImage) return;
 
     final uiImage = _uiImageCache[index];
     if (uiImage == null) return;
 
     final state = _getCurrentEditState();
-    final imageSize = Size(uiImage.width.toDouble(), uiImage.height.toDouble());
-    final cropState = state.cropState;
-
-    if (cropState.cropRectImage == null) return;
-
-    final width = containerSize.width;
-    final height = containerSize.height;
-    final containerCenter = Offset(width / 2, height / 2);
-
-    // ✅ image 좌표 기준으로 한 번만 계산 (screen 좌표 재사용 금지)
-    // 1) 크롭 중심을 image 좌표에서 직접 가져오기
-    final cropCenterImage = cropState.cropRectImage!.center;
-
-    // 2) 현재 scale 기준으로 크롭 크기 계산 (scale 결정용)
-    final currentImageRect = ImageRectUtils.computeImageRect(
+    final result = CropAutoZoom.autoZoomToCrop(
+      cropState: state.cropState,
+      uiImage: uiImage,
       containerSize: containerSize,
-      imageSize: imageSize,
-      scale: state.imageScale,
-      offset: Offset.zero, // offset은 scale 계산에 영향 없음
+      currentScale: state.imageScale,
+      currentOffset: state.imageOffset,
     );
 
-    final currentCropRectScreen = ImageRectUtils.imageToScreenRect(
-      imageRect: cropState.cropRectImage!,
-      screenImageRect: currentImageRect,
-      imageSize: imageSize,
-    );
-
-    // 3) 크롭 윈도우 크기에 따라 scale 계산
-    const maxZoom = 5.0;
-    const minRatio = 0.65; // 최소 65% (줌 인 증가)
-    const maxRatio = 0.75; // 최대 75% (줌 아웃 기준 상향)
-
-    final cropRatioX = currentCropRectScreen.width / width;
-    final cropRatioY = currentCropRectScreen.height / height;
-    final cropRatio = cropRatioX < cropRatioY ? cropRatioX : cropRatioY;
-
-    double targetScale = state.imageScale;
-
-    // 크롭이 너무 작으면 줌 인
-    if (cropRatio < minRatio && state.imageScale < maxZoom) {
-      targetScale = (state.imageScale / cropRatio * minRatio).clamp(
-        1.0,
-        maxZoom,
-      );
-    }
-    // 크롭이 너무 크면 줌 아웃 (단, scale이 1보다 클 때만)
-    else if (cropRatio > maxRatio && state.imageScale > 1.0) {
-      targetScale = (state.imageScale / cropRatio * maxRatio).clamp(
-        1.0,
-        maxZoom,
-      );
-    }
-
-    // 4) targetScale 적용 후 이미지 rect 계산 (offset=0 기준)
-    final imageRectAtTargetScale = ImageRectUtils.computeImageRect(
-      containerSize: containerSize,
-      imageSize: imageSize,
-      scale: targetScale,
-      offset: Offset.zero,
-    );
-
-    // 5) crop 중심을 image 좌표에서 직접 screen 좌표로 변환 (한 번만)
-    final scaleX = imageRectAtTargetScale.width / imageSize.width;
-    final scaleY = imageRectAtTargetScale.height / imageSize.height;
-
-    final cropCenterScreenAtTargetScale = Offset(
-      imageRectAtTargetScale.left + cropCenterImage.dx * scaleX,
-      imageRectAtTargetScale.top + cropCenterImage.dy * scaleY,
-    );
-
-    // 6) offset 계산 (한 줄)
-    final targetOffset = containerCenter - cropCenterScreenAtTargetScale;
-
-    // 7) 업데이트
-    state.imageScale = targetScale;
-    state.imageOffset = targetOffset;
-
+    state.imageScale = result.scale;
+    state.imageOffset = result.offset;
     setState(() {});
   }
 
@@ -1603,7 +1460,6 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
       {'label': '재설정', 'ratio': 'reset', 'icon': Icons.refresh},
       {'label': '회전', 'ratio': 'rotate', 'icon': Icons.rotate_right},
       {'label': '자유', 'ratio': null, 'icon': null},
-      {'label': '원본', 'ratio': 'original', 'icon': null},
       {'label': '1:1', 'ratio': '1:1', 'icon': null},
       {'label': '4:5', 'ratio': '4:5', 'icon': null},
       {'label': '16:9', 'ratio': '16:9', 'icon': null},
@@ -1625,6 +1481,8 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
                       if (option['ratio'] == 'reset') {
                         setState(() {
                           state.selectedAspectRatio = null;
+                          state.cropState.selectedAspectRatio =
+                              null; // CropState에도 설정
                           state.cropState.reset();
                           // transform 초기화
                           state.imageOffset = Offset.zero;
@@ -1656,35 +1514,33 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
                           state.rotation = (state.rotation + 90) % 360;
                         });
                       } else {
-                        setState(() {
-                          state.selectedAspectRatio =
-                              option['ratio'] as String?;
-                          state.cropState.isCropRectInitialized = false;
-                          // transform 초기화
-                          state.imageOffset = Offset.zero;
-                          state.imageScale = 1.0;
-                        });
-                        // 크롭 영역 재초기화
-                        WidgetsBinding.instance.addPostFrameCallback((_) {
-                          if (mounted && _uiImageCache[_currentIndex] != null) {
-                            // LayoutBuilder constraints 사용
-                            final containerSize =
-                                _containerSizes[_currentIndex];
-                            if (containerSize != null) {
-                              CropUtils.initializeCropRect(
-                                image: _uiImageCache[_currentIndex]!,
-                                containerSize: containerSize,
-                                cropState: state.cropState,
-                                scale: state.imageScale,
-                                offset: state.imageOffset,
-                                onDisplaySizeChanged: (size) {
-                                  _imageDisplaySizes[_currentIndex] = size;
-                                },
-                              );
-                              setState(() {});
-                            }
-                          }
-                        });
+                        final selectedRatio = option['ratio'] as String?;
+                        // ✅ 즉시 크롭 영역 재초기화 (번쩍거림 방지)
+                        final containerSize = _containerSizes[_currentIndex];
+                        if (_uiImageCache[_currentIndex] != null &&
+                            containerSize != null) {
+                          setState(() {
+                            // transform 초기화
+                            state.imageOffset = Offset.zero;
+                            state.imageScale = 1.0;
+
+                            // 비율 설정
+                            state.selectedAspectRatio = selectedRatio;
+                            state.cropState.selectedAspectRatio = selectedRatio;
+
+                            // 크롭 영역 즉시 재초기화
+                            CropUtils.initializeCropRect(
+                              image: _uiImageCache[_currentIndex]!,
+                              containerSize: containerSize,
+                              cropState: state.cropState,
+                              scale: state.imageScale,
+                              offset: state.imageOffset,
+                              onDisplaySizeChanged: (size) {
+                                _imageDisplaySizes[_currentIndex] = size;
+                              },
+                            );
+                          });
+                        }
                       }
                     },
                     child: Container(
@@ -1815,8 +1671,8 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
                                     child: CustomPaint(
                                       painter: ImagePainter(
                                         snapshot.data!,
-                                        imageOffset: Offset.zero,
-                                        imageScale: 1.0,
+                                        Offset.zero,
+                                        1.0,
                                       ),
                                       size: Size.infinite,
                                     ),

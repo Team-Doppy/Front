@@ -1,7 +1,8 @@
 import 'dart:io';
+import 'dart:math' as math;
 import 'dart:ui' as ui;
 import 'package:cached_network_image/cached_network_image.dart';
-import 'package:doppy/image/crop_editor.dart' show ImageRectUtils;
+import 'package:doppy/image/crop_editor.dart';
 import 'package:doppy/image/media_picker_screen.dart';
 import 'package:doppy/l10n/app_localizations.dart';
 import 'package:doppy/providers/friend_provider.dart';
@@ -42,13 +43,18 @@ class ProfileImageViewScreen extends StatefulWidget {
 class _ProfileImageViewScreenState extends State<ProfileImageViewScreen> {
   bool _isDownloading = false;
 
-  // 이미지 선택 및 편집 관련
+  // 이미지 선택 관련
   File? _selectedImage;
-  Offset _imageOffset = Offset.zero;
+  ui.Image? _uiImage;
+
+  // 이미지 상태 (crop_editor.dart 구조 참고)
   double _imageScale = 1.0;
-  Offset _lastFocalPoint = Offset.zero;
-  double _startScale = 1.0; // 제스처 시작 시 스케일 (누적 방지용)
-  ui.Image? _uiImage; // 원본 이미지 (크기 계산용)
+  Offset _imageOffset = Offset.zero;
+  double? _initialScale; // 핀치 시작 시 초기 scale
+  Offset? _lastPanPosition;
+
+  // 원형 크롭박스 크기 (고정)
+  static const double _cropSize = 350.0;
 
   @override
   Widget build(BuildContext context) {
@@ -159,133 +165,11 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen> {
                     ),
                   ),
 
-                // 선택된 이미지가 있을 때 드래그 가능한 이미지 표시
-                if (_selectedImage != null && widget.isOwnProfile)
-                  Container(
-                    width: 350,
-                    height: 350,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      border: Border.all(
-                        color: theme.colorScheme.onSurface.withOpacity(0.3),
-                        width: 2,
-                      ),
-                    ),
-                    child: ClipOval(
-                      child: GestureDetector(
-                        onScaleStart: (details) {
-                          _lastFocalPoint = details.focalPoint;
-                          _startScale = _imageScale; // 제스처 시작 시 스케일 저장
-                        },
-                        onScaleUpdate: (details) {
-                          if (_uiImage == null) return;
-
-                          setState(() {
-                            final imageSize = Size(
-                              _uiImage!.width.toDouble(),
-                              _uiImage!.height.toDouble(),
-                            );
-                            final containerSize = const Size(350, 350);
-
-                            // 확대/축소: startScale * details.scale (누적 방지)
-                            final newScale = _startScale * details.scale;
-
-                            // 최소 스케일 계산: ImageRectUtils 사용
-                            final imageRectAtScale1 =
-                                ImageRectUtils.computeImageRect(
-                                  containerSize: containerSize,
-                                  imageSize: imageSize,
-                                  scale: 1.0,
-                                  offset: Offset.zero,
-                                );
-                            final scaleForWidth =
-                                imageRectAtScale1.width / imageSize.width;
-                            final scaleForHeight =
-                                imageRectAtScale1.height / imageSize.height;
-                            final minScale =
-                                (scaleForWidth > scaleForHeight
-                                    ? scaleForWidth
-                                    : scaleForHeight) *
-                                1.05;
-
-                            _imageScale = newScale.clamp(minScale, 4.0);
-
-                            // 이동: delta / scale (스케일 반영)
-                            final delta = details.focalPoint - _lastFocalPoint;
-                            final newOffset =
-                                _imageOffset + (delta / _imageScale);
-
-                            // 매 프레임 clamp 적용 (인스타 방식)
-                            _imageOffset = _clampOffset(
-                              offset: newOffset,
-                              imageSize: imageSize,
-                              scale: _imageScale,
-                              containerSize: containerSize,
-                            );
-
-                            _lastFocalPoint = details.focalPoint;
-                          });
-                        },
-                        onScaleEnd: (details) {
-                          // 드래그 종료 시 미세 snap만 (이미 clamp되어 있으므로 최소한의 보정)
-                          if (_uiImage != null) {
-                            final imageSize = Size(
-                              _uiImage!.width.toDouble(),
-                              _uiImage!.height.toDouble(),
-                            );
-                            final containerSize = const Size(350, 350);
-
-                            // 최소 스케일 확인
-                            final minScaleForWidth =
-                                containerSize.width / imageSize.width;
-                            final minScaleForHeight =
-                                containerSize.height / imageSize.height;
-                            final minScale =
-                                (minScaleForWidth > minScaleForHeight
-                                    ? minScaleForWidth
-                                    : minScaleForHeight) *
-                                1.01;
-
-                            setState(() {
-                              // 스케일 보정
-                              if (_imageScale < minScale) {
-                                _imageScale = minScale;
-                              }
-
-                              // offset은 이미 clamp되어 있지만, 한 번 더 확인
-                              _imageOffset = _clampOffset(
-                                offset: _imageOffset,
-                                imageSize: imageSize,
-                                scale: _imageScale,
-                                containerSize: containerSize,
-                              );
-                            });
-                          }
-                        },
-                        child: Transform(
-                          transform:
-                              Matrix4.identity()
-                                ..translate(_imageOffset.dx, _imageOffset.dy)
-                                ..scale(_imageScale),
-                          alignment: Alignment.center,
-                          child:
-                              _uiImage != null
-                                  ? SizedBox(
-                                    width: _uiImage!.width.toDouble(),
-                                    height: _uiImage!.height.toDouble(),
-                                    child: Image.file(
-                                      _selectedImage!,
-                                      fit: BoxFit.cover,
-                                    ),
-                                  )
-                                  : Image.file(
-                                    _selectedImage!,
-                                    fit: BoxFit.cover,
-                                  ),
-                        ),
-                      ),
-                    ),
-                  ),
+                // 선택된 이미지가 있을 때 표시
+                if (_selectedImage != null &&
+                    _uiImage != null &&
+                    widget.isOwnProfile)
+                  _buildImageEditor(theme),
               ],
             ),
           ),
@@ -351,8 +235,11 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen> {
                                   onTap: () {
                                     setState(() {
                                       _selectedImage = null;
-                                      _imageOffset = Offset.zero;
+                                      _uiImage = null;
                                       _imageScale = 1.0;
+                                      _imageOffset = Offset.zero;
+                                      _initialScale = null;
+                                      _lastPanPosition = null;
                                     });
                                   },
                                 ),
@@ -643,68 +530,178 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen> {
 
     if (result != null && result.files.isNotEmpty && mounted) {
       final file = result.files.first;
-      // 이미지 로드 및 초기 스케일 계산
+      // 이미지 로드
       _loadImageAndCalculateScale(file);
     }
   }
 
-  /// 이미지 로드 및 원형 컨테이너를 채우는 초기 스케일 계산
-  /// 에디터의 ImageRectUtils.computeImageRect 로직 사용
+  /// 이미지 로드 및 초기 스케일 계산
   Future<void> _loadImageAndCalculateScale(File file) async {
     try {
       final bytes = await file.readAsBytes();
       final codec = await ui.instantiateImageCodec(bytes);
       final frame = await codec.getNextFrame();
-      final image = frame.image;
+      final img = frame.image;
 
-      if (mounted) {
-        final imageSize = Size(image.width.toDouble(), image.height.toDouble());
-        final containerSize = const Size(350, 350); // 원형 컨테이너 크기
+      final imageSize = Size(img.width.toDouble(), img.height.toDouble());
+      final containerSize = Size(_cropSize, _cropSize);
 
-        // 단일 좌표계: ImageRectUtils.computeImageRect 사용
-        final imageRectAtScale1 = ImageRectUtils.computeImageRect(
-          containerSize: containerSize,
-          imageSize: imageSize,
-          scale: 1.0,
-          offset: Offset.zero,
-        );
+      // 원형을 완전히 덮는 최소 스케일 계산
+      final imageRect = ImageRectUtils.computeImageRect(
+        containerSize: containerSize,
+        imageSize: imageSize,
+        scale: 1.0,
+        offset: Offset.zero,
+      );
 
-        // 원본 이미지 크기 대비 표시 크기의 비율 = 최소 스케일
-        final scaleForWidth = imageRectAtScale1.width / imageSize.width;
-        final scaleForHeight = imageRectAtScale1.height / imageSize.height;
-        // 둘 중 큰 값을 사용하여 컨테이너를 완전히 채움
-        final minScale =
-            (scaleForWidth > scaleForHeight ? scaleForWidth : scaleForHeight) *
-            1.05; // 5% 여유
+      // 원형 크롭박스를 완전히 덮는 최소 스케일
+      final minScale =
+          math.max(_cropSize / imageRect.width, _cropSize / imageRect.height) *
+          1.01; // 약간의 여유
 
-        setState(() {
-          _selectedImage = file;
-          _uiImage = image;
-          _imageOffset = Offset.zero;
-          _imageScale = minScale.clamp(1.0, 4.0);
-        });
-      }
+      setState(() {
+        _selectedImage = file;
+        _uiImage = img;
+        _imageScale = minScale;
+        _imageOffset = Offset.zero;
+        _initialScale = null;
+        _lastPanPosition = null;
+      });
     } catch (e) {
       debugPrint('[ProfileImageView] 이미지 로드 실패: $e');
       if (mounted) {
         setState(() {
           _selectedImage = file;
-          _imageOffset = Offset.zero;
           _imageScale = 1.0;
+          _imageOffset = Offset.zero;
         });
       }
     }
   }
 
-  /// 인스타 방식: rect 기반 clamp (매 프레임 적용)
-  /// ImageRectUtils.computeImageRect를 단일 진실로 사용
-  Offset _clampOffset({
-    required Offset offset,
-    required Size imageSize,
-    required double scale,
-    required Size containerSize,
-  }) {
-    // 단일 좌표계: ImageRectUtils.computeImageRect 사용
+  /// 이미지 에디터 빌드 (crop_editor.dart 구조 참고)
+  Widget _buildImageEditor(ThemeData theme) {
+    if (_uiImage == null) return const SizedBox.shrink();
+
+    final imageSize = Size(
+      _uiImage!.width.toDouble(),
+      _uiImage!.height.toDouble(),
+    );
+    final containerSize = Size(_cropSize, _cropSize);
+
+    // ImageRectUtils로 이미지 rect 계산
+    final imageRect = ImageRectUtils.computeImageRect(
+      containerSize: containerSize,
+      imageSize: imageSize,
+      scale: _imageScale,
+      offset: _imageOffset,
+    );
+
+    return Stack(
+      alignment: Alignment.center,
+      children: [
+        // 배경: 원형 클립 밖에 투명하게 표시되는 원본 이미지
+        CustomPaint(
+          size: Size.infinite,
+          painter: _BackgroundImagePainter(
+            image: _uiImage!,
+            imageRect: imageRect,
+            cropSize: _cropSize,
+          ),
+        ),
+        // 중앙: 원형 클립된 이미지 (제스처 가능)
+        Container(
+          width: _cropSize,
+          height: _cropSize,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            border: Border.all(
+              color: theme.colorScheme.onSurface.withOpacity(0.3),
+              width: 2,
+            ),
+          ),
+          child: ClipOval(
+            child: GestureDetector(
+              onScaleStart: (details) {
+                _initialScale = _imageScale;
+                _lastPanPosition = details.focalPoint;
+              },
+              onScaleUpdate: (details) {
+                if (_uiImage == null) return;
+
+                // 핀치 줌 처리
+                if ((details.scale - 1.0).abs() >= 0.001) {
+                  _initialScale ??= _imageScale;
+                  final newScale = (_initialScale! * details.scale).clamp(
+                    1.0,
+                    5.0,
+                  );
+
+                  setState(() {
+                    _imageScale = newScale;
+                  });
+                  return;
+                }
+
+                // 드래그 처리
+                if (_lastPanPosition != null) {
+                  final delta = details.focalPoint - _lastPanPosition!;
+
+                  // 원형 크롭박스를 벗어나지 않도록 clamp
+                  final newOffset = _clampOffset(
+                    _imageOffset +
+                        Offset(delta.dx / _imageScale, delta.dy / _imageScale),
+                    _imageScale,
+                    imageSize,
+                    containerSize,
+                  );
+
+                  setState(() {
+                    _imageOffset = newOffset;
+                    _lastPanPosition = details.focalPoint;
+                  });
+                }
+              },
+              onScaleEnd: (_) {
+                setState(() {
+                  _lastPanPosition = null;
+                  _initialScale = null;
+                  // 최종 clamp
+                  if (_uiImage != null) {
+                    _imageOffset = _clampOffset(
+                      _imageOffset,
+                      _imageScale,
+                      Size(
+                        _uiImage!.width.toDouble(),
+                        _uiImage!.height.toDouble(),
+                      ),
+                      Size(_cropSize, _cropSize),
+                    );
+                  }
+                });
+              },
+              child: CustomPaint(
+                size: Size(_cropSize, _cropSize),
+                painter: _CroppedImagePainter(
+                  image: _uiImage!,
+                  imageRect: imageRect,
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// 이동 한계 계산 (원형 크롭박스를 벗어나지 않도록)
+  /// crop_editor.dart의 clamp 로직 참고: 이미지가 크롭박스를 완전히 덮어야 함
+  Offset _clampOffset(
+    Offset offset,
+    double scale,
+    Size imageSize,
+    Size containerSize,
+  ) {
     final imageRect = ImageRectUtils.computeImageRect(
       containerSize: containerSize,
       imageSize: imageSize,
@@ -712,31 +709,111 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen> {
       offset: offset,
     );
 
-    // 컨테이너 rect (사각형 기준)
-    final containerRect = Rect.fromLTWH(
-      0,
-      0,
-      containerSize.width,
-      containerSize.height,
+    // 원형 크롭박스 (정사각형으로 처리)
+    final cropRect = Rect.fromCenter(
+      center: Offset(containerSize.width / 2, containerSize.height / 2),
+      width: _cropSize,
+      height: _cropSize,
     );
 
-    // rect containment: 이미지가 컨테이너를 완전히 덮어야 함
-    double fixX = 0;
-    double fixY = 0;
+    double dx = offset.dx;
+    double dy = offset.dy;
 
-    if (imageRect.left > containerRect.left) {
-      fixX = containerRect.left - imageRect.left;
+    // 이미지가 크롭박스를 완전히 덮어야 함
+    // 왼쪽 경계: 이미지가 크롭박스 왼쪽으로 벗어나면 안 됨
+    if (imageRect.left > cropRect.left) {
+      dx = offset.dx - (imageRect.left - cropRect.left);
     }
-    if (imageRect.right < containerRect.right) {
-      fixX = containerRect.right - imageRect.right;
+    // 오른쪽 경계: 이미지가 크롭박스 오른쪽으로 벗어나면 안 됨
+    if (imageRect.right < cropRect.right) {
+      dx = offset.dx + (cropRect.right - imageRect.right);
     }
-    if (imageRect.top > containerRect.top) {
-      fixY = containerRect.top - imageRect.top;
+    // 위쪽 경계: 이미지가 크롭박스 위로 벗어나면 안 됨
+    if (imageRect.top > cropRect.top) {
+      dy = offset.dy - (imageRect.top - cropRect.top);
     }
-    if (imageRect.bottom < containerRect.bottom) {
-      fixY = containerRect.bottom - imageRect.bottom;
+    // 아래쪽 경계: 이미지가 크롭박스 아래로 벗어나면 안 됨
+    if (imageRect.bottom < cropRect.bottom) {
+      dy = offset.dy + (cropRect.bottom - imageRect.bottom);
     }
 
-    return offset + Offset(fixX, fixY);
+    return Offset(dx, dy);
+  }
+}
+
+/// 배경 이미지 Painter (투명하게 표시)
+class _BackgroundImagePainter extends CustomPainter {
+  final ui.Image image;
+  final Rect imageRect;
+  final double cropSize;
+
+  _BackgroundImagePainter({
+    required this.image,
+    required this.imageRect,
+    required this.cropSize,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint =
+        Paint()
+          ..colorFilter = ColorFilter.mode(
+            Colors.white.withOpacity(0.3),
+            BlendMode.modulate,
+          );
+
+    final srcRect = Rect.fromLTWH(
+      0,
+      0,
+      image.width.toDouble(),
+      image.height.toDouble(),
+    );
+    canvas.drawImageRect(image, srcRect, imageRect, paint);
+  }
+
+  @override
+  bool shouldRepaint(_BackgroundImagePainter oldDelegate) {
+    return oldDelegate.imageRect != imageRect || oldDelegate.image != image;
+  }
+}
+
+/// 크롭된 이미지 Painter (원형 클립 내부)
+class _CroppedImagePainter extends CustomPainter {
+  final ui.Image image;
+  final Rect imageRect;
+
+  _CroppedImagePainter({required this.image, required this.imageRect});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final srcRect = Rect.fromLTWH(
+      0,
+      0,
+      image.width.toDouble(),
+      image.height.toDouble(),
+    );
+
+    // 원형 클립 경로 (크롭박스 크기만큼)
+    final path = Path()..addOval(Rect.fromLTWH(0, 0, size.width, size.height));
+    canvas.clipPath(path);
+
+    // imageRect는 전체 컨테이너 기준이므로, 크롭박스 영역으로 변환
+    // 크롭박스는 컨테이너 중앙에 위치
+    final cropRect = Rect.fromCenter(
+      center: Offset(size.width / 2, size.height / 2),
+      width: size.width,
+      height: size.height,
+    );
+
+    // imageRect와 cropRect의 교집합 영역만 그리기
+    final drawRect = imageRect.intersect(cropRect);
+    if (drawRect.width > 0 && drawRect.height > 0) {
+      canvas.drawImageRect(image, srcRect, imageRect, Paint());
+    }
+  }
+
+  @override
+  bool shouldRepaint(_CroppedImagePainter oldDelegate) {
+    return oldDelegate.imageRect != imageRect || oldDelegate.image != image;
   }
 }

@@ -212,6 +212,7 @@ class _CardViewState extends State<CardView> {
                                           ),
                                         )
                                     : CachedNetworkImage(
+                                      key: ValueKey('cached-image-${widget.post.id}-${widget.post.thumbnailImageUrl}'),
                                       imageUrl: widget.post.thumbnailImageUrl,
                                       cacheKey: widget.post.thumbnailImageUrl,
                                       fit: BoxFit.cover,

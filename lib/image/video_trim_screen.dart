@@ -197,6 +197,9 @@ class Trimmer extends ChangeNotifier {
     final maxSeconds = _videoDuration?.inSeconds.toDouble() ?? 0.0;
     if (maxSeconds > 0 && value > maxSeconds) return;
 
+    // 🎯 핸들 위치 역전 방지: 시작 값이 끝 값보다 크거나 같으면 무시
+    if (value >= _endValue) return;
+
     _startValue = value.clamp(
       0.0,
       maxSeconds > 0 ? maxSeconds : double.infinity,
@@ -212,6 +215,9 @@ class Trimmer extends ChangeNotifier {
     if (value.isNaN || value.isInfinite || value < 0) return;
     final maxSeconds = _videoDuration?.inSeconds.toDouble() ?? 0.0;
     if (maxSeconds > 0 && value > maxSeconds) return;
+
+    // 🎯 핸들 위치 역전 방지: 끝 값이 시작 값보다 작거나 같으면 무시
+    if (value <= _startValue) return;
 
     _endValue = value.clamp(0.0, maxSeconds > 0 ? maxSeconds : double.infinity);
     // 🎯 currentPosition 즉시 클램프 (타이머 보정 충돌 방지)
@@ -499,15 +505,11 @@ class _TrimEditorState extends State<TrimEditor> {
   // 🎯 드래그 상태
   bool _isHandleDragging = false;
   bool _isPlaybackBarDragging = false;
-  bool _isTimelineDragging = false; // 🎯 타임라인 전체 드래그
 
   // 🎯 드래그 시작 기준값 (누적 계산용)
   double? _dragStartValue;
   double? _dragStartTimelineX; // timeline absolute px (= localX + scrollOffset)
-
-  // 🎯 타임라인 전체 드래그용 (범위 이동)
-  double? _dragStartStartValue;
-  double? _dragStartEndValue;
+  double? _dragStartOppositeValue; // 🎯 반대쪽 핸들 값 (역전 방지용)
 
   @override
   void initState() {
@@ -614,11 +616,9 @@ class _TrimEditorState extends State<TrimEditor> {
                 child: SingleChildScrollView(
                   controller: _scrollController,
                   scrollDirection: Axis.horizontal,
-                  // 🎯 핸들/재생바/타임라인 드래그 중 스크롤 잠금: 좌표계 흔들림(점프/걸림) 방지
+                  // 🎯 핸들/재생바 드래그 중 스크롤 잠금: 좌표계 흔들림(점프/걸림) 방지
                   physics:
-                      (_isHandleDragging ||
-                              _isPlaybackBarDragging ||
-                              _isTimelineDragging)
+                      (_isHandleDragging || _isPlaybackBarDragging)
                           ? const NeverScrollableScrollPhysics()
                           : const ClampingScrollPhysics(),
                   child: SizedBox(
@@ -757,49 +757,43 @@ class _TrimEditorState extends State<TrimEditor> {
                   ),
                 ),
 
-              // 🎯 왼쪽 경계선 핸들 (오버레이 끝에 표시)
-              if (startBoundaryX >= 0 && startBoundaryX <= totalWidth)
-                Positioned(
-                  left: startBoundaryX - 10, // 핸들 중심이 경계선에 오도록
-                  top: 0,
-                  bottom: 0,
-                  width: 20,
-                  child: _buildHandle(
-                    isStart: true,
-                    pxPerSecond: pxPerSecond,
-                    scrollOffset: scrollOffset,
-                    totalSeconds: totalSeconds,
-                    maxTrimLength: maxTrimLength,
-                    selectionMinGap: selectionMinGap,
-                  ),
-                ),
-
-              // 🎯 오른쪽 경계선 핸들 (오버레이 끝에 표시)
-              if (endBoundaryX >= 0 && endBoundaryX <= totalWidth)
-                Positioned(
-                  left: endBoundaryX - 10, // 핸들 중심이 경계선에 오도록
-                  top: 0,
-                  bottom: 0,
-                  width: 20,
-                  child: _buildHandle(
-                    isStart: false,
-                    pxPerSecond: pxPerSecond,
-                    scrollOffset: scrollOffset,
-                    totalSeconds: totalSeconds,
-                    maxTrimLength: maxTrimLength,
-                    selectionMinGap: selectionMinGap,
-                  ),
-                ),
-
-              // 🎯 타임라인 전체 드래그 영역 (핸들이 아닐 때 트림 범위 이동)
-              Positioned.fill(
-                child: _buildTimelineDragArea(
-                  startBoundaryX: startBoundaryX,
-                  endBoundaryX: endBoundaryX,
+              // 🎯 왼쪽 경계선 핸들 (경계선 왼쪽 끝에 붙게)
+              Positioned(
+                left: startBoundaryX.clamp(
+                  0.0,
+                  totalWidth - 20,
+                ), // 왼쪽에 붙게, 오버플로우 방지
+                top: 0,
+                bottom: 0,
+                width: 20,
+                child: _buildHandle(
+                  isStart: true,
                   pxPerSecond: pxPerSecond,
                   scrollOffset: scrollOffset,
                   totalSeconds: totalSeconds,
+                  totalWidth: totalWidth,
                   maxTrimLength: maxTrimLength,
+                  selectionMinGap: selectionMinGap,
+                ),
+              ),
+
+              // 🎯 오른쪽 경계선 핸들 (경계선 오른쪽 끝에 붙게)
+              Positioned(
+                left: (endBoundaryX - 20).clamp(
+                  0.0,
+                  totalWidth - 20,
+                ), // 오른쪽 끝에 붙게, 오버플로우 방지
+                top: 0,
+                bottom: 0,
+                width: 20,
+                child: _buildHandle(
+                  isStart: false,
+                  pxPerSecond: pxPerSecond,
+                  scrollOffset: scrollOffset,
+                  totalSeconds: totalSeconds,
+                  totalWidth: totalWidth,
+                  maxTrimLength: maxTrimLength,
+                  selectionMinGap: selectionMinGap,
                 ),
               ),
 
@@ -1015,7 +1009,7 @@ class _TrimEditorState extends State<TrimEditor> {
     );
   }
 
-  /// 드래그 가능한 오버레이 (범위 이동용, 길이 조정 안 함)
+  /// 드래그 가능한 오버레이 (핸들 대신 사용)
   Widget _buildDraggableOverlay({
     required bool isStart,
     required double pxPerSecond,
@@ -1028,44 +1022,27 @@ class _TrimEditorState extends State<TrimEditor> {
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onPanStart: (details) {
-        // 🎯 핸들 영역 체크
         final box =
             _timelineKey.currentContext?.findRenderObject() as RenderBox?;
         if (box == null) return;
         final localX = box.globalToLocal(details.globalPosition).dx;
 
-        // 핸들 영역이면 무시 (핸들이 처리)
-        const handleTouchPadding = 15.0;
-        final startBoundaryX =
-            (widget.trimmer.startValue * pxPerSecond) - scrollOffset;
-        final endBoundaryX =
-            (widget.trimmer.endValue * pxPerSecond) - scrollOffset;
-
-        final touchingStartHandle =
-            (localX - startBoundaryX).abs() < handleTouchPadding;
-        final touchingEndHandle =
-            (localX - endBoundaryX).abs() < handleTouchPadding;
-
-        if (touchingStartHandle || touchingEndHandle || _isHandleDragging) {
-          return;
-        }
-
-        // 🎯 오버레이 드래그: 전체 범위 이동 (길이 유지)
         setState(() {
-          _isTimelineDragging = true;
-          _dragStartStartValue = widget.trimmer.startValue;
-          _dragStartEndValue = widget.trimmer.endValue;
+          _isHandleDragging = true;
+          _dragStartValue =
+              isStart ? widget.trimmer.startValue : widget.trimmer.endValue;
+          // 🎯 반대쪽 핸들 값 저장 (역전 방지용)
+          _dragStartOppositeValue =
+              isStart ? widget.trimmer.endValue : widget.trimmer.startValue;
           _dragStartTimelineX = localX + scrollOffset;
         });
         widget.trimmer.setHandleDragging(true);
       },
       onPanUpdate: (details) {
-        if (!_isTimelineDragging ||
-            _dragStartStartValue == null ||
-            _dragStartEndValue == null ||
-            _dragStartTimelineX == null) {
+        if (_dragStartValue == null ||
+            _dragStartTimelineX == null ||
+            _dragStartOppositeValue == null)
           return;
-        }
 
         final box =
             _timelineKey.currentContext?.findRenderObject() as RenderBox?;
@@ -1077,43 +1054,75 @@ class _TrimEditorState extends State<TrimEditor> {
 
         final dx = timelineX - _dragStartTimelineX!;
         final deltaSeconds = dx / pxPerSecond;
+        const minLength = 1.0;
 
-        // 🎯 범위 길이 유지하면서 이동
-        final currentLength = _dragStartEndValue! - _dragStartStartValue!;
-        var newStart = _dragStartStartValue! + deltaSeconds;
-        var newEnd = _dragStartEndValue! + deltaSeconds;
+        if (isStart) {
+          var newStart = _dragStartValue! + deltaSeconds;
 
-        // 범위 체크
-        if (newStart < 0) {
-          newStart = 0;
-          newEnd = currentLength;
+          // 🎯 핸들 위치 역전 방지: 드래그 시작 시 저장된 반대쪽 값과 비교
+          if (newStart >= _dragStartOppositeValue!) return;
+
+          newStart = newStart.clamp(
+            0.0,
+            (_dragStartOppositeValue! - minLength).clamp(0.0, totalSeconds),
+          );
+
+          // 🎯 유효하지 않은 값 방지
+          if (newStart.isNaN || newStart.isInfinite || newStart < 0) return;
+
+          // 🎯 최종 역전 체크 (clamp 후에도)
+          if (newStart >= _dragStartOppositeValue!) return;
+
+          final proposedLength = _dragStartOppositeValue! - newStart;
+          if (proposedLength < minLength) return;
+          if (proposedLength > maxTrimLength) return;
+          newStart = newStart.clamp(0.0, totalSeconds);
+
+          widget.trimmer.onChangeStart(newStart);
+          widget.onChangeStart?.call(newStart);
+          // 🎯 드래그 중 즉시 UI 업데이트 (오버레이가 따라오도록)
+          setState(() {});
+        } else {
+          var newEnd = _dragStartValue! + deltaSeconds;
+
+          // 🎯 핸들 위치 역전 방지: 드래그 시작 시 저장된 반대쪽 값과 비교
+          if (newEnd <= _dragStartOppositeValue!) return;
+
+          newEnd = newEnd.clamp(
+            (_dragStartOppositeValue! + minLength).clamp(0.0, totalSeconds),
+            totalSeconds,
+          );
+
+          // 🎯 유효하지 않은 값 방지
+          if (newEnd.isNaN || newEnd.isInfinite || newEnd < 0) return;
+
+          // 🎯 최종 역전 체크 (clamp 후에도)
+          if (newEnd <= _dragStartOppositeValue!) return;
+
+          final proposedLength = newEnd - _dragStartOppositeValue!;
+          if (proposedLength < minLength) return;
+          if (proposedLength > maxTrimLength) return;
+          newEnd = newEnd.clamp(0.0, totalSeconds);
+
+          widget.trimmer.onChangeEnd(newEnd);
+          widget.onChangeEnd?.call(newEnd);
+          // 🎯 드래그 중 즉시 UI 업데이트 (오버레이가 따라오도록)
+          setState(() {});
         }
-        if (newEnd > totalSeconds) {
-          newEnd = totalSeconds;
-          newStart = totalSeconds - currentLength;
-          if (newStart < 0) newStart = 0;
-        }
-
-        // 유효성 검사
-        if (newStart.isNaN || newStart.isInfinite || newStart < 0) return;
-        if (newEnd.isNaN || newEnd.isInfinite || newEnd < 0) return;
-        if (newEnd <= newStart) return;
-
-        widget.trimmer.onChangeStart(newStart);
-        widget.trimmer.onChangeEnd(newEnd);
-        widget.onChangeStart?.call(newStart);
-        widget.onChangeEnd?.call(newEnd);
-        setState(() {});
       },
       onPanEnd: (_) {
         setState(() {
-          _isTimelineDragging = false;
-          _dragStartStartValue = null;
-          _dragStartEndValue = null;
+          _isHandleDragging = false;
+          _dragStartValue = null;
+          _dragStartOppositeValue = null;
           _dragStartTimelineX = null;
         });
         widget.trimmer.setHandleDragging(false);
-        widget.trimmer.seekTo(widget.trimmer.startValue);
+        if (isStart) {
+          widget.trimmer.seekTo(widget.trimmer.startValue);
+        } else {
+          widget.trimmer.seekTo(widget.trimmer.endValue);
+        }
       },
       child: Container(
         decoration: BoxDecoration(
@@ -1138,6 +1147,7 @@ class _TrimEditorState extends State<TrimEditor> {
     required double pxPerSecond,
     required double scrollOffset,
     required double totalSeconds,
+    required double totalWidth,
     required double maxTrimLength,
     required double selectionMinGap,
   }) {
@@ -1153,12 +1163,18 @@ class _TrimEditorState extends State<TrimEditor> {
           _isHandleDragging = true;
           _dragStartValue =
               isStart ? widget.trimmer.startValue : widget.trimmer.endValue;
+          // 🎯 반대쪽 핸들 값 저장 (역전 방지용)
+          _dragStartOppositeValue =
+              isStart ? widget.trimmer.endValue : widget.trimmer.startValue;
           _dragStartTimelineX = localX + scrollOffset;
         });
         widget.trimmer.setHandleDragging(true);
       },
       onPanUpdate: (details) {
-        if (_dragStartValue == null || _dragStartTimelineX == null) return;
+        if (_dragStartValue == null ||
+            _dragStartTimelineX == null ||
+            _dragStartOppositeValue == null)
+          return;
 
         final box =
             _timelineKey.currentContext?.findRenderObject() as RenderBox?;
@@ -1174,14 +1190,21 @@ class _TrimEditorState extends State<TrimEditor> {
 
         if (isStart) {
           var newStart = _dragStartValue! + deltaSeconds;
+
+          // 🎯 핸들 위치 역전 방지: 드래그 시작 시 저장된 반대쪽 값과 비교
+          if (newStart >= _dragStartOppositeValue!) return;
+
           newStart = newStart.clamp(
             0.0,
-            (widget.trimmer.endValue - minLength).clamp(0.0, totalSeconds),
+            (_dragStartOppositeValue! - minLength).clamp(0.0, totalSeconds),
           );
 
           if (newStart.isNaN || newStart.isInfinite || newStart < 0) return;
 
-          final proposedLength = widget.trimmer.endValue - newStart;
+          // 🎯 최종 역전 체크 (clamp 후에도)
+          if (newStart >= _dragStartOppositeValue!) return;
+
+          final proposedLength = _dragStartOppositeValue! - newStart;
           if (proposedLength < minLength) return;
           if (proposedLength > maxTrimLength) return;
           newStart = newStart.clamp(0.0, totalSeconds);
@@ -1191,14 +1214,21 @@ class _TrimEditorState extends State<TrimEditor> {
           setState(() {});
         } else {
           var newEnd = _dragStartValue! + deltaSeconds;
+
+          // 🎯 핸들 위치 역전 방지: 드래그 시작 시 저장된 반대쪽 값과 비교
+          if (newEnd <= _dragStartOppositeValue!) return;
+
           newEnd = newEnd.clamp(
-            (widget.trimmer.startValue + minLength).clamp(0.0, totalSeconds),
+            (_dragStartOppositeValue! + minLength).clamp(0.0, totalSeconds),
             totalSeconds,
           );
 
           if (newEnd.isNaN || newEnd.isInfinite || newEnd < 0) return;
 
-          final proposedLength = newEnd - widget.trimmer.startValue;
+          // 🎯 최종 역전 체크 (clamp 후에도)
+          if (newEnd <= _dragStartOppositeValue!) return;
+
+          final proposedLength = newEnd - _dragStartOppositeValue!;
           if (proposedLength < minLength) return;
           if (proposedLength > maxTrimLength) return;
           newEnd = newEnd.clamp(0.0, totalSeconds);
@@ -1212,13 +1242,24 @@ class _TrimEditorState extends State<TrimEditor> {
         setState(() {
           _isHandleDragging = false;
           _dragStartValue = null;
+          _dragStartOppositeValue = null;
           _dragStartTimelineX = null;
         });
         widget.trimmer.setHandleDragging(false);
-        if (isStart) {
-          widget.trimmer.seekTo(widget.trimmer.startValue);
+
+        // 🎯 핸들 드래그 종료 시 비디오 위치를 범위 내로 조정
+        final currentPos = widget.trimmer.currentPosition;
+        final startValue = widget.trimmer.startValue;
+        final endValue = widget.trimmer.endValue;
+
+        // 현재 위치가 범위를 벗어나면 조정
+        if (currentPos < startValue) {
+          widget.trimmer.seekTo(startValue);
+        } else if (currentPos > endValue) {
+          widget.trimmer.seekTo(endValue);
         } else {
-          widget.trimmer.seekTo(widget.trimmer.endValue);
+          // 범위 내에 있으면 현재 위치 유지 (핸들 위치에 맞게)
+          widget.trimmer.seekTo(currentPos);
         }
       },
       child: Center(
@@ -1286,98 +1327,6 @@ class _TrimEditorState extends State<TrimEditor> {
           },
         ),
       ),
-    );
-  }
-
-  /// 타임라인 전체 드래그 영역 (핸들이 아닐 때 트림 범위 이동)
-  Widget _buildTimelineDragArea({
-    required double startBoundaryX,
-    required double endBoundaryX,
-    required double pxPerSecond,
-    required double scrollOffset,
-    required double totalSeconds,
-    required double maxTrimLength,
-  }) {
-    return Listener(
-      behavior: HitTestBehavior.translucent,
-      onPointerDown: (event) {
-        // 핸들 영역 체크
-        final localX = event.localPosition.dx;
-        const handleTouchPadding = 15.0;
-
-        final touchingStartHandle =
-            (localX - startBoundaryX).abs() < handleTouchPadding;
-        final touchingEndHandle =
-            (localX - endBoundaryX).abs() < handleTouchPadding;
-
-        // 핸들 영역이면 무시
-        if (touchingStartHandle || touchingEndHandle || _isHandleDragging) {
-          return;
-        }
-
-        // 드래그 시작: 현재 범위 길이 저장
-        setState(() {
-          _isTimelineDragging = true;
-          _dragStartStartValue = widget.trimmer.startValue;
-          _dragStartEndValue = widget.trimmer.endValue;
-          _dragStartTimelineX = localX + scrollOffset;
-        });
-        widget.trimmer.setHandleDragging(true);
-      },
-      onPointerMove: (event) {
-        if (!_isTimelineDragging ||
-            _dragStartStartValue == null ||
-            _dragStartEndValue == null ||
-            _dragStartTimelineX == null) {
-          return;
-        }
-
-        final localX = event.localPosition.dx;
-        final currentScrollOffset =
-            _scrollController.hasClients ? _scrollController.offset : 0.0;
-        final timelineX = localX + currentScrollOffset;
-
-        final dx = timelineX - _dragStartTimelineX!;
-        final deltaSeconds = dx / pxPerSecond;
-
-        // 🎯 범위 길이 유지하면서 이동
-        final currentLength = _dragStartEndValue! - _dragStartStartValue!;
-        var newStart = _dragStartStartValue! + deltaSeconds;
-        var newEnd = _dragStartEndValue! + deltaSeconds;
-
-        // 범위 체크
-        if (newStart < 0) {
-          newStart = 0;
-          newEnd = currentLength;
-        }
-        if (newEnd > totalSeconds) {
-          newEnd = totalSeconds;
-          newStart = totalSeconds - currentLength;
-          if (newStart < 0) newStart = 0;
-        }
-
-        // 유효성 검사
-        if (newStart.isNaN || newStart.isInfinite || newStart < 0) return;
-        if (newEnd.isNaN || newEnd.isInfinite || newEnd < 0) return;
-        if (newEnd <= newStart) return;
-
-        widget.trimmer.onChangeStart(newStart);
-        widget.trimmer.onChangeEnd(newEnd);
-        widget.onChangeStart?.call(newStart);
-        widget.onChangeEnd?.call(newEnd);
-        setState(() {});
-      },
-      onPointerUp: (event) {
-        setState(() {
-          _isTimelineDragging = false;
-          _dragStartStartValue = null;
-          _dragStartEndValue = null;
-          _dragStartTimelineX = null;
-        });
-        widget.trimmer.setHandleDragging(false);
-        widget.trimmer.seekTo(widget.trimmer.startValue);
-      },
-      child: Container(color: Colors.transparent),
     );
   }
 
