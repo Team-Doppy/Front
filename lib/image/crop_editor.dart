@@ -179,10 +179,6 @@ class CropState {
   }
 }
 
-/// ❌ CropEditor 제거됨 - 크롭 이동은 금지, 이미지만 이동 가능
-
-/// ❌ _CornerHandlePainter 제거됨 - CropEditor에서만 사용되었음
-
 /// 크롭 유틸리티 클래스
 class CropUtils {
   CropUtils._();
@@ -1552,7 +1548,37 @@ class CropGestureHandler {
           );
         }
 
-        // ✅ snap-back은 offset만 조정, cropRectImage는 절대 건드리지 않음
+        // ✅ 핀치 줌 완료 시: 화면 중앙 기준으로 cropRectImage 재계산
+        final finalImageRect = ImageRectUtils.computeImageRectForCrop(
+          containerSize: containerSize,
+          imageSize: imageSize,
+          scale: imageScale,
+          offset:
+              snapBackOffset != null
+                  ? imageOffset + snapBackOffset
+                  : imageOffset,
+        );
+        final containerCenter = Offset(
+          containerSize.width / 2,
+          containerSize.height / 2,
+        );
+        final sx = finalImageRect.width / imageSize.width;
+        final sy = finalImageRect.height / imageSize.height;
+        final cropSizeScreen = Size(
+          cropState.cropRectImage!.width * sx,
+          cropState.cropRectImage!.height * sy,
+        );
+        final centerScreenRect = Rect.fromCenter(
+          center: containerCenter,
+          width: cropSizeScreen.width,
+          height: cropSizeScreen.height,
+        );
+        // 화면 좌표 → 이미지 좌표 변환
+        final cropRectImageUpdate = Offset(
+          (centerScreenRect.left - finalImageRect.left) / sx,
+          (centerScreenRect.top - finalImageRect.top) / sy,
+        );
+
         _isDraggingImage = false;
         _frozenImageRect = null;
         _frozenCropRectScreen = null;
@@ -1561,8 +1587,11 @@ class CropGestureHandler {
 
         return CropDragEndResult(
           snapBackOffset: snapBackOffset,
-          cropRectImagePosition: null, // ❌ snap-back에서는 cropRectImage 변경 금지
-          cropRectImageSize: null,
+          cropRectImagePosition: cropRectImageUpdate, // ✅ 화면 중앙 기준으로 재계산
+          cropRectImageSize: Size(
+            cropState.cropRectImage!.width,
+            cropState.cropRectImage!.height,
+          ),
           snapBackScale: null,
         );
       }
@@ -1624,7 +1653,35 @@ class CropGestureHandler {
         );
       }
 
-      // ✅ snap-back은 offset만 조정, cropRectImage는 절대 건드리지 않음
+      // ✅ 드래그 완료 시: 화면 중앙 기준으로 cropRectImage 재계산
+      final finalImageRect = ImageRectUtils.computeImageRectForCrop(
+        containerSize: containerSize,
+        imageSize: imageSize,
+        scale: imageScale,
+        offset:
+            snapBackOffset != null ? imageOffset + snapBackOffset : imageOffset,
+      );
+      final containerCenter = Offset(
+        containerSize.width / 2,
+        containerSize.height / 2,
+      );
+      final sx = finalImageRect.width / imageSize.width;
+      final sy = finalImageRect.height / imageSize.height;
+      final cropSizeScreen = Size(
+        cropState.cropRectImage!.width * sx,
+        cropState.cropRectImage!.height * sy,
+      );
+      final centerScreenRect = Rect.fromCenter(
+        center: containerCenter,
+        width: cropSizeScreen.width,
+        height: cropSizeScreen.height,
+      );
+      // 화면 좌표 → 이미지 좌표 변환
+      final cropRectImageUpdate = Offset(
+        (centerScreenRect.left - finalImageRect.left) / sx,
+        (centerScreenRect.top - finalImageRect.top) / sy,
+      );
+
       // ✅ 드래그 종료 시 freeze 해제
       _isDraggingImage = false;
       _frozenImageRect = null;
@@ -1632,8 +1689,11 @@ class CropGestureHandler {
 
       return CropDragEndResult(
         snapBackOffset: snapBackOffset,
-        cropRectImagePosition: null, // ❌ snap-back에서는 cropRectImage 변경 금지
-        cropRectImageSize: null,
+        cropRectImagePosition: cropRectImageUpdate, // ✅ 화면 중앙 기준으로 재계산
+        cropRectImageSize: Size(
+          cropState.cropRectImage!.width,
+          cropState.cropRectImage!.height,
+        ),
       );
     }
 
