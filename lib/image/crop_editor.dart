@@ -45,12 +45,15 @@ class ImageRectUtils {
     Offset offset = Offset.zero,
     double topMargin = 0.0,
     double bottomMargin = 0.0,
+    double leftMargin = 0.0,
+    double rightMargin = 0.0,
   }) {
     final imageAspect = imageSize.width / imageSize.height;
 
     // 마진을 적용한 실제 컨테이너 크기
+    final availableWidth = containerSize.width - leftMargin - rightMargin;
     final availableHeight = containerSize.height - topMargin - bottomMargin;
-    final availableSize = Size(containerSize.width, availableHeight);
+    final availableSize = Size(availableWidth, availableHeight);
     final containerAspect = availableSize.width / availableSize.height;
 
     // 기본 표시 크기 계산 (scale 1.0 기준)
@@ -60,12 +63,14 @@ class ImageRectUtils {
     if (imageAspect > containerAspect) {
       baseDisplayWidth = availableSize.width;
       baseDisplayHeight = availableSize.width / imageAspect;
+      baseImageOffsetX = leftMargin;
       baseImageOffsetY =
           topMargin + (availableSize.height - baseDisplayHeight) / 2;
     } else {
       baseDisplayHeight = availableSize.height;
       baseDisplayWidth = availableSize.height * imageAspect;
-      baseImageOffsetX = (containerSize.width - baseDisplayWidth) / 2;
+      baseImageOffsetX =
+          leftMargin + (availableSize.width - baseDisplayWidth) / 2;
       baseImageOffsetY = topMargin;
     }
 
@@ -88,6 +93,26 @@ class ImageRectUtils {
       finalImageOffsetY,
       scaledWidth,
       scaledHeight,
+    );
+  }
+
+  /// 크롭 모드용 이미지 rect 계산 (항상 마진 적용)
+  /// 크롭 모드에서는 항상 이 함수를 사용하여 마진이 보장되도록 함
+  static Rect computeImageRectForCrop({
+    required Size containerSize,
+    required Size imageSize,
+    double scale = 1.0,
+    Offset offset = Offset.zero,
+  }) {
+    return computeImageRect(
+      containerSize: containerSize,
+      imageSize: imageSize,
+      scale: scale,
+      offset: offset,
+      topMargin: 4.0,
+      bottomMargin: 4.0,
+      leftMargin: 4.0,
+      rightMargin: 4.0,
     );
   }
 }
@@ -174,14 +199,12 @@ class CropUtils {
     final imageSize = Size(image.width.toDouble(), image.height.toDouble());
 
     // ✅ 실제 화면에 표시된 이미지 rect 계산 (scale과 offset 반영)
-    // 크롭 모드이므로 상하 마진 4픽셀 적용
-    final displayImageRect = ImageRectUtils.computeImageRect(
+    // 크롭 모드이므로 상하좌우 마진 4픽셀 적용
+    final displayImageRect = ImageRectUtils.computeImageRectForCrop(
       containerSize: containerSize,
       imageSize: imageSize,
       scale: scale,
       offset: offset,
-      topMargin: 4.0,
-      bottomMargin: 4.0,
     );
 
     if (onDisplaySizeChanged != null) {
@@ -1281,7 +1304,7 @@ class CropGestureHandler {
         uiImage.width.toDouble(),
         uiImage.height.toDouble(),
       );
-      final currentImageRect = ImageRectUtils.computeImageRect(
+      final currentImageRect = ImageRectUtils.computeImageRectForCrop(
         containerSize: containerSize,
         imageSize: imageSize,
         scale: imageScale,
@@ -1318,6 +1341,11 @@ class CropGestureHandler {
       _isPinching = true;
       _initialScale ??= imageScale;
 
+      final imageSize = Size(
+        uiImage.width.toDouble(),
+        uiImage.height.toDouble(),
+      );
+
       // 새로운 scale 계산 (초기 scale * 현재 scale 변화)
       double newScale = _initialScale! * details.scale;
 
@@ -1327,12 +1355,37 @@ class CropGestureHandler {
         return null;
       }
 
-      // ✅ 계산된 스케일이 1.0 미만이면 무시 (더 이상 축소 불가)
+      // ✅ 핀치 축소 허용 조건: 이미지가 cropRect를 덮고 있어야 함
+      if (details.scale < 1.0 && cropState.cropRectImage != null) {
+        final testImageRect = ImageRectUtils.computeImageRectForCrop(
+          containerSize: containerSize,
+          imageSize: imageSize,
+          scale: newScale,
+          offset: imageOffset,
+        );
+
+        final testCropRectScreen = ImageRectUtils.imageToScreenRect(
+          imageRect: cropState.cropRectImage!,
+          screenImageRect: testImageRect,
+          imageSize: imageSize,
+        );
+
+        // ✅ 이미지가 cropRect를 완전히 덮지 못하면 축소 금지
+        if (testImageRect.left > testCropRectScreen.left ||
+            testImageRect.top > testCropRectScreen.top ||
+            testImageRect.right < testCropRectScreen.right ||
+            testImageRect.bottom < testCropRectScreen.bottom) {
+          // 축소 금지: 현재 scale 유지
+          return null;
+        }
+      }
+
+      // 최소 scale 제한
       if (newScale < _minImageScale) {
         return null;
       }
 
-      // 최소 scale 제한 (1.0 이하로 내려가지 않음)
+      // 최대 scale 제한
       newScale = newScale.clamp(_minImageScale, 5.0);
 
       return ScaleUpdateResult(
@@ -1379,7 +1432,7 @@ class CropGestureHandler {
     final proposedOffset = imageOffset + delta;
 
     // (2) 고무줄 감쇠 판정
-    final testImageRect = ImageRectUtils.computeImageRect(
+    final testImageRect = ImageRectUtils.computeImageRectForCrop(
       containerSize: containerSize,
       imageSize: imageSize,
       scale: imageScale,
@@ -1446,10 +1499,7 @@ class CropGestureHandler {
         return CropDragEndResult(
           snapBackOffset: null,
           cropRectImagePosition: null,
-          cropRectImageSize: Size(
-            cropState.cropRectImage!.width,
-            cropState.cropRectImage!.height,
-          ),
+          cropRectImageSize: null,
           snapBackScale: _minImageScale, // 복귀할 scale 값
         );
       }
@@ -1461,7 +1511,7 @@ class CropGestureHandler {
       );
 
       // 현재 scale 기준으로 이미지 rect 계산
-      final currentImageRect = ImageRectUtils.computeImageRect(
+      final currentImageRect = ImageRectUtils.computeImageRectForCrop(
         containerSize: containerSize,
         imageSize: imageSize,
         scale: imageScale,
@@ -1502,43 +1552,7 @@ class CropGestureHandler {
           );
         }
 
-        // snap-back offset이 있으면 적용된 상태로 다시 계산
-        final finalImageRect =
-            snapBackOffset != null
-                ? ImageRectUtils.computeImageRect(
-                  containerSize: containerSize,
-                  imageSize: imageSize,
-                  scale: imageScale,
-                  offset: imageOffset + snapBackOffset,
-                )
-                : currentImageRect;
-
-        // 화면 좌표를 이미지 좌표로 변환
-        final sx = finalImageRect.width / imageSize.width;
-        final sy = finalImageRect.height / imageSize.height;
-
-        // 화면 좌표의 크롭박스를 이미지 좌표로 변환
-        final cropRectImageLeft =
-            (_frozenCropRectScreen!.left - finalImageRect.left) / sx;
-        final cropRectImageTop =
-            (_frozenCropRectScreen!.top - finalImageRect.top) / sy;
-        final cropRectImageWidth = _frozenCropRectScreen!.width / sx;
-        final cropRectImageHeight = _frozenCropRectScreen!.height / sy;
-
-        // 이미지 경계 내로 클램프
-        final newCropRectImage = Rect.fromLTWH(
-          cropRectImageLeft.clamp(0.0, imageSize.width),
-          cropRectImageTop.clamp(0.0, imageSize.height),
-          cropRectImageWidth.clamp(
-            0.0,
-            imageSize.width - cropRectImageLeft.clamp(0.0, imageSize.width),
-          ),
-          cropRectImageHeight.clamp(
-            0.0,
-            imageSize.height - cropRectImageTop.clamp(0.0, imageSize.height),
-          ),
-        );
-
+        // ✅ snap-back은 offset만 조정, cropRectImage는 절대 건드리지 않음
         _isDraggingImage = false;
         _frozenImageRect = null;
         _frozenCropRectScreen = null;
@@ -1547,14 +1561,8 @@ class CropGestureHandler {
 
         return CropDragEndResult(
           snapBackOffset: snapBackOffset,
-          cropRectImagePosition: Offset(
-            newCropRectImage.left,
-            newCropRectImage.top,
-          ),
-          cropRectImageSize: Size(
-            newCropRectImage.width,
-            newCropRectImage.height,
-          ),
+          cropRectImagePosition: null, // ❌ snap-back에서는 cropRectImage 변경 금지
+          cropRectImageSize: null,
           snapBackScale: null,
         );
       }
@@ -1577,7 +1585,7 @@ class CropGestureHandler {
       );
 
       // 현재 이미지 rect (최종 offset 기준)
-      final currentImageRect = ImageRectUtils.computeImageRect(
+      final currentImageRect = ImageRectUtils.computeImageRectForCrop(
         containerSize: containerSize,
         imageSize: imageSize,
         scale: imageScale,
@@ -1607,7 +1615,6 @@ class CropGestureHandler {
       }
 
       Offset? snapBackOffset;
-      Offset? cropRectImageUpdate;
 
       // ✅ 벗어났으면 offset 조정하여 복귀
       if (adjustX != 0.0 || adjustY != 0.0) {
@@ -1617,35 +1624,7 @@ class CropGestureHandler {
         );
       }
 
-      // ✅ 드래그 종료 시: 현재 화면 중앙에 있는 크롭박스 기준으로 cropRectImage 업데이트
-      final finalImageRect = ImageRectUtils.computeImageRect(
-        containerSize: containerSize,
-        imageSize: imageSize,
-        scale: imageScale,
-        offset:
-            snapBackOffset != null ? imageOffset + snapBackOffset : imageOffset,
-      );
-      final containerCenter = Offset(
-        containerSize.width / 2,
-        containerSize.height / 2,
-      );
-      final sx = finalImageRect.width / imageSize.width;
-      final sy = finalImageRect.height / imageSize.height;
-      final cropSizeScreen = Size(
-        cropState.cropRectImage!.width * sx,
-        cropState.cropRectImage!.height * sy,
-      );
-      final centerScreenRect = Rect.fromCenter(
-        center: containerCenter,
-        width: cropSizeScreen.width,
-        height: cropSizeScreen.height,
-      );
-      // 화면 좌표 → 이미지 좌표 변환
-      cropRectImageUpdate = Offset(
-        (centerScreenRect.left - finalImageRect.left) / sx,
-        (centerScreenRect.top - finalImageRect.top) / sy,
-      );
-
+      // ✅ snap-back은 offset만 조정, cropRectImage는 절대 건드리지 않음
       // ✅ 드래그 종료 시 freeze 해제
       _isDraggingImage = false;
       _frozenImageRect = null;
@@ -1653,11 +1632,8 @@ class CropGestureHandler {
 
       return CropDragEndResult(
         snapBackOffset: snapBackOffset,
-        cropRectImagePosition: cropRectImageUpdate,
-        cropRectImageSize: Size(
-          cropState.cropRectImage!.width,
-          cropState.cropRectImage!.height,
-        ),
+        cropRectImagePosition: null, // ❌ snap-back에서는 cropRectImage 변경 금지
+        cropRectImageSize: null,
       );
     }
 
@@ -1704,13 +1680,13 @@ class CropGestureHandler {
 class CropDragEndResult {
   final Offset? snapBackOffset;
   final Offset? cropRectImagePosition;
-  final Size cropRectImageSize;
+  final Size? cropRectImageSize; // nullable로 변경 (snap-back에서는 null)
   final double? snapBackScale; // 핀치 줌 복귀용 scale
 
   CropDragEndResult({
     this.snapBackOffset,
     this.cropRectImagePosition,
-    required this.cropRectImageSize,
+    this.cropRectImageSize,
     this.snapBackScale,
   });
 }
@@ -1751,7 +1727,7 @@ class CropAutoZoom {
     final cropCenterImage = cropState.cropRectImage!.center;
 
     // 2) 현재 scale 기준으로 크롭 크기 계산 (scale 결정용)
-    final currentImageRect = ImageRectUtils.computeImageRect(
+    final currentImageRect = ImageRectUtils.computeImageRectForCrop(
       containerSize: containerSize,
       imageSize: imageSize,
       scale: currentScale,
@@ -1788,7 +1764,7 @@ class CropAutoZoom {
     double finalTargetScale = targetScale;
 
     // targetScale로 계산된 이미지 rect 확인
-    final testImageRect = ImageRectUtils.computeImageRect(
+    final testImageRect = ImageRectUtils.computeImageRectForCrop(
       containerSize: containerSize,
       imageSize: imageSize,
       scale: targetScale,
@@ -1854,7 +1830,7 @@ class CropAutoZoom {
     targetScale = finalTargetScale;
 
     // 4) targetScale 적용 후 이미지 rect 계산 (offset=0 기준)
-    final imageRectAtTargetScale = ImageRectUtils.computeImageRect(
+    final imageRectAtTargetScale = ImageRectUtils.computeImageRectForCrop(
       containerSize: containerSize,
       imageSize: imageSize,
       scale: targetScale,

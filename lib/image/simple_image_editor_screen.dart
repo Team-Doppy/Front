@@ -74,6 +74,8 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
   int _currentIndex = 0;
   _EditMode _editMode = _EditMode.none;
   final Map<int, ui.Image?> _uiImageCache = {};
+  // ✅ 원본 이미지의 ui.Image 캐시 (크롭 취소 시 즉시 사용)
+  final Map<int, ui.Image?> _originalUiImageCache = {};
   static const int _maxImageCacheSize = 10; // 최대 UI 이미지 캐시 크기
 
   // 이미지별 편집 상태 관리
@@ -162,6 +164,8 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
   Future<void> _preloadImages() async {
     for (int i = 0; i < _images.length; i++) {
       _loadImageToCache(i, _images[i]);
+      // ✅ 원본 이미지의 ui.Image도 미리 로드
+      _loadOriginalImageToCache(i, _originalImages[i]);
     }
   }
 
@@ -180,6 +184,23 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
       }
     } catch (e) {
       debugPrint('이미지 로드 오류: $e');
+    }
+  }
+
+  /// ✅ 원본 이미지의 ui.Image를 캐시에 로드 (크롭 취소 시 즉시 사용)
+  Future<void> _loadOriginalImageToCache(int index, Uint8List bytes) async {
+    if (_originalUiImageCache[index] != null) return;
+
+    try {
+      final codec = await ui.instantiateImageCodec(bytes);
+      final frame = await codec.getNextFrame();
+      if (mounted) {
+        setState(() {
+          _originalUiImageCache[index] = frame.image;
+        });
+      }
+    } catch (e) {
+      debugPrint('원본 이미지 로드 오류: $e');
     }
   }
 
@@ -216,6 +237,11 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
       image?.dispose();
     }
     _uiImageCache.clear();
+    // ✅ 원본 이미지 캐시도 정리
+    for (final image in _originalUiImageCache.values) {
+      image?.dispose();
+    }
+    _originalUiImageCache.clear();
     _history.clear();
     _redoStack.clear();
 
@@ -714,14 +740,22 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
                 : null;
 
         // ✅ 현재 이미지 rect 계산
+        // 크롭 모드일 때는 항상 마진이 적용된 함수 사용
         final currentImageRect =
             imageSize != null
-                ? ImageRectUtils.computeImageRect(
-                  containerSize: containerSize,
-                  imageSize: imageSize,
-                  scale: state.imageScale,
-                  offset: state.imageOffset,
-                )
+                ? (_editMode == _EditMode.crop
+                    ? ImageRectUtils.computeImageRectForCrop(
+                      containerSize: containerSize,
+                      imageSize: imageSize,
+                      scale: state.imageScale,
+                      offset: state.imageOffset,
+                    )
+                    : ImageRectUtils.computeImageRect(
+                      containerSize: containerSize,
+                      imageSize: imageSize,
+                      scale: state.imageScale,
+                      offset: state.imageOffset,
+                    ))
                 : null;
 
         // ✅ 크롭 관련 계산용 imageRect (드래그 중이면 freeze된 값 사용)
@@ -915,12 +949,19 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
                             cropHandler.isDraggingImage &&
                                     cropHandler.frozenImageRect != null
                                 ? cropHandler.frozenImageRect!
-                                : ImageRectUtils.computeImageRect(
-                                  containerSize: containerSize,
-                                  imageSize: imageSize,
-                                  scale: state.imageScale,
-                                  offset: state.imageOffset,
-                                );
+                                : (_editMode == _EditMode.crop
+                                    ? ImageRectUtils.computeImageRectForCrop(
+                                      containerSize: containerSize,
+                                      imageSize: imageSize,
+                                      scale: state.imageScale,
+                                      offset: state.imageOffset,
+                                    )
+                                    : ImageRectUtils.computeImageRect(
+                                      containerSize: containerSize,
+                                      imageSize: imageSize,
+                                      scale: state.imageScale,
+                                      offset: state.imageOffset,
+                                    ));
                         CropGestureUtils.updateCropRectResize(
                           handle: handle,
                           screenDelta: delta,
@@ -1168,15 +1209,20 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
         // 크롭 모드 종료 시: 원본 이미지로 복원
         if (_currentIndex < _originalImages.length) {
           _images[_currentIndex] = _originalImages[_currentIndex];
-          _uiImageCache[_currentIndex] = null;
+
+          // ✅ 원본 이미지의 ui.Image가 캐시에 있으면 즉시 사용 (로딩 없음)
+          if (_originalUiImageCache[_currentIndex] != null) {
+            _uiImageCache[_currentIndex] = _originalUiImageCache[_currentIndex];
+          } else {
+            // 캐시에 없으면 로드 (초기 로드 시나리오)
+            _uiImageCache[_currentIndex] = null;
+            _loadImageToCache(_currentIndex, _originalImages[_currentIndex]);
+          }
 
           // transform 상태도 초기화
           state.imageOffset = Offset.zero;
           state.imageScale = 1.0;
           state.cropState.reset();
-
-          // UI 이미지 다시 로드
-          _loadImageToCache(_currentIndex, _originalImages[_currentIndex]);
         }
         // 크롭 모드 종료 시 제스처 핸들러 리셋
         _getCropGestureHandler(_currentIndex).reset();
@@ -1227,7 +1273,16 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
         if (_editMode == _EditMode.crop) {
           if (_currentIndex < _originalImages.length) {
             _images[_currentIndex] = _originalImages[_currentIndex];
-            _uiImageCache[_currentIndex] = null;
+
+            // ✅ 원본 이미지의 ui.Image가 캐시에 있으면 즉시 사용 (로딩 없음)
+            if (_originalUiImageCache[_currentIndex] != null) {
+              _uiImageCache[_currentIndex] =
+                  _originalUiImageCache[_currentIndex];
+            } else {
+              // 캐시에 없으면 로드 (초기 로드 시나리오)
+              _uiImageCache[_currentIndex] = null;
+              _loadImageToCache(_currentIndex, _originalImages[_currentIndex]);
+            }
 
             // transform 상태도 초기화
             final state = _imageEditStates[_currentIndex];
@@ -1236,9 +1291,6 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
               state.imageScale = 1.0;
               state.cropState.reset();
             }
-
-            // UI 이미지 다시 로드
-            _loadImageToCache(_currentIndex, _originalImages[_currentIndex]);
           }
         }
 
@@ -1389,12 +1441,14 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
       }
 
       // ✅ cropRectImage 위치 업데이트 (크기 유지)
-      if (result.cropRectImagePosition != null) {
+      // ❌ snap-back에서는 cropRectImage 변경하지 않음 (null이면 무시)
+      if (result.cropRectImagePosition != null &&
+          result.cropRectImageSize != null) {
         state.cropState.cropRectImage = Rect.fromLTWH(
           result.cropRectImagePosition!.dx,
           result.cropRectImagePosition!.dy,
-          result.cropRectImageSize.width,
-          result.cropRectImageSize.height,
+          result.cropRectImageSize!.width,
+          result.cropRectImageSize!.height,
         );
       }
     }
