@@ -2113,10 +2113,23 @@ class EditorService extends ChangeNotifier {
     String targetImageId, {
     bool isFromLeft = true,
   }) {
+    debugPrint(
+      '[EditorService] 🔀 병합 시작: dragging=$draggingImageId, target=$targetImageId, isFromLeft=$isFromLeft',
+    );
+
     final draggingNode = document.getNodeById(draggingImageId);
     final targetNode = document.getNodeById(targetImageId);
 
-    if (draggingNode == null || targetNode == null) return;
+    if (draggingNode == null || targetNode == null) {
+      debugPrint(
+        '[EditorService] ❌ 병합 실패: 노드를 찾을 수 없음 (dragging: ${draggingNode != null}, target: ${targetNode != null})',
+      );
+      return;
+    }
+
+    debugPrint(
+      '[EditorService] 📋 병합 대상 노드 타입: dragging=${draggingNode.runtimeType}, target=${targetNode.runtimeType}',
+    );
 
     // 타겟 노드가 ImageRowNode인 경우
     if (targetNode is ImageRowNode) {
@@ -2159,16 +2172,33 @@ class EditorService extends ChangeNotifier {
     // 🎯 각 이미지의 mediaId 추출
     String? draggingMediaId;
     String? targetMediaId;
+    Map<String, dynamic>? draggingMeta;
+    Map<String, dynamic>? targetMeta;
     try {
-      final draggingMeta =
+      draggingMeta =
           (draggingNode as dynamic).metadata as Map<String, dynamic>?;
       draggingMediaId = draggingMeta?['mediaId']?.toString();
-    } catch (_) {}
+      debugPrint('[EditorService] 📦 드래그 이미지 메타데이터: mediaId=$draggingMediaId');
+      if (draggingMeta != null && draggingMeta.containsKey('imageDimensions')) {
+        debugPrint(
+          '[EditorService] 📏 드래그 이미지 imageDimensions: ${draggingMeta['imageDimensions']}',
+        );
+      }
+    } catch (e) {
+      debugPrint('[EditorService] ⚠️ 드래그 이미지 메타데이터 추출 실패: $e');
+    }
     try {
-      final targetMeta =
-          (targetNode as dynamic).metadata as Map<String, dynamic>?;
+      targetMeta = (targetNode as dynamic).metadata as Map<String, dynamic>?;
       targetMediaId = targetMeta?['mediaId']?.toString();
-    } catch (_) {}
+      debugPrint('[EditorService] 📦 타겟 이미지 메타데이터: mediaId=$targetMediaId');
+      if (targetMeta != null && targetMeta.containsKey('imageDimensions')) {
+        debugPrint(
+          '[EditorService] 📏 타겟 이미지 imageDimensions: ${targetMeta['imageDimensions']}',
+        );
+      }
+    } catch (e) {
+      debugPrint('[EditorService] ⚠️ 타겟 이미지 메타데이터 추출 실패: $e');
+    }
 
     // 방향에 따라 이미지 순서 결정
     List<String> mediaIds = [];
@@ -2186,7 +2216,8 @@ class EditorService extends ChangeNotifier {
       if (draggingMediaId != null) mediaIds.add(draggingMediaId);
     }
 
-    debugPrint('[EditorService] ImageRow 생성 - mediaIds: $mediaIds');
+    debugPrint('[EditorService] 📋 ImageRow 생성 - imageUrls: $imageUrls');
+    debugPrint('[EditorService] 📋 ImageRow 생성 - mediaIds: $mediaIds');
 
     // 🎯 imageCommentInfo 맵 생성 (PostExporter가 기대하는 형식)
     final imageCommentInfo = <String, Map<String, dynamic>>{};
@@ -2203,44 +2234,83 @@ class EditorService extends ChangeNotifier {
 
     debugPrint('[EditorService] 🔍 생성된 imageCommentInfo: $imageCommentInfo');
 
+    // 🎯 기존 이미지들의 메타데이터 병합 (공통 함수 사용)
+    final mergedMetadata = _mergeImageMetadata([draggingMeta, targetMeta]);
+    final mergedImageDimensions =
+        mergedMetadata['imageDimensions'] as Map<String, dynamic>? ?? {};
+
+    // 메타데이터 구성
+    final metadata = <String, dynamic>{};
+    if (imageCommentInfo.isNotEmpty) {
+      metadata['imageCommentInfo'] = imageCommentInfo;
+    }
+    // 병합된 메타데이터 추가 (imageDimensions, uploadedUrls)
+    metadata.addAll(mergedMetadata);
+
+    debugPrint(
+      '[EditorService] 📦 최종 메타데이터: imageCommentInfo=${imageCommentInfo.isNotEmpty}, imageDimensions=${mergedImageDimensions.isNotEmpty}',
+    );
+
     // ImageRowNode 생성 (이미 3개 제한이 적용됨)
     final imageRowNode = ImageRowNode(
       id: 'imageRow_${DateTime.now().millisecondsSinceEpoch}',
       imageUrls: imageUrls,
       spacing: 8.0,
-      metadata:
-          imageCommentInfo.isNotEmpty
-              ? {'imageCommentInfo': imageCommentInfo}
-              : null,
+      metadata: metadata.isNotEmpty ? metadata : null,
+    );
+
+    debugPrint(
+      '[EditorService] 🆕 생성된 ImageRowNode: id=${imageRowNode.id}, imageUrls=${imageRowNode.imageUrls.length}개, metadata keys=${imageRowNode.metadata.keys.toList()}',
     );
 
     // 🎯 이미지 병합 작업 중에는 히스토리 추적 일시 중단
     _isExecutingHistory = true;
+
+    // ImageRowNode 삽입 (더 작은 인덱스 위치에)
+    final insertIndex =
+        draggingIndex < targetIndex ? draggingIndex : targetIndex;
 
     try {
       // 기존 이미지들 삭제
       document.deleteNode(draggingImageId);
       document.deleteNode(targetImageId);
 
-      // ImageRowNode 삽입 (더 작은 인덱스 위치에)
-      final insertIndex =
-          draggingIndex < targetIndex ? draggingIndex : targetIndex;
       document.insertNodeAt(insertIndex, imageRowNode);
       // 🎯 notifyListeners는 finally 이후에 한 번만
     } finally {
       _isExecutingHistory = false;
       _saveCurrentState(immediate: true);
-      debugPrint('[EditorService] 🖼️ 이미지 병합 완료');
+      debugPrint(
+        '[EditorService] ✅ 이미지 병합 완료: insertIndex=$insertIndex, newNodeId=${imageRowNode.id}',
+      );
       notifyListeners(); // 🎯 최종: 한 번만 호출
     }
   }
 
   void _addImageToRow(String imageId, String rowId, bool isFromLeft) {
+    debugPrint(
+      '[EditorService] ➕ Row에 이미지 추가 시작: imageId=$imageId, rowId=$rowId, isFromLeft=$isFromLeft',
+    );
+
     final imageNode = document.getNodeById(imageId);
     final rowNode = document.getNodeById(rowId);
 
-    if (imageNode == null || rowNode == null) return;
-    if (imageNode is! ImageNode || rowNode is! ImageRowNode) return;
+    if (imageNode == null || rowNode == null) {
+      debugPrint(
+        '[EditorService] ❌ Row에 이미지 추가 실패: 노드를 찾을 수 없음 (image: ${imageNode != null}, row: ${rowNode != null})',
+      );
+      return;
+    }
+    if (imageNode is! ImageNode || rowNode is! ImageRowNode) {
+      debugPrint(
+        '[EditorService] ❌ Row에 이미지 추가 실패: 타입 불일치 (image: ${imageNode.runtimeType}, row: ${rowNode.runtimeType})',
+      );
+      return;
+    }
+
+    debugPrint(
+      '[EditorService] 📋 기존 Row 이미지 개수: ${rowNode.imageUrls.length}, 이미지 URL: ${rowNode.imageUrls}',
+    );
 
     // 네트워크 URL만 허용
     bool _isNetworkUrl(String u) =>
@@ -2252,18 +2322,19 @@ class EditorService extends ChangeNotifier {
     // 이미 3개가 있으면 추가하지 않음
     if (rowNode.imageUrls.length >= 3) return;
 
+    // 🎯 메타데이터 추출 (한 번만)
+    final imageMeta = (imageNode as dynamic).metadata as Map<String, dynamic>?;
+    final rowMeta = rowNode.metadata;
+
     // 🎯 추가되는 이미지의 mediaId 추출
     String? newImageMediaId;
     try {
-      final imageMeta =
-          (imageNode as dynamic).metadata as Map<String, dynamic>?;
       newImageMediaId = imageMeta?['mediaId']?.toString();
     } catch (_) {}
 
     // 🎯 기존 row의 imageCommentInfo 추출
     Map<String, Map<String, dynamic>> existingCommentInfo = {};
     try {
-      final rowMeta = rowNode.metadata;
       final commentInfo = rowMeta['imageCommentInfo'] as Map<String, dynamic>?;
       if (commentInfo != null) {
         existingCommentInfo = commentInfo.map(
@@ -2271,6 +2342,11 @@ class EditorService extends ChangeNotifier {
         );
       }
     } catch (_) {}
+
+    // 🎯 메타데이터 병합 (공통 함수 사용)
+    final mergedMetadata = _mergeImageMetadata([rowMeta, imageMeta]);
+    final existingImageDimensions =
+        mergedMetadata['imageDimensions'] as Map<String, dynamic>? ?? {};
 
     // 새로운 이미지 URL 리스트 생성
     final newImageUrls = List<String>.from(rowNode.imageUrls);
@@ -2302,15 +2378,31 @@ class EditorService extends ChangeNotifier {
     _isExecutingHistory = true;
 
     try {
+      // 메타데이터 구성
+      final metadata = <String, dynamic>{};
+      if (newImageCommentInfo.isNotEmpty) {
+        metadata['imageCommentInfo'] = newImageCommentInfo;
+      }
+      // 병합된 메타데이터 추가 (imageDimensions, uploadedUrls)
+      metadata.addAll(mergedMetadata);
+
+      debugPrint(
+        '[EditorService] 📦 업데이트된 메타데이터: imageCommentInfo=${newImageCommentInfo.isNotEmpty}, imageDimensions=${existingImageDimensions.isNotEmpty}, uploadedUrls=${mergedMetadata['uploadedUrls'] != null}',
+      );
+      debugPrint(
+        '[EditorService] 📋 새로운 이미지 URL 리스트: $newImageUrls (${newImageUrls.length}개)',
+      );
+
       // ImageRowNode 업데이트 (이미 3개 제한이 적용됨)
       final updatedRowNode = rowNode.copyWith(
         imageUrls: newImageUrls,
-        metadata:
-            newImageCommentInfo.isNotEmpty
-                ? {'imageCommentInfo': newImageCommentInfo}
-                : null,
+        metadata: metadata.isNotEmpty ? metadata : null,
       );
       document.replaceNodeById(rowId, updatedRowNode);
+
+      debugPrint(
+        '[EditorService] ✅ Row 업데이트 완료: rowId=$rowId, imageUrls=${updatedRowNode.imageUrls.length}개, metadata keys=${updatedRowNode.metadata.keys.toList()}',
+      );
 
       // 기존 이미지 삭제
       document.deleteNode(imageId);
@@ -2318,7 +2410,7 @@ class EditorService extends ChangeNotifier {
     } finally {
       _isExecutingHistory = false;
       _saveCurrentState(immediate: true);
-      debugPrint('[EditorService] 🖼️ ImageRow에 이미지 추가 완료');
+      debugPrint('[EditorService] ✅ ImageRow에 이미지 추가 완료: rowId=$rowId');
       notifyListeners(); // 🎯 최종: 한 번만 호출
     }
   }
@@ -2809,15 +2901,163 @@ class EditorService extends ChangeNotifier {
     }
   }
 
+  /// 🎯 이미지 메타데이터 병합 헬퍼 함수 (공통 로직)
+  /// 여러 이미지의 imageDimensions와 uploadedUrls를 병합
+  /// 반환: {imageDimensions: {...}, uploadedUrls: {...}}
+  Map<String, dynamic> _mergeImageMetadata(
+    List<Map<String, dynamic>?> metadataList,
+  ) {
+    final mergedDimensions = <String, dynamic>{};
+    final mergedUploadedUrls = <String, dynamic>{};
+
+    try {
+      // 모든 메타데이터에서 imageDimensions와 uploadedUrls 병합
+      for (final meta in metadataList) {
+        if (meta == null) continue;
+
+        final dimensions = meta['imageDimensions'] as Map<String, dynamic>?;
+        if (dimensions != null) {
+          mergedDimensions.addAll(dimensions);
+        }
+
+        final uploadedUrls = meta['uploadedUrls'] as Map<String, dynamic>?;
+        if (uploadedUrls != null) {
+          mergedUploadedUrls.addAll(uploadedUrls);
+        }
+      }
+
+      // uploadedUrls의 값(네트워크 URL)에 대한 크기 정보도 매핑
+      for (final meta in metadataList) {
+        if (meta == null) continue;
+
+        final dimensions = meta['imageDimensions'] as Map<String, dynamic>?;
+        final uploadedUrls = meta['uploadedUrls'] as Map<String, dynamic>?;
+
+        if (dimensions != null && uploadedUrls != null) {
+          for (final entry in uploadedUrls.entries) {
+            final localPath = entry.key;
+            final networkUrl = entry.value.toString();
+            if (dimensions.containsKey(localPath) &&
+                !mergedDimensions.containsKey(networkUrl)) {
+              mergedDimensions[networkUrl] = dimensions[localPath];
+            }
+          }
+        }
+      }
+
+      debugPrint(
+        '[EditorService] ✅ 병합된 imageDimensions: ${mergedDimensions.keys.toList()}',
+      );
+      debugPrint(
+        '[EditorService] ✅ 병합된 uploadedUrls: ${mergedUploadedUrls.keys.toList()}',
+      );
+    } catch (e) {
+      debugPrint('[EditorService] ❌ imageMetadata 병합 실패: $e');
+    }
+
+    final result = <String, dynamic>{};
+    if (mergedDimensions.isNotEmpty) {
+      result['imageDimensions'] = mergedDimensions;
+    }
+    if (mergedUploadedUrls.isNotEmpty) {
+      result['uploadedUrls'] = mergedUploadedUrls;
+    }
+    return result;
+  }
+
+  /// 🎯 특정 URL 목록에 해당하는 메타데이터만 필터링
+  Map<String, dynamic> _filterMetadataForUrls(
+    Map<String, dynamic>? sourceMetadata,
+    List<String> targetUrls,
+  ) {
+    if (sourceMetadata == null) return {};
+
+    final filtered = <String, dynamic>{};
+
+    // imageDimensions 필터링
+    final dimensions =
+        sourceMetadata['imageDimensions'] as Map<String, dynamic>?;
+    if (dimensions != null) {
+      final filteredDimensions = <String, dynamic>{};
+      for (final url in targetUrls) {
+        if (dimensions.containsKey(url)) {
+          filteredDimensions[url] = dimensions[url];
+        }
+      }
+      if (filteredDimensions.isNotEmpty) {
+        filtered['imageDimensions'] = filteredDimensions;
+      }
+    }
+
+    // imageCommentInfo 필터링
+    final commentInfo =
+        sourceMetadata['imageCommentInfo'] as Map<String, dynamic>?;
+    if (commentInfo != null) {
+      final filteredCommentInfo = <String, dynamic>{};
+      for (final url in targetUrls) {
+        if (commentInfo.containsKey(url)) {
+          filteredCommentInfo[url] = commentInfo[url];
+        }
+      }
+      if (filteredCommentInfo.isNotEmpty) {
+        filtered['imageCommentInfo'] = filteredCommentInfo;
+      }
+    }
+
+    // uploadedUrls 필터링 (해당 URL과 관련된 것만)
+    final uploadedUrls =
+        sourceMetadata['uploadedUrls'] as Map<String, dynamic>?;
+    if (uploadedUrls != null) {
+      final filteredUploadedUrls = <String, dynamic>{};
+      for (final entry in uploadedUrls.entries) {
+        final networkUrl = entry.value.toString();
+        if (targetUrls.contains(networkUrl) ||
+            targetUrls.any(
+              (url) =>
+                  url.contains(entry.key) ||
+                  entry.key.contains(url.split('/').last),
+            )) {
+          filteredUploadedUrls[entry.key] = entry.value;
+        }
+      }
+      if (filteredUploadedUrls.isNotEmpty) {
+        filtered['uploadedUrls'] = filteredUploadedUrls;
+      }
+    }
+
+    return filtered;
+  }
+
   /// 이미지 행에서 특정 이미지를 분리하고 분리된 이미지 ID 반환
   /// insertIndex가 주어지면 해당 위치에 바로 삽입한다. 주어지지 않으면 행의 위치(rowIndex)에 삽입.
   String? splitImageFromRow(String rowId, int imageIndex, {int? insertIndex}) {
+    debugPrint(
+      '[EditorService] ✂️ 이미지 분리 시작: rowId=$rowId, imageIndex=$imageIndex, insertIndex=$insertIndex',
+    );
+
     final rowNode = document.getNodeById(rowId);
-    if (rowNode == null || rowNode is! ImageRowNode) return null;
-    if (imageIndex < 0 || imageIndex >= rowNode.imageUrls.length) return null;
+    if (rowNode == null || rowNode is! ImageRowNode) {
+      debugPrint('[EditorService] ❌ 분리 실패: Row 노드를 찾을 수 없음');
+      return null;
+    }
+    if (imageIndex < 0 || imageIndex >= rowNode.imageUrls.length) {
+      debugPrint(
+        '[EditorService] ❌ 분리 실패: 이미지 인덱스 범위 초과 (imageIndex=$imageIndex, rowLength=${rowNode.imageUrls.length})',
+      );
+      return null;
+    }
 
     // 분리할 이미지 URL
     final imageUrl = rowNode.imageUrls[imageIndex];
+    debugPrint('[EditorService] 📋 분리할 이미지 URL: $imageUrl');
+    debugPrint('[EditorService] 📋 기존 Row 이미지: ${rowNode.imageUrls}');
+
+    // 🎯 분리할 이미지의 메타데이터 추출 (공통 함수 사용)
+    final rowMeta = rowNode.metadata;
+    final splitImageMetadata = _filterMetadataForUrls(rowMeta, [imageUrl]);
+    debugPrint(
+      '[EditorService] 📦 분리할 이미지 메타데이터: keys=${splitImageMetadata.keys.toList()}',
+    );
 
     // 이미지 행의 인덱스 찾기
     int rowIndex = -1;
@@ -2831,30 +3071,60 @@ class EditorService extends ChangeNotifier {
 
     // 분리할 이미지의 새 ID 생성
     final newImageId = 'image_${DateTime.now().millisecondsSinceEpoch}';
-    final newImageNode = AppImageNode(id: newImageId, imageUrl: imageUrl);
+    final newImageNode = AppImageNode(
+      id: newImageId,
+      imageUrl: imageUrl,
+      metadata: splitImageMetadata,
+    );
+    debugPrint(
+      '[EditorService] 🆕 분리된 이미지 노드 생성: id=$newImageId, metadata=${splitImageMetadata.keys.toList()}',
+    );
 
     // 이미지 행에서 해당 이미지 제거
     final remainingUrls = List<String>.from(rowNode.imageUrls);
     remainingUrls.removeAt(imageIndex);
+    debugPrint(
+      '[EditorService] 📋 분리 후 남은 이미지: $remainingUrls (${remainingUrls.length}개)',
+    );
 
     // 🎯 이미지 분리 작업 중에는 히스토리 추적 일시 중단
     _isExecutingHistory = true;
 
     try {
+      // 🎯 남은 이미지들의 메타데이터 필터링
+      final remainingMetadata = _filterMetadataForUrls(rowMeta, remainingUrls);
+      debugPrint(
+        '[EditorService] 📦 남은 이미지 메타데이터: keys=${remainingMetadata.keys.toList()}',
+      );
+
       if (remainingUrls.length == 1) {
         // 이미지가 1개만 남으면 단일 이미지로 변경
+        final singleImageMetadata = _filterMetadataForUrls(rowMeta, [
+          remainingUrls.first,
+        ]);
         final singleImageNode = AppImageNode(
           id: rowId,
           imageUrl: remainingUrls.first,
+          metadata: singleImageMetadata.isNotEmpty ? singleImageMetadata : null,
         );
         document.replaceNodeById(rowId, singleImageNode);
+        debugPrint(
+          '[EditorService] 🔄 Row를 단일 이미지로 변환: rowId=$rowId, metadata keys=${singleImageMetadata.keys.toList()}',
+        );
       } else if (remainingUrls.isEmpty) {
         // 이미지가 없으면 행 삭제
         document.deleteNode(rowId);
+        debugPrint('[EditorService] 🗑️ 빈 Row 삭제: rowId=$rowId');
       } else {
-        // 이미지 행 업데이트
-        final updatedRowNode = rowNode.copyWith(imageUrls: remainingUrls);
+        // 이미지 행 업데이트 (메타데이터도 함께 업데이트)
+        final updatedRowNode = rowNode.copyWith(
+          imageUrls: remainingUrls,
+          metadata: remainingMetadata.isNotEmpty ? remainingMetadata : null,
+        );
         document.replaceNodeById(rowId, updatedRowNode);
+        debugPrint(
+          '[EditorService] ✅ Row 업데이트: rowId=$rowId, imageUrls=${remainingUrls.length}개, metadata keys=${remainingMetadata.keys.toList()}',
+        );
       }
 
       // 분리된 이미지를 원하는 위치에 삽입 (기본: 원래 행의 위치)
@@ -2862,11 +3132,13 @@ class EditorService extends ChangeNotifier {
       document.insertNodeAt(targetInsertIndex, newImageNode);
       // 🎯 notifyListeners는 finally 이후에 한 번만
 
+      debugPrint(
+        '[EditorService] ✅ 이미지 분리 완료: newImageId=$newImageId, insertIndex=$targetInsertIndex',
+      );
       return newImageId;
     } finally {
       _isExecutingHistory = false;
       _saveCurrentState(immediate: true);
-      debugPrint('[EditorService] 🖼️ 이미지 분리 완료');
       notifyListeners(); // 🎯 최종: 한 번만 호출
     }
   }

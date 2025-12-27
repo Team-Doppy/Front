@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:doppy/common/widgets/image_error_placeholder.dart';
+import 'package:doppy/utils/image_size_utils.dart';
 import 'package:doppy/data/services/upload_service.dart';
 import 'package:doppy/editor/component/clip_component.dart';
 import 'package:doppy/editor/postwrite_screen.dart';
@@ -15,7 +16,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_svg/svg.dart';
 import 'package:provider/provider.dart';
 import 'dart:ui' as ui;
-import 'dart:typed_data';
 import 'package:super_editor/super_editor.dart';
 import 'dart:math' as math;
 
@@ -470,13 +470,58 @@ class _ImageRowComponentState extends State<ImageRowComponent>
   void didUpdateWidget(ImageRowComponent oldWidget) {
     super.didUpdateWidget(oldWidget);
 
-    // 🎯 이미지 URL이 변경되면 무조건 재측정
-    if (!_areUrlsEqual(oldWidget.imageUrls, widget.imageUrls)) {
+    // 🎯 이미지 URL이 변경되면 무조건 재측정 (병합 포함)
+    final urlsChanged = !_areUrlsEqual(oldWidget.imageUrls, widget.imageUrls);
+
+    if (urlsChanged) {
       _measuringUrls.clear();
 
       setState(() {
         _imageSizes.clear();
         _unifiedHeight = null;
+      });
+
+      // 🎯 병합 후 메타데이터에서 크기 정보 다시 로드
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+
+        // 🎯 메타데이터에서 크기 정보 로드 (병합 후 업데이트된 메타데이터 반영)
+        _loadImageSizesFromMetadata();
+
+        // 메타데이터에 없는 이미지는 측정 시작
+        final screenWidth = widget.screenWidth;
+        for (final imageUrl in widget.imageUrls) {
+          if (!_imageSizes.containsKey(imageUrl) &&
+              !_measuringUrls.contains(imageUrl)) {
+            _measureImageRealtime(imageUrl, screenWidth);
+          }
+        }
+      });
+    } else {
+      // 🎯 URL이 같아도 메타데이터가 업데이트되었을 수 있음 (병합 후)
+      // 메타데이터를 다시 확인하여 누락된 크기 정보가 있으면 로드
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+
+        // 현재 메타데이터에서 누락된 이미지 크기 정보 확인
+        final dimensions = _getImageDimensionsFromMetadata();
+        if (dimensions != null && dimensions.isNotEmpty) {
+          bool hasNewSizes = false;
+          for (final imageUrl in widget.imageUrls) {
+            if (!_imageSizes.containsKey(imageUrl)) {
+              final size = _parseSizeFromDimensions(dimensions, imageUrl);
+              if (size != null) {
+                _imageSizes[imageUrl] = size;
+                hasNewSizes = true;
+              }
+            }
+          }
+
+          // 새로운 크기 정보가 로드되었으면 높이 재계산
+          if (hasNewSizes && _imageSizes.length == widget.imageUrls.length) {
+            _calculateUnifiedHeight(widget.screenWidth);
+          }
+        }
       });
     }
   }
@@ -1277,7 +1322,7 @@ class _ImageRowComponentState extends State<ImageRowComponent>
   }
 
   /// 실시간 이미지 측정 (메타데이터가 없을 때)
-  /// 🎯 성능 최적화: ImageDecoder.decodeHeader() 사용 (헤더만 읽어서 크기 얻기)
+  /// 🎯 공통 유틸리티 사용: 전체 이미지 다운로드 후 크기 추출
   void _measureImageRealtime(String imageUrl, double availableWidth) async {
     // 🎯 성능 최적화: 중복 측정 방지
     if (_measuringUrls.contains(imageUrl) ||
@@ -1288,104 +1333,133 @@ class _ImageRowComponentState extends State<ImageRowComponent>
     _measuringUrls.add(imageUrl);
 
     try {
-      Uint8List? imageBytes;
+      // 🎯 공통 유틸리티 사용
+      final size = await ImageSizeUtils.measureImageSize(imageUrl);
 
-      if (_isLocalPath(imageUrl)) {
-        // 로컬 파일: 파일에서 직접 읽기
-        final filePath =
-            imageUrl.startsWith('file://') ? imageUrl.substring(7) : imageUrl;
-        final file = File(filePath);
-        if (await file.exists()) {
-          imageBytes = await file.readAsBytes();
+      if (!mounted) {
+        _measuringUrls.remove(imageUrl);
+        return;
+      }
+
+      if (size != null) {
+        _imageSizes[imageUrl] = size;
+        _measuringUrls.remove(imageUrl);
+
+        debugPrint(
+          '[RowImage] ✅ 이미지 크기 측정 완료: $imageUrl -> ${size.width.toInt()}x${size.height.toInt()}',
+        );
+
+        if (widget.isEditing) {
+          _saveImageSizeToMetadata(imageUrl, size);
+        }
+
+        if (_imageSizes.length == widget.imageUrls.length) {
+          _calculateUnifiedHeight(availableWidth);
         }
       } else {
-        // 네트워크 이미지: HTTP 요청으로 헤더만 읽기
-        try {
-          final uri = Uri.parse(imageUrl);
-          final client = HttpClient();
-          final request = await client.getUrl(uri);
-          request.headers.set(
-            HttpHeaders.rangeHeader,
-            'bytes=0-8192',
-          ); // 헤더만 읽기
-          final response = await request.close();
+        // 🎯 HEIC 파일 등은 ImageProvider로 재시도
+        if (ImageSizeUtils.isHeicFile(imageUrl)) {
+          debugPrint('[RowImage] 🔄 HEIC 파일: ImageProvider로 재시도');
+          final providerSize =
+              await ImageSizeUtils.extractSizeFromImageProvider(imageUrl);
+          if (providerSize != null && mounted) {
+            _imageSizes[imageUrl] = providerSize;
+            _measuringUrls.remove(imageUrl);
 
-          if (response.statusCode == 200 || response.statusCode == 206) {
-            final bytes = <int>[];
-            await for (final chunk in response) {
-              bytes.addAll(chunk);
-              // 헤더만 읽으면 되므로 8KB면 충분
-              if (bytes.length >= 8192) break;
+            debugPrint(
+              '[RowImage] ✅ ImageProvider에서 크기 추출: $imageUrl -> ${providerSize.width.toInt()}x${providerSize.height.toInt()}',
+            );
+
+            if (widget.isEditing) {
+              _saveImageSizeToMetadata(imageUrl, providerSize);
             }
-            imageBytes = Uint8List.fromList(bytes);
+
+            if (_imageSizes.length == widget.imageUrls.length) {
+              _calculateUnifiedHeight(availableWidth);
+            }
+          } else {
+            _measuringUrls.remove(imageUrl);
+            _useDefaultSize(imageUrl, availableWidth);
           }
-          client.close();
-        } catch (e) {
-          assert(() {
-            debugPrint('[RowImage] 네트워크 이미지 헤더 읽기 실패: $e');
-            return true;
-          }());
+        } else {
+          _measuringUrls.remove(imageUrl);
+          _useDefaultSize(imageUrl, availableWidth);
         }
       }
+    } catch (e) {
+      _measuringUrls.remove(imageUrl);
+      debugPrint('[RowImage] ⚠️ 측정 실패: $imageUrl - $e');
+      _useDefaultSize(imageUrl, availableWidth);
+    }
+  }
 
-      if (imageBytes == null || !mounted) {
-        _measuringUrls.remove(imageUrl);
-        return;
-      }
+  /// 기본 크기 사용 (3:4 비율)
+  void _useDefaultSize(String imageUrl, double availableWidth) {
+    if (_imageSizes.containsKey(imageUrl)) return;
 
-      // 🎯 instantiateImageCodec 사용 (헤더만 읽어서 크기 얻기)
-      // 주의: 이것도 전체 이미지를 디코딩하지만, Flutter의 최적화로 인해
-      // 실제로는 헤더만 읽는 것처럼 동작할 수 있음
-      final codec = await ui.instantiateImageCodec(imageBytes);
-      final frame = await codec.getNextFrame();
+    final count = widget.imageUrls.length;
+    final spacingWidth = widget.spacing * (count - 1);
+    final eachWidth = (availableWidth - spacingWidth) / count;
+    final defaultHeight = eachWidth / (3 / 4); // 3:4 비율
+
+    _imageSizes[imageUrl] = Size(eachWidth, defaultHeight);
+    debugPrint(
+      '[RowImage] 📏 기본 크기 사용: $imageUrl -> ${eachWidth.toInt()}x${defaultHeight.toInt()}',
+    );
+
+    // 모든 이미지 크기가 결정되면 높이 재계산
+    if (_imageSizes.length == widget.imageUrls.length) {
+      _calculateUnifiedHeight(availableWidth);
+    }
+  }
+
+  /// Image 위젯에서 실제 크기 추출 (이미 로드된 이미지)
+  /// 🎯 공통 유틸리티 사용: ImageProvider의 ImageStreamListener를 사용하여 ImageInfo에서 크기 추출
+  void _extractSizeFromImageWidget(
+    String imageUrl,
+    double availableWidth,
+    Widget? imageWidget,
+  ) async {
+    if (!mounted ||
+        _imageSizes.containsKey(imageUrl) ||
+        _measuringUrls.contains(imageUrl)) {
+      return;
+    }
+
+    _measuringUrls.add(imageUrl);
+
+    try {
+      // 🎯 공통 유틸리티 사용
+      final size = await ImageSizeUtils.extractSizeFromImageProvider(imageUrl);
 
       if (!mounted) {
         _measuringUrls.remove(imageUrl);
         return;
       }
 
-      final originalSize = Size(
-        frame.image.width.toDouble(),
-        frame.image.height.toDouble(),
-      );
+      if (size != null) {
+        _imageSizes[imageUrl] = size;
+        _measuringUrls.remove(imageUrl);
 
-      // 메모리 정리
-      frame.image.dispose();
-
-      // 🎯 성능 최적화: 디버그 로그는 개발 모드에서만
-      assert(() {
         debugPrint(
-          '[RowImage] 📏 이미지 크기 측정 완료 (헤더만): url=$imageUrl, size=${originalSize.width.toInt()}x${originalSize.height.toInt()}',
+          '[RowImage] ✅ ImageInfo에서 크기 추출: $imageUrl -> ${size.width.toInt()}x${size.height.toInt()}',
         );
-        return true;
-      }());
 
-      if (!mounted) {
+        if (widget.isEditing) {
+          _saveImageSizeToMetadata(imageUrl, size);
+        }
+
+        if (_imageSizes.length == widget.imageUrls.length) {
+          _calculateUnifiedHeight(availableWidth);
+        }
+      } else {
         _measuringUrls.remove(imageUrl);
-        return;
+        _useDefaultSize(imageUrl, availableWidth);
       }
-
-      _imageSizes[imageUrl] = originalSize;
+    } catch (e) {
       _measuringUrls.remove(imageUrl);
-
-      if (widget.isEditing) {
-        assert(() {
-          debugPrint('[RowImage] 💾 편집 모드이므로 메타데이터에 저장 시작');
-          return true;
-        }());
-        _saveImageSizeToMetadata(imageUrl, originalSize);
-      }
-
-      if (_imageSizes.length == widget.imageUrls.length) {
-        _calculateUnifiedHeight(availableWidth);
-      }
-    } catch (e, stackTrace) {
-      _measuringUrls.remove(imageUrl);
-      assert(() {
-        debugPrint('[RowImage] 측정 실패: $imageUrl - $e');
-        debugPrint('[RowImage] 스택: $stackTrace');
-        return true;
-      }());
+      debugPrint('[RowImage] ⚠️ Image 위젯에서 크기 추출 실패: $imageUrl - $e');
+      _useDefaultSize(imageUrl, availableWidth);
     }
   }
 
@@ -1562,59 +1636,19 @@ class _ImageRowComponentState extends State<ImageRowComponent>
   }
 
   bool _shouldShowLeftVerticalLine() {
-    if (widget.dragService == null) return false;
-    if (widget.dragService.draggingNodeId == null) return false;
-    if (widget.dragService.dragPosition == null) return false;
-    if (widget.dragService.draggingNodeId == widget.nodeId) return false;
-
-    // 병합 모드에서만 세로 라인 표시 (reorder 라인과 중복 방지)
-    if (widget.dragService.dragMode != DragType.imageRowMerge) return false;
-
-    // 현재 노드가 타겟 노드가 아니면 표시하지 않음
-    if (widget.dragService.targetNodeId != widget.nodeId) {
-      return false;
-    }
-
-    if (!(widget.dragService.draggingNodeType == NodeType.image ||
-        widget.dragService.draggingNodeType == NodeType.imageRow)) {
-      return false;
-    }
-
-    final renderBox = context.findRenderObject() as RenderBox?;
-    if (renderBox == null) return false;
-    final rect = (renderBox.localToGlobal(Offset.zero) & renderBox.size)
-        .inflate(12);
-    if (!rect.contains(widget.dragService.dragPosition!)) return false;
-
-    return widget.dragService.dragPosition!.dx < rect.center.dx;
+    // 🎯 DropLineConfig 사용 (3개 가득 찬 로우 이미지 체크 포함)
+    return DropLineConfig.shouldShowLeftVerticalLine(
+      nodeId: widget.nodeId,
+      dragService: widget.dragService,
+    );
   }
 
   bool _shouldShowRightVerticalLine() {
-    if (widget.dragService == null) return false;
-    if (widget.dragService.draggingNodeId == null) return false;
-    if (widget.dragService.dragPosition == null) return false;
-    if (widget.dragService.draggingNodeId == widget.nodeId) return false;
-
-    // 병합 모드에서만 세로 라인 표시 (reorder 라인과 중복 방지)
-    if (widget.dragService.dragMode != DragType.imageRowMerge) return false;
-
-    // 현재 노드가 타겟 노드가 아니면 표시하지 않음
-    if (widget.dragService.targetNodeId != widget.nodeId) {
-      return false;
-    }
-
-    if (!(widget.dragService.draggingNodeType == NodeType.image ||
-        widget.dragService.draggingNodeType == NodeType.imageRow)) {
-      return false;
-    }
-
-    final renderBox = context.findRenderObject() as RenderBox?;
-    if (renderBox == null) return false;
-    final rect = (renderBox.localToGlobal(Offset.zero) & renderBox.size)
-        .inflate(12);
-    if (!rect.contains(widget.dragService.dragPosition!)) return false;
-
-    return widget.dragService.dragPosition!.dx >= rect.center.dx;
+    // 🎯 DropLineConfig 사용 (3개 가득 찬 로우 이미지 체크 포함)
+    return DropLineConfig.shouldShowRightVerticalLine(
+      nodeId: widget.nodeId,
+      dragService: widget.dragService,
+    );
   }
 
   bool _hasNeighborImage(Document? doc, String nodeId, int direction) {
@@ -1733,7 +1767,7 @@ class _ImageRowComponentState extends State<ImageRowComponent>
 
   /// 🎯 Row 이미지 위젯 빌드 (로컬/네트워크 자동 판단)
   Widget _buildRowImageWidget(String imageUrl, double maxWidth) {
-    final isLocal = _isLocalPath(imageUrl);
+    final isLocal = ImageSizeUtils.isLocalPath(imageUrl);
 
     if (isLocal) {
       // 로컬 이미지
@@ -1784,12 +1818,12 @@ class _ImageRowComponentState extends State<ImageRowComponent>
         frameBuilder: (context, child, frame, wasSyncLoaded) {
           // 🎯 프리로드되었거나 캐시에 있으면 즉시 표시
           if (wasSyncLoaded || frame != null) {
-            // 🎯 성능 최적화: 이미 로드된 이미지에서 크기 추출 (중복 ImageStream 방지)
-            // 이미 측정 완료했거나 측정 중이면 스킵 (중복 방지)
+            // 🎯 이미지가 로드되면 실제 크기 추출
             WidgetsBinding.instance.addPostFrameCallback((_) {
               if (!_imageSizes.containsKey(imageUrl) &&
                   !_measuringUrls.contains(imageUrl)) {
-                _measureAndUnifyHeight(imageUrl, maxWidth);
+                // Image 위젯에서 실제 크기 추출 시도
+                _extractSizeFromImageWidget(imageUrl, maxWidth, child);
               }
             });
             return child;
@@ -1828,15 +1862,6 @@ class _ImageRowComponentState extends State<ImageRowComponent>
         },
       );
     }
-  }
-
-  bool _isLocalPath(String path) {
-    if (path.isEmpty) return false;
-    if (path.startsWith('http://') || path.startsWith('https://')) return false;
-    if (path.startsWith('file://')) return true;
-    return path.startsWith('/') ||
-        path.contains('/Application/') ||
-        path.contains('/Documents/');
   }
 }
 

@@ -12,6 +12,22 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
+/// 앱 부트스트랩 결과
+class _BootstrapResult {
+  final bool loggedIn;
+  final HomeData? homeData;
+
+  const _BootstrapResult({required this.loggedIn, this.homeData});
+
+  factory _BootstrapResult.notLoggedIn() {
+    return const _BootstrapResult(loggedIn: false, homeData: null);
+  }
+
+  factory _BootstrapResult.loggedIn(HomeData? homeData) {
+    return _BootstrapResult(loggedIn: true, homeData: homeData);
+  }
+}
+
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
 
@@ -20,36 +36,49 @@ class SplashScreen extends StatefulWidget {
 }
 
 class _SplashScreenState extends State<SplashScreen>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _controller;
-  late final Animation<double> _opacity;
+    with TickerProviderStateMixin {
+  late final AnimationController _fadeInController;
+  late final Animation<double> _fadeInOpacity;
+  late final AnimationController _fadeOutController;
+  late final Animation<double> _fadeOutOpacity;
 
   final HomeDataService _homeDataService = HomeDataService();
 
-  HomeData? _preloadedHomeData;
-  bool _isDataLoaded = false;
-  bool _isTokenValidated = false;
+  late final Future<_BootstrapResult> _bootstrapFuture;
 
   @override
   void initState() {
     super.initState();
 
-    _controller = AnimationController(
+    _fadeInController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1600),
     );
 
-    _opacity = CurvedAnimation(
-      parent: _controller,
+    _fadeInOpacity = CurvedAnimation(
+      parent: _fadeInController,
       curve: const Interval(0.0, 0.1, curve: Curves.easeOut),
     );
 
-    // 🎯 먼저 로딩 로고 애니메이션 시작
-    _controller.forward();
+    _fadeOutController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 800),
+    );
 
-    // 🎯 애니메이션이 시작된 후 데이터 로드 시작
+    _fadeOutOpacity = Tween<double>(begin: 1.0, end: 0.0).animate(
+      CurvedAnimation(parent: _fadeOutController, curve: Curves.easeOut),
+    );
+
+    // 🎯 먼저 로딩 로고 애니메이션 시작
+    _fadeInController.forward();
+
+    // 🎯 부트스트랩 Future 생성
+    _bootstrapFuture = _bootstrap();
+
+    // 🎯 애니메이션이 시작된 후 데이터 로드 및 네비게이션 시작
     WidgetsBinding.instance.addPostFrameCallback((_) {
       startSequence();
+      _navigateAfterReady();
     });
   }
 
@@ -58,65 +87,61 @@ class _SplashScreenState extends State<SplashScreen>
     Future.delayed(const Duration(milliseconds: 550), () {
       HapticFeedback.heavyImpact();
     });
-    initializeApp();
     Future.delayed(const Duration(milliseconds: 900), () {
       HapticFeedback.mediumImpact();
     });
   }
 
-  Future<void> initializeApp() async {
+  /// 앱 부트스트랩: 인증 및 필수 데이터 로드
+  Future<_BootstrapResult> _bootstrap() async {
     try {
       // 1. 토큰 검증 및 갱신
       final authProvider = context.read<AuthProvider>();
       final hasToken = await authProvider.checkLoginStatus();
 
-      if (hasToken) {
-        final isValid = await authProvider.validateAndRefreshToken();
-        _isTokenValidated = isValid;
-      } else {
-        _isTokenValidated = false;
+      if (!hasToken) {
+        return _BootstrapResult.notLoggedIn();
       }
 
-      // 2. 토큰이 유효한 경우에만 데이터 로딩
-      if (_isTokenValidated) {
-        // 🎯 앱 시작 시 FCM 토큰 검사 및 필요시 재발급 (비동기로 처리하여 앱 시작을 막지 않음)
-        _checkAndSyncFcmToken();
-
-        // 🎯 앱 시작 시 필수 데이터만 로드 (그룹 스키마 포함)
-        // 홈 데이터, 검색 기록, 유저 정보, 그룹 스키마를 병렬로 로드
-        await Future.wait([
-          _loadHomeData(),
-          _loadSearchHistory(),
-          _loadUserData(),
-          _loadGroupSchema(),
-        ]);
-
-        // 🎯 트렌딩 데이터는 비동기로 백그라운드에서 로드 (앱 시작을 막지 않음)
-        _loadTrendingData();
-
-        // 🎯 설정 정보 및 받은 요청은 비동기로 백그라운드에서 로드 (앱 시작을 막지 않음)
-        _loadSettingsAndFriendRequests();
-      } else {
-        // 토큰이 없거나 유효하지 않은 경우 빈 데이터로 설정
-        setState(() {
-          _preloadedHomeData = HomeData(friendsPosts: [], allPosts: []);
-          _isDataLoaded = true;
-        });
+      final isValid = await authProvider.validateAndRefreshToken();
+      if (!isValid) {
+        return _BootstrapResult.notLoggedIn();
       }
 
-      // 3. 네비게이션
-      await _navigateAfterReady();
+      if (!mounted) {
+        return _BootstrapResult.notLoggedIn();
+      }
+
+      // 2. FCM 토큰 검사 및 필요시 재발급 (비동기로 처리하여 앱 시작을 막지 않음)
+      _checkAndSyncFcmToken();
+
+      // 3. 앱 시작 시 필수 데이터만 로드 (그룹 스키마 포함)
+      // 홈 데이터, 검색 기록, 유저 정보, 그룹 스키마를 병렬로 로드
+      final homeDataFuture = _loadHomeData();
+      await Future.wait([
+        homeDataFuture.then((_) => null),
+        _loadSearchHistory(),
+        _loadUserData(),
+        _loadGroupSchema(),
+      ]);
+
+      // 홈 데이터 가져오기
+      final homeData = await homeDataFuture;
+
+      // 4. 트렌딩 데이터는 비동기로 백그라운드에서 로드 (앱 시작을 막지 않음)
+      _loadTrendingData();
+
+      // 5. 설정 정보 및 받은 요청은 비동기로 백그라운드에서 로드 (앱 시작을 막지 않음)
+      _loadSettingsAndFriendRequests();
+
+      return _BootstrapResult.loggedIn(homeData);
     } catch (e) {
-      setState(() {
-        _isTokenValidated = false;
-        _isDataLoaded = true;
-        _preloadedHomeData = HomeData(friendsPosts: [], allPosts: []);
-      });
-      await _navigateAfterReady();
+      debugPrint('[SplashScreen] 부트스트랩 오류: $e');
+      return _BootstrapResult.notLoggedIn();
     }
   }
 
-  Future<void> _loadHomeData() async {
+  Future<HomeData> _loadHomeData() async {
     try {
       // 통합 피드 데이터 서비스를 사용하여 두 섹션 동시 로드
       final homeData = await _homeDataService.preloadAllSections(
@@ -124,26 +149,11 @@ class _SplashScreenState extends State<SplashScreen>
         size: 20, // 🎯 10 -> 20으로 증가 (앱 시작 시에도 20개 로드)
       );
 
-      setState(() {
-        _preloadedHomeData = homeData;
-      });
-
-      // 이미지 미리 로드 (두 섹션 모두)
-      if (!homeData.isEmpty) {
-        final allPosts = [...homeData.friendsPosts, ...homeData.allPosts];
-        await _homeDataService.precacheImages(allPosts, context);
-      }
-
-      setState(() {
-        _isDataLoaded = true;
-      });
+      // 이미지 프리캐시는 Splash에서 하지 않음 (RootShell에서 처리)
+      return homeData;
     } catch (e) {
       debugPrint('[SplashScreen] 피드 데이터 로드 실패: $e');
-
-      setState(() {
-        _preloadedHomeData = HomeData(friendsPosts: [], allPosts: []);
-        _isDataLoaded = true;
-      });
+      return HomeData(friendsPosts: [], allPosts: []);
     }
   }
 
@@ -244,33 +254,30 @@ class _SplashScreenState extends State<SplashScreen>
   }
 
   Future<void> _navigateAfterReady() async {
-    // 🎯 애니메이션은 이미 initState에서 시작했으므로 완료만 대기
-    if (!_controller.isCompleted) {
-      try {
-        await _controller.forward().orCancel;
-      } catch (_) {}
-    }
+    // 🎯 애니메이션과 부트스트랩을 동일한 await 그룹으로 묶기
+    await Future.wait([
+      _fadeInController.forward().orCancel.catchError((_) => null),
+      _bootstrapFuture,
+    ]);
 
     if (!mounted) return;
 
-    // 데이터 로딩 완료까지 대기
-    while (!_isDataLoaded) {
-      await Future.delayed(const Duration(milliseconds: 50));
-      if (!mounted) return;
-    }
+    // 🎯 로딩 완료 후 dopp 로고 페이드아웃 애니메이션 시작
+    await _fadeOutController.forward();
 
-    // 애니메이션 잔상 방지 약간의 텀 후 전환
-    await Future.delayed(const Duration(milliseconds: 150));
     if (!mounted) return;
 
-    // 토큰 검증 결과에 따라 네비게이션
-    if (_isTokenValidated) {
+    // 부트스트랩 결과에 따라 네비게이션
+    final result = await _bootstrapFuture;
+    if (!mounted) return;
+
+    if (result.loggedIn) {
       Navigator.of(context).pushReplacement(
         PageRouteBuilder(
           pageBuilder:
               (_, __, ___) => RootShell(
                 initialIndex: 0,
-                preloadedHomeData: _preloadedHomeData,
+                preloadedHomeData: result.homeData,
               ),
           transitionDuration: const Duration(milliseconds: 250),
           transitionsBuilder:
@@ -284,7 +291,8 @@ class _SplashScreenState extends State<SplashScreen>
 
   @override
   void dispose() {
-    _controller.dispose();
+    _fadeInController.dispose();
+    _fadeOutController.dispose();
     super.dispose();
   }
 
@@ -297,13 +305,22 @@ class _SplashScreenState extends State<SplashScreen>
         children: [
           Center(
             child: AnimatedBuilder(
-              animation: _controller,
+              animation: Listenable.merge([
+                _fadeInController,
+                _fadeOutController,
+              ]),
               builder: (context, _) {
+                // 페이드아웃이 진행 중이면 fadeOutOpacity, 아니면 fadeInOpacity
+                final currentOpacity =
+                    _fadeOutController.value > 0.0
+                        ? _fadeOutOpacity.value
+                        : _fadeInOpacity.value;
+
                 return Stack(
                   alignment: Alignment.center,
                   children: [
                     DoppyLoadingLogo(
-                      opacity: _opacity.value,
+                      opacity: currentOpacity,
                       dTextSize: 40,
                       ppyTextSize: 40,
                       spinnerStrokeWidth: 4.5,

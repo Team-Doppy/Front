@@ -7,6 +7,7 @@ import 'package:doppy/pages/components/profile_action_bottom_sheet.dart';
 import 'package:doppy/providers/feed_provider/feed_ui_service.dart';
 import 'package:doppy/pages/screens/group_selection_screen.dart';
 import 'package:doppy/pages/screens/setting_screen.dart';
+import 'package:doppy/pages/screens/profile_image_view_screen.dart';
 import 'package:doppy/providers/feed_provider/other_profile_feed_provider.dart';
 import 'package:doppy/theme/app_colors.dart';
 import 'package:doppy/utils/network_utils.dart';
@@ -16,6 +17,8 @@ import 'package:doppy/l10n/app_localizations.dart';
 import 'package:doppy/data/services/friend_service.dart';
 import 'package:doppy/data/services/blog_service.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/cupertino.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:doppy/data/services/upload_service.dart';
 import 'package:doppy/providers/user_provider.dart';
@@ -627,7 +630,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                                           profileUploadTasks.isNotEmpty ||
                                           _isUploadingProfileImage;
 
-                                      return CommonProfileAvatar(
+                                      final avatar = CommonProfileAvatar(
                                         imageUrl: _displayImageUrl,
                                         username: _displayUsername,
                                         size: 150,
@@ -642,6 +645,40 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                                             _isOwnProfile && !isUploading
                                                 ? _changeProfileImage
                                                 : null,
+                                      );
+
+                                      // Hero 애니메이션 적용
+                                      return Hero(
+                                        tag:
+                                            'profile_image_${_displayUsername}',
+                                        createRectTween: (begin, end) {
+                                          // 직선 경로 생성 (수직 이동만, X는 시작 위치의 중심 기준으로 고정)
+                                          if (begin == null || end == null) {
+                                            return RectTween(
+                                              begin: begin,
+                                              end: end,
+                                            );
+                                          }
+
+                                          // 시작 위치의 중심 X 좌표
+                                          final startCenterX =
+                                              begin.left + begin.width / 2;
+
+                                          return RectTween(
+                                            begin: begin,
+                                            end: Rect.fromLTWH(
+                                              startCenterX -
+                                                  end.width / 2, // 중심 정렬
+                                              end.top,
+                                              end.width,
+                                              end.height,
+                                            ),
+                                          );
+                                        },
+                                        child: Material(
+                                          color: Colors.transparent,
+                                          child: avatar,
+                                        ),
                                       );
                                     },
                                   ),
@@ -1683,21 +1720,61 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     );
   }
 
-  /// 프로필 사진 변경 바텀시트 표시
+  /// 프로필 사진 변경 화면 표시
   void _changeProfileImage() {
     if (_isUploadingProfileImage) return;
 
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.transparent,
+    final user = context.read<UserProvider>().currentUser;
+    if (user == null) return;
 
-      builder: (BuildContext context) {
-        return ProfileEditBottomSheet(
-          singleSelect: true,
-          onClearProfileImage: _clearProfileImage,
-          onImagesSelected: (files) => _handleImageSelected(files.first),
-        );
-      },
+    Navigator.push(
+      context,
+      PageRouteBuilder(
+        transitionDuration: const Duration(milliseconds: 300),
+        reverseTransitionDuration: const Duration(milliseconds: 150),
+        pageBuilder:
+            (context, animation, secondaryAnimation) => ProfileImageViewScreen(
+              profileImageUrl: user.profileImageUrl,
+              username: user.username,
+              isOwnProfile: true,
+              onShareProfile: () {
+                ShareProfileBottomSheet.show(
+                  context,
+                  username: user.username,
+                  profileImageUrl: user.profileImageUrl,
+                  bio: user.selfIntroduction,
+                  friendCount: user.friendCount ?? 0,
+                );
+              },
+              onCopyProfileLink: () async {
+                final profileUrl = 'https://doppy.world/@${user.username}';
+                await Clipboard.setData(ClipboardData(text: profileUrl));
+
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(
+                        AppLocalizations.of(context).translate('link_copied'),
+                      ),
+                      duration: const Duration(seconds: 2),
+                    ),
+                  );
+                }
+              },
+              onGallerySelected: (file) {
+                _handleImageSelected(file);
+              },
+              onSetDefaultImage: () {
+                _clearProfileImage();
+              },
+              onFollowStatusChanged: null,
+            ),
+        transitionsBuilder: (context, animation, secondaryAnimation, child) {
+          // 나갈 때: 페이지 전환만 빠르게 (히어로 애니메이션은 자동으로 무시됨)
+          // 들어올 때: 히어로 애니메이션과 함께 나타남
+          return FadeTransition(opacity: animation, child: child);
+        },
+      ),
     );
   }
 

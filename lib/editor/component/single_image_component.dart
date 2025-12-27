@@ -2,6 +2,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:doppy/common/widgets/image_error_placeholder.dart';
+import 'package:doppy/utils/image_size_utils.dart';
 import 'package:doppy/data/services/upload_service.dart';
 import 'package:doppy/editor/component/row_image_component.dart';
 import 'package:doppy/editor/component/pageview_image_component.dart';
@@ -876,84 +877,37 @@ class _SingleImageComponentState extends State<SingleImageComponent>
     }
 
     try {
-      Uint8List? imageBytes;
-
-      // 로컬 파일 경로 확인
-      if (_isLocalPath(widget.imageUrl)) {
-        final filePath =
-            widget.imageUrl.startsWith('file://')
-                ? widget.imageUrl.substring(7)
-                : widget.imageUrl;
-        try {
-          final file = File(filePath);
-          if (await file.exists()) {
-            imageBytes = await file.readAsBytes();
-          }
-        } catch (e) {
-          assert(() {
-            debugPrint('[SingleImage] 로컬 파일 읽기 실패: $e');
-            return true;
-          }());
-        }
-      } else {
-        // 네트워크 이미지: HTTP 요청으로 헤더만 읽기
-        try {
-          final uri = Uri.parse(widget.imageUrl);
-          final client = HttpClient();
-          final request = await client.getUrl(uri);
-          request.headers.set(
-            HttpHeaders.rangeHeader,
-            'bytes=0-8192',
-          ); // 헤더만 읽기
-          final response = await request.close();
-
-          if (response.statusCode == 200 || response.statusCode == 206) {
-            final bytes = <int>[];
-            await for (final chunk in response) {
-              bytes.addAll(chunk);
-              if (bytes.length >= 8192) break;
-            }
-            imageBytes = Uint8List.fromList(bytes);
-          }
-          client.close();
-        } catch (e) {
-          assert(() {
-            debugPrint('[SingleImage] 네트워크 이미지 헤더 읽기 실패: $e');
-            return true;
-          }());
-        }
-      }
-
-      if (imageBytes == null || !mounted) {
-        return;
-      }
-
-      // 🎯 instantiateImageCodec 사용 (헤더만 읽어서 크기 얻기)
-      final codec = await ui.instantiateImageCodec(imageBytes);
-      final frame = await codec.getNextFrame();
-
-      if (!mounted) {
-        frame.image.dispose();
-        return;
-      }
-
-      final size = Size(
-        frame.image.width.toDouble(),
-        frame.image.height.toDouble(),
-      );
-
-      // 메모리 정리
-      frame.image.dispose();
+      // 🎯 공통 유틸리티 사용: 전체 이미지 다운로드 후 크기 추출
+      final size = await ImageSizeUtils.measureImageSize(widget.imageUrl);
 
       if (!mounted) return;
 
-      _cachedImageSize = size;
-      _saveImageSizeToMetadata(size);
+      if (size != null) {
+        _cachedImageSize = size;
+        debugPrint(
+          '[SingleImage] ✅ 이미지 크기 측정 완료: ${widget.imageUrl} -> ${size.width.toInt()}x${size.height.toInt()}',
+        );
+        _saveImageSizeToMetadata(size);
+      } else {
+        // 🎯 HEIC 파일 등은 ImageProvider로 재시도
+        if (ImageSizeUtils.isHeicFile(widget.imageUrl)) {
+          debugPrint('[SingleImage] 🔄 HEIC 파일: ImageProvider로 재시도');
+          final providerSize =
+              await ImageSizeUtils.extractSizeFromImageProvider(
+                widget.imageUrl,
+              );
+          if (providerSize != null && mounted) {
+            _cachedImageSize = providerSize;
+            debugPrint(
+              '[SingleImage] ✅ ImageProvider에서 크기 추출: ${widget.imageUrl} -> ${providerSize.width.toInt()}x${providerSize.height.toInt()}',
+            );
+            _saveImageSizeToMetadata(providerSize);
+          }
+        }
+      }
     } catch (e) {
       // 🎯 크기 측정 실패는 조용히 처리 (이미지 표시에는 영향 없음)
-      // 헤더만으로는 디코딩 불가능한 이미지 형식이 있을 수 있음
-      // 이미지는 정상적으로 표시되므로 크기 측정 실패는 무시
-      // debugPrint('[SingleImage] 크기 측정 실패: $e');
+      debugPrint('[SingleImage] ⚠️ 크기 측정 실패: ${widget.imageUrl} - $e');
     }
   }
 

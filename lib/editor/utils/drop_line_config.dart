@@ -1,5 +1,6 @@
 import 'package:doppy/editor/service/drag_service.dart';
 import 'package:doppy/editor/utils/node_type_checker.dart';
+import 'package:doppy/editor/component/row_image_component.dart';
 
 /// 🎯 드롭 라인 표시 규칙을 중앙에서 관리하는 Config
 /// 모든 컴포넌트(SingleImage, RowImage, PageViewImage, Clip, Link)가 이 규칙을 주입받아 사용
@@ -41,8 +42,8 @@ class DropLineConfig {
       if (isSplitTarget && dropIndex == currentNodeIndex) {
         return true; // 분리 대상 노드의 위쪽 라인 표시
       }
-      // 🎯 분리 모드일 때 분리 대상 노드가 아니면 라인 숨김
-      return false;
+      // 🎯 분리 모드일 때 분리 대상 노드가 아니면 일반 드래그 로직 적용
+      // (다른 로우 이미지 위아래에도 드롭라인 표시 가능)
     }
 
     // 🎯 드래그 중인 노드가 바로 이웃한 위치에 있으면 라인 숨김
@@ -140,8 +141,8 @@ class DropLineConfig {
       if (isSplitTarget && dropIndex == currentNodeIndex + 1) {
         return true; // 분리 대상 노드의 하단 라인 표시
       }
-      // 🎯 분리 모드일 때 분리 대상 노드가 아니면 라인 숨김
-      return false;
+      // 🎯 분리 모드일 때 분리 대상 노드가 아니면 일반 드래그 로직 적용
+      // (다른 로우 이미지 위아래에도 드롭라인 표시 가능)
     }
 
     // 🎯 드래그 중인 노드가 바로 이웃한 위치에 있으면 라인 숨김
@@ -274,6 +275,14 @@ class DropLineConfig {
       return false;
     }
 
+    // 🎯 이미 3개가 다 차있는 로우 이미지에는 양옆 드롭라인 숨김
+    final targetNode = dragService.editorService.document.getNodeById(nodeId);
+    if (targetNode != null && targetNode is ImageRowNode) {
+      if (targetNode.imageUrls.length >= 3) {
+        return false; // 3개 가득 찬 경우 드롭라인 숨김
+      }
+    }
+
     // 왼쪽에서 드래그하는 경우만 표시
     return dragService.isDraggingFromLeft;
   }
@@ -300,6 +309,14 @@ class DropLineConfig {
     // dragMode가 imageRowMerge가 아니면 숨김
     if (dragService.dragMode != DragType.imageRowMerge) {
       return false;
+    }
+
+    // 🎯 이미 3개가 다 차있는 로우 이미지에는 양옆 드롭라인 숨김
+    final targetNode = dragService.editorService.document.getNodeById(nodeId);
+    if (targetNode != null && targetNode is ImageRowNode) {
+      if (targetNode.imageUrls.length >= 3) {
+        return false; // 3개 가득 찬 경우 드롭라인 숨김
+      }
     }
 
     // 오른쪽에서 드래그하는 경우만 표시

@@ -54,7 +54,7 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
   bool _hasPermission = false;
   AssetPathEntity? _currentAlbum;
   List<AssetPathEntity> _albums = [];
-  Set<String> _selectedMediaIds = {}; // 선택된 미디어 ID들
+  List<String> _selectedMediaIds = []; // 선택된 미디어 ID들 (선택 순서 유지)
   MediaType _mediaType = MediaType.video; // 현재 선택된 미디어 타입
   int _crossAxisCount = 3; // 그리드 열 수 (5열(최소) -> 3열(기본) -> 1열(최대))
   double _lastScale = 1.0; // 마지막 핀치 스케일
@@ -534,9 +534,8 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
         _selectedMediaIds.remove(asset.id);
       } else {
         if (_selectedMediaIds.length >= _maxSelectionCount) {
-          // 가장 오래된 선택 제거
-          final first = _selectedMediaIds.first;
-          _selectedMediaIds.remove(first);
+          // 가장 오래된 선택 제거 (리스트의 첫 번째 요소)
+          _selectedMediaIds.removeAt(0);
         }
         _selectedMediaIds.add(asset.id);
       }
@@ -622,6 +621,7 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
   }
 
   Future<void> _handleImageEdit(List<AssetEntity> selectedAssets) async {
+    // ✅ selectedAssets는 이미 선택 순서대로 정렬되어 있음
     try {
       // 선택된 이미지들을 Uint8List로 변환
       final List<Uint8List> imageBytesList = [];
@@ -759,11 +759,15 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
     if (_selectedMediaIds.isEmpty) return;
 
     try {
-      // 선택된 미디어들 찾기
-      final selectedAssets =
-          _media
-              .where((asset) => _selectedMediaIds.contains(asset.id))
-              .toList();
+      // 선택된 미디어들 찾기 (선택 순서대로 유지)
+      final selectedAssets = <AssetEntity>[];
+      final mediaMap = {for (var asset in _media) asset.id: asset};
+      for (final id in _selectedMediaIds) {
+        final asset = mediaMap[id];
+        if (asset != null) {
+          selectedAssets.add(asset);
+        }
+      }
 
       if (selectedAssets.isEmpty) return;
 
@@ -1001,8 +1005,15 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
 
   Widget _buildBottomToolbar() {
     final colorScheme = Theme.of(context).colorScheme;
-    final selectedAssets =
-        _media.where((asset) => _selectedMediaIds.contains(asset.id)).toList();
+    // 선택된 미디어들 찾기 (선택 순서대로 유지)
+    final selectedAssets = <AssetEntity>[];
+    final mediaMap = {for (var asset in _media) asset.id: asset};
+    for (final id in _selectedMediaIds) {
+      final asset = mediaMap[id];
+      if (asset != null) {
+        selectedAssets.add(asset);
+      }
+    }
 
     // 선택된 미디어 타입 확인 (모두 같은 타입이어야 함)
     final isVideo =
