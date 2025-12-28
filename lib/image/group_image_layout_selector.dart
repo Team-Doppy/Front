@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:doppy/l10n/app_localizations.dart';
 
 enum GroupImageLayout {
+  individual, // 개별 이미지
   grid2, // 2열 그리드
   grid3, // 3열 그리드
   pageview, // 페이지뷰
@@ -82,6 +83,22 @@ class GroupImageLayoutSelector extends StatelessWidget {
                 shrinkWrap: true,
                 padding: const EdgeInsets.symmetric(horizontal: 16),
                 children: [
+                  // 개별 이미지 (항상 표시)
+                  _LayoutOption(
+                    title: l10n.t('individual_images'),
+                    description: l10n.t('individual_images_description'),
+                    icon: Icons.image,
+                    previewImages: previewImages,
+                    previewLayout: GroupImageLayout.individual,
+                    onTap: () {
+                      // 🎯 레이아웃 타입 즉시 반환 (플레이스홀더 생성은 MediaUploadHandler에서 처리)
+                      if (context.mounted) {
+                        Navigator.of(context).pop(GroupImageLayout.individual);
+                      }
+                    },
+                  ),
+                  const SizedBox(height: 16),
+
                   // 2열 그리드
                   if (showGrid2) ...[
                     _LayoutOption(
@@ -267,6 +284,8 @@ class _LayoutOption extends StatelessWidget {
     }
 
     switch (previewLayout) {
+      case GroupImageLayout.individual:
+        return _buildIndividualPreview();
       case GroupImageLayout.grid2:
         return _buildGrid2Preview();
       case GroupImageLayout.grid3:
@@ -274,6 +293,19 @@ class _LayoutOption extends StatelessWidget {
       case GroupImageLayout.pageview:
         return _buildPageViewPreview(colorScheme);
     }
+  }
+
+  Widget _buildIndividualPreview() {
+    final displayImages = previewImages!.take(3).toList();
+
+    return Column(
+      children: [
+        for (int i = 0; i < displayImages.length; i++) ...[
+          if (i > 0) const SizedBox(height: 4),
+          _buildPreviewImage(displayImages[i], height: 60),
+        ],
+      ],
+    );
   }
 
   Widget _buildGrid2Preview() {

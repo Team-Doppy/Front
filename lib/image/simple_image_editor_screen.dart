@@ -1,11 +1,15 @@
+import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:doppy/theme/app_colors.dart';
 import 'package:flutter/material.dart';
+import 'package:doppy/image/group_image_layout_selector.dart';
 import 'crop_editor.dart'
     show
         CropState,
         CropUtils,
+        CropEditorBottomSheet,
+        CropEditorPanel,
         ImageRectUtils,
         ImagePainter,
         CropOverlayPainter,
@@ -13,6 +17,7 @@ import 'crop_editor.dart'
         CropHandleBuilder,
         CropGestureHandler,
         CropAutoZoom;
+import 'rotation_editor.dart';
 
 /// 간단한 커스텀 이미지 편집 화면
 /// 바텀시트 기반 UI, Undo/Redo, 실시간 미리보기 제공
@@ -34,12 +39,14 @@ class SimpleImageEditorScreen extends StatefulWidget {
       _SimpleImageEditorScreenState();
 }
 
-enum _EditMode { none, crop, adjust, filter }
+enum _EditMode { none, crop, rotate, adjust, filter }
 
 // 이미지별 편집 상태
 class _ImageEditState {
   // 회전 관련 상태
-  int rotation = 0;
+  int rotation = 0; // 0-360
+  bool flipHorizontal = false;
+  bool flipVertical = false;
 
   // 자르기 관련 상태
   String? selectedAspectRatio; // null = 자유, '1:1', '4:5', '16:9' 등
@@ -78,6 +85,10 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
   final Map<int, ui.Image?> _originalUiImageCache = {};
   static const int _maxImageCacheSize = 10; // 최대 UI 이미지 캐시 크기
 
+  // ✅ “확 바뀌는 것” 방지용: 이전 프레임 이미지 보관 + 크로스페이드
+  final Map<int, int> _applyAnimVersion = {};
+  static const Duration _applySettleDuration = Duration(milliseconds: 140);
+
   // 이미지별 편집 상태 관리
   final Map<int, _ImageEditState> _imageEditStates = {};
 
@@ -90,19 +101,47 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
   late AnimationController _bottomSheetController;
   late Animation<double> _bottomSheetAnimation;
   double _dragOffset = 0.0;
+  CropEditorPanel _initialCropPanelForOpen = CropEditorPanel.aspect;
 
-  // 옵션별 바텀시트 높이 (간격을 줄이기 위해 높이 감소)
-  double get bottomSheetHeight {
+  // 메인 툴바(조정/자르기/회전/필터) 시각적 높이(대략값).
+  // - 툴바를 트리에서 제거하면 바텀시트가 내려오는 동안 이미지가 하단 영역까지 확장됐다가
+  //   마지막에 툴바가 "툭" 등장하며 점프하는 문제가 생김.
+  // - 따라서 바텀시트 애니메이션과 반대로(닫힐수록) 툴바 높이를 함께 늘려 점프를 제거한다.
+  static const double _mainToolbarHeight = 90.0;
+
+  /// 바텀시트는 고정 height를 쓰지 않고, 모드별 "최대 높이"만 둔다.
+  /// (모드별 레이아웃 요구사항이 달라 고정 숫자는 구조적으로 항상 깨짐)
+  double get _bottomSheetMaxHeight {
+    // 모드별 적절한 최대 높이 설정 (과도하게 높지 않게)
     switch (_editMode) {
       case _EditMode.crop:
-        return 200; // 크롭: 가로 스크롤 옵션 (간격 줄임)
+        // 패널별 높이 조절은 crop_editor.dart 내부 위젯에서 처리
+        return 320;
+      case _EditMode.rotate:
+        return 240;
       case _EditMode.filter:
-        return 250; // 필터: 가로 스크롤 필터 미리보기 (간격 줄임)
+        return 280;
       case _EditMode.adjust:
-        return 380; // 조정: 세로 슬라이더들 (간격 줄임)
+        return 400;
       case _EditMode.none:
-        return 250; // 기본값
+        return 250;
     }
+  }
+
+  Widget _buildBottomSheetEditorContent() {
+    final content =
+        _editMode == _EditMode.crop
+            ? _buildCropBottomSheet()
+            : _editMode == _EditMode.filter
+            ? _buildFilterBottomSheet()
+            : _buildAdjustmentBottomSheet();
+
+    // ✅ editor 영역은 항상 스크롤 가능해야 overflow가 나지 않고 히트테스트도 안정적이다.
+    return SingleChildScrollView(
+      padding: EdgeInsets.zero,
+      physics: const ClampingScrollPhysics(),
+      child: content,
+    );
   }
 
   // UI 토글
@@ -230,6 +269,98 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
     }
   }
 
+  Future<void> _setImageBytesWithFade(
+    int index,
+    Uint8List newBytes, {
+    VoidCallback? mutateStateInsideSetState,
+  }) async {
+    // ✅ 기존 이미지를 유지한 채 새 이미지를 먼저 디코딩 (로딩 스피너/확 바뀜 방지)
+    ui.Image? next;
+    try {
+      next = await _loadImage(newBytes);
+    } catch (e) {
+      debugPrint('[SimpleImageEditor] 이미지 디코딩 실패: $e');
+      return;
+    }
+
+    if (!mounted) return;
+
+    setState(() {
+      _images[index] = newBytes;
+      _uiImageCache[index] = next;
+
+      // 스냅 교체 + 미세 settle 애니메이션 트리거
+      _applyAnimVersion[index] = (_applyAnimVersion[index] ?? 0) + 1;
+
+      // 호출자가 state reset 등을 같이 하고 싶으면 여기서 실행
+      mutateStateInsideSetState?.call();
+
+      // 캐시 정리
+      _cleanupImageCache();
+    });
+  }
+
+  Widget _buildPaintWithFade({
+    required BuildContext context,
+    required int index,
+    required Uint8List bytesForFallbackLoad,
+    required _ImageEditState state,
+  }) {
+    final curr = _uiImageCache[index];
+    final v = _applyAnimVersion[index] ?? 0;
+
+    // 최초 로딩(캐시에 아무것도 없을 때만) — 적용 순간엔 여기에 잘 안 들어오게 만드는 게 목표
+    if (curr == null) {
+      return Center(
+        child: FutureBuilder<ui.Image>(
+          future: _loadImage(bytesForFallbackLoad),
+          builder: (context, snapshot) {
+            if (snapshot.connectionState == ConnectionState.waiting) {
+              return SizedBox(
+                width: 24,
+                height: 24,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: Theme.of(context).colorScheme.onSurface,
+                ),
+              );
+            }
+            if (snapshot.hasError || !snapshot.hasData) {
+              return const Icon(Icons.error);
+            }
+            _uiImageCache[index] = snapshot.data!;
+            return CustomPaint(
+              painter: ImagePainter(
+                snapshot.data!,
+                state.imageOffset,
+                state.imageScale,
+              ),
+              size: Size.infinite,
+            );
+          },
+        ),
+      );
+    }
+
+    // ✅ 스냅 교체 + “살짝 정착(zoom settle)” (겹침 없음 → 덜 조잡/덜 어지러움)
+    return TweenAnimationBuilder<double>(
+      key: ValueKey('apply_settle_$index\_$v'),
+      tween: Tween(begin: 1.02, end: 1.0),
+      duration: _applySettleDuration,
+      curve: Curves.easeOutCubic,
+      builder: (context, s, _) {
+        return Transform.scale(
+          scale: s,
+          alignment: Alignment.center,
+          child: CustomPaint(
+            painter: ImagePainter(curr, state.imageOffset, state.imageScale),
+            size: Size.infinite,
+          ),
+        );
+      },
+    );
+  }
+
   @override
   void dispose() {
     // 🚀 모든 캐시 정리 (메모리 최적화)
@@ -282,23 +413,21 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
 
   /// 크롭 적용 (완전히 새로운 이미지로 교체 + transform 초기화)
   void _onCropApplied(int index, Uint8List croppedBytes) {
-    setState(() {
-      // ✅ 크롭된 이미지로 완전히 교체
-      _images[index] = croppedBytes;
-      _uiImageCache[index] = null;
-
-      // ✅ transform 상태 초기화 (크롭 후에는 새로운 이미지이므로)
-      final state = _imageEditStates[index];
-      if (state != null) {
-        state.imageOffset = Offset.zero;
-        state.imageScale = 1.0;
-        state.cropState.reset();
-      }
-
-      // ✅ 히스토리에 저장 (언두/리두용)
-      _saveToHistory(index, croppedBytes);
-    });
-    _loadImageToCache(index, croppedBytes);
+    // ✅ “확 바뀜” 방지: 기존 이미지를 유지한 채 새 이미지 준비 후 페이드 교체
+    _setImageBytesWithFade(
+      index,
+      croppedBytes,
+      mutateStateInsideSetState: () {
+        // transform 상태 초기화 (크롭 후에는 새로운 이미지이므로)
+        final state = _imageEditStates[index];
+        if (state != null) {
+          state.imageOffset = Offset.zero;
+          state.imageScale = 1.0;
+          state.cropState.reset();
+        }
+        _saveToHistory(index, croppedBytes);
+      },
+    );
   }
 
   void _saveToHistory(int index, Uint8List imageBytes) {
@@ -317,41 +446,148 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
     final history = _history[_currentIndex];
     if (history == null || history.length <= 1) return;
 
-    setState(() {
-      // ✅ 현재 이미지를 redo 스택에 추가
-      _redoStack
-          .putIfAbsent(_currentIndex, () => [])
-          .add(_images[_currentIndex]);
-
-      // ✅ 이전 이미지로 복원
-      history.removeLast();
-      final previousImage = history.last;
-      _images[_currentIndex] = previousImage;
-      _uiImageCache[_currentIndex] = null;
-    });
-    _loadImageToCache(_currentIndex, _images[_currentIndex]);
+    // ✅ “확 바뀜” 방지: undo도 페이드로
+    final currentBytes = _images[_currentIndex];
+    history.removeLast();
+    final previousBytes = history.last;
+    _redoStack.putIfAbsent(_currentIndex, () => []).add(currentBytes);
+    _setImageBytesWithFade(_currentIndex, previousBytes);
   }
 
   void _redo() {
     final redoStack = _redoStack[_currentIndex];
     if (redoStack == null || redoStack.isEmpty) return;
 
-    setState(() {
-      final redoImage = redoStack.removeLast();
-      _history.putIfAbsent(_currentIndex, () => []).add(redoImage);
-      _images[_currentIndex] = redoImage; // ✅ 현재 이미지 리스트 직접 업데이트
-      _uiImageCache[_currentIndex] = null;
-    });
-    _loadImageToCache(_currentIndex, _images[_currentIndex]);
+    // ✅ “확 바뀜” 방지: redo도 페이드로
+    final redoBytes = redoStack.removeLast();
+    _history.putIfAbsent(_currentIndex, () => []).add(redoBytes);
+    _setImageBytesWithFade(_currentIndex, redoBytes);
   }
 
-  void _handleDone() {
-    // ✅ 현재 이미지 리스트를 그대로 반환 (이미 편집이 반영되어 있음)
-    if (_images.length == 1) {
-      Navigator.pop(context, _images.first);
-    } else {
-      Navigator.pop(context, List<Uint8List>.from(_images));
+  Future<void> _handleDone() async {
+    // ✅ 현재 보이는(필터/보정 포함) 결과를 실제 bytes로 "굽기"
+    final exportedImages = <Uint8List>[];
+    for (int i = 0; i < _images.length; i++) {
+      exportedImages.add(await _exportFinalBytes(i));
     }
+
+    // ✅ 이미지가 1개면 바로 반환
+    if (exportedImages.length == 1) {
+      Navigator.pop(context, exportedImages.first);
+      return;
+    }
+
+    // ✅ 여러 이미지일 때 그룹 레이아웃 선택 페이지 표시
+    try {
+      // Uint8List를 임시 File로 변환
+      final List<File> tempFiles = [];
+      final tempDir = await Directory.systemTemp.createTemp('image_editor_');
+
+      for (int i = 0; i < exportedImages.length; i++) {
+        final tempFile = File('${tempDir.path}/image_$i.jpg');
+        await tempFile.writeAsBytes(exportedImages[i]);
+        tempFiles.add(tempFile);
+      }
+
+      if (!mounted) return;
+
+      // 그룹 레이아웃 선택 페이지 표시
+      final layout = await Navigator.push<GroupImageLayout>(
+        context,
+        MaterialPageRoute(
+          builder:
+              (context) => Scaffold(
+                body: GroupImageLayoutSelector(previewImages: tempFiles),
+              ),
+          fullscreenDialog: false,
+        ),
+      );
+
+      // 임시 파일 정리
+      try {
+        await tempDir.delete(recursive: true);
+      } catch (_) {}
+
+      if (!mounted) return;
+
+      // 레이아웃 선택 취소 시 종료
+      if (layout == null) return;
+
+      // 레이아웃 정보와 함께 이미지 반환
+      // 결과를 Map 형태로 반환: {images: List<Uint8List>, layout: GroupImageLayout}
+      Navigator.pop(context, {
+        'images': List<Uint8List>.from(exportedImages),
+        'layout': layout,
+      });
+    } catch (e) {
+      debugPrint('그룹 레이아웃 선택 오류: $e');
+      // 오류 발생 시 기존 방식으로 반환
+      if (mounted) {
+        Navigator.pop(context, List<Uint8List>.from(exportedImages));
+      }
+    }
+  }
+
+  /// ✅ 현재 편집 상태(회전/반전 + 필터/보정)를 bytes로 "굽기"
+  Future<Uint8List> _exportFinalBytes(int index) async {
+    final state = _imageEditStates.putIfAbsent(index, () => _ImageEditState());
+    Uint8List bytes = _images[index];
+
+    // 1) 회전/반전이 아직 bytes로 적용되지 않았다면 여기서 반영
+    try {
+      if (state.flipHorizontal) {
+        bytes = RotationEditor.flip(bytes, horizontal: true);
+      }
+      if (state.flipVertical) {
+        bytes = RotationEditor.flip(bytes, horizontal: false);
+      }
+      if (state.rotation != 0) {
+        bytes = RotationEditor.rotate(bytes, angle: state.rotation.toDouble());
+      }
+    } catch (e) {
+      debugPrint('[SimpleImageEditor] 회전/반전 export 실패: $e');
+    }
+
+    // 2) 필터/보정(밝기/대비/채도)은 화면 렌더링만 되므로 실제로 굽는다
+    final matrix = _getCombinedColorMatrix(state);
+    if (matrix == null) return bytes;
+
+    try {
+      return await _applyColorMatrixToBytes(bytes, matrix);
+    } catch (e) {
+      debugPrint('[SimpleImageEditor] 필터/보정 export 실패: $e');
+      return bytes;
+    }
+  }
+
+  List<double>? _getCombinedColorMatrix(_ImageEditState state) {
+    final filterMatrix = _getFilterMatrix(state.selectedFilter);
+    final adjustmentMatrix = _getAdjustmentMatrix(state);
+
+    if (filterMatrix != null && adjustmentMatrix != null) {
+      return _multiplyMatrices(filterMatrix, adjustmentMatrix);
+    }
+    return filterMatrix ?? adjustmentMatrix;
+  }
+
+  Future<Uint8List> _applyColorMatrixToBytes(
+    Uint8List imageBytes,
+    List<double> matrix,
+  ) async {
+    final src = await _loadImage(imageBytes);
+    final recorder = ui.PictureRecorder();
+    final canvas = Canvas(recorder);
+
+    final paint = Paint()..colorFilter = ColorFilter.matrix(matrix);
+    canvas.drawImage(src, Offset.zero, paint);
+
+    final picture = recorder.endRecording();
+    final out = await picture.toImage(src.width, src.height);
+    final bd = await out.toByteData(format: ui.ImageByteFormat.png);
+    if (bd == null) {
+      throw StateError('toByteData returned null');
+    }
+    return bd.buffer.asUint8List();
   }
 
   @override
@@ -418,7 +654,7 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
                                       IconButton(
                                         onPressed: () {
                                           if (_isBottomSheetOpen) {
-                                            _closeBottomSheet();
+                                            _closeBottomSheet(cancel: true);
                                           } else {
                                             Navigator.pop(context);
                                           }
@@ -489,11 +725,11 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
                                               horizontal: 20,
                                               vertical: 10,
                                             ),
-                                            child: const Text(
-                                              '완료',
+                                            child: Text(
+                                              '추가(${_images.length})',
                                               style: TextStyle(
                                                 color: Colors.white,
-                                                fontSize: 15,
+                                                fontSize: 16,
                                                 fontWeight: FontWeight.w600,
                                               ),
                                             ),
@@ -533,66 +769,36 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
                             : _buildImagePreview(context, 0, _images[0]),
                   ),
 
-                  // 메인 툴바 (바텀시트가 열리면 완전히 제거하여 간격 줄임)
-                  if (!_isBottomSheetOpen)
-                    GestureDetector(
-                      // ✅ 툴바 영역 터치 이벤트 차단 (배경 GestureDetector와 충돌 방지)
-                      onTap: () {}, // 빈 핸들러로 터치 이벤트 소비
-                      behavior: HitTestBehavior.opaque,
-                      child: AnimatedOpacity(
-                        opacity: _showUI ? 1.0 : 0.0,
-                        duration: const Duration(milliseconds: 200),
-                        child: SafeArea(
-                          top: false,
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 20),
-                            child: ClipRRect(
-                              borderRadius: BorderRadius.circular(16),
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 20,
-                                  vertical: 16,
-                                ),
-                                child: Row(
-                                  mainAxisAlignment:
-                                      MainAxisAlignment.spaceEvenly,
-                                  children: [
-                                    _GlassToolButton(
-                                      icon: Icons.tune,
-                                      label: '조정',
-                                      onTap: _toggleAdjustment,
-                                      isActive: _editMode == _EditMode.adjust,
-                                    ),
-                                    Container(
-                                      width: 1,
-                                      height: 40,
-                                      color: Colors.white.withOpacity(0.2),
-                                    ),
-                                    _GlassToolButton(
-                                      icon: Icons.crop,
-                                      label: '자르기',
-                                      onTap: _toggleCrop,
-                                      isActive: _editMode == _EditMode.crop,
-                                    ),
-                                    Container(
-                                      width: 1,
-                                      height: 40,
-                                      color: Colors.white.withOpacity(0.2),
-                                    ),
-                                    _GlassToolButton(
-                                      icon: Icons.color_lens,
-                                      label: '필터',
-                                      onTap: _toggleFilter,
-                                      isActive: _editMode == _EditMode.filter,
-                                    ),
-                                  ],
-                                ),
+                  // ✅ 메인 툴바: 바텀시트가 내려오는 동안(애니메이션 중) 툴바 높이를 함께 복원
+                  // -> 이미지가 하단 영역을 침범했다가 마지막에 툴바가 튀는 점프 제거
+                  AnimatedBuilder(
+                    animation: _bottomSheetAnimation,
+                    builder: (context, _) {
+                      // 바텀시트가 열려있을수록(1.0) 툴바는 0, 닫힐수록(0.0) 툴바는 1
+                      final toolbarFactor = (1.0 - _bottomSheetAnimation.value)
+                          .clamp(0.0, 1.0);
+
+                      // UI 숨김 상태면 "보이진 않되" 레이아웃 점프를 막기 위해 높이는 유지
+                      final opacity = _showUI ? 1.0 : 0.0;
+
+                      return ClipRect(
+                        child: Align(
+                          alignment: Alignment.topCenter,
+                          heightFactor: toolbarFactor,
+                          child: SizedBox(
+                            height: _mainToolbarHeight,
+                            child: Opacity(
+                              opacity: opacity * toolbarFactor,
+                              child: IgnorePointer(
+                                ignoring: toolbarFactor < 0.99,
+                                child: _buildMainToolbar(),
                               ),
                             ),
                           ),
                         ),
-                      ),
-                    ),
+                      );
+                    },
+                  ),
 
                   // 바텀시트 (일반 위젯으로 올라오고 내려감)
                   AnimatedBuilder(
@@ -611,7 +817,6 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
                             alignment: Alignment.topCenter,
                             heightFactor: _bottomSheetAnimation.value,
                             child: Container(
-                              height: bottomSheetHeight,
                               decoration: BoxDecoration(
                                 color: bgColor.withOpacity(1),
                                 borderRadius: const BorderRadius.only(
@@ -625,65 +830,69 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
                         ),
                       );
                     },
-                    child: Column(
-                      children: [
-                        const SizedBox(height: 12),
-                        Container(
-                          height: 4,
-                          width: 80,
-                          decoration: BoxDecoration(
-                            color: fgColor.withOpacity(0.2),
-                            borderRadius: BorderRadius.circular(4),
+                    child: ConstrainedBox(
+                      constraints: BoxConstraints(
+                        maxHeight: _bottomSheetMaxHeight,
+                      ),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const SizedBox(height: 12),
+                          Container(
+                            height: 4,
+                            width: 80,
+                            decoration: BoxDecoration(
+                              color: fgColor.withOpacity(0.2),
+                              borderRadius: BorderRadius.circular(4),
+                            ),
                           ),
-                        ),
-                        const SizedBox(height: 12),
-                        Expanded(
-                          child:
-                              _editMode == _EditMode.crop
-                                  ? _buildCropBottomSheet()
-                                  : _editMode == _EditMode.filter
-                                  ? _buildFilterBottomSheet()
-                                  : _buildAdjustmentBottomSheet(),
-                        ),
-                        Padding(
-                          padding: const EdgeInsets.only(
-                            left: 8.0,
-                            right: 8.0,
-                            bottom: 30.0,
-                          ),
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.end,
-                            children: [
-                              TextButton(
-                                onPressed: _closeBottomSheet,
-                                child: Text(
-                                  '취소',
-                                  style: TextStyle(
-                                    fontSize: 15,
-                                    fontWeight: FontWeight.w600,
-                                    color: fgColor.withOpacity(0.7),
+                          const SizedBox(height: 12),
+                          Flexible(child: _buildBottomSheetEditorContent()),
+                          Padding(
+                            padding: const EdgeInsets.only(
+                              left: 8.0,
+                              right: 8.0,
+                              bottom: 30.0,
+                              top: 8.0,
+                            ),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.end,
+                              children: [
+                                TextButton(
+                                  onPressed:
+                                      () => _closeBottomSheet(cancel: true),
+                                  child: Text(
+                                    '취소',
+                                    style: TextStyle(
+                                      fontSize: 17,
+                                      fontWeight: FontWeight.w600,
+                                      color: fgColor.withOpacity(0.9),
+                                    ),
                                   ),
                                 ),
-                              ),
-                              const Spacer(),
-                              TextButton(
-                                onPressed: () {
-                                  _applyEdit();
-                                  _closeBottomSheet();
-                                },
-                                child: Text(
-                                  _editMode == _EditMode.crop ? '적용' : '완료',
-                                  style: TextStyle(
-                                    fontSize: 15,
-                                    fontWeight: FontWeight.w600,
-                                    color: fgColor.withOpacity(0.7),
+                                const Spacer(),
+                                TextButton(
+                                  onPressed: () async {
+                                    await _applyEdit();
+                                    _closeBottomSheet(cancel: false);
+                                  },
+                                  child: Text(
+                                    (_editMode == _EditMode.crop ||
+                                            _editMode == _EditMode.rotate)
+                                        ? '적용'
+                                        : '완료',
+                                    style: TextStyle(
+                                      fontSize: 17,
+                                      fontWeight: FontWeight.w600,
+                                      color: fgColor.withOpacity(0.9),
+                                    ),
                                   ),
                                 ),
-                              ),
-                            ],
+                              ],
+                            ),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
                   ),
                 ],
@@ -693,6 +902,127 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
         ],
       ),
     );
+  }
+
+  Widget _buildMainToolbar() {
+    return GestureDetector(
+      // ✅ 툴바 영역 터치 이벤트 차단 (배경 GestureDetector와 충돌 방지)
+      onTap: () {}, // 빈 핸들러로 터치 이벤트 소비
+      behavior: HitTestBehavior.opaque,
+      child: SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 20),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(16),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: [
+                  _GlassToolButton(
+                    icon: Icons.tune,
+                    label: '조정',
+                    onTap: _toggleAdjustment,
+                    isActive: _editMode == _EditMode.adjust,
+                  ),
+                  Container(
+                    width: 1,
+                    height: 40,
+                    color: Colors.white.withOpacity(0.2),
+                  ),
+                  _GlassToolButton(
+                    icon: Icons.crop,
+                    label: '자르기',
+                    onTap: () => _openCropPanel(CropEditorPanel.aspect),
+                    isActive: _editMode == _EditMode.crop,
+                  ),
+                  Container(
+                    width: 1,
+                    height: 40,
+                    color: Colors.white.withOpacity(0.2),
+                  ),
+                  _GlassToolButton(
+                    icon: Icons.rotate_right,
+                    label: '회전',
+                    onTap: () => _openCropPanel(CropEditorPanel.rotate),
+                    isActive: _editMode == _EditMode.crop,
+                  ),
+                  Container(
+                    width: 1,
+                    height: 40,
+                    color: Colors.white.withOpacity(0.2),
+                  ),
+                  _GlassToolButton(
+                    icon: Icons.color_lens,
+                    label: '필터',
+                    onTap: _toggleFilter,
+                    isActive: _editMode == _EditMode.filter,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 회전을 적용한 이미지 위젯 빌드
+  Widget _buildRotatedImage(
+    BuildContext context,
+    int index,
+    Uint8List currentImageBytes,
+    _ImageEditState state,
+  ) {
+    final rotationRadians = state.rotation * (3.14159265359 / 180.0);
+
+    final basePaint = _buildPaintWithFade(
+      context: context,
+      index: index,
+      bytesForFallbackLoad: currentImageBytes,
+      state: state,
+    );
+
+    final imageWidget =
+        _getColorFilter(state) != null
+            ? ColorFiltered(
+              key: ValueKey(
+                '${state.selectedFilter}_${state.brightness}_${state.contrast}_${state.saturation}',
+              ),
+              colorFilter: _getColorFilter(state)!,
+              child: basePaint,
+            )
+            : basePaint;
+
+    Widget result = imageWidget;
+
+    // Flip 적용 (먼저 flip, 그 다음 회전)
+    if (state.flipHorizontal) {
+      result = Transform(
+        alignment: Alignment.center,
+        transform: Matrix4.identity()..scale(-1.0, 1.0),
+        child: result,
+      );
+    }
+    if (state.flipVertical) {
+      result = Transform(
+        alignment: Alignment.center,
+        transform: Matrix4.identity()..scale(1.0, -1.0),
+        child: result,
+      );
+    }
+
+    // 회전 적용
+    if (state.rotation != 0) {
+      result = Transform.rotate(
+        angle: rotationRadians,
+        alignment: Alignment.center,
+        child: result,
+      );
+    }
+
+    return result;
   }
 
   Widget _buildImagePreview(
@@ -810,94 +1140,12 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
               // 1️⃣ 이미지 레이어 (transform 적용)
               IgnorePointer(
                 // 이미지 레이어는 터치 이벤트를 차단 (GestureDetector가 처리)
-                child:
-                    _getColorFilter(state) != null
-                        ? ColorFiltered(
-                          key: ValueKey(
-                            '${state.selectedFilter}_${state.brightness}_${state.contrast}_${state.saturation}',
-                          ),
-                          colorFilter: _getColorFilter(state)!,
-                          child:
-                              _uiImageCache[index] != null
-                                  ? CustomPaint(
-                                    painter: ImagePainter(
-                                      _uiImageCache[index]!,
-                                      state.imageOffset,
-                                      state.imageScale,
-                                    ),
-                                    size: Size.infinite,
-                                  )
-                                  : Center(
-                                    child: FutureBuilder<ui.Image>(
-                                      future: _loadImage(currentImageBytes),
-                                      builder: (context, snapshot) {
-                                        if (snapshot.connectionState ==
-                                            ConnectionState.waiting) {
-                                          return CircularProgressIndicator(
-                                            color:
-                                                Theme.of(
-                                                  context,
-                                                ).colorScheme.onSurface,
-                                          );
-                                        }
-                                        if (snapshot.hasError ||
-                                            !snapshot.hasData) {
-                                          return const Icon(Icons.error);
-                                        }
-                                        if (snapshot.hasData) {
-                                          _uiImageCache[index] = snapshot.data!;
-                                        }
-                                        return CustomPaint(
-                                          painter: ImagePainter(
-                                            snapshot.data!,
-                                            state.imageOffset,
-                                            state.imageScale,
-                                          ),
-                                          size: Size.infinite,
-                                        );
-                                      },
-                                    ),
-                                  ),
-                        )
-                        : (_uiImageCache[index] != null
-                            ? CustomPaint(
-                              painter: ImagePainter(
-                                _uiImageCache[index]!,
-                                state.imageOffset,
-                                state.imageScale,
-                              ),
-                              size: Size.infinite,
-                            )
-                            : Center(
-                              child: FutureBuilder<ui.Image>(
-                                future: _loadImage(currentImageBytes),
-                                builder: (context, snapshot) {
-                                  if (snapshot.connectionState ==
-                                      ConnectionState.waiting) {
-                                    return CircularProgressIndicator(
-                                      color:
-                                          Theme.of(
-                                            context,
-                                          ).colorScheme.onSurface,
-                                    );
-                                  }
-                                  if (snapshot.hasError || !snapshot.hasData) {
-                                    return const Icon(Icons.error);
-                                  }
-                                  if (snapshot.hasData) {
-                                    _uiImageCache[index] = snapshot.data!;
-                                  }
-                                  return CustomPaint(
-                                    painter: ImagePainter(
-                                      snapshot.data!,
-                                      state.imageOffset,
-                                      state.imageScale,
-                                    ),
-                                    size: Size.infinite,
-                                  );
-                                },
-                              ),
-                            )),
+                child: _buildRotatedImage(
+                  context,
+                  index,
+                  currentImageBytes,
+                  state,
+                ),
               ),
               // 2️⃣ 크롭 오버레이 레이어 (transform 미적용 - screen 좌표로 직접 그림)
               if (_editMode == _EditMode.crop &&
@@ -1192,48 +1440,23 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
     }
   }
 
-  void _toggleCrop() {
+  void _openCropPanel(CropEditorPanel panel) {
     final state = _getCurrentEditState();
 
     setState(() {
+      _initialCropPanelForOpen = panel;
+
       if (_editMode != _EditMode.crop) {
-        // ✅ 크롭 진입 시 transform 초기화
+        // 크롭(통합 편집)로 진입
         state.imageOffset = Offset.zero;
         state.imageScale = 1.0;
-        // 크롭 모드 진입 시 초기화 플래그 리셋
         state.cropState.isCropRectInitialized = false;
         _isBottomSheetAnimationComplete = false;
-        // 크롭 모드 진입 시 제스처 핸들러 리셋
         _getCropGestureHandler(_currentIndex).reset();
-      } else {
-        // 크롭 모드 종료 시: 원본 이미지로 복원
-        if (_currentIndex < _originalImages.length) {
-          _images[_currentIndex] = _originalImages[_currentIndex];
 
-          // ✅ 원본 이미지의 ui.Image가 캐시에 있으면 즉시 사용 (로딩 없음)
-          if (_originalUiImageCache[_currentIndex] != null) {
-            _uiImageCache[_currentIndex] = _originalUiImageCache[_currentIndex];
-          } else {
-            // 캐시에 없으면 로드 (초기 로드 시나리오)
-            _uiImageCache[_currentIndex] = null;
-            _loadImageToCache(_currentIndex, _originalImages[_currentIndex]);
-          }
-
-          // transform 상태도 초기화
-          state.imageOffset = Offset.zero;
-          state.imageScale = 1.0;
-          state.cropState.reset();
-        }
-        // 크롭 모드 종료 시 제스처 핸들러 리셋
-        _getCropGestureHandler(_currentIndex).reset();
-      }
-
-      _editMode = _editMode == _EditMode.crop ? _EditMode.none : _EditMode.crop;
-      _isBottomSheetOpen = _editMode == _EditMode.crop;
-      if (_isBottomSheetOpen) {
+        _editMode = _EditMode.crop;
+        _isBottomSheetOpen = true;
         _bottomSheetController.forward();
-      } else {
-        _bottomSheetController.reverse();
       }
     });
   }
@@ -1264,13 +1487,13 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
     });
   }
 
-  void _closeBottomSheet() {
+  void _closeBottomSheet({required bool cancel}) {
     // ✅ 애니메이션이 완전히 끝난 후에만 상태 변경 (오버플로우 방지)
     _bottomSheetController.reverse().then((_) {
       if (!mounted) return;
       setState(() {
-        // ✅ 크롭 모드 취소 시: 원본 이미지로 복원
-        if (_editMode == _EditMode.crop) {
+        // ✅ 취소로 닫는 경우에만 원본/상태 복원
+        if (cancel && _editMode == _EditMode.crop) {
           if (_currentIndex < _originalImages.length) {
             _images[_currentIndex] = _originalImages[_currentIndex];
 
@@ -1307,20 +1530,18 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
 
   void _onBottomSheetDragUpdate(DragUpdateDetails details) {
     setState(() {
-      _dragOffset = (_dragOffset + details.delta.dy).clamp(
-        0.0,
-        bottomSheetHeight,
-      );
-      final progress = 1.0 - (_dragOffset / bottomSheetHeight);
+      final maxH = _bottomSheetMaxHeight;
+      _dragOffset = (_dragOffset + details.delta.dy).clamp(0.0, maxH);
+      final progress = 1.0 - (_dragOffset / maxH);
       _bottomSheetController.value = progress;
     });
   }
 
   void _onBottomSheetDragEnd(DragEndDetails details) {
     final velocity = details.velocity.pixelsPerSecond.dy;
-    final dismissThreshold = 200.0;
+    final dismissThreshold = _bottomSheetMaxHeight * 0.35;
     if (_dragOffset > dismissThreshold || velocity > 300) {
-      _closeBottomSheet();
+      _closeBottomSheet(cancel: true);
     } else {
       setState(() {
         _dragOffset = 0.0;
@@ -1352,12 +1573,12 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
     _hasSwiped = false;
   }
 
-  void _applyEdit() {
+  Future<void> _applyEdit() async {
     final currentImageBytes = _images[_currentIndex];
 
     if (_editMode == _EditMode.crop) {
       // 크롭 적용
-      _applyCrop(_currentIndex, currentImageBytes);
+      await _applyCrop(_currentIndex, currentImageBytes);
     } else {
       // 필터와 조정은 실시간 적용되므로 히스토리에 저장
       _saveToHistory(_currentIndex, currentImageBytes);
@@ -1492,14 +1713,15 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
       return;
     }
 
-    final result = await CropUtils.applyCrop(
-      imageBytes: imageBytes,
-      cropState: state.cropState,
+    final result = await CropUtils.applyCropWithTransform(
       uiImage: _uiImageCache[index]!,
+      cropState: state.cropState,
       containerSize: containerSize,
       scale: state.imageScale,
       offset: state.imageOffset,
-      rotation: state.rotation,
+      rotationDeg: state.rotation,
+      flipHorizontal: state.flipHorizontal,
+      flipVertical: state.flipVertical,
     );
 
     if (result != null) {
@@ -1510,138 +1732,78 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
 
   Widget _buildCropBottomSheet() {
     final state = _getCurrentEditState();
-    final cropOptions = [
-      {'label': '재설정', 'ratio': 'reset', 'icon': Icons.refresh},
-      {'label': '회전', 'ratio': 'rotate', 'icon': Icons.rotate_right},
-      {'label': '자유', 'ratio': null, 'icon': null},
-      {'label': '1:1', 'ratio': '1:1', 'icon': null},
-      {'label': '4:5', 'ratio': '4:5', 'icon': null},
-      {'label': '16:9', 'ratio': '16:9', 'icon': null},
-      {'label': '9:16', 'ratio': '9:16', 'icon': null},
-    ];
 
-    return Padding(
-      padding: const EdgeInsets.only(left: 8, right: 4, top: 10, bottom: 30),
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: Row(
-          children:
-              cropOptions.map((option) {
-                final isSelected = state.selectedAspectRatio == option['ratio'];
-                return Padding(
-                  padding: const EdgeInsets.only(right: 8),
-                  child: GestureDetector(
-                    onTap: () {
-                      if (option['ratio'] == 'reset') {
-                        setState(() {
-                          state.selectedAspectRatio = null;
-                          state.cropState.selectedAspectRatio =
-                              null; // CropState에도 설정
-                          state.cropState.reset();
-                          // transform 초기화
-                          state.imageOffset = Offset.zero;
-                          state.imageScale = 1.0;
-                        });
-                        // 크롭 영역 재초기화
-                        WidgetsBinding.instance.addPostFrameCallback((_) {
-                          if (mounted && _uiImageCache[_currentIndex] != null) {
-                            // LayoutBuilder constraints 사용
-                            final containerSize =
-                                _containerSizes[_currentIndex];
-                            if (containerSize != null) {
-                              CropUtils.initializeCropRect(
-                                image: _uiImageCache[_currentIndex]!,
-                                containerSize: containerSize,
-                                cropState: state.cropState,
-                                scale: state.imageScale,
-                                offset: state.imageOffset,
-                                onDisplaySizeChanged: (size) {
-                                  _imageDisplaySizes[_currentIndex] = size;
-                                },
-                              );
-                              setState(() {});
-                            }
-                          }
-                        });
-                      } else if (option['ratio'] == 'rotate') {
-                        setState(() {
-                          state.rotation = (state.rotation + 90) % 360;
-                        });
-                      } else {
-                        final selectedRatio = option['ratio'] as String?;
-                        // ✅ 즉시 크롭 영역 재초기화 (번쩍거림 방지)
-                        final containerSize = _containerSizes[_currentIndex];
-                        if (_uiImageCache[_currentIndex] != null &&
-                            containerSize != null) {
-                          setState(() {
-                            // transform 초기화
-                            state.imageOffset = Offset.zero;
-                            state.imageScale = 1.0;
+    void reinitCropRect() {
+      final containerSize = _containerSizes[_currentIndex];
+      if (_uiImageCache[_currentIndex] != null && containerSize != null) {
+        CropUtils.initializeCropRect(
+          image: _uiImageCache[_currentIndex]!,
+          containerSize: containerSize,
+          cropState: state.cropState,
+          scale: state.imageScale,
+          offset: state.imageOffset,
+          onDisplaySizeChanged: (size) {
+            _imageDisplaySizes[_currentIndex] = size;
+          },
+        );
+      }
+    }
 
-                            // 비율 설정
-                            state.selectedAspectRatio = selectedRatio;
-                            state.cropState.selectedAspectRatio = selectedRatio;
-
-                            // 크롭 영역 즉시 재초기화
-                            CropUtils.initializeCropRect(
-                              image: _uiImageCache[_currentIndex]!,
-                              containerSize: containerSize,
-                              cropState: state.cropState,
-                              scale: state.imageScale,
-                              offset: state.imageOffset,
-                              onDisplaySizeChanged: (size) {
-                                _imageDisplaySizes[_currentIndex] = size;
-                              },
-                            );
-                          });
-                        }
-                      }
-                    },
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 8,
-                      ),
-                      decoration: BoxDecoration(
-                        color:
-                            isSelected
-                                ? Theme.of(context).colorScheme.primary
-                                : Colors.transparent,
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(
-                          color:
-                              isSelected
-                                  ? Theme.of(context).colorScheme.primary
-                                  : Colors.white.withOpacity(0.3),
-                          width: 1,
-                        ),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          if (option['icon'] != null)
-                            Icon(
-                              option['icon'] as IconData,
-                              color: isSelected ? Colors.white : Colors.white,
-                              size: 18,
-                            ),
-                          if (option['icon'] != null) const SizedBox(width: 4),
-                          Text(
-                            option['label'] as String,
-                            style: TextStyle(
-                              color: isSelected ? Colors.white : Colors.white,
-                              fontSize: 14,
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                );
-              }).toList(),
-        ),
-      ),
+    return CropEditorBottomSheet(
+      initialPanel: _initialCropPanelForOpen,
+      selectedAspectRatio: state.selectedAspectRatio,
+      rotation: state.rotation,
+      flipHorizontal: state.flipHorizontal,
+      flipVertical: state.flipVertical,
+      onSelectAspectRatio: (ratio) {
+        setState(() {
+          state.imageOffset = Offset.zero;
+          state.imageScale = 1.0;
+          state.selectedAspectRatio = ratio;
+          state.cropState.selectedAspectRatio = ratio;
+          reinitCropRect();
+        });
+      },
+      onResetAspectRatio: () {
+        setState(() {
+          state.selectedAspectRatio = null;
+          state.cropState.selectedAspectRatio = null;
+          state.cropState.reset();
+          state.imageOffset = Offset.zero;
+          state.imageScale = 1.0;
+        });
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          setState(reinitCropRect);
+        });
+      },
+      onRotationChanged: (v) => setState(() => state.rotation = v),
+      onRotate90:
+          () => setState(() => state.rotation = (state.rotation + 90) % 360),
+      onResetRotation: () => setState(() => state.rotation = 0),
+      onToggleFlipHorizontal:
+          () => setState(() {
+            state.flipHorizontal = !state.flipHorizontal;
+          }),
+      onToggleFlipVertical:
+          () => setState(() {
+            state.flipVertical = !state.flipVertical;
+          }),
+      onResetAll: () {
+        setState(() {
+          state.selectedAspectRatio = null;
+          state.cropState.reset();
+          state.rotation = 0;
+          state.flipHorizontal = false;
+          state.flipVertical = false;
+          state.imageOffset = Offset.zero;
+          state.imageScale = 1.0;
+        });
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          setState(reinitCropRect);
+        });
+      },
     );
   }
 
@@ -1735,8 +1897,12 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
                                 return Container(
                                   color: Colors.white.withOpacity(0.1),
                                   child: const Center(
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
+                                    child: SizedBox(
+                                      width: 24,
+                                      height: 24,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                      ),
                                     ),
                                   ),
                                 );

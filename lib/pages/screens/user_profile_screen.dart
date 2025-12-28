@@ -34,8 +34,6 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'dart:io';
 import 'dart:ui';
 import 'dart:async';
-import 'dart:typed_data';
-import 'package:doppy/image/custom_image_editor_screen.dart';
 
 class UserProfileScreen extends StatefulWidget {
   final User? otherUser; // 다른 사용자 프로필을 볼 때 username 전달
@@ -1649,6 +1647,8 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                           width: 40,
                           height: 40,
                           fit: BoxFit.cover,
+                          fadeInDuration: Duration.zero,
+                          fadeOutDuration: Duration.zero,
                           // 🚀 링크 이미지는 자주 바뀌지 않으므로 디스크 캐시 사용
                           memCacheWidth: 80, // 메모리 캐시 크기 (작은 썸네일)
                           maxWidthDiskCache: 200, // 디스크 캐시 크기
@@ -1888,44 +1888,17 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     }
   }
 
-  /// 선택된 이미지 처리
+  /// 선택된 이미지 처리 (크롭된 이미지 바로 업로드)
   Future<void> _handleImageSelected(File file) async {
-    // 🎯 이미지 편집기 열기
-    File? tempFile;
     try {
-      final imageBytes = await file.readAsBytes();
-
-      final editedBytes = await Navigator.push<Uint8List?>(
-        context,
-        MaterialPageRoute(
-          builder: (context) => CustomImageEditorScreen(imageBytes: imageBytes),
-          fullscreenDialog: true,
-        ),
-      );
-
-      // 편집 취소 시 종료
-      if (editedBytes == null || !mounted) return;
-
-      // 편집된 이미지를 임시 파일로 저장
-      final tempDir = await Directory.systemTemp.createTemp('profile_edit_');
-      tempFile = File(
-        '${tempDir.path}/edited_profile_${DateTime.now().millisecondsSinceEpoch}.jpg',
-      );
-      await tempFile.writeAsBytes(editedBytes);
-
-      // 임시 디렉토리 정리 (파일은 유지)
-      try {
-        await tempDir.delete(recursive: false);
-      } catch (_) {}
-
       setState(() {
         _isUploadingProfileImage = true;
       });
 
       final upload = context.read<UploadService>();
-      final task = upload.enqueueFile(tempFile, kind: UploadKind.profile);
+      final task = upload.enqueueFile(file, kind: UploadKind.profile);
       _profileUploadTask = task;
-      final finalTempFile = tempFile; // 클로저에서 사용하기 위해
+      final finalTempFile = file; // 클로저에서 사용하기 위해
       _profileTaskListener = () async {
         if (!mounted) return;
         if (task.state == UploadState.success) {
@@ -2009,10 +1982,10 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
         });
         ErrorHandler.showError(context, '이미지 처리 중 오류가 발생했습니다: $e');
       }
-      // 에러 발생 시 임시 파일 삭제
+      // 에러 발생 시 파일 삭제 (크롭된 파일은 ProfileImageViewScreen에서 생성됨)
       try {
-        if (tempFile != null && await tempFile.exists()) {
-          await tempFile.delete();
+        if (await file.exists()) {
+          await file.delete();
         }
       } catch (_) {}
     }

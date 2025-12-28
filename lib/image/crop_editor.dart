@@ -3,6 +3,9 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:image/image.dart' as img;
 
+/// 크롭 바텀시트 패널 타입(대표 버튼 → 펼침 패널)
+enum CropEditorPanel { aspect, rotate, flip }
+
 /// 이미지 표시 rect 계산 유틸리티 (단일 소스)
 /// 모든 곳에서 동일한 계산 로직 사용
 class ImageRectUtils {
@@ -347,6 +350,594 @@ class CropUtils {
       debugPrint('크롭 적용 오류: $e');
       return null;
     }
+  }
+
+  /// ✅ 크롭 + 회전/반전(프리뷰와 동일)까지 한 번에 적용 (PNG)
+  ///
+  /// - `uiImage`(원본 decode 결과)를 기반으로 캔버스에 렌더링 후,
+  /// - 크롭 프레임 영역만 잘라 최종 bytes로 반환한다.
+  static Future<Uint8List?> applyCropWithTransform({
+    required ui.Image uiImage,
+    required CropState cropState,
+    required Size containerSize,
+    required double scale,
+    required Offset offset,
+    required int rotationDeg,
+    required bool flipHorizontal,
+    required bool flipVertical,
+  }) async {
+    if (!cropState.isCropRectInitialized || cropState.cropRectImage == null) {
+      return null;
+    }
+
+    final imageSize = Size(uiImage.width.toDouble(), uiImage.height.toDouble());
+    final displayImageRect = ImageRectUtils.computeImageRectForCrop(
+      containerSize: containerSize,
+      imageSize: imageSize,
+      scale: scale,
+      offset: offset,
+    );
+
+    final cropRectScreen = ImageRectUtils.imageToScreenRect(
+      imageRect: cropState.cropRectImage!,
+      screenImageRect: displayImageRect,
+      imageSize: imageSize,
+    );
+
+    // screen → image 픽셀 스케일 (캔버스 해상도)
+    final scaleX = imageSize.width / displayImageRect.width;
+    final scaleY = imageSize.height / displayImageRect.height;
+
+    final outW = (cropRectScreen.width * scaleX).round().clamp(1, 1000000);
+    final outH = (cropRectScreen.height * scaleY).round().clamp(1, 1000000);
+
+    try {
+      final recorder = ui.PictureRecorder();
+      final canvas = Canvas(recorder);
+
+      // output 픽셀 좌표계로 맞춘다
+      canvas.scale(scaleX, scaleY);
+      // 프레임의 좌상단을 (0,0)로 이동
+      canvas.translate(-cropRectScreen.left, -cropRectScreen.top);
+
+      // 프리뷰와 동일한 변환(Flip -> Rotate, center 기준)
+      canvas.save();
+      final cx = containerSize.width / 2;
+      final cy = containerSize.height / 2;
+      canvas.translate(cx, cy);
+      final theta = rotationDeg * (3.14159265359 / 180.0);
+      if (rotationDeg != 0) {
+        canvas.rotate(theta);
+      }
+      final sx = flipHorizontal ? -1.0 : 1.0;
+      final sy = flipVertical ? -1.0 : 1.0;
+      if (sx != 1.0 || sy != 1.0) {
+        canvas.scale(sx, sy);
+      }
+      canvas.translate(-cx, -cy);
+
+      final srcRect = Rect.fromLTWH(0, 0, imageSize.width, imageSize.height);
+      canvas.drawImageRect(uiImage, srcRect, displayImageRect, Paint());
+      canvas.restore();
+
+      final picture = recorder.endRecording();
+      final outImage = await picture.toImage(outW, outH);
+      final bd = await outImage.toByteData(format: ui.ImageByteFormat.png);
+      if (bd == null) return null;
+      return bd.buffer.asUint8List();
+    } catch (e) {
+      debugPrint('크롭(통합: 회전/반전 포함) 적용 오류: $e');
+      return null;
+    }
+  }
+}
+
+/// iOS 룰러 느낌 회전 슬라이더(크롭 바텀시트에서 재사용)
+class RotationRulerSlider extends StatefulWidget {
+  const RotationRulerSlider({
+    super.key,
+    required this.value,
+    required this.onChanged,
+    required this.onDragStart,
+    required this.onDragEnd,
+    required this.isDragging,
+  });
+
+  final int value; // 0-360
+  final ValueChanged<int> onChanged;
+  final VoidCallback onDragStart;
+  final VoidCallback onDragEnd;
+  final bool isDragging;
+
+  @override
+  State<RotationRulerSlider> createState() => _RotationRulerSliderState();
+}
+
+class _RotationRulerSliderState extends State<RotationRulerSlider> {
+  double? _dragStartX;
+  int? _dragStartValue;
+
+  void _onPanStart(DragStartDetails details) {
+    _dragStartX = details.localPosition.dx;
+    _dragStartValue = widget.value;
+    widget.onDragStart();
+  }
+
+  void _onPanUpdate(DragUpdateDetails details, double width) {
+    if (_dragStartX == null || _dragStartValue == null) return;
+
+    final deltaX = details.localPosition.dx - _dragStartX!;
+    // 화면에 표시할 범위(중앙 기준 좌우 90도씩, 총 180도)
+    final deltaDegree = (deltaX / width) * 180;
+    final newValue = (_dragStartValue! + deltaDegree.round()) % 360;
+    final normalizedValue = newValue < 0 ? newValue + 360 : newValue;
+    widget.onChanged(normalizedValue);
+  }
+
+  void _onPanEnd(DragEndDetails details) {
+    _dragStartX = null;
+    _dragStartValue = null;
+    widget.onDragEnd();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        return GestureDetector(
+          behavior: HitTestBehavior.translucent,
+          onHorizontalDragStart: _onPanStart,
+          onHorizontalDragUpdate:
+              (details) => _onPanUpdate(details, constraints.maxWidth),
+          onHorizontalDragEnd: _onPanEnd,
+          child: SizedBox(
+            height: 40,
+            child: CustomPaint(
+              painter: _RotationRulerPainter(currentValue: widget.value),
+              size: Size(constraints.maxWidth, 40),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _RotationRulerPainter extends CustomPainter {
+  final int currentValue;
+
+  _RotationRulerPainter({required this.currentValue});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final tickPaint =
+        Paint()
+          ..color = Colors.white.withOpacity(0.5)
+          ..strokeWidth = 1.5
+          ..strokeCap = StrokeCap.round;
+
+    final majorTickPaint =
+        Paint()
+          ..color = Colors.white.withOpacity(0.7)
+          ..strokeWidth = 2.0
+          ..strokeCap = StrokeCap.round;
+
+    final centerPaint =
+        Paint()
+          ..color = Colors.white
+          ..strokeWidth = 3.0
+          ..strokeCap = StrokeCap.round;
+
+    final centerX = size.width / 2;
+    final bottomY = size.height - 4;
+
+    const totalTicks = 360;
+    const visibleRange = 90.0;
+    final pixelsPerDegree = size.width / (visibleRange * 2);
+
+    for (int i = 0; i < totalTicks; i++) {
+      final degree = i.toDouble();
+      var relative = degree - currentValue.toDouble();
+      if (relative > 180) relative -= 360;
+      if (relative < -180) relative += 360;
+      if (relative.abs() > visibleRange) continue;
+
+      final x = centerX + relative * pixelsPerDegree;
+      final isMajor = (i % 10 == 0);
+      final isMedium = (i % 5 == 0);
+
+      final tickHeight =
+          (relative.abs() < 0.01)
+              ? 18.0
+              : isMajor
+              ? 16.0
+              : isMedium
+              ? 12.0
+              : 8.0;
+
+      final paint =
+          (relative.abs() < 0.01)
+              ? centerPaint
+              : isMajor
+              ? majorTickPaint
+              : tickPaint;
+
+      canvas.drawLine(
+        Offset(x, bottomY - tickHeight),
+        Offset(x, bottomY),
+        paint,
+      );
+    }
+
+    // 중앙 아래 삼각형 포인터
+    final trianglePaint = Paint()..color = Colors.white;
+    final path = Path();
+    path.moveTo(centerX, size.height);
+    path.lineTo(centerX - 6, size.height - 8);
+    path.lineTo(centerX + 6, size.height - 8);
+    path.close();
+    canvas.drawPath(path, trianglePaint);
+  }
+
+  @override
+  bool shouldRepaint(_RotationRulerPainter oldDelegate) {
+    return oldDelegate.currentValue != currentValue;
+  }
+}
+
+/// 크롭/회전 통합 바텀시트 콘텐츠(대표 버튼 + 펼침 패널)
+class CropEditorBottomSheet extends StatefulWidget {
+  const CropEditorBottomSheet({
+    super.key,
+    required this.initialPanel,
+    required this.selectedAspectRatio,
+    required this.rotation,
+    required this.flipHorizontal,
+    required this.flipVertical,
+    required this.onSelectAspectRatio,
+    required this.onResetAspectRatio,
+    required this.onRotationChanged,
+    required this.onRotate90,
+    required this.onResetRotation,
+    required this.onToggleFlipHorizontal,
+    required this.onToggleFlipVertical,
+    required this.onResetAll,
+  });
+
+  final CropEditorPanel initialPanel;
+  final String? selectedAspectRatio;
+  final int rotation;
+  final bool flipHorizontal;
+  final bool flipVertical;
+
+  final ValueChanged<String?> onSelectAspectRatio;
+  final VoidCallback onResetAspectRatio;
+
+  final ValueChanged<int> onRotationChanged;
+  final VoidCallback onRotate90;
+  final VoidCallback onResetRotation;
+
+  final VoidCallback onToggleFlipHorizontal;
+  final VoidCallback onToggleFlipVertical;
+
+  final VoidCallback onResetAll;
+
+  @override
+  State<CropEditorBottomSheet> createState() => _CropEditorBottomSheetState();
+}
+
+class _CropEditorBottomSheetState extends State<CropEditorBottomSheet> {
+  late CropEditorPanel _panel;
+  bool _isRotateDragging = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _panel = widget.initialPanel;
+  }
+
+  @override
+  void didUpdateWidget(covariant CropEditorBottomSheet oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // 외부에서 "처음 열리는 패널"이 바뀌면 동기화
+    if (oldWidget.initialPanel != widget.initialPanel) {
+      _panel = widget.initialPanel;
+      _isRotateDragging = false;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+
+    Widget circleButton({
+      required Widget child,
+      required bool selected,
+      required VoidCallback onTap,
+    }) {
+      return GestureDetector(
+        onTap: onTap,
+        child: Container(
+          width: 52,
+          height: 52,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            border: Border.all(
+              color: selected ? cs.primary : Colors.white.withOpacity(0.3),
+              width: selected ? 2.5 : 1.5,
+            ),
+          ),
+          child: Center(child: child),
+        ),
+      );
+    }
+
+    Widget aspectPanel() {
+      final cropOptions = [
+        {'label': '재설정', 'ratio': 'reset', 'icon': Icons.refresh},
+        {'label': '자유', 'ratio': null, 'icon': null},
+        {'label': '1:1', 'ratio': '1:1', 'icon': null},
+        {'label': '4:5', 'ratio': '4:5', 'icon': null},
+        {'label': '16:9', 'ratio': '16:9', 'icon': null},
+        {'label': '9:16', 'ratio': '9:16', 'icon': null},
+      ];
+
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            children:
+                cropOptions.map((option) {
+                  final ratio = option['ratio'];
+                  final isSelected = widget.selectedAspectRatio == ratio;
+                  return Padding(
+                    padding: const EdgeInsets.only(right: 12),
+                    child: GestureDetector(
+                      onTap: () {
+                        if (ratio == 'reset') {
+                          widget.onResetAspectRatio();
+                          return;
+                        }
+                        widget.onSelectAspectRatio(ratio as String?);
+                      },
+                      child: Container(
+                        width: 52,
+                        height: 52,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                            color:
+                                isSelected
+                                    ? cs.primary
+                                    : Colors.white.withOpacity(0.3),
+                            width: isSelected ? 2.5 : 1.5,
+                          ),
+                        ),
+                        child: Center(
+                          child:
+                              option['icon'] != null
+                                  ? Icon(
+                                    option['icon'] as IconData,
+                                    color:
+                                        isSelected ? cs.primary : Colors.white,
+                                    size: 26,
+                                  )
+                                  : Text(
+                                    option['label'] as String,
+                                    style: TextStyle(
+                                      color:
+                                          isSelected
+                                              ? cs.primary
+                                              : Colors.white,
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                        ),
+                      ),
+                    ),
+                  );
+                }).toList(),
+          ),
+        ),
+      );
+    }
+
+    Widget rotatePanel() {
+      final bubble = Container(
+        width: 56,
+        height: 56,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: Colors.black.withOpacity(0.85),
+          border: Border.all(color: Colors.white.withOpacity(0.3), width: 2),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.3),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Center(
+          child: Text(
+            '${widget.rotation}',
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 18,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
+      );
+
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (_isRotateDragging)
+              Center(child: bubble)
+            else
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  circleButton(
+                    selected: false,
+                    onTap: widget.onRotate90,
+                    child: const Icon(
+                      Icons.rotate_right,
+                      color: Colors.white,
+                      size: 26,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  circleButton(
+                    selected: false,
+                    onTap: widget.onResetRotation,
+                    child: const Icon(
+                      Icons.refresh,
+                      color: Colors.white,
+                      size: 26,
+                    ),
+                  ),
+                ],
+              ),
+            const SizedBox(height: 12),
+            RotationRulerSlider(
+              value: widget.rotation,
+              onChanged: widget.onRotationChanged,
+              onDragStart: () => setState(() => _isRotateDragging = true),
+              onDragEnd: () => setState(() => _isRotateDragging = false),
+              isDragging: _isRotateDragging,
+            ),
+          ],
+        ),
+      );
+    }
+
+    Widget flipPanel() {
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            circleButton(
+              selected: widget.flipHorizontal,
+              onTap: widget.onToggleFlipHorizontal,
+              child: Icon(
+                Icons.flip,
+                color: widget.flipHorizontal ? cs.primary : Colors.white,
+                size: 26,
+              ),
+            ),
+            const SizedBox(width: 12),
+            circleButton(
+              selected: widget.flipVertical,
+              onTap: widget.onToggleFlipVertical,
+              child: Icon(
+                Icons.flip_camera_ios,
+                color: widget.flipVertical ? cs.primary : Colors.white,
+                size: 26,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+            children: [
+              circleButton(
+                selected: _panel == CropEditorPanel.aspect,
+                onTap:
+                    () => setState(() {
+                      _panel = CropEditorPanel.aspect;
+                      _isRotateDragging = false;
+                    }),
+                child: Icon(
+                  Icons.aspect_ratio,
+                  color:
+                      _panel == CropEditorPanel.aspect
+                          ? cs.primary
+                          : Colors.white,
+                  size: 26,
+                ),
+              ),
+              circleButton(
+                selected: _panel == CropEditorPanel.rotate,
+                onTap:
+                    () => setState(() {
+                      _panel = CropEditorPanel.rotate;
+                      _isRotateDragging = false;
+                    }),
+                child: Icon(
+                  Icons.rotate_right,
+                  color:
+                      _panel == CropEditorPanel.rotate
+                          ? cs.primary
+                          : Colors.white,
+                  size: 26,
+                ),
+              ),
+              circleButton(
+                selected: _panel == CropEditorPanel.flip,
+                onTap:
+                    () => setState(() {
+                      _panel = CropEditorPanel.flip;
+                      _isRotateDragging = false;
+                    }),
+                child: Icon(
+                  Icons.flip,
+                  color:
+                      _panel == CropEditorPanel.flip
+                          ? cs.primary
+                          : Colors.white,
+                  size: 26,
+                ),
+              ),
+              GestureDetector(
+                onTap: widget.onResetAll,
+                child: Container(
+                  width: 52,
+                  height: 52,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                      color: Colors.white.withOpacity(0.3),
+                      width: 1.5,
+                    ),
+                  ),
+                  child: const Icon(
+                    Icons.refresh,
+                    color: Colors.white,
+                    size: 26,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        AnimatedSwitcher(
+          duration: const Duration(milliseconds: 200),
+          child: KeyedSubtree(
+            key: ValueKey(_panel),
+            child: switch (_panel) {
+              CropEditorPanel.aspect => aspectPanel(),
+              CropEditorPanel.rotate => rotatePanel(),
+              CropEditorPanel.flip => flipPanel(),
+            },
+          ),
+        ),
+      ],
+    );
   }
 }
 
@@ -1269,7 +1860,6 @@ class CropGestureHandler {
   // 드래그 중 상태
   bool _isDraggingImage = false;
   Rect? _frozenImageRect;
-  Rect? _frozenCropRectScreen;
   Offset? _lastPanPosition;
   CropHandleType? _activeCropHandle;
 
@@ -1281,6 +1871,92 @@ class CropGestureHandler {
   static const double _dragResistance = 0.6;
   static const double _snapBackStrength = 1.5;
   static const double _minImageScale = 1.0; // 최소 줌 레벨 (축소 제한)
+  static const double _maxImageScale = 5.0; // 최대 줌 레벨
+  static const double _pinchEpsilon = 0.001; // 핀치로 판단할 최소 scale 변화량
+  static const double _snapTolerancePx = 0.5; // 스냅백/커버 판정 픽셀 오차 허용치
+  static const double _edgeToleranceImagePx = 0.1; // 이미지 좌표 경계 판정 여유값
+
+  /// snapBackOffset이 있으면 반영한 최종 offset을 반환한다.
+  Offset _applySnapBackOffset(Offset imageOffset, Offset? snapBackOffset) {
+    return snapBackOffset != null
+        ? (imageOffset + snapBackOffset)
+        : imageOffset;
+  }
+
+  /// freeze(렌더 기준)로 고정된 screen cropRect를, 특정 screenImageRect 기준의 image 좌표로 1회 재투영한다.
+  /// - cropRectImage는 image 좌표가 단일 진실이므로, 여기서만 갱신한다.
+  /// - 결과는 항상 이미지 경계 내로 clamp 된다.
+  Rect? _projectScreenRectToImageRect({
+    required Rect screenCropRect,
+    required Rect screenImageRect,
+    required Size imageSize,
+  }) {
+    final sx = screenImageRect.width / imageSize.width;
+    final sy = screenImageRect.height / imageSize.height;
+    if (sx <= 0 || sy <= 0) return null;
+
+    final projectedLeft = (screenCropRect.left - screenImageRect.left) / sx;
+    final projectedTop = (screenCropRect.top - screenImageRect.top) / sy;
+    final projectedWidth = screenCropRect.width / sx;
+    final projectedHeight = screenCropRect.height / sy;
+
+    final clampedLeft = projectedLeft.clamp(0.0, imageSize.width);
+    final clampedTop = projectedTop.clamp(0.0, imageSize.height);
+    final clampedWidth = projectedWidth.clamp(
+      0.0,
+      imageSize.width - clampedLeft,
+    );
+    final clampedHeight = projectedHeight.clamp(
+      0.0,
+      imageSize.height - clampedTop,
+    );
+
+    return Rect.fromLTWH(clampedLeft, clampedTop, clampedWidth, clampedHeight);
+  }
+
+  /// 제스처 종료 후 공통 상태 리셋
+  void _resetGestureState({required bool clearFrozen}) {
+    _isDraggingImage = false;
+    if (clearFrozen) _frozenImageRect = null;
+    _initialScale = null;
+    _isPinching = false;
+  }
+
+  /// 현재 이미지가 screenCropRect(=고정된 크롭 박스)를 완전히 덮지 못하면,
+  /// 그 차이를 기준으로 snapBackOffset을 계산한다.
+  ///
+  /// - snap 판정은 `_snapTolerancePx`를 반영해 경계 픽셀 오차로 인한 과도한 스냅을 줄인다.
+  Offset? _computeSnapBackOffset({
+    required Rect currentImageRect,
+    required Rect screenCropRect,
+    required double imageScale,
+  }) {
+    double adjustX = 0.0;
+    double adjustY = 0.0;
+
+    // 좌/우
+    if (currentImageRect.left > screenCropRect.left + _snapTolerancePx) {
+      adjustX = screenCropRect.left - currentImageRect.left;
+    } else if (currentImageRect.right <
+        screenCropRect.right - _snapTolerancePx) {
+      adjustX = screenCropRect.right - currentImageRect.right;
+    }
+
+    // 상/하
+    if (currentImageRect.top > screenCropRect.top + _snapTolerancePx) {
+      adjustY = screenCropRect.top - currentImageRect.top;
+    } else if (currentImageRect.bottom <
+        screenCropRect.bottom - _snapTolerancePx) {
+      adjustY = screenCropRect.bottom - currentImageRect.bottom;
+    }
+
+    if (adjustX == 0.0 && adjustY == 0.0) return null;
+
+    return Offset(
+      (adjustX / imageScale) * _snapBackStrength,
+      (adjustY / imageScale) * _snapBackStrength,
+    );
+  }
 
   /// 드래그 시작 처리
   void onScaleStart({
@@ -1307,13 +1983,10 @@ class CropGestureHandler {
         offset: imageOffset,
       );
 
-      // ✅ 드래그 시작 시 imageRect와 cropRectScreen 모두 freeze (복귀 기준으로 사용)
+      // ✅ 드래그/핀치 시작 시 imageRect만 freeze (렌더 기준/복귀 기준)
+      // cropRectScreen은 cropRectImage(진실) + frozenImageRect(기준)으로 항상 계산 가능하므로
+      // 파생값을 상태로 들고 있지 않는다.
       _frozenImageRect = currentImageRect;
-      _frozenCropRectScreen = ImageRectUtils.imageToScreenRect(
-        imageRect: cropState.cropRectImage!,
-        screenImageRect: currentImageRect,
-        imageSize: imageSize,
-      );
       _isDraggingImage = true;
     }
   }
@@ -1333,7 +2006,7 @@ class CropGestureHandler {
     if (_activeCropHandle != null) return null;
 
     // 핀치 줌 처리 (scale 변화가 있을 때)
-    if ((details.scale - 1.0).abs() >= 0.001) {
+    if ((details.scale - 1.0).abs() >= _pinchEpsilon) {
       _isPinching = true;
       _initialScale ??= imageScale;
 
@@ -1353,6 +2026,25 @@ class CropGestureHandler {
 
       // ✅ 핀치 축소 허용 조건: 이미지가 cropRect를 덮고 있어야 함
       if (details.scale < 1.0 && cropState.cropRectImage != null) {
+        // 🎯 중요: 축소 허용/차단 판정 기준을 "사용자가 실제로 보는 크롭 박스"로 통일한다.
+        // - 핀치 중 UX는 cropRectScreen이 화면에 고정(frozen 기준)되어야 함
+        // - 그런데 여기서 testImageRect 기준으로 cropRectScreen을 계산하면(=박스가 이미지에 종속),
+        //   축소를 과하게 허용하게 되고, 종료 시점에 frozen 기준 스냅백이 과하게 걸릴 수 있다.
+        //
+        // 따라서 zoom-out(축소) 중에는 "frozen 기준 cropRectScreen"을 기준으로
+        // 이미지가 그 박스를 계속 덮는지 검사한다.
+        //
+        // 경계 픽셀 오차로 인한 불필요 차단/스냅백 방지를 위해 tolerance를 둔다.
+        // 핀치 시작 시점에 freeze된 imageRect가 없으면(예외 케이스) 기존 방식으로 폴백
+        final Rect? frozenCropRectScreen =
+            (_frozenImageRect != null)
+                ? ImageRectUtils.imageToScreenRect(
+                  imageRect: cropState.cropRectImage!,
+                  screenImageRect: _frozenImageRect!,
+                  imageSize: imageSize,
+                )
+                : null;
+
         final testImageRect = ImageRectUtils.computeImageRectForCrop(
           containerSize: containerSize,
           imageSize: imageSize,
@@ -1360,17 +2052,20 @@ class CropGestureHandler {
           offset: imageOffset,
         );
 
-        final testCropRectScreen = ImageRectUtils.imageToScreenRect(
-          imageRect: cropState.cropRectImage!,
-          screenImageRect: testImageRect,
-          imageSize: imageSize,
-        );
+        final testCropRectScreen =
+            frozenCropRectScreen ??
+            ImageRectUtils.imageToScreenRect(
+              imageRect: cropState.cropRectImage!,
+              screenImageRect: testImageRect,
+              imageSize: imageSize,
+            );
 
         // ✅ 이미지가 cropRect를 완전히 덮지 못하면 축소 금지
-        if (testImageRect.left > testCropRectScreen.left ||
-            testImageRect.top > testCropRectScreen.top ||
-            testImageRect.right < testCropRectScreen.right ||
-            testImageRect.bottom < testCropRectScreen.bottom) {
+        if (testImageRect.left > testCropRectScreen.left + _snapTolerancePx ||
+            testImageRect.top > testCropRectScreen.top + _snapTolerancePx ||
+            testImageRect.right < testCropRectScreen.right - _snapTolerancePx ||
+            testImageRect.bottom <
+                testCropRectScreen.bottom - _snapTolerancePx) {
           // 축소 금지: 현재 scale 유지
           return null;
         }
@@ -1382,7 +2077,7 @@ class CropGestureHandler {
       }
 
       // 최대 scale 제한
-      newScale = newScale.clamp(_minImageScale, 5.0);
+      newScale = newScale.clamp(_minImageScale, _maxImageScale);
 
       return ScaleUpdateResult(
         scale: newScale,
@@ -1404,23 +2099,24 @@ class CropGestureHandler {
 
     // ✅ 스케일이 1.0 이하이고 크롭박스가 이미지 경계에 붙어있으면 드래그 막기
     if (imageScale <= _minImageScale && cropState.cropRectImage != null) {
-      const tolerance = 0.1; // 경계 판정 여유값
       final cropRect = cropState.cropRectImage!;
 
       // 왼쪽으로 드래그하려고 하는데 왼쪽 경계에 붙어있으면 막기
-      if (delta.dx < 0 && cropRect.left <= tolerance) {
+      if (delta.dx < 0 && cropRect.left <= _edgeToleranceImagePx) {
         return null;
       }
       // 오른쪽으로 드래그하려고 하는데 오른쪽 경계에 붙어있으면 막기
-      if (delta.dx > 0 && cropRect.right >= imageSize.width - tolerance) {
+      if (delta.dx > 0 &&
+          cropRect.right >= imageSize.width - _edgeToleranceImagePx) {
         return null;
       }
       // 위로 드래그하려고 하는데 위쪽 경계에 붙어있으면 막기
-      if (delta.dy < 0 && cropRect.top <= tolerance) {
+      if (delta.dy < 0 && cropRect.top <= _edgeToleranceImagePx) {
         return null;
       }
       // 아래로 드래그하려고 하는데 아래쪽 경계에 붙어있으면 막기
-      if (delta.dy > 0 && cropRect.bottom >= imageSize.height - tolerance) {
+      if (delta.dy > 0 &&
+          cropRect.bottom >= imageSize.height - _edgeToleranceImagePx) {
         return null;
       }
     }
@@ -1473,141 +2169,177 @@ class CropGestureHandler {
 
     // ✅ 핸들 리사이즈 중이면 복귀 로직 스킵
     if (_activeCropHandle != null) {
-      _isDraggingImage = false;
-      _frozenImageRect = null;
-      _frozenCropRectScreen = null;
-      _initialScale = null;
-      _isPinching = false;
+      _resetGestureState(clearFrozen: true);
       return null;
     }
 
     // ✅ 핀치 줌이 끝났을 때 처리
     if (_isPinching) {
-      // scale이 최소값보다 작으면 복귀
-      if (imageScale < _minImageScale) {
-        _isDraggingImage = false;
-        _frozenImageRect = null;
-        _frozenCropRectScreen = null;
-        _initialScale = null;
-        _isPinching = false;
-
-        // scale을 최소값으로 복귀
-        return CropDragEndResult(
-          snapBackOffset: null,
-          cropRectImagePosition: null,
-          cropRectImageSize: null,
-          snapBackScale: _minImageScale, // 복귀할 scale 값
-        );
-      }
-
-      // ✅ 핀치 줌 후: 크롭박스가 이미지 영역 밖으로 나갔는지 확인 후 복귀
-      final imageSize = Size(
-        uiImage.width.toDouble(),
-        uiImage.height.toDouble(),
-      );
-
-      // 현재 scale 기준으로 이미지 rect 계산
-      final currentImageRect = ImageRectUtils.computeImageRectForCrop(
+      return _handlePinchEnd(
+        cropState: cropState,
+        uiImage: uiImage,
         containerSize: containerSize,
+        imageScale: imageScale,
+        imageOffset: imageOffset,
+      );
+    }
+
+    return _handleDragEnd(
+      cropState: cropState,
+      uiImage: uiImage,
+      containerSize: containerSize,
+      imageScale: imageScale,
+      imageOffset: imageOffset,
+    );
+  }
+
+  // ----------------------------
+  // onScaleEnd 내부 책임 분리
+  // ----------------------------
+  CropDragEndResult? _handlePinchEnd({
+    required CropState cropState,
+    required ui.Image uiImage,
+    required Size containerSize,
+    required double imageScale,
+    required Offset imageOffset,
+  }) {
+    // scale이 최소값보다 작으면 복귀
+    if (imageScale < _minImageScale) {
+      _resetGestureState(clearFrozen: true);
+
+      // scale을 최소값으로 복귀
+      return CropDragEndResult(
+        snapBackOffset: null,
+        cropRectImagePosition: null,
+        cropRectImageSize: null,
+        snapBackScale: _minImageScale, // 복귀할 scale 값
+      );
+    }
+
+    // ✅ 핀치 줌 후: 확대/축소 구분하여 처리
+    final imageSize = Size(uiImage.width.toDouble(), uiImage.height.toDouble());
+
+    // 현재 scale 기준으로 이미지 rect 계산
+    final currentImageRect = ImageRectUtils.computeImageRectForCrop(
+      containerSize: containerSize,
+      imageSize: imageSize,
+      scale: imageScale,
+      offset: imageOffset,
+    );
+
+    // 화면에서 크롭박스 위치는 고정 (frozenImageRect 기준으로 즉시 계산)
+    if (_frozenImageRect != null && _initialScale != null) {
+      final frozenCropRectScreen = ImageRectUtils.imageToScreenRect(
+        imageRect: cropState.cropRectImage!,
+        screenImageRect: _frozenImageRect!,
         imageSize: imageSize,
-        scale: imageScale,
-        offset: imageOffset,
+      );
+      // ✅ 확대/축소 판단: 초기 scale과 현재 scale 비교
+      final isZoomIn = imageScale > _initialScale!; // 확대
+      final isZoomOut = imageScale < _initialScale!; // 축소
+
+      final snapBackOffset = _computeSnapBackOffset(
+        currentImageRect: currentImageRect,
+        screenCropRect: frozenCropRectScreen,
+        imageScale: imageScale,
       );
 
-      // 화면에서 크롭박스 위치는 고정 (_frozenCropRectScreen 기준)
-      if (_frozenCropRectScreen != null) {
-        // ✅ 드래그 종료와 동일한 로직: 크롭박스가 이미지 영역 밖으로 나갔는지 확인
-        double adjustX = 0.0;
-        double adjustY = 0.0;
+      // ✅ 확대 핀치: cropRectImage 절대 재계산하지 않음 (고정)
+      if (isZoomIn) {
+        // ✅ zoom-in 종료의 정석화:
+        // - zoom-in 중에는 cropRectScreen을 frozen 기준으로 고정 렌더(이미지 확대만 보이게)
+        // - zoom-in 종료 시점에 한 번만 "고정된 screen cropRect"를 최종 imageRect 기준으로
+        //   screen→image 재투영해서 cropRectImage(단일 진실)를 갱신한다.
+        // - 그 후 freeze를 해제해도 cropRectScreen이 유지된다.
 
-        // 이미지가 고정된 크롭박스 왼쪽으로 벗어나면 오른쪽으로 이동
-        if (currentImageRect.left > _frozenCropRectScreen!.left) {
-          adjustX = _frozenCropRectScreen!.left - currentImageRect.left;
-        }
-        // 이미지가 고정된 크롭박스 오른쪽으로 벗어나면 왼쪽으로 이동
-        else if (currentImageRect.right < _frozenCropRectScreen!.right) {
-          adjustX = _frozenCropRectScreen!.right - currentImageRect.right;
-        }
-
-        // 이미지가 고정된 크롭박스 위로 벗어나면 아래로 이동
-        if (currentImageRect.top > _frozenCropRectScreen!.top) {
-          adjustY = _frozenCropRectScreen!.top - currentImageRect.top;
-        }
-        // 이미지가 고정된 크롭박스 아래로 벗어나면 위로 이동
-        else if (currentImageRect.bottom < _frozenCropRectScreen!.bottom) {
-          adjustY = _frozenCropRectScreen!.bottom - currentImageRect.bottom;
-        }
-
-        Offset? snapBackOffset;
-
-        // ✅ 벗어났으면 offset 조정하여 복귀
-        if (adjustX != 0.0 || adjustY != 0.0) {
-          snapBackOffset = Offset(
-            (adjustX / imageScale) * _snapBackStrength,
-            (adjustY / imageScale) * _snapBackStrength,
-          );
-        }
-
-        // ✅ 핀치 줌 완료 시: 화면 중앙 기준으로 cropRectImage 재계산
+        // 스냅백이 적용된 최종 offset 기준으로 imageRect를 계산해야, 재투영이 일관된다.
+        final finalOffset = _applySnapBackOffset(imageOffset, snapBackOffset);
         final finalImageRect = ImageRectUtils.computeImageRectForCrop(
           containerSize: containerSize,
           imageSize: imageSize,
           scale: imageScale,
-          offset:
-              snapBackOffset != null
-                  ? imageOffset + snapBackOffset
-                  : imageOffset,
-        );
-        final containerCenter = Offset(
-          containerSize.width / 2,
-          containerSize.height / 2,
-        );
-        final sx = finalImageRect.width / imageSize.width;
-        final sy = finalImageRect.height / imageSize.height;
-        final cropSizeScreen = Size(
-          cropState.cropRectImage!.width * sx,
-          cropState.cropRectImage!.height * sy,
-        );
-        final centerScreenRect = Rect.fromCenter(
-          center: containerCenter,
-          width: cropSizeScreen.width,
-          height: cropSizeScreen.height,
-        );
-        // 화면 좌표 → 이미지 좌표 변환
-        final cropRectImageUpdate = Offset(
-          (centerScreenRect.left - finalImageRect.left) / sx,
-          (centerScreenRect.top - finalImageRect.top) / sy,
+          offset: finalOffset,
         );
 
-        _isDraggingImage = false;
-        _frozenImageRect = null;
-        _frozenCropRectScreen = null;
-        _initialScale = null;
-        _isPinching = false;
+        final projected = _projectScreenRectToImageRect(
+          screenCropRect: frozenCropRectScreen,
+          screenImageRect: finalImageRect,
+          imageSize: imageSize,
+        );
+        if (projected == null) {
+          _resetGestureState(clearFrozen: true);
+          return CropDragEndResult(
+            snapBackOffset: snapBackOffset,
+            cropRectImagePosition: null,
+            cropRectImageSize: null,
+            snapBackScale: null,
+          );
+        }
+
+        // zoom-in 종료 후에는 freeze 해제 (이제 cropRectImage가 최종 기준에 맞게 재투영됨)
+        _resetGestureState(clearFrozen: true);
 
         return CropDragEndResult(
           snapBackOffset: snapBackOffset,
-          cropRectImagePosition: cropRectImageUpdate, // ✅ 화면 중앙 기준으로 재계산
-          cropRectImageSize: Size(
-            cropState.cropRectImage!.width,
-            cropState.cropRectImage!.height,
-          ),
+          cropRectImagePosition: projected.topLeft,
+          cropRectImageSize: projected.size,
           snapBackScale: null,
         );
       }
 
-      _isDraggingImage = false;
-      _frozenImageRect = null;
-      _frozenCropRectScreen = null;
-      _initialScale = null;
-      _isPinching = false;
-      return null;
+      // ✅ 축소 핀치: zoom-in과 동일하게 "재투영 1회"로 정석화한다.
+      // - 축소 중에도 크롭 박스(screen)는 고정되어야 함
+      // - 종료 시점에 한 번만 고정된 screen cropRect를 최종 imageRect 기준으로 image 좌표로 투영
+      // - 이후 freeze를 해제해도 screen 크롭박스가 유지됨
+      if (isZoomOut) {
+        final finalOffset = _applySnapBackOffset(imageOffset, snapBackOffset);
+        final finalImageRect = ImageRectUtils.computeImageRectForCrop(
+          containerSize: containerSize,
+          imageSize: imageSize,
+          scale: imageScale,
+          offset: finalOffset,
+        );
+        final projected = _projectScreenRectToImageRect(
+          screenCropRect: frozenCropRectScreen,
+          screenImageRect: finalImageRect,
+          imageSize: imageSize,
+        );
+        if (projected == null) {
+          _resetGestureState(clearFrozen: true);
+          return CropDragEndResult(
+            snapBackOffset: snapBackOffset,
+            cropRectImagePosition: null,
+            cropRectImageSize: null,
+            snapBackScale: null,
+          );
+        }
+
+        _resetGestureState(clearFrozen: true);
+
+        return CropDragEndResult(
+          snapBackOffset: snapBackOffset,
+          cropRectImagePosition: projected.topLeft,
+          cropRectImageSize: projected.size,
+          snapBackScale: null,
+        );
+      }
     }
 
+    _resetGestureState(clearFrozen: true);
+    return null;
+  }
+
+  CropDragEndResult? _handleDragEnd({
+    required CropState cropState,
+    required ui.Image uiImage,
+    required Size containerSize,
+    required double imageScale,
+    required Offset imageOffset,
+  }) {
     // ✅ 드래그 완료 시: 고정된 기준으로 크롭박스 밖으로 나갔는지 확인 후 복귀
     if (cropState.isCropRectInitialized &&
         _isDraggingImage &&
-        _frozenCropRectScreen != null) {
+        _frozenImageRect != null) {
       final imageSize = Size(
         uiImage.width.toDouble(),
         uiImage.height.toDouble(),
@@ -1621,45 +2353,25 @@ class CropGestureHandler {
         offset: imageOffset,
       );
 
-      // ✅ 고정된 기준(_frozenCropRectScreen)으로 벗어남 확인
-      double adjustX = 0.0;
-      double adjustY = 0.0;
-
-      // 이미지가 고정된 크롭박스 왼쪽으로 벗어나면 오른쪽으로 이동
-      if (currentImageRect.left > _frozenCropRectScreen!.left) {
-        adjustX = _frozenCropRectScreen!.left - currentImageRect.left;
-      }
-      // 이미지가 고정된 크롭박스 오른쪽으로 벗어나면 왼쪽으로 이동
-      else if (currentImageRect.right < _frozenCropRectScreen!.right) {
-        adjustX = _frozenCropRectScreen!.right - currentImageRect.right;
-      }
-
-      // 이미지가 고정된 크롭박스 위로 벗어나면 아래로 이동
-      if (currentImageRect.top > _frozenCropRectScreen!.top) {
-        adjustY = _frozenCropRectScreen!.top - currentImageRect.top;
-      }
-      // 이미지가 고정된 크롭박스 아래로 벗어나면 위로 이동
-      else if (currentImageRect.bottom < _frozenCropRectScreen!.bottom) {
-        adjustY = _frozenCropRectScreen!.bottom - currentImageRect.bottom;
-      }
-
-      Offset? snapBackOffset;
-
-      // ✅ 벗어났으면 offset 조정하여 복귀
-      if (adjustX != 0.0 || adjustY != 0.0) {
-        snapBackOffset = Offset(
-          (adjustX / imageScale) * _snapBackStrength,
-          (adjustY / imageScale) * _snapBackStrength,
-        );
-      }
+      // ✅ 고정된 기준(frozenImageRect)으로 “화면 크롭박스”를 즉시 계산해 벗어남 확인
+      final frozenCropRectScreen = ImageRectUtils.imageToScreenRect(
+        imageRect: cropState.cropRectImage!,
+        screenImageRect: _frozenImageRect!,
+        imageSize: imageSize,
+      );
+      final snapBackOffset = _computeSnapBackOffset(
+        currentImageRect: currentImageRect,
+        screenCropRect: frozenCropRectScreen,
+        imageScale: imageScale,
+      );
 
       // ✅ 드래그 완료 시: 화면 중앙 기준으로 cropRectImage 재계산
+      final finalOffset = _applySnapBackOffset(imageOffset, snapBackOffset);
       final finalImageRect = ImageRectUtils.computeImageRectForCrop(
         containerSize: containerSize,
         imageSize: imageSize,
         scale: imageScale,
-        offset:
-            snapBackOffset != null ? imageOffset + snapBackOffset : imageOffset,
+        offset: finalOffset,
       );
       final containerCenter = Offset(
         containerSize.width / 2,
@@ -1685,7 +2397,8 @@ class CropGestureHandler {
       // ✅ 드래그 종료 시 freeze 해제
       _isDraggingImage = false;
       _frozenImageRect = null;
-      _frozenCropRectScreen = null;
+      _initialScale = null;
+      _isPinching = false;
 
       return CropDragEndResult(
         snapBackOffset: snapBackOffset,
@@ -1700,7 +2413,6 @@ class CropGestureHandler {
     // ✅ 드래그 종료 시 freeze 해제
     _isDraggingImage = false;
     _frozenImageRect = null;
-    _frozenCropRectScreen = null;
     _initialScale = null;
     _isPinching = false;
 
@@ -1721,14 +2433,10 @@ class CropGestureHandler {
   /// Freeze된 이미지 rect 가져오기
   Rect? get frozenImageRect => _frozenImageRect;
 
-  /// Freeze된 크롭 rect (화면 좌표) 가져오기
-  Rect? get frozenCropRectScreen => _frozenCropRectScreen;
-
   /// 리셋
   void reset() {
     _isDraggingImage = false;
     _frozenImageRect = null;
-    _frozenCropRectScreen = null;
     _lastPanPosition = null;
     _activeCropHandle = null;
     _initialScale = null;

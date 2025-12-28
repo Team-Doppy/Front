@@ -793,6 +793,8 @@ class _ProfileInfoEditBottomSheetState
                       ? CachedNetworkImage(
                         imageUrl: thumbnailUrl,
                         fit: BoxFit.cover,
+                        fadeInDuration: Duration.zero,
+                        fadeOutDuration: Duration.zero,
                         memCacheWidth: 64,
                         maxWidthDiskCache: 128,
                         maxHeightDiskCache: 128,

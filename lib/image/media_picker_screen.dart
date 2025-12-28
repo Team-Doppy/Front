@@ -52,9 +52,7 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
   List<AssetEntity> _media = [];
   bool _isLoading = true;
   bool _hasPermission = false;
-  AssetPathEntity? _currentAlbum;
-  List<AssetPathEntity> _albums = [];
-  List<String> _selectedMediaIds = []; // 선택된 미디어 ID들 (선택 순서 유지)
+  final List<String> _selectedMediaIds = []; // 선택된 미디어 ID들 (선택 순서 유지)
   MediaType _mediaType = MediaType.video; // 현재 선택된 미디어 타입
   int _crossAxisCount = 3; // 그리드 열 수 (5열(최소) -> 3열(기본) -> 1열(최대))
   double _lastScale = 1.0; // 마지막 핀치 스케일
@@ -68,8 +66,29 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
   bool _isLoadingMore = false;
   final ScrollController _scrollController = ScrollController();
 
-  // 🎯 영상 전체 저장용 (모든 앨범에서 수집한 전체 영상)
-  List<AssetEntity> _allVideoMedia = [];
+  // 🎯 All 앨범 캐시 (미디어 목록은 캐시하지 않음)
+  AssetPathEntity? _cachedAllAlbum;
+  MediaType? _cachedAllAlbumType;
+
+  Future<AssetPathEntity?> _getAllAlbum(MediaType type) async {
+    if (_cachedAllAlbum != null && _cachedAllAlbumType == type) {
+      return _cachedAllAlbum;
+    }
+
+    final paths = await PhotoManager.getAssetPathList(
+      type: type == MediaType.video ? RequestType.video : RequestType.image,
+      hasAll: true,
+    );
+    if (paths.isEmpty) return null;
+    // '전체/최근' 앨범 우선
+    final allAlbum = paths.firstWhere(
+      (p) => p.isAll,
+      orElse: () => paths.first,
+    );
+    _cachedAllAlbum = allAlbum;
+    _cachedAllAlbumType = type;
+    return allAlbum;
+  }
 
   @override
   void initState() {
@@ -126,7 +145,6 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
         setState(() {
           _hasPermission = true;
         });
-        await _loadAlbums();
         await _loadMedia();
       } else if (ps == PermissionState.denied) {
         // 권한이 거부된 경우 설정으로 이동
@@ -160,60 +178,6 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
     }
   }
 
-  Future<void> _loadAlbums() async {
-    try {
-      // 영상과 이미지 앨범 모두 가져오기
-      final List<AssetPathEntity> videoAlbums =
-          await PhotoManager.getAssetPathList(
-            type: RequestType.video,
-            hasAll: true,
-          );
-      final List<AssetPathEntity> imageAlbums =
-          await PhotoManager.getAssetPathList(
-            type: RequestType.image,
-            hasAll: true,
-          );
-
-      if (!mounted) return;
-
-      // 모든 앨범을 합치고 중복 제거
-      final allAlbums = <String, AssetPathEntity>{};
-      for (var album in videoAlbums) {
-        allAlbums[album.id] = album;
-      }
-      for (var album in imageAlbums) {
-        allAlbums[album.id] = album;
-      }
-
-      setState(() {
-        _albums = allAlbums.values.toList();
-        if (_albums.isNotEmpty && _currentAlbum == null) {
-          // 현재 미디어 타입에 맞는 앨범을 먼저 찾기
-          if (_mediaType == MediaType.video) {
-            // 영상 타입이면 영상 앨범을 먼저 찾기
-            _currentAlbum = _albums.firstWhere(
-              (album) => videoAlbums.any((v) => v.id == album.id),
-              orElse: () => _albums.first,
-            );
-          } else {
-            // 이미지 타입이면 이미지 앨범을 먼저 찾기
-            _currentAlbum = _albums.firstWhere(
-              (album) => imageAlbums.any((i) => i.id == album.id),
-              orElse: () => _albums.first,
-            );
-          }
-        }
-      });
-    } catch (e) {
-      debugPrint('앨범 로드 오류: $e');
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
-      }
-    }
-  }
-
   Future<void> _loadMedia() async {
     if (mounted) {
       setState(() {
@@ -225,152 +189,32 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
     }
 
     try {
-      List<AssetEntity> media = [];
-
-      if (_mediaType == MediaType.video) {
-        // 🎯 영상의 경우: 모든 영상 앨범에서 전체 영상 가져오기
-        debugPrint('[MediaPicker] 영상 전체 앨범에서 로드 시작...');
-
-        // 모든 영상 앨범 가져오기 (hasAll: true로 전체 앨범 포함)
-        final List<AssetPathEntity> videoAlbums =
-            await PhotoManager.getAssetPathList(
-              type: RequestType.video,
-              hasAll: true,
-            );
-
-        if (videoAlbums.isEmpty) {
-          debugPrint('[MediaPicker] 영상 앨범이 없습니다');
-          if (mounted) {
-            setState(() {
-              _media = [];
-              _isLoading = false;
-              _hasMoreMedia = false;
-            });
-          }
-          return;
-        }
-
-        // 모든 영상 앨범에서 영상 수집
-        final Set<String> seenIds = {}; // 중복 제거용
-
-        for (final album in videoAlbums) {
-          try {
-            // 각 앨범의 모든 영상 가져오기 (페이지네이션 없이 전체)
-            final albumAssets = await album.getAssetListRange(
-              start: 0,
-              end: 10000, // 충분히 큰 값으로 모든 영상 가져오기
-            );
-
-            // 영상만 필터링하고 중복 제거
-            for (final asset in albumAssets) {
-              if (asset.type == AssetType.video &&
-                  !seenIds.contains(asset.id)) {
-                media.add(asset);
-                seenIds.add(asset.id);
-              }
-            }
-          } catch (e) {
-            debugPrint('[MediaPicker] 앨범 ${album.name} 로드 오류: $e');
-          }
-        }
-
-        // 날짜 순으로 정렬 (최신순)
-        media.sort((a, b) {
-          final aTime = a.createDateTime;
-          final bTime = b.createDateTime;
-
-          return bTime.compareTo(aTime);
-        });
-
-        // 전체 영상 저장
-        _allVideoMedia = media;
-
-        // 첫 페이지만 표시
-        final firstPage = media.take(_pageSize).toList();
-        _hasMoreMedia = media.length > _pageSize;
-
+      final allAlbum = await _getAllAlbum(_mediaType);
+      if (allAlbum == null) {
         debugPrint(
-          '[MediaPicker] 전체 영상 개수: ${media.length}, 첫 페이지: ${firstPage.length}',
+          '[MediaPicker] ${_mediaType == MediaType.video ? "영상" : "이미지"} All 앨범이 없습니다',
         );
-
         if (!mounted) return;
         setState(() {
-          _media = firstPage;
+          _media = [];
           _isLoading = false;
+          _hasMoreMedia = false;
         });
-      } else {
-        // 🎯 이미지의 경우: 기존 로직 유지 (특정 앨범에서만)
-        if (_currentAlbum == null) {
-          if (mounted) {
-            setState(() {
-              _isLoading = false;
-            });
-          }
-          return;
-        }
-
-        final List<AssetEntity> allMedia = await _currentAlbum!
-            .getAssetListRange(start: 0, end: _pageSize);
-
-        // 타입에 따라 필터링
-        media =
-            allMedia.where((asset) {
-              return asset.type == AssetType.image;
-            }).toList();
-
-        // 🎯 더 로드할 미디어가 있는지 확인
-        _hasMoreMedia = allMedia.length >= _pageSize;
-
-        // 필터링 후 비어있고, 다른 앨범이 있다면 이미지가 있는 앨범 찾기
-        if (media.isEmpty && _albums.length > 1) {
-          debugPrint('[MediaPicker] 현재 앨범에 이미지가 없음. 다른 앨범 찾는 중...');
-
-          final List<AssetPathEntity> imageAlbums =
-              await PhotoManager.getAssetPathList(
-                type: RequestType.image,
-                hasAll: true,
-              );
-
-          // 타겟 앨범 중에서 미디어가 있는 앨범 찾기
-          for (final targetAlbum in imageAlbums) {
-            if (targetAlbum.id == _currentAlbum!.id) continue;
-
-            final testMedia = await targetAlbum.getAssetListRange(
-              start: 0,
-              end: 100,
-            );
-            final filteredMedia =
-                testMedia
-                    .where((asset) => asset.type == AssetType.image)
-                    .toList();
-
-            if (filteredMedia.isNotEmpty) {
-              debugPrint('[MediaPicker] 이미지가 있는 앨범 발견: ${targetAlbum.name}');
-              setState(() {
-                _currentAlbum = targetAlbum;
-              });
-              final allMediaFromNewAlbum = await targetAlbum.getAssetListRange(
-                start: 0,
-                end: _pageSize,
-              );
-              media =
-                  allMediaFromNewAlbum
-                      .where((asset) => asset.type == AssetType.image)
-                      .toList();
-              _hasMoreMedia = allMediaFromNewAlbum.length >= _pageSize;
-              break;
-            }
-          }
-        }
-
-        debugPrint('[MediaPicker] 로드된 이미지 개수: ${media.length}');
-
-        if (!mounted) return;
-        setState(() {
-          _media = media;
-          _isLoading = false;
-        });
+        return;
       }
+
+      // ✅ 정석: 진짜 페이지네이션 (전체를 메모리에 올리지 않음)
+      final pageAssets = await allAlbum.getAssetListPaged(
+        page: 0,
+        size: _pageSize,
+      );
+
+      if (!mounted) return;
+      setState(() {
+        _media = pageAssets;
+        _hasMoreMedia = pageAssets.length >= _pageSize;
+        _isLoading = false;
+      });
     } catch (e) {
       debugPrint('미디어 로드 오류: $e');
       if (mounted) {
@@ -390,77 +234,28 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
     });
 
     try {
-      if (_mediaType == MediaType.video) {
-        // 🎯 영상의 경우: _allVideoMedia에서 다음 페이지 가져오기
-        _currentPage++;
-        final start = _currentPage * _pageSize;
-        final end = (start + _pageSize).clamp(0, _allVideoMedia.length);
-
-        debugPrint(
-          '[MediaPicker] 📄 영상 페이지 로드: page=$_currentPage, start=$start, end=$end (전체: ${_allVideoMedia.length})',
-        );
-
-        if (start < _allVideoMedia.length) {
-          final newMedia = _allVideoMedia.sublist(start, end);
-
-          if (mounted) {
-            setState(() {
-              _media.addAll(newMedia);
-              _hasMoreMedia = end < _allVideoMedia.length;
-              _isLoadingMore = false;
-            });
-
-            debugPrint(
-              '[MediaPicker] ✅ 영상 추가 로드 완료: ${newMedia.length}개, 총 ${_media.length}개',
-            );
-          }
-        } else {
-          if (mounted) {
-            setState(() {
-              _hasMoreMedia = false;
-              _isLoadingMore = false;
-            });
-          }
-        }
-      } else {
-        // 🎯 이미지의 경우: 기존 로직 유지
-        if (_currentAlbum == null) {
-          if (mounted) {
-            setState(() {
-              _isLoadingMore = false;
-              _hasMoreMedia = false;
-            });
-          }
-          return;
-        }
-
-        _currentPage++;
-        final start = _currentPage * _pageSize;
-        final end = start + _pageSize;
-
-        debugPrint(
-          '[MediaPicker] 📄 이미지 페이지 로드: page=$_currentPage, start=$start, end=$end',
-        );
-
-        final List<AssetEntity> newMedia = await _currentAlbum!
-            .getAssetListRange(start: start, end: end);
-
-        // 타입에 따라 필터링
-        final filtered =
-            newMedia.where((asset) => asset.type == AssetType.image).toList();
-
-        if (mounted) {
-          setState(() {
-            _media.addAll(filtered);
-            _hasMoreMedia = newMedia.length >= _pageSize;
-            _isLoadingMore = false;
-          });
-
-          debugPrint(
-            '[MediaPicker] ✅ 이미지 추가 로드 완료: ${filtered.length}개, 총 ${_media.length}개',
-          );
-        }
+      final allAlbum = await _getAllAlbum(_mediaType);
+      if (allAlbum == null) {
+        if (!mounted) return;
+        setState(() {
+          _hasMoreMedia = false;
+          _isLoadingMore = false;
+        });
+        return;
       }
+
+      _currentPage++;
+      final nextPage = await allAlbum.getAssetListPaged(
+        page: _currentPage,
+        size: _pageSize,
+      );
+
+      if (!mounted) return;
+      setState(() {
+        _media.addAll(nextPage);
+        _hasMoreMedia = nextPage.length >= _pageSize;
+        _isLoadingMore = false;
+      });
     } catch (e) {
       debugPrint('[MediaPicker] ❌ 추가 로드 오류: $e');
       if (mounted) {
@@ -572,49 +367,16 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
         _crossAxisCount = 3;
         // 핀치 스케일 초기화
         _lastScale = 1.0;
+        // 🎯 페이지네이션 초기화
+        _currentPage = 0;
+        _hasMoreMedia = true;
+        _isLoadingMore = false;
+        _media = [];
       });
 
-      // 미디어 타입에 맞는 앨범으로 변경
-      if (_albums.isNotEmpty) {
-        // 현재 앨범에서 해당 타입의 미디어가 있는지 확인
-        final currentMedia = await _currentAlbum?.getAssetListRange(
-          start: 0,
-          end: 10,
-        );
-        final hasCurrentType =
-            currentMedia?.any((asset) {
-              return type == MediaType.video
-                  ? asset.type == AssetType.video
-                  : asset.type == AssetType.image;
-            }) ??
-            false;
-
-        // 현재 앨범에 해당 타입의 미디어가 없으면 다른 앨범 찾기
-        if (!hasCurrentType) {
-          // 영상/이미지 앨범 목록 다시 가져오기
-          final List<AssetPathEntity> targetAlbums =
-              type == MediaType.video
-                  ? await PhotoManager.getAssetPathList(
-                    type: RequestType.video,
-                    hasAll: true,
-                  )
-                  : await PhotoManager.getAssetPathList(
-                    type: RequestType.image,
-                    hasAll: true,
-                  );
-
-          if (targetAlbums.isNotEmpty) {
-            // 타겟 앨범 중에서 현재 앨범 목록에 있는 것 찾기
-            final matchingAlbum = _albums.firstWhere(
-              (album) => targetAlbums.any((t) => t.id == album.id),
-              orElse: () => _albums.first,
-            );
-            setState(() {
-              _currentAlbum = matchingAlbum;
-            });
-          }
-        }
-      }
+      // 🎯 타입 변경 시 All 앨범 캐시 갱신(무효화)
+      _cachedAllAlbum = null;
+      _cachedAllAlbumType = null;
 
       _loadMedia();
     }
@@ -647,34 +409,69 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
         ),
       );
 
-      if (result != null && mounted) {
-        // 단일 이미지인 경우 Uint8List, 다중 이미지인 경우 List<Uint8List>
-        if (result is Uint8List) {
-          // 단일 이미지
-          final tempDir = await Directory.systemTemp.createTemp();
-          final tempFile = File(
-            '${tempDir.path}/edited_${DateTime.now().millisecondsSinceEpoch}.jpg',
-          );
-          await tempFile.writeAsBytes(result);
+      if (result == null || !mounted) return;
 
-          if (mounted) {
-            widget.onMediaSelected(tempFile);
-          }
-        } else if (result is List<Uint8List> && result.isNotEmpty) {
-          // 다중 이미지 - 모든 이미지를 File로 변환하여 각각 호출
-          final tempDir = await Directory.systemTemp.createTemp();
-          final timestamp = DateTime.now().millisecondsSinceEpoch;
+      // ✅ SimpleImageEditorScreen 반환값 호환:
+      // - 단일: Uint8List
+      // - 다중(구형): List<Uint8List>
+      // - 다중(신규): { 'images': List<Uint8List>, 'layout': GroupImageLayout }
+      List<Uint8List>? editedImages;
+      GroupImageLayout? selectedLayout;
 
-          for (int i = 0; i < result.length; i++) {
-            final tempFile = File('${tempDir.path}/edited_${timestamp}_$i.jpg');
-            await tempFile.writeAsBytes(result[i]);
+      if (result is Uint8List) {
+        editedImages = [result];
+        selectedLayout = null;
+      } else if (result is List<Uint8List>) {
+        if (result.isEmpty) return;
+        editedImages = result;
+        // 구형 반환(레이아웃 없음)은 개별 이미지로 간주
+        selectedLayout = GroupImageLayout.individual;
+      } else if (result is Map) {
+        final dynamic imagesAny = result['images'];
+        final dynamic layoutAny = result['layout'];
 
-            if (mounted) {
-              widget.onMediaSelected(tempFile);
-            }
-          }
+        if (imagesAny is List<Uint8List> && imagesAny.isNotEmpty) {
+          editedImages = imagesAny;
+        } else {
+          return;
         }
+
+        if (layoutAny is GroupImageLayout) {
+          selectedLayout = layoutAny;
+        } else {
+          // 레이아웃이 없으면 개별 이미지로 간주
+          selectedLayout = GroupImageLayout.individual;
+        }
+      } else {
+        return;
       }
+
+      // ✅ 업로드/에디터 삽입을 위해 임시 파일로 저장 (삭제하지 않음)
+      final tempDir = await Directory.systemTemp.createTemp();
+      final timestamp = DateTime.now().millisecondsSinceEpoch;
+      final List<File> files = [];
+
+      for (int i = 0; i < editedImages.length; i++) {
+        final tempFile = File('${tempDir.path}/edited_${timestamp}_$i.jpg');
+        await tempFile.writeAsBytes(editedImages[i]);
+        files.add(tempFile);
+      }
+
+      if (!mounted) return;
+
+      // 기존 콜백 유지
+      for (final f in files) {
+        widget.onMediaSelected(f);
+      }
+
+      // ✅ 핵심: 피커 화면도 닫아서 상위(에디터)로 "진짜 추가"가 되게 함
+      Navigator.of(context).pop(
+        MediaPickerResult(
+          files: files,
+          selectedMediaType: MediaType.image,
+          groupLayout: selectedLayout,
+        ),
+      );
     } catch (e) {
       debugPrint('이미지 편집 오류: $e');
       if (mounted) {
@@ -960,7 +757,6 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
           trailing: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              if (_albums.length > 1) const SizedBox(width: 8),
               CupertinoButton(
                 padding: EdgeInsets.zero,
                 onPressed: _selectedMediaIds.isNotEmpty ? _handleAdd : null,

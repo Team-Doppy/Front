@@ -157,6 +157,12 @@ class MediaUploadHandler {
     final layout = result.groupLayout!;
     final files = result.files;
 
+    // 🎯 개별 이미지: 그룹 노드 생성 없이 일반 이미지로 업로드
+    if (layout == GroupImageLayout.individual) {
+      await _uploadImages(files, upload);
+      return;
+    }
+
     if (layout == GroupImageLayout.pageview) {
       // 🎯 페이지뷰: 모든 이미지를 하나의 노드로
       await _uploadPageViewGroup(files, layout, upload);
