@@ -1,10 +1,11 @@
 import 'dart:typed_data';
 import 'dart:ui' as ui;
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:image/image.dart' as img;
 
 /// 크롭 바텀시트 패널 타입(대표 버튼 → 펼침 패널)
-enum CropEditorPanel { aspect, rotate, flip }
+enum CropEditorPanel { aspect, flip }
 
 /// 이미지 표시 rect 계산 유틸리티 (단일 소스)
 /// 모든 곳에서 동일한 계산 로직 사용
@@ -384,6 +385,15 @@ class CropUtils {
       imageSize: imageSize,
     );
 
+    // ✅ 표준: "크롭 4꼭짓점이 회전/스케일된 이미지 내부"가 되도록 하는 최소 배율(상태값은 건드리지 않음)
+    final thetaRad = rotationDeg * (3.14159265359 / 180.0);
+    final k = coverScaleToContainCropRect(
+      imageRectScreen: displayImageRect,
+      cropRectScreen: cropRectScreen,
+      pivot: cropRectScreen.center,
+      thetaRad: thetaRad,
+    );
+
     // screen → image 픽셀 스케일 (캔버스 해상도)
     final scaleX = imageSize.width / displayImageRect.width;
     final scaleY = imageSize.height / displayImageRect.height;
@@ -402,15 +412,15 @@ class CropUtils {
 
       // 프리뷰와 동일한 변환(Flip -> Rotate, center 기준)
       canvas.save();
-      final cx = containerSize.width / 2;
-      final cy = containerSize.height / 2;
+      // 표준: 회전/스케일/플립의 기준점을 cropRect(프레임) 중심으로 둔다.
+      final cx = cropRectScreen.center.dx;
+      final cy = cropRectScreen.center.dy;
       canvas.translate(cx, cy);
-      final theta = rotationDeg * (3.14159265359 / 180.0);
       if (rotationDeg != 0) {
-        canvas.rotate(theta);
+        canvas.rotate(thetaRad);
       }
-      final sx = flipHorizontal ? -1.0 : 1.0;
-      final sy = flipVertical ? -1.0 : 1.0;
+      final sx = (flipHorizontal ? -1.0 : 1.0) * k;
+      final sy = (flipVertical ? -1.0 : 1.0) * k;
       if (sx != 1.0 || sy != 1.0) {
         canvas.scale(sx, sy);
       }
@@ -429,6 +439,187 @@ class CropUtils {
       debugPrint('크롭(통합: 회전/반전 포함) 적용 오류: $e');
       return null;
     }
+  }
+
+  /// 회전 각도에 따른 "외접 사각형" 커버 보장용 최소 배율
+  ///
+  /// - w/h: 회전 전(현재 표시 기준) 이미지 사각형의 화면 크기
+  /// - cropW/cropH: 고정 크롭 프레임(화면) 크기
+  /// - 반환값 k는 항상 1.0 이상 (추가 배율)
+  static double rotationCoverMultiplier({
+    required double w,
+    required double h,
+    required double cropW,
+    required double cropH,
+    required double thetaRad,
+  }) {
+    final cosT = math.cos(thetaRad).abs();
+    final sinT = math.sin(thetaRad).abs();
+
+    final W = (w * cosT) + (h * sinT);
+    final H = (w * sinT) + (h * cosT);
+    if (W <= 0 || H <= 0) return 1.0;
+
+    final kW = cropW / W;
+    final kH = cropH / H;
+    final k = kW > kH ? kW : kH;
+    return k < 1.0 ? 1.0 : k;
+  }
+
+  /// 회전 피벗(pivot)이 이미지 사각형 중심이 아닐 수도 있는 케이스를 포함한 커버 보장용 최소 배율.
+  ///
+  /// - `imageRectScreen`: 현재(회전 전) 이미지의 화면 좌표 Rect
+  /// - `pivot`: 회전/스케일의 기준점(보통 cropRectScreen.center)
+  /// - 반환 k는 항상 1.0 이상 (추가 배율)
+  static double rotationCoverMultiplierForPivot({
+    required Rect imageRectScreen,
+    required Offset pivot,
+    required double cropW,
+    required double cropH,
+    required double thetaRad,
+  }) {
+    final cosT = math.cos(thetaRad);
+    final sinT = math.sin(thetaRad);
+
+    // pivot 기준 코너 벡터들
+    final corners = <Offset>[
+      Offset(imageRectScreen.left - pivot.dx, imageRectScreen.top - pivot.dy),
+      Offset(imageRectScreen.right - pivot.dx, imageRectScreen.top - pivot.dy),
+      Offset(
+        imageRectScreen.right - pivot.dx,
+        imageRectScreen.bottom - pivot.dy,
+      ),
+      Offset(
+        imageRectScreen.left - pivot.dx,
+        imageRectScreen.bottom - pivot.dy,
+      ),
+    ];
+
+    double halfW = 0;
+    double halfH = 0;
+    for (final p in corners) {
+      final rx = (p.dx * cosT) - (p.dy * sinT);
+      final ry = (p.dx * sinT) + (p.dy * cosT);
+      final ax = rx.abs();
+      final ay = ry.abs();
+      if (ax > halfW) halfW = ax;
+      if (ay > halfH) halfH = ay;
+    }
+
+    if (halfW <= 0 || halfH <= 0) return 1.0;
+
+    final kW = (cropW / 2) / halfW;
+    final kH = (cropH / 2) / halfH;
+    final k = kW > kH ? kW : kH;
+    return k < 1.0 ? 1.0 : k;
+  }
+
+  static Offset _rotateAround(Offset p, Offset pivot, double rad) {
+    final s = math.sin(rad);
+    final c = math.cos(rad);
+    final dx = p.dx - pivot.dx;
+    final dy = p.dy - pivot.dy;
+    final rx = (dx * c) - (dy * s);
+    final ry = (dx * s) + (dy * c);
+    return Offset(pivot.dx + rx, pivot.dy + ry);
+  }
+
+  static bool _coversCropForK({
+    required Rect imageRectScreen,
+    required Rect cropRectScreen,
+    required Offset pivot,
+    required double thetaRad,
+    required double k,
+    double epsilon = 0.25,
+  }) {
+    // 변환: originalImageRect -> rotate(theta) about pivot -> scale(k) about pivot
+    // 검사: cropCorner가 transformedImage 안에 있나?
+    // 역변환을 corner에 적용해서 originalImageRect 포함 여부로 판정
+    final invTheta = -thetaRad;
+    final invK = 1.0 / k;
+    final corners = <Offset>[
+      cropRectScreen.topLeft,
+      cropRectScreen.topRight,
+      cropRectScreen.bottomRight,
+      cropRectScreen.bottomLeft,
+    ];
+
+    for (final p in corners) {
+      // inverse scale about pivot
+      final ps = Offset(
+        pivot.dx + (p.dx - pivot.dx) * invK,
+        pivot.dy + (p.dy - pivot.dy) * invK,
+      );
+      // inverse rotate about pivot
+      final pr = _rotateAround(ps, pivot, invTheta);
+
+      if (pr.dx < imageRectScreen.left - epsilon ||
+          pr.dx > imageRectScreen.right + epsilon ||
+          pr.dy < imageRectScreen.top - epsilon ||
+          pr.dy > imageRectScreen.bottom + epsilon) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  /// 크롭 꼭짓점이 회전/스케일된 이미지 내부에 들어오도록 하는 최소 배율 k를 이분탐색으로 구한다.
+  static double coverScaleToContainCropRect({
+    required Rect imageRectScreen,
+    required Rect cropRectScreen,
+    required Offset pivot,
+    required double thetaRad,
+  }) {
+    // 회전이 없으면 굳이 추가 스케일 필요 없음(원래 crop은 이미지 내부로 유지되도록 snapback이 있음)
+    if (thetaRad == 0) return 1.0;
+
+    // 이미 커버면 1.0
+    if (_coversCropForK(
+      imageRectScreen: imageRectScreen,
+      cropRectScreen: cropRectScreen,
+      pivot: pivot,
+      thetaRad: thetaRad,
+      k: 1.0,
+    )) {
+      return 1.0;
+    }
+
+    // upper bound 찾기
+    double lo = 1.0;
+    double hi = 1.5;
+    int expand = 0;
+    while (expand < 12 &&
+        !_coversCropForK(
+          imageRectScreen: imageRectScreen,
+          cropRectScreen: cropRectScreen,
+          pivot: pivot,
+          thetaRad: thetaRad,
+          k: hi,
+        )) {
+      hi *= 1.5;
+      expand++;
+    }
+
+    // 너무 커도 못 덮으면(이론상 거의 없음) 상한 캡
+    if (hi > 32.0) return 32.0;
+
+    // 이분탐색 (충분히 빠르게)
+    for (int i = 0; i < 18; i++) {
+      final mid = (lo + hi) / 2;
+      final ok = _coversCropForK(
+        imageRectScreen: imageRectScreen,
+        cropRectScreen: cropRectScreen,
+        pivot: pivot,
+        thetaRad: thetaRad,
+        k: mid,
+      );
+      if (ok) {
+        hi = mid;
+      } else {
+        lo = mid;
+      }
+    }
+    return hi;
   }
 }
 
@@ -589,7 +780,6 @@ class _RotationRulerPainter extends CustomPainter {
 class CropEditorBottomSheet extends StatefulWidget {
   const CropEditorBottomSheet({
     super.key,
-    required this.initialPanel,
     required this.selectedAspectRatio,
     required this.rotation,
     required this.flipHorizontal,
@@ -604,7 +794,6 @@ class CropEditorBottomSheet extends StatefulWidget {
     required this.onResetAll,
   });
 
-  final CropEditorPanel initialPanel;
   final String? selectedAspectRatio;
   final int rotation;
   final bool flipHorizontal;
@@ -627,313 +816,198 @@ class CropEditorBottomSheet extends StatefulWidget {
 }
 
 class _CropEditorBottomSheetState extends State<CropEditorBottomSheet> {
-  late CropEditorPanel _panel;
   bool _isRotateDragging = false;
 
-  @override
-  void initState() {
-    super.initState();
-    _panel = widget.initialPanel;
+  Widget circleButton({
+    required Widget child,
+    required bool selected,
+    required VoidCallback onTap,
+    BuildContext? context,
+  }) {
+    final cs = context != null ? Theme.of(context).colorScheme : null;
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: 52,
+        height: 52,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          border: Border.all(
+            color:
+                selected && cs != null
+                    ? cs.primary
+                    : Colors.white.withOpacity(0.3),
+            width: selected && cs != null ? 2.5 : 1.5,
+          ),
+        ),
+        child: Center(child: child),
+      ),
+    );
   }
 
-  @override
-  void didUpdateWidget(covariant CropEditorBottomSheet oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    // 외부에서 "처음 열리는 패널"이 바뀌면 동기화
-    if (oldWidget.initialPanel != widget.initialPanel) {
-      _panel = widget.initialPanel;
-      _isRotateDragging = false;
-    }
+  Widget rotationBubble() {
+    // 0-360 범위를 -180~180 범위로 변환 (359도 → -1도)
+    final displayRotation =
+        widget.rotation > 180 ? widget.rotation - 360 : widget.rotation;
+    return Container(
+      width: 56,
+      height: 56,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: Colors.black.withOpacity(0.85),
+        border: Border.all(color: Colors.white.withOpacity(0.3), width: 2),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.3),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Center(
+        child: Text(
+          '$displayRotation',
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 18,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
 
-    Widget circleButton({
-      required Widget child,
-      required bool selected,
-      required VoidCallback onTap,
-    }) {
-      return GestureDetector(
-        onTap: onTap,
-        child: Container(
-          width: 52,
-          height: 52,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            border: Border.all(
-              color: selected ? cs.primary : Colors.white.withOpacity(0.3),
-              width: selected ? 2.5 : 1.5,
-            ),
-          ),
-          child: Center(child: child),
-        ),
-      );
-    }
-
-    Widget aspectPanel() {
-      final cropOptions = [
-        {'label': '재설정', 'ratio': 'reset', 'icon': Icons.refresh},
-        {'label': '자유', 'ratio': null, 'icon': null},
-        {'label': '1:1', 'ratio': '1:1', 'icon': null},
-        {'label': '4:5', 'ratio': '4:5', 'icon': null},
-        {'label': '16:9', 'ratio': '16:9', 'icon': null},
-        {'label': '9:16', 'ratio': '9:16', 'icon': null},
-      ];
-
-      return Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
-        child: SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          child: Row(
-            children:
-                cropOptions.map((option) {
-                  final ratio = option['ratio'];
-                  final isSelected = widget.selectedAspectRatio == ratio;
-                  return Padding(
-                    padding: const EdgeInsets.only(right: 12),
-                    child: GestureDetector(
-                      onTap: () {
-                        if (ratio == 'reset') {
-                          widget.onResetAspectRatio();
-                          return;
-                        }
-                        widget.onSelectAspectRatio(ratio as String?);
-                      },
-                      child: Container(
-                        width: 52,
-                        height: 52,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          border: Border.all(
-                            color:
-                                isSelected
-                                    ? cs.primary
-                                    : Colors.white.withOpacity(0.3),
-                            width: isSelected ? 2.5 : 1.5,
-                          ),
-                        ),
-                        child: Center(
-                          child:
-                              option['icon'] != null
-                                  ? Icon(
-                                    option['icon'] as IconData,
-                                    color:
-                                        isSelected ? cs.primary : Colors.white,
-                                    size: 26,
-                                  )
-                                  : Text(
-                                    option['label'] as String,
-                                    style: TextStyle(
-                                      color:
-                                          isSelected
-                                              ? cs.primary
-                                              : Colors.white,
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
-                        ),
-                      ),
-                    ),
-                  );
-                }).toList(),
-          ),
-        ),
-      );
-    }
-
-    Widget rotatePanel() {
-      final bubble = Container(
-        width: 56,
-        height: 56,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          color: Colors.black.withOpacity(0.85),
-          border: Border.all(color: Colors.white.withOpacity(0.3), width: 2),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.3),
-              blurRadius: 8,
-              offset: const Offset(0, 2),
-            ),
-          ],
-        ),
-        child: Center(
-          child: Text(
-            '${widget.rotation}',
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 18,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-        ),
-      );
-
-      return Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (_isRotateDragging)
-              Center(child: bubble)
-            else
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  circleButton(
-                    selected: false,
-                    onTap: widget.onRotate90,
-                    child: const Icon(
-                      Icons.rotate_right,
-                      color: Colors.white,
-                      size: 26,
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  circleButton(
-                    selected: false,
-                    onTap: widget.onResetRotation,
-                    child: const Icon(
-                      Icons.refresh,
-                      color: Colors.white,
-                      size: 26,
-                    ),
-                  ),
-                ],
-              ),
-            const SizedBox(height: 12),
-            RotationRulerSlider(
-              value: widget.rotation,
-              onChanged: widget.onRotationChanged,
-              onDragStart: () => setState(() => _isRotateDragging = true),
-              onDragEnd: () => setState(() => _isRotateDragging = false),
-              isDragging: _isRotateDragging,
-            ),
-          ],
-        ),
-      );
-    }
-
-    Widget flipPanel() {
-      return Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            circleButton(
-              selected: widget.flipHorizontal,
-              onTap: widget.onToggleFlipHorizontal,
-              child: Icon(
-                Icons.flip,
-                color: widget.flipHorizontal ? cs.primary : Colors.white,
-                size: 26,
-              ),
-            ),
-            const SizedBox(width: 12),
-            circleButton(
-              selected: widget.flipVertical,
-              onTap: widget.onToggleFlipVertical,
-              child: Icon(
-                Icons.flip_camera_ios,
-                color: widget.flipVertical ? cs.primary : Colors.white,
-                size: 26,
-              ),
-            ),
-          ],
-        ),
-      );
-    }
+    final aspectRatioOptions = [
+      {'label': '자유', 'ratio': null},
+      {'label': '1:1', 'ratio': '1:1'},
+      {'label': '4:5', 'ratio': '4:5'},
+      {'label': '16:9', 'ratio': '16:9'},
+      {'label': '9:16', 'ratio': '9:16'},
+    ];
 
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
+        // ✅ 상단: 초기화 | 디바이더 | 90도 회전 | 디바이더 | 비율 버튼들
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-            children: [
-              circleButton(
-                selected: _panel == CropEditorPanel.aspect,
-                onTap:
-                    () => setState(() {
-                      _panel = CropEditorPanel.aspect;
-                      _isRotateDragging = false;
-                    }),
-                child: Icon(
-                  Icons.aspect_ratio,
-                  color:
-                      _panel == CropEditorPanel.aspect
-                          ? cs.primary
-                          : Colors.white,
-                  size: 26,
-                ),
-              ),
-              circleButton(
-                selected: _panel == CropEditorPanel.rotate,
-                onTap:
-                    () => setState(() {
-                      _panel = CropEditorPanel.rotate;
-                      _isRotateDragging = false;
-                    }),
-                child: Icon(
-                  Icons.rotate_right,
-                  color:
-                      _panel == CropEditorPanel.rotate
-                          ? cs.primary
-                          : Colors.white,
-                  size: 26,
-                ),
-              ),
-              circleButton(
-                selected: _panel == CropEditorPanel.flip,
-                onTap:
-                    () => setState(() {
-                      _panel = CropEditorPanel.flip;
-                      _isRotateDragging = false;
-                    }),
-                child: Icon(
-                  Icons.flip,
-                  color:
-                      _panel == CropEditorPanel.flip
-                          ? cs.primary
-                          : Colors.white,
-                  size: 26,
-                ),
-              ),
-              GestureDetector(
-                onTap: widget.onResetAll,
-                child: Container(
-                  width: 52,
-                  height: 52,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    border: Border.all(
-                      color: Colors.white.withOpacity(0.3),
-                      width: 1.5,
-                    ),
-                  ),
-                  child: const Icon(
-                    Icons.refresh,
-                    color: Colors.white,
-                    size: 26,
-                  ),
-                ),
-              ),
-            ],
+          child: SizedBox(
+            height: 56,
+            child: AnimatedSwitcher(
+              duration: const Duration(milliseconds: 160),
+              child:
+                  _isRotateDragging
+                      ? Center(
+                        key: const ValueKey('rotation_bubble'),
+                        child: rotationBubble(),
+                      )
+                      : Row(
+                        key: const ValueKey('top_row'),
+                        children: [
+                          // 초기화 버튼
+                          circleButton(
+                            context: context,
+                            selected: false,
+                            onTap: widget.onResetAll,
+                            child: const Icon(
+                              Icons.refresh,
+                              color: Colors.white,
+                              size: 26,
+                            ),
+                          ),
+                          // 디바이더
+                          Container(
+                            width: 1,
+                            height: 40,
+                            margin: const EdgeInsets.symmetric(horizontal: 12),
+                            color: Colors.white.withOpacity(0.2),
+                          ),
+                          // 90도 회전 버튼
+                          circleButton(
+                            context: context,
+                            selected: false,
+                            onTap: widget.onRotate90,
+                            child: const Icon(
+                              Icons.rotate_right,
+                              color: Colors.white,
+                              size: 26,
+                            ),
+                          ),
+                          // 디바이더
+                          Container(
+                            width: 1,
+                            height: 40,
+                            margin: const EdgeInsets.symmetric(horizontal: 12),
+                            color: Colors.white.withOpacity(0.2),
+                          ),
+                          // 비율 버튼들 (가로 스크롤)
+                          Expanded(
+                            child: ListView.separated(
+                              scrollDirection: Axis.horizontal,
+                              itemCount: aspectRatioOptions.length,
+                              separatorBuilder:
+                                  (_, __) => const SizedBox(width: 12),
+                              itemBuilder: (context, i) {
+                                final option = aspectRatioOptions[i];
+                                final ratio = option['ratio'];
+                                final isSelected =
+                                    widget.selectedAspectRatio == ratio;
+                                return GestureDetector(
+                                  onTap: () {
+                                    widget.onSelectAspectRatio(ratio);
+                                  },
+                                  child: Container(
+                                    width: 52,
+                                    height: 52,
+                                    decoration: BoxDecoration(
+                                      shape: BoxShape.circle,
+                                      border: Border.all(
+                                        color:
+                                            isSelected
+                                                ? cs.primary
+                                                : Colors.white.withOpacity(0.3),
+                                        width: isSelected ? 2.5 : 1.5,
+                                      ),
+                                    ),
+                                    child: Center(
+                                      child: Text(
+                                        option['label'] as String,
+                                        style: TextStyle(
+                                          color:
+                                              isSelected
+                                                  ? cs.primary
+                                                  : Colors.white,
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                );
+                              },
+                            ),
+                          ),
+                        ],
+                      ),
+            ),
           ),
         ),
-        AnimatedSwitcher(
-          duration: const Duration(milliseconds: 200),
-          child: KeyedSubtree(
-            key: ValueKey(_panel),
-            child: switch (_panel) {
-              CropEditorPanel.aspect => aspectPanel(),
-              CropEditorPanel.rotate => rotatePanel(),
-              CropEditorPanel.flip => flipPanel(),
-            },
+
+        const SizedBox(height: 4),
+
+        // ✅ 하단: 회전 슬라이더는 항상 노출
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          child: RotationRulerSlider(
+            value: widget.rotation,
+            onChanged: widget.onRotationChanged,
+            onDragStart: () => setState(() => _isRotateDragging = true),
+            onDragEnd: () => setState(() => _isRotateDragging = false),
+            isDragging: _isRotateDragging,
           ),
         ),
       ],
@@ -951,41 +1025,7 @@ class ImagePainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    // image는 항상 non-null이므로 null 체크 불필요
-
     final imageSize = Size(image.width.toDouble(), image.height.toDouble());
-    final imageAspect = imageSize.width / imageSize.height;
-    final containerAspect = size.width / size.height;
-
-    double baseDisplayWidth, baseDisplayHeight;
-    double baseImageOffsetX = 0, baseImageOffsetY = 0;
-
-    // ImagePainter는 크롭 모드에서만 사용되므로 항상 마진 적용
-    const topMargin = 4.0;
-    const bottomMargin = 4.0;
-    final availableHeight = size.height - topMargin - bottomMargin;
-
-    if (imageAspect > containerAspect) {
-      baseDisplayWidth = size.width;
-      baseDisplayHeight = size.width / imageAspect;
-      baseImageOffsetY = topMargin + (availableHeight - baseDisplayHeight) / 2;
-    } else {
-      baseDisplayHeight = availableHeight;
-      baseDisplayWidth = availableHeight * imageAspect;
-      baseImageOffsetX = (size.width - baseDisplayWidth) / 2;
-      baseImageOffsetY = topMargin;
-    }
-
-    final scaledWidth = baseDisplayWidth * imageScale;
-    final scaledHeight = baseDisplayHeight * imageScale;
-
-    final scaledImageOffsetX =
-        baseImageOffsetX - (scaledWidth - baseDisplayWidth) / 2;
-    final scaledImageOffsetY =
-        baseImageOffsetY - (scaledHeight - baseDisplayHeight) / 2;
-
-    final finalImageOffsetX = scaledImageOffsetX + imageOffset.dx;
-    final finalImageOffsetY = scaledImageOffsetY + imageOffset.dy;
 
     final srcRect = Rect.fromLTWH(
       0,
@@ -993,11 +1033,13 @@ class ImagePainter extends CustomPainter {
       image.width.toDouble(),
       image.height.toDouble(),
     );
-    final dstRect = Rect.fromLTWH(
-      finalImageOffsetX,
-      finalImageOffsetY,
-      scaledWidth,
-      scaledHeight,
+    // ✅ 단일 소스: 실제 드로잉 rect도 ImageRectUtils와 100% 동일하게 계산한다.
+    // (k 계산/크롭 오버레이/Apply와 좌표계를 완전히 맞추기 위함)
+    final dstRect = ImageRectUtils.computeImageRectForCrop(
+      containerSize: size,
+      imageSize: imageSize,
+      scale: imageScale,
+      offset: imageOffset,
     );
 
     canvas.drawImageRect(image, srcRect, dstRect, Paint());

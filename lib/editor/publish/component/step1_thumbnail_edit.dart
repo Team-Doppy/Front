@@ -4,7 +4,7 @@ import 'dart:typed_data';
 import 'package:doppy/data/services/upload_service.dart';
 import 'package:doppy/image/media_picker_screen.dart';
 import 'package:flutter/cupertino.dart';
-import 'package:doppy/image/custom_image_editor_screen.dart';
+import 'package:doppy/image/simple_image_editor_screen.dart';
 import 'package:doppy/editor/service/node_component_service.dart';
 import 'package:doppy/l10n/app_localizations.dart';
 import 'package:doppy/utils/error_handler.dart';
@@ -969,15 +969,18 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
 
       final imageBytes = response.bodyBytes;
 
-      final editedBytes = await Navigator.push<Uint8List?>(
+      final dynamic result = await Navigator.push(
         context,
         MaterialPageRoute(
-          builder: (context) => CustomImageEditorScreen(imageBytes: imageBytes),
+          builder: (context) => SimpleImageEditorScreen(imageBytes: imageBytes),
           fullscreenDialog: true,
         ),
       );
 
-      if (editedBytes == null || !mounted) return;
+      if (result == null || !mounted) return;
+
+      final Uint8List? editedBytes = result is Uint8List ? result : null;
+      if (editedBytes == null) return;
 
       widget.onIsUploadingThumbChanged(true);
 

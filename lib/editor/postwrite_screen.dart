@@ -776,6 +776,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     return extracted;
   }
 
+  @override
   void dispose() {
     // 🎯 자동 저장 타이머 정리
     _autoSaveTimer?.cancel();
@@ -984,6 +985,11 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                                       builder: (context) {
                                         final screenWidth =
                                             MediaQuery.of(context).size.width;
+                                        final isDarkMode =
+                                            context
+                                                .read<ThemeProvider>()
+                                                .themeMode ==
+                                            ThemeMode.dark;
                                         return RepaintBoundary(
                                           child: SuperEditor(
                                             gestureMode:
@@ -1013,29 +1019,17 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                                               SingleImageComponentBuilder(
                                                 screenWidth: screenWidth,
                                                 dragService: dragService,
-                                                isDarkMode:
-                                                    context
-                                                        .read<ThemeProvider>()
-                                                        .themeMode ==
-                                                    ThemeMode.dark,
+                                                isDarkMode: isDarkMode,
                                               ),
                                               RowImageComponentBuilder(
                                                 screenWidth: screenWidth,
                                                 dragService: dragService,
-                                                isDarkMode:
-                                                    context
-                                                        .read<ThemeProvider>()
-                                                        .themeMode ==
-                                                    ThemeMode.dark,
+                                                isDarkMode: isDarkMode,
                                               ),
                                               PageViewImageComponentBuilder(
                                                 screenWidth: screenWidth,
                                                 dragService: dragService,
-                                                isDarkMode:
-                                                    context
-                                                        .read<ThemeProvider>()
-                                                        .themeMode ==
-                                                    ThemeMode.dark,
+                                                isDarkMode: isDarkMode,
                                               ),
                                               CustomParagraphComponentBuilder(
                                                 dragService: dragService,
@@ -1047,22 +1041,14 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                                               ),
                                               LinkComponentBuilder(
                                                 dragService: dragService,
-                                                isDarkMode:
-                                                    context
-                                                        .read<ThemeProvider>()
-                                                        .themeMode ==
-                                                    ThemeMode.dark,
+                                                isDarkMode: isDarkMode,
                                               ),
                                               ClipComponentBuilder(
                                                 screenWidth:
                                                     screenWidth, // 🚀 전달
                                                 dragService: dragService,
                                                 isEditing: true,
-                                                isDarkMode:
-                                                    context
-                                                        .read<ThemeProvider>()
-                                                        .themeMode ==
-                                                    ThemeMode.dark,
+                                                isDarkMode: isDarkMode,
                                               ),
                                               // 기본 컴포넌트들 (Paragraph 제외)
                                               ...defaultComponentBuilders.where(
@@ -1213,7 +1199,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
             nodeComponentService.editImage(
               context: context,
               imageId: selectedId,
-              node: node as ImageNode,
+              node: node,
               editorService: editorService,
               document: document,
             );

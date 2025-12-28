@@ -75,6 +75,21 @@ class EditorService extends ChangeNotifier {
   bool _isDeletingNode = false; // 🎯 노드 삭제 중 플래그 (중복 저장 방지)
   bool _firstChangeAfterLoad = false; // 🎯 임시저장 불러온 직후 첫 변경사항 플래그
 
+  // ✅ "실제 변경이 있었으면 반드시 히스토리에 들어가야 한다"를 보장하기 위한 버전 값
+  // - 문서에 의미있는 변경이 발생할 때마다 증가
+  // - 스냅샷에 버전을 기록하고, undo/redo 직전에 현재 버전이 스택에 없으면 동기 저장으로 보강한다.
+  int _documentVersion = 0;
+
+  // ✅ "현재 상태가 히스토리에 아직 반영되지 않음" 플래그
+  // - 사용자에 의한 DocumentChange가 발생하면 true
+  // - 스냅샷이 스택에 push되면 false
+  // - undo/redo 직전 flush는 이 값이 true일 때만 수행 (undo 후 무한 flush 방지)
+  bool _hasPendingHistoryChanges = false;
+
+  // ✅ 레지스트리 복구/자동 정리(빈 문단 삭제, 제목 보호 등)로 인한 문서 변경은
+  // 히스토리에 담지 않는다. (유저가 한 변경이 아니며, Undo 스택을 오염시키기 때문)
+  bool _isRecoveryOperation = false;
+
   // 🎯 NodeComponentService 참조 (노드 선택 해제용)
   BuildContext? _context;
 
@@ -167,6 +182,7 @@ class EditorService extends ChangeNotifier {
     return _DocumentSnapshot(
       nodes: nodes,
       order: order,
+      version: _documentVersion,
       selection: null, // 🎯 커서 숨기기
     );
   }
@@ -199,6 +215,7 @@ class EditorService extends ChangeNotifier {
     return _DocumentSnapshot(
       nodes: nodes,
       order: order,
+      version: _documentVersion,
       selection: null, // 🎯 커서 숨기기
     );
   }
@@ -241,10 +258,46 @@ class EditorService extends ChangeNotifier {
     }
   }
 
+  void _runRecoveryOperation(VoidCallback op) {
+    final prev = _isRecoveryOperation;
+    _isRecoveryOperation = true;
+    try {
+      op();
+    } finally {
+      _isRecoveryOperation = prev;
+    }
+  }
+
+  // ✅ undo/redo 직전에 "현재 상태"가 아직 히스토리에 반영되지 않았으면 강제로 1회 저장
+  // (텍스트 디바운스, 비동기 즉시 저장 타이밍에서 undo가 '안 먹는 것처럼' 보이는 문제 방지)
+  void _flushHistoryIfNeeded({required String reason}) {
+    if (_isExecutingHistory) return;
+    _historyTimer?.cancel();
+
+    // 사용자 변경이 없으면 flush 불필요 (undo 후 무한 flush 방지)
+    if (!_hasPendingHistoryChanges) return;
+
+    final snapshot = _copyAllNodes();
+    if (_undoStack.isNotEmpty &&
+        _areSnapshotsEqual(_undoStack.last, snapshot)) {
+      _hasPendingHistoryChanges = false;
+      return;
+    }
+    _addToHistoryStack(snapshot, 'flush($reason)');
+  }
+
   /// 🎯 히스토리 스택에 스냅샷 추가 (중복 코드 제거)
   void _addToHistoryStack(_DocumentSnapshot snapshot, String logLabel) {
+    // ✅ 동일 스냅샷 중복 방지 (디바운스/flush 타이밍 보호)
+    if (_undoStack.isNotEmpty &&
+        _areSnapshotsEqual(_undoStack.last, snapshot)) {
+      return;
+    }
     _undoStack.add(snapshot);
     _redoStack.clear();
+
+    // ✅ 현재 상태가 히스토리에 반영됨
+    _hasPendingHistoryChanges = false;
 
     // 최대 30개까지만 유지
     if (_undoStack.length > 30) {
@@ -282,6 +335,10 @@ class EditorService extends ChangeNotifier {
     // 🎯 히스토리 실행 중이면 저장하지 않음 (무한 루프 방지)
     if (_isExecutingHistory) {
       debugPrint('[EditorService] ⚠️ 히스토리 실행 중 - 변경 추적 스킵: $change');
+      return;
+    }
+    // ✅ 복구/자동 정리로 인한 변화는 히스토리에 담지 않음
+    if (_isRecoveryOperation) {
       return;
     }
 
@@ -354,6 +411,7 @@ class EditorService extends ChangeNotifier {
     return _DocumentSnapshot(
       nodes: nodes,
       order: order,
+      version: _documentVersion,
       selection: null, // 🎯 커서 숨기기
     );
   }
@@ -537,6 +595,7 @@ class EditorService extends ChangeNotifier {
 
   // 🎯 Undo 실행
   void undo() {
+    _flushHistoryIfNeeded(reason: 'undo');
     _executeHistoryOperation(
       canExecute: canUndo,
       errorMessage: 'Undo 불가 (첫 상태)',
@@ -568,6 +627,7 @@ class EditorService extends ChangeNotifier {
 
   // 🎯 Redo 실행
   void redo() {
+    _flushHistoryIfNeeded(reason: 'redo');
     _executeHistoryOperation(
       canExecute: canRedo,
       errorMessage: 'Redo 불가 (없음)',
@@ -720,8 +780,63 @@ class EditorService extends ChangeNotifier {
     final change = changeLog.changes[0];
     debugPrint('changeLog.changes[0]: $change');
 
-    // 🎯 변경된 노드 추적
-    _trackChangeFromLog(change);
+    // ✅ 복구/자동 정리(레지스트리 복원, 빈 문단 자동 삭제, 제목 보호 등)는 히스토리에 담지 않는다.
+    bool isRecoveryChange = _isRecoveryOperation;
+    if (change is NodeInsertedEvent) {
+      // ✅ "빈 문단 자동 추가"는 유저에게 숨겨야 하는 내부 보정이므로 히스토리에서 제외
+      // (예: 특수노드 아래 텍스트 입력을 위한 trailing 빈 문단, 구조 안정화용 빈 문단 등)
+      try {
+        final inserted = document.getNodeById(change.nodeId);
+        if (inserted is ParagraphNode) {
+          final bool isTitle = inserted.metadata['isTitle'] == true;
+          final bool isMention = inserted.metadata['mention'] == true;
+          final bool isEmpty = inserted.text.text.trim().isEmpty;
+          if (!isTitle && !isMention && isEmpty) {
+            isRecoveryChange = true;
+          }
+        }
+      } catch (_) {}
+    }
+    if (change is NodeRemovedEvent) {
+      final removedId = change.nodeId;
+
+      // 자동 삭제 예약으로 지워지는 빈 ParagraphNode는 복구/정리로 간주
+      if (_pendingDeletionNodeIds.contains(removedId)) {
+        isRecoveryChange = true;
+      }
+
+      // 제목 보호(삭제 방지)도 자동 복구로 간주
+      if (getEditingIndex() == 0) {
+        isRecoveryChange = true;
+      }
+
+      // 레지스트리에 등록된 특수 노드가 백스페이스로 삭제된 경우(복원 대상)도 자동 복구
+      if (!isRecoveryChange &&
+          _specialNodeRegistry.containsKey(removedId) &&
+          !_explicitlyDeletedNodes.contains(removedId)) {
+        final sel = editor.composer.selectionNotifier.value;
+        final isDownstream =
+            sel != null &&
+            sel.extent.nodeId == removedId &&
+            sel.extent.nodePosition is UpstreamDownstreamNodePosition &&
+            sel.extent.nodePosition ==
+                const UpstreamDownstreamNodePosition.downstream();
+        if (!isDownstream) {
+          isRecoveryChange = true;
+        }
+      }
+    }
+
+    // ✅ undo/redo 복원 과정 + 자동 복구는 "사용자 변경"이 아니므로 버전/플래그/히스토리 반영 제외
+    if (!_isExecutingHistory && !isRecoveryChange) {
+      _documentVersion++;
+      _hasPendingHistoryChanges = true;
+    }
+
+    // 🎯 변경된 노드 추적 (복구/자동 정리 변화는 스킵)
+    if (!isRecoveryChange) {
+      _trackChangeFromLog(change);
+    }
 
     // 🎯 텍스트 입력/삭제 시 노드 선택 자동 해제 (가볍게 처리)
     if ((change is TextInsertionEvent || change is TextDeletedEvent) &&
@@ -816,12 +931,14 @@ class EditorService extends ChangeNotifier {
                           ),
                         );
 
-                        editor.execute([
-                          ReplaceNodeRequest(
-                            existingNodeId: updatedNode.id,
-                            newNode: newNode,
-                          ),
-                        ]);
+                        _runRecoveryOperation(() {
+                          editor.execute([
+                            ReplaceNodeRequest(
+                              existingNodeId: updatedNode.id,
+                              newNode: newNode,
+                            ),
+                          ]);
+                        });
                       }
                     }
                   } catch (e) {
@@ -1145,7 +1262,10 @@ class EditorService extends ChangeNotifier {
 
                 // 노드 삭제
                 try {
-                  document.deleteNode(targetNodeId);
+                  final idToDelete = targetNodeId;
+                  _runRecoveryOperation(() {
+                    document.deleteNode(idToDelete);
+                  });
                   debugPrint('[EditorService] 멘션 노드 삭제 완료: $targetNodeId');
                 } catch (e) {
                   debugPrint('[EditorService] 멘션 노드 삭제 실패: $e');
@@ -1292,7 +1412,7 @@ class EditorService extends ChangeNotifier {
     if (change is NodeRemovedEvent) {
       if (getEditingIndex() == 0) {
         // 타이틀 문단 삭제 방지
-        _ensureTitleAtTop();
+        _runRecoveryOperation(_ensureTitleAtTop);
         // 🎯 _ensureTitleAtTop()이 document.insertNodeAt()을 호출하므로 notifyListeners() 불필요
         return;
       }
@@ -1472,7 +1592,9 @@ class EditorService extends ChangeNotifier {
                 }
 
                 // 노드 복원
-                document.insertNodeAt(insertIndex, restoredNode);
+                _runRecoveryOperation(() {
+                  document.insertNodeAt(insertIndex, restoredNode);
+                });
 
                 // 레지스트리 재등록
                 if (_isSpecialNode(restoredNode)) {
@@ -1588,12 +1710,14 @@ class EditorService extends ChangeNotifier {
 
                 WidgetsBinding.instance.addPostFrameCallback((_) {
                   try {
-                    editor.execute([
-                      ReplaceNodeRequest(
-                        existingNodeId: insertedNode.id,
-                        newNode: newNode,
-                      ),
-                    ]);
+                    _runRecoveryOperation(() {
+                      editor.execute([
+                        ReplaceNodeRequest(
+                          existingNodeId: insertedNode.id,
+                          newNode: newNode,
+                        ),
+                      ]);
+                    });
                   } catch (e) {
                     debugPrint('[EditorService] 멘션 노드 다음 문단 볼드 제거 실패: $e');
                   }
@@ -1607,10 +1731,12 @@ class EditorService extends ChangeNotifier {
       }
 
       // 새 문단의 정렬 승계
-      _ensureParagraphAlignmentForIndex(change.insertionIndex);
+      _runRecoveryOperation(() {
+        _ensureParagraphAlignmentForIndex(change.insertionIndex);
+      });
       // 삽입 지점 주변(상/하/본인)만 마진 재계산
       //_recomputeParagraphMarginsAround(change.insertionIndex);
-      _ensureOnlyFirstIsTitle();
+      _runRecoveryOperation(_ensureOnlyFirstIsTitle);
       // 문서 구조가 변했으므로 UI 갱신 필요
       notifyListeners();
       return;
@@ -1620,7 +1746,7 @@ class EditorService extends ChangeNotifier {
       // 이동 전/후 주변만 마진 재계산
       //_recomputeParagraphMarginsAround(change.from);
       //_recomputeParagraphMarginsAround(change.to);
-      _ensureOnlyFirstIsTitle();
+      _runRecoveryOperation(_ensureOnlyFirstIsTitle);
       // 문서 구조가 변했으므로 UI 갱신 필요
       notifyListeners();
       return;
@@ -1631,11 +1757,13 @@ class EditorService extends ChangeNotifier {
       final idx = document.getNodeIndexById(change.nodeId);
       if (idx != -1) {
         //_recomputeParagraphMarginsAround(idx);
-        _ensureParagraphAlignmentForIndex(getEditingIndex());
-        _ensureOnlyFirstIsTitle();
+        _runRecoveryOperation(() {
+          _ensureParagraphAlignmentForIndex(getEditingIndex());
+          _ensureOnlyFirstIsTitle();
+        });
       } else {
         // _recomputeParagraphMargins();
-        _ensureOnlyFirstIsTitle();
+        _runRecoveryOperation(_ensureOnlyFirstIsTitle);
       }
       // 문서 구조/내용이 변했으므로 UI 갱신 필요
       notifyListeners();
@@ -1643,7 +1771,7 @@ class EditorService extends ChangeNotifier {
     }
 
     if (change is TextInsertionEvent || change is TextDeletedEvent) {
-      _ensureOnlyFirstIsTitle();
+      _runRecoveryOperation(_ensureOnlyFirstIsTitle);
       // 본문 텍스트 변경으로 UI 갱신 통지
       notifyListeners(); // 🎯 한 번만 호출
       return;
@@ -1811,7 +1939,9 @@ class EditorService extends ChangeNotifier {
                                   nodeIdToDelete,
                                 ) &&
                                 document.getNodeById(nodeIdToDelete) != null) {
-                              document.deleteNode(nodeIdToDelete);
+                              _runRecoveryOperation(() {
+                                document.deleteNode(nodeIdToDelete);
+                              });
                               _pendingDeletionNodeIds.remove(nodeIdToDelete);
                               debugPrint(
                                 '[EditorService] ✅ 빈 ParagraphNode 삭제 완료: nodeId=$nodeIdToDelete',
@@ -2146,12 +2276,24 @@ class EditorService extends ChangeNotifier {
     // 둘 다 단일 이미지인 경우
     if (draggingNode is! ImageNode || targetNode is! ImageNode) return;
 
-    // 네트워크 URL만 허용 (file:// 또는 로컬 경로는 행에 포함 금지)
-    bool _isNetworkUrl(String u) =>
-        u.startsWith('http://') || u.startsWith('https://');
-    if (!_isNetworkUrl(draggingNode.imageUrl) ||
-        !_isNetworkUrl(targetNode.imageUrl)) {
-      return; // 업로드 완료 후 다시 시도
+    // ✅ 병합 가능한 URL:
+    // - 네트워크(http/https)
+    // - 로컬(file://, /var/... 등)
+    // Row는 로컬도 렌더링/업로드 흐름을 지원하므로 병합을 막지 않는다.
+    bool _isMergeableImageUrl(String u) {
+      if (u.isEmpty) return false;
+      return u.startsWith('http://') ||
+          u.startsWith('https://') ||
+          u.startsWith('file://') ||
+          u.startsWith('/');
+    }
+
+    if (!_isMergeableImageUrl(draggingNode.imageUrl) ||
+        !_isMergeableImageUrl(targetNode.imageUrl)) {
+      debugPrint(
+        '[EditorService] ❌ 병합 스킵: URL이 병합 불가 (draggingUrl=${draggingNode.imageUrl}, targetUrl=${targetNode.imageUrl})',
+      );
+      return;
     }
 
     // 두 이미지의 URL 수집 (최대 3개)
@@ -2312,10 +2454,19 @@ class EditorService extends ChangeNotifier {
       '[EditorService] 📋 기존 Row 이미지 개수: ${rowNode.imageUrls.length}, 이미지 URL: ${rowNode.imageUrls}',
     );
 
-    // 네트워크 URL만 허용
-    bool _isNetworkUrl(String u) =>
-        u.startsWith('http://') || u.startsWith('https://');
-    if (!_isNetworkUrl(imageNode.imageUrl)) {
+    // ✅ Row에 추가 가능한 URL (네트워크 + 로컬)
+    bool _isMergeableImageUrl(String u) {
+      if (u.isEmpty) return false;
+      return u.startsWith('http://') ||
+          u.startsWith('https://') ||
+          u.startsWith('file://') ||
+          u.startsWith('/');
+    }
+
+    if (!_isMergeableImageUrl(imageNode.imageUrl)) {
+      debugPrint(
+        '[EditorService] ❌ Row 추가 스킵: URL이 병합 불가 (imageUrl=${imageNode.imageUrl})',
+      );
       return;
     }
 
@@ -3377,8 +3528,16 @@ class EditorService extends ChangeNotifier {
       });
     }
 
-    editor.execute(edits);
-    // 🎯 editor.execute()가 자동으로 document 리스너를 호출하므로 notifyListeners() 불필요
+    // ✅ 여러 노드 삽입(컴포넌트 + trailing 빈 문단)은 문서 변경 이벤트가 여러 번 발생할 수 있어
+    // "빈 문단 추가" 같은 의미없는 undo step이 생길 수 있다.
+    // 따라서 이 삽입은 원자적으로 처리하여 히스토리에 1번만 기록되도록 한다.
+    _isExecutingHistory = true;
+    try {
+      editor.execute(edits);
+    } finally {
+      _isExecutingHistory = false;
+      _saveCurrentState(immediate: true);
+    }
   }
 
   String _getPreviousParagraphAlign(int beforeIndex) {
@@ -3422,69 +3581,73 @@ class EditorService extends ChangeNotifier {
       text: node.text,
       metadata: meta,
     );
-    document.replaceNodeById(node.id, replaced);
+    _runRecoveryOperation(() {
+      document.replaceNodeById(node.id, replaced);
+    });
   }
 
   // 제목 문단이 항상 존재하고 맨 위(index 0)에 있도록 보정한다.
   // 변경이 있었으면 true를 반환한다.
   void _ensureTitleAtTop() {
-    int titleIndex = -1;
-    ParagraphNode? titleNode;
+    _runRecoveryOperation(() {
+      int titleIndex = -1;
+      ParagraphNode? titleNode;
 
-    // 0,1번까지만 체크
-    for (int i = 0; i < document.length && i < 2; i++) {
-      final node = document.getNodeAt(i);
-      if (node is ParagraphNode && node.metadata['isTitle'] == true) {
-        titleIndex = i;
-        titleNode = node;
-        break;
-      }
-    }
-
-    if (titleIndex == -1) {
-      // 제목 없으면 새로 추가
-      document.insertNodeAt(
-        0,
-        ParagraphNode(
-          id: Editor.createNodeId(),
-          text: AttributedText(),
-          // 기본 정렬을 중앙으로 보정
-          metadata: {'isTitle': true, 'textAlign': 'center'},
-        ),
-      );
-    } else if (titleIndex > 0) {
-      // 이미 맨 위에 있지 않으면 위치만 교체
-      final node = titleNode!;
-      document
-        ..deleteNode(titleNode.id) // 이벤트 발생 막고
-        ..insertNodeAt(0, node); // 최종 이벤트는 1번만
-    }
-
-    // 제목 보정 후, 제목은 다른 텍스트의 정렬에 맞춰 보정
-    final title = document.getNodeAt(0);
-    if (title is ParagraphNode && title.metadata['isTitle'] == true) {
-      // 다른 텍스트 문단의 정렬을 찾아서 제목에 적용
-      String targetAlignment = 'center'; // 기본값(중앙)
-      for (int i = 1; i < document.length; i++) {
+      // 0,1번까지만 체크
+      for (int i = 0; i < document.length && i < 2; i++) {
         final node = document.getNodeAt(i);
-        if (node is ParagraphNode) {
-          final String? align = node.metadata['textAlign'] as String?;
-          if (align != null) {
-            targetAlignment = align;
-            break;
-          }
+        if (node is ParagraphNode && node.metadata['isTitle'] == true) {
+          titleIndex = i;
+          titleNode = node;
+          break;
         }
       }
 
-      final meta = Map<String, dynamic>.from(title.metadata);
-      meta['textAlign'] = targetAlignment;
-      final updated = ParagraphNode(
-        id: title.id,
-        text: title.text,
-        metadata: meta,
-      );
-      document.replaceNodeById(title.id, updated);
-    }
+      if (titleIndex == -1) {
+        // 제목 없으면 새로 추가
+        document.insertNodeAt(
+          0,
+          ParagraphNode(
+            id: Editor.createNodeId(),
+            text: AttributedText(),
+            // 기본 정렬을 중앙으로 보정
+            metadata: {'isTitle': true, 'textAlign': 'center'},
+          ),
+        );
+      } else if (titleIndex > 0) {
+        // 이미 맨 위에 있지 않으면 위치만 교체
+        final node = titleNode!;
+        document
+          ..deleteNode(titleNode.id) // 이벤트 발생 막고
+          ..insertNodeAt(0, node); // 최종 이벤트는 1번만
+      }
+
+      // 제목 보정 후, 제목은 다른 텍스트의 정렬에 맞춰 보정
+      final title = document.getNodeAt(0);
+      if (title is ParagraphNode && title.metadata['isTitle'] == true) {
+        // 다른 텍스트 문단의 정렬을 찾아서 제목에 적용
+        String targetAlignment = 'center'; // 기본값(중앙)
+        for (int i = 1; i < document.length; i++) {
+          final node = document.getNodeAt(i);
+          if (node is ParagraphNode) {
+            final String? align = node.metadata['textAlign'] as String?;
+            if (align != null) {
+              targetAlignment = align;
+              break;
+            }
+          }
+        }
+
+        final meta = Map<String, dynamic>.from(title.metadata);
+        meta['textAlign'] = targetAlignment;
+        final updated = ParagraphNode(
+          id: title.id,
+          text: title.text,
+          metadata: meta,
+        );
+        document.replaceNodeById(title.id, updated);
+      }
+    });
   }
 
   void _ensureOnlyFirstIsTitle() {
@@ -3500,10 +3663,12 @@ class EditorService extends ChangeNotifier {
           final meta0 = Map<String, dynamic>.from(node0.metadata);
           if (meta0['isTitle'] != true) {
             meta0['isTitle'] = true;
-            document.replaceNodeById(
-              node0.id,
-              ParagraphNode(id: node0.id, text: node0.text, metadata: meta0),
-            );
+            _runRecoveryOperation(() {
+              document.replaceNodeById(
+                node0.id,
+                ParagraphNode(id: node0.id, text: node0.text, metadata: meta0),
+              );
+            });
           }
         }
       }
@@ -3515,10 +3680,12 @@ class EditorService extends ChangeNotifier {
           final meta1 = Map<String, dynamic>.from(node1.metadata);
           if (meta1['isTitle'] == true) {
             meta1.remove('isTitle');
-            document.replaceNodeById(
-              node1.id,
-              ParagraphNode(id: node1.id, text: node1.text, metadata: meta1),
-            );
+            _runRecoveryOperation(() {
+              document.replaceNodeById(
+                node1.id,
+                ParagraphNode(id: node1.id, text: node1.text, metadata: meta1),
+              );
+            });
           }
         }
       }
@@ -3536,20 +3703,95 @@ class EditorService extends ChangeNotifier {
 class _DocumentSnapshot {
   final Map<String, DocumentNode> nodes; // nodeId -> node
   final List<String> order; // 노드 순서
+  final int version; // ✅ 변경 버전
   final DocumentSelection? selection; // 커서 위치
   final int _cachedHashCode; // 🚀 캐시된 해시 (O(1) 비교용)
 
-  _DocumentSnapshot({required this.nodes, required this.order, this.selection})
-    : _cachedHashCode = _computeHash(nodes, order);
+  _DocumentSnapshot({
+    required this.nodes,
+    required this.order,
+    required this.version,
+    this.selection,
+  }) : _cachedHashCode = _computeHash(nodes, order, version);
 
   // 🚀 해시 계산 (생성 시 한 번만)
-  static int _computeHash(Map<String, DocumentNode> nodes, List<String> order) {
-    // 노드 개수 + 순서 + 각 노드의 텍스트 해시
-    final values = <int>[order.length, order.join(',').hashCode];
+  static int _computeHash(
+    Map<String, DocumentNode> nodes,
+    List<String> order,
+    int version,
+  ) {
+    // ✅ 이전 해시는 "runtimeType" 위주라서 이미지 URL/메타데이터 변화가 반영되지 않아
+    //    스냅샷이 동일하다고 판단되는 경우가 잦았음(Undo가 안 먹는 듯 보임).
+    //    -> 샘플링은 유지하되, 노드별 "콘텐츠 시그니처"를 포함한다.
+
+    int _nodeSignature(DocumentNode? node) {
+      if (node == null) return 0;
+      if (node is ParagraphNode) {
+        // 텍스트 + 정렬/제목/멘션 등 주요 메타
+        final meta = node.metadata;
+        return Object.hash(
+          'p',
+          node.text.text,
+          meta['textAlign'],
+          meta['isTitle'],
+          meta['mention'],
+          (meta['usernames'] as List?)?.length,
+          meta['fontFamily'],
+        );
+      }
+      if (node is ImageNode) {
+        // 이미지 URL(로컬/네트워크) 변화가 Undo에 반영되도록 포함
+        return Object.hash('img', node.imageUrl, node.altText);
+      }
+      if (node is ImageRowNode) {
+        return Object.hash('row', node.imageUrls.join('|'), node.spacing);
+      }
+      if (node is PageViewImageNode) {
+        // PageViewImageNode는 커스텀 노드. urls/메타를 반영
+        return Object.hash('page', node.imageUrls.join('|'));
+      }
+      if (node is LinkNode) {
+        return Object.hash(
+          'link',
+          node.url,
+          node.title,
+          node.description,
+          node.thumbnailUrl,
+        );
+      }
+      if (node is ClipNode) {
+        return Object.hash(
+          'clip',
+          node.url,
+          node.localPath,
+          node.thumbnailPath,
+          node.label,
+          node.colorHex,
+        );
+      }
+      // 기타 노드: 타입 + id 정도
+      return Object.hash(node.runtimeType.toString(), node.id);
+    }
+
+    // ✅ order.join(',')는 문서가 길어질수록 매번 큰 문자열을 생성(O(n) + alloc)해서 무거울 수 있음.
+    // 히스토리 비교는 아래에서 "order.length + (first/middle/last)" 샘플로도 충분히 안전하게 동작하도록 설계되어 있으므로,
+    // 여기서도 동일한 방식으로 order 시그니처를 만든다.
+    final int orderSignature =
+        order.isEmpty
+            ? 0
+            : Object.hash(
+              order.length,
+              order.first,
+              order.length > 1 ? order[order.length ~/ 2] : null,
+              order.last,
+            );
+
+    // 노드 순서 시그니처 + 버전
+    final values = <int>[orderSignature, version];
 
     // 샘플링: 첫/중간/마지막 노드만 체크 (성능 최적화)
     if (order.isNotEmpty) {
-      final indices = [
+      final indices = <int>[
         0,
         if (order.length > 1) order.length ~/ 2,
         if (order.length > 1) order.length - 1,
@@ -3557,12 +3799,7 @@ class _DocumentSnapshot {
 
       for (final i in indices) {
         final id = order[i];
-        final node = nodes[id];
-        if (node is ParagraphNode) {
-          values.add(node.text.text.hashCode);
-        } else {
-          values.add(node.runtimeType.hashCode);
-        }
+        values.add(_nodeSignature(nodes[id]));
       }
     }
 

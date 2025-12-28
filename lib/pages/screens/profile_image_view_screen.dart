@@ -1,11 +1,9 @@
 import 'dart:io';
 import 'dart:math' as math;
-import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:doppy/image/crop_editor.dart';
 import 'package:doppy/image/media_picker_screen.dart';
-import 'package:doppy/image/simple_image_editor_screen.dart';
 import 'package:doppy/l10n/app_localizations.dart';
 import 'package:doppy/providers/friend_provider.dart';
 import 'package:doppy/utils/error_handler.dart';
@@ -49,6 +47,15 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen> {
   File? _selectedImage;
   ui.Image? _uiImage;
   bool _isDefaultImageMode = false; // 기본이미지 모드
+
+  // 인라인 보정 모드
+  bool _isAdjustMode = false;
+  _AdjustTool _activeAdjustTool = _AdjustTool.brightness;
+  double _brightness = 0.0; // -100 ~ 100
+  double _contrast = 0.0; // -100 ~ 100
+  double _saturation = 0.0; // -100 ~ 100
+  double _warmth = 0.0; // -100 ~ 100
+  _AdjustSnapshot? _adjustSnapshot;
 
   // 이미지 상태 (crop_editor.dart 구조 참고)
   double _imageScale = 1.0;
@@ -197,54 +204,57 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen> {
                 child:
                     widget.isOwnProfile
                         ? _selectedImage != null
-                            ? // 이미지가 선택된 경우 완료, 보정, 취소 버튼 표시
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                _buildCircleButton(
-                                  context: context,
-                                  icon: Icons.check,
-                                  label: '완료',
-                                  onTap: () async {
-                                    if (_selectedImage != null &&
-                                        _uiImage != null) {
-                                      final croppedFile =
-                                          await _cropImageToCircle();
-                                      if (croppedFile != null && mounted) {
-                                        widget.onGallerySelected(croppedFile);
-                                        Navigator.pop(context);
-                                      }
-                                    }
-                                  },
-                                ),
-                                const SizedBox(width: 16),
-                                _buildCircleButton(
-                                  context: context,
-                                  icon: Icons.tune,
-                                  label: '보정',
-                                  onTap: () {
-                                    _showImageEditor();
-                                  },
-                                ),
-                                const SizedBox(width: 16),
-                                _buildCircleButton(
-                                  context: context,
-                                  icon: Icons.close,
-                                  label: '취소',
-                                  onTap: () {
-                                    setState(() {
-                                      _selectedImage = null;
-                                      _uiImage = null;
-                                      _imageScale = 1.0;
-                                      _imageOffset = Offset.zero;
-                                      _minScale = 1.0;
-                                      _initialScale = null;
-                                      _lastPanPosition = null;
-                                    });
-                                  },
-                                ),
-                              ],
-                            )
+                            ? (_isAdjustMode
+                                ? _buildAdjustBottomSheet(theme)
+                                : Row(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    _buildCircleButton(
+                                      context: context,
+                                      icon: Icons.check,
+                                      label: '완료',
+                                      onTap: () async {
+                                        if (_selectedImage != null &&
+                                            _uiImage != null) {
+                                          final croppedFile =
+                                              await _cropImageToCircle();
+                                          if (croppedFile != null && mounted) {
+                                            widget.onGallerySelected(
+                                              croppedFile,
+                                            );
+                                            Navigator.pop(context);
+                                          }
+                                        }
+                                      },
+                                    ),
+                                    const SizedBox(width: 16),
+                                    _buildCircleButton(
+                                      context: context,
+                                      icon: Icons.tune,
+                                      label: '보정',
+                                      onTap: _enterAdjustMode,
+                                    ),
+                                    const SizedBox(width: 16),
+                                    _buildCircleButton(
+                                      context: context,
+                                      icon: Icons.close,
+                                      label: '취소',
+                                      onTap: () {
+                                        setState(() {
+                                          _selectedImage = null;
+                                          _uiImage = null;
+                                          _imageScale = 1.0;
+                                          _imageOffset = Offset.zero;
+                                          _minScale = 1.0;
+                                          _initialScale = null;
+                                          _lastPanPosition = null;
+                                          _isAdjustMode = false;
+                                          _adjustSnapshot = null;
+                                        });
+                                      },
+                                    ),
+                                  ],
+                                ))
                             : _isDefaultImageMode
                             ? // 기본이미지 모드: 확인, 취소 버튼 표시
                             Row(
@@ -304,6 +314,8 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen> {
                                       _isDefaultImageMode = true;
                                       _selectedImage = null;
                                       _uiImage = null;
+                                      _isAdjustMode = false;
+                                      _adjustSnapshot = null;
                                     });
                                   },
                                 ),
@@ -566,40 +578,245 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen> {
     }
   }
 
-  /// 이미지 편집 화면 표시
-  Future<void> _showImageEditor() async {
+  void _enterAdjustMode() {
     if (_selectedImage == null) return;
-
-    try {
-      final imageBytes = await _selectedImage!.readAsBytes();
-
-      final result = await Navigator.push<List<Uint8List>>(
-        context,
-        MaterialPageRoute(
-          builder:
-              (context) =>
-                  SimpleImageEditorScreen(imageBytesList: [imageBytes]),
-          fullscreenDialog: true,
-        ),
+    setState(() {
+      _adjustSnapshot = _AdjustSnapshot(
+        brightness: _brightness,
+        contrast: _contrast,
+        saturation: _saturation,
+        warmth: _warmth,
       );
+      _isAdjustMode = true;
+      _activeAdjustTool = _AdjustTool.brightness;
+    });
+  }
 
-      if (result != null && result.isNotEmpty && mounted) {
-        // 편집된 이미지로 교체
-        final tempDir = await Directory.systemTemp.createTemp();
-        final tempFile = File(
-          '${tempDir.path}/edited_${DateTime.now().millisecondsSinceEpoch}.jpg',
-        );
-        await tempFile.writeAsBytes(result.first);
-
-        // 편집된 이미지로 다시 로드
-        _loadImageAndCalculateScale(tempFile);
-      }
-    } catch (e) {
-      debugPrint('[ProfileImageView] 이미지 편집 실패: $e');
-      if (mounted) {
-        ErrorHandler.showError(context, '이미지 편집에 실패했습니다');
+  void _exitAdjustMode({required bool apply}) {
+    if (!apply) {
+      final snap = _adjustSnapshot;
+      if (snap != null) {
+        _brightness = snap.brightness;
+        _contrast = snap.contrast;
+        _saturation = snap.saturation;
+        _warmth = snap.warmth;
       }
     }
+    setState(() {
+      _isAdjustMode = false;
+      _adjustSnapshot = null;
+    });
+  }
+
+  Widget _buildAdjustBottomSheet(ThemeData theme) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surface,
+        borderRadius: BorderRadius.circular(18),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.12),
+            blurRadius: 16,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            children: [
+              TextButton(
+                onPressed: () => _exitAdjustMode(apply: false),
+                child: Text(
+                  '취소',
+                  style: TextStyle(
+                    color: theme.colorScheme.onSurface.withOpacity(0.8),
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+              const Spacer(),
+              TextButton(
+                onPressed: () => _exitAdjustMode(apply: true),
+                child: Text(
+                  '완료',
+                  style: TextStyle(
+                    color: theme.colorScheme.primary,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [
+                _buildAdjustToolButton(
+                  theme: theme,
+                  tool: _AdjustTool.brightness,
+                  icon: Icons.brightness_6,
+                  label: '밝기',
+                ),
+                _buildAdjustToolButton(
+                  theme: theme,
+                  tool: _AdjustTool.contrast,
+                  icon: Icons.contrast,
+                  label: '대비',
+                ),
+                _buildAdjustToolButton(
+                  theme: theme,
+                  tool: _AdjustTool.saturation,
+                  icon: Icons.palette,
+                  label: '채도',
+                ),
+                _buildAdjustToolButton(
+                  theme: theme,
+                  tool: _AdjustTool.warmth,
+                  icon: Icons.thermostat,
+                  label: '따뜻함',
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 10),
+          _buildAdjustSlider(theme),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAdjustToolButton({
+    required ThemeData theme,
+    required _AdjustTool tool,
+    required IconData icon,
+    required String label,
+  }) {
+    final selected = _activeAdjustTool == tool;
+    return GestureDetector(
+      onTap: () => setState(() => _activeAdjustTool = tool),
+      child: Container(
+        margin: const EdgeInsets.only(right: 10),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color:
+              selected
+                  ? theme.colorScheme.primary.withOpacity(0.12)
+                  : theme.colorScheme.surfaceVariant.withOpacity(0.25),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color:
+                selected
+                    ? theme.colorScheme.primary.withOpacity(0.6)
+                    : Colors.transparent,
+            width: 1,
+          ),
+        ),
+        child: Row(
+          children: [
+            Icon(
+              icon,
+              size: 18,
+              color:
+                  selected
+                      ? theme.colorScheme.primary
+                      : theme.colorScheme.onSurface.withOpacity(0.8),
+            ),
+            const SizedBox(width: 6),
+            Text(
+              label,
+              style: TextStyle(
+                color:
+                    selected
+                        ? theme.colorScheme.primary
+                        : theme.colorScheme.onSurface.withOpacity(0.8),
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAdjustSlider(ThemeData theme) {
+    double value;
+    String label;
+    switch (_activeAdjustTool) {
+      case _AdjustTool.brightness:
+        value = _brightness;
+        label = '밝기';
+        break;
+      case _AdjustTool.contrast:
+        value = _contrast;
+        label = '대비';
+        break;
+      case _AdjustTool.saturation:
+        value = _saturation;
+        label = '채도';
+        break;
+      case _AdjustTool.warmth:
+        value = _warmth;
+        label = '따뜻함';
+        break;
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            Text(
+              label,
+              style: TextStyle(
+                color: theme.colorScheme.onSurface.withOpacity(0.85),
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const Spacer(),
+            Text(
+              value.toStringAsFixed(0),
+              style: TextStyle(
+                color: theme.colorScheme.onSurface.withOpacity(0.85),
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+        Slider(
+          value: value,
+          min: -100,
+          max: 100,
+          onChanged: (v) {
+            setState(() {
+              switch (_activeAdjustTool) {
+                case _AdjustTool.brightness:
+                  _brightness = v;
+                  break;
+                case _AdjustTool.contrast:
+                  _contrast = v;
+                  break;
+                case _AdjustTool.saturation:
+                  _saturation = v;
+                  break;
+                case _AdjustTool.warmth:
+                  _warmth = v;
+                  break;
+              }
+            });
+          },
+        ),
+      ],
+    );
   }
 
   /// 이미지 로드 및 초기 스케일 계산
@@ -757,6 +974,7 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen> {
           screenImageRect: screenImageRect,
           cropRect: cropRect,
           borderColor: theme.colorScheme.onSurface.withOpacity(0.3),
+          adjustmentFilter: _buildAdjustmentColorFilter(),
         ),
       ),
     );
@@ -887,7 +1105,12 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen> {
       );
       final dstRect = Rect.fromLTWH(0, 0, size.width, size.height);
 
-      canvas.drawImageRect(_uiImage!, srcRect, dstRect, Paint());
+      canvas.drawImageRect(
+        _uiImage!,
+        srcRect,
+        dstRect,
+        Paint()..colorFilter = _buildAdjustmentColorFilter(),
+      );
 
       // Picture를 Image로 변환
       final picture = recorder.endRecording();
@@ -924,12 +1147,14 @@ class _UnifiedImagePainter extends CustomPainter {
   final Rect screenImageRect; // 화면 좌표계의 이미지 rect
   final Rect cropRect; // 화면 좌표계의 크롭 영역
   final Color borderColor;
+  final ColorFilter? adjustmentFilter;
 
   _UnifiedImagePainter({
     required this.image,
     required this.screenImageRect,
     required this.cropRect,
     required this.borderColor,
+    this.adjustmentFilter,
   });
 
   @override
@@ -945,10 +1170,8 @@ class _UnifiedImagePainter extends CustomPainter {
     // 원형 영역을 제외한 나머지 영역에만 그리기
     final backgroundPaint =
         Paint()
-          ..colorFilter = ColorFilter.mode(
-            Colors.white.withOpacity(0.3),
-            BlendMode.modulate,
-          );
+          ..color = Colors.white.withOpacity(0.3)
+          ..colorFilter = adjustmentFilter;
 
     // 원형 영역을 제외한 경로 생성
     final backgroundPath =
@@ -968,7 +1191,12 @@ class _UnifiedImagePainter extends CustomPainter {
     final cropPath = Path()..addOval(cropRect);
     canvas.clipPath(cropPath);
     // 원형 영역 내부에 이미지 그리기
-    canvas.drawImageRect(image, srcRect, screenImageRect, Paint());
+    canvas.drawImageRect(
+      image,
+      srcRect,
+      screenImageRect,
+      Paint()..colorFilter = adjustmentFilter,
+    );
     canvas.restore();
 
     // 3. 원형 테두리 그리기
@@ -985,6 +1213,78 @@ class _UnifiedImagePainter extends CustomPainter {
     return oldDelegate.screenImageRect != screenImageRect ||
         oldDelegate.cropRect != cropRect ||
         oldDelegate.image != image ||
-        oldDelegate.borderColor != borderColor;
+        oldDelegate.borderColor != borderColor ||
+        oldDelegate.adjustmentFilter != adjustmentFilter;
+  }
+}
+
+enum _AdjustTool { brightness, contrast, saturation, warmth }
+
+class _AdjustSnapshot {
+  const _AdjustSnapshot({
+    required this.brightness,
+    required this.contrast,
+    required this.saturation,
+    required this.warmth,
+  });
+  final double brightness;
+  final double contrast;
+  final double saturation;
+  final double warmth;
+}
+
+extension on _ProfileImageViewScreenState {
+  ColorFilter? _buildAdjustmentColorFilter() {
+    if (_brightness == 0.0 &&
+        _contrast == 0.0 &&
+        _saturation == 0.0 &&
+        _warmth == 0.0) {
+      return null;
+    }
+
+    final b = _brightness / 100.0; // -1..1
+    final c = 1.0 + (_contrast / 100.0); // 0..2
+    final s = 1.0 + (_saturation / 100.0); // 0..2
+    final w = _warmth / 100.0; // -1..1
+
+    // contrast around 128 + brightness
+    final t = (1.0 - c) * 128.0 + (b * 255.0);
+
+    // saturation
+    const lumR = 0.299;
+    const lumG = 0.587;
+    const lumB = 0.114;
+    final sr = (1.0 - s) * lumR;
+    final sg = (1.0 - s) * lumG;
+    final sb = (1.0 - s) * lumB;
+
+    // warmth: red up / blue down (간단 근사)
+    final warmR = 30.0 * w;
+    final warmB = -30.0 * w;
+
+    final m = <double>[
+      c * (sr + s),
+      c * sg,
+      c * sb,
+      0,
+      t + warmR,
+      c * sr,
+      c * (sg + s),
+      c * sb,
+      0,
+      t,
+      c * sr,
+      c * sg,
+      c * (sb + s),
+      0,
+      t + warmB,
+      0,
+      0,
+      0,
+      1,
+      0,
+    ];
+
+    return ColorFilter.matrix(m);
   }
 }

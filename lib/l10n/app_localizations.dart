@@ -24,6 +24,7 @@ class AppLocalizations {
       'app_name': 'Doppy',
       'ok': '확인',
       'cancel': '취소',
+      'apply': '적용',
       'save': '저장',
       'delete': '삭제',
       'edit': '수정',
@@ -35,6 +36,11 @@ class AppLocalizations {
       'success': '성공',
       'yes': '예',
       'no': '아니오',
+
+      // 이미지 에디터
+      'adjust': '조정',
+      'crop': '자르기',
+      'filter': '필터',
 
       // 설정 화면
       'settings': '설정',
@@ -595,6 +601,7 @@ class AppLocalizations {
       'app_name': 'Doppy',
       'ok': 'OK',
       'cancel': 'Cancel',
+      'apply': 'Apply',
       'save': 'Save',
       'delete': 'Delete',
       'edit': 'Edit',
@@ -606,6 +613,11 @@ class AppLocalizations {
       'success': 'Success',
       'yes': 'Yes',
       'no': 'No',
+
+      // Image editor
+      'adjust': 'Adjust',
+      'crop': 'Crop',
+      'filter': 'Filter',
 
       // Settings Screen
       'settings': 'Settings',

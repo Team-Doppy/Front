@@ -1076,7 +1076,7 @@ class _SingleImageComponentState extends State<SingleImageComponent>
           final double w = widget.screenWidth; // 🚀 최고 효율: prop 사용
           return Image.file(
             File(filePath),
-            key: ValueKey('$filePath-${Theme.of(context).brightness}'),
+            key: ValueKey('single_${widget.nodeId}'),
             fit: BoxFit.contain,
             cacheWidth: w.isFinite ? w.toInt() : null,
             filterQuality: FilterQuality.low,
@@ -1118,7 +1118,7 @@ class _SingleImageComponentState extends State<SingleImageComponent>
       final filePath = url.startsWith('file://') ? url.substring(7) : url;
       return Image.file(
         File(filePath),
-        key: ValueKey('$filePath-${Theme.of(context).brightness}'),
+        key: ValueKey('single_${widget.nodeId}'),
         fit: BoxFit.contain,
         errorBuilder:
             (context, error, stack) => ImageErrorPlaceholder(
@@ -1129,7 +1129,7 @@ class _SingleImageComponentState extends State<SingleImageComponent>
 
     return Image.network(
       url,
-      key: ValueKey('$url-${Theme.of(context).brightness}'),
+      key: ValueKey('single_${widget.nodeId}'),
       fit: BoxFit.contain,
       frameBuilder: (context, child, frame, wasSyncLoaded) {
         // 프리로드(캐시 히트)된 경우 즉시 child 렌더 → 쉬머 미노출

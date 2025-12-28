@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:doppy/editor/component/row_image_component.dart';
+import 'package:doppy/editor/component/pageview_image_component.dart';
 import 'package:doppy/editor/component/divider_component.dart';
 import 'package:doppy/providers/auth_provider.dart';
 import 'package:doppy/data/services/auth_service.dart';
@@ -168,6 +169,18 @@ class PostExporter {
         } else if (type == 'imageRow') {
           // urls 필드에서 추출
           final List<dynamic> urls = List<dynamic>.from(n['urls'] ?? const []);
+          for (final u in urls) {
+            final String url = u.toString();
+            if (url.isNotEmpty) {
+              usedUrls.add(url);
+            }
+          }
+        } else if (type == 'pageViewImage' ||
+            type == 'pageviewImage' ||
+            type == 'page_view_image') {
+          final List<dynamic> urls = List<dynamic>.from(
+            n['imageUrls'] ?? const [],
+          );
           for (final u in urls) {
             final String url = u.toString();
             if (url.isNotEmpty) {
@@ -572,6 +585,143 @@ class PostExporter {
         }
 
         debugPrint('[PostExporter] 🔍 최종 nodeMap: $nodeMap');
+        nodes.add(nodeMap);
+        continue;
+      }
+
+      // PageViewImageNode (여러 이미지를 PageView로 표시)
+      if (node is PageViewImageNode) {
+        // 스포일러 확인: metadata 또는 NodeComponentService
+        bool hasSpoiler = false;
+        final meta = node.metadata;
+        if (meta['spoiler'] == true) {
+          hasSpoiler = true;
+        } else {
+          final nodeService = NodeComponentService();
+          hasSpoiler = nodeService.isSpoiler(node.id);
+        }
+
+        // 🚀 forPublishing이 true이고 uploadedUrls가 있으면 네트워크 URL로 변환
+        List<String> imageUrls = node.imageUrls;
+        if (forPublishing) {
+          final uploadedUrls = meta['uploadedUrls'] as Map<String, dynamic>?;
+          if (uploadedUrls != null && uploadedUrls.isNotEmpty) {
+            final List<String> convertedUrls = [];
+            final List<String> failedUrls = [];
+
+            for (final url in node.imageUrls) {
+              if (_isNetworkUrl(url)) {
+                convertedUrls.add(url);
+                continue;
+              }
+              final networkUrl = uploadedUrls[url];
+              if (networkUrl != null) {
+                convertedUrls.add(networkUrl.toString());
+              } else {
+                failedUrls.add(url);
+              }
+            }
+
+            if (failedUrls.isNotEmpty) {
+              final isUploading = editorService.isNodeUploading(node.id);
+              if (isUploading) {
+                throw StateError(
+                  '임시저장 불가: 페이지뷰 이미지가 업로드 중입니다. '
+                  '업로드가 완료될 때까지 기다려주세요. (노드 ID: ${node.id}, 실패한 URL: ${failedUrls.join(", ")})',
+                );
+              } else if (allowPartialUpload) {
+                imageUrls = convertedUrls + failedUrls;
+              } else {
+                throw StateError(
+                  '${allowPartialUpload ? "임시저장" : "발행"} 불가: 페이지뷰 이미지 중 업로드되지 않은 이미지가 있습니다. '
+                  '업로드가 완료될 때까지 기다려주세요. (노드 ID: ${node.id}, 실패한 URL: ${failedUrls.join(", ")})',
+                );
+              }
+            } else {
+              imageUrls = convertedUrls;
+            }
+          } else if (node.imageUrls.any((url) => !_isNetworkUrl(url))) {
+            final isUploading = editorService.isNodeUploading(node.id);
+            if (isUploading) {
+              throw StateError(
+                '임시저장 불가: 페이지뷰 이미지가 업로드 중입니다. '
+                '업로드가 완료될 때까지 기다려주세요. (노드 ID: ${node.id})',
+              );
+            } else if (!allowPartialUpload) {
+              throw StateError(
+                '${allowPartialUpload ? "임시저장" : "발행"} 불가: 페이지뷰 이미지에 업로드되지 않은 이미지가 있습니다. '
+                '업로드가 완료될 때까지 기다려주세요. (노드 ID: ${node.id})',
+              );
+            }
+          }
+        }
+
+        final hasComments = (meta['hasComments'] ?? false) == true;
+        final commentCountRaw = meta['commentCount'];
+        final commentCount =
+            (commentCountRaw is num)
+                ? commentCountRaw.toInt()
+                : int.tryParse(commentCountRaw?.toString() ?? '0') ?? 0;
+
+        final nodeMap = <String, dynamic>{
+          'id': node.id,
+          'type': 'pageViewImage',
+          'imageUrls': imageUrls,
+        };
+
+        if (hasSpoiler) nodeMap['spoiler'] = true;
+        if (hasComments) nodeMap['hasComments'] = true;
+        if (commentCount > 0) nodeMap['commentCount'] = commentCount;
+
+        final imgCommentInfo = meta['imageCommentInfo'];
+        if (imgCommentInfo is Map) {
+          nodeMap['imageCommentInfo'] = imgCommentInfo;
+        }
+
+        final imageDimensions =
+            meta['imageDimensions'] as Map<String, dynamic>?;
+        if (imageDimensions != null && imageDimensions.isNotEmpty) {
+          final convertedDimensions = <String, dynamic>{};
+          final uploadedUrls = meta['uploadedUrls'] as Map<String, dynamic>?;
+
+          for (final url in imageUrls) {
+            String? dimensionKey = url;
+            if (uploadedUrls != null) {
+              String? foundLocalPath;
+              for (final entry in uploadedUrls.entries) {
+                if (entry.value.toString() == url) {
+                  foundLocalPath = entry.key;
+                  break;
+                }
+              }
+              if (foundLocalPath != null && foundLocalPath.isNotEmpty) {
+                dimensionKey = foundLocalPath;
+              }
+            }
+
+            dynamic dimensionData =
+                imageDimensions[dimensionKey] ?? imageDimensions[url];
+            if (dimensionData == null) {
+              for (final key in imageDimensions.keys) {
+                if (key.toString().endsWith(url.split('/').last) ||
+                    url.endsWith(key.toString().split('/').last)) {
+                  dimensionData = imageDimensions[key];
+                  break;
+                }
+              }
+            }
+
+            if (dimensionData != null) {
+              convertedDimensions[url] = dimensionData;
+            }
+          }
+
+          nodeMap['imageDimensions'] =
+              convertedDimensions.isNotEmpty
+                  ? convertedDimensions
+                  : imageDimensions;
+        }
+
         nodes.add(nodeMap);
         continue;
       }

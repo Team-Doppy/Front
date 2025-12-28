@@ -3,11 +3,9 @@ import 'package:doppy/common/widgets/image_error_placeholder.dart';
 import 'package:doppy/utils/image_size_utils.dart';
 import 'package:doppy/data/services/upload_service.dart';
 import 'package:doppy/editor/component/clip_component.dart';
-import 'package:doppy/editor/postwrite_screen.dart';
 import 'package:doppy/editor/component/link_component.dart';
 import 'package:doppy/editor/service/node_component_service.dart';
 import 'package:doppy/editor/service/editor_service.dart';
-import 'package:doppy/editor/service/drag_service.dart';
 import 'package:doppy/editor/utils/config.dart';
 import 'package:doppy/editor/utils/node_type_checker.dart';
 import 'package:doppy/editor/utils/drop_line_config.dart';
@@ -915,6 +913,7 @@ class _ImageRowComponentState extends State<ImageRowComponent>
                                                                 ),
                                                         child:
                                                             _buildRowImageWidget(
+                                                              entry.key,
                                                               imageUrl,
                                                               constraints
                                                                   .maxWidth,
@@ -953,6 +952,7 @@ class _ImageRowComponentState extends State<ImageRowComponent>
                                                                     ),
                                                             child:
                                                                 _buildRowImageWidget(
+                                                                  entry.key,
                                                                   imageUrl,
                                                                   imageConstraints
                                                                       .maxWidth,
@@ -1766,7 +1766,7 @@ class _ImageRowComponentState extends State<ImageRowComponent>
   }
 
   /// 🎯 Row 이미지 위젯 빌드 (로컬/네트워크 자동 판단)
-  Widget _buildRowImageWidget(String imageUrl, double maxWidth) {
+  Widget _buildRowImageWidget(int index, String imageUrl, double maxWidth) {
     final isLocal = ImageSizeUtils.isLocalPath(imageUrl);
 
     if (isLocal) {
@@ -1776,7 +1776,7 @@ class _ImageRowComponentState extends State<ImageRowComponent>
 
       return Image.file(
         File(filePath),
-        key: ValueKey('$imageUrl-${Theme.of(context).brightness}'),
+        key: ValueKey('row_${widget.nodeId}_$index'),
         fit: BoxFit.cover,
         frameBuilder: (context, child, frame, wasSyncLoaded) {
           if (wasSyncLoaded || frame != null) {
@@ -1813,7 +1813,7 @@ class _ImageRowComponentState extends State<ImageRowComponent>
       // 네트워크 이미지
       return Image.network(
         imageUrl,
-        key: ValueKey('$imageUrl-${Theme.of(context).brightness}'),
+        key: ValueKey('row_${widget.nodeId}_$index'),
         fit: BoxFit.cover,
         frameBuilder: (context, child, frame, wasSyncLoaded) {
           // 🎯 프리로드되었거나 캐시에 있으면 즉시 표시

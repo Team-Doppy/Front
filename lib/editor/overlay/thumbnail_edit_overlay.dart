@@ -6,7 +6,7 @@ import 'package:doppy/data/services/blog_service.dart';
 import 'package:doppy/data/services/video_cache_service.dart';
 import 'package:doppy/image/media_picker_screen.dart';
 import 'package:flutter/cupertino.dart';
-import 'package:doppy/image/custom_image_editor_screen.dart';
+import 'package:doppy/image/simple_image_editor_screen.dart';
 import 'package:doppy/editor/utils/video_upload_utils.dart';
 import 'package:doppy/utils/error_handler.dart';
 import 'package:doppy/utils/dialog_utils.dart';
@@ -331,16 +331,19 @@ class _ThumbnailEditOverlayState extends State<ThumbnailEditOverlay> {
 
       final imageBytes = response.bodyBytes;
 
-      // 커스텀 이미지 에디터 열기
-      final editedBytes = await Navigator.push<Uint8List?>(
+      // ✅ SimpleImageEditorScreen 열기
+      final dynamic result = await Navigator.push(
         context,
         MaterialPageRoute(
-          builder: (context) => CustomImageEditorScreen(imageBytes: imageBytes),
+          builder: (context) => SimpleImageEditorScreen(imageBytes: imageBytes),
           fullscreenDialog: true,
         ),
       );
 
-      if (editedBytes == null || !mounted) return;
+      if (result == null || !mounted) return;
+
+      final Uint8List? editedBytes = result is Uint8List ? result : null;
+      if (editedBytes == null) return;
 
       // 편집된 이미지를 서버에 업로드
       setState(() => _isUploadingThumb = true);

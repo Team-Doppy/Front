@@ -31,37 +31,10 @@ class SelectedToolbar extends StatefulWidget {
 }
 
 class _SelectedToolbarState extends State<SelectedToolbar> {
-  bool _isPlaceholderMedia(DocumentNode? node) {
-    if (node == null) return false;
-    try {
-      // 단일 이미지(AppImageNode / ImageNode)
-      if (node is ImageNode) {
-        final dynamic dyn = node;
-        final String url = (dyn.imageUrl as String?) ?? '';
-        final Map<String, dynamic>? meta =
-            (dyn.metadata as Map<String, dynamic>?) ?? {};
-        final bool isPlaceholder = (meta?['isPlaceholder'] == true);
-        if (isPlaceholder) return true;
-        if (url.isEmpty || url.startsWith('file://')) return true;
-        return false;
-      }
-      // 이미지 행(ImageRowNode): 내부에 로컬 경로가 하나라도 있으면 플레이스홀더로 간주
-      if (node is ImageRowNode) {
-        final hasLocal = node.imageUrls.any(
-          (u) => u.isEmpty || u.startsWith('file://'),
-        );
-        return hasLocal;
-      }
-    } catch (_) {}
-    return false;
-  }
-
   @override
   Widget build(BuildContext context) {
     if (widget.node == null || widget.selectedId == null)
       return const SizedBox.shrink();
-
-    final bool isPlaceholder = _isPlaceholderMedia(widget.node);
 
     // 이미지 스포일러 적용 여부
     bool isImageSpoiler = false;
@@ -115,8 +88,7 @@ class _SelectedToolbarState extends State<SelectedToolbar> {
           ),
          */
           const Spacer(),
-          if (!isPlaceholder &&
-              (widget.node is ImageNode || widget.node is ImageRowNode)) ...[
+          if (widget.node is ImageNode || widget.node is ImageRowNode) ...[
             // 스포일러 토글
             if (widget.node is ImageNode || widget.node is ImageRowNode)
               _buildSvgToggleIcon(
@@ -191,8 +163,7 @@ class _SelectedToolbarState extends State<SelectedToolbar> {
           ],
 
           // 패딩 조절 버튼 (이미지와 영상 모두, placeholder가 아닐 때)
-          if (!isPlaceholder &&
-              (widget.node is ImageNode || widget.node is ClipNode)) ...[
+          if (widget.node is ImageNode || widget.node is ClipNode) ...[
             _buildMainSvgIcon(
               context: context,
               svgPath:
